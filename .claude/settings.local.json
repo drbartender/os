@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install helmet --save)",
+      "Bash(node -e \":*)",
+      "Bash(node -e \"try { require\\(''./server/routes/application.js''\\); } catch\\(e\\) { console.log\\(''application.js:'', e.message\\); }\")",
+      "Bash(node -e \"try { require\\(''./server/routes/admin.js''\\); } catch\\(e\\) { console.log\\(''admin.js:'', e.message\\); }\")",
+      "Bash(node -e \"try { require\\(''./server/routes/auth.js''\\); } catch\\(e\\) { console.log\\(''auth.js:'', e.message\\); }\")",
+      "Bash(node -e \"try { require\\(''./server/routes/contractor.js''\\); } catch\\(e\\) { console.log\\(''contractor.js:'', e.message\\); }\")",
+      "Bash(node check.js)",
+      "Bash(del \"C:\\\\Users\\\\dalla\\\\Downloads\\\\dr-bartender-onboarding\\\\dr-bartender\\\\check.js\")",
+      "Bash(npx react-scripts build)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :5000)",
+      "Bash(findstr LISTENING)",
+      "Bash(taskkill /PID 70104 /F)",
+      "Bash(psql \"postgresql://postgres:M7n4mJ%40%40@localhost:5432/dr_bartender\" -c \"SELECT 1\")",
+      "Bash(curl -s http://localhost:5000/api/auth/me)",
+      "Bash(npm install:*)",
+      "Bash(node -e \"require\\(''./node_modules/jspdf/dist/jspdf.node.js''\\); console.log\\(''jspdf ok''\\)\")",
+      "Bash(taskkill /F /IM node.exe)",
+      "Bash(taskkill /F /PID 5776)",
+      "Bash(taskkill //F //PID 5776)",
+      "Bash(taskkill //F //PID 1476)",
+      "Bash(JSONL_FILE=\"/mnt/c/Users/dalla/.claude/projects/C--Users-dalla-Downloads-dr-bartender-onboarding-dr-bartender/95d9e792-7aa0-4137-8053-f317fe42a497.jsonl\" wc -l \"$JSONL_FILE\")",
+      "Read(//c/Users/dalla/Downloads/dr-bartender-onboarding/dr-bartender/**)",
+      "Bash(cmd /c \"netstat -ano | findstr \"\":5000 \"\" | findstr LISTENING\")",
+      "Bash(node server/index.js)",
+      "Bash(cmd /c \"netstat -ano | findstr \"\":5000\"\" | findstr LISTENING\")",
+      "Bash(cmd /c \"netstat -ano | findstr :5000\")",
+      "Bash(cmd /c \"for /f \"\"tokens=5\"\" %a in \\(''netstat -aon ^| findstr :5000''\\) do echo PID: %a\")",
+      "Bash(cmd /c \"wmic process where \"\"name=''node.exe''\"\" get ProcessId,CommandLine\")",
+      "Bash(cmd /c \"powershell -Command \"\"Get-NetTCPConnection -LocalPort 5000 -ErrorAction SilentlyContinue | Select-Object LocalPort,State,OwningProcess\"\"\")",
+      "Bash(cmd /c \"powershell -Command \"\"Get-Process node -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,StartTime\"\"\")",
+      "Bash(cmd /c \"powershell -Command \"\"Stop-Process -Name node -Force -ErrorAction SilentlyContinue; Write-Host ''Done killing node processes''\"\"\")",
+      "Bash(cmd /c \"powershell -NoProfile -Command \"\"$conn = Get-NetTCPConnection -LocalPort 5000 -ErrorAction SilentlyContinue; if \\($conn\\) { Write-Host ''PID:'' $conn.OwningProcess; Stop-Process -Id $conn.OwningProcess -Force; Write-Host ''Killed'' } else { Write-Host ''Port 5000 is free'' }\"\" \")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(BROWSER=none npm start)"
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+services:
+  # Web Service
+  - type: web
+    name: dr-bartender-onboarding
+    env: node
+    buildCommand: npm install && cd client && npm install && cd .. && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: dr-bartender-db
+          property: connectionString
+      - key: CLIENT_URL
+        value: https://dr-bartender-onboarding.onrender.com
+
+  # PostgreSQL Database
+  - type: pserv
+    name: dr-bartender-db
+    databaseName: dr_bartender
+    user: dr_bartender

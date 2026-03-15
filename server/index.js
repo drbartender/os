@@ -1,0 +1,78 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const fileUpload = require('express-fileupload');
+const path = require('path');
+const fs = require('fs');
+const { initDb } = require('./db');
+const { auth } = require('./middleware/auth');
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || './server/uploads');
+
+// Security headers (CSP disabled — React inline styles require careful CSP tuning)
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+
+// Middleware
+app.use(cors({
+  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  credentials: true
+}));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(fileUpload({
+  limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024 },
+  abortOnLimit: true,
+  useTempFiles: false
+}));
+
+// Protected file download — admin and managers only
+app.get('/api/files/:filename', auth, (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+  // path.basename strips any directory traversal attempts (e.g. "../../etc/passwd")
+  const filename = path.basename(req.params.filename);
+  const filepath = path.join(UPLOAD_DIR, filename);
+  if (!fs.existsSync(filepath)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+  res.sendFile(filepath);
+});
+
+// Routes
+app.use('/api/auth', require('./routes/auth'));
+app.use('/api/progress', require('./routes/progress'));
+app.use('/api/agreement', require('./routes/agreement'));
+app.use('/api/contractor', require('./routes/contractor'));
+app.use('/api/payment', require('./routes/payment'));
+app.use('/api/application', require('./routes/application'));
+app.use('/api/admin', require('./routes/admin'));
+app.use('/api/shifts', require('./routes/shifts'));
+
+// Health check — must be registered BEFORE the React catch-all below
+app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+
+// Serve React app in production
+if (process.env.NODE_ENV === 'production') {
+  app.use(express.static(path.join(__dirname, '../client/build')));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../client/build/index.html'));
+  });
+}
+
+async function start() {
+  try {
+    // Ensure uploads directory exists before accepting any requests
+    if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    await initDb();
+    app.listen(PORT, () => console.log(`✓ Server running on port ${PORT}`));
+  } catch (err) {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  }
+}
+
+start();
