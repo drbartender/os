@@ -17,8 +17,7 @@ services:
       - key: CLIENT_URL
         value: https://dr-bartender-onboarding.onrender.com
 
-  # PostgreSQL Database
-  - type: pserv
-    name: dr-bartender-db
+databases:
+  - name: dr-bartender-db
     databaseName: dr_bartender
     user: dr_bartender
