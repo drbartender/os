@@ -3,7 +3,7 @@ services:
   - type: web
     name: dr-bartender-onboarding
     env: node
-    buildCommand: npm install && cd client && npm install && cd .. && npm run build
+    buildCommand: npm install
     startCommand: npm start
     envVars:
       - key: NODE_ENV
@@ -13,4 +13,4 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: CLIENT_URL
-        value: https://dr-bartender-onboarding.onrender.com
+        sync: false

@@ -55,13 +55,7 @@ app.use('/api/shifts', require('./routes/shifts'));
 // Health check — must be registered BEFORE the React catch-all below
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
-// Serve React app in production
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../client/build')));
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../client/build/index.html'));
-  });
-}
+// Frontend is served separately on Vercel
 
 async function start() {
   try {
