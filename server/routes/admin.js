@@ -124,6 +124,65 @@ router.put('/users/:id/status', auth, adminOnly, async (req, res) => {
   }
 });
 
+// Update user profile (admin editing contractor info)
+router.put('/users/:id/profile', auth, adminOnly, async (req, res) => {
+  const userId = req.params.id;
+  const {
+    preferred_name, phone, email: profileEmail, birth_month, birth_day, birth_year,
+    city, state, street_address, zip_code, travel_distance, reliable_transportation,
+    equipment_portable_bar, equipment_cooler, equipment_table_with_spandex,
+    equipment_none_but_open, equipment_no_space,
+    emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
+    preferred_payment_method, payment_username, routing_number, account_number,
+  } = req.body;
+
+  try {
+    // Upsert contractor profile
+    await pool.query(`
+      INSERT INTO contractor_profiles (
+        user_id, preferred_name, phone, email, birth_month, birth_day, birth_year,
+        city, state, street_address, zip_code, travel_distance, reliable_transportation,
+        equipment_portable_bar, equipment_cooler, equipment_table_with_spandex,
+        equipment_none_but_open, equipment_no_space,
+        emergency_contact_name, emergency_contact_phone, emergency_contact_relationship
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+      ON CONFLICT (user_id) DO UPDATE SET
+        preferred_name=$2, phone=$3, email=$4, birth_month=$5, birth_day=$6, birth_year=$7,
+        city=$8, state=$9, street_address=$10, zip_code=$11, travel_distance=$12, reliable_transportation=$13,
+        equipment_portable_bar=$14, equipment_cooler=$15, equipment_table_with_spandex=$16,
+        equipment_none_but_open=$17, equipment_no_space=$18,
+        emergency_contact_name=$19, emergency_contact_phone=$20, emergency_contact_relationship=$21
+    `, [
+      userId, preferred_name || null, phone || null, profileEmail || null,
+      birth_month || null, birth_day || null, birth_year || null,
+      city || null, state || null, street_address || null, zip_code || null,
+      travel_distance || null, reliable_transportation || null,
+      equipment_portable_bar || false, equipment_cooler || false, equipment_table_with_spandex || false,
+      equipment_none_but_open || false, equipment_no_space || false,
+      emergency_contact_name || null, emergency_contact_phone || null, emergency_contact_relationship || null,
+    ]);
+
+    // Upsert payment profile
+    await pool.query(`
+      INSERT INTO payment_profiles (user_id, preferred_payment_method, payment_username, routing_number, account_number)
+      VALUES ($1,$2,$3,$4,$5)
+      ON CONFLICT (user_id) DO UPDATE SET
+        preferred_payment_method=$2, payment_username=$3, routing_number=$4, account_number=$5
+    `, [userId, preferred_payment_method || null, payment_username || null, routing_number || null, account_number || null]);
+
+    // Return updated data
+    const [profileRes, paymentRes] = await Promise.all([
+      pool.query('SELECT * FROM contractor_profiles WHERE user_id = $1', [userId]),
+      pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [userId]),
+    ]);
+
+    res.json({ profile: profileRes.rows[0] || {}, payment: paymentRes.rows[0] || {} });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Update user permissions (role + flags)
 router.put('/users/:id/permissions', auth, adminOnly, async (req, res) => {
   const { role, can_hire, can_staff } = req.body;

@@ -11,7 +11,27 @@ function Section({ title, children }) {
   );
 }
 
-function Field({ label, value }) {
+function Field({ label, value, editing, editKey, editValue, onChange, type = 'text', options }) {
+  if (editing && editKey) {
+    const labelStyle = { fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--warm-brown)', marginBottom: '0.25rem' };
+    if (options) {
+      return (
+        <div style={{ marginBottom: '0.75rem' }}>
+          <div style={labelStyle}>{label}</div>
+          <select className="form-input" style={{ marginBottom: 0 }} value={editValue || ''} onChange={e => onChange(editKey, e.target.value)}>
+            <option value="">—</option>
+            {options.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+      );
+    }
+    return (
+      <div style={{ marginBottom: '0.75rem' }}>
+        <div style={labelStyle}>{label}</div>
+        <input className="form-input" style={{ marginBottom: 0 }} type={type} value={editValue || ''} onChange={e => onChange(editKey, e.target.value)} />
+      </div>
+    );
+  }
   return (
     <div style={{ marginBottom: '0.75rem' }}>
       <div style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--warm-brown)', marginBottom: '0.15rem' }}>{label}</div>
@@ -39,6 +59,9 @@ export default function AdminUserDetail() {
   const [statusLoading, setStatusLoading] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
   const [permsSaving, setPermsSaving] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState({});
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     api.get(`/admin/users/${id}`)
@@ -90,6 +113,55 @@ export default function AdminUserDetail() {
       console.error(e);
     } finally {
       setPermsSaving(false);
+    }
+  }
+
+  function startEditing() {
+    const p = data.profile || {};
+    const pay = data.payment || {};
+    setEditForm({
+      preferred_name: p.preferred_name || '',
+      phone: p.phone || '',
+      email: p.email || data.user.email || '',
+      birth_month: p.birth_month || '',
+      birth_day: p.birth_day || '',
+      birth_year: p.birth_year || '',
+      city: p.city || '',
+      state: p.state || '',
+      street_address: p.street_address || '',
+      zip_code: p.zip_code || '',
+      travel_distance: p.travel_distance || '',
+      reliable_transportation: p.reliable_transportation || '',
+      equipment_portable_bar: !!p.equipment_portable_bar,
+      equipment_cooler: !!p.equipment_cooler,
+      equipment_table_with_spandex: !!p.equipment_table_with_spandex,
+      equipment_none_but_open: !!p.equipment_none_but_open,
+      equipment_no_space: !!p.equipment_no_space,
+      emergency_contact_name: p.emergency_contact_name || '',
+      emergency_contact_phone: p.emergency_contact_phone || '',
+      emergency_contact_relationship: p.emergency_contact_relationship || '',
+      preferred_payment_method: pay.preferred_payment_method || '',
+      payment_username: pay.payment_username || '',
+      routing_number: pay.routing_number || '',
+      account_number: pay.account_number || '',
+    });
+    setEditing(true);
+  }
+
+  function updateField(key, value) {
+    setEditForm(f => ({ ...f, [key]: value }));
+  }
+
+  async function saveProfile() {
+    setSaving(true);
+    try {
+      const r = await api.put(`/admin/users/${id}/profile`, editForm);
+      setData(d => ({ ...d, profile: r.data.profile, payment: r.data.payment }));
+      setEditing(false);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -161,7 +233,7 @@ export default function AdminUserDetail() {
             ['payment', 'Payment'],
             ['permissions', 'Permissions'],
           ].map(([key, label]) => (
-            <button key={key} className={`tab-btn ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)}>
+            <button key={key} className={`tab-btn ${tab === key ? 'active' : ''}`} onClick={() => { setTab(key); setEditing(false); }}>
               {label}
             </button>
           ))}
@@ -169,37 +241,86 @@ export default function AdminUserDetail() {
 
         {/* ── Profile Tab ── */}
         {tab === 'profile' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <Section title="Contact Info">
-              <Field label="Preferred Name" value={profile.preferred_name} />
-              <Field label="Phone" value={profile.phone} />
-              <Field label="Email" value={profile.email || user.email} />
-              <Field label="Birthday" value={profile.birth_month && profile.birth_day && profile.birth_year ? `${profile.birth_month}/${profile.birth_day}/${profile.birth_year}` : null} />
-            </Section>
-            <Section title="Location & Travel">
-              <Field label="City" value={profile.city} />
-              <Field label="State" value={profile.state} />
-              <Field label="Address" value={[profile.street_address, profile.zip_code].filter(Boolean).join(' ') || null} />
-              <Field label="Travel Distance" value={profile.travel_distance} />
-              <Field label="Transportation" value={profile.reliable_transportation} />
-            </Section>
-            <Section title="Equipment">
-              {equipmentItems.length > 0 ? (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-                  {equipmentItems.map(([key, label]) => (
-                    <span key={key} className="badge badge-inprogress">{label}</span>
-                  ))}
-                </div>
+          <>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem', gap: '0.5rem' }}>
+              {editing ? (
+                <>
+                  <button className="btn btn-secondary btn-sm" disabled={saving} onClick={() => setEditing(false)}>Cancel</button>
+                  <button className="btn btn-primary btn-sm" disabled={saving} onClick={saveProfile}>
+                    {saving ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </>
               ) : (
-                <span className="text-muted" style={{ fontStyle: 'italic' }}>No equipment listed</span>
+                <button className="btn btn-secondary btn-sm" onClick={startEditing}>Edit</button>
               )}
-            </Section>
-            <Section title="Emergency Contact">
-              <Field label="Name" value={profile.emergency_contact_name} />
-              <Field label="Phone" value={profile.emergency_contact_phone} />
-              <Field label="Relationship" value={profile.emergency_contact_relationship} />
-            </Section>
-          </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+              <Section title="Contact Info">
+                <Field label="Preferred Name" value={profile.preferred_name} editing={editing} editKey="preferred_name" editValue={editForm.preferred_name} onChange={updateField} />
+                <Field label="Phone" value={profile.phone} editing={editing} editKey="phone" editValue={editForm.phone} onChange={updateField} type="tel" />
+                <Field label="Email" value={profile.email || user.email} editing={editing} editKey="email" editValue={editForm.email} onChange={updateField} type="email" />
+                {editing ? (
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--warm-brown)', marginBottom: '0.25rem' }}>Birthday</div>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <input className="form-input" style={{ marginBottom: 0, width: 70 }} placeholder="MM" type="number" min="1" max="12" value={editForm.birth_month || ''} onChange={e => updateField('birth_month', e.target.value)} />
+                      <input className="form-input" style={{ marginBottom: 0, width: 70 }} placeholder="DD" type="number" min="1" max="31" value={editForm.birth_day || ''} onChange={e => updateField('birth_day', e.target.value)} />
+                      <input className="form-input" style={{ marginBottom: 0, width: 90 }} placeholder="YYYY" type="number" min="1900" max="2010" value={editForm.birth_year || ''} onChange={e => updateField('birth_year', e.target.value)} />
+                    </div>
+                  </div>
+                ) : (
+                  <Field label="Birthday" value={profile.birth_month && profile.birth_day && profile.birth_year ? `${profile.birth_month}/${profile.birth_day}/${profile.birth_year}` : null} />
+                )}
+              </Section>
+              <Section title="Location & Travel">
+                <Field label="City" value={profile.city} editing={editing} editKey="city" editValue={editForm.city} onChange={updateField} />
+                <Field label="State" value={profile.state} editing={editing} editKey="state" editValue={editForm.state} onChange={updateField} />
+                {editing ? (
+                  <>
+                    <Field label="Street Address" editing={editing} editKey="street_address" editValue={editForm.street_address} onChange={updateField} />
+                    <Field label="Zip Code" editing={editing} editKey="zip_code" editValue={editForm.zip_code} onChange={updateField} />
+                  </>
+                ) : (
+                  <Field label="Address" value={[profile.street_address, profile.zip_code].filter(Boolean).join(' ') || null} />
+                )}
+                <Field label="Travel Distance" value={profile.travel_distance} editing={editing} editKey="travel_distance" editValue={editForm.travel_distance} onChange={updateField}
+                  options={['Up to 15 miles', 'Up to 30 miles', 'Up to 50 miles', '50+ miles']} />
+                <Field label="Transportation" value={profile.reliable_transportation} editing={editing} editKey="reliable_transportation" editValue={editForm.reliable_transportation} onChange={updateField}
+                  options={['Yes', 'No', 'Sometimes']} />
+              </Section>
+              <Section title="Equipment">
+                {editing ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {[
+                      ['equipment_portable_bar', 'Portable Bar'],
+                      ['equipment_cooler', 'Cooler'],
+                      ['equipment_table_with_spandex', '6ft Table w/ Spandex'],
+                      ['equipment_none_but_open', 'Open to Getting Equipment'],
+                      ['equipment_no_space', 'No Space'],
+                    ].map(([key, label]) => (
+                      <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
+                        <input type="checkbox" checked={!!editForm[key]} onChange={e => updateField(key, e.target.checked)} style={{ width: 16, height: 16 }} />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
+                ) : equipmentItems.length > 0 ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                    {equipmentItems.map(([key, label]) => (
+                      <span key={key} className="badge badge-inprogress">{label}</span>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-muted" style={{ fontStyle: 'italic' }}>No equipment listed</span>
+                )}
+              </Section>
+              <Section title="Emergency Contact">
+                <Field label="Name" value={profile.emergency_contact_name} editing={editing} editKey="emergency_contact_name" editValue={editForm.emergency_contact_name} onChange={updateField} />
+                <Field label="Phone" value={profile.emergency_contact_phone} editing={editing} editKey="emergency_contact_phone" editValue={editForm.emergency_contact_phone} onChange={updateField} type="tel" />
+                <Field label="Relationship" value={profile.emergency_contact_relationship} editing={editing} editKey="emergency_contact_relationship" editValue={editForm.emergency_contact_relationship} onChange={updateField} />
+              </Section>
+            </div>
+          </>
         )}
 
         {/* ── Documents Tab ── */}
@@ -324,12 +445,27 @@ export default function AdminUserDetail() {
 
         {/* ── Payment Tab ── */}
         {tab === 'payment' && (
-          <Section title="Payment Info">
-            <Field label="Payment Method" value={payment.preferred_payment_method} />
-            {payment.payment_username && <Field label="Username / Handle" value={payment.payment_username} />}
-            {payment.routing_number && <Field label="Routing Number" value={payment.routing_number} />}
-            {payment.account_number && <Field label="Account Number" value={payment.account_number} />}
-          </Section>
+          <>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem', gap: '0.5rem' }}>
+              {editing ? (
+                <>
+                  <button className="btn btn-secondary btn-sm" disabled={saving} onClick={() => setEditing(false)}>Cancel</button>
+                  <button className="btn btn-primary btn-sm" disabled={saving} onClick={saveProfile}>
+                    {saving ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </>
+              ) : (
+                <button className="btn btn-secondary btn-sm" onClick={startEditing}>Edit</button>
+              )}
+            </div>
+            <Section title="Payment Info">
+              <Field label="Payment Method" value={payment.preferred_payment_method} editing={editing} editKey="preferred_payment_method" editValue={editForm.preferred_payment_method} onChange={updateField}
+                options={['Zelle', 'Venmo', 'CashApp', 'PayPal', 'Direct Deposit']} />
+              <Field label="Username / Handle" value={payment.payment_username} editing={editing} editKey="payment_username" editValue={editForm.payment_username} onChange={updateField} />
+              <Field label="Routing Number" value={payment.routing_number} editing={editing} editKey="routing_number" editValue={editForm.routing_number} onChange={updateField} />
+              <Field label="Account Number" value={payment.account_number} editing={editing} editKey="account_number" editValue={editForm.account_number} onChange={updateField} />
+            </Section>
+          </>
         )}
 
         {/* ── Permissions Tab ── */}
