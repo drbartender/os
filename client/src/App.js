@@ -23,6 +23,9 @@ import EventsDashboard from './pages/admin/EventsDashboard';
 import ClientsDashboard from './pages/admin/ClientsDashboard';
 import FinancialsDashboard from './pages/admin/FinancialsDashboard';
 import SettingsDashboard from './pages/admin/SettingsDashboard';
+import DrinkPlansDashboard from './pages/admin/DrinkPlansDashboard';
+import DrinkPlanDetail from './pages/admin/DrinkPlanDetail';
+import PotionPlanningLab from './pages/plan/PotionPlanningLab';
 
 /** Determine where a logged-in user should go based on their role and status */
 function getHomePath(user) {
@@ -102,6 +105,9 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/register" replace />} />
+      {/* Public client questionnaire (no auth) */}
+      <Route path="/plan/:token" element={<PotionPlanningLab />} />
+
       <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
       <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
 
@@ -128,6 +134,8 @@ function AppRoutes() {
         <Route path="staffing" element={<AdminDashboard />} />
         <Route path="staffing/users/:id" element={<AdminUserDetail />} />
         <Route path="staffing/applications/:id" element={<AdminApplicationDetail />} />
+        <Route path="drink-plans" element={<DrinkPlansDashboard />} />
+        <Route path="drink-plans/:id" element={<DrinkPlanDetail />} />
         <Route path="events" element={<EventsDashboard />} />
         <Route path="clients" element={<ClientsDashboard />} />
         <Route path="financials" element={<FinancialsDashboard />} />

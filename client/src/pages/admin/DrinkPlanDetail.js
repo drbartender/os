@@ -1,0 +1,237 @@
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import api from '../../utils/api';
+import { SERVING_TYPES } from '../plan/data/servingTypes';
+import { COCKTAILS } from '../plan/data/cocktailMenu';
+
+const STATUS_LABELS = {
+  pending: 'Pending',
+  draft: 'Draft',
+  submitted: 'Submitted',
+  reviewed: 'Reviewed',
+};
+const STATUS_CLASSES = {
+  pending: 'badge-inprogress',
+  draft: 'badge-inprogress',
+  submitted: 'badge-submitted',
+  reviewed: 'badge-approved',
+};
+
+export default function DrinkPlanDetail() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [plan, setPlan] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [copyMessage, setCopyMessage] = useState('');
+
+  useEffect(() => {
+    async function fetchPlan() {
+      try {
+        const res = await api.get('/drink-plans');
+        const found = res.data.find(p => p.id === parseInt(id));
+        if (found) {
+          setPlan(found);
+          setNotes(found.admin_notes || '');
+        }
+      } catch (err) {
+        console.error('Failed to fetch plan:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchPlan();
+  }, [id]);
+
+  const saveNotes = async () => {
+    setSaving(true);
+    try {
+      await api.patch(`/drink-plans/${id}/notes`, { admin_notes: notes });
+    } catch (err) {
+      console.error('Failed to save notes:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const markReviewed = async () => {
+    try {
+      const res = await api.patch(`/drink-plans/${id}/status`, { status: 'reviewed' });
+      setPlan(prev => ({ ...prev, status: res.data.status }));
+    } catch (err) {
+      console.error('Failed to update status:', err);
+    }
+  };
+
+  const deletePlan = async () => {
+    if (!window.confirm('Delete this drink plan? This cannot be undone.')) return;
+    try {
+      await api.delete(`/drink-plans/${id}`);
+      navigate('/admin/drink-plans');
+    } catch (err) {
+      console.error('Failed to delete plan:', err);
+    }
+  };
+
+  const copyLink = () => {
+    const url = `${window.location.origin}/plan/${plan.token}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopyMessage('Copied!');
+      setTimeout(() => setCopyMessage(''), 2000);
+    });
+  };
+
+  if (loading) {
+    return (
+      <div className="page-container" style={{ textAlign: 'center', paddingTop: '2rem' }}>
+        <div className="spinner" />
+      </div>
+    );
+  }
+
+  if (!plan) {
+    return (
+      <div className="page-container">
+        <div className="card" style={{ textAlign: 'center' }}>
+          <p className="text-muted">Plan not found.</p>
+          <button className="btn btn-secondary mt-1" onClick={() => navigate('/admin/drink-plans')}>
+            Back to Drink Plans
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const type = SERVING_TYPES.find(t => t.key === plan.serving_type);
+  const sel = plan.selections || {};
+  const selectedDrinks = COCKTAILS.filter(d => (sel.signatureCocktails || []).includes(d.id));
+
+  const formatDate = (d) => {
+    if (!d) return '—';
+    return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
+  return (
+    <div className="page-container">
+      {/* Back link */}
+      <button
+        className="btn btn-secondary btn-sm mb-2"
+        onClick={() => navigate('/admin/drink-plans')}
+      >
+        &larr; All Drink Plans
+      </button>
+
+      {/* Header */}
+      <div className="card mb-2">
+        <div className="flex-between" style={{ flexWrap: 'wrap', gap: '1rem' }}>
+          <div>
+            <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>
+              {plan.client_name || 'Unnamed Client'}
+            </h2>
+            {plan.client_email && <p className="text-muted text-small">{plan.client_email}</p>}
+            {plan.event_name && <p className="mt-1"><strong>Event:</strong> {plan.event_name}</p>}
+            {plan.event_date && <p><strong>Date:</strong> {formatDate(plan.event_date)}</p>}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
+            <span className={`badge ${STATUS_CLASSES[plan.status] || ''}`}>
+              {STATUS_LABELS[plan.status] || plan.status}
+            </span>
+            <button className="btn btn-sm btn-secondary" onClick={copyLink}>
+              {copyMessage || 'Copy Client Link'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Selections */}
+      {plan.status !== 'pending' && (
+        <div className="card mb-2">
+          <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>
+            Selections
+          </h3>
+
+          {type && (
+            <p className="mb-1"><strong>Package:</strong> {type.emoji} {type.label}</p>
+          )}
+
+          {selectedDrinks.length > 0 && (
+            <div className="mb-2">
+              <strong>Signature Cocktails:</strong>
+              <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
+                {selectedDrinks.map(d => (
+                  <li key={d.id}>{d.emoji} {d.name}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {sel.spirits?.length > 0 && (
+            <p className="mb-1"><strong>Spirits:</strong> {sel.spirits.join(', ')}</p>
+          )}
+          {sel.barFocus && (
+            <p className="mb-1"><strong>Bar Focus:</strong> {sel.barFocus.replace(/-/g, ' ')}</p>
+          )}
+          {sel.wineStyles?.length > 0 && (
+            <p className="mb-1"><strong>Wine Styles:</strong> {sel.wineStyles.join(', ')}</p>
+          )}
+          {sel.beerStyles?.length > 0 && (
+            <p className="mb-1"><strong>Beer Styles:</strong> {sel.beerStyles.join(', ')}</p>
+          )}
+          {sel.beerWineBalance && (
+            <p className="mb-1"><strong>Balance:</strong> {sel.beerWineBalance.replace(/-/g, ' ')}</p>
+          )}
+          {sel.beerWineNotes && (
+            <div className="mb-1"><strong>Drink Notes:</strong><p className="text-muted">{sel.beerWineNotes}</p></div>
+          )}
+          {sel.fullBarNotes && (
+            <div className="mb-1"><strong>Full Bar Notes:</strong><p className="text-muted">{sel.fullBarNotes}</p></div>
+          )}
+          {sel.mocktailNotes && (
+            <div className="mb-1"><strong>Mocktail Preferences:</strong><p className="text-muted">{sel.mocktailNotes}</p></div>
+          )}
+          {sel.logisticsNotes && (
+            <div className="mb-1"><strong>Logistics:</strong><p className="text-muted">{sel.logisticsNotes}</p></div>
+          )}
+
+          {!type && !selectedDrinks.length && !sel.spirits?.length && !sel.logisticsNotes && (
+            <p className="text-muted">Client hasn't made any selections yet.</p>
+          )}
+        </div>
+      )}
+
+      {/* Admin Notes */}
+      <div className="card mb-2">
+        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+          Admin Notes
+        </h3>
+        <textarea
+          className="form-textarea"
+          rows={4}
+          placeholder="Internal notes about this plan..."
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+        />
+        <button
+          className="btn btn-sm mt-1"
+          onClick={saveNotes}
+          disabled={saving}
+        >
+          {saving ? 'Saving...' : 'Save Notes'}
+        </button>
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-1">
+        {plan.status === 'submitted' && (
+          <button className="btn btn-success" onClick={markReviewed}>
+            Mark as Reviewed
+          </button>
+        )}
+        <button className="btn btn-danger btn-sm" onClick={deletePlan}>
+          Delete Plan
+        </button>
+      </div>
+    </div>
+  );
+}

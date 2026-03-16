@@ -5,6 +5,7 @@ import BrandLogo from './BrandLogo';
 
 const NAV_ITEMS = [
   { label: 'Staff',      path: '/admin/staffing',   icon: '👥' },
+  { label: 'Drink Plans', path: '/admin/drink-plans', icon: '🧪' },
   { label: 'Events',     path: '/admin/events',     icon: '📅' },
   { label: 'Clients',    path: '/admin/clients',    icon: '🤝' },
   { label: 'Financials', path: '/admin/financials',  icon: '📒' },

@@ -255,3 +255,26 @@ CREATE TRIGGER update_payment_profiles_updated_at BEFORE UPDATE ON payment_profi
 DROP TRIGGER IF EXISTS update_applications_updated_at ON applications;
 CREATE TRIGGER update_applications_updated_at BEFORE UPDATE ON applications
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ─── Drink Plans (client questionnaire) ─────────────────────────
+CREATE TABLE IF NOT EXISTS drink_plans (
+  id SERIAL PRIMARY KEY,
+  token UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
+  client_name VARCHAR(255),
+  client_email VARCHAR(255),
+  event_name VARCHAR(255),
+  event_date DATE,
+  status VARCHAR(20) DEFAULT 'pending'
+    CHECK (status IN ('pending','draft','submitted','reviewed')),
+  serving_type VARCHAR(100),
+  selections JSONB DEFAULT '{}',
+  admin_notes TEXT,
+  created_by INTEGER REFERENCES users(id),
+  submitted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS update_drink_plans_updated_at ON drink_plans;
+CREATE TRIGGER update_drink_plans_updated_at BEFORE UPDATE ON drink_plans
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

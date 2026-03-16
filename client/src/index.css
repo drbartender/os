@@ -1075,3 +1075,185 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
     z-index: 89;
   }
 }
+
+/* ─── Potion Planning Lab ─────────────────────────────────────────── */
+
+.potion-step {
+  animation: potionFadeIn 0.3s ease;
+}
+@keyframes potionFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Serving Type Grid */
+.serving-type-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+.serving-type-card {
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  border: 3px solid var(--border);
+}
+.serving-type-card:hover {
+  border-color: var(--amber);
+  box-shadow: var(--shadow-lg);
+}
+.serving-type-card.selected {
+  border-color: var(--amber);
+  background: var(--cream);
+  box-shadow: 0 0 0 2px var(--amber), var(--shadow);
+}
+.serving-type-emoji {
+  font-size: 2rem;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+.serving-type-label {
+  font-family: var(--font-display);
+  color: var(--deep-brown);
+  font-size: 1rem;
+  margin-bottom: 0.35rem;
+}
+.serving-type-desc {
+  font-size: 0.85rem;
+  color: var(--warm-brown);
+  line-height: 1.4;
+}
+@media (max-width: 600px) {
+  .serving-type-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Cocktail Grid */
+.cocktail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+.cocktail-card {
+  cursor: pointer;
+  text-align: center;
+  padding: 1.25rem 1rem;
+  position: relative;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+  border: 3px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+.cocktail-card:hover {
+  border-color: var(--amber);
+}
+.cocktail-card.selected {
+  border-color: var(--forest);
+  background: var(--cream);
+}
+.cocktail-card-check {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: var(--forest);
+  color: #fff;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+}
+.cocktail-card-emoji {
+  font-size: 1.75rem;
+}
+.cocktail-card-name {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  color: var(--deep-brown);
+}
+.cocktail-card-desc {
+  font-size: 0.78rem;
+  color: var(--warm-brown);
+  line-height: 1.35;
+}
+@media (max-width: 768px) {
+  .cocktail-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 480px) {
+  .cocktail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Your Menu List */
+.your-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.your-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.your-menu-item:last-child {
+  border-bottom: none;
+}
+.your-menu-number {
+  font-weight: 600;
+  color: var(--warm-brown);
+  min-width: 1.5rem;
+}
+.your-menu-emoji {
+  font-size: 1.25rem;
+}
+.your-menu-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+/* Checkbox Grid (for Beer/Wine/FullBar steps) */
+.checkbox-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--cream);
+  transition: border-color 0.15s ease;
+}
+.checkbox-label:hover {
+  border-color: var(--amber);
+}
+.checkbox-label input:checked + span {
+  color: var(--deep-brown);
+  font-weight: 600;
+}
+
+/* Step Navigation Bar */
+.step-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+}
