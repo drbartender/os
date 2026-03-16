@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { COCKTAIL_CATEGORIES, COCKTAILS } from '../data/cocktailMenu';
 
-export default function SignaturePickerStep({ selected, onChange, servingType }) {
-  const [activeTab, setActiveTab] = useState('crowd-favorites');
+export default function SignaturePickerStep({ selected, onChange, servingType, cocktails = [], categories = [] }) {
+  const [activeTab, setActiveTab] = useState(categories[0]?.id || 'crowd-favorites');
 
   const toggleDrink = (drinkId) => {
     if (selected.includes(drinkId)) {
@@ -12,10 +11,10 @@ export default function SignaturePickerStep({ selected, onChange, servingType })
     }
   };
 
-  const allTabs = [...COCKTAIL_CATEGORIES, { key: 'your-menu', label: 'Your Menu' }];
+  const allTabs = [...categories.map(c => ({ key: c.id, label: c.label })), { key: 'your-menu', label: 'Your Menu' }];
   const isYourMenu = activeTab === 'your-menu';
-  const filteredDrinks = COCKTAILS.filter(d => d.category === activeTab);
-  const selectedDrinks = COCKTAILS.filter(d => selected.includes(d.id));
+  const filteredDrinks = cocktails.filter(d => d.category_id === activeTab);
+  const selectedDrinks = cocktails.filter(d => selected.includes(d.id));
 
   return (
     <div>

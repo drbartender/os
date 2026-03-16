@@ -122,6 +122,24 @@ router.post('/', auth, requireAdmin, async (req, res) => {
   }
 });
 
+/** GET /api/drink-plans/:id — fetch single plan by id */
+router.get('/:id', auth, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT dp.*, u.email AS created_by_email
+       FROM drink_plans dp
+       LEFT JOIN users u ON u.id = dp.created_by
+       WHERE dp.id = $1`,
+      [req.params.id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 /** PATCH /api/drink-plans/:id/notes — update admin notes */
 router.patch('/:id/notes', auth, requireAdmin, async (req, res) => {
   const { admin_notes } = req.body;

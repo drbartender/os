@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { SERVING_TYPES } from '../plan/data/servingTypes';
-import { COCKTAILS } from '../plan/data/cocktailMenu';
 
 const STATUS_LABELS = {
   pending: 'Pending',
@@ -21,27 +20,31 @@ export default function DrinkPlanDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [plan, setPlan] = useState(null);
+  const [cocktails, setCocktails] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [copyMessage, setCopyMessage] = useState('');
 
   useEffect(() => {
-    async function fetchPlan() {
+    async function fetchData() {
       try {
-        const res = await api.get('/drink-plans');
-        const found = res.data.find(p => p.id === parseInt(id));
-        if (found) {
-          setPlan(found);
-          setNotes(found.admin_notes || '');
-        }
+        const [planRes, cocktailsRes] = await Promise.all([
+          api.get(`/drink-plans/${id}`),
+          api.get('/cocktails'),
+        ]);
+        setPlan(planRes.data);
+        setNotes(planRes.data.admin_notes || '');
+        setCocktails(cocktailsRes.data.cocktails || []);
       } catch (err) {
-        console.error('Failed to fetch plan:', err);
+        if (err.response?.status !== 404) {
+          console.error('Failed to fetch plan:', err);
+        }
       } finally {
         setLoading(false);
       }
     }
-    fetchPlan();
+    fetchData();
   }, [id]);
 
   const saveNotes = async () => {
@@ -105,7 +108,7 @@ export default function DrinkPlanDetail() {
 
   const type = SERVING_TYPES.find(t => t.key === plan.serving_type);
   const sel = plan.selections || {};
-  const selectedDrinks = COCKTAILS.filter(d => (sel.signatureCocktails || []).includes(d.id));
+  const selectedDrinks = cocktails.filter(d => (sel.signatureCocktails || []).includes(d.id));
 
   const formatDate = (d) => {
     if (!d) return '—';

@@ -278,3 +278,69 @@ CREATE TABLE IF NOT EXISTS drink_plans (
 DROP TRIGGER IF EXISTS update_drink_plans_updated_at ON drink_plans;
 CREATE TRIGGER update_drink_plans_updated_at BEFORE UPDATE ON drink_plans
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ─── Cocktail Menu ────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS cocktail_categories (
+  id VARCHAR(100) PRIMARY KEY,
+  label VARCHAR(255) NOT NULL,
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS cocktails (
+  id VARCHAR(100) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  category_id VARCHAR(100) REFERENCES cocktail_categories(id) ON DELETE SET NULL,
+  emoji VARCHAR(20),
+  description TEXT,
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS update_cocktail_categories_updated_at ON cocktail_categories;
+CREATE TRIGGER update_cocktail_categories_updated_at BEFORE UPDATE ON cocktail_categories
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_cocktails_updated_at ON cocktails;
+CREATE TRIGGER update_cocktails_updated_at BEFORE UPDATE ON cocktails
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+INSERT INTO cocktail_categories (id, label, sort_order) VALUES
+  ('crowd-favorites',  'Crowd Favorites',    1),
+  ('light-refreshing', 'Light & Refreshing', 2),
+  ('classic',          'Classic',            3),
+  ('bold',             'Bold',               4),
+  ('bartenders-picks', 'Bartender''s Picks', 5)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order) VALUES
+  ('vodka-berry-lemonade','Berry Vodka Lemonade','crowd-favorites','🍓','Bright vodka lemonade with mixed berries and a pop of pink.',1),
+  ('moscow-mule','Moscow Mule','crowd-favorites','🫙','Vodka, ginger beer, and lime — crisp and refreshing.',2),
+  ('margarita','Margarita','crowd-favorites','🍋','Tequila, lime, and orange liqueur — balanced and citrusy.',3),
+  ('espresso-martini','Espresso Martini','crowd-favorites','☕','Vodka and espresso with a smooth, velvety finish.',4),
+  ('old-fashioned','Old Fashioned','crowd-favorites','🥃','Whiskey with sugar and bitters — bold and timeless.',5),
+  ('cosmopolitan','Cosmopolitan','light-refreshing','🍸','Vodka, cranberry, and a splash of citrus — bright and balanced.',1),
+  ('aperol-spritz','Aperol Spritz','light-refreshing','🍊','Aperol, prosecco, and soda — light, bubbly, and bittersweet.',2),
+  ('paloma','Paloma','light-refreshing','🌸','Tequila and grapefruit soda — refreshing with a citrus bite.',3),
+  ('mojito','Mojito','light-refreshing','🌿','Rum, mint, lime, and soda — cool and herbaceous.',4),
+  ('french-75','French 75','light-refreshing','🥂','Gin, lemon, and champagne — elegant and effervescent.',5),
+  ('daiquiri','Daiquiri','classic','🍹','Rum, lime, and simple syrup — a perfectly balanced classic.',1),
+  ('sidecar','Sidecar','classic','🍋','Cognac, orange liqueur, and lemon — rich and smooth.',2),
+  ('martini','Martini','classic','🍸','Gin or vodka with dry vermouth — timeless sophistication.',3),
+  ('manhattan','Manhattan','classic','🍒','Whiskey, sweet vermouth, and bitters — deep and aromatic.',4),
+  ('negroni','Negroni','classic','🔴','Gin, Campari, and sweet vermouth — bitter and complex.',5),
+  ('amaretto-sour','Amaretto Sour','bold','🌰','Amaretto and citrus with a foamy top — nutty and smooth.',1),
+  ('smokey-pina','Smokey Piña','bold','🍍','Mezcal, pineapple, and lime — tropical with a smoky kick.',2),
+  ('boulevardier','Boulevardier','bold','🥃','Bourbon, Campari, and sweet vermouth — a whiskey Negroni.',3),
+  ('black-manhattan','Black Manhattan','bold','🖤','Bourbon and amaro — dark, rich, and herbal.',4),
+  ('sazerac','Sazerac','bold','⚜️','Rye, absinthe rinse, and Peychaud''s bitters — a New Orleans legend.',5),
+  ('whiskey-sour','Whiskey Sour','bartenders-picks','🍋','Bourbon, lemon, and simple — classic with optional egg white.',1),
+  ('mai-tai','Mai Tai','bartenders-picks','🌺','Rum, orgeat, and citrus — tropical and layered.',2),
+  ('paper-plane','Paper Plane','bartenders-picks','✈️','Bourbon, Aperol, Amaro, and lemon — equal parts perfection.',3),
+  ('corpse-reviver','Corpse Reviver No. 2','bartenders-picks','💀','Gin, Lillet, Cointreau, lemon, and absinthe — hauntingly good.',4),
+  ('last-word','Last Word','bartenders-picks','🟢','Gin, green Chartreuse, maraschino, and lime — herbaceous and bold.',5)
+ON CONFLICT (id) DO NOTHING;

@@ -24,6 +24,10 @@ export default function PotionPlanningLab() {
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
 
+  // Cocktail menu (fetched once, shared across steps)
+  const [cocktails, setCocktails] = useState([]);
+  const [cocktailCategories, setCocktailCategories] = useState([]);
+
   // Flow state
   const [step, setStep] = useState('welcome');
   const [servingType, setServingType] = useState(null);
@@ -43,11 +47,17 @@ export default function PotionPlanningLab() {
     logisticsNotes: '',
   });
 
-  // Load plan data
+  // Load plan data and cocktail menu in parallel
   useEffect(() => {
     async function fetchPlan() {
       try {
-        const res = await axios.get(`${BASE_URL}/drink-plans/t/${token}`);
+        const [planRes, cocktailsRes] = await Promise.all([
+          axios.get(`${BASE_URL}/drink-plans/t/${token}`),
+          axios.get(`${BASE_URL}/cocktails`),
+        ]);
+        const res = planRes;
+        setCocktails(cocktailsRes.data.cocktails || []);
+        setCocktailCategories(cocktailsRes.data.categories || []);
         setPlan(res.data);
         // Restore saved state if draft
         if (res.data.status === 'draft' || res.data.status === 'submitted') {
@@ -218,6 +228,8 @@ export default function PotionPlanningLab() {
             selected={selections.signatureCocktails}
             onChange={(drinks) => updateSelections('signatureCocktails', drinks)}
             servingType={servingType}
+            cocktails={cocktails}
+            categories={cocktailCategories}
           />
         );
       case 'moduleBeerWine':
@@ -254,6 +266,7 @@ export default function PotionPlanningLab() {
             plan={plan}
             servingType={servingType}
             selections={selections}
+            cocktails={cocktails}
             onSubmit={handleSubmit}
             saving={saving}
             error={error}

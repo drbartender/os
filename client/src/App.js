@@ -25,6 +25,7 @@ import FinancialsDashboard from './pages/admin/FinancialsDashboard';
 import SettingsDashboard from './pages/admin/SettingsDashboard';
 import DrinkPlansDashboard from './pages/admin/DrinkPlansDashboard';
 import DrinkPlanDetail from './pages/admin/DrinkPlanDetail';
+import CocktailMenuDashboard from './pages/admin/CocktailMenuDashboard';
 import PotionPlanningLab from './pages/plan/PotionPlanningLab';
 
 /** Determine where a logged-in user should go based on their role and status */
@@ -136,6 +137,7 @@ function AppRoutes() {
         <Route path="staffing/applications/:id" element={<AdminApplicationDetail />} />
         <Route path="drink-plans" element={<DrinkPlansDashboard />} />
         <Route path="drink-plans/:id" element={<DrinkPlanDetail />} />
+        <Route path="cocktail-menu" element={<CocktailMenuDashboard />} />
         <Route path="events" element={<EventsDashboard />} />
         <Route path="clients" element={<ClientsDashboard />} />
         <Route path="financials" element={<FinancialsDashboard />} />

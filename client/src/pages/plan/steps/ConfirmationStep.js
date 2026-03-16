@@ -1,10 +1,9 @@
 import React from 'react';
 import { SERVING_TYPES } from '../data/servingTypes';
-import { COCKTAILS } from '../data/cocktailMenu';
 
-export default function ConfirmationStep({ plan, servingType, selections, onSubmit, saving, error }) {
+export default function ConfirmationStep({ plan, servingType, selections, cocktails = [], onSubmit, saving, error }) {
   const type = SERVING_TYPES.find(t => t.key === servingType);
-  const selectedDrinks = COCKTAILS.filter(d => selections.signatureCocktails?.includes(d.id));
+  const selectedDrinks = cocktails.filter(d => selections.signatureCocktails?.includes(d.id));
 
   const hasSignature = type?.modules.includes('signature');
   const hasFullBar = type?.modules.includes('full-bar');

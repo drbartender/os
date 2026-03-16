@@ -53,6 +53,7 @@ app.use('/api/application', require('./routes/application'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/shifts', require('./routes/shifts'));
 app.use('/api/drink-plans', require('./routes/drinkPlans'));
+app.use('/api/cocktails', require('./routes/cocktails'));
 
 // Health check — must be registered BEFORE the React catch-all below
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
