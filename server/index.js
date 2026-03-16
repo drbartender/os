@@ -9,6 +9,7 @@ const { initDb } = require('./db');
 const { auth } = require('./middleware/auth');
 
 const app = express();
+app.set('trust proxy', 1); // Required for Render/Heroku reverse proxies (rate limiter, IP detection)
 const PORT = process.env.PORT || 5000;
 const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || './server/uploads');
 
