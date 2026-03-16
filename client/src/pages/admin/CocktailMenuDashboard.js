@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../utils/api';
 
+const SPIRIT_OPTIONS = ['Vodka', 'Gin', 'Rum', 'Tequila', 'Whiskey', 'Scotch', 'Bourbon', 'Mezcal', 'Cognac', 'Amaretto', 'Aperol', 'Other'];
+
 function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
@@ -15,7 +17,7 @@ export default function CocktailMenuDashboard() {
   const [editingCocktail, setEditingCocktail] = useState(null); // cocktail id being edited
   const [editCocktailForm, setEditCocktailForm] = useState({});
   const [addCocktailCategory, setAddCocktailCategory] = useState(null); // category id to add to
-  const [newCocktailForm, setNewCocktailForm] = useState({ name: '', emoji: '', description: '', sort_order: '' });
+  const [newCocktailForm, setNewCocktailForm] = useState({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '' });
   const [cocktailError, setCocktailError] = useState('');
 
   // Edit state for categories
@@ -43,7 +45,7 @@ export default function CocktailMenuDashboard() {
 
   const startEditCocktail = (c) => {
     setEditingCocktail(c.id);
-    setEditCocktailForm({ name: c.name, emoji: c.emoji || '', description: c.description || '', sort_order: c.sort_order, category_id: c.category_id || '', is_active: c.is_active });
+    setEditCocktailForm({ name: c.name, emoji: c.emoji || '', description: c.description || '', sort_order: c.sort_order, category_id: c.category_id || '', is_active: c.is_active, base_spirit: c.base_spirit || '' });
     setCocktailError('');
   };
 
@@ -89,9 +91,10 @@ export default function CocktailMenuDashboard() {
         emoji: newCocktailForm.emoji.trim() || null,
         description: newCocktailForm.description.trim() || null,
         sort_order: parseInt(newCocktailForm.sort_order) || 0,
+        base_spirit: newCocktailForm.base_spirit || null,
       });
       setCocktails(prev => [...prev, res.data]);
-      setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '' });
+      setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '' });
       setAddCocktailCategory(null);
       setCocktailError('');
     } catch (err) {
@@ -190,7 +193,7 @@ export default function CocktailMenuDashboard() {
                   </h3>
                   <button
                     className="btn btn-sm btn-secondary"
-                    onClick={() => { setAddCocktailCategory(cat.id); setCocktailError(''); setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '' }); }}
+                    onClick={() => { setAddCocktailCategory(cat.id); setCocktailError(''); setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '' }); }}
                   >
                     + Add Cocktail
                   </button>
@@ -206,8 +209,15 @@ export default function CocktailMenuDashboard() {
                     </div>
                     <input className="form-input mb-1" placeholder="Description" value={newCocktailForm.description}
                       onChange={e => setNewCocktailForm(p => ({ ...p, description: e.target.value }))} />
-                    <input className="form-input mb-1" type="number" placeholder="Sort order (0)" value={newCocktailForm.sort_order}
-                      onChange={e => setNewCocktailForm(p => ({ ...p, sort_order: e.target.value }))} style={{ width: '120px' }} />
+                    <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      <input className="form-input" type="number" placeholder="Sort order (0)" value={newCocktailForm.sort_order}
+                        onChange={e => setNewCocktailForm(p => ({ ...p, sort_order: e.target.value }))} />
+                      <select className="form-input" value={newCocktailForm.base_spirit}
+                        onChange={e => setNewCocktailForm(p => ({ ...p, base_spirit: e.target.value }))}>
+                        <option value="">Base Spirit (optional)</option>
+                        {SPIRIT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
                     <div className="flex gap-1">
                       <button className="btn btn-sm" onClick={() => addCocktail(cat.id)}>Save</button>
                       <button className="btn btn-sm btn-secondary" onClick={() => setAddCocktailCategory(null)}>Cancel</button>
@@ -224,6 +234,7 @@ export default function CocktailMenuDashboard() {
                         <th>Emoji</th>
                         <th>Name</th>
                         <th>Description</th>
+                        <th>Spirit</th>
                         <th>Order</th>
                         <th>Active</th>
                         <th></th>
@@ -240,6 +251,13 @@ export default function CocktailMenuDashboard() {
                                 onChange={e => setEditCocktailForm(p => ({ ...p, name: e.target.value }))} /></td>
                               <td><input className="form-input" value={editCocktailForm.description}
                                 onChange={e => setEditCocktailForm(p => ({ ...p, description: e.target.value }))} /></td>
+                              <td>
+                                <select className="form-input" style={{ width: '100px' }} value={editCocktailForm.base_spirit}
+                                  onChange={e => setEditCocktailForm(p => ({ ...p, base_spirit: e.target.value }))}>
+                                  <option value="">—</option>
+                                  {SPIRIT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                                </select>
+                              </td>
                               <td><input className="form-input" type="number" style={{ width: '70px' }} value={editCocktailForm.sort_order}
                                 onChange={e => setEditCocktailForm(p => ({ ...p, sort_order: parseInt(e.target.value) || 0 }))} /></td>
                               <td>
@@ -258,6 +276,7 @@ export default function CocktailMenuDashboard() {
                               <td>{c.emoji}</td>
                               <td><strong>{c.name}</strong></td>
                               <td className="text-muted text-small">{c.description || '—'}</td>
+                              <td className="text-muted text-small">{c.base_spirit || '—'}</td>
                               <td>{c.sort_order}</td>
                               <td>
                                 <button

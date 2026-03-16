@@ -1,14 +1,9 @@
 import React from 'react';
-import { SERVING_TYPES } from '../data/servingTypes';
+import { QUICK_PICKS } from '../data/servingTypes';
 
-export default function ConfirmationStep({ plan, servingType, selections, cocktails = [], onSubmit, saving, error }) {
-  const type = SERVING_TYPES.find(t => t.key === servingType);
-  const selectedDrinks = cocktails.filter(d => selections.signatureCocktails?.includes(d.id));
-
-  const hasSignature = type?.modules.includes('signature');
-  const hasFullBar = type?.modules.includes('full-bar');
-  const hasBeerWine = type?.modules.includes('beer-wine');
-  const hasMocktail = type?.modules.includes('mocktail');
+export default function ConfirmationStep({ plan, quickPickChoice, activeModules, selections, cocktails = [], onSubmit, saving, error }) {
+  const pick = QUICK_PICKS.find(p => p.key === quickPickChoice);
+  const selectedDrinks = cocktails.filter(d => (selections.signatureDrinks || []).includes(d.id));
 
   return (
     <div>
@@ -22,11 +17,14 @@ export default function ConfirmationStep({ plan, servingType, selections, cockta
       </div>
 
       <div className="card mb-2">
-        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
-          Package: {type?.label}
-        </h3>
+        {pick && (
+          <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+            Package: {pick.label}
+          </h3>
+        )}
 
-        {hasSignature && selectedDrinks.length > 0 && (
+        {/* Signature Drinks */}
+        {activeModules.signatureDrinks && selectedDrinks.length > 0 && (
           <div className="mb-2">
             <strong>Signature Cocktails</strong>
             <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
@@ -34,53 +32,92 @@ export default function ConfirmationStep({ plan, servingType, selections, cockta
                 <li key={d.id}>{d.emoji} {d.name}</li>
               ))}
             </ul>
-          </div>
-        )}
-
-        {hasFullBar && (
-          <div className="mb-2">
-            {selections.spirits?.length > 0 && (
-              <p><strong>Spirits:</strong> {selections.spirits.join(', ')}</p>
+            {selections.signatureDrinkSpirits?.length > 0 && (
+              <p className="text-muted text-small">
+                Base spirits: {selections.signatureDrinkSpirits.join(', ')}
+              </p>
             )}
-            {selections.barFocus && (
-              <p><strong>Bar Focus:</strong> {selections.barFocus.replace(/-/g, ' ')}</p>
+            {selections.mixersForSignatureDrinks === true && (
+              <p className="text-muted text-small">Basic mixers included for signature drink spirits</p>
             )}
           </div>
         )}
 
-        {(hasBeerWine || hasFullBar) && (
+        {/* Mocktails */}
+        {activeModules.mocktails && selections.mocktailNotes && (
           <div className="mb-2">
-            {selections.wineStyles?.length > 0 && (
-              <p><strong>Wine Styles:</strong> {selections.wineStyles.join(', ')}</p>
-            )}
-            {selections.beerStyles?.length > 0 && (
-              <p><strong>Beer Styles:</strong> {selections.beerStyles.join(', ')}</p>
-            )}
-            {hasBeerWine && selections.beerWineBalance && (
-              <p><strong>Balance:</strong> {selections.beerWineBalance.replace(/-/g, ' ')}</p>
-            )}
-          </div>
-        )}
-
-        {hasMocktail && selections.mocktailNotes && (
-          <div className="mb-2">
-            <strong>Mocktail Preferences:</strong>
+            <strong>Mocktail Preferences</strong>
             <p className="text-muted">{selections.mocktailNotes}</p>
           </div>
         )}
 
-        {/* Notes */}
-        {(selections.beerWineNotes || selections.fullBarNotes) && (
+        {/* Full Bar */}
+        {activeModules.fullBar && (
           <div className="mb-2">
-            <strong>Drink Notes:</strong>
-            <p className="text-muted">{selections.beerWineNotes || selections.fullBarNotes}</p>
+            {selections.spirits?.length > 0 && (
+              <p><strong>Spirits:</strong> {selections.spirits.join(', ')}</p>
+            )}
+            {selections.mixersForSpirits === true && (
+              <p className="text-muted text-small">Mixers included for bar spirits</p>
+            )}
+            {selections.beerFromFullBar?.length > 0 && (
+              <p><strong>Beer:</strong> {selections.beerFromFullBar.join(', ')}</p>
+            )}
+            {selections.wineFromFullBar?.length > 0 && (
+              <p><strong>Wine:</strong> {selections.wineFromFullBar.join(', ')}</p>
+            )}
+            {selections.beerWineBalanceFullBar && (
+              <p><strong>Balance:</strong> {selections.beerWineBalanceFullBar.replace(/_/g, ' ')}</p>
+            )}
           </div>
         )}
 
-        {selections.logisticsNotes && (
+        {/* Beer & Wine Only */}
+        {activeModules.beerWineOnly && !activeModules.fullBar && (
           <div className="mb-2">
-            <strong>Logistics Notes:</strong>
-            <p className="text-muted">{selections.logisticsNotes}</p>
+            {selections.beerFromBeerWine?.length > 0 && (
+              <p><strong>Beer:</strong> {selections.beerFromBeerWine.join(', ')}</p>
+            )}
+            {selections.wineFromBeerWine?.length > 0 && (
+              <p><strong>Wine:</strong> {selections.wineFromBeerWine.join(', ')}</p>
+            )}
+            {selections.beerWineBalanceBeerWine && (
+              <p><strong>Balance:</strong> {selections.beerWineBalanceBeerWine.replace(/_/g, ' ')}</p>
+            )}
+          </div>
+        )}
+
+        {/* Menu Design */}
+        {selections.customMenuDesign === true && (
+          <div className="mb-2">
+            <strong>Custom Menu Design:</strong> Yes
+            {selections.menuTheme && (
+              <p className="text-muted">Theme: {selections.menuTheme}</p>
+            )}
+            {selections.drinkNaming && (
+              <p className="text-muted">Custom naming: {selections.drinkNaming}</p>
+            )}
+          </div>
+        )}
+        {selections.customMenuDesign === false && (
+          <div className="mb-2">
+            <strong>Custom Menu Design:</strong> No
+          </div>
+        )}
+
+        {/* Logistics */}
+        {selections.logistics && (
+          <div className="mb-2">
+            <strong>Logistics</strong>
+            {selections.logistics.parking && (
+              <p className="text-muted">Parking: {selections.logistics.parking.replace(/_/g, ' ')}</p>
+            )}
+            {selections.logistics.ice && (
+              <p className="text-muted">Ice machine: {selections.logistics.ice}</p>
+            )}
+            {selections.logistics.other && (
+              <p className="text-muted">Notes: {selections.logistics.other}</p>
+            )}
           </div>
         )}
       </div>

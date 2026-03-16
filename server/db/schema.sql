@@ -317,6 +317,9 @@ INSERT INTO cocktail_categories (id, label, sort_order) VALUES
   ('bartenders-picks', 'Bartender''s Picks', 5)
 ON CONFLICT (id) DO NOTHING;
 
+-- Add base_spirit column (idempotent)
+ALTER TABLE cocktails ADD COLUMN IF NOT EXISTS base_spirit VARCHAR(100);
+
 INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order) VALUES
   ('vodka-berry-lemonade','Berry Vodka Lemonade','crowd-favorites','🍓','Bright vodka lemonade with mixed berries and a pop of pink.',1),
   ('moscow-mule','Moscow Mule','crowd-favorites','🫙','Vodka, ginger beer, and lime — crisp and refreshing.',2),
@@ -344,3 +347,33 @@ INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order) VA
   ('corpse-reviver','Corpse Reviver No. 2','bartenders-picks','💀','Gin, Lillet, Cointreau, lemon, and absinthe — hauntingly good.',4),
   ('last-word','Last Word','bartenders-picks','🟢','Gin, green Chartreuse, maraschino, and lime — herbaceous and bold.',5)
 ON CONFLICT (id) DO NOTHING;
+
+-- Backfill base_spirit for existing cocktails
+UPDATE cocktails SET base_spirit = CASE id
+  WHEN 'vodka-berry-lemonade' THEN 'Vodka'
+  WHEN 'moscow-mule'          THEN 'Vodka'
+  WHEN 'margarita'             THEN 'Tequila'
+  WHEN 'espresso-martini'      THEN 'Vodka'
+  WHEN 'old-fashioned'         THEN 'Whiskey'
+  WHEN 'cosmopolitan'          THEN 'Vodka'
+  WHEN 'aperol-spritz'         THEN 'Aperol'
+  WHEN 'paloma'                THEN 'Tequila'
+  WHEN 'mojito'                THEN 'Rum'
+  WHEN 'french-75'             THEN 'Gin'
+  WHEN 'daiquiri'              THEN 'Rum'
+  WHEN 'sidecar'               THEN 'Cognac'
+  WHEN 'martini'               THEN 'Gin'
+  WHEN 'manhattan'             THEN 'Whiskey'
+  WHEN 'negroni'               THEN 'Gin'
+  WHEN 'amaretto-sour'         THEN 'Amaretto'
+  WHEN 'smokey-pina'           THEN 'Mezcal'
+  WHEN 'boulevardier'          THEN 'Whiskey'
+  WHEN 'black-manhattan'       THEN 'Whiskey'
+  WHEN 'sazerac'               THEN 'Whiskey'
+  WHEN 'whiskey-sour'          THEN 'Whiskey'
+  WHEN 'mai-tai'               THEN 'Rum'
+  WHEN 'paper-plane'           THEN 'Whiskey'
+  WHEN 'corpse-reviver'        THEN 'Gin'
+  WHEN 'last-word'             THEN 'Gin'
+END
+WHERE base_spirit IS NULL;

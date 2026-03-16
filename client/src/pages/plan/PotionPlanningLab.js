@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
-import { SERVING_TYPES, MODULE_STEP_MAP } from './data/servingTypes';
+import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue } from './data/servingTypes';
 import WelcomeStep from './steps/WelcomeStep';
-import ServingTypeStep from './steps/ServingTypeStep';
+import QuickPickStep from './steps/QuickPickStep';
+import CustomSetupStep from './steps/CustomSetupStep';
 import SignaturePickerStep from './steps/SignaturePickerStep';
 import BeerWineStep from './steps/BeerWineStep';
 import FullBarStep from './steps/FullBarStep';
 import MocktailStep from './steps/MocktailStep';
+import MenuDesignStep from './steps/MenuDesignStep';
 import LogisticsStep from './steps/LogisticsStep';
 import ConfirmationStep from './steps/ConfirmationStep';
 
@@ -15,39 +17,50 @@ const BASE_URL = process.env.REACT_APP_API_URL
   ? `${process.env.REACT_APP_API_URL}/api`
   : '/api';
 
+const DEFAULT_ACTIVE_MODULES = { signatureDrinks: false, mocktails: false, fullBar: false, beerWineOnly: false };
+
+const DEFAULT_SELECTIONS = {
+  signatureDrinks: [],
+  signatureDrinkSpirits: [],
+  mixersForSignatureDrinks: null,
+  mocktailNotes: '',
+  spirits: [],
+  mixersForSpirits: null,
+  beerFromFullBar: [],
+  wineFromFullBar: [],
+  beerWineBalanceFullBar: '',
+  beerFromBeerWine: [],
+  wineFromBeerWine: [],
+  beerWineBalanceBeerWine: '',
+  customMenuDesign: null,
+  menuTheme: '',
+  drinkNaming: '',
+  logistics: { parking: '', ice: '', other: '' },
+};
+
 export default function PotionPlanningLab() {
   const { token } = useParams();
 
-  // Plan metadata from the server
+  // Plan metadata
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  // Cocktail menu (fetched once, shared across steps)
+  // Cocktail menu
   const [cocktails, setCocktails] = useState([]);
   const [cocktailCategories, setCocktailCategories] = useState([]);
 
   // Flow state
   const [step, setStep] = useState('welcome');
-  const [servingType, setServingType] = useState(null);
+  const [quickPickChoice, setQuickPickChoice] = useState(null);
+  const [activeModules, setActiveModules] = useState(DEFAULT_ACTIVE_MODULES);
   const [moduleQueue, setModuleQueue] = useState([]);
 
   // Form selections
-  const [selections, setSelections] = useState({
-    signatureCocktails: [],
-    spirits: [],
-    barFocus: '',
-    wineStyles: [],
-    beerStyles: [],
-    beerWineBalance: '',
-    beerWineNotes: '',
-    fullBarNotes: '',
-    mocktailNotes: '',
-    logisticsNotes: '',
-  });
+  const [selections, setSelections] = useState(DEFAULT_SELECTIONS);
 
-  // Load plan data and cocktail menu in parallel
+  // Load plan + cocktails
   useEffect(() => {
     async function fetchPlan() {
       try {
@@ -55,17 +68,35 @@ export default function PotionPlanningLab() {
           axios.get(`${BASE_URL}/drink-plans/t/${token}`),
           axios.get(`${BASE_URL}/cocktails`),
         ]);
-        const res = planRes;
         setCocktails(cocktailsRes.data.cocktails || []);
         setCocktailCategories(cocktailsRes.data.categories || []);
-        setPlan(res.data);
-        // Restore saved state if draft
-        if (res.data.status === 'draft' || res.data.status === 'submitted') {
-          if (res.data.serving_type) setServingType(res.data.serving_type);
-          if (res.data.selections && Object.keys(res.data.selections).length > 0) {
-            setSelections(prev => ({ ...prev, ...res.data.selections }));
+        setPlan(planRes.data);
+
+        // Restore saved state if draft/submitted
+        const data = planRes.data;
+        if (data.status === 'draft' || data.status === 'submitted') {
+          const savedSel = data.selections || {};
+
+          // Detect new format (has activeModules in selections)
+          if (savedSel.activeModules) {
+            setQuickPickChoice(data.serving_type);
+            setActiveModules(savedSel.activeModules);
+            setModuleQueue(buildStepQueue(savedSel.activeModules));
+            // Restore selections without activeModules key
+            const { activeModules: _am, ...rest } = savedSel;
+            setSelections(prev => ({ ...prev, ...rest }));
+          } else if (data.serving_type) {
+            // Legacy format — try to map old serving_type
+            const pick = QUICK_PICKS.find(p => p.key === data.serving_type);
+            if (pick && pick.activeModules) {
+              setQuickPickChoice(data.serving_type);
+              setActiveModules(pick.activeModules);
+              setModuleQueue(buildStepQueue(pick.activeModules));
+            }
+            setSelections(prev => ({ ...prev, ...savedSel }));
           }
-          if (res.data.status === 'submitted') {
+
+          if (data.status === 'submitted') {
             setStep('submitted');
           }
         }
@@ -79,13 +110,13 @@ export default function PotionPlanningLab() {
   }, [token]);
 
   // Auto-save draft
-  const saveDraft = useCallback(async (currentServingType, currentSelections) => {
+  const saveDraft = useCallback(async (currentQuickPick, currentActiveModules, currentSelections) => {
     if (!token) return;
     setSaving(true);
     try {
       await axios.put(`${BASE_URL}/drink-plans/t/${token}`, {
-        serving_type: currentServingType,
-        selections: currentSelections,
+        serving_type: currentQuickPick,
+        selections: { ...currentSelections, activeModules: currentActiveModules },
         status: 'draft',
       });
     } catch (err) {
@@ -100,8 +131,8 @@ export default function PotionPlanningLab() {
     setSaving(true);
     try {
       await axios.put(`${BASE_URL}/drink-plans/t/${token}`, {
-        serving_type: servingType,
-        selections,
+        serving_type: quickPickChoice,
+        selections: { ...selections, activeModules },
         status: 'submitted',
       });
       setStep('submitted');
@@ -123,51 +154,80 @@ export default function PotionPlanningLab() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleServingTypeSelect = (typeKey) => {
-    setServingType(typeKey);
-    const type = SERVING_TYPES.find(t => t.key === typeKey);
-    const queue = type.modules.map(m => MODULE_STEP_MAP[m]);
+  // Quick pick selection
+  const handleQuickPickSelect = (key) => {
+    if (key === 'custom') {
+      setQuickPickChoice('custom');
+      goToStep('customSetup');
+      return;
+    }
+    const pick = QUICK_PICKS.find(p => p.key === key);
+    setQuickPickChoice(key);
+    setActiveModules(pick.activeModules);
+    const queue = buildStepQueue(pick.activeModules);
     setModuleQueue(queue);
-    saveDraft(typeKey, selections);
+    saveDraft(key, pick.activeModules, selections);
     goToStep(queue[0]);
   };
 
-  const handleNext = () => {
-    // Save on each step transition
-    saveDraft(servingType, selections);
-
-    if (step === 'welcome') return goToStep('servingType');
-
-    // If in a module, advance to next module or logistics
-    const currentQueueIndex = moduleQueue.indexOf(step);
-    if (currentQueueIndex !== -1) {
-      const nextIndex = currentQueueIndex + 1;
-      if (nextIndex < moduleQueue.length) {
-        return goToStep(moduleQueue[nextIndex]);
-      }
-      return goToStep('logistics');
-    }
-
-    if (step === 'logistics') return goToStep('confirmation');
+  // Custom setup confirm
+  const handleCustomSetupConfirm = (computedModules) => {
+    setActiveModules(computedModules);
+    const queue = buildStepQueue(computedModules);
+    setModuleQueue(queue);
+    saveDraft('custom', computedModules, selections);
+    goToStep(queue[0]);
   };
 
-  const handleBack = () => {
-    if (step === 'servingType') return goToStep('welcome');
+  // Generic next
+  const handleNext = () => {
+    saveDraft(quickPickChoice, activeModules, selections);
 
-    const currentQueueIndex = moduleQueue.indexOf(step);
-    if (currentQueueIndex !== -1) {
-      if (currentQueueIndex > 0) {
-        return goToStep(moduleQueue[currentQueueIndex - 1]);
+    if (step === 'welcome') return goToStep('quickPick');
+
+    const currentIdx = moduleQueue.indexOf(step);
+    if (currentIdx !== -1) {
+      const nextIdx = currentIdx + 1;
+      if (nextIdx < moduleQueue.length) {
+        return goToStep(moduleQueue[nextIdx]);
       }
-      return goToStep('servingType');
+      return goToStep('confirmation');
+    }
+  };
+
+  // Skip to step after a given step in the queue (used for skip mocktails)
+  const handleSkipToAfter = (stepToSkip) => {
+    saveDraft(quickPickChoice, activeModules, selections);
+    const idx = moduleQueue.indexOf(stepToSkip);
+    if (idx !== -1 && idx + 1 < moduleQueue.length) {
+      return goToStep(moduleQueue[idx + 1]);
+    }
+    return goToStep('confirmation');
+  };
+
+  // Back navigation
+  const handleBack = () => {
+    if (step === 'quickPick') return goToStep('welcome');
+    if (step === 'customSetup') return goToStep('quickPick');
+
+    const currentIdx = moduleQueue.indexOf(step);
+    if (currentIdx !== -1) {
+      if (currentIdx > 0) {
+        return goToStep(moduleQueue[currentIdx - 1]);
+      }
+      // First module — go back to quickPick or customSetup
+      return goToStep(quickPickChoice === 'custom' ? 'customSetup' : 'quickPick');
     }
 
-    if (step === 'logistics') {
+    if (step === 'confirmation') {
       return goToStep(moduleQueue[moduleQueue.length - 1]);
     }
-
-    if (step === 'confirmation') return goToStep('logistics');
   };
+
+  // Compute step progress
+  const totalSteps = moduleQueue.length + 1; // +1 for confirmation
+  const currentQueueIdx = moduleQueue.indexOf(step);
+  const progressStep = currentQueueIdx !== -1 ? currentQueueIdx + 1 : (step === 'confirmation' ? totalSteps : null);
 
   // Loading / error states
   if (loading) {
@@ -211,60 +271,82 @@ export default function PotionPlanningLab() {
     );
   }
 
+  // Steps that manage their own next button (hide global next)
+  const selfNavigatingSteps = [MODULE_STEP_MAP.signatureDrinks];
+  const hideGlobalNext = selfNavigatingSteps.includes(step);
+
   // Show/hide nav buttons
-  const showBack = !['welcome', 'servingType'].includes(step);
-  const showNext = !['servingType', 'confirmation', 'submitted'].includes(step);
+  const showBack = !['welcome', 'quickPick'].includes(step);
+  const showNext = !['quickPick', 'customSetup', 'confirmation', 'submitted'].includes(step) && !hideGlobalNext;
 
   // Render current step
   const renderStep = () => {
     switch (step) {
       case 'welcome':
         return <WelcomeStep plan={plan} />;
-      case 'servingType':
-        return <ServingTypeStep selected={servingType} onSelect={handleServingTypeSelect} />;
-      case 'moduleSignature':
+      case 'quickPick':
+        return <QuickPickStep selected={quickPickChoice} onSelect={handleQuickPickSelect} />;
+      case 'customSetup':
+        return <CustomSetupStep onConfirm={handleCustomSetupConfirm} />;
+      case MODULE_STEP_MAP.signatureDrinks:
         return (
           <SignaturePickerStep
-            selected={selections.signatureCocktails}
-            onChange={(drinks) => updateSelections('signatureCocktails', drinks)}
-            servingType={servingType}
+            selected={selections.signatureDrinks}
+            onChange={(drinks) => updateSelections('signatureDrinks', drinks)}
             cocktails={cocktails}
             categories={cocktailCategories}
+            isFullBarActive={activeModules.fullBar}
+            isMocktailsActive={activeModules.mocktails}
+            mixersForSignatureDrinks={selections.mixersForSignatureDrinks}
+            onMixersChange={(val) => updateSelections('mixersForSignatureDrinks', val)}
+            onSpiritsExtracted={(spirits) => updateSelections('signatureDrinkSpirits', spirits)}
+            onNext={() => handleNext()}
+            onSkipMocktails={() => handleSkipToAfter(MODULE_STEP_MAP.mocktails)}
           />
         );
-      case 'moduleBeerWine':
-        return (
-          <BeerWineStep
-            selections={selections}
-            onChange={updateSelections}
-          />
-        );
-      case 'moduleFullBar':
-        return (
-          <FullBarStep
-            selections={selections}
-            onChange={updateSelections}
-          />
-        );
-      case 'moduleMocktail':
+      case MODULE_STEP_MAP.mocktails:
         return (
           <MocktailStep
             notes={selections.mocktailNotes}
             onChange={(val) => updateSelections('mocktailNotes', val)}
           />
         );
-      case 'logistics':
+      case MODULE_STEP_MAP.fullBar:
+        return (
+          <FullBarStep
+            selections={selections}
+            onChange={updateSelections}
+          />
+        );
+      case MODULE_STEP_MAP.beerWineOnly:
+        return (
+          <BeerWineStep
+            selections={selections}
+            onChange={updateSelections}
+          />
+        );
+      case MODULE_STEP_MAP.menuDesign:
+        return (
+          <MenuDesignStep
+            selections={selections}
+            activeModules={activeModules}
+            cocktails={cocktails}
+            onChange={updateSelections}
+          />
+        );
+      case MODULE_STEP_MAP.logistics:
         return (
           <LogisticsStep
-            notes={selections.logisticsNotes}
-            onChange={(val) => updateSelections('logisticsNotes', val)}
+            logistics={selections.logistics}
+            onChange={(val) => updateSelections('logistics', val)}
           />
         );
       case 'confirmation':
         return (
           <ConfirmationStep
             plan={plan}
-            servingType={servingType}
+            quickPickChoice={quickPickChoice}
+            activeModules={activeModules}
             selections={selections}
             cocktails={cocktails}
             onSubmit={handleSubmit}
@@ -280,6 +362,13 @@ export default function PotionPlanningLab() {
   return (
     <div className="auth-page">
       <div className="page-container">
+        {/* Progress indicator */}
+        {progressStep && (
+          <div style={{ textAlign: 'center', marginBottom: '0.5rem', fontSize: '0.85rem', opacity: 0.6 }}>
+            Step {progressStep} of {totalSteps}
+          </div>
+        )}
+
         {/* Saving indicator */}
         {saving && (
           <div style={{ textAlign: 'center', padding: '0.25rem', opacity: 0.6, fontSize: '0.85rem' }}>

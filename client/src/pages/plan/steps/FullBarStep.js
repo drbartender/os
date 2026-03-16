@@ -1,13 +1,13 @@
 import React from 'react';
 
 const SPIRITS = ['Vodka', 'Gin', 'Rum', 'Tequila', 'Whiskey', 'Scotch'];
-const BAR_FOCUS_OPTIONS = [
-  { value: 'cocktail-heavy', label: 'Cocktail Lovers' },
-  { value: 'balanced', label: 'Balanced' },
-  { value: 'beer-wine-heavy', label: 'Beer & Wine Focused' },
+const BEER_STYLES = ['Light / Easy Drinking', 'Craft / Local', 'IPA', 'Seltzer', 'Non-Alcoholic'];
+const WINE_STYLES = ['Red', 'White', 'Ros\u00e9', 'Sparkling'];
+const BALANCE_OPTIONS = [
+  { value: '50/50', label: '50/50' },
+  { value: 'mostly_beer', label: 'Mostly Beer' },
+  { value: 'mostly_wine', label: 'Mostly Wine' },
 ];
-const WINE_STYLES = ['Red', 'White', 'Rosé', 'Sparkling'];
-const BEER_STYLES = ['Light / Easy Drinking', 'Craft / Local', 'Non-Alcoholic'];
 
 export default function FullBarStep({ selections, onChange }) {
   const toggleArray = (field, value) => {
@@ -20,90 +20,138 @@ export default function FullBarStep({ selections, onChange }) {
   };
 
   return (
-    <div className="card">
-      <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>
-        Full Bar Setup
-      </h2>
+    <div>
+      <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
+          Full Bar Setup
+        </h2>
+        <p className="text-muted">
+          Let's build out your complete bar. We'll cover spirits, mixers, beer, and wine.
+        </p>
+      </div>
 
-      {/* Spirits */}
-      <div className="form-group">
-        <label className="form-label">Which spirits should we stock?</label>
-        <div className="checkbox-grid">
-          {SPIRITS.map(spirit => (
-            <label key={spirit} className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={(selections.spirits || []).includes(spirit)}
-                onChange={() => toggleArray('spirits', spirit)}
-              />
-              <span>{spirit}</span>
-            </label>
-          ))}
+      {/* Part 1: Spirits */}
+      <div className="card mb-2">
+        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+          Spirits & Liquor
+        </h3>
+        <div className="form-group">
+          <label className="form-label">Which spirits should we stock?</label>
+          <div className="checkbox-grid">
+            {SPIRITS.map(spirit => (
+              <label key={spirit} className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={(selections.spirits || []).includes(spirit)}
+                  onChange={() => toggleArray('spirits', spirit)}
+                />
+                <span>{spirit}</span>
+              </label>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Bar Focus */}
-      <div className="form-group">
-        <label className="form-label">Bar Focus</label>
-        <div className="checkbox-grid">
-          {BAR_FOCUS_OPTIONS.map(opt => (
-            <label key={opt.value} className="checkbox-label">
+      {/* Part 2: Mixers */}
+      <div className="card mb-2">
+        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+          Mixers
+        </h3>
+        <div className="form-group">
+          <label className="form-label">
+            Would you like us to stock mixers for these spirits?
+          </label>
+          <p className="text-muted text-small mb-1">
+            Tonic, soda, ginger beer, juices, etc. for guests who want simple mixed drinks.
+          </p>
+          <div className="checkbox-grid">
+            <label className="checkbox-label">
               <input
                 type="radio"
-                name="barFocus"
-                checked={selections.barFocus === opt.value}
-                onChange={() => onChange('barFocus', opt.value)}
+                name="mixersForSpirits"
+                checked={selections.mixersForSpirits === true}
+                onChange={() => onChange('mixersForSpirits', true)}
               />
-              <span>{opt.label}</span>
+              <span>Yes, include mixers</span>
             </label>
-          ))}
-        </div>
-      </div>
-
-      {/* Wine Styles */}
-      <div className="form-group">
-        <label className="form-label">Wine Styles</label>
-        <div className="checkbox-grid">
-          {WINE_STYLES.map(style => (
-            <label key={style} className="checkbox-label">
+            <label className="checkbox-label">
               <input
-                type="checkbox"
-                checked={(selections.wineStyles || []).includes(style)}
-                onChange={() => toggleArray('wineStyles', style)}
+                type="radio"
+                name="mixersForSpirits"
+                checked={selections.mixersForSpirits === false}
+                onChange={() => onChange('mixersForSpirits', false)}
               />
-              <span>{style}</span>
+              <span>No mixers needed</span>
             </label>
-          ))}
+          </div>
         </div>
       </div>
 
-      {/* Beer Styles */}
-      <div className="form-group">
-        <label className="form-label">Beer Styles</label>
-        <div className="checkbox-grid">
-          {BEER_STYLES.map(style => (
-            <label key={style} className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={(selections.beerStyles || []).includes(style)}
-                onChange={() => toggleArray('beerStyles', style)}
-              />
-              <span>{style}</span>
-            </label>
-          ))}
+      {/* Part 3: Beer */}
+      <div className="card mb-2">
+        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+          Beer & Seltzer
+        </h3>
+        <div className="form-group">
+          <label className="form-label">What styles of beer should we include?</label>
+          <div className="checkbox-grid">
+            {BEER_STYLES.map(style => (
+              <label key={style} className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={(selections.beerFromFullBar || []).includes(style)}
+                  onChange={() => toggleArray('beerFromFullBar', style)}
+                />
+                <span>{style}</span>
+              </label>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Notes */}
-      <div className="form-group">
-        <label className="form-label">Additional Notes</label>
-        <textarea
-          className="form-textarea"
-          rows={4}
-          placeholder="E.g., premium brands only, no tequila shots, focus on bourbon cocktails..."
-          value={selections.fullBarNotes || ''}
-          onChange={(e) => onChange('fullBarNotes', e.target.value)}
-        />
+      {/* Part 4: Wine */}
+      <div className="card mb-2">
+        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+          Wine
+        </h3>
+        <div className="form-group">
+          <label className="form-label">What styles of wine should we include?</label>
+          <div className="checkbox-grid">
+            {WINE_STYLES.map(style => (
+              <label key={style} className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={(selections.wineFromFullBar || []).includes(style)}
+                  onChange={() => toggleArray('wineFromFullBar', style)}
+                />
+                <span>{style}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Part 5: Balance */}
+      <div className="card">
+        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+          Beer & Wine Balance
+        </h3>
+        <div className="form-group">
+          <label className="form-label">How should we balance beer and wine?</label>
+          <div className="checkbox-grid">
+            {BALANCE_OPTIONS.map(opt => (
+              <label key={opt.value} className="checkbox-label">
+                <input
+                  type="radio"
+                  name="beerWineBalanceFullBar"
+                  checked={selections.beerWineBalanceFullBar === opt.value}
+                  onChange={() => onChange('beerWineBalanceFullBar', opt.value)}
+                />
+                <span>{opt.label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

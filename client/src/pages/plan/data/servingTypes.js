@@ -1,52 +1,72 @@
-export const SERVING_TYPES = [
+// Quick-pick options (Screen 1)
+export const QUICK_PICKS = [
   {
-    key: 'full-bar-signature',
-    label: 'Full Bar + Signature Drinks',
-    description: 'Complete open bar including your custom drinks and all standard mixed drinks served.',
-    modules: ['signature', 'full-bar'],
+    key: 'full_bar',
+    label: 'Full Bar Experience',
+    description: 'Complete open bar with signature cocktails, spirits, beer & wine.',
     emoji: '🍸',
+    activeModules: { signatureDrinks: true, mocktails: false, fullBar: true, beerWineOnly: false },
   },
   {
-    key: 'signature-beer-wine',
+    key: 'sig_beer_wine',
     label: 'Signature Drinks + Beer & Wine',
-    description: 'Your custom cocktails, beer, and wine. No other liquor or mixed drinks served.',
-    modules: ['signature', 'beer-wine'],
+    description: 'Custom cocktails plus beer and wine. No other mixed drinks.',
     emoji: '🍷',
+    activeModules: { signatureDrinks: true, mocktails: false, fullBar: false, beerWineOnly: true },
   },
   {
-    key: 'signature-matching-mixers',
-    label: 'Signature Drinks + Matching Mixers',
-    description: 'Your custom cocktails plus basic mixed drinks using those same spirits.',
-    modules: ['signature'],
-    emoji: '🧉',
-  },
-  {
-    key: 'signature-only',
-    label: 'Signature Drinks Only',
-    description: 'Strictly your custom menu items only. No beer, wine, or other drinks served.',
-    modules: ['signature'],
-    emoji: '✨',
-  },
-  {
-    key: 'beer-wine-only',
+    key: 'beer_wine',
     label: 'Beer & Wine Only',
-    description: 'Guests choose from the beers and wines you want — no cocktails required.',
-    modules: ['beer-wine'],
+    description: 'Curated beer and wine selection — no cocktails.',
     emoji: '🍺',
+    activeModules: { signatureDrinks: false, mocktails: false, fullBar: false, beerWineOnly: true },
   },
   {
-    key: 'mocktail',
-    label: 'Mocktail / Non-Alcoholic Bar',
-    description: '0% alcohol. Unique, handcrafted drinks suitable for all ages to enjoy.',
-    modules: ['mocktail'],
+    key: 'mocktails',
+    label: 'Mocktails Only',
+    description: 'Non-alcoholic handcrafted drinks for all ages.',
     emoji: '🧃',
+    activeModules: { signatureDrinks: false, mocktails: true, fullBar: false, beerWineOnly: false },
+  },
+  {
+    key: 'custom',
+    label: 'Custom Setup',
+    description: 'Mix and match exactly what you want.',
+    emoji: '🧪',
+    activeModules: null, // routes to custom setup screen
   },
 ];
 
-/** Map module key to the step component name used in the orchestrator */
+// Module flow order
+export const MODULE_ORDER = [
+  'signatureDrinks',
+  'mocktails',
+  'fullBar',
+  'beerWineOnly',
+  'menuDesign',
+  'logistics',
+];
+
+// Map module key to step identifier used by orchestrator
 export const MODULE_STEP_MAP = {
-  'signature': 'moduleSignature',
-  'full-bar': 'moduleFullBar',
-  'beer-wine': 'moduleBeerWine',
-  'mocktail': 'moduleMocktail',
+  signatureDrinks: 'stepSignatureDrinks',
+  mocktails: 'stepMocktails',
+  fullBar: 'stepFullBar',
+  beerWineOnly: 'stepBeerWineOnly',
+  menuDesign: 'stepMenuDesign',
+  logistics: 'stepLogistics',
 };
+
+/** Build ordered step queue from activeModules */
+export function buildStepQueue(activeModules) {
+  const steps = [];
+  for (const mod of MODULE_ORDER) {
+    if (mod === 'menuDesign' || mod === 'logistics') {
+      steps.push(MODULE_STEP_MAP[mod]);
+    } else if (activeModules[mod]) {
+      if (mod === 'beerWineOnly' && activeModules.fullBar) continue;
+      steps.push(MODULE_STEP_MAP[mod]);
+    }
+  }
+  return steps;
+}

@@ -1,7 +1,33 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
-export default function SignaturePickerStep({ selected, onChange, servingType, cocktails = [], categories = [] }) {
+export default function SignaturePickerStep({
+  selected,
+  onChange,
+  cocktails = [],
+  categories = [],
+  isFullBarActive,
+  isMocktailsActive,
+  mixersForSignatureDrinks,
+  onMixersChange,
+  onSpiritsExtracted,
+  onNext,
+  onSkipMocktails,
+}) {
   const [activeTab, setActiveTab] = useState(categories[0]?.id || 'crowd-favorites');
+
+  // Extract spirits from selected cocktails
+  const selectedDrinks = cocktails.filter(d => selected.includes(d.id));
+  const extractedSpirits = [...new Set(
+    selectedDrinks.map(d => d.base_spirit).filter(Boolean)
+  )];
+
+  // Notify parent of extracted spirits whenever they change
+  useEffect(() => {
+    if (onSpiritsExtracted) {
+      onSpiritsExtracted(extractedSpirits);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [extractedSpirits.join(',')]);
 
   const toggleDrink = (drinkId) => {
     if (selected.includes(drinkId)) {
@@ -14,7 +40,6 @@ export default function SignaturePickerStep({ selected, onChange, servingType, c
   const allTabs = [...categories.map(c => ({ key: c.id, label: c.label })), { key: 'your-menu', label: 'Your Menu' }];
   const isYourMenu = activeTab === 'your-menu';
   const filteredDrinks = cocktails.filter(d => d.category_id === activeTab);
-  const selectedDrinks = cocktails.filter(d => selected.includes(d.id));
 
   return (
     <div>
@@ -100,6 +125,55 @@ export default function SignaturePickerStep({ selected, onChange, servingType, c
           })}
         </div>
       )}
+
+      {/* Mixer question — only if Full Bar is NOT active and drinks are selected */}
+      {!isFullBarActive && selectedDrinks.length > 0 && extractedSpirits.length > 0 && (
+        <div className="card mt-2">
+          <div className="form-group">
+            <label className="form-label">
+              Would you like basic mixers for {extractedSpirits.join(', ')}?
+            </label>
+            <p className="text-muted text-small mb-1">
+              This includes things like tonic, soda, ginger beer, and juice for your signature drink spirits.
+            </p>
+            <div className="checkbox-grid">
+              <label className="checkbox-label">
+                <input
+                  type="radio"
+                  name="mixersForSigDrinks"
+                  checked={mixersForSignatureDrinks === true}
+                  onChange={() => onMixersChange(true)}
+                />
+                <span>Yes, include mixers</span>
+              </label>
+              <label className="checkbox-label">
+                <input
+                  type="radio"
+                  name="mixersForSigDrinks"
+                  checked={mixersForSignatureDrinks === false}
+                  onChange={() => onMixersChange(false)}
+                />
+                <span>No, just the signature drinks</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Navigation buttons */}
+      <div className="step-nav mt-2">
+        <div />
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          {isMocktailsActive && (
+            <button className="btn btn-secondary" onClick={onSkipMocktails}>
+              Skip Mocktails
+            </button>
+          )}
+          <button className="btn" onClick={onNext}>
+            {isMocktailsActive ? 'Continue to Mocktails' : 'Continue'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

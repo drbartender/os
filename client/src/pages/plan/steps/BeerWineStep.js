@@ -1,11 +1,11 @@
 import React from 'react';
 
-const WINE_STYLES = ['Red', 'White', 'Rosé', 'Sparkling'];
-const BEER_STYLES = ['Light / Easy Drinking', 'Craft / Local', 'Non-Alcoholic'];
+const BEER_STYLES = ['Light / Easy Drinking', 'Craft / Local', 'IPA', 'Seltzer', 'Non-Alcoholic'];
+const WINE_STYLES = ['Red', 'White', 'Ros\u00e9', 'Sparkling'];
 const BALANCE_OPTIONS = [
-  { value: 'mostly-beer', label: 'Mostly Beer' },
-  { value: 'balanced', label: 'Balanced' },
-  { value: 'mostly-wine', label: 'Mostly Wine' },
+  { value: '50/50', label: '50/50' },
+  { value: 'mostly_beer', label: 'Mostly Beer' },
+  { value: 'mostly_wine', label: 'Mostly Wine' },
 ];
 
 export default function BeerWineStep({ selections, onChange }) {
@@ -19,73 +19,81 @@ export default function BeerWineStep({ selections, onChange }) {
   };
 
   return (
-    <div className="card">
-      <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>
-        Beer &amp; Wine Preferences
-      </h2>
+    <div>
+      <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
+          Beer &amp; Wine Preferences
+        </h2>
+        <p className="text-muted">
+          Tell us what styles you'd like so we can curate the perfect selection.
+        </p>
+      </div>
 
-      {/* Wine Styles */}
-      <div className="form-group">
-        <label className="form-label">Wine Styles</label>
-        <div className="checkbox-grid">
-          {WINE_STYLES.map(style => (
-            <label key={style} className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={(selections.wineStyles || []).includes(style)}
-                onChange={() => toggleArray('wineStyles', style)}
-              />
-              <span>{style}</span>
-            </label>
-          ))}
+      {/* Beer */}
+      <div className="card mb-2">
+        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+          Beer & Seltzer
+        </h3>
+        <div className="form-group">
+          <label className="form-label">What styles of beer should we include?</label>
+          <div className="checkbox-grid">
+            {BEER_STYLES.map(style => (
+              <label key={style} className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={(selections.beerFromBeerWine || []).includes(style)}
+                  onChange={() => toggleArray('beerFromBeerWine', style)}
+                />
+                <span>{style}</span>
+              </label>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Beer Styles */}
-      <div className="form-group">
-        <label className="form-label">Beer Styles</label>
-        <div className="checkbox-grid">
-          {BEER_STYLES.map(style => (
-            <label key={style} className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={(selections.beerStyles || []).includes(style)}
-                onChange={() => toggleArray('beerStyles', style)}
-              />
-              <span>{style}</span>
-            </label>
-          ))}
+      {/* Wine */}
+      <div className="card mb-2">
+        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+          Wine
+        </h3>
+        <div className="form-group">
+          <label className="form-label">What styles of wine should we include?</label>
+          <div className="checkbox-grid">
+            {WINE_STYLES.map(style => (
+              <label key={style} className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={(selections.wineFromBeerWine || []).includes(style)}
+                  onChange={() => toggleArray('wineFromBeerWine', style)}
+                />
+                <span>{style}</span>
+              </label>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* Balance */}
-      <div className="form-group">
-        <label className="form-label">Beer vs. Wine Balance</label>
-        <div className="checkbox-grid">
-          {BALANCE_OPTIONS.map(opt => (
-            <label key={opt.value} className="checkbox-label">
-              <input
-                type="radio"
-                name="beerWineBalance"
-                checked={selections.beerWineBalance === opt.value}
-                onChange={() => onChange('beerWineBalance', opt.value)}
-              />
-              <span>{opt.label}</span>
-            </label>
-          ))}
+      <div className="card">
+        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+          Beer & Wine Balance
+        </h3>
+        <div className="form-group">
+          <label className="form-label">How should we balance beer and wine?</label>
+          <div className="checkbox-grid">
+            {BALANCE_OPTIONS.map(opt => (
+              <label key={opt.value} className="checkbox-label">
+                <input
+                  type="radio"
+                  name="beerWineBalanceBeerWine"
+                  checked={selections.beerWineBalanceBeerWine === opt.value}
+                  onChange={() => onChange('beerWineBalanceBeerWine', opt.value)}
+                />
+                <span>{opt.label}</span>
+              </label>
+            ))}
+          </div>
         </div>
-      </div>
-
-      {/* Notes */}
-      <div className="form-group">
-        <label className="form-label">Notes &amp; Preferences</label>
-        <textarea
-          className="form-textarea"
-          rows={4}
-          placeholder="E.g., IPAs only, sweet wine, prosecco over champagne, no seltzers..."
-          value={selections.beerWineNotes || ''}
-          onChange={(e) => onChange('beerWineNotes', e.target.value)}
-        />
       </div>
     </div>
   );

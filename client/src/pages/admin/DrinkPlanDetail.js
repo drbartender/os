@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
-import { SERVING_TYPES } from '../plan/data/servingTypes';
+import { QUICK_PICKS } from '../plan/data/servingTypes';
 
 const STATUS_LABELS = {
   pending: 'Pending',
@@ -15,6 +15,20 @@ const STATUS_CLASSES = {
   submitted: 'badge-submitted',
   reviewed: 'badge-approved',
 };
+
+// Legacy serving types for backward compatibility with old plans
+const LEGACY_SERVING_TYPES = {
+  'full-bar-signature': 'Full Bar + Signature Drinks',
+  'signature-beer-wine': 'Signature Drinks + Beer & Wine',
+  'signature-matching-mixers': 'Signature Drinks + Matching Mixers',
+  'signature-only': 'Signature Drinks Only',
+  'beer-wine-only': 'Beer & Wine Only',
+  'mocktail': 'Mocktail / Non-Alcoholic Bar',
+};
+
+function isNewFormat(sel) {
+  return sel && sel.activeModules;
+}
 
 export default function DrinkPlanDetail() {
   const { id } = useParams();
@@ -106,13 +120,175 @@ export default function DrinkPlanDetail() {
     );
   }
 
-  const type = SERVING_TYPES.find(t => t.key === plan.serving_type);
   const sel = plan.selections || {};
-  const selectedDrinks = cocktails.filter(d => (sel.signatureCocktails || []).includes(d.id));
-
   const formatDate = (d) => {
     if (!d) return '—';
     return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
+  // Render selections based on format
+  const renderSelections = () => {
+    if (isNewFormat(sel)) {
+      return renderNewSelections();
+    }
+    return renderLegacySelections();
+  };
+
+  const renderNewSelections = () => {
+    const am = sel.activeModules;
+    const pick = QUICK_PICKS.find(p => p.key === plan.serving_type);
+    const selectedDrinks = cocktails.filter(d => (sel.signatureDrinks || []).includes(d.id));
+
+    return (
+      <>
+        {pick && (
+          <p className="mb-1"><strong>Package:</strong> {pick.emoji} {pick.label}</p>
+        )}
+        {plan.serving_type === 'custom' && (
+          <p className="mb-1"><strong>Package:</strong> Custom Setup</p>
+        )}
+
+        {/* Signature Drinks */}
+        {am.signatureDrinks && selectedDrinks.length > 0 && (
+          <div className="mb-2">
+            <strong>Signature Cocktails:</strong>
+            <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
+              {selectedDrinks.map(d => (
+                <li key={d.id}>{d.emoji} {d.name}{d.base_spirit ? ` (${d.base_spirit})` : ''}</li>
+              ))}
+            </ul>
+            {sel.signatureDrinkSpirits?.length > 0 && (
+              <p className="text-muted text-small">Extracted spirits: {sel.signatureDrinkSpirits.join(', ')}</p>
+            )}
+            {sel.mixersForSignatureDrinks === true && (
+              <p className="text-muted text-small">Basic mixers requested for signature drink spirits</p>
+            )}
+            {sel.mixersForSignatureDrinks === false && (
+              <p className="text-muted text-small">No mixers for signature drink spirits</p>
+            )}
+          </div>
+        )}
+
+        {/* Mocktails */}
+        {am.mocktails && sel.mocktailNotes && (
+          <div className="mb-1"><strong>Mocktail Preferences:</strong><p className="text-muted">{sel.mocktailNotes}</p></div>
+        )}
+
+        {/* Full Bar */}
+        {am.fullBar && (
+          <div className="mb-2">
+            {sel.spirits?.length > 0 && (
+              <p className="mb-1"><strong>Spirits:</strong> {sel.spirits.join(', ')}</p>
+            )}
+            {sel.mixersForSpirits === true && (
+              <p className="text-muted text-small mb-1">Mixers included for bar spirits</p>
+            )}
+            {sel.beerFromFullBar?.length > 0 && (
+              <p className="mb-1"><strong>Beer:</strong> {sel.beerFromFullBar.join(', ')}</p>
+            )}
+            {sel.wineFromFullBar?.length > 0 && (
+              <p className="mb-1"><strong>Wine:</strong> {sel.wineFromFullBar.join(', ')}</p>
+            )}
+            {sel.beerWineBalanceFullBar && (
+              <p className="mb-1"><strong>Balance:</strong> {sel.beerWineBalanceFullBar.replace(/_/g, ' ')}</p>
+            )}
+          </div>
+        )}
+
+        {/* Beer & Wine Only */}
+        {am.beerWineOnly && !am.fullBar && (
+          <div className="mb-2">
+            {sel.beerFromBeerWine?.length > 0 && (
+              <p className="mb-1"><strong>Beer:</strong> {sel.beerFromBeerWine.join(', ')}</p>
+            )}
+            {sel.wineFromBeerWine?.length > 0 && (
+              <p className="mb-1"><strong>Wine:</strong> {sel.wineFromBeerWine.join(', ')}</p>
+            )}
+            {sel.beerWineBalanceBeerWine && (
+              <p className="mb-1"><strong>Balance:</strong> {sel.beerWineBalanceBeerWine.replace(/_/g, ' ')}</p>
+            )}
+          </div>
+        )}
+
+        {/* Menu Design */}
+        {sel.customMenuDesign === true && (
+          <div className="mb-2">
+            <p className="mb-1"><strong>Custom Menu Design:</strong> Yes</p>
+            {sel.menuTheme && <p className="text-muted mb-1">Theme: {sel.menuTheme}</p>}
+            {sel.drinkNaming && <p className="text-muted mb-1">Custom naming: {sel.drinkNaming}</p>}
+          </div>
+        )}
+        {sel.customMenuDesign === false && (
+          <p className="mb-1"><strong>Custom Menu Design:</strong> No</p>
+        )}
+
+        {/* Logistics */}
+        {sel.logistics && (sel.logistics.parking || sel.logistics.ice || sel.logistics.other) && (
+          <div className="mb-1">
+            <strong>Logistics:</strong>
+            {sel.logistics.parking && <p className="text-muted">Parking: {sel.logistics.parking}</p>}
+            {sel.logistics.ice && <p className="text-muted">Ice machine: {sel.logistics.ice}</p>}
+            {sel.logistics.other && <p className="text-muted">Notes: {sel.logistics.other}</p>}
+          </div>
+        )}
+      </>
+    );
+  };
+
+  const renderLegacySelections = () => {
+    const typeName = LEGACY_SERVING_TYPES[plan.serving_type];
+    const selectedDrinks = cocktails.filter(d => (sel.signatureCocktails || []).includes(d.id));
+
+    return (
+      <>
+        {typeName && (
+          <p className="mb-1"><strong>Package:</strong> {typeName}</p>
+        )}
+
+        {selectedDrinks.length > 0 && (
+          <div className="mb-2">
+            <strong>Signature Cocktails:</strong>
+            <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
+              {selectedDrinks.map(d => (
+                <li key={d.id}>{d.emoji} {d.name}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {sel.spirits?.length > 0 && (
+          <p className="mb-1"><strong>Spirits:</strong> {sel.spirits.join(', ')}</p>
+        )}
+        {sel.barFocus && (
+          <p className="mb-1"><strong>Bar Focus:</strong> {sel.barFocus.replace(/-/g, ' ')}</p>
+        )}
+        {sel.wineStyles?.length > 0 && (
+          <p className="mb-1"><strong>Wine Styles:</strong> {sel.wineStyles.join(', ')}</p>
+        )}
+        {sel.beerStyles?.length > 0 && (
+          <p className="mb-1"><strong>Beer Styles:</strong> {sel.beerStyles.join(', ')}</p>
+        )}
+        {sel.beerWineBalance && (
+          <p className="mb-1"><strong>Balance:</strong> {sel.beerWineBalance.replace(/-/g, ' ')}</p>
+        )}
+        {sel.beerWineNotes && (
+          <div className="mb-1"><strong>Drink Notes:</strong><p className="text-muted">{sel.beerWineNotes}</p></div>
+        )}
+        {sel.fullBarNotes && (
+          <div className="mb-1"><strong>Full Bar Notes:</strong><p className="text-muted">{sel.fullBarNotes}</p></div>
+        )}
+        {sel.mocktailNotes && (
+          <div className="mb-1"><strong>Mocktail Preferences:</strong><p className="text-muted">{sel.mocktailNotes}</p></div>
+        )}
+        {sel.logisticsNotes && (
+          <div className="mb-1"><strong>Logistics:</strong><p className="text-muted">{sel.logisticsNotes}</p></div>
+        )}
+
+        {!typeName && !sel.spirits?.length && !sel.logisticsNotes && (
+          <p className="text-muted">Client hasn't made any selections yet.</p>
+        )}
+      </>
+    );
   };
 
   return (
@@ -153,53 +329,7 @@ export default function DrinkPlanDetail() {
           <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>
             Selections
           </h3>
-
-          {type && (
-            <p className="mb-1"><strong>Package:</strong> {type.emoji} {type.label}</p>
-          )}
-
-          {selectedDrinks.length > 0 && (
-            <div className="mb-2">
-              <strong>Signature Cocktails:</strong>
-              <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
-                {selectedDrinks.map(d => (
-                  <li key={d.id}>{d.emoji} {d.name}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {sel.spirits?.length > 0 && (
-            <p className="mb-1"><strong>Spirits:</strong> {sel.spirits.join(', ')}</p>
-          )}
-          {sel.barFocus && (
-            <p className="mb-1"><strong>Bar Focus:</strong> {sel.barFocus.replace(/-/g, ' ')}</p>
-          )}
-          {sel.wineStyles?.length > 0 && (
-            <p className="mb-1"><strong>Wine Styles:</strong> {sel.wineStyles.join(', ')}</p>
-          )}
-          {sel.beerStyles?.length > 0 && (
-            <p className="mb-1"><strong>Beer Styles:</strong> {sel.beerStyles.join(', ')}</p>
-          )}
-          {sel.beerWineBalance && (
-            <p className="mb-1"><strong>Balance:</strong> {sel.beerWineBalance.replace(/-/g, ' ')}</p>
-          )}
-          {sel.beerWineNotes && (
-            <div className="mb-1"><strong>Drink Notes:</strong><p className="text-muted">{sel.beerWineNotes}</p></div>
-          )}
-          {sel.fullBarNotes && (
-            <div className="mb-1"><strong>Full Bar Notes:</strong><p className="text-muted">{sel.fullBarNotes}</p></div>
-          )}
-          {sel.mocktailNotes && (
-            <div className="mb-1"><strong>Mocktail Preferences:</strong><p className="text-muted">{sel.mocktailNotes}</p></div>
-          )}
-          {sel.logisticsNotes && (
-            <div className="mb-1"><strong>Logistics:</strong><p className="text-muted">{sel.logisticsNotes}</p></div>
-          )}
-
-          {!type && !selectedDrinks.length && !sel.spirits?.length && !sel.logisticsNotes && (
-            <p className="text-muted">Client hasn't made any selections yet.</p>
-          )}
+          {renderSelections()}
         </div>
       )}
 
