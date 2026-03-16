@@ -25,12 +25,12 @@ router.get('/users', auth, adminOnly, async (req, res) => {
         LEFT JOIN onboarding_progress op ON op.user_id = u.id
         LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
         LEFT JOIN agreements ag ON ag.user_id = u.id
-        WHERE u.role = 'staff'
+        WHERE u.role IN ('staff', 'manager')
           AND u.onboarding_status IN ('hired','in_progress','submitted','reviewed','approved','deactivated')
         ORDER BY u.created_at DESC
         LIMIT $1 OFFSET $2
       `, [limit, offset]),
-      pool.query(`SELECT COUNT(*) FROM users WHERE role = 'staff' AND onboarding_status IN ('hired','in_progress','submitted','reviewed','approved','deactivated')`)
+      pool.query(`SELECT COUNT(*) FROM users WHERE role IN ('staff', 'manager') AND onboarding_status IN ('hired','in_progress','submitted','reviewed','approved','deactivated')`)
     ]);
 
     res.json({
@@ -85,14 +85,14 @@ router.put('/users/:id/status', auth, adminOnly, async (req, res) => {
   try {
     // Get current status before changing (for the audit log)
     const currentRes = await pool.query(
-      "SELECT onboarding_status FROM users WHERE id=$1 AND role='staff'",
+      "SELECT onboarding_status FROM users WHERE id=$1 AND role IN ('staff','manager')",
       [req.params.id]
     );
     if (!currentRes.rows[0]) return res.status(404).json({ error: 'User not found' });
     const oldStatus = currentRes.rows[0].onboarding_status;
 
     const result = await pool.query(
-      "UPDATE users SET onboarding_status=$1 WHERE id=$2 AND role='staff' RETURNING id, email, onboarding_status",
+      "UPDATE users SET onboarding_status=$1 WHERE id=$2 AND role IN ('staff','manager') RETURNING id, email, onboarding_status",
       [status, req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
@@ -236,23 +236,23 @@ router.get('/applications', auth, adminOnly, async (req, res) => {
           a.reliable_transportation, a.comfortable_working_alone
         FROM users u
         INNER JOIN applications a ON a.user_id = u.id
-        WHERE u.role = 'staff' AND ${statusClause}
+        WHERE u.role IN ('staff', 'manager') AND ${statusClause}
         ORDER BY a.created_at DESC
         LIMIT $1 OFFSET $2
       `, [limit, offset]),
       pool.query(
-        `SELECT COUNT(*) FROM applications a INNER JOIN users u ON u.id = a.user_id WHERE u.role = 'staff' AND ${statusClause}`
+        `SELECT COUNT(*) FROM applications a INNER JOIN users u ON u.id = a.user_id WHERE u.role IN ('staff', 'manager') AND ${statusClause}`
       ),
       // Active status counts (always excludes rejected)
       pool.query(`
         SELECT u.onboarding_status, COUNT(*) as count
         FROM users u INNER JOIN applications a ON a.user_id = u.id
-        WHERE u.role = 'staff' AND u.onboarding_status != 'rejected'
+        WHERE u.role IN ('staff', 'manager') AND u.onboarding_status != 'rejected'
         GROUP BY u.onboarding_status
       `),
       // Archived (rejected) count — always returned regardless of view
       pool.query(
-        `SELECT COUNT(*) FROM applications a INNER JOIN users u ON u.id = a.user_id WHERE u.role = 'staff' AND u.onboarding_status = 'rejected'`
+        `SELECT COUNT(*) FROM applications a INNER JOIN users u ON u.id = a.user_id WHERE u.role IN ('staff', 'manager') AND u.onboarding_status = 'rejected'`
       )
     ]);
 
@@ -328,7 +328,7 @@ router.get('/active-staff', auth, async (req, res) => {
     const [staffResult, countResult] = await Promise.all([
       pool.query(`
         SELECT
-          u.id, u.email, u.onboarding_status, u.created_at,
+          u.id, u.email, u.role, u.onboarding_status, u.created_at,
           cp.preferred_name, cp.phone, cp.city, cp.state,
           cp.travel_distance, cp.reliable_transportation,
           cp.equipment_portable_bar, cp.equipment_cooler, cp.equipment_table_with_spandex,
@@ -339,7 +339,7 @@ router.get('/active-staff', auth, async (req, res) => {
         LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
         LEFT JOIN applications a ON a.user_id = u.id
         LEFT JOIN agreements ag ON ag.user_id = u.id
-        WHERE u.role = 'staff'
+        WHERE u.role IN ('staff', 'manager')
           AND u.onboarding_status IN ('approved', 'reviewed', 'submitted')
           AND op.onboarding_completed = true
         ORDER BY COALESCE(cp.preferred_name, u.email) ASC
@@ -348,7 +348,7 @@ router.get('/active-staff', auth, async (req, res) => {
       pool.query(`
         SELECT COUNT(*) FROM users u
         JOIN onboarding_progress op ON op.user_id = u.id
-        WHERE u.role = 'staff'
+        WHERE u.role IN ('staff', 'manager')
           AND u.onboarding_status IN ('approved', 'reviewed', 'submitted')
           AND op.onboarding_completed = true
       `)

@@ -594,7 +594,10 @@ export default function AdminDashboard() {
                           return (
                             <tr key={s.id} onClick={() => navigate(`/admin/staffing/users/${s.id}`)}>
                               <td>
-                                <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{s.preferred_name || '—'}</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                  <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{s.preferred_name || '—'}</span>
+                                  {s.role === 'manager' && <span className="badge badge-approved" style={{ fontSize: '0.6rem', padding: '0.1rem 0.4rem' }}>Manager</span>}
+                                </div>
                                 <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{s.email}</div>
                               </td>
                               <td style={{ fontSize: '0.82rem' }}>{s.phone || '—'}</td>
