@@ -92,13 +92,6 @@ export default function AdminDashboard() {
   const [shiftForm, setShiftForm]             = useState({ event_name: '', event_date: '', start_time: '', end_time: '', location: '', notes: '', positions: [] });
   const [shiftPosInput, setShiftPosInput]     = useState('');
 
-  // Managers state
-  const [managers, setManagers]               = useState([]);
-  const [managersLoading, setManagersLoading] = useState(false);
-  const [showManagerForm, setShowManagerForm] = useState(false);
-  const [elevateUserId, setElevateUserId]     = useState('');
-  const [elevatePerms, setElevatePerms]       = useState({ can_hire: false, can_staff: false });
-
   // Close inline editor when clicking outside the table
   useEffect(() => {
     function handleClick(e) {
@@ -143,7 +136,7 @@ export default function AdminDashboard() {
       .finally(() => setUsersLoading(false));
   }, [userPage, tab]);
 
-  // Fetch active staff (default tab — also needed for manager elevation dropdown)
+  // Fetch active staff (default tab)
   const fetchActiveStaff = useCallback(() => {
     setStaffLoading(true);
     api.get('/admin/active-staff')
@@ -153,7 +146,7 @@ export default function AdminDashboard() {
   }, []);
 
   useEffect(() => {
-    if (tab === 'active-staff' || tab === 'managers') fetchActiveStaff();
+    if (tab === 'active-staff') fetchActiveStaff();
   }, [tab, fetchActiveStaff]);
 
   // Fetch shifts
@@ -169,16 +162,6 @@ export default function AdminDashboard() {
     if (tab !== 'shifts') return;
     fetchShifts();
   }, [tab, fetchShifts]);
-
-  // Fetch managers
-  useEffect(() => {
-    if (tab !== 'managers') return;
-    setManagersLoading(true);
-    api.get('/admin/managers')
-      .then(r => setManagers(r.data.managers))
-      .catch(console.error)
-      .finally(() => setManagersLoading(false));
-  }, [tab]);
 
   async function handleInlineStatusChange(userId, newStatus) {
     const prevApp = apps.find(a => a.id === userId);
@@ -264,35 +247,6 @@ export default function AdminDashboard() {
     } catch (e) { console.error(e); }
   }
 
-  async function elevateToManager(e) {
-    e.preventDefault();
-    if (!elevateUserId) return;
-    try {
-      const r = await api.post('/admin/managers', { user_id: elevateUserId, ...elevatePerms });
-      setManagers(prev => [r.data, ...prev]);
-      setElevateUserId('');
-      setElevatePerms({ can_hire: false, can_staff: false });
-      setShowManagerForm(false);
-      // Remove from active staff list if they were there
-      setActiveStaff(prev => prev.filter(s => String(s.id) !== String(elevateUserId)));
-    } catch (e) { alert(e.response?.data?.error || 'Failed to elevate staff member'); }
-  }
-
-  async function updateManagerPermissions(mgr, field, value) {
-    try {
-      const updated = await api.put(`/admin/managers/${mgr.id}`, { ...mgr, [field]: value });
-      setManagers(prev => prev.map(m => m.id === mgr.id ? updated.data : m));
-    } catch (e) { console.error(e); }
-  }
-
-  async function demoteManager(id) {
-    if (!window.confirm('Demote this manager back to staff?')) return;
-    try {
-      await api.delete(`/admin/managers/${id}`);
-      setManagers(prev => prev.filter(m => m.id !== id));
-    } catch (e) { console.error(e); }
-  }
-
   const fmtDate = iso => iso ? new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—';
 
   // Permission flags for the current user
@@ -368,11 +322,6 @@ export default function AdminDashboard() {
           {canStaff && (
             <button className={`tab-btn ${tab === 'shifts' ? 'active' : ''}`} onClick={() => setTab('shifts')}>
               Shifts {shifts.length > 0 && `(${shifts.length})`}
-            </button>
-          )}
-          {isAdmin && (
-            <button className={`tab-btn ${tab === 'managers' ? 'active' : ''}`} onClick={() => setTab('managers')}>
-              Managers {managers.length > 0 && `(${managers.length})`}
             </button>
           )}
         </div>
@@ -901,110 +850,6 @@ export default function AdminDashboard() {
         )}
 
         {/* ─── Managers Tab ─── */}
-        {tab === 'managers' && (
-          <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-              <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{managers.length} manager{managers.length !== 1 ? 's' : ''}</span>
-              <button className="btn btn-primary btn-sm" onClick={() => setShowManagerForm(v => !v)}>
-                {showManagerForm ? '✕ Cancel' : '+ Elevate Staff Member'}
-              </button>
-            </div>
-
-            {/* Elevate staff form */}
-            {showManagerForm && (
-              <div className="card mb-3" style={{ border: '2px solid var(--amber)' }}>
-                <h3 style={{ marginBottom: '0.5rem' }}>Elevate Staff to Manager</h3>
-                <p className="text-muted text-small" style={{ marginBottom: '1rem' }}>Select an active staff member to grant management permissions.</p>
-                <form onSubmit={elevateToManager}>
-                  <div>
-                    <label className="form-label">Staff Member *</label>
-                    <select className="form-input" required value={elevateUserId}
-                      onChange={e => setElevateUserId(e.target.value)}>
-                      <option value="">Select a staff member…</option>
-                      {activeStaff
-                        .filter(s => !managers.some(m => m.id === s.id))
-                        .map(s => (
-                          <option key={s.id} value={s.id}>{s.preferred_name || s.email} — {s.email}</option>
-                        ))}
-                    </select>
-                  </div>
-                  <div style={{ marginTop: '0.75rem', display: 'flex', gap: '1.5rem' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.9rem' }}>
-                      <input type="checkbox" checked={elevatePerms.can_hire}
-                        onChange={e => setElevatePerms(p => ({ ...p, can_hire: e.target.checked }))} />
-                      Can hire (Applications tab)
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.9rem' }}>
-                      <input type="checkbox" checked={elevatePerms.can_staff}
-                        onChange={e => setElevatePerms(p => ({ ...p, can_staff: e.target.checked }))} />
-                      Can staff (Active Staff + Shifts tabs)
-                    </label>
-                  </div>
-                  <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
-                    <button type="submit" className="btn btn-primary">Elevate to Manager</button>
-                    <button type="button" className="btn btn-secondary" onClick={() => setShowManagerForm(false)}>Cancel</button>
-                  </div>
-                </form>
-              </div>
-            )}
-
-            {/* Managers list */}
-            {managersLoading ? (
-              <div className="loading"><div className="spinner" />Loading managers…</div>
-            ) : managers.length === 0 ? (
-              <div className="card text-center"><p className="text-muted italic">No managers added yet.</p></div>
-            ) : (
-              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="admin-table">
-                    <thead>
-                      <tr>
-                        <th>Email</th>
-                        <th style={{ textAlign: 'center' }}>Can Hire</th>
-                        <th style={{ textAlign: 'center' }}>Can Staff</th>
-                        <th>Added</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {managers.map(mgr => (
-                        <tr key={mgr.id}>
-                          <td style={{ fontWeight: 600, fontSize: '0.9rem' }}>{mgr.email}</td>
-                          <td style={{ textAlign: 'center' }}>
-                            <label style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}>
-                              <input
-                                type="checkbox"
-                                checked={!!mgr.can_hire}
-                                onChange={e => updateManagerPermissions(mgr, 'can_hire', e.target.checked)}
-                                style={{ width: 16, height: 16 }}
-                              />
-                            </label>
-                          </td>
-                          <td style={{ textAlign: 'center' }}>
-                            <label style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}>
-                              <input
-                                type="checkbox"
-                                checked={!!mgr.can_staff}
-                                onChange={e => updateManagerPermissions(mgr, 'can_staff', e.target.checked)}
-                                style={{ width: 16, height: 16 }}
-                              />
-                            </label>
-                          </td>
-                          <td style={{ fontSize: '0.82rem' }}>
-                            {new Date(mgr.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                          </td>
-                          <td>
-                            <button className="btn btn-secondary btn-sm" onClick={() => demoteManager(mgr.id)}>Demote</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </>
-        )}
       </div>
   );
 }

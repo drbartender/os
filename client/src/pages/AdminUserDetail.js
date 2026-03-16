@@ -38,6 +38,7 @@ export default function AdminUserDetail() {
   const [tab, setTab] = useState('profile');
   const [statusLoading, setStatusLoading] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
+  const [permsSaving, setPermsSaving] = useState(false);
 
   useEffect(() => {
     api.get(`/admin/users/${id}`)
@@ -70,6 +71,25 @@ export default function AdminUserDetail() {
       URL.revokeObjectURL(blobUrl);
     } catch (e) {
       console.error('Download failed', e);
+    }
+  }
+
+  async function updatePermission(field, value) {
+    setPermsSaving(true);
+    try {
+      const current = data.user;
+      const payload = {
+        role: current.role,
+        can_hire: current.can_hire || false,
+        can_staff: current.can_staff || false,
+        [field]: value,
+      };
+      const r = await api.put(`/admin/users/${id}/permissions`, payload);
+      setData(d => ({ ...d, user: { ...d.user, ...r.data } }));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setPermsSaving(false);
     }
   }
 
@@ -139,6 +159,7 @@ export default function AdminUserDetail() {
             ...(application?.id ? [['application', 'Application']] : []),
             ['progress', 'Onboarding'],
             ['payment', 'Payment'],
+            ['permissions', 'Permissions'],
           ].map(([key, label]) => (
             <button key={key} className={`tab-btn ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)}>
               {label}
@@ -309,6 +330,54 @@ export default function AdminUserDetail() {
             {payment.routing_number && <Field label="Routing Number" value={payment.routing_number} />}
             {payment.account_number && <Field label="Account Number" value={payment.account_number} />}
           </Section>
+        )}
+
+        {/* ── Permissions Tab ── */}
+        {tab === 'permissions' && (
+          <div style={{ maxWidth: 520 }}>
+            <Section title="Role">
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                Managers can access the admin dashboard. Staff permissions control what they can do within it.
+              </p>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {['staff', 'manager'].map(r => (
+                  <button
+                    key={r}
+                    className={`btn btn-sm ${user.role === r ? 'btn-dark' : 'btn-secondary'}`}
+                    disabled={permsSaving}
+                    onClick={() => updatePermission('role', r)}
+                  >
+                    {r.charAt(0).toUpperCase() + r.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </Section>
+
+            <Section title="Staff Permissions">
+              {[
+                { key: 'can_hire', label: 'Can Hire', desc: 'View and manage applications, change applicant status, schedule interviews' },
+                { key: 'can_staff', label: 'Can Staff', desc: 'View active staff roster, manage shifts and shift requests' },
+              ].map(perm => (
+                <label key={perm.key} style={{
+                  display: 'flex', alignItems: 'flex-start', gap: '0.75rem',
+                  padding: '0.75rem 0', borderBottom: '1px solid var(--border)',
+                  cursor: 'pointer',
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={!!user[perm.key]}
+                    disabled={permsSaving}
+                    onChange={e => updatePermission(perm.key, e.target.checked)}
+                    style={{ width: 18, height: 18, marginTop: '0.1rem', flexShrink: 0 }}
+                  />
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{perm.label}</div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{perm.desc}</div>
+                  </div>
+                </label>
+              ))}
+            </Section>
+          </div>
         )}
       </div>
 

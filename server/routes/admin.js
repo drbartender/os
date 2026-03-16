@@ -52,7 +52,7 @@ router.get('/users/:id', auth, adminOnly, async (req, res) => {
     const userId = req.params.id;
 
     const [userRes, progressRes, profileRes, agreementRes, paymentRes, appRes] = await Promise.all([
-      pool.query('SELECT id, email, role, onboarding_status, notifications_opt_in, created_at, updated_at FROM users WHERE id = $1', [userId]),
+      pool.query('SELECT id, email, role, onboarding_status, notifications_opt_in, can_hire, can_staff, created_at, updated_at FROM users WHERE id = $1', [userId]),
       pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [userId]),
       pool.query('SELECT * FROM contractor_profiles WHERE user_id = $1', [userId]),
       pool.query('SELECT * FROM agreements WHERE user_id = $1', [userId]),
@@ -117,6 +117,31 @@ router.put('/users/:id/status', auth, adminOnly, async (req, res) => {
       ).catch(err => console.error('Status change log failed:', err));
     }
 
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Update user permissions (role + flags)
+router.put('/users/:id/permissions', auth, adminOnly, async (req, res) => {
+  const { role, can_hire, can_staff } = req.body;
+  const validRoles = ['staff', 'manager'];
+  if (role && !validRoles.includes(role)) return res.status(400).json({ error: 'Invalid role' });
+
+  try {
+    const current = await pool.query('SELECT id, role FROM users WHERE id = $1', [req.params.id]);
+    if (!current.rows[0]) return res.status(404).json({ error: 'User not found' });
+    if (current.rows[0].role === 'admin') return res.status(400).json({ error: 'Cannot change admin permissions.' });
+
+    const newRole = role || current.rows[0].role;
+    const result = await pool.query(
+      `UPDATE users SET role = $1, can_hire = $2, can_staff = $3
+       WHERE id = $4
+       RETURNING id, email, role, can_hire, can_staff`,
+      [newRole, can_hire ?? false, can_staff ?? false, req.params.id]
+    );
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
