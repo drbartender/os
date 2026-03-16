@@ -28,7 +28,6 @@ export default function PotionPlanningLab() {
   const [step, setStep] = useState('welcome');
   const [servingType, setServingType] = useState(null);
   const [moduleQueue, setModuleQueue] = useState([]);
-  const [moduleIndex, setModuleIndex] = useState(0);
 
   // Form selections
   const [selections, setSelections] = useState({
@@ -119,7 +118,6 @@ export default function PotionPlanningLab() {
     const type = SERVING_TYPES.find(t => t.key === typeKey);
     const queue = type.modules.map(m => MODULE_STEP_MAP[m]);
     setModuleQueue(queue);
-    setModuleIndex(0);
     saveDraft(typeKey, selections);
     goToStep(queue[0]);
   };
@@ -135,7 +133,6 @@ export default function PotionPlanningLab() {
     if (currentQueueIndex !== -1) {
       const nextIndex = currentQueueIndex + 1;
       if (nextIndex < moduleQueue.length) {
-        setModuleIndex(nextIndex);
         return goToStep(moduleQueue[nextIndex]);
       }
       return goToStep('logistics');
@@ -150,16 +147,13 @@ export default function PotionPlanningLab() {
     const currentQueueIndex = moduleQueue.indexOf(step);
     if (currentQueueIndex !== -1) {
       if (currentQueueIndex > 0) {
-        setModuleIndex(currentQueueIndex - 1);
         return goToStep(moduleQueue[currentQueueIndex - 1]);
       }
       return goToStep('servingType');
     }
 
     if (step === 'logistics') {
-      const lastIdx = moduleQueue.length - 1;
-      setModuleIndex(lastIdx);
-      return goToStep(moduleQueue[lastIdx]);
+      return goToStep(moduleQueue[moduleQueue.length - 1]);
     }
 
     if (step === 'confirmation') return goToStep('logistics');
