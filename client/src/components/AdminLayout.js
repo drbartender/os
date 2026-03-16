@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import BrandLogo from './BrandLogo';
 
 const NAV_ITEMS = [
-  { label: 'Staffing',   path: '/admin/staffing',   icon: '👥' },
+  { label: 'Staff',      path: '/admin/staffing',   icon: '👥' },
   { label: 'Events',     path: '/admin/events',     icon: '📅' },
   { label: 'Clients',    path: '/admin/clients',    icon: '🤝' },
   { label: 'Financials', path: '/admin/financials',  icon: '📒' },

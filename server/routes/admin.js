@@ -296,22 +296,23 @@ router.get('/managers', auth, adminOnly, async (req, res) => {
   }
 });
 
+// Elevate an existing staff member to manager
 router.post('/managers', auth, adminOnly, async (req, res) => {
-  const { email, password, can_hire, can_staff } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required.' });
-  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  const { user_id, can_hire, can_staff } = req.body;
+  if (!user_id) return res.status(400).json({ error: 'user_id is required.' });
   try {
-    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
-    if (existing.rows[0]) return res.status(409).json({ error: 'Email already in use.' });
-    const bcrypt = require('bcryptjs');
-    const hash = await bcrypt.hash(password, 12);
+    // Verify the user exists and is staff
+    const existing = await pool.query('SELECT id, role FROM users WHERE id = $1', [user_id]);
+    if (!existing.rows[0]) return res.status(404).json({ error: 'User not found.' });
+    if (existing.rows[0].role === 'manager') return res.status(409).json({ error: 'User is already a manager.' });
+    if (existing.rows[0].role === 'admin') return res.status(400).json({ error: 'Cannot change admin role.' });
     const result = await pool.query(
-      `INSERT INTO users (email, password_hash, role, can_hire, can_staff, onboarding_status)
-       VALUES ($1, $2, 'manager', $3, $4, 'approved')
+      `UPDATE users SET role = 'manager', can_hire = $1, can_staff = $2
+       WHERE id = $3
        RETURNING id, email, role, can_hire, can_staff, created_at`,
-      [email.toLowerCase(), hash, can_hire || false, can_staff || false]
+      [can_hire || false, can_staff || false, user_id]
     );
-    res.status(201).json(result.rows[0]);
+    res.status(200).json(result.rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -335,10 +336,12 @@ router.put('/managers/:id', auth, adminOnly, async (req, res) => {
   }
 });
 
+// Demote manager back to staff (don't delete the account)
 router.delete('/managers/:id', auth, adminOnly, async (req, res) => {
   try {
     const result = await pool.query(
-      "DELETE FROM users WHERE id = $1 AND role = 'manager' RETURNING id",
+      `UPDATE users SET role = 'staff', can_hire = false, can_staff = false
+       WHERE id = $1 AND role = 'manager' RETURNING id`,
       [req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Manager not found.' });
