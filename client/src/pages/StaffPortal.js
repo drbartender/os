@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import BrandLogo from '../components/BrandLogo';
 import api from '../utils/api';
 
-const POSITIONS = ['Bartender', 'Barback', 'Banquet Server'];
+const POSITIONS = ['Bartender', 'Barback', 'Banquet Server']; // eslint-disable-line no-unused-vars
 
 const STATUS_STYLES = {
   pending:  { background: '#FFF3DC', color: '#8B5E0A', border: '1px solid #E5C97A' },

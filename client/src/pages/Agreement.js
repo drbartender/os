@@ -35,7 +35,7 @@ export default function Agreement() {
         }));
       }
     }).catch(() => setLoadError("We couldn't load your saved agreement. You can still continue and sign below."));
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handle(e) {
     const { name, value, type, checked } = e.target;

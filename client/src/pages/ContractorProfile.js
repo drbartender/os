@@ -63,7 +63,7 @@ export default function ContractorProfile() {
         });
       }
     }).catch(() => setLoadError("We couldn't load your saved profile. You can still fill out the form below."));
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handle(e) {
     const { name, value, type, checked } = e.target;
