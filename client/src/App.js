@@ -15,9 +15,14 @@ import ContractorProfile from './pages/ContractorProfile';
 import PaydayProtocols from './pages/PaydayProtocols';
 import Completion from './pages/Completion';
 import StaffPortal from './pages/StaffPortal';
+import AdminLayout from './components/AdminLayout';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminUserDetail from './pages/AdminUserDetail';
 import AdminApplicationDetail from './pages/AdminApplicationDetail';
+import EventsDashboard from './pages/admin/EventsDashboard';
+import ClientsDashboard from './pages/admin/ClientsDashboard';
+import FinancialsDashboard from './pages/admin/FinancialsDashboard';
+import SettingsDashboard from './pages/admin/SettingsDashboard';
 
 /** Determine where a logged-in user should go based on their role and status */
 function getHomePath(user) {
@@ -117,10 +122,17 @@ function AppRoutes() {
       {/* Staff portal (onboarding completed) */}
       <Route path="/portal" element={<RequirePortal><StaffPortal /></RequirePortal>} />
 
-      {/* Admin + Manager dashboard */}
-      <Route path="/admin" element={<ProtectedRoute adminOnly><AdminDashboard /></ProtectedRoute>} />
-      <Route path="/admin/users/:id" element={<ProtectedRoute adminOnly><AdminUserDetail /></ProtectedRoute>} />
-      <Route path="/admin/applications/:id" element={<ProtectedRoute adminOnly><AdminApplicationDetail /></ProtectedRoute>} />
+      {/* Admin + Manager shell */}
+      <Route path="/admin" element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}>
+        <Route index element={<Navigate to="staffing" replace />} />
+        <Route path="staffing" element={<AdminDashboard />} />
+        <Route path="staffing/users/:id" element={<AdminUserDetail />} />
+        <Route path="staffing/applications/:id" element={<AdminApplicationDetail />} />
+        <Route path="events" element={<EventsDashboard />} />
+        <Route path="clients" element={<ClientsDashboard />} />
+        <Route path="financials" element={<FinancialsDashboard />} />
+        <Route path="settings" element={<SettingsDashboard />} />
+      </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
-import BrandLogo from '../components/BrandLogo';
 
 const ONBOARDING_STEPS = ['account_created','welcome_viewed','field_guide_completed','agreement_completed','contractor_profile_completed','payday_protocols_completed','onboarding_completed'];
 
@@ -45,7 +44,7 @@ const APP_FILTER_KEYS  = ['all', 'applied', 'interviewing', 'hired', 'archived']
 const USER_FILTER_KEYS = ['all', 'hired', 'in_progress', 'submitted', 'reviewed', 'approved', 'deactivated'];
 
 export default function AdminDashboard() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
   // Determine the first visible tab based on role/permissions
@@ -342,19 +341,10 @@ export default function AdminDashboard() {
   }
 
   return (
-    <div className="admin-page" style={{ minHeight: '100vh' }}>
-      <header className="site-header">
-        <BrandLogo admin />
-        <div className="header-actions">
-          <span className="header-user">{user?.email}</span>
-          <button className="btn btn-secondary btn-sm" onClick={() => { logout(); navigate('/login'); }}>Sign Out</button>
-        </div>
-      </header>
-
       <div className="page-container wide">
         <div className="flex-between mb-3" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
           <div>
-            <h1 style={{ marginBottom: '0.2rem' }}>Dashboard</h1>
+            <h1 style={{ marginBottom: '0.2rem' }}>Staffing</h1>
             <p className="text-muted text-small">Manage applications and contractor onboarding</p>
           </div>
         </div>
@@ -457,7 +447,7 @@ export default function AdminDashboard() {
                         const isEditing = editingStatus === a.id;
 
                         return (
-                          <tr key={a.id} onClick={() => navigate(`/admin/applications/${a.id}`)}>
+                          <tr key={a.id} onClick={() => navigate(`/admin/staffing/applications/${a.id}`)}>
                             <td>
                               <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{a.full_name}</div>
                               <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{a.email}</div>
@@ -512,7 +502,7 @@ export default function AdminDashboard() {
                             </td>
                             <td>
                               <button className="btn btn-secondary btn-sm"
-                                onClick={e => { e.stopPropagation(); navigate(`/admin/applications/${a.id}`); }}>
+                                onClick={e => { e.stopPropagation(); navigate(`/admin/staffing/applications/${a.id}`); }}>
                                 View →
                               </button>
                             </td>
@@ -571,7 +561,7 @@ export default function AdminDashboard() {
                       {filteredUsers.map(u => {
                         const pct = calcPct(u);
                         return (
-                          <tr key={u.id} onClick={() => navigate(`/admin/users/${u.id}`)}>
+                          <tr key={u.id} onClick={() => navigate(`/admin/staffing/users/${u.id}`)}>
                             <td>
                               <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{u.preferred_name || '—'}</div>
                               <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{u.email}</div>
@@ -592,7 +582,7 @@ export default function AdminDashboard() {
                             <td style={{ fontSize: '0.82rem' }}>{new Date(u.created_at).toLocaleDateString()}</td>
                             <td>
                               <button className="btn btn-secondary btn-sm"
-                                onClick={e => { e.stopPropagation(); navigate(`/admin/users/${u.id}`); }}>
+                                onClick={e => { e.stopPropagation(); navigate(`/admin/staffing/users/${u.id}`); }}>
                                 View →
                               </button>
                             </td>
@@ -648,7 +638,7 @@ export default function AdminDashboard() {
                           s.email.toLowerCase().includes(staffSearch.toLowerCase())
                         )
                         .map(s => (
-                          <tr key={s.id} onClick={() => navigate(`/admin/users/${s.id}`)}>
+                          <tr key={s.id} onClick={() => navigate(`/admin/staffing/users/${s.id}`)}>
                             <td>
                               <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{s.preferred_name || '—'}</div>
                               <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{s.email}</div>
@@ -661,7 +651,7 @@ export default function AdminDashboard() {
                             </td>
                             <td>
                               <button className="btn btn-secondary btn-sm"
-                                onClick={e => { e.stopPropagation(); navigate(`/admin/users/${s.id}`); }}>
+                                onClick={e => { e.stopPropagation(); navigate(`/admin/staffing/users/${s.id}`); }}>
                                 View →
                               </button>
                             </td>
@@ -1005,6 +995,5 @@ export default function AdminDashboard() {
           </>
         )}
       </div>
-    </div>
   );
 }

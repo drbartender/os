@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
-import BrandLogo from '../components/BrandLogo';
 
 // ─── Shared Helpers ───────────────────────────────────────────────
 
@@ -141,7 +139,6 @@ function FileTile({ label, url, filename, onDownload }) {
 export default function AdminApplicationDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { logout } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [statusLoading, setStatusLoading] = useState(false);
@@ -244,16 +241,10 @@ export default function AdminApplicationDetail() {
   });
 
   return (
-    <div className="admin-page" style={{ minHeight: '100vh' }}>
-
-      {/* ── Site Nav Header ── */}
-      <header className="site-header">
-        <BrandLogo admin />
-        <div className="header-actions">
-          <button className="btn btn-secondary btn-sm" onClick={() => navigate('/admin')}>← Dashboard</button>
-          <button className="btn btn-secondary btn-sm" onClick={() => { logout(); navigate('/login'); }}>Sign Out</button>
-        </div>
-      </header>
+    <>
+      <div style={{ padding: '1rem 1.5rem 0' }}>
+        <button className="btn btn-secondary btn-sm" onClick={() => navigate('/admin/staffing')}>← Staffing</button>
+      </div>
 
       {/* ══ ZONE 1 — Profile Header Bar (sticky) ══ */}
       <div style={{
@@ -542,6 +533,6 @@ export default function AdminApplicationDetail() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

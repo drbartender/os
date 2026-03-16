@@ -963,3 +963,115 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   border: 2px solid white;
   box-shadow: 0 2px 8px rgba(193, 125, 60, 0.45);
 }
+
+/* ══════════════════════════════════════════════════════
+   Admin Shell — Sidebar Layout
+   ══════════════════════════════════════════════════════ */
+
+.admin-shell {
+  display: flex;
+  min-height: calc(100vh - 60px);
+}
+
+.admin-sidebar {
+  width: 220px;
+  background: rgba(26, 20, 16, 0.95);
+  border-right: 1px solid rgba(193, 125, 60, 0.25);
+  padding: 1.25rem 0;
+  position: sticky;
+  top: 60px;
+  height: calc(100vh - 60px);
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.admin-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 1.25rem;
+  color: var(--parchment);
+  text-decoration: none;
+  font-family: var(--font-body);
+  font-size: 0.92rem;
+  border-left: 3px solid transparent;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.admin-nav-item:hover {
+  background: rgba(193, 125, 60, 0.1);
+  color: var(--amber-light);
+}
+.admin-nav-item.active {
+  color: var(--amber);
+  border-left-color: var(--amber);
+  background: rgba(193, 125, 60, 0.12);
+}
+
+.admin-nav-icon {
+  width: 22px;
+  text-align: center;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.admin-sidebar-divider {
+  height: 1px;
+  background: rgba(193, 125, 60, 0.2);
+  margin: 0.75rem 1.25rem;
+}
+
+.admin-content {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+}
+
+/* Hamburger toggle — hidden on desktop, visible on mobile */
+.admin-sidebar-toggle {
+  display: none;
+  background: none;
+  border: 1px solid rgba(193, 125, 60, 0.4);
+  border-radius: var(--radius);
+  color: var(--amber);
+  font-size: 1.2rem;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+/* Mobile overlay behind open sidebar */
+.admin-sidebar-overlay {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .admin-sidebar-toggle {
+    display: inline-flex;
+  }
+  .admin-sidebar {
+    position: fixed;
+    left: -240px;
+    top: 60px;
+    z-index: 90;
+    transition: left 0.25s ease;
+    box-shadow: none;
+  }
+  .admin-sidebar.open {
+    left: 0;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.5);
+  }
+  .admin-sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    top: 60px;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 89;
+  }
+}

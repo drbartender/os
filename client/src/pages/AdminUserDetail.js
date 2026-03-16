@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
-import BrandLogo from '../components/BrandLogo';
 
 function Section({ title, children }) {
   return (
@@ -51,7 +49,6 @@ const STEP_LABELS = {
 export default function AdminUserDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { logout } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('overview');
@@ -100,16 +97,11 @@ export default function AdminUserDetail() {
   const { user, progress, profile, agreement, payment, application } = data;
 
   return (
-    <div className="admin-page" style={{ minHeight: '100vh' }}>
-      <header className="site-header">
-        <BrandLogo admin />
-        <div className="header-actions">
-          <button className="btn btn-secondary btn-sm" onClick={() => navigate('/admin')}>← Dashboard</button>
-          <button className="btn btn-secondary btn-sm" onClick={() => { logout(); navigate('/login'); }}>Sign Out</button>
-        </div>
-      </header>
-
+    <>
       <div className="page-container wide">
+        <div style={{ marginBottom: '1rem' }}>
+          <button className="btn btn-secondary btn-sm" onClick={() => navigate('/admin/staffing')}>← Staffing</button>
+        </div>
         {/* Header */}
         <div className="card mb-2">
           <div className="flex-between" style={{ flexWrap: 'wrap', gap: '1rem' }}>
@@ -343,6 +335,6 @@ export default function AdminUserDetail() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
