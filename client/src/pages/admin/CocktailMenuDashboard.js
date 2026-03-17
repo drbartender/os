@@ -45,13 +45,13 @@ function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCa
       <table className="data-table">
         <thead>
           <tr>
-            <th style={{ width: '32px' }}></th>
-            <th style={{ width: '44px' }}>Emoji</th>
+            <th style={{ width: '32px', padding: '0.65rem 0.25rem' }}></th>
+            <th style={{ width: '48px' }}>Emoji</th>
             <th>Name</th>
             <th>Description</th>
-            {withSpirit && <th>Spirit</th>}
-            <th style={{ width: '70px' }}>Active</th>
-            <th style={{ width: '90px' }}></th>
+            {withSpirit && <th style={{ width: '100px' }}>Spirit</th>}
+            <th style={{ width: '60px' }}>Active</th>
+            <th style={{ width: '70px' }}></th>
           </tr>
         </thead>
         <tbody>
@@ -103,7 +103,7 @@ function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCa
                   <td className="drag-handle">⠿</td>
                   <td style={{ fontSize: '1.4rem' }}>{c.emoji}</td>
                   <td><strong>{c.name}</strong></td>
-                  <td className="text-muted text-small desc-cell">{c.description || '—'}</td>
+                  <td className="text-muted text-small"><span className="desc-cell-text">{c.description || '—'}</span></td>
                   {withSpirit && <td className="text-muted text-small">{c.base_spirit || '—'}</td>}
                   <td>
                     <button

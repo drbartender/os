@@ -896,7 +896,6 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   width: 100%;
   border-collapse: collapse;
   font-size: 0.875rem;
-  min-width: 600px;
 }
 
 .admin-table th,
@@ -939,14 +938,13 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   color: var(--warm-brown) !important;
 }
 
-/* Description cells — clamp to 2 lines so they don't dominate the table */
-.admin-table td.desc-cell,
-.data-table td.desc-cell {
-  max-width: 220px;
-  overflow: hidden;
+/* Description cells — clamp applied to inner span, not the td itself */
+.desc-cell-text {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 260px;
 }
 
 /* Drag-and-drop table rows */
