@@ -209,7 +209,11 @@ export default function SignaturePickerStep({
                       <span className="drink-card-name">{drink.name}</span>
                       <span className="drink-card-desc">{drink.description}</span>
                     </div>
-                    <span className="drink-check-stylized">&#10003;</span>
+                    <span className="drink-check-stylized">
+                      <svg width="14" height="12" viewBox="0 0 14 12" fill="none" aria-hidden="true">
+                        <path d="M1.5 6L5 9.5L12.5 1.5" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </span>
                   </button>
                 );
               })}

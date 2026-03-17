@@ -137,7 +137,8 @@ function AppRoutes() {
         <Route path="staffing/applications/:id" element={<AdminApplicationDetail />} />
         <Route path="drink-plans" element={<DrinkPlansDashboard />} />
         <Route path="drink-plans/:id" element={<DrinkPlanDetail />} />
-        <Route path="cocktail-menu" element={<CocktailMenuDashboard />} />
+        <Route path="cocktail-menu" element={<Navigate to="/admin/drink-menu" replace />} />
+        <Route path="drink-menu" element={<CocktailMenuDashboard />} />
         <Route path="events" element={<EventsDashboard />} />
         <Route path="clients" element={<ClientsDashboard />} />
         <Route path="financials" element={<FinancialsDashboard />} />
