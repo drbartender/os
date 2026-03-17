@@ -1,20 +1,46 @@
 import React from 'react';
 
 const BEER_STYLES = ['Light / Easy Drinking', 'Craft / Local', 'IPA', 'Seltzer', 'Non-Alcoholic'];
-const WINE_STYLES = ['Red', 'White', 'Ros\u00e9', 'Sparkling'];
+const WINE_STYLES = ['Red', 'White', 'Sparkling', 'Other'];
 const BALANCE_OPTIONS = [
-  { value: '50/50', label: '50/50' },
   { value: 'mostly_beer', label: 'Mostly Beer' },
+  { value: 'balanced', label: 'Balanced' },
   { value: 'mostly_wine', label: 'Mostly Wine' },
 ];
 
 export default function BeerWineStep({ selections, onChange }) {
-  const toggleArray = (field, value) => {
-    const current = selections[field] || [];
-    if (current.includes(value)) {
-      onChange(field, current.filter(v => v !== value));
+  const beerFromBeerWine = selections.beerFromBeerWine || [];
+  const wineFromBeerWine = selections.wineFromBeerWine || [];
+
+  // None/other mutual exclusion for beer
+  const handleBeerToggle = (value) => {
+    if (value === 'None') {
+      onChange('beerFromBeerWine', beerFromBeerWine.includes('None') ? [] : ['None']);
     } else {
-      onChange(field, [...current, value]);
+      const withoutNone = beerFromBeerWine.filter(v => v !== 'None');
+      if (withoutNone.includes(value)) {
+        onChange('beerFromBeerWine', withoutNone.filter(v => v !== value));
+      } else {
+        onChange('beerFromBeerWine', [...withoutNone, value]);
+      }
+    }
+  };
+
+  // None/other mutual exclusion for wine
+  const handleWineToggle = (value) => {
+    if (value === 'None') {
+      onChange('wineFromBeerWine', wineFromBeerWine.includes('None') ? [] : ['None']);
+      if (!wineFromBeerWine.includes('None')) {
+        onChange('wineOtherBeerWine', '');
+      }
+    } else {
+      const withoutNone = wineFromBeerWine.filter(v => v !== 'None');
+      if (withoutNone.includes(value)) {
+        onChange('wineFromBeerWine', withoutNone.filter(v => v !== value));
+        if (value === 'Other') onChange('wineOtherBeerWine', '');
+      } else {
+        onChange('wineFromBeerWine', [...withoutNone, value]);
+      }
     }
   };
 
@@ -32,21 +58,30 @@ export default function BeerWineStep({ selections, onChange }) {
       {/* Beer */}
       <div className="card mb-2">
         <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
-          Beer & Seltzer
+          Beer &amp; Seltzer
         </h3>
         <div className="form-group">
           <label className="form-label">What styles of beer should we include?</label>
           <div className="checkbox-grid">
             {BEER_STYLES.map(style => (
-              <label key={style} className="checkbox-label">
+              <label key={style} className={`checkbox-label${beerFromBeerWine.includes('None') ? ' none-option' : ''}`}>
                 <input
                   type="checkbox"
-                  checked={(selections.beerFromBeerWine || []).includes(style)}
-                  onChange={() => toggleArray('beerFromBeerWine', style)}
+                  checked={beerFromBeerWine.includes(style)}
+                  onChange={() => handleBeerToggle(style)}
+                  disabled={beerFromBeerWine.includes('None')}
                 />
                 <span>{style}</span>
               </label>
             ))}
+            <label className="checkbox-label none-option">
+              <input
+                type="checkbox"
+                checked={beerFromBeerWine.includes('None')}
+                onChange={() => handleBeerToggle('None')}
+              />
+              <span>None</span>
+            </label>
           </div>
         </div>
       </div>
@@ -60,26 +95,47 @@ export default function BeerWineStep({ selections, onChange }) {
           <label className="form-label">What styles of wine should we include?</label>
           <div className="checkbox-grid">
             {WINE_STYLES.map(style => (
-              <label key={style} className="checkbox-label">
+              <label key={style} className={`checkbox-label${wineFromBeerWine.includes('None') ? ' none-option' : ''}`}>
                 <input
                   type="checkbox"
-                  checked={(selections.wineFromBeerWine || []).includes(style)}
-                  onChange={() => toggleArray('wineFromBeerWine', style)}
+                  checked={wineFromBeerWine.includes(style)}
+                  onChange={() => handleWineToggle(style)}
+                  disabled={wineFromBeerWine.includes('None')}
                 />
                 <span>{style}</span>
               </label>
             ))}
+            <label className="checkbox-label none-option">
+              <input
+                type="checkbox"
+                checked={wineFromBeerWine.includes('None')}
+                onChange={() => handleWineToggle('None')}
+              />
+              <span>None</span>
+            </label>
           </div>
+          {wineFromBeerWine.includes('Other') && (
+            <div className="mt-1">
+              <input
+                type="text"
+                className="form-input"
+                placeholder="What other wine styles? E.g., Rosé, Orange wine..."
+                value={selections.wineOtherBeerWine || ''}
+                onChange={(e) => onChange('wineOtherBeerWine', e.target.value)}
+                style={{ maxWidth: '400px' }}
+              />
+            </div>
+          )}
         </div>
       </div>
 
       {/* Balance */}
       <div className="card">
         <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
-          Beer & Wine Balance
+          Beer &amp; Wine Balance
         </h3>
         <div className="form-group">
-          <label className="form-label">How should we balance beer and wine?</label>
+          <label className="form-label">How should we balance beer vs wine?</label>
           <div className="checkbox-grid">
             {BALANCE_OPTIONS.map(opt => (
               <label key={opt.value} className="checkbox-label">

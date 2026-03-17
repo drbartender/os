@@ -377,3 +377,59 @@ UPDATE cocktails SET base_spirit = CASE id
   WHEN 'last-word'             THEN 'Gin'
 END
 WHERE base_spirit IS NULL;
+
+-- ─── Mocktail Menu ──────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS mocktail_categories (
+  id VARCHAR(100) PRIMARY KEY,
+  label VARCHAR(255) NOT NULL,
+  sort_order INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS mocktails (
+  id VARCHAR(100) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  category_id VARCHAR(100) REFERENCES mocktail_categories(id) ON DELETE SET NULL,
+  emoji VARCHAR(20),
+  description TEXT,
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS update_mocktail_categories_updated_at ON mocktail_categories;
+CREATE TRIGGER update_mocktail_categories_updated_at BEFORE UPDATE ON mocktail_categories
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_mocktails_updated_at ON mocktails;
+CREATE TRIGGER update_mocktails_updated_at BEFORE UPDATE ON mocktails
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+INSERT INTO mocktail_categories (id, label, sort_order) VALUES
+  ('fruity-refreshing',  'Fruity & Refreshing',  1),
+  ('creamy-sweet',       'Creamy & Sweet',        2),
+  ('sparkling-light',    'Sparkling & Light',     3),
+  ('bold-complex',       'Bold & Complex',        4)
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO mocktails (id, name, category_id, emoji, description, sort_order) VALUES
+  ('virgin-mojito',             'Virgin Mojito',              'fruity-refreshing', '🌿', 'Fresh mint, lime, and soda — cool and herbaceous, no rum needed.', 1),
+  ('strawberry-basil-lemonade', 'Strawberry Basil Lemonade',  'fruity-refreshing', '🍓', 'Sweet strawberry meets fresh basil in a tangy lemonade.', 2),
+  ('tropical-sunrise',          'Tropical Sunrise',           'fruity-refreshing', '🌅', 'Mango, orange, and grenadine layered like a sunset.', 3),
+  ('mango-tango',               'Mango Tango',                'fruity-refreshing', '🥭', 'Ripe mango blended with lime and a hint of chili.', 4),
+  ('virgin-pina-colada',        'Virgin Piña Colada',         'creamy-sweet',      '🍍', 'Creamy coconut and pineapple — tropical paradise in a glass.', 1),
+  ('shirley-temple-deluxe',     'Shirley Temple Deluxe',      'creamy-sweet',      '🍒', 'Classic grenadine and ginger ale with a cherry twist.', 2),
+  ('lavender-cream-soda',       'Lavender Cream Soda',        'creamy-sweet',      '💜', 'Floral lavender syrup with vanilla cream soda.', 3),
+  ('chocolate-mint-shake',      'Chocolate Mint Shake',        'creamy-sweet',      '🍫', 'Rich chocolate and cool mint blended to perfection.', 4),
+  ('cucumber-spritz',           'Cucumber Spritz',            'sparkling-light',   '🥒', 'Muddled cucumber, elderflower, and sparkling water.', 1),
+  ('elderflower-fizz',          'Elderflower Fizz',           'sparkling-light',   '🌼', 'Elderflower cordial with soda and a squeeze of lemon.', 2),
+  ('ginger-peach-sparkler',     'Ginger Peach Sparkler',      'sparkling-light',   '🍑', 'Fresh peach purée with spicy ginger and bubbles.', 3),
+  ('citrus-cooler',             'Citrus Cooler',              'sparkling-light',   '🍊', 'A blend of orange, lemon, and lime with sparkling water.', 4),
+  ('virgin-espresso-tonic',     'Virgin Espresso Tonic',      'bold-complex',      '☕', 'Chilled espresso over tonic water — bold and surprising.', 1),
+  ('spiced-cider-mule',         'Spiced Apple Cider Mule',    'bold-complex',      '🍎', 'Apple cider, ginger beer, and warm spices.', 2),
+  ('hibiscus-ginger-punch',     'Hibiscus Ginger Punch',      'bold-complex',      '🌺', 'Tart hibiscus tea with fresh ginger and honey.', 3),
+  ('smoky-pineapple-sour',      'Smoky Pineapple Sour',       'bold-complex',      '🍍', 'Charred pineapple juice with lemon and smoked salt rim.', 4)
+ON CONFLICT (id) DO NOTHING;

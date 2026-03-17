@@ -35,6 +35,7 @@ export default function DrinkPlanDetail() {
   const navigate = useNavigate();
   const [plan, setPlan] = useState(null);
   const [cocktails, setCocktails] = useState([]);
+  const [mocktailItems, setMocktailItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -43,13 +44,15 @@ export default function DrinkPlanDetail() {
   useEffect(() => {
     async function fetchData() {
       try {
-        const [planRes, cocktailsRes] = await Promise.all([
+        const [planRes, cocktailsRes, mocktailsRes] = await Promise.all([
           api.get(`/drink-plans/${id}`),
           api.get('/cocktails'),
+          api.get('/mocktails').catch(() => ({ data: { mocktails: [] } })),
         ]);
         setPlan(planRes.data);
         setNotes(planRes.data.admin_notes || '');
         setCocktails(cocktailsRes.data.cocktails || []);
+        setMocktailItems(mocktailsRes.data.mocktails || []);
       } catch (err) {
         if (err.response?.status !== 404) {
           console.error('Failed to fetch plan:', err);
@@ -126,7 +129,6 @@ export default function DrinkPlanDetail() {
     return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   };
 
-  // Render selections based on format
   const renderSelections = () => {
     if (isNewFormat(sel)) {
       return renderNewSelections();
@@ -138,6 +140,8 @@ export default function DrinkPlanDetail() {
     const am = sel.activeModules;
     const pick = QUICK_PICKS.find(p => p.key === plan.serving_type);
     const selectedDrinks = cocktails.filter(d => (sel.signatureDrinks || []).includes(d.id));
+    const selectedMocktails = mocktailItems.filter(d => (sel.mocktails || []).includes(d.id));
+    const logistics = sel.logistics || {};
 
     return (
       <>
@@ -170,7 +174,21 @@ export default function DrinkPlanDetail() {
         )}
 
         {/* Mocktails */}
-        {am.mocktails && sel.mocktailNotes && (
+        {am.mocktails && selectedMocktails.length > 0 && (
+          <div className="mb-2">
+            <strong>Mocktails:</strong>
+            <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
+              {selectedMocktails.map(d => (
+                <li key={d.id}>{d.emoji} {d.name}</li>
+              ))}
+            </ul>
+            {sel.mocktailNotes && (
+              <p className="text-muted text-small">Notes: {sel.mocktailNotes}</p>
+            )}
+          </div>
+        )}
+        {/* Legacy mocktail notes (text only) */}
+        {am.mocktails && !selectedMocktails.length && sel.mocktailNotes && (
           <div className="mb-1"><strong>Mocktail Preferences:</strong><p className="text-muted">{sel.mocktailNotes}</p></div>
         )}
 
@@ -178,7 +196,9 @@ export default function DrinkPlanDetail() {
         {am.fullBar && (
           <div className="mb-2">
             {sel.spirits?.length > 0 && (
-              <p className="mb-1"><strong>Spirits:</strong> {sel.spirits.join(', ')}</p>
+              <p className="mb-1"><strong>Spirits:</strong> {sel.spirits.join(', ')}
+                {sel.spiritsOther && `, ${sel.spiritsOther}`}
+              </p>
             )}
             {sel.mixersForSpirits === true && (
               <p className="text-muted text-small mb-1">Mixers included for bar spirits</p>
@@ -187,10 +207,12 @@ export default function DrinkPlanDetail() {
               <p className="mb-1"><strong>Beer:</strong> {sel.beerFromFullBar.join(', ')}</p>
             )}
             {sel.wineFromFullBar?.length > 0 && (
-              <p className="mb-1"><strong>Wine:</strong> {sel.wineFromFullBar.join(', ')}</p>
+              <p className="mb-1"><strong>Wine:</strong> {sel.wineFromFullBar.join(', ')}
+                {sel.wineOtherFullBar && ` (${sel.wineOtherFullBar})`}
+              </p>
             )}
             {sel.beerWineBalanceFullBar && (
-              <p className="mb-1"><strong>Balance:</strong> {sel.beerWineBalanceFullBar.replace(/_/g, ' ')}</p>
+              <p className="mb-1"><strong>Guest preference:</strong> {sel.beerWineBalanceFullBar.replace(/_/g, ' ')}</p>
             )}
           </div>
         )}
@@ -202,7 +224,9 @@ export default function DrinkPlanDetail() {
               <p className="mb-1"><strong>Beer:</strong> {sel.beerFromBeerWine.join(', ')}</p>
             )}
             {sel.wineFromBeerWine?.length > 0 && (
-              <p className="mb-1"><strong>Wine:</strong> {sel.wineFromBeerWine.join(', ')}</p>
+              <p className="mb-1"><strong>Wine:</strong> {sel.wineFromBeerWine.join(', ')}
+                {sel.wineOtherBeerWine && ` (${sel.wineOtherBeerWine})`}
+              </p>
             )}
             {sel.beerWineBalanceBeerWine && (
               <p className="mb-1"><strong>Balance:</strong> {sel.beerWineBalanceBeerWine.replace(/_/g, ' ')}</p>
@@ -216,6 +240,7 @@ export default function DrinkPlanDetail() {
             <p className="mb-1"><strong>Custom Menu Design:</strong> Yes</p>
             {sel.menuTheme && <p className="text-muted mb-1">Theme: {sel.menuTheme}</p>}
             {sel.drinkNaming && <p className="text-muted mb-1">Custom naming: {sel.drinkNaming}</p>}
+            {sel.menuDesignNotes && <p className="text-muted mb-1">Design notes: {sel.menuDesignNotes}</p>}
           </div>
         )}
         {sel.customMenuDesign === false && (
@@ -223,14 +248,30 @@ export default function DrinkPlanDetail() {
         )}
 
         {/* Logistics */}
-        {sel.logistics && (sel.logistics.parking || sel.logistics.ice || sel.logistics.other) && (
-          <div className="mb-1">
-            <strong>Logistics:</strong>
-            {sel.logistics.parking && <p className="text-muted">Parking: {sel.logistics.parking}</p>}
-            {sel.logistics.ice && <p className="text-muted">Ice machine: {sel.logistics.ice}</p>}
-            {sel.logistics.other && <p className="text-muted">Notes: {sel.logistics.other}</p>}
-          </div>
-        )}
+        <div className="mb-1">
+          <strong>Logistics:</strong>
+          {logistics.dayOfContact?.name && (
+            <p className="text-muted">
+              Day-of contact: {logistics.dayOfContact.name}
+              {logistics.dayOfContact.phone && ` — ${logistics.dayOfContact.phone}`}
+            </p>
+          )}
+          {logistics.parking && (
+            <p className="text-muted">Parking: {logistics.parking.replace(/_/g, ' ')}</p>
+          )}
+          {logistics.equipment?.length > 0 && (
+            <p className="text-muted">
+              Equipment: {logistics.equipment.map(e => e.replace(/_/g, ' ')).join(', ')}
+              {logistics.equipmentOther && ` (${logistics.equipmentOther})`}
+            </p>
+          )}
+          {logistics.accessNotes && (
+            <p className="text-muted">Event notes: {logistics.accessNotes}</p>
+          )}
+          {/* Backward compat */}
+          {logistics.ice && <p className="text-muted">Ice machine: {logistics.ice}</p>}
+          {logistics.other && !logistics.accessNotes && <p className="text-muted">Notes: {logistics.other}</p>}
+        </div>
       </>
     );
   };
@@ -293,7 +334,6 @@ export default function DrinkPlanDetail() {
 
   return (
     <div className="page-container">
-      {/* Back link */}
       <button
         className="btn btn-secondary btn-sm mb-2"
         onClick={() => navigate('/admin/drink-plans')}
@@ -301,7 +341,6 @@ export default function DrinkPlanDetail() {
         &larr; All Drink Plans
       </button>
 
-      {/* Header */}
       <div className="card mb-2">
         <div className="flex-between" style={{ flexWrap: 'wrap', gap: '1rem' }}>
           <div>
@@ -323,7 +362,6 @@ export default function DrinkPlanDetail() {
         </div>
       </div>
 
-      {/* Selections */}
       {plan.status !== 'pending' && (
         <div className="card mb-2">
           <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>
@@ -333,7 +371,6 @@ export default function DrinkPlanDetail() {
         </div>
       )}
 
-      {/* Admin Notes */}
       <div className="card mb-2">
         <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
           Admin Notes
@@ -354,7 +391,6 @@ export default function DrinkPlanDetail() {
         </button>
       </div>
 
-      {/* Actions */}
       <div className="flex gap-1">
         {plan.status === 'submitted' && (
           <button className="btn btn-success" onClick={markReviewed}>

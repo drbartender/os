@@ -732,7 +732,7 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   font-family: var(--font-body);
   font-size: 0.85rem;
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--deep-brown);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   border-bottom: 2px solid transparent;
@@ -1256,4 +1256,203 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   align-items: center;
   margin-top: 1.5rem;
   padding-top: 1rem;
+}
+
+/* Your Menu description contrast fix */
+.your-menu-info .text-muted {
+  color: var(--warm-brown);
+}
+
+/* ─── Drink Picker Layout (sidebar + cards) ─────────────── */
+.drink-picker-layout {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+
+/* Category Sidebar */
+.category-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: sticky;
+  top: 5rem;
+}
+
+.category-sidebar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.9rem;
+  background: var(--parchment);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  color: var(--deep-brown);
+  text-align: left;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.category-sidebar-btn:hover {
+  border-color: var(--amber);
+  background: var(--cream);
+}
+
+.category-sidebar-btn.active {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: white;
+  font-weight: 600;
+}
+
+.category-sidebar-btn .badge {
+  font-size: 0.65rem;
+  padding: 0.15rem 0.45rem;
+  margin-left: 0.4rem;
+}
+
+/* Category Pills — mobile fallback */
+.category-pills {
+  display: none;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.category-pill {
+  padding: 0.45rem 0.85rem;
+  background: var(--parchment);
+  border: 2px solid var(--border);
+  border-radius: 100px;
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  color: var(--deep-brown);
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.category-pill:hover {
+  border-color: var(--amber);
+}
+
+.category-pill.active {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: white;
+}
+
+/* Horizontal Drink Cards */
+.drink-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.drink-card-horizontal {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  background: var(--card-bg);
+  border: 3px solid var(--border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease;
+  position: relative;
+  width: 100%;
+  text-align: left;
+}
+
+.drink-card-horizontal:hover {
+  border-color: var(--amber);
+}
+
+.drink-card-horizontal.selected {
+  border-color: #40E0D0;
+  background: #FAFFF9;
+}
+
+.drink-card-emoji {
+  font-size: 2rem;
+  flex-shrink: 0;
+  width: 2.5rem;
+  text-align: center;
+}
+
+.drink-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.drink-card-name {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--deep-brown);
+  font-weight: 600;
+  display: block;
+  margin-bottom: 0.15rem;
+}
+
+.drink-card-desc {
+  font-size: 0.82rem;
+  color: var(--warm-brown);
+  line-height: 1.4;
+  display: block;
+}
+
+/* Stylized Checkmark */
+.drink-check-stylized {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  color: #40E0D0;
+  opacity: 0;
+  transform: scale(0.5);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.drink-card-horizontal.selected .drink-check-stylized {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Responsive: sidebar → pills on mobile */
+@media (max-width: 768px) {
+  .drink-picker-layout {
+    grid-template-columns: 1fr;
+  }
+  .category-sidebar {
+    display: none;
+  }
+  .category-pills {
+    display: flex;
+  }
+}
+
+/* None option styling */
+.checkbox-label.none-option {
+  border-style: dashed;
+  color: var(--text-muted);
+}
+
+.checkbox-label.none-option input:checked + span {
+  color: var(--deep-brown);
+}
+
+/* Select all option */
+.checkbox-label.select-all {
+  background: var(--parchment);
+  font-weight: 600;
+  border-color: var(--border-dark);
 }

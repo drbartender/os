@@ -23,19 +23,30 @@ const DEFAULT_SELECTIONS = {
   signatureDrinks: [],
   signatureDrinkSpirits: [],
   mixersForSignatureDrinks: null,
+  mocktails: [],
   mocktailNotes: '',
   spirits: [],
+  spiritsOther: '',
   mixersForSpirits: null,
   beerFromFullBar: [],
   wineFromFullBar: [],
+  wineOtherFullBar: '',
   beerWineBalanceFullBar: '',
   beerFromBeerWine: [],
   wineFromBeerWine: [],
+  wineOtherBeerWine: '',
   beerWineBalanceBeerWine: '',
   customMenuDesign: null,
   menuTheme: '',
   drinkNaming: '',
-  logistics: { parking: '', ice: '', other: '' },
+  menuDesignNotes: '',
+  logistics: {
+    dayOfContact: { name: '', phone: '' },
+    parking: '',
+    equipment: [],
+    equipmentOther: '',
+    accessNotes: '',
+  },
 };
 
 export default function PotionPlanningLab() {
@@ -51,6 +62,10 @@ export default function PotionPlanningLab() {
   const [cocktails, setCocktails] = useState([]);
   const [cocktailCategories, setCocktailCategories] = useState([]);
 
+  // Mocktail menu
+  const [mocktailItems, setMocktailItems] = useState([]);
+  const [mocktailCategories, setMocktailCategories] = useState([]);
+
   // Flow state
   const [step, setStep] = useState('welcome');
   const [quickPickChoice, setQuickPickChoice] = useState(null);
@@ -60,16 +75,19 @@ export default function PotionPlanningLab() {
   // Form selections
   const [selections, setSelections] = useState(DEFAULT_SELECTIONS);
 
-  // Load plan + cocktails
+  // Load plan + cocktails + mocktails
   useEffect(() => {
     async function fetchPlan() {
       try {
-        const [planRes, cocktailsRes] = await Promise.all([
+        const [planRes, cocktailsRes, mocktailsRes] = await Promise.all([
           axios.get(`${BASE_URL}/drink-plans/t/${token}`),
           axios.get(`${BASE_URL}/cocktails`),
+          axios.get(`${BASE_URL}/mocktails`).catch(() => ({ data: { categories: [], mocktails: [] } })),
         ]);
         setCocktails(cocktailsRes.data.cocktails || []);
         setCocktailCategories(cocktailsRes.data.categories || []);
+        setMocktailItems(mocktailsRes.data.mocktails || []);
+        setMocktailCategories(mocktailsRes.data.categories || []);
         setPlan(planRes.data);
 
         // Restore saved state if draft/submitted
@@ -82,11 +100,10 @@ export default function PotionPlanningLab() {
             setQuickPickChoice(data.serving_type);
             setActiveModules(savedSel.activeModules);
             setModuleQueue(buildStepQueue(savedSel.activeModules));
-            // Restore selections without activeModules key
             const { activeModules: _am, ...rest } = savedSel;
             setSelections(prev => ({ ...prev, ...rest }));
           } else if (data.serving_type) {
-            // Legacy format — try to map old serving_type
+            // Legacy format
             const pick = QUICK_PICKS.find(p => p.key === data.serving_type);
             if (pick && pick.activeModules) {
               setQuickPickChoice(data.serving_type);
@@ -195,7 +212,7 @@ export default function PotionPlanningLab() {
     }
   };
 
-  // Skip to step after a given step in the queue (used for skip mocktails)
+  // Skip to step after a given step in the queue
   const handleSkipToAfter = (stepToSkip) => {
     saveDraft(quickPickChoice, activeModules, selections);
     const idx = moduleQueue.indexOf(stepToSkip);
@@ -215,7 +232,6 @@ export default function PotionPlanningLab() {
       if (currentIdx > 0) {
         return goToStep(moduleQueue[currentIdx - 1]);
       }
-      // First module — go back to quickPick or customSetup
       return goToStep(quickPickChoice === 'custom' ? 'customSetup' : 'quickPick');
     }
 
@@ -225,7 +241,7 @@ export default function PotionPlanningLab() {
   };
 
   // Compute step progress
-  const totalSteps = moduleQueue.length + 1; // +1 for confirmation
+  const totalSteps = moduleQueue.length + 1;
   const currentQueueIdx = moduleQueue.indexOf(step);
   const progressStep = currentQueueIdx !== -1 ? currentQueueIdx + 1 : (step === 'confirmation' ? totalSteps : null);
 
@@ -271,13 +287,12 @@ export default function PotionPlanningLab() {
     );
   }
 
-  // Steps that manage their own next button (hide global next)
-  const selfNavigatingSteps = [MODULE_STEP_MAP.signatureDrinks];
-  const hideGlobalNext = selfNavigatingSteps.includes(step);
+  // Steps that manage their own nav buttons (hide global nav)
+  const selfNavigatingSteps = [MODULE_STEP_MAP.signatureDrinks, MODULE_STEP_MAP.mocktails];
+  const hideGlobalNav = selfNavigatingSteps.includes(step);
 
-  // Show/hide nav buttons
-  const showBack = !['welcome', 'quickPick'].includes(step);
-  const showNext = !['quickPick', 'customSetup', 'confirmation', 'submitted'].includes(step) && !hideGlobalNext;
+  const showBack = !['welcome', 'quickPick'].includes(step) && !hideGlobalNav;
+  const showNext = !['quickPick', 'customSetup', 'confirmation', 'submitted'].includes(step) && !hideGlobalNav;
 
   // Render current step
   const renderStep = () => {
@@ -301,14 +316,21 @@ export default function PotionPlanningLab() {
             onMixersChange={(val) => updateSelections('mixersForSignatureDrinks', val)}
             onSpiritsExtracted={(spirits) => updateSelections('signatureDrinkSpirits', spirits)}
             onNext={() => handleNext()}
+            onBack={() => handleBack()}
             onSkipMocktails={() => handleSkipToAfter(MODULE_STEP_MAP.mocktails)}
           />
         );
       case MODULE_STEP_MAP.mocktails:
         return (
           <MocktailStep
+            selected={selections.mocktails || []}
+            onChange={(val) => updateSelections('mocktails', val)}
+            mocktails={mocktailItems}
+            categories={mocktailCategories}
             notes={selections.mocktailNotes}
-            onChange={(val) => updateSelections('mocktailNotes', val)}
+            onNotesChange={(val) => updateSelections('mocktailNotes', val)}
+            onNext={() => handleNext()}
+            onBack={() => handleBack()}
           />
         );
       case MODULE_STEP_MAP.fullBar:
@@ -331,6 +353,7 @@ export default function PotionPlanningLab() {
             selections={selections}
             activeModules={activeModules}
             cocktails={cocktails}
+            mocktails={mocktailItems}
             onChange={updateSelections}
           />
         );
@@ -349,6 +372,7 @@ export default function PotionPlanningLab() {
             activeModules={activeModules}
             selections={selections}
             cocktails={cocktails}
+            mocktails={mocktailItems}
             onSubmit={handleSubmit}
             saving={saving}
             error={error}
@@ -362,26 +386,22 @@ export default function PotionPlanningLab() {
   return (
     <div className="auth-page">
       <div className="page-container">
-        {/* Progress indicator */}
         {progressStep && (
           <div style={{ textAlign: 'center', marginBottom: '0.5rem', fontSize: '0.85rem', opacity: 0.6 }}>
             Step {progressStep} of {totalSteps}
           </div>
         )}
 
-        {/* Saving indicator */}
         {saving && (
           <div style={{ textAlign: 'center', padding: '0.25rem', opacity: 0.6, fontSize: '0.85rem' }}>
             Saving...
           </div>
         )}
 
-        {/* Step content */}
         <div className="potion-step" key={step}>
           {renderStep()}
         </div>
 
-        {/* Navigation */}
         {(showBack || showNext) && (
           <div className="step-nav">
             {showBack ? (
