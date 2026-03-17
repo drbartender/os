@@ -433,3 +433,192 @@ INSERT INTO mocktails (id, name, category_id, emoji, description, sort_order) VA
   ('hibiscus-ginger-punch',     'Hibiscus Ginger Punch',      'bold-complex',      '🌺', 'Tart hibiscus tea with fresh ginger and honey.', 3),
   ('smoky-pineapple-sour',      'Smoky Pineapple Sour',       'bold-complex',      '🍍', 'Charred pineapple juice with lemon and smoked salt rim.', 4)
 ON CONFLICT (id) DO NOTHING;
+
+-- ─── Service Packages (proposal pricing) ────────────────────────────
+
+CREATE TABLE IF NOT EXISTS service_packages (
+  id SERIAL PRIMARY KEY,
+  slug VARCHAR(100) UNIQUE NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  category VARCHAR(50) NOT NULL CHECK (category IN ('byob', 'hosted')),
+  pricing_type VARCHAR(20) DEFAULT 'flat' CHECK (pricing_type IN ('flat', 'per_guest')),
+  base_rate_3hr NUMERIC(10,2),
+  base_rate_4hr NUMERIC(10,2),
+  extra_hour_rate NUMERIC(10,2),
+  min_guests INTEGER DEFAULT 50,
+  base_rate_3hr_small NUMERIC(10,2),
+  base_rate_4hr_small NUMERIC(10,2),
+  extra_hour_rate_small NUMERIC(10,2),
+  bartenders_included INTEGER DEFAULT 1,
+  guests_per_bartender INTEGER DEFAULT 100,
+  extra_bartender_hourly NUMERIC(10,2) DEFAULT 40,
+  first_bar_fee NUMERIC(10,2) DEFAULT 50,
+  additional_bar_fee NUMERIC(10,2) DEFAULT 100,
+  includes JSONB DEFAULT '[]',
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS update_service_packages_updated_at ON service_packages;
+CREATE TRIGGER update_service_packages_updated_at BEFORE UPDATE ON service_packages
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+INSERT INTO service_packages (slug, name, description, category, pricing_type, base_rate_3hr, base_rate_4hr, extra_hour_rate, min_guests, base_rate_3hr_small, base_rate_4hr_small, extra_hour_rate_small, bartenders_included, includes, sort_order) VALUES
+  ('the-core-reaction', 'The Core Reaction', 'Service-only. Built to flex. Clients provide alcohol and supplies or use the recommended shopping list.', 'byob', 'flat',
+    NULL, 350, 100, NULL, NULL, NULL, NULL, 1,
+    '["Professional bartender","Setup & breakdown","Cooler","Bar tools","Menu planning","Alcohol shopping list","Bespoke menu graphic","$2M liability insurance"]', 1),
+  ('the-doctors-orders', 'The Doctor''s Orders', 'Our signature Mixology Lab. Hands-on cocktail creation session excluding liquor.', 'byob', 'flat',
+    300, NULL, 100, NULL, NULL, NULL, NULL, 1,
+    '["Professional instructor","Setup & breakdown","Cooler","Menu planning","Shopping list","Menu graphic","Digital curriculum","$2M liability insurance"]', 2),
+  ('the-base-compound', 'The Base Compound', 'Minimal inputs. Maximum efficiency. Two signature cocktails, basic beer/wine selection, and essential service.', 'hosted', 'per_guest',
+    NULL, 18, 5, 50, NULL, 23, 5, 1,
+    '["Two signature cocktails","Miller Lite, Michelob Ultra","One red wine, one white wine","Bottled water","Up to 4 hours service","One bartender per 100 guests","Setup & breakdown","Cooler","Custom menu","$2M liability insurance"]', 3),
+  ('the-midrange-reaction', 'The Midrange Reaction', 'More variables. Still controlled. Expanded spirit and mixer selection ideal for weddings and milestone events.', 'hosted', 'per_guest',
+    NULL, 22, 6, 50, NULL, 27, 6, 1,
+    '["Six spirits (Svedka, New Amsterdam, Bacardi, Jim Beam, Margaritaville, Dewar''s)","Two beers","Two wines","Three soft drink mixers","Three juices","Bottled water","Full service package"]', 4),
+  ('the-enhanced-solution', 'The Enhanced Solution', 'Refined inputs. Amplified output. Premium spirits with expanded modifiers.', 'hosted', 'per_guest',
+    NULL, 28, 8, 50, NULL, 33, 8, 1,
+    '["Six premium spirits","Three beers","Four wines","Sparkling wine","Expanded mixers/modifiers including bitters and citrus juices","Full service"]', 5),
+  ('formula-no-5', 'Formula No. 5', 'Precision over excess. High-end setup emphasizing quality without overstock.', 'hosted', 'per_guest',
+    NULL, 33, 9, 50, NULL, 39, 9, 1,
+    '["Five premium spirits","One beer","Two wines","Essential mixers","Bitters","Full service package"]', 6),
+  ('the-grand-experiment', 'The Grand Experiment', 'No corners cut. No questions unanswered. Apex formula with celebrated spirits and comprehensive bar experience.', 'hosted', 'per_guest',
+    NULL, 40, 11.25, 50, NULL, 46, 11.25, 1,
+    '["Nine spirits","Three beers","Four premium wines","Sparkling wine","Craft beer selection","Full mixer/modifier range including fresh citrus","Complete service"]', 7),
+  ('the-clear-reaction', 'The Clear Reaction', 'Mocktail Bar. Perfect for corporate, baby showers, religious/cultural events, or sober-curious crowds.', 'hosted', 'per_guest',
+    NULL, 14, 4, 50, NULL, 18, 4, 1,
+    '["3-4 signature mocktail recipes","All mixers, garnishes, syrups","Premium presentation","Full bar setup","Professional bartender service","$2M liability insurance"]', 8),
+  ('the-primary-culture', 'The Primary Culture', 'Bare Bones. Fully Functional. A foundational option suitable for casual gatherings.', 'hosted', 'per_guest',
+    NULL, 12, 4, 50, NULL, 17, 4, 1,
+    '["Miller Lite, Michelob Ultra","One red wine, one white wine","Infused water station","4 hours service","Professional bartender","Setup & breakdown","Cooler","Custom menu","$2M liability insurance"]', 9),
+  ('the-refined-reaction', 'The Refined Reaction', 'A polished experiment in crowd-pleasing sophistication. Elevated quality for weddings and milestone events.', 'hosted', 'per_guest',
+    NULL, 14, 5, 50, NULL, 19, 5, 1,
+    '["Stella Artois, Corona Extra","One red, one white, plus sparkling wine","Bottled water","4 hours service","Professional bartender","Setup & breakdown","Cooler","Custom menu","$2M liability insurance"]', 10),
+  ('the-carbon-suspension', 'The Carbon Suspension', 'Expanded range. Zero pretense. Variety-focused without formality, ideal for larger crowds.', 'hosted', 'per_guest',
+    NULL, 15, 5.75, 50, NULL, 20, 5.75, 1,
+    '["Miller Lite, Michelob Ultra, Yuengling Lager","Rotating seltzer flavors","Two reds, two whites","Bottled water","4 hours service","Professional bartender","Setup & breakdown","Cooler","Custom menu","$2M liability insurance"]', 11),
+  ('the-cultivated-complex', 'The Cultivated Complex', 'Curated elegance. Lab-certified crowd-pleaser. Elevated selections with craft variety.', 'hosted', 'per_guest',
+    NULL, 17, 6.25, 50, NULL, 22, 6.25, 1,
+    '["Miller Lite, Michelob Ultra, Yuengling Lager","Two rotating craft/local beers","Seasonal seltzer","Two premium reds, two premium whites","Sparkling wine","Bottled water","4 hours service","Professional bartender","Setup & breakdown","Cooler","Custom menu","$2M liability insurance"]', 12)
+ON CONFLICT (slug) DO NOTHING;
+
+-- ─── Service Add-ons ────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS service_addons (
+  id SERIAL PRIMARY KEY,
+  slug VARCHAR(100) UNIQUE NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  billing_type VARCHAR(20) NOT NULL CHECK (billing_type IN ('per_guest', 'per_hour', 'flat', 'per_guest_timed')),
+  rate NUMERIC(10,2) NOT NULL,
+  extra_hour_rate NUMERIC(10,2),
+  applies_to VARCHAR(20) DEFAULT 'all' CHECK (applies_to IN ('byob', 'hosted', 'all')),
+  is_default BOOLEAN DEFAULT false,
+  sort_order INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS update_service_addons_updated_at ON service_addons;
+CREATE TRIGGER update_service_addons_updated_at BEFORE UPDATE ON service_addons
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_hour_rate, applies_to, sort_order) VALUES
+  ('the-foundation', 'The Foundation', 'Ice delivery, bottled water service, premium cups, napkins, stir sticks. No mixers, no garnishes.', 'per_guest_timed', 3.00, 0.75, 'byob', 1),
+  ('the-formula', 'The Formula', 'Everything in The Foundation plus mixers for signature cocktails, basic garnishes, simple syrup, bitters.', 'per_guest_timed', 5.50, 1.25, 'byob', 2),
+  ('the-full-compound', 'The Full Compound', 'Everything in The Foundation plus complete mixer selection, premium garnish package, simple syrup, bitters.', 'per_guest_timed', 8.00, 2.00, 'byob', 3),
+  ('ice-delivery-only', 'Ice Delivery Only', 'Ice delivery for the event.', 'per_guest', 2.00, NULL, 'byob', 4),
+  ('cups-disposables-only', 'Cups & Disposables Only', 'Premium cups, napkins, stir sticks, straws.', 'per_guest', 1.50, NULL, 'byob', 5),
+  ('bottled-water-only', 'Bottled Water Only', 'Bottled water service.', 'per_guest', 0.50, NULL, 'byob', 6),
+  ('signature-mixers-only', 'Signature Mixers Only', 'Mixers for signature cocktails only. Does not include Foundation items.', 'per_guest', 2.00, NULL, 'byob', 7),
+  ('full-mixers-only', 'Full Mixers Only', 'Complete mixer selection. Does not include Foundation items.', 'per_guest', 4.50, NULL, 'byob', 8),
+  ('garnish-package-only', 'Garnish Package Only', 'Premium garnish package (lemons, limes, oranges, cherries, olives).', 'flat', 50.00, NULL, 'byob', 9),
+  ('champagne-toast', 'Champagne Toast', 'Champagne toast for all guests.', 'per_guest', 2.50, NULL, 'all', 10),
+  ('pre-batched-mocktail', 'Single Pre-Batched Mocktail Add-On', 'One pre-batched mocktail option for all guests.', 'per_guest', 1.50, NULL, 'all', 11),
+  ('soft-drink-addon', 'Soft Drink Add-On', 'Soft drinks for all guests.', 'per_guest', 3.00, NULL, 'all', 12),
+  ('mocktail-bar', 'Mocktail Bar', 'Full mocktail bar with signature recipes.', 'per_guest_timed', 7.50, 2.00, 'all', 13),
+  ('banquet-server', 'Banquet Server', 'Professional banquet server.', 'per_hour', 75.00, NULL, 'all', 14),
+  ('flavor-blaster-rental', 'Flavor Blaster Rental', 'Flavor blaster equipment rental.', 'flat', 150.00, NULL, 'all', 15),
+  ('handcrafted-syrups', 'Handcrafted Syrups', 'Single 750ml bottle of handcrafted syrup.', 'flat', 30.00, NULL, 'all', 16),
+  ('handcrafted-syrups-3pack', 'Handcrafted Syrups 3-Pack', 'Three 750ml bottles of handcrafted syrups.', 'flat', 75.00, NULL, 'all', 17),
+  ('parking-fee', 'Parking Fee', 'Parking fee per bartender.', 'flat', 20.00, NULL, 'all', 18)
+ON CONFLICT (slug) DO NOTHING;
+
+-- ─── Clients ────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS clients (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  email VARCHAR(255),
+  phone VARCHAR(50),
+  source VARCHAR(50) DEFAULT 'direct' CHECK (source IN ('direct', 'thumbtack', 'referral', 'website')),
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS update_clients_updated_at ON clients;
+CREATE TRIGGER update_clients_updated_at BEFORE UPDATE ON clients
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ─── Proposals ──────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS proposals (
+  id SERIAL PRIMARY KEY,
+  token UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  event_name VARCHAR(255),
+  event_date DATE,
+  event_start_time VARCHAR(20),
+  event_duration_hours NUMERIC(4,1) NOT NULL DEFAULT 4,
+  event_location TEXT,
+  guest_count INTEGER NOT NULL DEFAULT 50,
+  package_id INTEGER REFERENCES service_packages(id),
+  num_bars INTEGER DEFAULT 1,
+  num_bartenders INTEGER,
+  pricing_snapshot JSONB NOT NULL DEFAULT '{}',
+  total_price NUMERIC(10,2),
+  status VARCHAR(30) DEFAULT 'draft'
+    CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','confirmed')),
+  last_viewed_at TIMESTAMPTZ,
+  view_count INTEGER DEFAULT 0,
+  admin_notes TEXT,
+  created_by INTEGER REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS update_proposals_updated_at ON proposals;
+CREATE TRIGGER update_proposals_updated_at BEFORE UPDATE ON proposals
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ─── Proposal Add-ons ───────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS proposal_addons (
+  id SERIAL PRIMARY KEY,
+  proposal_id INTEGER REFERENCES proposals(id) ON DELETE CASCADE,
+  addon_id INTEGER REFERENCES service_addons(id),
+  addon_name VARCHAR(255),
+  billing_type VARCHAR(20),
+  rate NUMERIC(10,2),
+  quantity INTEGER,
+  line_total NUMERIC(10,2),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(proposal_id, addon_id)
+);
+
+-- ─── Proposal Activity Log ─────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS proposal_activity_log (
+  id SERIAL PRIMARY KEY,
+  proposal_id INTEGER REFERENCES proposals(id) ON DELETE CASCADE,
+  action VARCHAR(50) NOT NULL,
+  actor_type VARCHAR(20) DEFAULT 'system',
+  actor_id INTEGER,
+  details JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);

@@ -27,6 +27,11 @@ import DrinkPlansDashboard from './pages/admin/DrinkPlansDashboard';
 import DrinkPlanDetail from './pages/admin/DrinkPlanDetail';
 import CocktailMenuDashboard from './pages/admin/CocktailMenuDashboard';
 import PotionPlanningLab from './pages/plan/PotionPlanningLab';
+import ProposalsDashboard from './pages/admin/ProposalsDashboard';
+import ProposalCreate from './pages/admin/ProposalCreate';
+import ProposalDetail from './pages/admin/ProposalDetail';
+import ClientDetail from './pages/admin/ClientDetail';
+import ProposalView from './pages/proposal/ProposalView';
 
 /** Determine where a logged-in user should go based on their role and status */
 function getHomePath(user) {
@@ -106,8 +111,9 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/register" replace />} />
-      {/* Public client questionnaire (no auth) */}
+      {/* Public pages (no auth) */}
       <Route path="/plan/:token" element={<PotionPlanningLab />} />
+      <Route path="/proposal/:token" element={<ProposalView />} />
 
       <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
       <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
@@ -139,8 +145,12 @@ function AppRoutes() {
         <Route path="drink-plans/:id" element={<DrinkPlanDetail />} />
         <Route path="cocktail-menu" element={<Navigate to="/admin/drink-menu" replace />} />
         <Route path="drink-menu" element={<CocktailMenuDashboard />} />
+        <Route path="proposals" element={<ProposalsDashboard />} />
+        <Route path="proposals/new" element={<ProposalCreate />} />
+        <Route path="proposals/:id" element={<ProposalDetail />} />
         <Route path="events" element={<EventsDashboard />} />
         <Route path="clients" element={<ClientsDashboard />} />
+        <Route path="clients/:id" element={<ClientDetail />} />
         <Route path="financials" element={<FinancialsDashboard />} />
         <Route path="settings" element={<SettingsDashboard />} />
       </Route>
