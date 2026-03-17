@@ -4,10 +4,9 @@ const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { isValidUpload } = require('../utils/fileValidation');
+const { uploadFile } = require('../utils/storage');
 
 const router = express.Router();
-
-const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || './server/uploads');
 
 // Get contractor profile (falls back to application data for auto-fill if no profile exists)
 router.get('/', auth, async (req, res) => {
@@ -81,7 +80,7 @@ router.post('/', auth, async (req, res) => {
       if (!isValidUpload(file)) return res.status(400).json({ error: 'Invalid file type. Use PDF, JPEG, or PNG only.' });
       const ext = path.extname(file.name);
       const filename = `${req.user.id}_alcohol_${uuidv4()}${ext}`;
-      await file.mv(path.join(UPLOAD_DIR, filename));
+      await uploadFile(file.data, filename);
       alcohol_cert_url = `/files/${filename}`;
       alcohol_cert_name = file.name;
     }
@@ -91,7 +90,7 @@ router.post('/', auth, async (req, res) => {
       if (!isValidUpload(file)) return res.status(400).json({ error: 'Invalid file type. Use PDF, JPEG, or PNG only.' });
       const ext = path.extname(file.name);
       const filename = `${req.user.id}_resume_${uuidv4()}${ext}`;
-      await file.mv(path.join(UPLOAD_DIR, filename));
+      await uploadFile(file.data, filename);
       resume_url = `/files/${filename}`;
       resume_name = file.name;
     }
@@ -101,7 +100,7 @@ router.post('/', auth, async (req, res) => {
       if (!isValidUpload(file)) return res.status(400).json({ error: 'Invalid file type. Use JPEG or PNG only.' });
       const ext = path.extname(file.name);
       const filename = `${req.user.id}_headshot_${uuidv4()}${ext}`;
-      await file.mv(path.join(UPLOAD_DIR, filename));
+      await uploadFile(file.data, filename);
       headshot_url = `/files/${filename}`;
       headshot_name = file.name;
     }

@@ -4,9 +4,9 @@ const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { isValidUpload } = require('../utils/fileValidation');
+const { uploadFile } = require('../utils/storage');
 
 const router = express.Router();
-const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || './server/uploads');
 
 // Get current user's application
 router.get('/', auth, async (req, res) => {
@@ -77,7 +77,7 @@ router.post('/', auth, async (req, res) => {
       if (!isValidUpload(file)) return res.status(400).json({ error: 'Invalid resume file type. Use PDF, JPEG, or PNG only.' });
       const ext = path.extname(file.name);
       const filename = `${req.user.id}_app_resume_${uuidv4()}${ext}`;
-      await file.mv(path.join(UPLOAD_DIR, filename));
+      await uploadFile(file.data, filename);
       resume_url = `/files/${filename}`;
       resume_name = file.name;
     }
@@ -87,7 +87,7 @@ router.post('/', auth, async (req, res) => {
       if (!isValidUpload(file)) return res.status(400).json({ error: 'Invalid headshot file type. Use JPEG or PNG only.' });
       const ext = path.extname(file.name);
       const filename = `${req.user.id}_headshot_${uuidv4()}${ext}`;
-      await file.mv(path.join(UPLOAD_DIR, filename));
+      await uploadFile(file.data, filename);
       headshot_url = `/files/${filename}`;
       headshot_name = file.name;
     }
@@ -97,7 +97,7 @@ router.post('/', auth, async (req, res) => {
       if (!isValidUpload(file)) return res.status(400).json({ error: 'Invalid BASSET cert file type. Use PDF, JPEG, or PNG only.' });
       const ext = path.extname(file.name);
       const filename = `${req.user.id}_basset_${uuidv4()}${ext}`;
-      await file.mv(path.join(UPLOAD_DIR, filename));
+      await uploadFile(file.data, filename);
       basset_url = `/files/${filename}`;
       basset_name = file.name;
     }

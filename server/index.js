@@ -4,14 +4,13 @@ const cors = require('cors');
 const helmet = require('helmet');
 const fileUpload = require('express-fileupload');
 const path = require('path');
-const fs = require('fs');
 const { initDb } = require('./db');
 const { auth } = require('./middleware/auth');
+const { getSignedUrl } = require('./utils/storage');
 
 const app = express();
 app.set('trust proxy', 1); // Required for Render/Heroku reverse proxies (rate limiter, IP detection)
 const PORT = process.env.PORT || 5000;
-const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || './server/uploads');
 
 // Security headers (CSP disabled — React inline styles require careful CSP tuning)
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
@@ -30,17 +29,19 @@ app.use(fileUpload({
 }));
 
 // Protected file download — admin and managers only
-app.get('/api/files/:filename', auth, (req, res) => {
+app.get('/api/files/:filename', auth, async (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') {
     return res.status(403).json({ error: 'Access denied' });
   }
   // path.basename strips any directory traversal attempts (e.g. "../../etc/passwd")
   const filename = path.basename(req.params.filename);
-  const filepath = path.join(UPLOAD_DIR, filename);
-  if (!fs.existsSync(filepath)) {
-    return res.status(404).json({ error: 'File not found' });
+  try {
+    const url = await getSignedUrl(filename);
+    res.redirect(url);
+  } catch (err) {
+    console.error('File download error:', err);
+    res.status(404).json({ error: 'File not found' });
   }
-  res.sendFile(filepath);
 });
 
 // Routes
@@ -63,8 +64,6 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
 async function start() {
   try {
-    // Ensure uploads directory exists before accepting any requests
-    if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
     await initDb();
     app.listen(PORT, () => console.log(`✓ Server running on port ${PORT}`));
   } catch (err) {

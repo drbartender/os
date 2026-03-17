@@ -4,9 +4,9 @@ const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { isValidUpload } = require('../utils/fileValidation');
+const { uploadFile } = require('../utils/storage');
 
 const router = express.Router();
-const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || './server/uploads');
 
 // Get payment profile
 router.get('/', auth, async (req, res) => {
@@ -38,8 +38,7 @@ router.post('/', auth, async (req, res) => {
       if (!isValidUpload(file)) return res.status(400).json({ error: 'Invalid file type. Use PDF, JPEG, or PNG only.' });
       const ext = path.extname(file.name);
       const filename = `${req.user.id}_w9_${uuidv4()}${ext}`;
-      const filepath = path.join(UPLOAD_DIR, filename);
-      await file.mv(filepath);
+      await uploadFile(file.data, filename);
       w9_url = `/files/${filename}`;
       w9_name = file.name;
     } else if (existing.rows[0]?.w9_file_url) {
