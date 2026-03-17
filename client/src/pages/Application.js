@@ -31,7 +31,7 @@ const EQUIPMENT = [
 
 export default function Application() {
   const navigate = useNavigate();
-  const { user, login } = useAuth();
+  const { user, login, logout } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [files, setFiles] = useState({ resume: null, headshot: null, basset: null });
@@ -141,6 +141,7 @@ export default function Application() {
         <BrandLogo />
         <div className="header-actions">
           <span className="header-user">{user?.email}</span>
+          <button className="btn btn-secondary btn-sm" onClick={() => { logout(); navigate('/login'); }}>Sign Out</button>
         </div>
       </header>
 

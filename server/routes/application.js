@@ -109,7 +109,7 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ error: 'Please upload your BASSET / alcohol certification.' });
     }
 
-    const toBool = v => v === 'true' || v === true;
+    const toBool = v => v === 'true' || v === true || v === 'Yes';
 
     await pool.query(
       `INSERT INTO applications (
