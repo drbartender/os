@@ -167,6 +167,7 @@ export default function DrinkPlansDashboard() {
           <p className="text-muted">No drink plans yet. Create one to get started!</p>
         </div>
       ) : (
+        <div className="table-wrap">
         <table className="admin-table">
           <thead>
             <tr>
@@ -205,6 +206,7 @@ export default function DrinkPlansDashboard() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

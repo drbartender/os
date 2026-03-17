@@ -11,6 +11,7 @@ function slugify(str) {
 
 function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCancelEdit, onSaveEdit, onToggleActive, onDelete, onEditFormChange, withSpirit = false }) {
   return (
+    <div className="table-wrap">
     <table className="data-table">
       <thead>
         <tr>
@@ -68,7 +69,7 @@ function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCa
               <>
                 <td>{c.emoji}</td>
                 <td><strong>{c.name}</strong></td>
-                <td className="text-muted text-small">{c.description || '—'}</td>
+                <td className="text-muted text-small desc-cell">{c.description || '—'}</td>
                 {withSpirit && <td className="text-muted text-small">{c.base_spirit || '—'}</td>}
                 <td className="text-muted text-small">{c.category_label || c.category_id || '—'}</td>
                 <td>{c.sort_order}</td>
@@ -95,11 +96,13 @@ function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCa
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
 
 function CategoryTable({ categories, drinkCounts, editingId, editForm, onStartEdit, onCancelEdit, onSaveEdit, onDelete, onEditFormChange }) {
   return (
+    <div className="table-wrap">
     <table className="data-table">
       <thead>
         <tr>
@@ -151,6 +154,7 @@ function CategoryTable({ categories, drinkCounts, editingId, editForm, onStartEd
         })}
       </tbody>
     </table>
+    </div>
   );
 }
 
@@ -416,7 +420,7 @@ export default function CocktailMenuDashboard() {
   const activeMocktails = mocktails.filter(m => m.is_active).length;
 
   return (
-    <div className="page-container">
+    <div className="page-container wide">
       {/* ── Header ── */}
       <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '1rem' }}>
         <div>

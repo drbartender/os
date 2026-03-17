@@ -882,14 +882,21 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   flex-shrink: 0;
 }
 
-/* Admin table */
+/* Admin table — wrapper handles overflow scroll on small screens */
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-dark);
+  box-shadow: var(--shadow);
+}
+
 .admin-table,
 .data-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.875rem;
-  border-radius: var(--radius-lg);
-  overflow: hidden;
+  min-width: 600px;
 }
 
 .admin-table th,
@@ -930,6 +937,16 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
 .admin-table .text-muted,
 .data-table .text-muted {
   color: var(--warm-brown) !important;
+}
+
+/* Description cells — clamp to 2 lines so they don't dominate the table */
+.admin-table td.desc-cell,
+.data-table td.desc-cell {
+  max-width: 220px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 /* Completion page */
