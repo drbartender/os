@@ -102,6 +102,11 @@ p:last-child { margin-bottom: 0; }
 .card h3,
 .card h4 { color: var(--deep-brown); }
 
+/* Text-muted inside parchment cards — warm brown for contrast */
+.card .text-muted {
+  color: var(--warm-brown);
+}
+
 /* Secondary buttons inside parchment cards need dark text */
 .card .btn-secondary {
   color: var(--deep-brown);
@@ -732,7 +737,7 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   font-family: var(--font-body);
   font-size: 0.85rem;
   font-weight: 600;
-  color: var(--deep-brown);
+  color: var(--parchment);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   border-bottom: 2px solid transparent;
@@ -741,7 +746,7 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   transition: color 0.15s, border-color 0.15s;
 }
 
-.tab-btn:hover { color: var(--amber); }
+.tab-btn:hover { color: var(--amber-light); }
 .tab-btn.active { color: var(--amber); border-bottom-color: var(--amber); }
 
 /* Field Guide sections — framed vintage */
@@ -878,32 +883,54 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
 }
 
 /* Admin table */
-.admin-table {
+.admin-table,
+.data-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.875rem;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
 }
 
-.admin-table th {
+.admin-table th,
+.data-table th {
   text-align: left;
   padding: 0.65rem 1rem;
-  background: var(--parchment);
+  background: var(--parchment-dark);
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--warm-brown);
-  border-bottom: 2px solid var(--border);
+  border-bottom: 2px solid var(--border-dark);
   white-space: nowrap;
 }
 
-.admin-table td {
+.admin-table td,
+.data-table td {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
   color: var(--deep-brown);
+  background: var(--card-bg);
+  vertical-align: middle;
 }
 
-.admin-table tr:hover td { background: var(--parchment); cursor: pointer; }
+.admin-table tr:last-child td,
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-table tr:hover td,
+.data-table tr:hover td {
+  background: var(--parchment);
+  cursor: pointer;
+}
+
+/* Text-muted inside tables — warm brown on parchment bg */
+.admin-table .text-muted,
+.data-table .text-muted {
+  color: var(--warm-brown) !important;
+}
 
 /* Completion page */
 .completion-icon {

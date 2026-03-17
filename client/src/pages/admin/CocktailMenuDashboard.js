@@ -420,7 +420,7 @@ export default function CocktailMenuDashboard() {
       {/* ── Header ── */}
       <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>
+          <h2 style={{ fontFamily: 'var(--font-display)', margin: 0 }}>
             Drink Menu
           </h2>
           <p className="text-muted text-small mt-1">
