@@ -61,6 +61,48 @@ router.get('/categories', async (req, res) => {
   }
 });
 
+// ─── Admin — bulk reorder ─────────────────────────────────────────
+
+/** POST /api/cocktails/reorder — bulk update sort_order for cocktails */
+router.post('/reorder', auth, requireAdmin, async (req, res) => {
+  const { items } = req.body; // [{ id, sort_order }, ...]
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required.' });
+  try {
+    const ids = items.map(x => x.id);
+    const orders = items.map(x => x.sort_order);
+    await pool.query(
+      `UPDATE cocktails c SET sort_order = v.so
+       FROM (SELECT unnest($1::text[]) AS id, unnest($2::int[]) AS so) AS v
+       WHERE c.id = v.id`,
+      [ids, orders]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** POST /api/cocktails/categories/reorder — bulk update sort_order for categories */
+router.post('/categories/reorder', auth, requireAdmin, async (req, res) => {
+  const { items } = req.body;
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required.' });
+  try {
+    const ids = items.map(x => x.id);
+    const orders = items.map(x => x.sort_order);
+    await pool.query(
+      `UPDATE cocktail_categories c SET sort_order = v.so
+       FROM (SELECT unnest($1::text[]) AS id, unnest($2::int[]) AS so) AS v
+       WHERE c.id = v.id`,
+      [ids, orders]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ─── Admin — category management ─────────────────────────────────
 
 /** POST /api/cocktails/categories — create category */

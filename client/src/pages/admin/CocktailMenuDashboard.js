@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../utils/api';
 
 const SPIRIT_OPTIONS = ['Vodka', 'Gin', 'Rum', 'Tequila', 'Whiskey', 'Scotch', 'Bourbon', 'Mezcal', 'Cognac', 'Amaretto', 'Aperol', 'Other'];
@@ -7,177 +7,241 @@ function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-// ─── Shared sub-components ──────────────────────────────────────────────────
+// ─── DrinkTable ───────────────────────────────────────────────────────────────
 
-function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCancelEdit, onSaveEdit, onToggleActive, onDelete, onEditFormChange, withSpirit = false }) {
+function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCancelEdit, onSaveEdit, onToggleActive, onEditFormChange, withSpirit = false, onReorder }) {
+  const dragItem = useRef(null);
+  const dragOverItem = useRef(null);
+  const [dragIndex, setDragIndex] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
+
+  const handleDragStart = (e, index) => {
+    dragItem.current = index;
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnter = (index) => {
+    dragOverItem.current = index;
+    setDragOverIndex(index);
+  };
+
+  const handleDragEnd = () => {
+    const from = dragItem.current;
+    const to = dragOverItem.current;
+    setDragIndex(null);
+    setDragOverIndex(null);
+    dragItem.current = null;
+    dragOverItem.current = null;
+    if (from === null || to === null || from === to) return;
+    const reordered = [...drinks];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(to, 0, moved);
+    onReorder(reordered.map((d, i) => ({ id: d.id, sort_order: i })));
+  };
+
   return (
     <div className="table-wrap">
-    <table className="data-table">
-      <thead>
-        <tr>
-          <th>Emoji</th>
-          <th>Name</th>
-          <th>Description</th>
-          {withSpirit && <th>Spirit</th>}
-          <th>Category</th>
-          <th>Order</th>
-          <th>Active</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {drinks.map(c => (
-          <tr key={c.id} style={{ opacity: c.is_active ? 1 : 0.5 }}>
-            {editingId === c.id ? (
-              <>
-                <td><input className="form-input" style={{ width: '60px' }} value={editForm.emoji}
-                  onChange={e => onEditFormChange({ emoji: e.target.value })} /></td>
-                <td><input className="form-input" value={editForm.name}
-                  onChange={e => onEditFormChange({ name: e.target.value })} /></td>
-                <td><input className="form-input" value={editForm.description}
-                  onChange={e => onEditFormChange({ description: e.target.value })} /></td>
-                {withSpirit && (
-                  <td>
-                    <select className="form-input" style={{ width: '110px' }} value={editForm.base_spirit}
-                      onChange={e => onEditFormChange({ base_spirit: e.target.value })}>
-                      <option value="">—</option>
-                      {SPIRIT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </td>
-                )}
-                <td>
-                  <select className="form-input" style={{ width: '120px' }} value={editForm.category_id}
-                    onChange={e => onEditFormChange({ category_id: e.target.value })}>
-                    <option value="">— none —</option>
-                    {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.label}</option>)}
-                  </select>
-                </td>
-                <td><input className="form-input" type="number" style={{ width: '70px' }} value={editForm.sort_order}
-                  onChange={e => onEditFormChange({ sort_order: parseInt(e.target.value) || 0 })} /></td>
-                <td>
-                  <input type="checkbox" checked={editForm.is_active}
-                    onChange={e => onEditFormChange({ is_active: e.target.checked })} />
-                </td>
-                <td>
-                  <div className="flex gap-1">
-                    <button className="btn btn-sm" onClick={() => onSaveEdit(c.id)}>Save</button>
-                    <button className="btn btn-sm btn-secondary" onClick={onCancelEdit}>Cancel</button>
-                  </div>
-                </td>
-              </>
-            ) : (
-              <>
-                <td>{c.emoji}</td>
-                <td><strong>{c.name}</strong></td>
-                <td className="text-muted text-small desc-cell">{c.description || '—'}</td>
-                {withSpirit && <td className="text-muted text-small">{c.base_spirit || '—'}</td>}
-                <td className="text-muted text-small">{c.category_label || c.category_id || '—'}</td>
-                <td>{c.sort_order}</td>
-                <td>
-                  <button
-                    className={`btn btn-sm ${c.is_active ? 'btn-success' : 'btn-secondary'}`}
-                    onClick={() => onToggleActive(c)}
-                    style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
-                  >
-                    {c.is_active ? 'Active' : 'Inactive'}
-                  </button>
-                </td>
-                <td>
-                  <div className="flex gap-1">
-                    <button className="btn btn-sm btn-secondary" onClick={() => onStartEdit(c)}>Edit</button>
-                    {c.is_active && (
-                      <button className="btn btn-sm btn-danger" onClick={() => onDelete(c.id)}>Deactivate</button>
-                    )}
-                  </div>
-                </td>
-              </>
-            )}
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th style={{ width: '32px' }}></th>
+            <th style={{ width: '44px' }}>Emoji</th>
+            <th>Name</th>
+            <th>Description</th>
+            {withSpirit && <th>Spirit</th>}
+            <th style={{ width: '70px' }}>Active</th>
+            <th style={{ width: '90px' }}></th>
           </tr>
-        ))}
-      </tbody>
-    </table>
-    </div>
-  );
-}
-
-function CategoryTable({ categories, drinkCounts, editingId, editForm, onStartEdit, onCancelEdit, onSaveEdit, onDelete, onEditFormChange }) {
-  return (
-    <div className="table-wrap">
-    <table className="data-table">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Label</th>
-          <th>Sort Order</th>
-          <th>Drinks</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {categories.map(cat => {
-          const count = drinkCounts[cat.id] || 0;
-          return (
-            <tr key={cat.id}>
-              {editingId === cat.id ? (
+        </thead>
+        <tbody>
+          {drinks.map((c, index) => (
+            <tr
+              key={c.id}
+              draggable={editingId !== c.id}
+              onDragStart={(e) => handleDragStart(e, index)}
+              onDragEnter={() => handleDragEnter(index)}
+              onDragEnd={handleDragEnd}
+              onDragOver={(e) => e.preventDefault()}
+              className={[
+                dragIndex === index ? 'row-dragging' : '',
+                dragOverIndex === index && dragIndex !== index ? 'row-drag-over' : '',
+              ].join(' ')}
+              style={{ opacity: c.is_active ? 1 : 0.55 }}
+            >
+              {editingId === c.id ? (
                 <>
-                  <td className="text-muted text-small">{cat.id}</td>
-                  <td><input className="form-input" value={editForm.label}
-                    onChange={e => onEditFormChange({ label: e.target.value })} /></td>
-                  <td><input className="form-input" type="number" style={{ width: '80px' }} value={editForm.sort_order}
-                    onChange={e => onEditFormChange({ sort_order: parseInt(e.target.value) || 0 })} /></td>
-                  <td>{count}</td>
+                  <td></td>
+                  <td><input className="form-input" style={{ width: '52px' }} value={editForm.emoji}
+                    onChange={e => onEditFormChange({ emoji: e.target.value })} /></td>
+                  <td><input className="form-input" value={editForm.name}
+                    onChange={e => onEditFormChange({ name: e.target.value })} /></td>
+                  <td><input className="form-input" value={editForm.description}
+                    onChange={e => onEditFormChange({ description: e.target.value })} /></td>
+                  {withSpirit && (
+                    <td>
+                      <select className="form-input" style={{ minWidth: '110px' }} value={editForm.base_spirit}
+                        onChange={e => onEditFormChange({ base_spirit: e.target.value })}>
+                        <option value="">—</option>
+                        {SPIRIT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </td>
+                  )}
+                  <td>
+                    <input type="checkbox" checked={editForm.is_active}
+                      onChange={e => onEditFormChange({ is_active: e.target.checked })} />
+                  </td>
                   <td>
                     <div className="flex gap-1">
-                      <button className="btn btn-sm" onClick={() => onSaveEdit(cat.id)}>Save</button>
+                      <button className="btn btn-sm" onClick={() => onSaveEdit(c.id)}>Save</button>
                       <button className="btn btn-sm btn-secondary" onClick={onCancelEdit}>Cancel</button>
                     </div>
                   </td>
                 </>
               ) : (
                 <>
-                  <td className="text-muted text-small">{cat.id}</td>
-                  <td><strong>{cat.label}</strong></td>
-                  <td>{cat.sort_order}</td>
-                  <td>{count}</td>
+                  <td className="drag-handle">⠿</td>
+                  <td style={{ fontSize: '1.4rem' }}>{c.emoji}</td>
+                  <td><strong>{c.name}</strong></td>
+                  <td className="text-muted text-small desc-cell">{c.description || '—'}</td>
+                  {withSpirit && <td className="text-muted text-small">{c.base_spirit || '—'}</td>}
                   <td>
-                    <div className="flex gap-1">
-                      <button className="btn btn-sm btn-secondary" onClick={() => onStartEdit(cat)}>Edit</button>
-                      {count === 0 && (
-                        <button className="btn btn-sm btn-danger" onClick={() => onDelete(cat.id)}>Delete</button>
-                      )}
-                    </div>
+                    <button
+                      className={`btn btn-sm ${c.is_active ? 'btn-success' : 'btn-secondary'}`}
+                      onClick={() => onToggleActive(c)}
+                      style={{ minWidth: '42px', fontSize: '0.78rem', padding: '0.25rem 0.6rem' }}
+                    >
+                      {c.is_active ? 'On' : 'Off'}
+                    </button>
+                  </td>
+                  <td>
+                    <button className="btn btn-sm btn-secondary" onClick={() => onStartEdit(c)}>Edit</button>
                   </td>
                 </>
               )}
             </tr>
-          );
-        })}
-      </tbody>
-    </table>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-// ─── Main Component ─────────────────────────────────────────────────────────
+// ─── CategoryTable ────────────────────────────────────────────────────────────
+
+function CategoryTable({ categories, drinkCounts, editingId, editForm, onStartEdit, onCancelEdit, onSaveEdit, onDelete, onEditFormChange, onReorder }) {
+  const dragItem = useRef(null);
+  const dragOverItem = useRef(null);
+  const [dragIndex, setDragIndex] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
+
+  const handleDragStart = (e, index) => {
+    dragItem.current = index;
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnter = (index) => {
+    dragOverItem.current = index;
+    setDragOverIndex(index);
+  };
+
+  const handleDragEnd = () => {
+    const from = dragItem.current;
+    const to = dragOverItem.current;
+    setDragIndex(null);
+    setDragOverIndex(null);
+    dragItem.current = null;
+    dragOverItem.current = null;
+    if (from === null || to === null || from === to) return;
+    const reordered = [...categories];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(to, 0, moved);
+    onReorder(reordered.map((c, i) => ({ id: c.id, sort_order: i })));
+  };
+
+  return (
+    <div className="table-wrap">
+      <table className="data-table">
+        <thead>
+          <tr>
+            <th style={{ width: '32px' }}></th>
+            <th>Category Name</th>
+            <th style={{ width: '80px' }}>Drinks</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {categories.map((cat, index) => {
+            const count = drinkCounts[cat.id] || 0;
+            return (
+              <tr
+                key={cat.id}
+                draggable={editingId !== cat.id}
+                onDragStart={(e) => handleDragStart(e, index)}
+                onDragEnter={() => handleDragEnter(index)}
+                onDragEnd={handleDragEnd}
+                onDragOver={(e) => e.preventDefault()}
+                className={[
+                  dragIndex === index ? 'row-dragging' : '',
+                  dragOverIndex === index && dragIndex !== index ? 'row-drag-over' : '',
+                ].join(' ')}
+              >
+                {editingId === cat.id ? (
+                  <>
+                    <td></td>
+                    <td><input className="form-input" value={editForm.label}
+                      onChange={e => onEditFormChange({ label: e.target.value })} /></td>
+                    <td>{count}</td>
+                    <td>
+                      <div className="flex gap-1">
+                        <button className="btn btn-sm" onClick={() => onSaveEdit(cat.id)}>Save</button>
+                        <button className="btn btn-sm btn-secondary" onClick={onCancelEdit}>Cancel</button>
+                      </div>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="drag-handle">⠿</td>
+                    <td><strong>{cat.label}</strong></td>
+                    <td className="text-muted text-small">{count}</td>
+                    <td>
+                      <div className="flex gap-1">
+                        <button className="btn btn-sm btn-secondary" onClick={() => onStartEdit(cat)}>Edit</button>
+                        {count === 0 && (
+                          <button className="btn btn-sm btn-danger" onClick={() => onDelete(cat.id)}>Delete</button>
+                        )}
+                      </div>
+                    </td>
+                  </>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function CocktailMenuDashboard() {
   // ── Navigation ─────────────────────────────────────────────────
-  const [drinkType, setDrinkType] = useState('cocktails'); // 'cocktails' | 'mocktails'
-  const [subTab, setSubTab] = useState('drinks');           // 'drinks' | 'categories'
+  const [drinkType, setDrinkType] = useState('cocktails');
+  const [subTab, setSubTab] = useState('drinks');
 
-  // ── Cocktail data ───────────────────────────────────────────────
+  // ── Cocktail data ────────────────────────────────────────────────
   const [cocktailCategories, setCocktailCategories] = useState([]);
   const [cocktails, setCocktails] = useState([]);
   const [cocktailsLoading, setCocktailsLoading] = useState(true);
 
-  // Cocktail edit state
   const [editingCocktail, setEditingCocktail] = useState(null);
   const [editCocktailForm, setEditCocktailForm] = useState({});
   const [addCocktailCategory, setAddCocktailCategory] = useState(null);
   const [newCocktailForm, setNewCocktailForm] = useState({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '' });
   const [cocktailError, setCocktailError] = useState('');
 
-  // Cocktail category edit state
   const [editingCocktailCat, setEditingCocktailCat] = useState(null);
   const [editCocktailCatForm, setEditCocktailCatForm] = useState({});
   const [showAddCocktailCat, setShowAddCocktailCat] = useState(false);
@@ -189,21 +253,19 @@ export default function CocktailMenuDashboard() {
   const [mocktails, setMocktails] = useState([]);
   const [mocktailsLoading, setMocktailsLoading] = useState(true);
 
-  // Mocktail edit state
   const [editingMocktail, setEditingMocktail] = useState(null);
   const [editMocktailForm, setEditMocktailForm] = useState({});
   const [addMocktailCategory, setAddMocktailCategory] = useState(null);
   const [newMocktailForm, setNewMocktailForm] = useState({ name: '', emoji: '', description: '', sort_order: '' });
   const [mocktailError, setMocktailError] = useState('');
 
-  // Mocktail category edit state
   const [editingMocktailCat, setEditingMocktailCat] = useState(null);
   const [editMocktailCatForm, setEditMocktailCatForm] = useState({});
   const [showAddMocktailCat, setShowAddMocktailCat] = useState(false);
   const [newMocktailCatForm, setNewMocktailCatForm] = useState({ id: '', label: '', sort_order: '' });
   const [mocktailCatError, setMocktailCatError] = useState('');
 
-  // ── Fetch data ─────────────────────────────────────────────────
+  // ── Fetch ─────────────────────────────────────────────────────────
   const fetchCocktails = useCallback(async () => {
     try {
       const res = await api.get('/cocktails/admin');
@@ -230,7 +292,7 @@ export default function CocktailMenuDashboard() {
 
   useEffect(() => { fetchCocktails(); fetchMocktails(); }, [fetchCocktails, fetchMocktails]);
 
-  // ── Cocktail CRUD ──────────────────────────────────────────────
+  // ── Cocktail CRUD ─────────────────────────────────────────────────
   const saveEditCocktail = async (id) => {
     try {
       const res = await api.put(`/cocktails/${id}`, editCocktailForm);
@@ -242,17 +304,10 @@ export default function CocktailMenuDashboard() {
   };
 
   const toggleCocktailActive = async (c) => {
+    if (c.is_active && !window.confirm('Remove this drink from the client menu?')) return;
     try {
       const res = await api.put(`/cocktails/${c.id}`, { is_active: !c.is_active });
       setCocktails(prev => prev.map(x => x.id === c.id ? { ...x, ...res.data } : x));
-    } catch (err) { console.error(err); }
-  };
-
-  const deactivateCocktail = async (id) => {
-    if (!window.confirm('Deactivate this cocktail?')) return;
-    try {
-      await api.delete(`/cocktails/${id}`);
-      setCocktails(prev => prev.map(c => c.id === id ? { ...c, is_active: false } : c));
     } catch (err) { console.error(err); }
   };
 
@@ -266,7 +321,7 @@ export default function CocktailMenuDashboard() {
         category_id: categoryId,
         emoji: newCocktailForm.emoji.trim() || null,
         description: newCocktailForm.description.trim() || null,
-        sort_order: parseInt(newCocktailForm.sort_order) || 0,
+        sort_order: cocktails.filter(c => c.category_id === categoryId).length,
         base_spirit: newCocktailForm.base_spirit || null,
       });
       setCocktails(prev => [...prev, res.data]);
@@ -276,6 +331,17 @@ export default function CocktailMenuDashboard() {
     } catch (err) {
       setCocktailError(err.response?.data?.error || 'Failed to add cocktail.');
     }
+  };
+
+  const reorderCocktails = async (categoryId, items) => {
+    // Optimistic update
+    setCocktails(prev => {
+      const orderMap = new Map(items.map(({ id, sort_order }) => [id, sort_order]));
+      return prev.map(c => orderMap.has(c.id) ? { ...c, sort_order: orderMap.get(c.id) } : c);
+    });
+    try {
+      await api.post('/cocktails/reorder', { items });
+    } catch (err) { console.error('Reorder failed:', err); }
   };
 
   // Cocktail category CRUD
@@ -305,7 +371,7 @@ export default function CocktailMenuDashboard() {
     try {
       const res = await api.post('/cocktails/categories', {
         id, label: newCocktailCatForm.label.trim(),
-        sort_order: parseInt(newCocktailCatForm.sort_order) || 0,
+        sort_order: cocktailCategories.length,
       });
       setCocktailCategories(prev => [...prev, res.data].sort((a, b) => a.sort_order - b.sort_order));
       setNewCocktailCatForm({ id: '', label: '', sort_order: '' });
@@ -316,7 +382,18 @@ export default function CocktailMenuDashboard() {
     }
   };
 
-  // ── Mocktail CRUD ─────────────────────────────────────────────
+  const reorderCocktailCategories = async (items) => {
+    const orderMap = new Map(items.map(({ id, sort_order }) => [id, sort_order]));
+    setCocktailCategories(prev =>
+      prev.map(c => ({ ...c, sort_order: orderMap.get(c.id) ?? c.sort_order }))
+          .sort((a, b) => a.sort_order - b.sort_order)
+    );
+    try {
+      await api.post('/cocktails/categories/reorder', { items });
+    } catch (err) { console.error('Category reorder failed:', err); }
+  };
+
+  // ── Mocktail CRUD ─────────────────────────────────────────────────
   const saveEditMocktail = async (id) => {
     try {
       const res = await api.put(`/mocktails/${id}`, editMocktailForm);
@@ -328,17 +405,10 @@ export default function CocktailMenuDashboard() {
   };
 
   const toggleMocktailActive = async (m) => {
+    if (m.is_active && !window.confirm('Remove this drink from the client menu?')) return;
     try {
       const res = await api.put(`/mocktails/${m.id}`, { is_active: !m.is_active });
       setMocktails(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x));
-    } catch (err) { console.error(err); }
-  };
-
-  const deactivateMocktail = async (id) => {
-    if (!window.confirm('Deactivate this mocktail?')) return;
-    try {
-      await api.delete(`/mocktails/${id}`);
-      setMocktails(prev => prev.map(m => m.id === id ? { ...m, is_active: false } : m));
     } catch (err) { console.error(err); }
   };
 
@@ -352,7 +422,7 @@ export default function CocktailMenuDashboard() {
         category_id: categoryId,
         emoji: newMocktailForm.emoji.trim() || null,
         description: newMocktailForm.description.trim() || null,
-        sort_order: parseInt(newMocktailForm.sort_order) || 0,
+        sort_order: mocktails.filter(m => m.category_id === categoryId).length,
       });
       setMocktails(prev => [...prev, res.data]);
       setNewMocktailForm({ name: '', emoji: '', description: '', sort_order: '' });
@@ -361,6 +431,16 @@ export default function CocktailMenuDashboard() {
     } catch (err) {
       setMocktailError(err.response?.data?.error || 'Failed to add mocktail.');
     }
+  };
+
+  const reorderMocktails = async (categoryId, items) => {
+    setMocktails(prev => {
+      const orderMap = new Map(items.map(({ id, sort_order }) => [id, sort_order]));
+      return prev.map(m => orderMap.has(m.id) ? { ...m, sort_order: orderMap.get(m.id) } : m);
+    });
+    try {
+      await api.post('/mocktails/reorder', { items });
+    } catch (err) { console.error('Reorder failed:', err); }
   };
 
   // Mocktail category CRUD
@@ -390,7 +470,7 @@ export default function CocktailMenuDashboard() {
     try {
       const res = await api.post('/mocktails/categories', {
         id, label: newMocktailCatForm.label.trim(),
-        sort_order: parseInt(newMocktailCatForm.sort_order) || 0,
+        sort_order: mocktailCategories.length,
       });
       setMocktailCategories(prev => [...prev, res.data].sort((a, b) => a.sort_order - b.sort_order));
       setNewMocktailCatForm({ id: '', label: '', sort_order: '' });
@@ -401,11 +481,25 @@ export default function CocktailMenuDashboard() {
     }
   };
 
-  // ── Helpers ────────────────────────────────────────────────────
-  const switchDrinkType = (type) => {
-    setDrinkType(type);
-    setSubTab('drinks');
+  const reorderMocktailCategories = async (items) => {
+    const orderMap = new Map(items.map(({ id, sort_order }) => [id, sort_order]));
+    setMocktailCategories(prev =>
+      prev.map(c => ({ ...c, sort_order: orderMap.get(c.id) ?? c.sort_order }))
+          .sort((a, b) => a.sort_order - b.sort_order)
+    );
+    try {
+      await api.post('/mocktails/categories/reorder', { items });
+    } catch (err) { console.error('Category reorder failed:', err); }
   };
+
+  // ── Helpers ───────────────────────────────────────────────────────
+  const switchDrinkType = (type) => { setDrinkType(type); setSubTab('drinks'); };
+
+  const sortedCocktailsInCat = (catId) =>
+    cocktails.filter(c => c.category_id === catId).sort((a, b) => a.sort_order - b.sort_order);
+
+  const sortedMocktailsInCat = (catId) =>
+    mocktails.filter(m => m.category_id === catId).sort((a, b) => a.sort_order - b.sort_order);
 
   if (cocktailsLoading && mocktailsLoading) {
     return (
@@ -424,73 +518,45 @@ export default function CocktailMenuDashboard() {
       {/* ── Header ── */}
       <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <h2 style={{ fontFamily: 'var(--font-display)', margin: 0 }}>
-            Drink Menu
-          </h2>
+          <h2 style={{ fontFamily: 'var(--font-display)', margin: 0 }}>Drink Menu</h2>
           <p className="text-muted text-small mt-1">
             {activeCocktails} active cocktails · {activeMocktails} active mocktails
           </p>
         </div>
       </div>
 
-      {/* ── Top-level type tabs ── */}
+      {/* ── Type tabs ── */}
       <div className="tab-nav mb-2">
-        <button
-          className={`tab-btn${isCocktails ? ' active' : ''}`}
-          onClick={() => switchDrinkType('cocktails')}
-        >
+        <button className={`tab-btn${isCocktails ? ' active' : ''}`} onClick={() => switchDrinkType('cocktails')}>
           🍸 Cocktails
         </button>
-        <button
-          className={`tab-btn${!isCocktails ? ' active' : ''}`}
-          onClick={() => switchDrinkType('mocktails')}
-        >
+        <button className={`tab-btn${!isCocktails ? ' active' : ''}`} onClick={() => switchDrinkType('mocktails')}>
           🥤 Mocktails
         </button>
       </div>
 
       {/* ── Sub tabs ── */}
       <div className="tab-nav mb-2" style={{ borderBottom: '1px solid var(--border)', marginTop: '-0.5rem' }}>
-        <button
-          className={`tab-btn${subTab === 'drinks' ? ' active' : ''}`}
-          style={{ fontSize: '0.78rem' }}
-          onClick={() => setSubTab('drinks')}
-        >
-          Drinks
-        </button>
-        <button
-          className={`tab-btn${subTab === 'categories' ? ' active' : ''}`}
-          style={{ fontSize: '0.78rem' }}
-          onClick={() => setSubTab('categories')}
-        >
-          Categories
-        </button>
+        <button className={`tab-btn${subTab === 'drinks' ? ' active' : ''}`} style={{ fontSize: '0.78rem' }}
+          onClick={() => setSubTab('drinks')}>Drinks</button>
+        <button className={`tab-btn${subTab === 'categories' ? ' active' : ''}`} style={{ fontSize: '0.78rem' }}
+          onClick={() => setSubTab('categories')}>Categories</button>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════
-          COCKTAILS
-      ══════════════════════════════════════════════════════════ */}
+      {/* ══ COCKTAILS ══ */}
       {isCocktails && subTab === 'drinks' && (
         <div>
           {cocktailError && <div className="alert alert-error mb-2">{cocktailError}</div>}
           {cocktailCategories.map(cat => {
-            const catDrinks = cocktails.filter(c => c.category_id === cat.id);
+            const catDrinks = sortedCocktailsInCat(cat.id);
             return (
               <div key={cat.id} className="card mb-2">
                 <div className="flex-between mb-1">
-                  <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>
-                    {cat.label}
-                  </h3>
-                  <button
-                    className="btn btn-sm btn-secondary"
-                    onClick={() => {
-                      setAddCocktailCategory(cat.id);
-                      setCocktailError('');
-                      setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '' });
-                    }}
-                  >
-                    + Add Cocktail
-                  </button>
+                  <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>{cat.label}</h3>
+                  <button className="btn btn-sm btn-secondary" onClick={() => {
+                    setAddCocktailCategory(cat.id); setCocktailError('');
+                    setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '' });
+                  }}>+ Add Cocktail</button>
                 </div>
 
                 {addCocktailCategory === cat.id && (
@@ -503,15 +569,11 @@ export default function CocktailMenuDashboard() {
                     </div>
                     <input className="form-input mb-1" placeholder="Description" value={newCocktailForm.description}
                       onChange={e => setNewCocktailForm(p => ({ ...p, description: e.target.value }))} />
-                    <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                      <input className="form-input" type="number" placeholder="Sort" value={newCocktailForm.sort_order}
-                        onChange={e => setNewCocktailForm(p => ({ ...p, sort_order: e.target.value }))} />
-                      <select className="form-input" value={newCocktailForm.base_spirit}
-                        onChange={e => setNewCocktailForm(p => ({ ...p, base_spirit: e.target.value }))}>
-                        <option value="">Base Spirit (optional)</option>
-                        {SPIRIT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
+                    <select className="form-input mb-1" value={newCocktailForm.base_spirit}
+                      onChange={e => setNewCocktailForm(p => ({ ...p, base_spirit: e.target.value }))}>
+                      <option value="">Base Spirit (optional)</option>
+                      {SPIRIT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
                     <div className="flex gap-1">
                       <button className="btn btn-sm" onClick={() => addCocktail(cat.id)}>Save</button>
                       <button className="btn btn-sm btn-secondary" onClick={() => setAddCocktailCategory(null)}>Cancel</button>
@@ -528,16 +590,12 @@ export default function CocktailMenuDashboard() {
                     editingId={editingCocktail}
                     editForm={editCocktailForm}
                     withSpirit
-                    onStartEdit={(c) => {
-                      setEditingCocktail(c.id);
-                      setEditCocktailForm({ name: c.name, emoji: c.emoji || '', description: c.description || '', sort_order: c.sort_order, category_id: c.category_id || '', is_active: c.is_active, base_spirit: c.base_spirit || '' });
-                      setCocktailError('');
-                    }}
+                    onStartEdit={(c) => { setEditingCocktail(c.id); setEditCocktailForm({ name: c.name, emoji: c.emoji || '', description: c.description || '', sort_order: c.sort_order, category_id: c.category_id || '', is_active: c.is_active, base_spirit: c.base_spirit || '' }); setCocktailError(''); }}
                     onCancelEdit={() => { setEditingCocktail(null); setEditCocktailForm({}); }}
                     onSaveEdit={saveEditCocktail}
                     onToggleActive={toggleCocktailActive}
-                    onDelete={deactivateCocktail}
                     onEditFormChange={(patch) => setEditCocktailForm(p => ({ ...p, ...patch }))}
+                    onReorder={(items) => reorderCocktails(cat.id, items)}
                   />
                 )}
               </div>
@@ -555,13 +613,11 @@ export default function CocktailMenuDashboard() {
           {cocktailCatError && <div className="alert alert-error mb-2">{cocktailCatError}</div>}
           {showAddCocktailCat && (
             <div className="card mb-2" style={{ background: 'var(--cream)' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
                 <input className="form-input" placeholder="Label *" value={newCocktailCatForm.label}
                   onChange={e => setNewCocktailCatForm(p => ({ ...p, label: e.target.value }))} />
                 <input className="form-input" placeholder="ID (auto if blank)" value={newCocktailCatForm.id}
                   onChange={e => setNewCocktailCatForm(p => ({ ...p, id: e.target.value }))} />
-                <input className="form-input" type="number" placeholder="Order" value={newCocktailCatForm.sort_order}
-                  onChange={e => setNewCocktailCatForm(p => ({ ...p, sort_order: e.target.value }))} />
               </div>
               <div className="flex gap-1">
                 <button className="btn btn-sm" onClick={addCocktailCat}>Save</button>
@@ -579,34 +635,25 @@ export default function CocktailMenuDashboard() {
             onSaveEdit={saveEditCocktailCat}
             onDelete={deleteCocktailCat}
             onEditFormChange={(patch) => setEditCocktailCatForm(p => ({ ...p, ...patch }))}
+            onReorder={reorderCocktailCategories}
           />
         </div>
       )}
 
-      {/* ══════════════════════════════════════════════════════════
-          MOCKTAILS
-      ══════════════════════════════════════════════════════════ */}
+      {/* ══ MOCKTAILS ══ */}
       {!isCocktails && subTab === 'drinks' && (
         <div>
           {mocktailError && <div className="alert alert-error mb-2">{mocktailError}</div>}
           {mocktailCategories.map(cat => {
-            const catDrinks = mocktails.filter(m => m.category_id === cat.id);
+            const catDrinks = sortedMocktailsInCat(cat.id);
             return (
               <div key={cat.id} className="card mb-2">
                 <div className="flex-between mb-1">
-                  <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>
-                    {cat.label}
-                  </h3>
-                  <button
-                    className="btn btn-sm btn-secondary"
-                    onClick={() => {
-                      setAddMocktailCategory(cat.id);
-                      setMocktailError('');
-                      setNewMocktailForm({ name: '', emoji: '', description: '', sort_order: '' });
-                    }}
-                  >
-                    + Add Mocktail
-                  </button>
+                  <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>{cat.label}</h3>
+                  <button className="btn btn-sm btn-secondary" onClick={() => {
+                    setAddMocktailCategory(cat.id); setMocktailError('');
+                    setNewMocktailForm({ name: '', emoji: '', description: '', sort_order: '' });
+                  }}>+ Add Mocktail</button>
                 </div>
 
                 {addMocktailCategory === cat.id && (
@@ -619,8 +666,6 @@ export default function CocktailMenuDashboard() {
                     </div>
                     <input className="form-input mb-1" placeholder="Description" value={newMocktailForm.description}
                       onChange={e => setNewMocktailForm(p => ({ ...p, description: e.target.value }))} />
-                    <input className="form-input mb-1" type="number" placeholder="Sort order (0)" value={newMocktailForm.sort_order}
-                      onChange={e => setNewMocktailForm(p => ({ ...p, sort_order: e.target.value }))} />
                     <div className="flex gap-1">
                       <button className="btn btn-sm" onClick={() => addMocktail(cat.id)}>Save</button>
                       <button className="btn btn-sm btn-secondary" onClick={() => setAddMocktailCategory(null)}>Cancel</button>
@@ -637,16 +682,12 @@ export default function CocktailMenuDashboard() {
                     editingId={editingMocktail}
                     editForm={editMocktailForm}
                     withSpirit={false}
-                    onStartEdit={(m) => {
-                      setEditingMocktail(m.id);
-                      setEditMocktailForm({ name: m.name, emoji: m.emoji || '', description: m.description || '', sort_order: m.sort_order, category_id: m.category_id || '', is_active: m.is_active });
-                      setMocktailError('');
-                    }}
+                    onStartEdit={(m) => { setEditingMocktail(m.id); setEditMocktailForm({ name: m.name, emoji: m.emoji || '', description: m.description || '', sort_order: m.sort_order, category_id: m.category_id || '', is_active: m.is_active }); setMocktailError(''); }}
                     onCancelEdit={() => { setEditingMocktail(null); setEditMocktailForm({}); }}
                     onSaveEdit={saveEditMocktail}
                     onToggleActive={toggleMocktailActive}
-                    onDelete={deactivateMocktail}
                     onEditFormChange={(patch) => setEditMocktailForm(p => ({ ...p, ...patch }))}
+                    onReorder={(items) => reorderMocktails(cat.id, items)}
                   />
                 )}
               </div>
@@ -654,7 +695,7 @@ export default function CocktailMenuDashboard() {
           })}
           {mocktailCategories.length === 0 && (
             <div className="card">
-              <p className="text-muted">No mocktail categories yet. Add a category first under the Categories sub-tab.</p>
+              <p className="text-muted">No mocktail categories yet. Switch to the Categories tab to add one.</p>
             </div>
           )}
         </div>
@@ -669,13 +710,11 @@ export default function CocktailMenuDashboard() {
           {mocktailCatError && <div className="alert alert-error mb-2">{mocktailCatError}</div>}
           {showAddMocktailCat && (
             <div className="card mb-2" style={{ background: 'var(--cream)' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 80px', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
                 <input className="form-input" placeholder="Label *" value={newMocktailCatForm.label}
                   onChange={e => setNewMocktailCatForm(p => ({ ...p, label: e.target.value }))} />
                 <input className="form-input" placeholder="ID (auto if blank)" value={newMocktailCatForm.id}
                   onChange={e => setNewMocktailCatForm(p => ({ ...p, id: e.target.value }))} />
-                <input className="form-input" type="number" placeholder="Order" value={newMocktailCatForm.sort_order}
-                  onChange={e => setNewMocktailCatForm(p => ({ ...p, sort_order: e.target.value }))} />
               </div>
               <div className="flex gap-1">
                 <button className="btn btn-sm" onClick={addMocktailCat}>Save</button>
@@ -693,6 +732,7 @@ export default function CocktailMenuDashboard() {
             onSaveEdit={saveEditMocktailCat}
             onDelete={deleteMocktailCat}
             onEditFormChange={(patch) => setEditMocktailCatForm(p => ({ ...p, ...patch }))}
+            onReorder={reorderMocktailCategories}
           />
         </div>
       )}

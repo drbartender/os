@@ -949,6 +949,20 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   -webkit-box-orient: vertical;
 }
 
+/* Drag-and-drop table rows */
+.drag-handle {
+  color: var(--border-dark);
+  font-size: 1.1rem;
+  cursor: grab;
+  user-select: none;
+  text-align: center;
+  padding: 0.75rem 0.5rem !important;
+  width: 32px;
+}
+.drag-handle:active { cursor: grabbing; }
+tr.row-dragging td { opacity: 0.35; background: var(--parchment-dark) !important; }
+tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
+
 /* Completion page */
 .completion-icon {
   font-size: 4rem;

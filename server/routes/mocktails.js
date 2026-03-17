@@ -61,6 +61,48 @@ router.get('/categories', async (req, res) => {
   }
 });
 
+// ─── Admin — bulk reorder ─────────────────────────────────────────
+
+/** POST /api/mocktails/reorder — bulk update sort_order for mocktails */
+router.post('/reorder', auth, requireAdmin, async (req, res) => {
+  const { items } = req.body;
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required.' });
+  try {
+    const ids = items.map(x => x.id);
+    const orders = items.map(x => x.sort_order);
+    await pool.query(
+      `UPDATE mocktails m SET sort_order = v.so
+       FROM (SELECT unnest($1::text[]) AS id, unnest($2::int[]) AS so) AS v
+       WHERE m.id = v.id`,
+      [ids, orders]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** POST /api/mocktails/categories/reorder — bulk update sort_order for categories */
+router.post('/categories/reorder', auth, requireAdmin, async (req, res) => {
+  const { items } = req.body;
+  if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required.' });
+  try {
+    const ids = items.map(x => x.id);
+    const orders = items.map(x => x.sort_order);
+    await pool.query(
+      `UPDATE mocktail_categories m SET sort_order = v.so
+       FROM (SELECT unnest($1::text[]) AS id, unnest($2::int[]) AS so) AS v
+       WHERE m.id = v.id`,
+      [ids, orders]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ─── Admin — category management ─────────────────────────────────
 
 /** POST /api/mocktails/categories — create category */
