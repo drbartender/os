@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');
+const { sendEmail } = require('../utils/email');
 
 const router = express.Router();
 
@@ -473,6 +474,36 @@ router.delete('/notes/:noteId', auth, adminOnly, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ─── Test Email ──────────────────────────────────────────────────
+
+router.post('/test-email', auth, adminOnly, async (req, res) => {
+  const { to } = req.body;
+  if (!to) return res.status(400).json({ error: 'Recipient email (to) is required.' });
+
+  try {
+    const result = await sendEmail({
+      to,
+      subject: 'Dr. Bartender - Test Email',
+      html: `
+        <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+          <h1 style="color: #2d1810; text-align: center;">Dr. Bartender</h1>
+          <p style="color: #333; font-size: 16px; text-align: center;">
+            If you're reading this, email sending is working!
+          </p>
+          <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;" />
+          <p style="color: #999; font-size: 12px; text-align: center;">
+            This is a test email from drbartender.com
+          </p>
+        </div>
+      `,
+    });
+    res.json({ success: true, id: result.id });
+  } catch (err) {
+    console.error('Test email failed:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
