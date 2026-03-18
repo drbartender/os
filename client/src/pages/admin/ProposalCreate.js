@@ -95,7 +95,7 @@ export default function ProposalCreate() {
       {error && <div className="card mb-2" style={{ color: '#c0392b', border: '1px solid #c0392b' }}>{error}</div>}
 
       <form onSubmit={handleSubmit}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: '1.5rem', alignItems: 'start' }}>
+        <div className="proposal-layout">
           {/* Left: Form sections */}
           <div>
             {/* Client Info */}

@@ -684,10 +684,35 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   gap: 1rem;
 }
 
+/* Proposal create: main form + sticky pricing sidebar */
+.proposal-layout {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 1.5rem;
+  align-items: start;
+}
+
 @media (max-width: 600px) {
   .two-col { grid-template-columns: 1fr; }
   .card { padding: 1.25rem; }
   .page-container { padding: 1rem 0.75rem 3rem; }
+}
+
+@media (max-width: 900px) {
+  .proposal-layout {
+    grid-template-columns: 1fr;
+  }
+  .proposal-layout > div:last-child {
+    position: static !important;
+  }
+}
+
+/* Hide description column on small screens */
+@media (max-width: 640px) {
+  .data-table .col-desc,
+  .data-table .col-spirit {
+    display: none;
+  }
 }
 
 /* Grid layout for admin */

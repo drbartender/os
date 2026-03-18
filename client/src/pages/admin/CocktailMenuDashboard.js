@@ -48,8 +48,8 @@ function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCa
             <th style={{ width: '32px', padding: '0.65rem 0.25rem' }}></th>
             <th style={{ width: '48px' }}>Emoji</th>
             <th>Name</th>
-            <th>Description</th>
-            {withSpirit && <th style={{ width: '100px' }}>Spirit</th>}
+            <th className="col-desc">Description</th>
+            {withSpirit && <th className="col-spirit" style={{ width: '100px' }}>Spirit</th>}
             <th style={{ width: '60px' }}>Active</th>
             <th style={{ width: '70px' }}></th>
           </tr>
@@ -76,10 +76,10 @@ function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCa
                     onChange={e => onEditFormChange({ emoji: e.target.value })} /></td>
                   <td><input className="form-input" value={editForm.name}
                     onChange={e => onEditFormChange({ name: e.target.value })} /></td>
-                  <td><input className="form-input" value={editForm.description}
+                  <td className="col-desc"><input className="form-input" value={editForm.description}
                     onChange={e => onEditFormChange({ description: e.target.value })} /></td>
                   {withSpirit && (
-                    <td>
+                    <td className="col-spirit">
                       <select className="form-input" style={{ minWidth: '110px' }} value={editForm.base_spirit}
                         onChange={e => onEditFormChange({ base_spirit: e.target.value })}>
                         <option value="">—</option>
@@ -103,8 +103,8 @@ function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCa
                   <td className="drag-handle">⠿</td>
                   <td style={{ fontSize: '1.4rem' }}>{c.emoji}</td>
                   <td><strong>{c.name}</strong></td>
-                  <td className="text-muted text-small"><span className="desc-cell-text">{c.description || '—'}</span></td>
-                  {withSpirit && <td className="text-muted text-small">{c.base_spirit || '—'}</td>}
+                  <td className="col-desc text-muted text-small"><span className="desc-cell-text">{c.description || '—'}</span></td>
+                  {withSpirit && <td className="col-spirit text-muted text-small">{c.base_spirit || '—'}</td>}
                   <td>
                     <button
                       className={`btn btn-sm ${c.is_active ? 'btn-success' : 'btn-secondary'}`}
