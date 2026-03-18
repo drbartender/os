@@ -18,6 +18,15 @@ function formatTime(t) {
   return `${h12}:${mStr} ${ampm}`;
 }
 
+function calcEndTime(startTime, durationHours) {
+  if (!startTime) return '';
+  const [hStr, mStr] = startTime.split(':');
+  const totalMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10) + Math.round(Number(durationHours) * 60);
+  const endH = Math.floor(totalMinutes / 60) % 24;
+  const endM = totalMinutes % 60;
+  return formatTime(`${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`);
+}
+
 export default function ProposalView() {
   const { token } = useParams();
   const [proposal, setProposal] = useState(null);
@@ -66,14 +75,13 @@ export default function ProposalView() {
   const bartenders = snapshot?.staffing?.actual;
 
   // Build clean line items — name + amount, no math
+  // Staffing is folded into the package cost (bartenders scale with guest count, not optional)
   const lineItems = [];
   if (snapshot) {
-    lineItems.push({ label: proposal.package_name, amount: snapshot.package.base_cost });
+    const packageTotal = (snapshot.package.base_cost || 0) + (snapshot.staffing?.total || 0);
+    lineItems.push({ label: proposal.package_name, amount: packageTotal });
     if (snapshot.bar_rental?.total > 0) {
       lineItems.push({ label: 'Bar Rental', amount: snapshot.bar_rental.total });
-    }
-    if (snapshot.staffing?.total > 0) {
-      lineItems.push({ label: 'Additional Staffing', amount: snapshot.staffing.total });
     }
     (snapshot.addons || []).forEach(a => {
       lineItems.push({ label: a.name, amount: a.line_total });
@@ -100,15 +108,13 @@ export default function ProposalView() {
               </div>
             )}
             {proposal.event_start_time && (
-              <div style={styles.detailItem}>
-                <span style={styles.detailLabel}>Start Time</span>
-                <span style={styles.detailValue}>{formatTime(proposal.event_start_time)}</span>
+              <div style={{ ...styles.detailItem, gridColumn: '1 / -1' }}>
+                <span style={styles.detailLabel}>Service Time</span>
+                <span style={styles.detailValue}>
+                  {formatTime(proposal.event_start_time)} – {calcEndTime(proposal.event_start_time, proposal.event_duration_hours)}
+                </span>
               </div>
             )}
-            <div style={styles.detailItem}>
-              <span style={styles.detailLabel}>Duration</span>
-              <span style={styles.detailValue}>{proposal.event_duration_hours} hours</span>
-            </div>
             <div style={styles.detailItem}>
               <span style={styles.detailLabel}>Guests</span>
               <span style={styles.detailValue}>{proposal.guest_count}</span>
