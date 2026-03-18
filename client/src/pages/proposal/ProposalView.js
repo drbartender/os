@@ -6,6 +6,18 @@ const BASE_URL = process.env.REACT_APP_API_URL
   ? `${process.env.REACT_APP_API_URL}/api`
   : '/api';
 
+const fmt = (n) =>
+  `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function formatTime(t) {
+  if (!t) return '';
+  const [hStr, mStr] = t.split(':');
+  const h = parseInt(hStr, 10);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+  return `${h12}:${mStr} ${ampm}`;
+}
+
 export default function ProposalView() {
   const { token } = useParams();
   const [proposal, setProposal] = useState(null);
@@ -51,6 +63,22 @@ export default function ProposalView() {
 
   const snapshot = proposal.pricing_snapshot;
   const includes = proposal.package_includes || [];
+  const bartenders = snapshot?.staffing?.actual;
+
+  // Build clean line items — name + amount, no math
+  const lineItems = [];
+  if (snapshot) {
+    lineItems.push({ label: proposal.package_name, amount: snapshot.package.base_cost });
+    if (snapshot.bar_rental?.total > 0) {
+      lineItems.push({ label: 'Bar Rental', amount: snapshot.bar_rental.total });
+    }
+    if (snapshot.staffing?.total > 0) {
+      lineItems.push({ label: 'Additional Staffing', amount: snapshot.staffing.total });
+    }
+    (snapshot.addons || []).forEach(a => {
+      lineItems.push({ label: a.name, amount: a.line_total });
+    });
+  }
 
   return (
     <div style={styles.page}>
@@ -66,7 +94,7 @@ export default function ProposalView() {
           <h2 style={styles.sectionTitle}>{proposal.event_name || 'Your Event'}</h2>
           <div style={styles.detailGrid}>
             {proposal.event_date && (
-              <div style={styles.detailItem}>
+              <div style={{ ...styles.detailItem, gridColumn: '1 / -1' }}>
                 <span style={styles.detailLabel}>Date</span>
                 <span style={styles.detailValue}>{formatDate(proposal.event_date)}</span>
               </div>
@@ -74,7 +102,7 @@ export default function ProposalView() {
             {proposal.event_start_time && (
               <div style={styles.detailItem}>
                 <span style={styles.detailLabel}>Start Time</span>
-                <span style={styles.detailValue}>{proposal.event_start_time}</span>
+                <span style={styles.detailValue}>{formatTime(proposal.event_start_time)}</span>
               </div>
             )}
             <div style={styles.detailItem}>
@@ -85,8 +113,14 @@ export default function ProposalView() {
               <span style={styles.detailLabel}>Guests</span>
               <span style={styles.detailValue}>{proposal.guest_count}</span>
             </div>
-            {proposal.event_location && (
+            {bartenders != null && (
               <div style={styles.detailItem}>
+                <span style={styles.detailLabel}>Bartenders</span>
+                <span style={styles.detailValue}>{bartenders}</span>
+              </div>
+            )}
+            {proposal.event_location && (
+              <div style={{ ...styles.detailItem, gridColumn: '1 / -1' }}>
                 <span style={styles.detailLabel}>Location</span>
                 <span style={styles.detailValue}>{proposal.event_location}</span>
               </div>
@@ -106,14 +140,33 @@ export default function ProposalView() {
           )}
         </div>
 
-        {/* Total */}
+        {/* Pricing — clean name + amount, no math */}
         <div style={styles.section}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ ...styles.sectionTitle, marginBottom: 0 }}>Event Total</h2>
-            <span style={{ fontSize: '1.6rem', fontWeight: 700, color: '#3a2218', fontFamily: 'Georgia, "Times New Roman", serif' }}>
-              ${Number(snapshot.total).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-          </div>
+          <h2 style={styles.sectionTitle}>Pricing</h2>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <tbody>
+              {lineItems.map((item, i) => (
+                <tr key={i} style={{ borderBottom: '1px solid #ede3d3' }}>
+                  <td style={{ padding: '0.55rem 0', color: '#3a2218', fontSize: '0.95rem' }}>
+                    {item.label}
+                  </td>
+                  <td style={{ padding: '0.55rem 0', textAlign: 'right', color: '#3a2218', fontSize: '0.95rem', fontWeight: 500, whiteSpace: 'nowrap' }}>
+                    {fmt(item.amount)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ borderTop: '2px solid #3a2218' }}>
+                <td style={{ padding: '0.75rem 0', fontWeight: 700, fontSize: '1.1rem', color: '#3a2218', fontFamily: 'Georgia, "Times New Roman", serif' }}>
+                  Total
+                </td>
+                <td style={{ padding: '0.75rem 0', textAlign: 'right', fontWeight: 700, fontSize: '1.1rem', color: '#3a2218', fontFamily: 'Georgia, "Times New Roman", serif' }}>
+                  {snapshot ? fmt(snapshot.total) : '—'}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
 
         {/* Footer */}
