@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import PricingBreakdown from '../../components/PricingBreakdown';
+import LocationInput from '../../components/LocationInput';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
@@ -12,6 +13,25 @@ const STATUS_CLASSES = {
   modified: 'badge-inprogress', accepted: 'badge-approved', deposit_paid: 'badge-approved', confirmed: 'badge-approved',
 };
 
+// Generate 30-minute time slots from 6:00 AM to 11:30 PM
+const TIME_OPTIONS = [];
+for (let h = 6; h < 24; h++) {
+  ['00', '30'].forEach(m => {
+    const val = `${String(h).padStart(2, '0')}:${m}`;
+    const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    TIME_OPTIONS.push({ value: val, label: `${hour12}:${m} ${ampm}` });
+  });
+}
+
+function formatPhone(value) {
+  const digits = value.replace(/\D/g, '').slice(0, 10);
+  if (digits.length === 0) return '';
+  if (digits.length <= 3) return `(${digits}`;
+  if (digits.length <= 6) return `(${digits.slice(0, 3)})${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)})${digits.slice(3, 6)}-${digits.slice(6)}`;
+}
+
 export default function ProposalDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -21,12 +41,96 @@ export default function ProposalDetail() {
   const [savingNotes, setSavingNotes] = useState(false);
   const [copyMessage, setCopyMessage] = useState('');
 
-  useEffect(() => {
-    api.get(`/proposals/${id}`).then(res => {
+  // Edit mode state
+  const [editing, setEditing] = useState(false);
+  const [packages, setPackages] = useState([]);
+  const [addons, setAddons] = useState([]);
+  const [editForm, setEditForm] = useState(null);
+  const [editPreview, setEditPreview] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState('');
+
+  const loadProposal = () => {
+    return api.get(`/proposals/${id}`).then(res => {
       setProposal(res.data);
       setNotes(res.data.admin_notes || '');
     }).catch(() => navigate('/admin/proposals')).finally(() => setLoading(false));
-  }, [id, navigate]);
+  };
+
+  useEffect(() => { loadProposal(); }, [id]); // eslint-disable-line
+
+  // Fetch packages/addons when edit mode is opened
+  useEffect(() => {
+    if (!editing) return;
+    Promise.all([
+      api.get('/proposals/packages'),
+      api.get('/proposals/addons')
+    ]).then(([pkgRes, addonRes]) => {
+      setPackages(pkgRes.data);
+      setAddons(addonRes.data);
+    });
+    // Pre-populate edit form from current proposal
+    if (proposal && !editForm) {
+      const currentAddonIds = (proposal.addons || []).map(a => a.addon_id);
+      setEditForm({
+        event_name: proposal.event_name || '',
+        event_date: proposal.event_date ? proposal.event_date.slice(0, 10) : '',
+        event_start_time: proposal.event_start_time || '',
+        event_duration_hours: Number(proposal.event_duration_hours) || 4,
+        event_location: proposal.event_location || '',
+        guest_count: proposal.guest_count || 50,
+        package_id: proposal.package_id || '',
+        needs_bar: proposal.num_bars > 0,
+        num_bars: proposal.num_bars || 1,
+        addon_ids: currentAddonIds,
+      });
+    }
+  }, [editing]); // eslint-disable-line
+
+  // Live pricing preview in edit mode
+  useEffect(() => {
+    if (!editing || !editForm || !editForm.package_id) { setEditPreview(null); return; }
+    api.post('/proposals/calculate', {
+      package_id: Number(editForm.package_id),
+      guest_count: Number(editForm.guest_count) || 50,
+      duration_hours: Number(editForm.event_duration_hours) || 4,
+      num_bars: editForm.needs_bar ? Number(editForm.num_bars) || 1 : 0,
+      addon_ids: (editForm.addon_ids || []).map(Number)
+    }).then(res => setEditPreview(res.data)).catch(() => setEditPreview(null));
+  }, [editing, editForm?.package_id, editForm?.guest_count, editForm?.event_duration_hours, editForm?.needs_bar, editForm?.num_bars, editForm?.addon_ids]); // eslint-disable-line
+
+  const updateEdit = (field, value) => setEditForm(f => ({ ...f, [field]: value }));
+
+  const toggleEditAddon = (id) => {
+    setEditForm(f => ({
+      ...f,
+      addon_ids: f.addon_ids.includes(id) ? f.addon_ids.filter(a => a !== id) : [...f.addon_ids, id]
+    }));
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editForm.package_id) { setEditError('Please select a package.'); return; }
+    setEditError('');
+    setSaving(true);
+    try {
+      await api.patch(`/proposals/${id}`, {
+        ...editForm,
+        package_id: Number(editForm.package_id),
+        guest_count: Number(editForm.guest_count),
+        event_duration_hours: Number(editForm.event_duration_hours),
+        num_bars: editForm.needs_bar ? Number(editForm.num_bars) || 1 : 0,
+        addon_ids: (editForm.addon_ids || []).map(Number)
+      });
+      setLoading(true);
+      await loadProposal();
+      setEditing(false);
+      setEditForm(null);
+    } catch (err) {
+      setEditError(err.response?.data?.error || 'Failed to save changes.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const copyLink = () => {
     const url = `${window.location.origin}/proposal/${proposal.token}`;
@@ -70,12 +174,22 @@ export default function ProposalDetail() {
   const snapshot = proposal.pricing_snapshot;
   const includes = proposal.package_includes || [];
 
+  // Edit mode — derived state
+  const editSelectedPkg = editForm && packages.find(p => p.id === Number(editForm?.package_id));
+  const isHostedPkg = editSelectedPkg && (editSelectedPkg.pricing_type === 'per_guest' || editSelectedPkg.pricing_type === 'per_guest_timed');
+  const editFilteredAddons = addons.filter(a => {
+    if (a.applies_to !== 'all' && (!editSelectedPkg || a.applies_to !== editSelectedPkg.category)) return false;
+    if (isHostedPkg && /bartender/i.test((a.name || '') + (a.slug || ''))) return false;
+    return true;
+  });
+
   return (
     <div className="page-container wide">
       <div className="flex-between mb-2">
         <h1 style={{ fontFamily: 'var(--font-display)' }}>Proposal #{proposal.id}</h1>
         <div className="flex gap-1">
           <button className="btn btn-secondary" onClick={() => navigate('/admin/proposals')}>Back</button>
+          {!editing && <button className="btn btn-secondary" onClick={() => setEditing(true)}>Edit</button>}
           <button className="btn" onClick={copyLink}>{copyMessage || 'Copy Link'}</button>
         </div>
       </div>
@@ -115,18 +229,118 @@ export default function ProposalDetail() {
             </div>
           </div>
 
-          {/* Event Details */}
-          <div className="card mb-2">
-            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Event</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-              <div><span className="text-muted text-small">Event</span><div>{proposal.event_name || '—'}</div></div>
-              <div><span className="text-muted text-small">Date</span><div>{formatDate(proposal.event_date)}</div></div>
-              <div><span className="text-muted text-small">Start Time</span><div>{proposal.event_start_time || '—'}</div></div>
-              <div><span className="text-muted text-small">Duration</span><div>{proposal.event_duration_hours}hrs</div></div>
-              <div><span className="text-muted text-small">Guests</span><div>{proposal.guest_count}</div></div>
-              <div><span className="text-muted text-small">Location</span><div>{proposal.event_location || '—'}</div></div>
+          {/* Event Details — view or edit */}
+          {editing && editForm ? (
+            <div className="card mb-2">
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Edit Event Details</h3>
+              {editError && <div style={{ color: '#c0392b', marginBottom: '0.75rem', fontSize: '0.9rem' }}>{editError}</div>}
+              <div className="two-col" style={{ gap: '0.75rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Event Name</label>
+                  <input className="form-input" value={editForm.event_name} onChange={e => updateEdit('event_name', e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Event Date</label>
+                  <input className="form-input" type="date" value={editForm.event_date} onChange={e => updateEdit('event_date', e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Start Time</label>
+                  <select className="form-select" value={editForm.event_start_time} onChange={e => updateEdit('event_start_time', e.target.value)}>
+                    <option value="">— Select time —</option>
+                    {TIME_OPTIONS.map(t => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Duration (hours)</label>
+                  <input className="form-input" type="number" min="1" max="12" step="0.5" value={editForm.event_duration_hours} onChange={e => updateEdit('event_duration_hours', e.target.value)} />
+                </div>
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label className="form-label">Location</label>
+                  <LocationInput
+                    value={editForm.event_location}
+                    onChange={val => updateEdit('event_location', val)}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Guest Count</label>
+                  <input className="form-input" type="number" min="1" max="1000" value={editForm.guest_count} onChange={e => updateEdit('guest_count', e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Portable Bar Needed?</label>
+                  <select className="form-select" value={editForm.needs_bar ? 'yes' : 'no'} onChange={e => updateEdit('needs_bar', e.target.value === 'yes')}>
+                    <option value="yes">Yes</option>
+                    <option value="no">No — venue has a bar</option>
+                  </select>
+                </div>
+                {editForm.needs_bar && (
+                  <div className="form-group">
+                    <label className="form-label">Number of Bars</label>
+                    <input className="form-input" type="number" min="1" max="10" value={editForm.num_bars} onChange={e => updateEdit('num_bars', e.target.value)} />
+                  </div>
+                )}
+              </div>
+
+              {/* Package selection in edit mode */}
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: '1rem 0 0.75rem' }}>Package</h3>
+              <div style={{ display: 'grid', gap: '0.5rem', marginBottom: '1rem' }}>
+                {packages.map(pkg => (
+                  <label key={pkg.id} style={{
+                    display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0.75rem',
+                    borderRadius: '6px', cursor: 'pointer',
+                    border: Number(editForm.package_id) === pkg.id ? '2px solid var(--deep-brown)' : '1px solid var(--cream-dark, #e8e0d4)',
+                    background: Number(editForm.package_id) === pkg.id ? 'var(--cream-light, #faf5ef)' : 'transparent'
+                  }}>
+                    <input type="radio" name="edit-package" value={pkg.id} checked={Number(editForm.package_id) === pkg.id}
+                      onChange={e => { updateEdit('package_id', e.target.value); updateEdit('addon_ids', []); }} />
+                    <span style={{ fontWeight: 600, color: 'var(--deep-brown)', fontSize: '0.9rem' }}>{pkg.name}</span>
+                  </label>
+                ))}
+              </div>
+
+              {/* Add-ons in edit mode */}
+              {editFilteredAddons.length > 0 && (
+                <>
+                  <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: '0 0 0.75rem' }}>Add-ons</h3>
+                  <div style={{ display: 'grid', gap: '0.4rem', marginBottom: '1rem' }}>
+                    {editFilteredAddons.map(addon => (
+                      <label key={addon.id} style={{
+                        display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.4rem 0.75rem',
+                        borderRadius: '6px', cursor: 'pointer',
+                        background: editForm.addon_ids.includes(addon.id) ? 'var(--cream-light, #faf5ef)' : 'transparent'
+                      }}>
+                        <input type="checkbox" checked={editForm.addon_ids.includes(addon.id)} onChange={() => toggleEditAddon(addon.id)} />
+                        <span style={{ color: 'var(--deep-brown)', fontSize: '0.9rem' }}>{addon.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Save / cancel */}
+              <div className="flex gap-1">
+                <button className="btn" onClick={handleSaveEdit} disabled={saving}>
+                  {saving ? 'Saving...' : 'Save Changes'}
+                </button>
+                <button className="btn btn-secondary" onClick={() => { setEditing(false); setEditForm(null); setEditError(''); }}>
+                  Cancel
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="card mb-2">
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Event</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                <div><span className="text-muted text-small">Event</span><div>{proposal.event_name || '—'}</div></div>
+                <div><span className="text-muted text-small">Date</span><div>{formatDate(proposal.event_date)}</div></div>
+                <div><span className="text-muted text-small">Start Time</span><div>{proposal.event_start_time || '—'}</div></div>
+                <div><span className="text-muted text-small">Duration</span><div>{proposal.event_duration_hours}hrs</div></div>
+                <div><span className="text-muted text-small">Guests</span><div>{proposal.guest_count}</div></div>
+                <div><span className="text-muted text-small">Location</span><div>{proposal.event_location || '—'}</div></div>
+              </div>
+            </div>
+          )}
 
           {/* Admin Notes */}
           <div className="card mb-2">
@@ -147,32 +361,42 @@ export default function ProposalDetail() {
 
         {/* Right column */}
         <div>
-          {/* Package & Pricing */}
+          {/* Package & Pricing — show edit preview when editing */}
           <div className="card mb-2">
             <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
-              {proposal.package_name || 'Package'}
+              {editing && editSelectedPkg ? editSelectedPkg.name : (proposal.package_name || 'Package')}
             </h3>
-            {includes.length > 0 && (
+            {!editing && includes.length > 0 && (
               <ul style={{ margin: '0 0 1rem 0', padding: '0 0 0 1.2rem', color: 'var(--warm-brown, #6b4226)' }}>
                 {includes.map((item, i) => <li key={i} className="text-small" style={{ marginBottom: '0.2rem' }}>{item}</li>)}
               </ul>
             )}
-            <PricingBreakdown snapshot={snapshot} />
+            <PricingBreakdown snapshot={editing ? editPreview : snapshot} />
           </div>
 
           {/* Activity Log */}
           {proposal.activity && proposal.activity.length > 0 && (
             <div className="card">
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Activity</h3>
-              <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
-                {proposal.activity.map((entry, i) => (
-                  <div key={i} style={{ padding: '0.4rem 0', borderBottom: '1px solid var(--cream-dark, #e8e0d4)' }}>
-                    <span className="text-small" style={{ fontWeight: 500 }}>{entry.action}</span>
-                    <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>
-                      {entry.actor_type} · {formatDateTime(entry.created_at)}
-                    </span>
-                  </div>
-                ))}
+              <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                {proposal.activity.map((entry, i) => {
+                  const details = entry.details
+                    ? (typeof entry.details === 'string' ? JSON.parse(entry.details) : entry.details)
+                    : {};
+                  return (
+                    <div key={i} style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--cream-dark, #e8e0d4)' }}>
+                      <span className="text-small" style={{ fontWeight: 500 }}>{entry.action}</span>
+                      <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>
+                        {entry.actor_type} · {formatDateTime(entry.created_at)}
+                      </span>
+                      {details.location && (
+                        <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>
+                          · 📍 {details.location}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

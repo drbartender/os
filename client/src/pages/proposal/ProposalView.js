@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
-import PricingBreakdown from '../../components/PricingBreakdown';
 
 const BASE_URL = process.env.REACT_APP_API_URL
   ? `${process.env.REACT_APP_API_URL}/api`
@@ -107,10 +106,14 @@ export default function ProposalView() {
           )}
         </div>
 
-        {/* Pricing */}
+        {/* Total */}
         <div style={styles.section}>
-          <h2 style={styles.sectionTitle}>Pricing Breakdown</h2>
-          <PricingBreakdown snapshot={snapshot} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2 style={{ ...styles.sectionTitle, marginBottom: 0 }}>Event Total</h2>
+            <span style={{ fontSize: '1.6rem', fontWeight: 700, color: '#3a2218', fontFamily: 'Georgia, "Times New Roman", serif' }}>
+              ${Number(snapshot.total).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
+          </div>
         </div>
 
         {/* Footer */}

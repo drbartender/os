@@ -39,10 +39,24 @@ router.get('/t/:token', async (req, res) => {
       [proposal.id]
     );
 
+    // Capture IP and attempt geo lookup
+    const rawIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || '';
+    const ip = rawIp.replace(/^::ffff:/, ''); // strip IPv4-mapped prefix
+    let location = null;
+    if (ip && ip !== '::1' && ip !== '127.0.0.1') {
+      try {
+        const geoRes = await fetch(`http://ip-api.com/json/${ip}?fields=status,city,regionName`);
+        const geo = await geoRes.json();
+        if (geo.status === 'success' && geo.city) {
+          location = `${geo.city}, ${geo.regionName}`;
+        }
+      } catch { /* geo lookup is best-effort */ }
+    }
+
     // Log view
     await pool.query(
-      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type) VALUES ($1, 'viewed', 'client')`,
-      [proposal.id]
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'viewed', 'client', $2)`,
+      [proposal.id, JSON.stringify({ ip: ip || null, location })]
     );
 
     res.json({ ...proposal, addons: addons.rows, status: proposal.status === 'sent' ? 'viewed' : proposal.status });

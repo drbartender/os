@@ -24,6 +24,7 @@ function calculateBaseCost(pkg, guestCount, durationHours) {
 }
 
 function calculateBarRental(pkg, numBars) {
+  if (!numBars || numBars <= 0) return 0;
   const firstBar = Number(pkg.first_bar_fee || 50);
   const additionalBar = Number(pkg.additional_bar_fee || 100);
   return firstBar + Math.max(0, numBars - 1) * additionalBar;
@@ -53,8 +54,10 @@ function calculateAddonCost(addon, guestCount, durationHours) {
       const extraCost = extraHours * guestCount * Number(addon.extra_hour_rate || 0);
       return { quantity: guestCount, total: base + extraCost };
     }
-    case 'per_hour':
-      return { quantity: durationHours, total: durationHours * rate };
+    case 'per_hour': {
+      const effectiveHours = Math.max(durationHours, Number(addon.minimum_hours || 0));
+      return { quantity: effectiveHours, total: effectiveHours * rate };
+    }
     case 'flat':
       return { quantity: 1, total: rate };
     default:
@@ -91,10 +94,12 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
     label: `${pkg.name} (${durationHours}hr${durationHours !== 1 ? 's' : ''}, ${guestCount} guests)`,
     amount: Math.round(baseCost * 100) / 100
   });
-  breakdown.push({
-    label: `Bar Rental (${numBars} bar${numBars !== 1 ? 's' : ''})`,
-    amount: Math.round(barRental * 100) / 100
-  });
+  if (numBars > 0) {
+    breakdown.push({
+      label: `Bar Rental (${numBars} bar${numBars !== 1 ? 's' : ''})`,
+      amount: Math.round(barRental * 100) / 100
+    });
+  }
   if (staffing.extra > 0) {
     breakdown.push({
       label: `Additional Bartender${staffing.extra !== 1 ? 's' : ''} (${staffing.extra} × ${durationHours}hrs @ $${staffing.hourlyRate}/hr)`,

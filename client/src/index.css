@@ -35,7 +35,7 @@
 }
 
 html {
-  font-size: 16px;
+  font-size: 17px;
   -webkit-text-size-adjust: 100%;
 }
 
@@ -961,6 +961,20 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
 .admin-table .text-muted,
 .data-table .text-muted {
   color: var(--warm-brown) !important;
+}
+
+/* Secondary buttons inside tables need dark text (parchment background) */
+.admin-table .btn-secondary,
+.data-table .btn-secondary,
+.table-wrap .btn-secondary {
+  color: var(--deep-brown);
+  border-color: var(--border-dark);
+}
+.admin-table .btn-secondary:hover:not(:disabled),
+.data-table .btn-secondary:hover:not(:disabled),
+.table-wrap .btn-secondary:hover:not(:disabled) {
+  background: rgba(107, 66, 38, 0.12);
+  color: var(--deep-brown);
 }
 
 /* Description cells — clamp applied to inner span, not the td itself */
