@@ -1173,6 +1173,79 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 
 /* ─── Potion Planning Lab ─────────────────────────────────────────── */
 
+.potion-parchment {
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 40px,
+      rgba(139, 109, 71, 0.03) 40px,
+      rgba(139, 109, 71, 0.03) 41px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 40px,
+      rgba(139, 109, 71, 0.02) 40px,
+      rgba(139, 109, 71, 0.02) 41px
+    ),
+    radial-gradient(ellipse at 20% 50%, rgba(180, 140, 90, 0.15) 0%, transparent 70%),
+    radial-gradient(ellipse at 80% 20%, rgba(160, 120, 70, 0.12) 0%, transparent 60%),
+    radial-gradient(ellipse at 60% 80%, rgba(170, 130, 80, 0.10) 0%, transparent 65%),
+    linear-gradient(
+      180deg,
+      #f0dbb8 0%,
+      #f5e6c8 15%,
+      #ede0c8 40%,
+      #e8d5b5 60%,
+      #e0ccaa 80%,
+      #d4c4a0 100%
+    );
+  border-radius: 6px;
+  box-shadow:
+    inset 0 0 60px rgba(139, 109, 71, 0.08),
+    0 4px 20px rgba(0, 0, 0, 0.25);
+  position: relative;
+  overflow: hidden;
+  padding: 2rem;
+}
+
+.potion-parchment::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 10% 10%, rgba(101, 67, 33, 0.06) 0%, transparent 50%),
+    radial-gradient(circle at 90% 85%, rgba(101, 67, 33, 0.08) 0%, transparent 50%),
+    radial-gradient(circle at 50% 50%, rgba(101, 67, 33, 0.03) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.potion-welcome-img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 4px;
+  margin-bottom: 1.5rem;
+}
+
+.potion-welcome-title {
+  font-family: var(--font-display);
+  color: var(--deep-brown);
+  font-size: 1.75rem;
+  margin-bottom: 0.75rem;
+  text-align: center;
+}
+
+@media (max-width: 600px) {
+  .potion-parchment {
+    padding: 1.25rem;
+  }
+  .potion-welcome-title {
+    font-size: 1.35rem;
+  }
+}
+
 .potion-step {
   animation: potionFadeIn 0.3s ease;
 }
