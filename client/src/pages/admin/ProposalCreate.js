@@ -32,9 +32,9 @@ export default function ProposalCreate() {
   const [error, setError] = useState('');
 
   const [form, setForm] = useState({
-    client_name: '', client_email: '', client_phone: '', client_source: 'direct',
+    client_name: '', client_email: '', client_phone: '', client_source: 'thumbtack',
     event_name: '', event_date: '', event_start_time: '17:00', event_duration_hours: 4,
-    event_location: '', guest_count: 50, package_id: '', needs_bar: true, num_bars: 1,
+    event_location: '', guest_count: 50, package_id: '', needs_bar: false,
     num_bartenders: null, addon_ids: []
   });
 
@@ -48,7 +48,7 @@ export default function ProposalCreate() {
     });
   }, []);
 
-  const numBarsForCalc = form.needs_bar ? Number(form.num_bars) || 1 : 0;
+  const numBarsForCalc = form.needs_bar ? 1 : 0;
 
   const fetchPreview = useCallback(async () => {
     if (!form.package_id) { setPreview(null); return; }
@@ -57,13 +57,13 @@ export default function ProposalCreate() {
         package_id: Number(form.package_id),
         guest_count: Number(form.guest_count) || 50,
         duration_hours: Number(form.event_duration_hours) || 4,
-        num_bars: form.needs_bar ? Number(form.num_bars) || 1 : 0,
+        num_bars: form.needs_bar ? 1 : 0,
         num_bartenders: form.num_bartenders != null ? Number(form.num_bartenders) : undefined,
         addon_ids: form.addon_ids.map(Number)
       });
       setPreview(res.data);
     } catch { setPreview(null); }
-  }, [form.package_id, form.guest_count, form.event_duration_hours, form.needs_bar, form.num_bars, form.num_bartenders, form.addon_ids]);
+  }, [form.package_id, form.guest_count, form.event_duration_hours, form.needs_bar, form.num_bartenders, form.addon_ids]);
 
   useEffect(() => { fetchPreview(); }, [fetchPreview]);
 
@@ -98,7 +98,7 @@ export default function ProposalCreate() {
         package_id: Number(form.package_id),
         guest_count: Number(form.guest_count),
         event_duration_hours: Number(form.event_duration_hours),
-        num_bars: form.needs_bar ? Number(form.num_bars) || 1 : 0,
+        num_bars: form.needs_bar ? 1 : 0,
         num_bartenders: form.num_bartenders != null ? Number(form.num_bartenders) : undefined,
         addon_ids: form.addon_ids.map(Number)
       };
@@ -196,16 +196,10 @@ export default function ProposalCreate() {
                 <div className="form-group">
                   <label className="form-label">Portable Bar Needed?</label>
                   <select className="form-select" value={form.needs_bar ? 'yes' : 'no'} onChange={e => update('needs_bar', e.target.value === 'yes')}>
-                    <option value="yes">Yes</option>
                     <option value="no">No — venue has a bar</option>
+                    <option value="yes">Yes</option>
                   </select>
                 </div>
-                {form.needs_bar && (
-                  <div className="form-group">
-                    <label className="form-label">Number of Bars</label>
-                    <input className="form-input" type="number" min="1" max="10" value={form.num_bars} onChange={e => update('num_bars', e.target.value)} />
-                  </div>
-                )}
               </div>
             </div>
 

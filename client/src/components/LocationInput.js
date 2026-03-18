@@ -25,20 +25,31 @@ export default function LocationInput({ value, onChange, placeholder = 'Start ty
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const formatAddress = (d) => {
+    const a = d.address || {};
+    const street = [a.house_number, a.road].filter(Boolean).join(' ');
+    const city = a.city || a.town || a.village || a.hamlet || '';
+    const state = a.state || '';
+    const zip = a.postcode || '';
+    const stateZip = [state, zip].filter(Boolean).join(' ');
+    return [street, city, stateZip].filter(Boolean).join(', ');
+  };
+
   const fetchSuggestions = useCallback((q) => {
     if (q.length < 3) { setSuggestions([]); setOpen(false); return; }
     fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&addressdetails=0&limit=5&countrycodes=us&q=${encodeURIComponent(q)}`,
+      `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=5&countrycodes=us&q=${encodeURIComponent(q)}`,
       { headers: { 'Accept-Language': 'en' } }
     )
       .then(r => r.json())
       .then(data => {
-        setSuggestions(data.map(d => d.display_name));
-        setOpen(data.length > 0);
+        const formatted = data.map(d => formatAddress(d)).filter(Boolean);
+        setSuggestions(formatted);
+        setOpen(formatted.length > 0);
         setActiveIdx(-1);
       })
       .catch(() => { setSuggestions([]); setOpen(false); });
-  }, []);
+  }, []); // eslint-disable-line
 
   const handleChange = (e) => {
     const q = e.target.value;

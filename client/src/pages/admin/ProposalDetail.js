@@ -65,6 +65,12 @@ export default function ProposalDetail() {
     if (proposal && !editForm) {
       const currentAddonIds = (proposal.addons || []).map(a => a.addon_id);
       setEditForm({
+        // Client fields
+        client_name: proposal.client_name || '',
+        client_email: proposal.client_email || '',
+        client_phone: proposal.client_phone || '',
+        client_source: proposal.client_source || 'thumbtack',
+        // Event fields
         event_name: proposal.event_name || '',
         event_date: proposal.event_date ? proposal.event_date.slice(0, 10) : '',
         event_start_time: proposal.event_start_time || '',
@@ -73,7 +79,6 @@ export default function ProposalDetail() {
         guest_count: proposal.guest_count || 50,
         package_id: proposal.package_id || '',
         needs_bar: proposal.num_bars > 0,
-        num_bars: proposal.num_bars || 1,
         addon_ids: currentAddonIds,
       });
     }
@@ -86,10 +91,10 @@ export default function ProposalDetail() {
       package_id: Number(editForm.package_id),
       guest_count: Number(editForm.guest_count) || 50,
       duration_hours: Number(editForm.event_duration_hours) || 4,
-      num_bars: editForm.needs_bar ? Number(editForm.num_bars) || 1 : 0,
+      num_bars: editForm.needs_bar ? 1 : 0,
       addon_ids: (editForm.addon_ids || []).map(Number)
     }).then(res => setEditPreview(res.data)).catch(() => setEditPreview(null));
-  }, [editing, editForm?.package_id, editForm?.guest_count, editForm?.event_duration_hours, editForm?.needs_bar, editForm?.num_bars, editForm?.addon_ids]); // eslint-disable-line
+  }, [editing, editForm?.package_id, editForm?.guest_count, editForm?.event_duration_hours, editForm?.needs_bar, editForm?.addon_ids]); // eslint-disable-line
 
   const updateEdit = (field, value) => setEditForm(f => ({ ...f, [field]: value }));
 
@@ -105,12 +110,25 @@ export default function ProposalDetail() {
     setEditError('');
     setSaving(true);
     try {
+      // Update client record if we have a client_id
+      if (proposal.client_id) {
+        await api.put(`/clients/${proposal.client_id}`, {
+          name: editForm.client_name,
+          email: editForm.client_email,
+          phone: editForm.client_phone,
+          source: editForm.client_source,
+        });
+      }
+      // Update proposal event/package details
       await api.patch(`/proposals/${id}`, {
-        ...editForm,
-        package_id: Number(editForm.package_id),
-        guest_count: Number(editForm.guest_count),
+        event_name: editForm.event_name,
+        event_date: editForm.event_date,
+        event_start_time: editForm.event_start_time,
         event_duration_hours: Number(editForm.event_duration_hours),
-        num_bars: editForm.needs_bar ? Number(editForm.num_bars) || 1 : 0,
+        event_location: editForm.event_location,
+        guest_count: Number(editForm.guest_count),
+        package_id: Number(editForm.package_id),
+        num_bars: editForm.needs_bar ? 1 : 0,
         addon_ids: (editForm.addon_ids || []).map(Number)
       });
       setLoading(true);
@@ -224,8 +242,37 @@ export default function ProposalDetail() {
           {/* Event Details — view or edit */}
           {editing && editForm ? (
             <div className="card mb-2">
-              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Edit Event Details</h3>
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Edit Proposal</h3>
               {editError && <div style={{ color: '#c0392b', marginBottom: '0.75rem', fontSize: '0.9rem' }}>{editError}</div>}
+
+              {/* Client fields */}
+              <h4 style={{ color: 'var(--warm-brown)', marginBottom: '0.5rem' }}>Client</h4>
+              <div className="two-col" style={{ gap: '0.75rem', marginBottom: '1rem' }}>
+                <div className="form-group">
+                  <label className="form-label">Name</label>
+                  <input className="form-input" value={editForm.client_name} onChange={e => updateEdit('client_name', e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Email</label>
+                  <input className="form-input" type="email" value={editForm.client_email} onChange={e => updateEdit('client_email', e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Phone</label>
+                  <input className="form-input" value={editForm.client_phone} onChange={e => updateEdit('client_phone', e.target.value)} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Source</label>
+                  <select className="form-select" value={editForm.client_source} onChange={e => updateEdit('client_source', e.target.value)}>
+                    <option value="thumbtack">Thumbtack</option>
+                    <option value="direct">Direct</option>
+                    <option value="referral">Referral</option>
+                    <option value="website">Website</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Event fields */}
+              <h4 style={{ color: 'var(--warm-brown)', marginBottom: '0.5rem' }}>Event</h4>
               <div className="two-col" style={{ gap: '0.75rem' }}>
                 <div className="form-group">
                   <label className="form-label">Event Name</label>
@@ -266,12 +313,6 @@ export default function ProposalDetail() {
                     <option value="no">No — venue has a bar</option>
                   </select>
                 </div>
-                {editForm.needs_bar && (
-                  <div className="form-group">
-                    <label className="form-label">Number of Bars</label>
-                    <input className="form-input" type="number" min="1" max="10" value={editForm.num_bars} onChange={e => updateEdit('num_bars', e.target.value)} />
-                  </div>
-                )}
               </div>
 
               {/* Package selection in edit mode */}
