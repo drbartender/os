@@ -35,6 +35,7 @@ export default function ProposalDetail() {
   const [paymentLinkUrl, setPaymentLinkUrl] = useState('');
   const [generatingLink, setGeneratingLink] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [linkError, setLinkError] = useState('');
 
   // Edit mode state
   const [editing, setEditing] = useState(false);
@@ -164,11 +165,12 @@ export default function ProposalDetail() {
 
   const generatePaymentLink = async () => {
     setGeneratingLink(true);
+    setLinkError('');
     try {
       const res = await api.post(`/stripe/payment-link/${id}?token=${proposal.token}`);
       setPaymentLinkUrl(res.data.url);
     } catch (err) {
-      console.error('Failed to generate payment link:', err);
+      setLinkError(err.response?.data?.error || 'Failed to generate payment link. Check that Stripe env vars are set in Render.');
     } finally {
       setGeneratingLink(false);
     }
@@ -446,6 +448,9 @@ export default function ProposalDetail() {
                 >
                   {generatingLink ? 'Generating…' : 'Generate Payment Link'}
                 </button>
+                {linkError && (
+                  <p style={{ color: '#c0392b', fontSize: '0.85rem', marginTop: '0.5rem' }}>{linkError}</p>
+                )}
                 {paymentLinkUrl && (
                   <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     <input
