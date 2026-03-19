@@ -468,6 +468,19 @@ export default function ProposalDetail() {
             )}
           </div>
 
+          {/* Event Shift */}
+          {(proposal.status === 'deposit_paid' || proposal.status === 'confirmed') && (
+            <div className="card mb-2">
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>Event Shift</h3>
+              <p className="text-muted text-small" style={{ marginBottom: '0.75rem' }}>
+                A shift has been created for this event. Staff can now request to work it.
+              </p>
+              <button className="btn btn-sm" onClick={() => navigate('/admin/events')}>
+                View in Events
+              </button>
+            </div>
+          )}
+
           {/* Activity Log */}
           {proposal.activity && proposal.activity.length > 0 && (
             <div className="card">

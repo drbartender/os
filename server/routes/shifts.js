@@ -33,9 +33,18 @@ router.get('/', auth, requireOnboarded, async (req, res) => {
       const result = await pool.query(`
         SELECT s.*,
           u.email AS created_by_email,
+          p.total_price AS proposal_total,
+          p.guest_count AS proposal_guest_count,
+          p.token AS proposal_token,
+          p.status AS proposal_status,
+          c.name AS client_name,
+          c.phone AS client_phone,
+          c.email AS client_email,
           (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count
         FROM shifts s
         LEFT JOIN users u ON u.id = s.created_by
+        LEFT JOIN proposals p ON p.id = s.proposal_id
+        LEFT JOIN clients c ON c.id = p.client_id
         ORDER BY s.event_date ASC
       `);
       return res.json(result.rows);

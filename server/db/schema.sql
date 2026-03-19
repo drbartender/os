@@ -211,6 +211,9 @@ CREATE TABLE IF NOT EXISTS shifts (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_shifts_proposal_id ON shifts(proposal_id);
+
 DROP TRIGGER IF EXISTS update_shifts_updated_at ON shifts;
 CREATE TRIGGER update_shifts_updated_at BEFORE UPDATE ON shifts
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

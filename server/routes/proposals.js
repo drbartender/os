@@ -2,6 +2,7 @@ const express = require('express');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { calculateProposal } = require('../utils/pricingEngine');
+const { createEventShifts } = require('../utils/eventCreation');
 
 const router = express.Router();
 
@@ -449,6 +450,23 @@ router.patch('/:id/notes', auth, requireAdmin, async (req, res) => {
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
     res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** POST /api/proposals/:id/create-shift — manually create event shift from a proposal */
+router.post('/:id/create-shift', auth, requireAdmin, async (req, res) => {
+  try {
+    const proposal = await pool.query('SELECT id, status FROM proposals WHERE id = $1', [req.params.id]);
+    if (!proposal.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
+    if (!['deposit_paid', 'confirmed'].includes(proposal.rows[0].status)) {
+      return res.status(400).json({ error: 'Proposal must have deposit paid before creating a shift.' });
+    }
+    const shift = await createEventShifts(req.params.id);
+    if (!shift) return res.status(409).json({ error: 'Shift already exists for this proposal.' });
+    res.status(201).json(shift);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });

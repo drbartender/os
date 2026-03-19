@@ -2,6 +2,7 @@ const express = require('express');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
+const { createEventShifts } = require('../utils/eventCreation');
 
 const router = express.Router();
 
@@ -141,6 +142,13 @@ router.post('/webhook', async (req, res) => {
           [proposalId, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id })]
         );
         console.log(`Deposit paid for proposal ${proposalId}`);
+        // Auto-create event shift from the proposal
+        try {
+          const shift = await createEventShifts(proposalId);
+          if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
+        } catch (shiftErr) {
+          console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+        }
       } catch (dbErr) {
         console.error('Webhook DB error:', dbErr);
       }
@@ -165,6 +173,13 @@ router.post('/webhook', async (req, res) => {
           [proposalId, JSON.stringify({ amount: session.amount_total, payment_link: session.payment_link })]
         );
         console.log(`Deposit paid (payment link) for proposal ${proposalId}`);
+        // Auto-create event shift from the proposal
+        try {
+          const shift = await createEventShifts(proposalId);
+          if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
+        } catch (shiftErr) {
+          console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+        }
       } catch (dbErr) {
         console.error('Webhook DB error:', dbErr);
       }
