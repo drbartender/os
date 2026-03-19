@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
+const { sendSMS } = require('../utils/sms');
 
 const router = express.Router();
 
@@ -210,6 +211,40 @@ router.put('/requests/:requestId', auth, requireStaffing, async (req, res) => {
       [status, req.params.requestId]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Request not found.' });
+
+    // SMS the staff member when their request is approved
+    if (status === 'approved') {
+      try {
+        const infoRes = await pool.query(`
+          SELECT s.event_name, s.event_date, s.start_time, s.end_time, s.location,
+                 cp.phone, cp.preferred_name
+          FROM shift_requests sr
+          JOIN shifts s ON s.id = sr.shift_id
+          LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
+          WHERE sr.id = $1
+        `, [req.params.requestId]);
+
+        const info = infoRes.rows[0];
+        if (info?.phone) {
+          const date = info.event_date
+            ? new Date(info.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+            : 'TBD';
+          const time = info.start_time && info.end_time
+            ? `${info.start_time}–${info.end_time}`
+            : info.start_time || 'TBD';
+          const location = info.location || 'TBD';
+          const name = info.preferred_name ? `, ${info.preferred_name}` : '';
+
+          await sendSMS({
+            to: info.phone,
+            body: `Hey${name}! You've been confirmed for ${info.event_name} on ${date} at ${time} — ${location}. See you there! - Dr. Bartender`,
+          });
+        }
+      } catch (smsErr) {
+        console.error('SMS notification failed (non-blocking):', smsErr.message);
+      }
+    }
+
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);

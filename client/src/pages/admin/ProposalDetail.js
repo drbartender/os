@@ -32,6 +32,9 @@ export default function ProposalDetail() {
   const [notes, setNotes] = useState('');
   const [savingNotes, setSavingNotes] = useState(false);
   const [copyMessage, setCopyMessage] = useState('');
+  const [paymentLinkUrl, setPaymentLinkUrl] = useState('');
+  const [generatingLink, setGeneratingLink] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   // Edit mode state
   const [editing, setEditing] = useState(false);
@@ -157,6 +160,25 @@ export default function ProposalDetail() {
     } catch (err) {
       console.error('Failed to save notes:', err);
     } finally { setSavingNotes(false); }
+  };
+
+  const generatePaymentLink = async () => {
+    setGeneratingLink(true);
+    try {
+      const res = await api.post(`/stripe/payment-link/${id}?token=${proposal.token}`);
+      setPaymentLinkUrl(res.data.url);
+    } catch (err) {
+      console.error('Failed to generate payment link:', err);
+    } finally {
+      setGeneratingLink(false);
+    }
+  };
+
+  const copyPaymentLink = () => {
+    navigator.clipboard.writeText(paymentLinkUrl).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    });
   };
 
   const updateStatus = async (status) => {
@@ -405,6 +427,40 @@ export default function ProposalDetail() {
               </ul>
             )}
             <PricingBreakdown snapshot={editing ? editPreview : snapshot} />
+          </div>
+
+          {/* Payment Link */}
+          <div className="card mb-2">
+            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>Deposit Collection</h3>
+            <p className="text-muted text-small" style={{ marginBottom: '0.75rem' }}>
+              {proposal.status === 'deposit_paid' || proposal.status === 'confirmed'
+                ? '✓ Deposit has been paid.'
+                : 'Generate a payment link to share with the client for the $100 deposit.'}
+            </p>
+            {proposal.status !== 'deposit_paid' && proposal.status !== 'confirmed' && (
+              <>
+                <button
+                  className="btn btn-sm"
+                  onClick={generatePaymentLink}
+                  disabled={generatingLink}
+                >
+                  {generatingLink ? 'Generating…' : 'Generate Payment Link'}
+                </button>
+                {paymentLinkUrl && (
+                  <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <input
+                      readOnly
+                      value={paymentLinkUrl}
+                      onClick={e => e.target.select()}
+                      style={{ flex: 1, fontSize: '0.8rem', padding: '0.4rem 0.5rem', border: '1px solid var(--cream-dark)', borderRadius: '4px', background: '#faf5ef', color: 'var(--deep-brown)' }}
+                    />
+                    <button className="btn btn-sm btn-secondary" onClick={copyPaymentLink}>
+                      {linkCopied ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           {/* Activity Log */}

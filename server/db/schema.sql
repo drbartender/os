@@ -622,3 +622,21 @@ CREATE TABLE IF NOT EXISTS proposal_activity_log (
   details JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ─── Proposal Client Signature ─────────────────────────────────────
+
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signed_name VARCHAR(255);
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_data TEXT;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signed_at TIMESTAMPTZ;
+
+-- ─── Stripe Payment Sessions ───────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS stripe_sessions (
+  id SERIAL PRIMARY KEY,
+  proposal_id INTEGER REFERENCES proposals(id) ON DELETE CASCADE,
+  stripe_payment_intent_id VARCHAR(255) UNIQUE,
+  stripe_payment_link_id VARCHAR(255),
+  amount INTEGER DEFAULT 10000,
+  status VARCHAR(50) DEFAULT 'pending',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);

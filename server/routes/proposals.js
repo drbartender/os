@@ -66,6 +66,45 @@ router.get('/t/:token', async (req, res) => {
   }
 });
 
+/** POST /api/proposals/t/:token/sign — client signs and accepts proposal */
+router.post('/t/:token/sign', async (req, res) => {
+  const { client_signed_name, client_signature_data } = req.body;
+  if (!client_signed_name || !client_signature_data) {
+    return res.status(400).json({ error: 'Name and signature are required.' });
+  }
+  try {
+    const result = await pool.query(
+      "SELECT id, status FROM proposals WHERE token = $1",
+      [req.params.token]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
+
+    const proposal = result.rows[0];
+    if (['deposit_paid', 'confirmed'].includes(proposal.status)) {
+      return res.status(400).json({ error: 'Proposal has already been paid.' });
+    }
+
+    await pool.query(`
+      UPDATE proposals SET
+        client_signed_name = $1,
+        client_signature_data = $2,
+        client_signed_at = NOW(),
+        status = 'accepted'
+      WHERE id = $3
+    `, [client_signed_name, client_signature_data, proposal.id]);
+
+    await pool.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'signed', 'client', $2)`,
+      [proposal.id, JSON.stringify({ signed_name: client_signed_name })]
+    );
+
+    res.json({ success: true, status: 'accepted' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ─── Package & add-on listing (auth required) ────────────────────
 
 /** GET /api/proposals/packages — list active packages */

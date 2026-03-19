@@ -20,6 +20,10 @@ app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:3000',
   credentials: true
 }));
+
+// Stripe webhook needs raw body — must be registered BEFORE express.json()
+app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(fileUpload({
@@ -58,6 +62,7 @@ app.use('/api/cocktails', require('./routes/cocktails'));
 app.use('/api/mocktails', require('./routes/mocktails'));
 app.use('/api/proposals', require('./routes/proposals'));
 app.use('/api/clients', require('./routes/clients'));
+app.use('/api/stripe', require('./routes/stripe'));
 
 // Health check — must be registered BEFORE the React catch-all below
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
