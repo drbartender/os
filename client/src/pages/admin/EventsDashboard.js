@@ -122,7 +122,7 @@ export default function EventsDashboard() {
                   <div style={{ flex: 1, minWidth: 240 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
                       <strong style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', color: 'var(--deep-brown)' }}>
-                        {event.event_name}
+                        {event.event_name || (event.client_name ? `${event.client_name}'s Event` : 'Untitled Event')}
                       </strong>
                       <span className={`badge ${event.status === 'open' ? 'badge-approved' : event.status === 'filled' ? 'badge-reviewed' : 'badge-deactivated'}`}>
                         {event.status}

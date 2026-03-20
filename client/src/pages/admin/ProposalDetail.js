@@ -286,7 +286,7 @@ export default function ProposalDetail() {
   return (
     <div className="page-container wide">
       <div className="flex-between mb-2">
-        <h1 style={{ fontFamily: 'var(--font-display)' }}>{isEventContext ? 'Event' : 'Proposal'} #{proposal.id}</h1>
+        <h1 style={{ fontFamily: 'var(--font-display)' }}>{isEventContext ? (proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : `Event #${proposal.id}`)) : `Proposal #${proposal.id}`}</h1>
         <div className="flex gap-1">
           <button className="btn btn-secondary" onClick={() => navigate(isEventContext ? '/admin/events' : '/admin/proposals')}>Back</button>
           {!editing && <button className="btn btn-secondary" onClick={() => setEditing(true)}>Edit</button>}
@@ -455,7 +455,7 @@ export default function ProposalDetail() {
             <div className="card mb-2">
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Event</h3>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                <div><span className="text-muted text-small">Event</span><div>{proposal.event_name || '—'}</div></div>
+                <div><span className="text-muted text-small">Event</span><div>{proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : '—')}</div></div>
                 <div><span className="text-muted text-small">Date</span><div>{formatDate(proposal.event_date)}</div></div>
                 <div><span className="text-muted text-small">Start Time</span><div>{proposal.event_start_time || '—'}</div></div>
                 <div><span className="text-muted text-small">Duration</span><div>{proposal.event_duration_hours}hrs</div></div>
