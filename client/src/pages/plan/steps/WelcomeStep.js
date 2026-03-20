@@ -3,19 +3,18 @@ import React from 'react';
 export default function WelcomeStep({ plan }) {
   return (
     <div className="potion-parchment">
-      <div className="potion-welcome-layout">
-        <div className="potion-welcome-left">
-          <img
-            src="/images/potion-bartender.png"
-            alt="Dr. Bartender"
-            className="potion-welcome-side-img"
-          />
-        </div>
+      <h1 className="potion-welcome-title">
+        Welcome to the Potion Planning Lab
+      </h1>
 
-        <div className="potion-welcome-center">
-          <h1 className="potion-welcome-title">
-            Welcome to the Potion Planning Lab
-          </h1>
+      <div className="potion-welcome-body">
+        <img
+          src="/images/potion-bartender.png"
+          alt="Dr. Bartender"
+          className="potion-welcome-bartender"
+        />
+
+        <div className="potion-welcome-text">
           {plan?.client_name && (
             <p style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--deep-brown)', fontWeight: 600 }}>
               Hello, {plan.client_name}!
@@ -37,13 +36,11 @@ export default function WelcomeStep({ plan }) {
           </p>
         </div>
 
-        <div className="potion-welcome-right">
-          <img
-            src="/images/potion-drinks.png"
-            alt="Signature cocktails"
-            className="potion-welcome-side-img"
-          />
-        </div>
+        <img
+          src="/images/potion-drinks.png"
+          alt="Signature cocktails"
+          className="potion-welcome-drinks"
+        />
       </div>
     </div>
   );
