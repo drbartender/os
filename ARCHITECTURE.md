@@ -130,6 +130,7 @@ System design reference for the Dr. Bartender platform.
 | GET | `/t/:token` | Public | Fetch proposal by token (tracks views + geolocation) |
 | POST | `/t/:token/sign` | Public | Client signature + acceptance |
 | PATCH | `/:id/balance-due-date` | Admin | Override balance due date for a proposal |
+| POST | `/:id/record-payment` | Admin | Record an outside payment (cash, Venmo, etc.) — triggers shift creation |
 | POST | `/:id/create-shift` | Admin | Manually create event shift from a paid proposal |
 
 ### Stripe — `/api/stripe`

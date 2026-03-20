@@ -498,6 +498,68 @@ router.patch('/:id/balance-due-date', auth, requireAdmin, async (req, res) => {
   }
 });
 
+/** POST /api/proposals/:id/record-payment — manually record an outside payment (cash, Venmo, etc.) */
+router.post('/:id/record-payment', auth, requireAdmin, async (req, res) => {
+  const { amount, paid_in_full, method } = req.body;
+
+  try {
+    const result = await pool.query(
+      'SELECT id, total_price, amount_paid, deposit_amount, status FROM proposals WHERE id = $1',
+      [req.params.id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
+
+    const proposal = result.rows[0];
+    if (['balance_paid', 'confirmed'].includes(proposal.status)) {
+      return res.status(400).json({ error: 'Proposal is already fully paid.' });
+    }
+
+    const totalPrice = Number(proposal.total_price);
+    const currentPaid = Number(proposal.amount_paid || 0);
+    const paymentAmount = paid_in_full ? totalPrice - currentPaid : Number(amount);
+
+    if (!paymentAmount || paymentAmount <= 0) {
+      return res.status(400).json({ error: 'Invalid payment amount.' });
+    }
+
+    const newAmountPaid = Math.min(currentPaid + paymentAmount, totalPrice);
+    const isFullyPaid = newAmountPaid >= totalPrice;
+    const newStatus = isFullyPaid ? 'balance_paid' : 'deposit_paid';
+
+    await pool.query(
+      'UPDATE proposals SET amount_paid = $1, status = $2 WHERE id = $3',
+      [newAmountPaid, newStatus, proposal.id]
+    );
+
+    // Record in proposal_payments
+    await pool.query(
+      `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status)
+       VALUES ($1, $2, $3, 'succeeded')`,
+      [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round(paymentAmount * 100)]
+    );
+
+    // Log activity
+    await pool.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, $2, 'admin', $3, $4)`,
+      [proposal.id, isFullyPaid ? 'paid_in_full' : 'deposit_paid', req.user.id,
+        JSON.stringify({ amount: paymentAmount, method: method || 'manual', new_total_paid: newAmountPaid })]
+    );
+
+    // Auto-create event shift
+    try {
+      const shift = await createEventShifts(proposal.id);
+      if (shift) console.log(`Shift #${shift.id} created for proposal ${proposal.id} (manual payment)`);
+    } catch (shiftErr) {
+      console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+    }
+
+    res.json({ success: true, status: newStatus, amount_paid: newAmountPaid });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 /** DELETE /api/proposals/:id — delete a proposal */
 router.delete('/:id', auth, requireAdmin, async (req, res) => {
   try {

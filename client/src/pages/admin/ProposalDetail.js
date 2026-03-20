@@ -46,6 +46,14 @@ export default function ProposalDetail() {
   const [chargingBalance, setChargingBalance] = useState(false);
   const [chargeResult, setChargeResult] = useState('');
 
+  // Record payment state
+  const [showRecordPayment, setShowRecordPayment] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [paymentPaidInFull, setPaymentPaidInFull] = useState(false);
+  const [recordingPayment, setRecordingPayment] = useState(false);
+  const [paymentResult, setPaymentResult] = useState('');
+
   // Edit mode state
   const [editing, setEditing] = useState(false);
   const [packages, setPackages] = useState([]);
@@ -223,6 +231,29 @@ export default function ProposalDetail() {
     } catch (err) {
       setChargeResult(err.response?.data?.error || 'Failed to charge balance.');
     } finally { setChargingBalance(false); }
+  };
+
+  const recordPayment = async () => {
+    if (!paymentPaidInFull && (!paymentAmount || Number(paymentAmount) <= 0)) {
+      setPaymentResult('Please enter a valid amount.');
+      return;
+    }
+    setRecordingPayment(true);
+    setPaymentResult('');
+    try {
+      const res = await api.post(`/proposals/${id}/record-payment`, {
+        amount: paymentPaidInFull ? undefined : Number(paymentAmount),
+        paid_in_full: paymentPaidInFull,
+        method: paymentMethod,
+      });
+      setPaymentResult(`Payment of ${fmt(paymentPaidInFull ? Number(proposal.total_price) - Number(proposal.amount_paid || 0) : Number(paymentAmount))} recorded successfully.`);
+      setShowRecordPayment(false);
+      setPaymentAmount('');
+      setPaymentPaidInFull(false);
+      await loadProposal();
+    } catch (err) {
+      setPaymentResult(err.response?.data?.error || 'Failed to record payment.');
+    } finally { setRecordingPayment(false); }
   };
 
   const formatDate = (d) => {
@@ -545,6 +576,72 @@ export default function ProposalDetail() {
                       {linkCopied ? 'Copied!' : 'Copy'}
                     </button>
                   </div>
+                )}
+              </div>
+            )}
+
+            {/* Record manual payment — for proposals not fully paid */}
+            {!['balance_paid', 'confirmed'].includes(proposal.status) && (
+              <div style={{ borderTop: '1px solid var(--cream-dark, #e8e0d4)', paddingTop: '0.75rem' }}>
+                {!showRecordPayment ? (
+                  <button className="btn btn-sm btn-secondary" onClick={() => setShowRecordPayment(true)}>
+                    Record Payment
+                  </button>
+                ) : (
+                  <div>
+                    <label className="text-muted text-small" style={{ display: 'block', marginBottom: '0.4rem' }}>Record Outside Payment</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <select
+                        className="form-select"
+                        value={paymentMethod}
+                        onChange={e => setPaymentMethod(e.target.value)}
+                        style={{ fontSize: '0.85rem', padding: '0.35rem 0.5rem' }}
+                      >
+                        <option value="cash">Cash</option>
+                        <option value="venmo">Venmo</option>
+                        <option value="zelle">Zelle</option>
+                        <option value="check">Check</option>
+                        <option value="other">Other</option>
+                      </select>
+
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--deep-brown)' }}>
+                        <input
+                          type="checkbox"
+                          checked={paymentPaidInFull}
+                          onChange={e => { setPaymentPaidInFull(e.target.checked); if (e.target.checked) setPaymentAmount(''); }}
+                          style={{ accentColor: 'var(--deep-brown)' }}
+                        />
+                        Paid in full ({fmt(Number(proposal.total_price || 0) - Number(proposal.amount_paid || 0))} remaining)
+                      </label>
+
+                      {!paymentPaidInFull && (
+                        <input
+                          type="number"
+                          className="form-input"
+                          placeholder="Amount ($)"
+                          value={paymentAmount}
+                          onChange={e => setPaymentAmount(e.target.value)}
+                          min="0.01"
+                          step="0.01"
+                          style={{ fontSize: '0.85rem', padding: '0.35rem 0.5rem' }}
+                        />
+                      )}
+
+                      <div className="flex gap-05">
+                        <button className="btn btn-sm" onClick={recordPayment} disabled={recordingPayment}>
+                          {recordingPayment ? 'Recording...' : 'Confirm'}
+                        </button>
+                        <button className="btn btn-sm btn-secondary" onClick={() => { setShowRecordPayment(false); setPaymentResult(''); }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {paymentResult && (
+                  <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: paymentResult.includes('success') ? '#2d6a4f' : '#c0392b' }}>
+                    {paymentResult}
+                  </p>
                 )}
               </div>
             )}
