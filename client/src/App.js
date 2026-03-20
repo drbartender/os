@@ -149,6 +149,7 @@ function AppRoutes() {
         <Route path="proposals/new" element={<ProposalCreate />} />
         <Route path="proposals/:id" element={<ProposalDetail />} />
         <Route path="events" element={<EventsDashboard />} />
+        <Route path="events/:id" element={<ProposalDetail />} />
         <Route path="clients" element={<ClientsDashboard />} />
         <Route path="clients/:id" element={<ClientDetail />} />
         <Route path="financials" element={<FinancialsDashboard />} />

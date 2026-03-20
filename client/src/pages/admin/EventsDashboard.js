@@ -197,9 +197,9 @@ export default function EventsDashboard() {
                       <button
                         className="btn btn-sm"
                         style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
-                        onClick={() => navigate(`/admin/proposals/${event.proposal_id}`)}
+                        onClick={() => navigate(`/admin/events/${event.proposal_id}`)}
                       >
-                        View Proposal
+                        View Details
                       </button>
                     )}
                   </div>

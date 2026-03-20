@@ -8,9 +8,6 @@ const STATUS_LABELS = {
   viewed: 'Viewed',
   modified: 'Modified',
   accepted: 'Accepted',
-  deposit_paid: 'Deposit Paid',
-  balance_paid: 'Paid in Full',
-  confirmed: 'Confirmed',
 };
 const STATUS_CLASSES = {
   draft: 'badge-inprogress',
@@ -18,9 +15,6 @@ const STATUS_CLASSES = {
   viewed: 'badge-submitted',
   modified: 'badge-inprogress',
   accepted: 'badge-approved',
-  deposit_paid: 'badge-approved',
-  balance_paid: 'badge-approved',
-  confirmed: 'badge-approved',
 };
 
 export default function ProposalsDashboard() {

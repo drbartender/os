@@ -185,6 +185,9 @@ router.get('/', auth, requireAdmin, async (req, res) => {
     if (status) {
       params.push(status);
       query += ` AND p.status = $${params.length}`;
+    } else {
+      // By default, exclude paid statuses — those appear in Events instead
+      query += ` AND p.status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')`;
     }
     if (search) {
       params.push(`%${search}%`);

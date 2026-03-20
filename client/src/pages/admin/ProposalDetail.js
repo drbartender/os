@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../../utils/api';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import LocationInput from '../../components/LocationInput';
@@ -30,6 +30,8 @@ for (let h = 6; h < 24; h++) {
 export default function ProposalDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isEventContext = location.pathname.includes('/events/');
   const [proposal, setProposal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notes, setNotes] = useState('');
@@ -68,7 +70,7 @@ export default function ProposalDetail() {
       setProposal(res.data);
       setNotes(res.data.admin_notes || '');
       setBalanceDueDate(res.data.balance_due_date ? res.data.balance_due_date.slice(0, 10) : '');
-    }).catch(() => navigate('/admin/proposals')).finally(() => setLoading(false));
+    }).catch(() => navigate(isEventContext ? '/admin/events' : '/admin/proposals')).finally(() => setLoading(false));
   };
 
   useEffect(() => { loadProposal(); }, [id]); // eslint-disable-line
@@ -284,9 +286,9 @@ export default function ProposalDetail() {
   return (
     <div className="page-container wide">
       <div className="flex-between mb-2">
-        <h1 style={{ fontFamily: 'var(--font-display)' }}>Proposal #{proposal.id}</h1>
+        <h1 style={{ fontFamily: 'var(--font-display)' }}>{isEventContext ? 'Event' : 'Proposal'} #{proposal.id}</h1>
         <div className="flex gap-1">
-          <button className="btn btn-secondary" onClick={() => navigate('/admin/proposals')}>Back</button>
+          <button className="btn btn-secondary" onClick={() => navigate(isEventContext ? '/admin/events' : '/admin/proposals')}>Back</button>
           {!editing && <button className="btn btn-secondary" onClick={() => setEditing(true)}>Edit</button>}
           <button className="btn" onClick={copyLink}>{copyMessage || 'Copy Link'}</button>
         </div>

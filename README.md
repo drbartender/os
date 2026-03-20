@@ -169,15 +169,16 @@ dr-bartender/
 - Shift is populated from proposal data (event name, date, time, duration, location, bartenders needed)
 - Staff can immediately see and request the shift via the Staff Portal
 - Admin can also manually trigger shift creation via `POST /api/proposals/:id/create-shift`
+- Once paid, proposals automatically transition out of the Proposals dashboard and into the Events dashboard
 - Events dashboard shows all confirmed events with staffing status and staff request management
 
 ### Admin Dashboard
 - **Staffing**: Application review, hire/reject, interview notes, user management
-- **Proposals**: Create, price, send, track views/signatures/payments
+- **Proposals**: Create, price, send, track views/signatures — paid proposals automatically move to Events
 - **Clients**: CRM with source tracking (direct, Thumbtack, referral, website)
 - **Drink Plans**: Review client event questionnaires
 - **Drink Menu**: Manage 25 cocktails + 16 mocktails across categories
-- **Events**: Confirmed events from paid proposals, staffing status, shift request management
+- **Events**: Paid proposals become events with full detail view, staffing status, shift request management
 - **Financials / Settings**: Placeholder tabs ready for expansion
 
 ### Staff Portal
