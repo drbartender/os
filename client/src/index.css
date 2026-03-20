@@ -1221,12 +1221,31 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   pointer-events: none;
 }
 
-.potion-welcome-img {
-  width: 100%;
+.potion-welcome-layout {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1fr;
+  align-items: center;
+  gap: 1rem;
+  position: relative;
+  z-index: 1;
+}
+
+.potion-welcome-left,
+.potion-welcome-right {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.potion-welcome-side-img {
+  max-width: 100%;
   height: auto;
   display: block;
-  border-radius: 4px;
-  margin-bottom: 1.5rem;
+}
+
+.potion-welcome-center {
+  text-align: center;
+  padding: 1rem 0;
 }
 
 .potion-welcome-title {
@@ -1235,9 +1254,21 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   font-size: 1.75rem;
   margin-bottom: 0.75rem;
   text-align: center;
+  line-height: 1.3;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 768px) {
+  .potion-welcome-layout {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+  .potion-welcome-left,
+  .potion-welcome-right {
+    justify-content: center;
+  }
+  .potion-welcome-side-img {
+    max-width: 60%;
+  }
   .potion-parchment {
     padding: 1.25rem;
   }
