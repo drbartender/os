@@ -258,7 +258,6 @@ export default function ProposalView() {
   const showPayOnly = !isPaid && isAlreadySigned && proposal.status === 'accepted';
 
   const activeSecret = paymentOption === 'full' ? fullSecret : depositSecret;
-  const payAmount = paymentOption === 'full' ? totalPrice : DEPOSIT_DOLLARS;
   const payLabel = paymentOption === 'full'
     ? `Sign & Pay ${fmt(totalPrice)}`
     : `Sign & Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`;
