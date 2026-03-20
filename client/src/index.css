@@ -1205,12 +1205,12 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 }
 
 .potion-welcome-bartender {
-  width: 38%;
+  width: 45%;
   flex-shrink: 0;
   height: auto;
   display: block;
   margin-bottom: -2rem;
-  margin-left: -1rem;
+  margin-left: -1.5rem;
   align-self: flex-end;
 }
 
@@ -1227,12 +1227,12 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 }
 
 .potion-welcome-drinks {
-  width: 22%;
+  width: 26%;
   flex-shrink: 0;
   height: auto;
   display: block;
   margin-bottom: -2rem;
-  margin-right: -0.5rem;
+  margin-right: -1rem;
   align-self: flex-end;
 }
 
