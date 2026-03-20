@@ -1174,58 +1174,50 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 /* ─── Potion Planning Lab ─────────────────────────────────────────── */
 
 .potion-parchment {
-  background: url('./images/parchment-bg.png') center / cover no-repeat;
+  background: url('/images/parchment-bg.png') center / cover no-repeat;
   background-color: #e8d5b5;
   border-radius: 6px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-  overflow: visible;
-  display: grid;
-  grid-template-columns: 42% 1fr;
-  grid-template-rows: auto 1fr;
-  padding: 2rem 2rem 0 1rem;
-  gap: 0;
+  position: relative;
+  overflow: hidden;
+  padding: 2.5rem 2.5rem 2rem;
 }
 
-.page-container .potion-welcome-title,
 .potion-welcome-title {
-  grid-column: 1 / -1;
-  grid-row: 1;
   font-family: var(--font-display);
-  color: #2C1F0E !important;
-  font-size: clamp(2.25rem, 4.5vw, 3.25rem);
-  letter-spacing: 0.05em;
+  color: #2C1F0E;
+  font-size: 2.25rem;
   margin-bottom: 0.75rem;
   text-align: center;
   line-height: 1.3;
-  text-shadow: none;
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.3);
+}
+
+.potion-welcome-body {
+  display: flex;
+  align-items: flex-end;
+  gap: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .potion-welcome-bartender {
-  grid-column: 1;
-  grid-row: 2;
-  width: 100%;
+  width: 38%;
+  flex-shrink: 0;
   height: auto;
   display: block;
-  align-self: end;
-  margin-bottom: -3px;
-  margin-left: -0.5rem;
-}
-
-.potion-welcome-right {
-  grid-column: 2;
-  grid-row: 2;
-  display: flex;
-  flex-direction: column;
-  padding-bottom: 0;
+  margin-bottom: -2rem;
+  margin-left: -1rem;
+  align-self: flex-end;
 }
 
 .potion-welcome-text {
   flex: 1;
   text-align: center;
-  padding: 0.25rem 1rem 1rem;
+  padding: 1rem 0.75rem 2rem;
 }
-
-.potion-parchment p,
 .potion-welcome-text p {
   color: #2C1F0E;
   font-size: 1.1rem;
@@ -1233,36 +1225,40 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 }
 
 .potion-welcome-drinks {
-  width: 75%;
+  width: 22%;
+  flex-shrink: 0;
   height: auto;
   display: block;
+  margin-bottom: -2rem;
+  margin-right: -0.5rem;
   align-self: flex-end;
-  margin-bottom: -8px;
-  margin-right: -1.5rem;
 }
 
 @media (max-width: 768px) {
   .potion-parchment {
-    display: block;
-    padding: 1.25rem 1.25rem 0;
+    padding: 1.25rem;
   }
   .potion-welcome-title {
     font-size: 1.5rem;
   }
-  .potion-welcome-bartender {
-    width: 60%;
-    display: block;
-    margin: 0 auto;
+  .potion-welcome-body {
+    flex-wrap: wrap;
+    justify-content: center;
   }
-  .potion-welcome-right {
-    width: 100%;
+  .potion-welcome-bartender {
+    width: 50%;
+    margin: 0 auto;
+    order: 2;
   }
   .potion-welcome-text {
-    padding: 1rem 0.5rem;
+    order: 1;
+    width: 100%;
+    flex: none;
   }
   .potion-welcome-drinks {
-    width: 40%;
+    width: 35%;
     margin: 0 auto;
+    order: 3;
   }
 }
 

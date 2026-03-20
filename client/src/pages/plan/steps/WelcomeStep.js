@@ -7,37 +7,31 @@ export default function WelcomeStep({ plan }) {
         Welcome to the Potion Planning Lab
       </h1>
 
-      <img
-        src="/images/potion-bartender.png"
-        alt="Dr. Bartender"
-        className="potion-welcome-bartender"
-      />
+      <div className="potion-welcome-body">
+        <img
+          src="/images/potion-bartender.png"
+          alt="Dr. Bartender"
+          className="potion-welcome-bartender"
+        />
 
-      <div className="potion-welcome-right">
         <div className="potion-welcome-text">
           {plan?.client_name && (
-            <p style={{ fontWeight: 700, marginBottom: '0.5rem', color: '#2C1F0E' }}>
+            <p style={{ fontWeight: 700, marginBottom: '0.5rem' }}>
               Hello, {plan.client_name}!
             </p>
           )}
           {plan?.event_name && (
-            <p style={{ marginBottom: '1rem', fontFamily: 'var(--font-display)', color: '#2C1F0E' }}>
-              <span style={{ color: '#6B1A1A', fontWeight: 600 }}>Event: {plan.event_name}</span>
-              {plan.event_date && (
-                <span style={{ color: '#C17D3C' }}>
-                  {' '}&mdash;{' '}
-                  {new Date(plan.event_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-                </span>
-              )}
+            <p style={{ marginBottom: '1rem', fontFamily: 'var(--font-display)' }}>
+              Event: {plan.event_name}
+              {plan.event_date && <> &mdash; {new Date(plan.event_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</>}
             </p>
           )}
-          <p style={{ color: '#3D2810' }}>
+          <p>
             You're about to mix a few details to help us design your perfect bar setup.
-            We'll take your answers, refine recipe,
-            and send back your completed shopping list
-            and display menu in a few days.
+            We'll take your answers, refine the recipe, and send back your completed
+            shopping list and display menu in a few days.
           </p>
-          <p style={{ marginTop: '1rem', color: '#6B4226' }}>
+          <p style={{ marginTop: '1rem' }}>
             Click <strong>Next</strong> to begin.
           </p>
         </div>

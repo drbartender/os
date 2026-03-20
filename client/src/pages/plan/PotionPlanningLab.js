@@ -385,7 +385,7 @@ export default function PotionPlanningLab() {
 
   return (
     <div className="auth-page">
-      <div className={`page-container${step === 'welcome' ? ' wide' : ''}`}>
+      <div className="page-container">
         {progressStep && (
           <div style={{ textAlign: 'center', marginBottom: '0.5rem', fontSize: '0.85rem', opacity: 0.6 }}>
             Step {progressStep} of {totalSteps}
