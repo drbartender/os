@@ -272,11 +272,14 @@ CREATE TABLE IF NOT EXISTS drink_plans (
   serving_type VARCHAR(100),
   selections JSONB DEFAULT '{}',
   admin_notes TEXT,
+  proposal_id INTEGER REFERENCES proposals(id),
   created_by INTEGER REFERENCES users(id),
   submitted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS proposal_id INTEGER REFERENCES proposals(id);
 
 DROP TRIGGER IF EXISTS update_drink_plans_updated_at ON drink_plans;
 CREATE TRIGGER update_drink_plans_updated_at BEFORE UPDATE ON drink_plans

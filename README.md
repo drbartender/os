@@ -176,7 +176,7 @@ dr-bartender/
 - **Staffing**: Application review, hire/reject, interview notes, user management
 - **Proposals**: Create, price, send, track views/signatures — paid proposals automatically move to Events
 - **Clients**: CRM with source tracking (direct, Thumbtack, referral, website)
-- **Drink Plans**: Review client event questionnaires
+- **Drink Plans**: Auto-created when proposals become events; accessed from event detail page; client receives email with questionnaire link
 - **Drink Menu**: Manage 25 cocktails + 16 mocktails across categories
 - **Events**: Paid proposals become events with full detail view, staffing status, shift request management
 - **Financials / Settings**: Placeholder tabs ready for expansion

@@ -104,6 +104,7 @@ System design reference for the Dr. Bartender platform.
 |---|---|---|---|
 | GET | `/` | Admin | List all plans with filters |
 | POST | `/` | Admin | Create new plan (generates UUID token) |
+| GET | `/by-proposal/:proposalId` | Admin | Fetch plan linked to a proposal |
 | GET | `/t/:token` | Public | Fetch questionnaire by token |
 | PUT | `/t/:token` | Public | Save draft or submit selections |
 
@@ -211,11 +212,13 @@ System design reference for the Dr. Bartender platform.
 
 ### Event Planning
 
-**drink_plans** — Client event questionnaire
+**drink_plans** — Client event questionnaire (auto-created when proposal becomes an event)
 - `token` UUID (public access)
 - `client_name`, `client_email`, `event_name`, `event_date`
+- `proposal_id` — links to the source proposal/event
 - `serving_type`, `selections` (JSONB — chosen cocktails/mocktails)
 - `status`: pending | draft | submitted | reviewed
+- Auto-emails the drink plan link to client on creation
 
 ### Proposals & Pricing
 

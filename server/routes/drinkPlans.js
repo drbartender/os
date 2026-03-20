@@ -122,6 +122,24 @@ router.post('/', auth, requireAdmin, async (req, res) => {
   }
 });
 
+/** GET /api/drink-plans/by-proposal/:proposalId — fetch plan by proposal id */
+router.get('/by-proposal/:proposalId', auth, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT dp.*, u.email AS created_by_email
+       FROM drink_plans dp
+       LEFT JOIN users u ON u.id = dp.created_by
+       WHERE dp.proposal_id = $1`,
+      [req.params.proposalId]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'No drink plan found for this proposal.' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 /** GET /api/drink-plans/:id — fetch single plan by id */
 router.get('/:id', auth, requireAdmin, async (req, res) => {
   try {

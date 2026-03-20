@@ -1,4 +1,5 @@
 const { pool } = require('../db');
+const { sendEmail } = require('./email');
 
 /**
  * Convert a 24-hour time string (e.g. "17:00") and add hours to produce a new time string.
@@ -25,7 +26,88 @@ function formatTime12(timeStr) {
 }
 
 /**
+ * Auto-create a drink plan linked to a proposal. Idempotent — skips if one already exists.
+ * Sends the drink plan link to the client via email.
+ * @param {number} proposalId
+ * @param {object} proposal - Proposal row (must include client_name, client_email, event_name, event_date, created_by)
+ * @returns {object|null} The created drink_plan row, or null if skipped
+ */
+async function createDrinkPlan(proposalId, proposal) {
+  // Idempotency: skip if a drink plan already exists for this proposal
+  const existing = await pool.query(
+    'SELECT id FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
+    [proposalId]
+  );
+  if (existing.rows.length > 0) return null;
+
+  const clientEmail = proposal.client_email;
+
+  // Insert the drink plan
+  const result = await pool.query(`
+    INSERT INTO drink_plans (client_name, client_email, event_name, event_date, proposal_id, created_by)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING *
+  `, [
+    proposal.client_name || null,
+    clientEmail || null,
+    proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : null),
+    proposal.event_date || null,
+    proposalId,
+    proposal.created_by
+  ]);
+
+  const drinkPlan = result.rows[0];
+
+  // Email the drink plan link to the client
+  if (clientEmail && drinkPlan.token) {
+    const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+    const planUrl = `${clientUrl}/plan/${drinkPlan.token}`;
+    const eventName = drinkPlan.event_name || 'your upcoming event';
+
+    try {
+      await sendEmail({
+        to: clientEmail,
+        subject: `Your Drink Plan for ${eventName} — Dr. Bartender`,
+        html: `
+          <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #3b2314;">
+            <h2 style="color: #3b2314;">Your Drink Plan is Ready!</h2>
+            <p>Hi ${proposal.client_name || 'there'},</p>
+            <p>
+              Thank you for booking with Dr. Bartender! We're excited to help make
+              <strong>${eventName}</strong> unforgettable.
+            </p>
+            <p>
+              We've created a personalized drink planning questionnaire for your event.
+              Use it to tell us your preferences — signature cocktails, mocktails, beer &amp; wine,
+              and everything in between.
+            </p>
+            <p style="text-align: center; margin: 2rem 0;">
+              <a href="${planUrl}" style="
+                display: inline-block; padding: 14px 32px;
+                background: #3b2314; color: #fff; text-decoration: none;
+                border-radius: 6px; font-weight: bold; font-size: 16px;
+              ">Plan Your Drinks</a>
+            </p>
+            <p style="font-size: 14px; color: #6b4226;">
+              You can return to this link anytime to save your progress or make changes before submitting.
+            </p>
+            <p>Cheers,<br/>The Dr. Bartender Team</p>
+          </div>
+        `,
+        text: `Hi ${proposal.client_name || 'there'}, your drink plan for ${eventName} is ready! Visit ${planUrl} to plan your drinks. You can return anytime to save progress. — The Dr. Bartender Team`,
+      });
+      console.log(`Drink plan email sent to ${clientEmail} for proposal ${proposalId}`);
+    } catch (emailErr) {
+      console.error('Drink plan email failed (non-blocking):', emailErr);
+    }
+  }
+
+  return drinkPlan;
+}
+
+/**
  * Auto-create a shift from a paid proposal. Idempotent — skips if shifts already exist for this proposal.
+ * Also auto-creates a drink plan and emails the client.
  * @param {number} proposalId
  * @returns {object|null} The created shift row, or null if skipped
  */
@@ -39,7 +121,7 @@ async function createEventShifts(proposalId) {
 
   // Fetch proposal with client info
   const result = await pool.query(`
-    SELECT p.*, c.name AS client_name
+    SELECT p.*, c.name AS client_name, c.email AS client_email
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
     WHERE p.id = $1
@@ -79,7 +161,15 @@ async function createEventShifts(proposalId) {
     proposal.created_by
   ]);
 
+  // Auto-create drink plan and email client (non-blocking)
+  try {
+    const drinkPlan = await createDrinkPlan(proposalId, proposal);
+    if (drinkPlan) console.log(`Drink plan #${drinkPlan.id} created for proposal ${proposalId}`);
+  } catch (dpErr) {
+    console.error('Drink plan auto-creation failed (non-blocking):', dpErr);
+  }
+
   return shiftResult.rows[0];
 }
 
-module.exports = { createEventShifts };
+module.exports = { createEventShifts, createDrinkPlan };

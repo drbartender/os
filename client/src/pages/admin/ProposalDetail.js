@@ -56,6 +56,11 @@ export default function ProposalDetail() {
   const [recordingPayment, setRecordingPayment] = useState(false);
   const [paymentResult, setPaymentResult] = useState('');
 
+  // Drink plan state (event context only)
+  const [drinkPlan, setDrinkPlan] = useState(null);
+  const [drinkPlanLoading, setDrinkPlanLoading] = useState(false);
+  const [drinkPlanCopied, setDrinkPlanCopied] = useState(false);
+
   // Edit mode state
   const [editing, setEditing] = useState(false);
   const [packages, setPackages] = useState([]);
@@ -74,6 +79,16 @@ export default function ProposalDetail() {
   };
 
   useEffect(() => { loadProposal(); }, [id]); // eslint-disable-line
+
+  // Fetch drink plan when viewing as event
+  useEffect(() => {
+    if (!isEventContext || !id) return;
+    setDrinkPlanLoading(true);
+    api.get(`/drink-plans/by-proposal/${id}`)
+      .then(res => setDrinkPlan(res.data))
+      .catch(() => setDrinkPlan(null))
+      .finally(() => setDrinkPlanLoading(false));
+  }, [id, isEventContext]);
 
   // Fetch packages/addons when edit mode is opened
   useEffect(() => {
@@ -656,9 +671,52 @@ export default function ProposalDetail() {
               <p className="text-muted text-small" style={{ marginBottom: '0.75rem' }}>
                 A shift has been created for this event. Staff can now request to work it.
               </p>
-              <button className="btn btn-sm" onClick={() => navigate('/admin/events')}>
-                View in Events
-              </button>
+              {!isEventContext && (
+                <button className="btn btn-sm" onClick={() => navigate('/admin/events')}>
+                  View in Events
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Drink Plan (event context) */}
+          {isEventContext && (
+            <div className="card mb-2">
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>Drink Plan</h3>
+              {drinkPlanLoading ? (
+                <div style={{ padding: '1rem', textAlign: 'center' }}><div className="spinner" /></div>
+              ) : drinkPlan ? (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                    <span className={`badge ${drinkPlan.status === 'submitted' ? 'badge-submitted' : drinkPlan.status === 'reviewed' ? 'badge-approved' : drinkPlan.status === 'draft' ? 'badge-inprogress' : 'badge-inprogress'}`}>
+                      {drinkPlan.status === 'pending' ? 'Pending' : drinkPlan.status === 'draft' ? 'Draft' : drinkPlan.status === 'submitted' ? 'Submitted' : 'Reviewed'}
+                    </span>
+                    {drinkPlan.submitted_at && (
+                      <span className="text-muted text-small">
+                        Submitted {formatDateTime(drinkPlan.submitted_at)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex gap-05" style={{ flexWrap: 'wrap' }}>
+                    <button className="btn btn-sm" onClick={() => navigate(`/admin/drink-plans/${drinkPlan.id}`)}>
+                      View Details
+                    </button>
+                    <button className="btn btn-sm btn-secondary" onClick={() => {
+                      const url = `${window.location.origin}/plan/${drinkPlan.token}`;
+                      navigator.clipboard.writeText(url).then(() => {
+                        setDrinkPlanCopied(true);
+                        setTimeout(() => setDrinkPlanCopied(false), 2000);
+                      });
+                    }}>
+                      {drinkPlanCopied ? 'Copied!' : 'Copy Client Link'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-muted text-small" style={{ margin: 0 }}>
+                  No drink plan has been created for this event yet.
+                </p>
+              )}
             </div>
           )}
 
