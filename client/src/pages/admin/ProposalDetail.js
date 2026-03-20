@@ -6,12 +6,15 @@ import LocationInput from '../../components/LocationInput';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
-  accepted: 'Accepted', deposit_paid: 'Deposit Paid', confirmed: 'Confirmed',
+  accepted: 'Accepted', deposit_paid: 'Deposit Paid', balance_paid: 'Paid in Full', confirmed: 'Confirmed',
 };
 const STATUS_CLASSES = {
   draft: 'badge-inprogress', sent: 'badge-submitted', viewed: 'badge-submitted',
-  modified: 'badge-inprogress', accepted: 'badge-approved', deposit_paid: 'badge-approved', confirmed: 'badge-approved',
+  modified: 'badge-inprogress', accepted: 'badge-approved', deposit_paid: 'badge-approved',
+  balance_paid: 'badge-approved', confirmed: 'badge-approved',
 };
+
+const fmt = (n) => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // Generate 30-minute time slots from 6:00 AM to 11:30 PM
 const TIME_OPTIONS = [];
@@ -37,6 +40,12 @@ export default function ProposalDetail() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [linkError, setLinkError] = useState('');
 
+  // Balance / autopay state
+  const [balanceDueDate, setBalanceDueDate] = useState('');
+  const [savingDueDate, setSavingDueDate] = useState(false);
+  const [chargingBalance, setChargingBalance] = useState(false);
+  const [chargeResult, setChargeResult] = useState('');
+
   // Edit mode state
   const [editing, setEditing] = useState(false);
   const [packages, setPackages] = useState([]);
@@ -50,6 +59,7 @@ export default function ProposalDetail() {
     return api.get(`/proposals/${id}`).then(res => {
       setProposal(res.data);
       setNotes(res.data.admin_notes || '');
+      setBalanceDueDate(res.data.balance_due_date ? res.data.balance_due_date.slice(0, 10) : '');
     }).catch(() => navigate('/admin/proposals')).finally(() => setLoading(false));
   };
 
@@ -190,6 +200,29 @@ export default function ProposalDetail() {
     } catch (err) {
       console.error('Failed to update status:', err);
     }
+  };
+
+  const saveBalanceDueDate = async () => {
+    if (!balanceDueDate) return;
+    setSavingDueDate(true);
+    try {
+      await api.patch(`/proposals/${id}/balance-due-date`, { balance_due_date: balanceDueDate });
+      setProposal(prev => ({ ...prev, balance_due_date: balanceDueDate }));
+    } catch (err) {
+      console.error('Failed to save due date:', err);
+    } finally { setSavingDueDate(false); }
+  };
+
+  const chargeBalance = async () => {
+    setChargingBalance(true);
+    setChargeResult('');
+    try {
+      const res = await api.post(`/stripe/charge-balance/${id}`);
+      setChargeResult(`Charged ${fmt(res.data.amount / 100)} successfully.`);
+      await loadProposal();
+    } catch (err) {
+      setChargeResult(err.response?.data?.error || 'Failed to charge balance.');
+    } finally { setChargingBalance(false); }
   };
 
   const formatDate = (d) => {
@@ -431,32 +464,81 @@ export default function ProposalDetail() {
             <PricingBreakdown snapshot={editing ? editPreview : snapshot} />
           </div>
 
-          {/* Payment Link */}
+          {/* Payment Status */}
           <div className="card mb-2">
-            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>Deposit Collection</h3>
-            <p className="text-muted text-small" style={{ marginBottom: '0.75rem' }}>
-              {proposal.status === 'deposit_paid' || proposal.status === 'confirmed'
-                ? '✓ Deposit has been paid.'
-                : 'Generate a payment link to share with the client for the $100 deposit.'}
-            </p>
-            {proposal.status !== 'deposit_paid' && proposal.status !== 'confirmed' && (
-              <>
-                <button
-                  className="btn btn-sm"
-                  onClick={generatePaymentLink}
-                  disabled={generatingLink}
-                >
-                  {generatingLink ? 'Generating…' : 'Generate Payment Link'}
+            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Payment Status</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
+              <div>
+                <span className="text-muted text-small">Total</span>
+                <div>{fmt(proposal.total_price)}</div>
+              </div>
+              <div>
+                <span className="text-muted text-small">Paid</span>
+                <div>{fmt(proposal.amount_paid || 0)}</div>
+              </div>
+              <div>
+                <span className="text-muted text-small">Balance</span>
+                <div>{fmt(Number(proposal.total_price || 0) - Number(proposal.amount_paid || 0))}</div>
+              </div>
+              <div>
+                <span className="text-muted text-small">Payment Type</span>
+                <div>{proposal.payment_type === 'full' ? 'Paid in Full' : 'Deposit'}</div>
+              </div>
+              {proposal.autopay_enrolled && (
+                <div>
+                  <span className="text-muted text-small">Autopay</span>
+                  <div style={{ color: '#2d6a4f', fontWeight: 500 }}>Enrolled</div>
+                </div>
+              )}
+            </div>
+
+            {/* Balance Due Date — editable for deposit_paid proposals */}
+            {proposal.status === 'deposit_paid' && (
+              <div style={{ borderTop: '1px solid var(--cream-dark, #e8e0d4)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
+                <label className="text-muted text-small" style={{ display: 'block', marginBottom: '0.3rem' }}>Balance Due Date</label>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input
+                    type="date"
+                    className="form-input"
+                    value={balanceDueDate}
+                    onChange={e => setBalanceDueDate(e.target.value)}
+                    style={{ flex: 1, fontSize: '0.85rem', padding: '0.35rem 0.5rem' }}
+                  />
+                  <button className="btn btn-sm btn-secondary" onClick={saveBalanceDueDate} disabled={savingDueDate}>
+                    {savingDueDate ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Charge Balance button for autopay proposals */}
+            {proposal.status === 'deposit_paid' && proposal.autopay_enrolled && proposal.stripe_payment_method_id && (
+              <div style={{ borderTop: '1px solid var(--cream-dark, #e8e0d4)', paddingTop: '0.75rem' }}>
+                <button className="btn btn-sm" onClick={chargeBalance} disabled={chargingBalance}>
+                  {chargingBalance ? 'Charging...' : `Charge Balance Now (${fmt(Number(proposal.total_price || 0) - Number(proposal.amount_paid || 0))})`}
                 </button>
-                {linkError && (
-                  <p style={{ color: '#c0392b', fontSize: '0.85rem', marginTop: '0.5rem' }}>{linkError}</p>
+                {chargeResult && (
+                  <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: chargeResult.includes('success') ? '#2d6a4f' : '#c0392b' }}>
+                    {chargeResult}
+                  </p>
                 )}
+              </div>
+            )}
+
+            {/* Payment link generation — for proposals not yet paid */}
+            {!['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status) && (
+              <div style={{ borderTop: '1px solid var(--cream-dark, #e8e0d4)', paddingTop: '0.75rem' }}>
+                <p className="text-muted text-small" style={{ marginBottom: '0.5rem' }}>
+                  Generate a payment link to share with the client.
+                </p>
+                <button className="btn btn-sm" onClick={generatePaymentLink} disabled={generatingLink}>
+                  {generatingLink ? 'Generating...' : 'Generate Payment Link'}
+                </button>
+                {linkError && <p style={{ color: '#c0392b', fontSize: '0.85rem', marginTop: '0.5rem' }}>{linkError}</p>}
                 {paymentLinkUrl && (
                   <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     <input
-                      readOnly
-                      value={paymentLinkUrl}
-                      onClick={e => e.target.select()}
+                      readOnly value={paymentLinkUrl} onClick={e => e.target.select()}
                       style={{ flex: 1, fontSize: '0.8rem', padding: '0.4rem 0.5rem', border: '1px solid var(--cream-dark)', borderRadius: '4px', background: '#faf5ef', color: 'var(--deep-brown)' }}
                     />
                     <button className="btn btn-sm btn-secondary" onClick={copyPaymentLink}>
@@ -464,12 +546,12 @@ export default function ProposalDetail() {
                     </button>
                   </div>
                 )}
-              </>
+              </div>
             )}
           </div>
 
           {/* Event Shift */}
-          {(proposal.status === 'deposit_paid' || proposal.status === 'confirmed') && (
+          {(['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status)) && (
             <div className="card mb-2">
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>Event Shift</h3>
               <p className="text-muted text-small" style={{ marginBottom: '0.75rem' }}>

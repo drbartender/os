@@ -7,6 +7,7 @@ const path = require('path');
 const { initDb } = require('./db');
 const { auth } = require('./middleware/auth');
 const { getSignedUrl } = require('./utils/storage');
+const { processAutopayCharges } = require('./utils/balanceScheduler');
 
 const app = express();
 app.set('trust proxy', 1); // Required for Render/Heroku reverse proxies (rate limiter, IP detection)
@@ -72,7 +73,13 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 async function start() {
   try {
     await initDb();
-    app.listen(PORT, () => console.log(`✓ Server running on port ${PORT}`));
+    app.listen(PORT, () => {
+      console.log(`✓ Server running on port ${PORT}`);
+
+      // Autopay balance scheduler — check hourly for due balances
+      setTimeout(processAutopayCharges, 30000); // initial run after 30s
+      setInterval(processAutopayCharges, 60 * 60 * 1000); // then every hour
+    });
   } catch (err) {
     console.error('Failed to start server:', err);
     process.exit(1);

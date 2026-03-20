@@ -643,3 +643,40 @@ CREATE TABLE IF NOT EXISTS stripe_sessions (
   status VARCHAR(50) DEFAULT 'pending',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ─── Proposal Payment Options & Autopay ──────────────────────────
+
+ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_status_check;
+ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
+  CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed'));
+
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS payment_type VARCHAR(20) DEFAULT 'deposit';
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS autopay_enrolled BOOLEAN DEFAULT false;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(255);
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS stripe_payment_method_id VARCHAR(255);
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS deposit_amount NUMERIC(10,2) DEFAULT 100.00;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(10,2) DEFAULT 0;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS balance_due_date DATE;
+
+-- Drop old check if it exists from initial CREATE TABLE, then re-add with payment_type
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.constraint_column_usage
+    WHERE table_name = 'proposals' AND constraint_name = 'proposals_payment_type_check'
+  ) THEN
+    ALTER TABLE proposals ADD CONSTRAINT proposals_payment_type_check
+      CHECK (payment_type IN ('deposit', 'full'));
+  END IF;
+END $$;
+
+-- ─── Proposal Payments (tracks individual payment records) ───────
+
+CREATE TABLE IF NOT EXISTS proposal_payments (
+  id SERIAL PRIMARY KEY,
+  proposal_id INTEGER REFERENCES proposals(id) ON DELETE CASCADE,
+  stripe_payment_intent_id VARCHAR(255),
+  payment_type VARCHAR(20) NOT NULL CHECK (payment_type IN ('deposit', 'balance', 'full')),
+  amount INTEGER NOT NULL,
+  status VARCHAR(50) DEFAULT 'pending',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);

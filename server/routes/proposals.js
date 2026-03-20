@@ -81,7 +81,7 @@ router.post('/t/:token/sign', async (req, res) => {
     if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
 
     const proposal = result.rows[0];
-    if (['deposit_paid', 'confirmed'].includes(proposal.status)) {
+    if (['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status)) {
       return res.status(400).json({ error: 'Proposal has already been paid.' });
     }
 
@@ -417,7 +417,7 @@ router.patch('/:id', auth, requireAdmin, async (req, res) => {
 /** PATCH /api/proposals/:id/status — update status */
 router.patch('/:id/status', auth, requireAdmin, async (req, res) => {
   const { status } = req.body;
-  const validStatuses = ['draft', 'sent', 'viewed', 'modified', 'accepted', 'deposit_paid', 'confirmed'];
+  const validStatuses = ['draft', 'sent', 'viewed', 'modified', 'accepted', 'deposit_paid', 'balance_paid', 'confirmed'];
   if (!validStatuses.includes(status)) {
     return res.status(400).json({ error: 'Invalid status.' });
   }
@@ -461,12 +461,37 @@ router.post('/:id/create-shift', auth, requireAdmin, async (req, res) => {
   try {
     const proposal = await pool.query('SELECT id, status FROM proposals WHERE id = $1', [req.params.id]);
     if (!proposal.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
-    if (!['deposit_paid', 'confirmed'].includes(proposal.rows[0].status)) {
+    if (!['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.rows[0].status)) {
       return res.status(400).json({ error: 'Proposal must have deposit paid before creating a shift.' });
     }
     const shift = await createEventShifts(req.params.id);
     if (!shift) return res.status(409).json({ error: 'Shift already exists for this proposal.' });
     res.status(201).json(shift);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** PATCH /api/proposals/:id/balance-due-date — override balance due date */
+router.patch('/:id/balance-due-date', auth, requireAdmin, async (req, res) => {
+  const { balance_due_date } = req.body;
+  if (!balance_due_date) {
+    return res.status(400).json({ error: 'balance_due_date is required.' });
+  }
+  try {
+    const result = await pool.query(
+      'UPDATE proposals SET balance_due_date = $1 WHERE id = $2 RETURNING id, balance_due_date',
+      [balance_due_date, req.params.id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
+
+    await pool.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, 'balance_due_date_changed', 'admin', $2, $3)`,
+      [req.params.id, req.user.id, JSON.stringify({ balance_due_date })]
+    );
+
+    res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });

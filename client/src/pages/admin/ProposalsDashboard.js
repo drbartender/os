@@ -9,6 +9,7 @@ const STATUS_LABELS = {
   modified: 'Modified',
   accepted: 'Accepted',
   deposit_paid: 'Deposit Paid',
+  balance_paid: 'Paid in Full',
   confirmed: 'Confirmed',
 };
 const STATUS_CLASSES = {
@@ -18,6 +19,7 @@ const STATUS_CLASSES = {
   modified: 'badge-inprogress',
   accepted: 'badge-approved',
   deposit_paid: 'badge-approved',
+  balance_paid: 'badge-approved',
   confirmed: 'badge-approved',
 };
 

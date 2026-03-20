@@ -11,6 +11,9 @@ const BASE_URL = process.env.REACT_APP_API_URL
   ? `${process.env.REACT_APP_API_URL}/api`
   : '/api';
 
+const DEPOSIT_CENTS = parseInt(process.env.REACT_APP_DEPOSIT_AMOUNT) || 10000;
+const DEPOSIT_DOLLARS = DEPOSIT_CENTS / 100;
+
 const fmt = (n) =>
   `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -32,9 +35,14 @@ function calcEndTime(startTime, durationHours) {
   return formatTime(`${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`);
 }
 
+function formatDateShort(d) {
+  if (!d) return '';
+  return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
 // ─── Stripe payment form (must be inside <Elements>) ─────────────
 
-function PaymentForm({ onSuccess }) {
+function PaymentForm({ onSubmit, payLabel, disabled }) {
   const stripe = useStripe();
   const elements = useElements();
   const [paying, setPaying] = useState(false);
@@ -45,6 +53,15 @@ function PaymentForm({ onSuccess }) {
     if (!stripe || !elements) return;
     setPaying(true);
     setPayError('');
+
+    // Let parent handle signing first
+    try {
+      await onSubmit();
+    } catch (err) {
+      setPayError(err.message || 'Failed to sign. Please try again.');
+      setPaying(false);
+      return;
+    }
 
     const { error } = await stripe.confirmPayment({
       elements,
@@ -57,7 +74,7 @@ function PaymentForm({ onSuccess }) {
       setPayError(error.message || 'Payment failed. Please try again.');
       setPaying(false);
     }
-    // On success, Stripe redirects to return_url — no further action needed here
+    // On success, Stripe redirects to return_url
   };
 
   return (
@@ -68,10 +85,10 @@ function PaymentForm({ onSuccess }) {
       )}
       <button
         type="submit"
-        disabled={!stripe || paying}
-        style={styles.payButton}
+        disabled={!stripe || paying || disabled}
+        style={{ ...styles.payButton, opacity: (!stripe || paying || disabled) ? 0.6 : 1 }}
       >
-        {paying ? 'Processing…' : 'Pay $100 Deposit'}
+        {paying ? 'Processing...' : payLabel}
       </button>
     </form>
   );
@@ -89,10 +106,14 @@ export default function ProposalView() {
   const [sigName, setSigName] = useState('');
   const [sigData, setSigData] = useState('');
   const [sigError, setSigError] = useState('');
-  const [signing, setSigning] = useState(false);
 
-  // Payment state
-  const [clientSecret, setClientSecret] = useState('');
+  // Payment option state
+  const [paymentOption, setPaymentOption] = useState('deposit');
+  const [autopayChecked, setAutopayChecked] = useState(false);
+
+  // Intent state — track separate secrets for deposit vs full
+  const [depositSecret, setDepositSecret] = useState('');
+  const [fullSecret, setFullSecret] = useState('');
   const [loadingIntent, setLoadingIntent] = useState(false);
 
   // Check if returning from Stripe redirect
@@ -105,42 +126,74 @@ export default function ProposalView() {
       .finally(() => setLoading(false));
   }, [token]);
 
-  // Load Stripe Payment Intent when proposal is accepted and not yet paid
-  const loadIntent = useCallback(() => {
-    if (clientSecret || loadingIntent) return;
+  // Create or retrieve a payment intent for the given option
+  const loadIntent = useCallback(async (option, autopay = false) => {
     setLoadingIntent(true);
-    axios.post(`${BASE_URL}/stripe/create-intent/${token}`)
-      .then(res => setClientSecret(res.data.clientSecret))
-      .catch(err => console.error('Failed to load payment intent:', err))
-      .finally(() => setLoadingIntent(false));
-  }, [token, clientSecret, loadingIntent]);
-
-  useEffect(() => {
-    if (proposal?.status === 'accepted' && !paid) {
-      loadIntent();
+    try {
+      const res = await axios.post(`${BASE_URL}/stripe/create-intent/${token}`, {
+        payment_option: option,
+        autopay,
+      });
+      if (option === 'full') {
+        setFullSecret(res.data.clientSecret);
+      } else {
+        setDepositSecret(res.data.clientSecret);
+      }
+    } catch (err) {
+      console.error('Failed to load payment intent:', err);
+    } finally {
+      setLoadingIntent(false);
     }
-  }, [proposal?.status, paid, loadIntent]);
+  }, [token]);
+
+  // Load initial deposit intent when proposal is ready for signing+payment
+  useEffect(() => {
+    if (!proposal || paid) return;
+    const canPay = ['sent', 'viewed', 'accepted'].includes(proposal.status);
+    if (canPay && !depositSecret) {
+      loadIntent('deposit', false);
+    }
+  }, [proposal, paid, depositSecret, loadIntent]);
+
+  // When user switches to full payment, load a full intent
+  useEffect(() => {
+    if (paymentOption === 'full' && !fullSecret && proposal && !paid) {
+      loadIntent('full', false);
+    }
+  }, [paymentOption, fullSecret, proposal, paid, loadIntent]);
+
+  // When autopay is toggled, re-create the deposit intent with setup_future_usage
+  useEffect(() => {
+    if (paymentOption === 'deposit' && proposal && !paid) {
+      // Reset deposit secret so a new intent is created with correct autopay flag
+      setDepositSecret('');
+      loadIntent('deposit', autopayChecked);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autopayChecked]);
 
   const formatDate = (d) => {
     if (!d) return '';
     return new Date(d).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   };
 
+  // Sign the proposal — called by PaymentForm before confirming payment
   const handleSign = async () => {
-    if (!sigName.trim()) return setSigError('Please enter your full name.');
-    if (!sigData) return setSigError('Please add your signature above.');
+    if (!sigName.trim()) throw new Error('Please enter your full name.');
+    if (!sigData) throw new Error('Please add your signature.');
     setSigError('');
-    setSigning(true);
+
+    // If already signed (backward compat), skip signing
+    if (proposal.client_signed_at) return;
+
     try {
       await axios.post(`${BASE_URL}/proposals/t/${token}/sign`, {
         client_signed_name: sigName.trim(),
         client_signature_data: sigData,
       });
-      setProposal(prev => ({ ...prev, status: 'accepted' }));
+      setProposal(prev => ({ ...prev, status: 'accepted', client_signed_at: new Date().toISOString() }));
     } catch (err) {
-      setSigError(err.response?.data?.error || 'Failed to save signature. Please try again.');
-    } finally {
-      setSigning(false);
+      throw new Error(err.response?.data?.error || 'Failed to save signature. Please try again.');
     }
   };
 
@@ -172,6 +225,16 @@ export default function ProposalView() {
   const snapshot = proposal.pricing_snapshot;
   const includes = proposal.package_includes || [];
   const bartenders = snapshot?.staffing?.actual;
+  const totalPrice = snapshot ? Number(snapshot.total) : 0;
+  const balanceAmount = totalPrice - DEPOSIT_DOLLARS;
+
+  // Calculate balance due date (from DB or default 14 days before event)
+  let balanceDueDate = proposal.balance_due_date;
+  if (!balanceDueDate && proposal.event_date) {
+    const d = new Date(proposal.event_date);
+    d.setDate(d.getDate() - 14);
+    balanceDueDate = d.toISOString();
+  }
 
   const lineItems = [];
   if (snapshot) {
@@ -186,9 +249,22 @@ export default function ProposalView() {
   }
 
   const isAlreadySigned = !!proposal.client_signed_at;
-  const showSignSection = !isAlreadySigned && !['accepted', 'deposit_paid', 'confirmed'].includes(proposal.status);
-  const showPaySection = (proposal.status === 'accepted' || isAlreadySigned) && !['deposit_paid', 'confirmed'].includes(proposal.status) && !paid;
-  const showPaidBanner = proposal.status === 'deposit_paid' || proposal.status === 'confirmed' || paid;
+  const isPaid = ['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status) || paid;
+
+  // Combined sign+pay section (new flow)
+  const showSignAndPay = !isPaid && !isAlreadySigned && ['sent', 'viewed'].includes(proposal.status);
+
+  // Pay-only section (backward compat: already signed under old flow, not yet paid)
+  const showPayOnly = !isPaid && isAlreadySigned && proposal.status === 'accepted';
+
+  const activeSecret = paymentOption === 'full' ? fullSecret : depositSecret;
+  const payAmount = paymentOption === 'full' ? totalPrice : DEPOSIT_DOLLARS;
+  const payLabel = paymentOption === 'full'
+    ? `Sign & Pay ${fmt(totalPrice)}`
+    : `Sign & Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`;
+  const payOnlyLabel = paymentOption === 'full'
+    ? `Pay ${fmt(totalPrice)}`
+    : `Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`;
 
   return (
     <div style={styles.page}>
@@ -277,11 +353,13 @@ export default function ProposalView() {
           </table>
         </div>
 
-        {/* ── Contract & Signature ── */}
-        {showSignSection && (
+        {/* ── Combined Contract + Signature + Payment ── */}
+        {showSignAndPay && (
           <div style={styles.section}>
             <h2 style={styles.sectionTitle}>Event Services Agreement</h2>
-            <div style={styles.contractBox}>
+
+            {/* Contract in scrollable container */}
+            <div style={styles.contractScroll}>
               <p style={styles.contractText}>
                 This Event Services Agreement ("Agreement") is entered into between <strong>Dr. Bartender</strong> ("Service Provider") and the client named below ("Client").
               </p>
@@ -289,7 +367,7 @@ export default function ProposalView() {
                 <strong>Services:</strong> Dr. Bartender agrees to provide bartending services as outlined in this proposal, including the package, add-ons, and staffing described above, for the event date and location specified.
               </p>
               <p style={styles.contractText}>
-                <strong>Deposit &amp; Payment:</strong> A non-refundable deposit of <strong>$100.00</strong> is due upon signing to secure your date. The remaining balance is due no later than <strong>14 days before the event date</strong>. Failure to pay the balance by this date may result in cancellation.
+                <strong>Deposit &amp; Payment:</strong> A non-refundable deposit of <strong>{fmt(DEPOSIT_DOLLARS)}</strong> is due upon signing to secure your date. The remaining balance is due no later than <strong>14 days before the event date</strong>. Failure to pay the balance by this date may result in cancellation.
               </p>
               <p style={styles.contractText}>
                 <strong>Cancellation:</strong> The deposit is non-refundable. If the Client cancels within 14 days of the event, the full remaining balance may be owed. Dr. Bartender reserves the right to cancel due to circumstances beyond our control, in which case the deposit will be refunded in full.
@@ -305,6 +383,7 @@ export default function ProposalView() {
               </p>
             </div>
 
+            {/* Signature */}
             <div style={{ marginTop: '1.5rem' }}>
               <label style={styles.label}>Full Legal Name</label>
               <input
@@ -325,26 +404,164 @@ export default function ProposalView() {
               <p style={{ color: '#c0392b', fontSize: '0.875rem', marginTop: '0.75rem' }}>{sigError}</p>
             )}
 
-            <button
-              onClick={handleSign}
-              disabled={signing}
-              style={styles.signButton}
-            >
-              {signing ? 'Saving…' : 'Sign & Accept Proposal'}
-            </button>
+            {/* Payment Options */}
+            <div style={{ marginTop: '1.75rem' }}>
+              <label style={styles.label}>Payment Option</label>
+
+              {/* Option 1: Deposit */}
+              <label style={{
+                ...styles.radioCard,
+                border: paymentOption === 'deposit' ? '2px solid #3a2218' : '1px solid #d4c4b0',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="radio"
+                    name="paymentOption"
+                    value="deposit"
+                    checked={paymentOption === 'deposit'}
+                    onChange={() => setPaymentOption('deposit')}
+                    style={{ accentColor: '#3a2218' }}
+                  />
+                  <div>
+                    <div style={styles.radioLabel}>Pay {fmt(DEPOSIT_DOLLARS)} Deposit</div>
+                    <div style={styles.radioDesc}>Remaining balance of {fmt(balanceAmount)} due before your event</div>
+                  </div>
+                </div>
+
+                {/* Autopay checkbox (nested under deposit) */}
+                {paymentOption === 'deposit' && balanceAmount > 0 && (
+                  <label style={styles.autopayRow}>
+                    <input
+                      type="checkbox"
+                      checked={autopayChecked}
+                      onChange={e => setAutopayChecked(e.target.checked)}
+                      style={{ accentColor: '#3a2218', marginTop: '2px' }}
+                    />
+                    <span style={styles.autopayText}>
+                      Automatically pay remaining {fmt(balanceAmount)} on {formatDateShort(balanceDueDate)}
+                    </span>
+                  </label>
+                )}
+              </label>
+
+              {/* Option 2: Pay in Full */}
+              <label style={{
+                ...styles.radioCard,
+                border: paymentOption === 'full' ? '2px solid #3a2218' : '1px solid #d4c4b0',
+                marginTop: '0.5rem',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="radio"
+                    name="paymentOption"
+                    value="full"
+                    checked={paymentOption === 'full'}
+                    onChange={() => { setPaymentOption('full'); setAutopayChecked(false); }}
+                    style={{ accentColor: '#3a2218' }}
+                  />
+                  <div>
+                    <div style={styles.radioLabel}>Pay in Full — {fmt(totalPrice)}</div>
+                    <div style={styles.radioDesc}>No remaining balance</div>
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            {/* Stripe Payment Element */}
+            <div style={{ marginTop: '1.5rem' }}>
+              {loadingIntent && (
+                <div style={{ textAlign: 'center', padding: '2rem' }}>
+                  <div className="spinner" />
+                </div>
+              )}
+
+              {activeSecret && !loadingIntent && (
+                <Elements
+                  key={activeSecret}
+                  stripe={stripePromise}
+                  options={{ clientSecret: activeSecret, appearance: { theme: 'stripe' } }}
+                >
+                  <PaymentForm
+                    onSubmit={handleSign}
+                    payLabel={payLabel}
+                    disabled={!sigName.trim() || !sigData}
+                  />
+                </Elements>
+              )}
+
+              {!activeSecret && !loadingIntent && (
+                <p style={{ color: '#c0392b', fontSize: '0.875rem' }}>
+                  Unable to load payment form. Please refresh the page or contact us at contact@drbartender.com.
+                </p>
+              )}
+            </div>
           </div>
         )}
 
-        {/* ── Deposit Payment ── */}
-        {showPaySection && (
+        {/* ── Pay-only section (backward compat: already signed, not paid) ── */}
+        {showPayOnly && (
           <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>Secure Your Date</h2>
+            <h2 style={styles.sectionTitle}>Complete Your Payment</h2>
             <p style={{ color: '#6b4226', marginBottom: '0.5rem', fontSize: '0.95rem' }}>
-              Your proposal has been accepted! Pay the <strong>$100 deposit</strong> below to lock in your booking.
+              Your proposal has been accepted! Choose a payment option below to secure your booking.
             </p>
-            <p style={{ color: '#8b7355', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
-              The remaining balance of {snapshot ? fmt(snapshot.total - 100) : 'the balance'} is due 2 weeks before your event.
-            </p>
+
+            {/* Payment Options */}
+            <div style={{ marginTop: '1rem', marginBottom: '1.5rem' }}>
+              <label style={{
+                ...styles.radioCard,
+                border: paymentOption === 'deposit' ? '2px solid #3a2218' : '1px solid #d4c4b0',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="radio"
+                    name="paymentOption"
+                    value="deposit"
+                    checked={paymentOption === 'deposit'}
+                    onChange={() => setPaymentOption('deposit')}
+                    style={{ accentColor: '#3a2218' }}
+                  />
+                  <div>
+                    <div style={styles.radioLabel}>Pay {fmt(DEPOSIT_DOLLARS)} Deposit</div>
+                    <div style={styles.radioDesc}>Remaining balance of {fmt(balanceAmount)} due before your event</div>
+                  </div>
+                </div>
+                {paymentOption === 'deposit' && balanceAmount > 0 && (
+                  <label style={styles.autopayRow}>
+                    <input
+                      type="checkbox"
+                      checked={autopayChecked}
+                      onChange={e => setAutopayChecked(e.target.checked)}
+                      style={{ accentColor: '#3a2218', marginTop: '2px' }}
+                    />
+                    <span style={styles.autopayText}>
+                      Automatically pay remaining {fmt(balanceAmount)} on {formatDateShort(balanceDueDate)}
+                    </span>
+                  </label>
+                )}
+              </label>
+
+              <label style={{
+                ...styles.radioCard,
+                border: paymentOption === 'full' ? '2px solid #3a2218' : '1px solid #d4c4b0',
+                marginTop: '0.5rem',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="radio"
+                    name="paymentOption"
+                    value="full"
+                    checked={paymentOption === 'full'}
+                    onChange={() => { setPaymentOption('full'); setAutopayChecked(false); }}
+                    style={{ accentColor: '#3a2218' }}
+                  />
+                  <div>
+                    <div style={styles.radioLabel}>Pay in Full — {fmt(totalPrice)}</div>
+                    <div style={styles.radioDesc}>No remaining balance</div>
+                  </div>
+                </div>
+              </label>
+            </div>
 
             {loadingIntent && (
               <div style={{ textAlign: 'center', padding: '2rem' }}>
@@ -352,13 +569,21 @@ export default function ProposalView() {
               </div>
             )}
 
-            {clientSecret && !loadingIntent && (
-              <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
-                <PaymentForm />
+            {activeSecret && !loadingIntent && (
+              <Elements
+                key={activeSecret}
+                stripe={stripePromise}
+                options={{ clientSecret: activeSecret, appearance: { theme: 'stripe' } }}
+              >
+                <PaymentForm
+                  onSubmit={async () => {}} // Already signed, no-op
+                  payLabel={payOnlyLabel}
+                  disabled={false}
+                />
               </Elements>
             )}
 
-            {!clientSecret && !loadingIntent && (
+            {!activeSecret && !loadingIntent && (
               <p style={{ color: '#c0392b', fontSize: '0.875rem' }}>
                 Unable to load payment form. Please refresh the page or contact us at contact@drbartender.com.
               </p>
@@ -366,16 +591,40 @@ export default function ProposalView() {
           </div>
         )}
 
-        {/* ── Deposit Confirmed ── */}
-        {showPaidBanner && (
+        {/* ── Payment Confirmed ── */}
+        {isPaid && (
           <div style={styles.paidBanner}>
-            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🎉</div>
-            <h3 style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#2d6a4f', margin: '0 0 0.5rem' }}>
-              Deposit Received!
-            </h3>
-            <p style={{ color: '#40916c', margin: 0, fontSize: '0.95rem' }}>
-              Your booking is confirmed. We'll be in touch with event details closer to the date.
-            </p>
+            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>&#127881;</div>
+            {(proposal.status === 'balance_paid' || proposal.payment_type === 'full') ? (
+              <>
+                <h3 style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#2d6a4f', margin: '0 0 0.5rem' }}>
+                  Fully Paid!
+                </h3>
+                <p style={{ color: '#40916c', margin: 0, fontSize: '0.95rem' }}>
+                  Your booking is confirmed. We'll be in touch with event details closer to the date.
+                </p>
+              </>
+            ) : proposal.autopay_enrolled ? (
+              <>
+                <h3 style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#2d6a4f', margin: '0 0 0.5rem' }}>
+                  Deposit Received!
+                </h3>
+                <p style={{ color: '#40916c', margin: 0, fontSize: '0.95rem' }}>
+                  Your remaining balance of {fmt(balanceAmount)} will be automatically charged on {formatDateShort(balanceDueDate)}.
+                  We'll be in touch with event details closer to the date.
+                </p>
+              </>
+            ) : (
+              <>
+                <h3 style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#2d6a4f', margin: '0 0 0.5rem' }}>
+                  Deposit Received!
+                </h3>
+                <p style={{ color: '#40916c', margin: 0, fontSize: '0.95rem' }}>
+                  Your remaining balance of {fmt(balanceAmount)} is due by {formatDateShort(balanceDueDate)}.
+                  We'll be in touch with event details closer to the date.
+                </p>
+              </>
+            )}
           </div>
         )}
 
@@ -468,7 +717,9 @@ const styles = {
     fontSize: '0.9rem',
     marginBottom: '0.3rem',
   },
-  contractBox: {
+  contractScroll: {
+    maxHeight: '300px',
+    overflowY: 'auto',
     background: '#faf5ef',
     border: '1px solid #e8e0d4',
     borderRadius: '8px',
@@ -501,18 +752,36 @@ const styles = {
     boxSizing: 'border-box',
     outline: 'none',
   },
-  signButton: {
-    marginTop: '1.25rem',
-    width: '100%',
-    padding: '0.85rem',
-    background: '#3a2218',
-    color: '#fff',
-    border: 'none',
+  radioCard: {
+    display: 'block',
+    padding: '0.85rem 1rem',
     borderRadius: '8px',
-    fontSize: '1rem',
-    fontWeight: 600,
     cursor: 'pointer',
-    letterSpacing: '0.02em',
+    background: '#faf5ef',
+  },
+  radioLabel: {
+    fontSize: '0.95rem',
+    fontWeight: 600,
+    color: '#3a2218',
+  },
+  radioDesc: {
+    fontSize: '0.8rem',
+    color: '#8b7355',
+    marginTop: '0.15rem',
+  },
+  autopayRow: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '0.5rem',
+    marginTop: '0.75rem',
+    paddingTop: '0.75rem',
+    borderTop: '1px solid #e8e0d4',
+    cursor: 'pointer',
+  },
+  autopayText: {
+    fontSize: '0.85rem',
+    color: '#4a3520',
+    lineHeight: 1.4,
   },
   payButton: {
     marginTop: '1.25rem',

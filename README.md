@@ -107,7 +107,8 @@ dr-bartender/
 │       ├── storage.js          # Cloudflare R2 upload + signed URL helpers
 │       ├── fileValidation.js   # Magic-byte file type validation
 │       ├── pricingEngine.js    # Pure pricing calculation engine
-│       └── eventCreation.js   # Auto-create shifts from paid proposals
+│       ├── eventCreation.js   # Auto-create shifts from paid proposals
+│       └── balanceScheduler.js # Autopay balance charge scheduler
 ├── client/
 │   ├── src/
 │   │   ├── App.js              # All routes, auth guards (ProtectedRoute, RequireHired, etc.)
@@ -152,8 +153,11 @@ dr-bartender/
 - 18 add-on services with per-guest, per-hour, flat, and timed billing
 - Dynamic pricing engine that calculates staffing, bar rental, and add-on costs
 - Client-facing proposal view via UUID token URL
-- Client signature capture and acceptance workflow
-- $100 deposit collection via Stripe
+- Combined contract signing + payment on a single screen
+- Payment options: pay $100 deposit or pay in full
+- Autopay enrollment: clients can opt to have their remaining balance auto-charged on the due date (default: 14 days before event)
+- Admin-overridable balance due dates
+- Hourly autopay scheduler charges saved payment methods when balance is due
 
 ### Event Planning (Potion Planning Lab)
 - Public questionnaire sent to clients via unique token link
@@ -161,7 +165,7 @@ dr-bartender/
 - Admin review dashboard
 
 ### Proposal → Event Pipeline
-- When a client signs the contract and pays the deposit, a shift is automatically created
+- When a client signs the contract and pays (deposit or full), a shift is automatically created
 - Shift is populated from proposal data (event name, date, time, duration, location, bartenders needed)
 - Staff can immediately see and request the shift via the Staff Portal
 - Admin can also manually trigger shift creation via `POST /api/proposals/:id/create-shift`

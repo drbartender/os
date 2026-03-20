@@ -129,14 +129,16 @@ System design reference for the Dr. Bartender platform.
 | GET | `/addons` | Admin | List add-ons |
 | GET | `/t/:token` | Public | Fetch proposal by token (tracks views + geolocation) |
 | POST | `/t/:token/sign` | Public | Client signature + acceptance |
+| PATCH | `/:id/balance-due-date` | Admin | Override balance due date for a proposal |
 | POST | `/:id/create-shift` | Admin | Manually create event shift from a paid proposal |
 
 ### Stripe — `/api/stripe`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/create-intent/:token` | Public | Create Stripe PaymentIntent ($100 deposit) |
+| POST | `/create-intent/:token` | Public | Create Stripe PaymentIntent (deposit or full amount, with optional autopay) |
 | POST | `/payment-link/:id` | Admin | Generate reusable Stripe Payment Link |
-| POST | `/webhook` | Stripe | Handle `payment_intent.succeeded`, `checkout.session.completed` — auto-creates event shift on deposit payment |
+| POST | `/charge-balance/:id` | Admin | Manually trigger off-session autopay balance charge |
+| POST | `/webhook` | Stripe | Handle `payment_intent.succeeded`, `checkout.session.completed` — updates payment status, auto-creates event shift |
 
 ### Clients — `/api/clients`
 | Method | Path | Auth | Description |
@@ -235,8 +237,10 @@ System design reference for the Dr. Bartender platform.
 - Event details: name, date, start time, duration, location, guest count
 - `package_id` FK → service_packages, `num_bars`, `num_bartenders`
 - `pricing_snapshot` (JSONB — full pricing breakdown at time of creation)
-- `total_price`, `status`: draft | sent | viewed | modified | accepted | deposit_paid | confirmed
+- `total_price`, `status`: draft | sent | viewed | modified | accepted | deposit_paid | balance_paid | confirmed
 - Client signature: `client_signed_name`, `client_signature_data`, `client_signed_at`
+- Payment: `payment_type` (deposit | full), `autopay_enrolled`, `deposit_amount`, `amount_paid`, `balance_due_date`
+- Stripe: `stripe_customer_id`, `stripe_payment_method_id` (for autopay off-session charges)
 - Tracking: `view_count`, `last_viewed_at`
 
 **proposal_addons** — Line items linking proposals to add-ons
@@ -250,6 +254,11 @@ System design reference for the Dr. Bartender platform.
 **stripe_sessions** — Payment intent tracking
 - `proposal_id` FK
 - `stripe_payment_intent_id`, `stripe_payment_link_id`
+- `amount` (cents), `status`
+
+**proposal_payments** — Individual payment records
+- `proposal_id` FK, `stripe_payment_intent_id`
+- `payment_type`: deposit | balance | full
 - `amount` (cents), `status`
 
 ### Clients
@@ -303,9 +312,12 @@ The result is stored as a `pricing_snapshot` JSONB on the proposal for historica
 ## Third-Party Integrations
 
 ### Stripe (Payments)
-- **Flow**: Admin creates proposal → Client signs → Client pays deposit → Stripe PaymentIntent created → Stripe Elements modal → Webhook confirms → Proposal marked `deposit_paid` → Event shift auto-created via `createEventShifts()` (`server/utils/eventCreation.js`)
+- **Flow**: Admin creates proposal → Client views → Client signs contract + pays (deposit or full) on a single screen → Stripe PaymentIntent confirmed → Webhook updates status → Event shift auto-created
+- **Payment options**: Pay $100 deposit (default) or pay in full. Deposit option includes autopay checkbox.
+- **Autopay**: When enrolled, Stripe saves the payment method via `setup_future_usage: 'off_session'`. A Stripe Customer is created for the client. Balance is auto-charged on the due date (default: 14 days before event) by the hourly scheduler in `server/utils/balanceScheduler.js`.
+- **Off-session charges**: Admin can manually trigger via `POST /api/stripe/charge-balance/:id` or the scheduler runs hourly.
 - **Alternative**: Admin generates a reusable Payment Link via `POST /api/stripe/payment-link/:id`
-- **Webhook events**: `payment_intent.succeeded`, `checkout.session.completed`
+- **Webhook events**: `payment_intent.succeeded` (handles deposit, full, and balance payment types via metadata), `checkout.session.completed`
 - **Deposit**: $100 (configurable via `STRIPE_DEPOSIT_AMOUNT` in cents)
 - **Important**: Stripe webhook route (`/api/stripe/webhook`) must receive raw body — registered before `express.json()` in `server/index.js`
 
