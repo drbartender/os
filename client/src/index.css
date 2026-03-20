@@ -1198,14 +1198,14 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 
 .potion-welcome-body {
   display: flex;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 0;
   position: relative;
   z-index: 1;
 }
 
 .potion-welcome-bartender {
-  width: 45%;
+  width: 42%;
   flex-shrink: 0;
   height: auto;
   display: block;
@@ -1214,10 +1214,18 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   align-self: flex-end;
 }
 
+.potion-welcome-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-height: 280px;
+}
+
 .potion-welcome-text {
   flex: 1;
   text-align: center;
-  padding: 1rem 0.75rem 2rem;
+  padding: 0.25rem 1.5rem 1rem;
 }
 .potion-parchment p,
 .potion-welcome-text p {
@@ -1227,8 +1235,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 }
 
 .potion-welcome-drinks {
-  width: 26%;
-  flex-shrink: 0;
+  width: 55%;
   height: auto;
   display: block;
   margin-bottom: -2rem;
@@ -1244,23 +1251,25 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
     font-size: 1.5rem;
   }
   .potion-welcome-body {
-    flex-wrap: wrap;
-    justify-content: center;
+    flex-direction: column;
+    align-items: center;
   }
   .potion-welcome-bartender {
-    width: 50%;
-    margin: 0 auto;
-    order: 2;
+    width: 65%;
+    margin: 0 auto -1rem;
+    align-self: center;
+  }
+  .potion-welcome-right {
+    width: 100%;
+    min-height: unset;
   }
   .potion-welcome-text {
-    order: 1;
-    width: 100%;
-    flex: none;
+    padding: 1rem 0.5rem;
   }
   .potion-welcome-drinks {
-    width: 35%;
-    margin: 0 auto;
-    order: 3;
+    width: 45%;
+    margin: 0 auto -1.5rem;
+    align-self: center;
   }
 }
 
