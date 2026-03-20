@@ -247,7 +247,11 @@ export default function AdminDashboard() {
     } catch (e) { console.error(e); }
   }
 
-  const fmtDate = iso => iso ? new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '—';
+  const fmtDate = (iso) => {
+    if (!iso) return '—';
+    const dateStr = typeof iso === 'string' ? iso.slice(0, 10) : new Date(iso).toISOString().slice(0, 10);
+    return new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  };
 
   // Permission flags for the current user
   const isAdmin     = user?.role === 'admin';
