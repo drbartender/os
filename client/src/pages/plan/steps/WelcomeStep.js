@@ -16,22 +16,22 @@ export default function WelcomeStep({ plan }) {
 
         <div className="potion-welcome-text">
           {plan?.client_name && (
-            <p style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--deep-brown)', fontWeight: 600 }}>
+            <p style={{ fontWeight: 700, marginBottom: '0.5rem' }}>
               Hello, {plan.client_name}!
             </p>
           )}
           {plan?.event_name && (
-            <p style={{ marginBottom: '1rem', color: 'var(--warm-brown)', fontFamily: 'var(--font-display)' }}>
+            <p style={{ marginBottom: '1rem', fontFamily: 'var(--font-display)' }}>
               Event: {plan.event_name}
               {plan.event_date && <> &mdash; {new Date(plan.event_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</>}
             </p>
           )}
-          <p style={{ lineHeight: 1.7, color: 'var(--deep-brown)', fontSize: '0.95rem' }}>
+          <p>
             You're about to mix a few details to help us design your perfect bar setup.
             We'll take your answers, refine the recipe, and send back your completed
             shopping list and display menu in a few days.
           </p>
-          <p style={{ fontSize: '0.9rem', color: 'var(--warm-brown)', marginTop: '1rem' }}>
+          <p style={{ marginTop: '1rem' }}>
             Click <strong>Next</strong> to begin.
           </p>
         </div>
