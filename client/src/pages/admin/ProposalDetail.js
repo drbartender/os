@@ -241,7 +241,7 @@ export default function ProposalDetail() {
     setRecordingPayment(true);
     setPaymentResult('');
     try {
-      const res = await api.post(`/proposals/${id}/record-payment`, {
+      await api.post(`/proposals/${id}/record-payment`, {
         amount: paymentPaidInFull ? undefined : Number(paymentAmount),
         paid_in_full: paymentPaidInFull,
         method: paymentMethod,
