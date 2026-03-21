@@ -4,14 +4,15 @@ import { useAuth } from '../context/AuthContext';
 import BrandLogo from './BrandLogo';
 
 const NAV_ITEMS = [
-  { label: 'Staff',      path: '/admin/staffing',   icon: '👥' },
+  { label: 'Dashboard',   path: '/admin/dashboard',   icon: '📊' },
+  { label: 'Events',      path: '/admin/events',      icon: '📅' },
   { label: 'Proposals',   path: '/admin/proposals',   icon: '📋' },
-  { label: 'Drink Menu', path: '/admin/drink-menu', icon: '🍹' },
-  { label: 'Events',     path: '/admin/events',     icon: '📅' },
-  { label: 'Clients',    path: '/admin/clients',    icon: '🤝' },
-  { label: 'Financials', path: '/admin/financials',  icon: '📒' },
+  { label: 'Clients',     path: '/admin/clients',     icon: '🤝' },
+  { label: 'Drink Menus', path: '/admin/drink-menu',  icon: '🍹' },
+  { label: 'Staff',       path: '/admin/staffing',    icon: '👥' },
+  { label: 'Financials',  path: '/admin/financials',  icon: '📒' },
   'divider',
-  { label: 'Settings',   path: '/admin/settings',   icon: '⚙' },
+  { label: 'Settings',    path: '/admin/settings',    icon: '⚙' },
 ];
 
 export default function AdminLayout() {

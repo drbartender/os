@@ -154,7 +154,7 @@ router.post('/calculate', auth, requireAdmin, async (req, res) => {
       pkg: pkgResult.rows[0],
       guestCount: guest_count || 50,
       durationHours: duration_hours || 4,
-      numBars: num_bars || 1,
+      numBars: num_bars ?? 1,
       numBartenders: num_bartenders,
       addons
     });
@@ -252,7 +252,7 @@ router.post('/', auth, requireAdmin, async (req, res) => {
     // Calculate pricing
     const gc = guest_count || 50;
     const dh = event_duration_hours || 4;
-    const nb = num_bars || 1;
+    const nb = num_bars ?? 1;
     const snapshot = calculateProposal({
       pkg: pkgResult.rows[0],
       guestCount: gc,

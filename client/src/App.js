@@ -31,6 +31,7 @@ import ProposalsDashboard from './pages/admin/ProposalsDashboard';
 import ProposalCreate from './pages/admin/ProposalCreate';
 import ProposalDetail from './pages/admin/ProposalDetail';
 import ClientDetail from './pages/admin/ClientDetail';
+import Dashboard from './pages/admin/Dashboard';
 import ProposalView from './pages/proposal/ProposalView';
 
 /** Determine where a logged-in user should go based on their role and status */
@@ -137,7 +138,8 @@ function AppRoutes() {
 
       {/* Admin + Manager shell */}
       <Route path="/admin" element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}>
-        <Route index element={<Navigate to="staffing" replace />} />
+        <Route index element={<Navigate to="dashboard" replace />} />
+        <Route path="dashboard" element={<Dashboard />} />
         <Route path="staffing" element={<AdminDashboard />} />
         <Route path="staffing/users/:id" element={<AdminUserDetail />} />
         <Route path="staffing/applications/:id" element={<AdminApplicationDetail />} />

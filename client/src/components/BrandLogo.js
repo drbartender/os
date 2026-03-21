@@ -18,7 +18,7 @@ export default function BrandLogo({ admin = false }) {
       </div>
       <div className="site-logo">
         Dr. <span>Bartender</span>
-        {admin && <span className="site-admin-tag">Admin</span>}
+        {admin && <span className="site-admin-tag">OS</span>}
       </div>
     </div>
   );

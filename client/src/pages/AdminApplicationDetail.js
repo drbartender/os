@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../utils/api';
+import { formatPhone } from '../utils/formatPhone';
 
 // ─── Shared Helpers ───────────────────────────────────────────────
 
@@ -337,7 +338,7 @@ export default function AdminApplicationDetail() {
           <SectionCard title="Contact & Identity">
             <Field label="Full Name" value={app.full_name} />
             <Field label="Email" value={user.email} />
-            <Field label="Phone" value={app.phone} />
+            <Field label="Phone" value={formatPhone(app.phone)} />
             <Field label="Address" value={addrStr} />
             <Field label="Date of Birth" value={dobStr} />
             {app.favorite_color && <Field label="Favorite Color" value={app.favorite_color} />}
@@ -348,7 +349,7 @@ export default function AdminApplicationDetail() {
                 <div style={{ marginTop: '0.2rem' }}>
                   <div style={{ fontSize: '0.9rem', color: 'var(--deep-brown)', fontWeight: 600 }}>{app.emergency_contact_name}</div>
                   <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                    {[app.emergency_contact_relationship, app.emergency_contact_phone].filter(Boolean).join(' · ')}
+                    {[app.emergency_contact_relationship, app.emergency_contact_phone ? formatPhone(app.emergency_contact_phone) : null].filter(Boolean).join(' · ')}
                   </div>
                 </div>
               ) : <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Not provided</span>}

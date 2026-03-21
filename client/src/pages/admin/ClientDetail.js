@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import { formatPhone } from '../../utils/formatPhone';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
@@ -100,7 +101,7 @@ export default function ClientDetail() {
           ) : (
             <div style={{ display: 'grid', gap: '0.5rem' }}>
               <div><span className="text-muted text-small">Email</span><div>{client.email || '—'}</div></div>
-              <div><span className="text-muted text-small">Phone</span><div>{client.phone || '—'}</div></div>
+              <div><span className="text-muted text-small">Phone</span><div>{formatPhone(client.phone)}</div></div>
               <div><span className="text-muted text-small">Source</span><div>{SOURCE_LABELS[client.source] || client.source}</div></div>
               <div><span className="text-muted text-small">Added</span><div>{formatDate(client.created_at)}</div></div>
               {client.notes && <div><span className="text-muted text-small">Notes</span><div>{client.notes}</div></div>}

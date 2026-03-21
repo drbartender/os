@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
+import { formatPhone } from '../utils/formatPhone';
 
 const ONBOARDING_STEPS = ['account_created','welcome_viewed','field_guide_completed','agreement_completed','contractor_profile_completed','payday_protocols_completed','onboarding_completed'];
 
@@ -604,7 +605,7 @@ export default function AdminDashboard() {
                                 </div>
                                 <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{s.email}</div>
                               </td>
-                              <td style={{ fontSize: '0.82rem' }}>{s.phone || '—'}</td>
+                              <td style={{ fontSize: '0.82rem' }}>{formatPhone(s.phone)}</td>
                               <td style={{ fontSize: '0.82rem' }}>{s.city && s.state ? `${s.city}, ${s.state}` : s.city || '—'}</td>
                               <td style={{ fontSize: '0.82rem' }}>{s.reliable_transportation || '—'}</td>
                               <td style={{ fontSize: '0.78rem' }}>
@@ -807,7 +808,7 @@ export default function AdminDashboard() {
                                   <tr key={req.id}>
                                     <td>
                                       <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>{req.preferred_name || req.email}</div>
-                                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{req.phone || req.email}</div>
+                                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{req.phone ? formatPhone(req.phone) : req.email}</div>
                                     </td>
                                     <td style={{ fontSize: '0.82rem' }}>{req.position || '—'}</td>
                                     <td style={{ fontSize: '0.82rem', maxWidth: 180 }}>{req.notes || '—'}</td>

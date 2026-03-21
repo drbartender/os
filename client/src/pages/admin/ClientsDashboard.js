@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import { formatPhone } from '../../utils/formatPhone';
 
 const SOURCE_LABELS = { direct: 'Direct', thumbtack: 'Thumbtack', referral: 'Referral', website: 'Website' };
 
@@ -121,7 +122,7 @@ export default function ClientsDashboard() {
               <tr key={c.id} onClick={() => navigate(`/admin/clients/${c.id}`)} style={{ cursor: 'pointer' }}>
                 <td><strong>{c.name}</strong></td>
                 <td>{c.email || '—'}</td>
-                <td>{c.phone || '—'}</td>
+                <td>{formatPhone(c.phone)}</td>
                 <td>{SOURCE_LABELS[c.source] || c.source}</td>
                 <td>{formatDate(c.created_at)}</td>
               </tr>
