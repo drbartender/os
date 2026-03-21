@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import { formatPhone } from '../../utils/formatPhone';
 
 export default function EventsDashboard() {
   const navigate = useNavigate();
@@ -148,7 +149,7 @@ export default function EventsDashboard() {
                     {event.client_name && (
                       <div style={{ marginTop: '0.4rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                         Client: <strong>{event.client_name}</strong>
-                        {event.client_phone && <span> &middot; {event.client_phone}</span>}
+                        {event.client_phone && <span> &middot; {formatPhone(event.client_phone)}</span>}
                         {event.client_email && <span> &middot; {event.client_email}</span>}
                       </div>
                     )}
@@ -228,7 +229,7 @@ export default function EventsDashboard() {
                             <tr key={req.id}>
                               <td>
                                 <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>{req.preferred_name || req.email}</div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{req.phone || req.email}</div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{req.phone ? formatPhone(req.phone) : req.email}</div>
                               </td>
                               <td style={{ fontSize: '0.82rem' }}>{req.position || '—'}</td>
                               <td style={{ fontSize: '0.82rem', maxWidth: 180 }}>{req.notes || '—'}</td>

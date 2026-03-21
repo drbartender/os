@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../../utils/api';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import LocationInput from '../../components/LocationInput';
+import { formatPhone } from '../../utils/formatPhone';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
@@ -339,7 +340,7 @@ export default function ProposalDetail() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
               <div><span className="text-muted text-small">Name</span><div>{proposal.client_name || '—'}</div></div>
               <div><span className="text-muted text-small">Email</span><div>{proposal.client_email || '—'}</div></div>
-              <div><span className="text-muted text-small">Phone</span><div>{proposal.client_phone || '—'}</div></div>
+              <div><span className="text-muted text-small">Phone</span><div>{formatPhone(proposal.client_phone)}</div></div>
               <div><span className="text-muted text-small">Source</span><div>{proposal.client_source || '—'}</div></div>
             </div>
           </div>
