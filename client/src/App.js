@@ -22,6 +22,7 @@ import AdminApplicationDetail from './pages/AdminApplicationDetail';
 import EventsDashboard from './pages/admin/EventsDashboard';
 import ClientsDashboard from './pages/admin/ClientsDashboard';
 import FinancialsDashboard from './pages/admin/FinancialsDashboard';
+import HiringDashboard from './pages/admin/HiringDashboard';
 import SettingsDashboard from './pages/admin/SettingsDashboard';
 import DrinkPlansDashboard from './pages/admin/DrinkPlansDashboard';
 import DrinkPlanDetail from './pages/admin/DrinkPlanDetail';
@@ -143,6 +144,7 @@ function AppRoutes() {
         <Route path="staffing" element={<AdminDashboard />} />
         <Route path="staffing/users/:id" element={<AdminUserDetail />} />
         <Route path="staffing/applications/:id" element={<AdminApplicationDetail />} />
+        <Route path="hiring" element={<HiringDashboard />} />
         <Route path="drink-plans" element={<DrinkPlansDashboard />} />
         <Route path="drink-plans/:id" element={<DrinkPlanDetail />} />
         <Route path="cocktail-menu" element={<Navigate to="/admin/drink-menu" replace />} />

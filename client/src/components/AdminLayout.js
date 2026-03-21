@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { label: 'Clients',     path: '/admin/clients',     icon: '🤝' },
   { label: 'Drink Menus', path: '/admin/drink-menu',  icon: '🍹' },
   { label: 'Staff',       path: '/admin/staffing',    icon: '👥' },
+  { label: 'Hiring',      path: '/admin/hiring',      icon: '📝' },
   { label: 'Financials',  path: '/admin/financials',  icon: '📒' },
   'divider',
   { label: 'Settings',    path: '/admin/settings',    icon: '⚙' },
