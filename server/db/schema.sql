@@ -723,6 +723,28 @@ CREATE INDEX IF NOT EXISTS idx_shifts_created_by ON shifts(created_by);
 CREATE INDEX IF NOT EXISTS idx_shift_requests_shift_id ON shift_requests(shift_id);
 CREATE INDEX IF NOT EXISTS idx_shift_requests_user_id ON shift_requests(user_id);
 
+-- ─── SMS Messages ───────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS sms_messages (
+  id SERIAL PRIMARY KEY,
+  group_id UUID NOT NULL DEFAULT gen_random_uuid(),
+  sender_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  recipient_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  recipient_phone VARCHAR(50) NOT NULL,
+  recipient_name VARCHAR(255),
+  body TEXT NOT NULL,
+  message_type VARCHAR(20) DEFAULT 'general'
+    CHECK (message_type IN ('general', 'invitation', 'reminder', 'announcement')),
+  shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL,
+  twilio_sid VARCHAR(100),
+  status VARCHAR(20) DEFAULT 'sent'
+    CHECK (status IN ('sent', 'failed', 'queued')),
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sms_messages_group_id ON sms_messages(group_id);
+CREATE INDEX IF NOT EXISTS idx_sms_messages_created_at ON sms_messages(created_at DESC);
+
 -- Drink Plans
 CREATE INDEX IF NOT EXISTS idx_drink_plans_token ON drink_plans(token);
 CREATE INDEX IF NOT EXISTS idx_drink_plans_proposal_id ON drink_plans(proposal_id);

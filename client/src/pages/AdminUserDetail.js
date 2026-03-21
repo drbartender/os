@@ -63,12 +63,54 @@ export default function AdminUserDetail() {
   const [editForm, setEditForm] = useState({});
   const [saving, setSaving] = useState(false);
 
+  // Messages state
+  const [userMessages, setUserMessages] = useState([]);
+  const [userMsgLoading, setUserMsgLoading] = useState(false);
+  const [userMsgBody, setUserMsgBody] = useState('');
+  const [userMsgType, setUserMsgType] = useState('general');
+  const [userMsgSending, setUserMsgSending] = useState(false);
+  const [userMsgResult, setUserMsgResult] = useState(null);
+
   useEffect(() => {
     api.get(`/admin/users/${id}`)
       .then(r => setData(r.data))
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [id]);
+
+  // Fetch message history for this user
+  useEffect(() => {
+    if (tab !== 'messages') return;
+    setUserMsgLoading(true);
+    api.get(`/messages/user/${id}`)
+      .then(r => setUserMessages(r.data.messages))
+      .catch(console.error)
+      .finally(() => setUserMsgLoading(false));
+  }, [tab, id]);
+
+  async function sendUserMessage(e) {
+    e.preventDefault();
+    if (!userMsgBody.trim()) return;
+    setUserMsgSending(true);
+    setUserMsgResult(null);
+    try {
+      const r = await api.post('/messages/send', {
+        recipient_ids: [parseInt(id)],
+        body: userMsgBody.trim(),
+        message_type: userMsgType,
+      });
+      setUserMsgResult(r.data);
+      setUserMsgBody('');
+      setUserMsgType('general');
+      // Refresh history
+      const hist = await api.get(`/messages/user/${id}`);
+      setUserMessages(hist.data.messages);
+    } catch (err) {
+      setUserMsgResult({ error: err.response?.data?.error || 'Failed to send' });
+    } finally {
+      setUserMsgSending(false);
+    }
+  }
 
   async function updateStatus(status) {
     setConfirmAction(null);
@@ -232,6 +274,7 @@ export default function AdminUserDetail() {
             ['progress', 'Onboarding'],
             ['payment', 'Payment'],
             ['permissions', 'Permissions'],
+            ['messages', 'Messages'],
           ].map(([key, label]) => (
             <button key={key} className={`tab-btn ${tab === key ? 'active' : ''}`} onClick={() => { setTab(key); setEditing(false); }}>
               {label}
@@ -512,6 +555,94 @@ export default function AdminUserDetail() {
                   </div>
                 </label>
               ))}
+            </Section>
+          </div>
+        )}
+        {/* ── Messages Tab ── */}
+        {tab === 'messages' && (
+          <div style={{ maxWidth: 640 }}>
+            {/* Quick Compose */}
+            <Section title="Send Message">
+              <form onSubmit={sendUserMessage}>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <label className="form-label">Type</label>
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                    {['general', 'reminder', 'announcement'].map(t => (
+                      <button key={t} type="button"
+                        className={`btn btn-sm ${userMsgType === t ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => setUserMsgType(t)}
+                        style={{ textTransform: 'capitalize' }}>
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <label className="form-label">Message</label>
+                  <textarea
+                    className="form-input" rows={3}
+                    value={userMsgBody} onChange={e => setUserMsgBody(e.target.value)}
+                    maxLength={1600}
+                    placeholder={`Message to ${profile.preferred_name || user.email}…`}
+                    style={{ marginBottom: '0.25rem' }}
+                  />
+                  <div className="text-muted text-small" style={{ textAlign: 'right' }}>
+                    {userMsgBody.length}/1600
+                  </div>
+                </div>
+                <button type="submit" className="btn btn-primary btn-sm"
+                  disabled={userMsgSending || !userMsgBody.trim()}>
+                  {userMsgSending ? 'Sending…' : 'Send SMS'}
+                </button>
+              </form>
+              {userMsgResult && (
+                <div className={`alert ${userMsgResult.error ? 'alert-error' : 'alert-success'}`} style={{ marginTop: '0.75rem' }}>
+                  {userMsgResult.error
+                    ? userMsgResult.error
+                    : `Message ${userMsgResult.sent > 0 ? 'sent' : 'failed'}`
+                  }
+                </div>
+              )}
+            </Section>
+
+            {/* Message History */}
+            <Section title="Message History">
+              {userMsgLoading ? (
+                <div className="text-muted">Loading…</div>
+              ) : userMessages.length === 0 ? (
+                <p className="text-muted italic">No messages sent to this staff member yet.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {userMessages.map(m => (
+                    <div key={m.id} style={{
+                      padding: '0.75rem', borderRadius: '6px',
+                      background: 'var(--parchment)', border: '1px solid var(--border-dark)',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem', flexWrap: 'wrap', gap: '0.3rem' }}>
+                        <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                          <span className={`badge ${m.status === 'sent' ? 'badge-approved' : 'badge-deactivated'}`}>{m.status}</span>
+                          <span className={`badge ${m.message_type === 'invitation' ? 'badge-reviewed' : m.message_type === 'reminder' ? 'badge-inprogress' : 'badge-submitted'}`} style={{ textTransform: 'capitalize' }}>
+                            {m.message_type}
+                          </span>
+                          {m.shift_event_name && (
+                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>for {m.shift_event_name}</span>
+                          )}
+                        </div>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          {new Date(m.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      <p style={{ margin: 0, fontSize: '0.88rem' }}>{m.body}</p>
+                      {m.error_message && (
+                        <div style={{ fontSize: '0.78rem', color: 'var(--error)', marginTop: '0.3rem' }}>Error: {m.error_message}</div>
+                      )}
+                      {m.sender_email && (
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>Sent by {m.sender_email}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </Section>
           </div>
         )}

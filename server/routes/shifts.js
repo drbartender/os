@@ -1,7 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
-const { sendSMS } = require('../utils/sms');
+const { sendSMS, normalizePhone } = require('../utils/sms');
 
 const router = express.Router();
 
@@ -245,7 +245,7 @@ router.put('/requests/:requestId', auth, requireStaffing, async (req, res) => {
           const name = info.preferred_name ? `, ${info.preferred_name}` : '';
 
           await sendSMS({
-            to: info.phone,
+            to: normalizePhone(info.phone) || info.phone,
             body: `Hey${name}! You've been confirmed for ${info.event_name} on ${date} at ${time} — ${location}. See you there! - Dr. Bartender`,
           });
         }

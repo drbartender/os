@@ -183,6 +183,16 @@ System design reference for the Dr. Bartender platform.
 | GET | `/:id/requests` | Staffing | Get all requests for a shift |
 | PUT | `/requests/:requestId` | Staffing | Approve or deny a request (sends SMS on approve) |
 
+### Messages — `/api/messages`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/recipients` | Admin | List eligible staff with SMS consent |
+| POST | `/send` | Admin | Send SMS to one or more staff (supports batch sends with group_id) |
+| GET | `/history` | Admin | Paginated grouped message history |
+| GET | `/history/:groupId` | Admin | Per-recipient detail for a batch send |
+| GET | `/user/:userId` | Admin | Message history for a specific staff member |
+| GET | `/shifts` | Admin | Shifts available for invitation picker |
+
 ### Other
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -318,6 +328,18 @@ System design reference for the Dr. Bartender platform.
 - `shift_id` FK, `user_id` FK (unique together)
 - `position`, `status` (pending/approved/rejected), `notes`
 
+### Messaging
+
+**sms_messages** — Outbound SMS message log
+- `id` SERIAL PK
+- `user_id` FK → users (recipient)
+- `shift_id` FK → shifts (nullable, for shift invitations)
+- `group_id` UUID — groups messages from the same batch send
+- `message_type` — e.g. general, shift_invitation
+- `to_phone`, `body`
+- `twilio_sid`, `status` — delivery tracking
+- `sent_by` FK → users (admin who sent)
+
 ### Cross-Cutting Patterns
 - All tables have `created_at` / `updated_at` with auto-update triggers
 - UUID tokens on `drink_plans` and `proposals` for public access without auth
@@ -357,9 +379,10 @@ The result is stored as a `pricing_snapshot` JSONB on the proposal for historica
 - **Used for**: Status update notifications to contractors
 
 ### Twilio (SMS)
-- **Wrapper**: `server/utils/sms.js`
-- **Used for**: SMS notifications (module ready, not yet wired to automated flows)
-- **Consent**: Collected during agreement signing (`sms_consent` flag)
+- **Wrapper**: `server/utils/sms.js` (includes `normalizePhone()` for E.164 formatting)
+- **Used for**: Admin-initiated SMS to staff (general messages, shift invitations), shift approval notifications
+- **Consent**: Collected during agreement signing (`sms_consent` flag) — only consented staff appear as eligible recipients
+- **Logging**: All outbound messages logged to `sms_messages` table with delivery status tracking
 
 ### Cloudflare R2 (File Storage)
 - **Wrapper**: `server/utils/storage.js`

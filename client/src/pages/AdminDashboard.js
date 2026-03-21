@@ -93,6 +93,22 @@ export default function AdminDashboard() {
   const [shiftForm, setShiftForm]             = useState({ event_name: '', event_date: '', start_time: '', end_time: '', location: '', notes: '', positions: [] });
   const [shiftPosInput, setShiftPosInput]     = useState('');
 
+  // Messages state
+  const [msgRecipients, setMsgRecipients]           = useState([]);
+  const [msgRecipientsLoading, setMsgRecipientsLoading] = useState(false);
+  const [msgSelected, setMsgSelected]               = useState([]);
+  const [msgBody, setMsgBody]                       = useState('');
+  const [msgType, setMsgType]                       = useState('general');
+  const [msgShiftId, setMsgShiftId]                 = useState('');
+  const [msgShifts, setMsgShifts]                   = useState([]);
+  const [msgSending, setMsgSending]                 = useState(false);
+  const [msgResult, setMsgResult]                   = useState(null);
+  const [msgSearch, setMsgSearch]                    = useState('');
+  const [msgHistory, setMsgHistory]                  = useState([]);
+  const [msgHistoryLoading, setMsgHistoryLoading]    = useState(false);
+  const [msgExpandedGroup, setMsgExpandedGroup]      = useState(null);
+  const [msgGroupDetails, setMsgGroupDetails]        = useState({});
+
   // Close inline editor when clicking outside the table
   useEffect(() => {
     function handleClick(e) {
@@ -163,6 +179,66 @@ export default function AdminDashboard() {
     if (tab !== 'shifts') return;
     fetchShifts();
   }, [tab, fetchShifts]);
+
+  // Fetch messages recipients + history
+  const fetchMsgRecipients = useCallback(() => {
+    setMsgRecipientsLoading(true);
+    api.get('/messages/recipients')
+      .then(r => setMsgRecipients(r.data.recipients))
+      .catch(console.error)
+      .finally(() => setMsgRecipientsLoading(false));
+  }, []);
+
+  const fetchMsgHistory = useCallback(() => {
+    setMsgHistoryLoading(true);
+    api.get('/messages/history')
+      .then(r => setMsgHistory(r.data.groups))
+      .catch(console.error)
+      .finally(() => setMsgHistoryLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (tab !== 'messages') return;
+    fetchMsgRecipients();
+    fetchMsgHistory();
+    api.get('/messages/shifts')
+      .then(r => setMsgShifts(r.data.shifts))
+      .catch(console.error);
+  }, [tab, fetchMsgRecipients, fetchMsgHistory]);
+
+  async function sendMessage(e) {
+    e.preventDefault();
+    if (msgSelected.length === 0 || !msgBody.trim()) return;
+    if (!window.confirm(`Send this message to ${msgSelected.length} staff member${msgSelected.length !== 1 ? 's' : ''}?`)) return;
+    setMsgSending(true);
+    setMsgResult(null);
+    try {
+      const r = await api.post('/messages/send', {
+        recipient_ids: msgSelected,
+        body: msgBody.trim(),
+        message_type: msgType,
+        shift_id: msgType === 'invitation' && msgShiftId ? parseInt(msgShiftId) : null,
+      });
+      setMsgResult(r.data);
+      setMsgBody('');
+      setMsgSelected([]);
+      setMsgType('general');
+      setMsgShiftId('');
+      fetchMsgHistory();
+    } catch (err) {
+      setMsgResult({ error: err.response?.data?.error || 'Failed to send' });
+    } finally {
+      setMsgSending(false);
+    }
+  }
+
+  async function loadMsgGroupDetail(groupId) {
+    if (msgGroupDetails[groupId]) return;
+    try {
+      const r = await api.get(`/messages/history/${groupId}`);
+      setMsgGroupDetails(prev => ({ ...prev, [groupId]: r.data.messages }));
+    } catch (e) { console.error(e); }
+  }
 
   async function handleInlineStatusChange(userId, newStatus) {
     const prevApp = apps.find(a => a.id === userId);
@@ -327,6 +403,11 @@ export default function AdminDashboard() {
           {canStaff && (
             <button className={`tab-btn ${tab === 'shifts' ? 'active' : ''}`} onClick={() => setTab('shifts')}>
               Shifts {shifts.length > 0 && `(${shifts.length})`}
+            </button>
+          )}
+          {isAdmin && (
+            <button className={`tab-btn ${tab === 'messages' ? 'active' : ''}`} onClick={() => setTab('messages')}>
+              Messages
             </button>
           )}
         </div>
@@ -847,6 +928,224 @@ export default function AdminDashboard() {
                               </tbody>
                             </table>
                           )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ─── Messages Tab ─── */}
+        {tab === 'messages' && (
+          <>
+            {/* Compose */}
+            <div className="card mb-3" style={{ border: '2px solid var(--amber)' }}>
+              <h3 style={{ marginBottom: '1rem' }}>Compose Message</h3>
+              <form onSubmit={sendMessage}>
+                {/* Message Type */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <label className="form-label">Message Type</label>
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                    {['general', 'invitation', 'reminder', 'announcement'].map(t => (
+                      <button key={t} type="button"
+                        className={`btn btn-sm ${msgType === t ? 'btn-primary' : 'btn-secondary'}`}
+                        onClick={() => {
+                          setMsgType(t);
+                          if (t !== 'invitation') setMsgShiftId('');
+                        }}
+                        style={{ textTransform: 'capitalize' }}>
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Shift picker for invitations */}
+                {msgType === 'invitation' && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label className="form-label">Select Shift</label>
+                    <select className="form-input" style={{ marginBottom: 0 }}
+                      value={msgShiftId} onChange={e => {
+                        setMsgShiftId(e.target.value);
+                        const shift = msgShifts.find(s => String(s.id) === e.target.value);
+                        if (shift) {
+                          const date = shift.event_date
+                            ? new Date(shift.event_date.slice(0, 10) + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+                            : 'TBD';
+                          const time = shift.start_time && shift.end_time
+                            ? `${shift.start_time}\u2013${shift.end_time}` : shift.start_time || 'TBD';
+                          setMsgBody(`Hey! We have an event coming up: ${shift.event_name} on ${date} at ${time} \u2014 ${shift.location || 'TBD'}. Interested in working it? Reply YES to confirm. - Dr. Bartender`);
+                        }
+                      }}>
+                      <option value="">Select a shift…</option>
+                      {msgShifts.map(s => (
+                        <option key={s.id} value={s.id}>
+                          {s.event_name} — {s.event_date ? new Date(s.event_date.slice(0, 10) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '?'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Recipients */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <label className="form-label">Recipients</label>
+                  <input
+                    className="form-input" style={{ maxWidth: 300, marginBottom: '0.5rem' }}
+                    placeholder="Search staff…"
+                    value={msgSearch} onChange={e => setMsgSearch(e.target.value)}
+                  />
+                  {msgRecipientsLoading ? (
+                    <div className="text-muted text-small">Loading…</div>
+                  ) : (
+                    <>
+                      <div style={{ marginBottom: '0.4rem' }}>
+                        <label style={{ fontSize: '0.82rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <input type="checkbox"
+                            checked={msgSelected.length === msgRecipients.filter(r => !msgSearch || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase())).length && msgSelected.length > 0}
+                            onChange={e => {
+                              const filtered = msgRecipients.filter(r => !msgSearch || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase()));
+                              setMsgSelected(e.target.checked ? filtered.map(r => r.user_id) : []);
+                            }}
+                          />
+                          Select All ({msgRecipients.filter(r => !msgSearch || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase())).length})
+                        </label>
+                      </div>
+                      <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--border-dark)', borderRadius: '6px', padding: '0.5rem' }}>
+                        {msgRecipients
+                          .filter(r => !msgSearch || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase()))
+                          .map(r => (
+                            <label key={r.user_id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.25rem 0', cursor: 'pointer', fontSize: '0.88rem' }}>
+                              <input type="checkbox"
+                                checked={msgSelected.includes(r.user_id)}
+                                onChange={e => {
+                                  setMsgSelected(prev =>
+                                    e.target.checked ? [...prev, r.user_id] : prev.filter(id => id !== r.user_id)
+                                  );
+                                }}
+                              />
+                              <span style={{ fontWeight: 600 }}>{r.preferred_name || r.email}</span>
+                              <span className="text-muted" style={{ fontSize: '0.78rem' }}>{formatPhone(r.phone)}</span>
+                            </label>
+                          ))
+                        }
+                        {msgRecipients.filter(r => !msgSearch || r.preferred_name?.toLowerCase().includes(msgSearch.toLowerCase()) || r.email?.toLowerCase().includes(msgSearch.toLowerCase())).length === 0 && (
+                          <div className="text-muted text-small" style={{ padding: '0.5rem 0' }}>No eligible staff found (must have phone + SMS consent)</div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Message body */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <label className="form-label">Message</label>
+                  <textarea
+                    className="form-input" rows={4}
+                    value={msgBody} onChange={e => setMsgBody(e.target.value)}
+                    maxLength={1600}
+                    placeholder="Type your message…"
+                    style={{ marginBottom: '0.25rem' }}
+                  />
+                  <div className="text-muted text-small" style={{ textAlign: 'right' }}>
+                    {msgBody.length}/1600
+                  </div>
+                </div>
+
+                {/* Send */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <button type="submit" className="btn btn-primary"
+                    disabled={msgSending || msgSelected.length === 0 || !msgBody.trim()}>
+                    {msgSending ? 'Sending…' : `Send to ${msgSelected.length} recipient${msgSelected.length !== 1 ? 's' : ''}`}
+                  </button>
+                </div>
+              </form>
+
+              {/* Result */}
+              {msgResult && (
+                <div className={`alert ${msgResult.error ? 'alert-error' : 'alert-success'}`} style={{ marginTop: '1rem' }}>
+                  {msgResult.error
+                    ? msgResult.error
+                    : `Sent ${msgResult.sent} of ${msgResult.total} message${msgResult.total !== 1 ? 's' : ''}${msgResult.failed > 0 ? ` (${msgResult.failed} failed)` : ''}`
+                  }
+                </div>
+              )}
+            </div>
+
+            {/* History */}
+            <h3 style={{ marginBottom: '0.75rem' }}>Message History</h3>
+            {msgHistoryLoading ? (
+              <div className="loading"><div className="spinner" />Loading history…</div>
+            ) : msgHistory.length === 0 ? (
+              <div className="card text-center"><p className="text-muted italic">No messages sent yet.</p></div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {msgHistory.map(g => {
+                  const isExpanded = msgExpandedGroup === g.group_id;
+                  const details = msgGroupDetails[g.group_id] || [];
+                  return (
+                    <div key={g.group_id} className="card" style={{ padding: '1rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.3rem' }}>
+                            <span className={`badge ${g.message_type === 'invitation' ? 'badge-reviewed' : g.message_type === 'reminder' ? 'badge-inprogress' : g.message_type === 'announcement' ? 'badge-submitted' : 'badge-approved'}`} style={{ textTransform: 'capitalize' }}>
+                              {g.message_type}
+                            </span>
+                            {g.shift_event_name && (
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>for {g.shift_event_name}</span>
+                            )}
+                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                              {new Date(g.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          <p style={{ fontSize: '0.88rem', margin: '0.3rem 0', color: 'var(--deep-brown)' }}>
+                            {g.body.length > 120 ? g.body.slice(0, 120) + '…' : g.body}
+                          </p>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                            {g.total_recipients} recipient{g.total_recipients !== '1' ? 's' : ''}
+                            {' · '}{g.sent_count} sent
+                            {Number(g.failed_count) > 0 && <span style={{ color: 'var(--error)' }}> · {g.failed_count} failed</span>}
+                          </div>
+                        </div>
+                        <button className="btn btn-secondary btn-sm" onClick={() => {
+                          if (isExpanded) {
+                            setMsgExpandedGroup(null);
+                          } else {
+                            setMsgExpandedGroup(g.group_id);
+                            loadMsgGroupDetail(g.group_id);
+                          }
+                        }}>
+                          {isExpanded ? 'Hide ↑' : 'Details ↓'}
+                        </button>
+                      </div>
+
+                      {isExpanded && details.length > 0 && (
+                        <div style={{ marginTop: '0.75rem', borderTop: '1px solid var(--border-dark)', paddingTop: '0.75rem' }}>
+                          <table className="admin-table" style={{ margin: 0 }}>
+                            <thead>
+                              <tr>
+                                <th>Recipient</th>
+                                <th>Phone</th>
+                                <th>Status</th>
+                                <th>Error</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {details.map(d => (
+                                <tr key={d.id}>
+                                  <td style={{ fontSize: '0.88rem' }}>{d.recipient_name || '—'}</td>
+                                  <td style={{ fontSize: '0.82rem' }}>{formatPhone(d.recipient_phone)}</td>
+                                  <td>
+                                    <span className={`badge ${d.status === 'sent' ? 'badge-approved' : 'badge-deactivated'}`}>{d.status}</span>
+                                  </td>
+                                  <td style={{ fontSize: '0.78rem', color: 'var(--error)' }}>{d.error_message || '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
                       )}
                     </div>

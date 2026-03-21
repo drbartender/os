@@ -63,6 +63,7 @@ app.use('/api/cocktails', require('./routes/cocktails'));
 app.use('/api/mocktails', require('./routes/mocktails'));
 app.use('/api/proposals', require('./routes/proposals'));
 app.use('/api/clients', require('./routes/clients'));
+app.use('/api/messages', require('./routes/messages'));
 app.use('/api/stripe', require('./routes/stripe'));
 
 // Health check — must be registered BEFORE the React catch-all below

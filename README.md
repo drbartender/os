@@ -100,7 +100,8 @@ dr-bartender/
 │   │   ├── proposals.js        # Service proposals + pricing calculator
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
 │   │   ├── clients.js          # Client CRUD
-│   │   └── shifts.js           # Shift scheduling
+│   │   ├── shifts.js           # Shift scheduling
+│   │   └── messages.js         # SMS messaging to staff
 │   └── utils/
 │       ├── email.js            # Resend email wrapper
 │       ├── sms.js              # Twilio SMS wrapper
@@ -173,13 +174,20 @@ dr-bartender/
 - Events dashboard shows all confirmed events with staffing status and staff request management
 
 ### Admin Dashboard
-- **Staffing**: Application review, hire/reject, interview notes, user management
+- **Staffing**: Application review, hire/reject, interview notes, user management, SMS messaging (compose, recipient picker, shift invitation templates, grouped message history)
 - **Proposals**: Create, price, send, track views/signatures — paid proposals automatically move to Events
 - **Clients**: CRM with source tracking (direct, Thumbtack, referral, website)
 - **Drink Plans**: Auto-created when proposals become events; accessed from event detail page; client receives email with questionnaire link
 - **Drink Menu**: Manage 25 cocktails + 16 mocktails across categories
 - **Events**: Paid proposals become events with full detail view, staffing status, shift request management
 - **Financials / Settings**: Placeholder tabs ready for expansion
+
+### SMS Messaging
+- Send SMS to one or more staff members from the admin dashboard
+- Shift-based invitation templates for quick event staffing outreach
+- Grouped message history with per-recipient delivery tracking
+- Per-user message history on individual staff profiles
+- Filters by SMS consent — only staff who opted in are eligible
 
 ### Staff Portal
 - View available shifts and request assignments
