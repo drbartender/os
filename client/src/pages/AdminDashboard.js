@@ -385,21 +385,11 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Main Tabs */}
-        <div className="tab-nav" style={{ marginBottom: '1rem' }}>
+        {/* Primary Tabs */}
+        <div className="tab-nav" style={{ marginBottom: 0 }}>
           <button className={`tab-btn ${tab === 'active-staff' ? 'active' : ''}`} onClick={() => setTab('active-staff')}>
             Active Staff {staffTotal > 0 && `(${staffTotal})`}
           </button>
-          {canHire && (
-            <button className={`tab-btn ${tab === 'applications' ? 'active' : ''}`} onClick={() => setTab('applications')}>
-              Applications ({statusCounts.all ?? appTotal})
-            </button>
-          )}
-          {isAdmin && (
-            <button className={`tab-btn ${tab === 'onboarding' ? 'active' : ''}`} onClick={() => setTab('onboarding')}>
-              Onboarding ({userTotal})
-            </button>
-          )}
           {canStaff && (
             <button className={`tab-btn ${tab === 'shifts' ? 'active' : ''}`} onClick={() => setTab('shifts')}>
               Shifts {shifts.length > 0 && `(${shifts.length})`}
@@ -411,6 +401,30 @@ export default function AdminDashboard() {
             </button>
           )}
         </div>
+
+        {/* Secondary Tabs — Hiring */}
+        {(canHire || isAdmin) && (
+          <div style={{ display: 'flex', gap: '0.25rem', marginBottom: '1rem', paddingLeft: '0.25rem' }}>
+            {canHire && (
+              <button
+                className={`btn btn-sm ${tab === 'applications' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ fontSize: '0.78rem', padding: '0.2rem 0.6rem' }}
+                onClick={() => setTab('applications')}
+              >
+                Applications ({statusCounts.all ?? appTotal})
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                className={`btn btn-sm ${tab === 'onboarding' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{ fontSize: '0.78rem', padding: '0.2rem 0.6rem' }}
+                onClick={() => setTab('onboarding')}
+              >
+                Onboarding ({userTotal})
+              </button>
+            )}
+          </div>
+        )}
 
         {/* ─── Applications Tab ─── */}
         {tab === 'applications' && (
