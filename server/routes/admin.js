@@ -112,10 +112,14 @@ router.put('/users/:id/status', auth, adminOnly, async (req, res) => {
     // Log status change as a system note in the interview_notes table
     if (oldStatus !== status) {
       const toLabel = s => (s || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      pool.query(
-        `INSERT INTO interview_notes (user_id, admin_id, note, note_type) VALUES ($1, $2, $3, 'status_change')`,
-        [req.params.id, req.user.id, `${toLabel(oldStatus)} → ${toLabel(status)}`]
-      ).catch(err => console.error('Status change log failed:', err));
+      try {
+        await pool.query(
+          `INSERT INTO interview_notes (user_id, admin_id, note, note_type) VALUES ($1, $2, $3, 'status_change')`,
+          [req.params.id, req.user.id, `${toLabel(oldStatus)} → ${toLabel(status)}`]
+        );
+      } catch (logErr) {
+        console.error('Status change log failed:', logErr);
+      }
     }
 
     res.json(result.rows[0]);

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
+import { API_BASE_URL as BASE_URL } from '../../utils/api';
 import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue } from './data/servingTypes';
 import WelcomeStep from './steps/WelcomeStep';
 import QuickPickStep from './steps/QuickPickStep';
@@ -12,10 +13,6 @@ import MocktailStep from './steps/MocktailStep';
 import MenuDesignStep from './steps/MenuDesignStep';
 import LogisticsStep from './steps/LogisticsStep';
 import ConfirmationStep from './steps/ConfirmationStep';
-
-const BASE_URL = process.env.REACT_APP_API_URL
-  ? `${process.env.REACT_APP_API_URL}/api`
-  : '/api';
 
 const DEFAULT_ACTIVE_MODULES = { signatureDrinks: false, mocktails: false, fullBar: false, beerWineOnly: false };
 

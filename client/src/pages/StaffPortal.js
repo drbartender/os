@@ -3,8 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import BrandLogo from '../components/BrandLogo';
 import api from '../utils/api';
-
-const POSITIONS = ['Bartender', 'Barback', 'Banquet Server']; // eslint-disable-line no-unused-vars
+import { WHATSAPP_GROUP_URL, COMPANY_PHONE, COMPANY_PHONE_TEL } from '../utils/constants';
 
 const STATUS_STYLES = {
   pending:  { background: '#FFF3DC', color: '#8B5E0A', border: '1px solid #E5C97A' },
@@ -129,7 +128,7 @@ export default function StaffPortal() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
               <a
-                href="https://chat.whatsapp.com/GjZsSHG5BsRCR2yc9Z2b5A"
+                href={WHATSAPP_GROUP_URL}
                 target="_blank" rel="noopener noreferrer"
                 className="btn btn-secondary btn-sm"
               >
@@ -148,7 +147,7 @@ export default function StaffPortal() {
               The Dr. Bartender team is reviewing your submission. Once approved, you'll be able to view available shifts and request gigs here.
             </p>
             <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-              Questions? Text us at <a href="tel:+13125889401" style={{ color: 'var(--amber)' }}>(312) 588-9401</a> or email{' '}
+              Questions? Text us at <a href={COMPANY_PHONE_TEL} style={{ color: 'var(--amber)' }}>{COMPANY_PHONE}</a> or email{' '}
               <a href="mailto:contact@drbartender.com" style={{ color: 'var(--amber)' }}>contact@drbartender.com</a>
             </p>
           </div>
@@ -185,7 +184,7 @@ export default function StaffPortal() {
                     <h3 style={{ marginBottom: '0.5rem' }}>No Open Shifts Yet</h3>
                     <p style={{ color: 'var(--text-muted)' }}>
                       Check back soon — upcoming gigs will appear here when they're posted.
-                      Make sure you're in the <a href="https://chat.whatsapp.com/GjZsSHG5BsRCR2yc9Z2b5A" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)' }}>WhatsApp group</a> for real-time updates.
+                      Make sure you're in the <a href={WHATSAPP_GROUP_URL} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)' }}>WhatsApp group</a> for real-time updates.
                     </p>
                   </div>
                 ) : (
@@ -325,7 +324,7 @@ export default function StaffPortal() {
                       💳 Payday Protocols
                     </Link>
                     <a
-                      href="https://chat.whatsapp.com/GjZsSHG5BsRCR2yc9Z2b5A"
+                      href={WHATSAPP_GROUP_URL}
                       target="_blank" rel="noopener noreferrer"
                       className="btn btn-secondary" style={{ textAlign: 'left', textDecoration: 'none' }}
                     >
@@ -345,7 +344,7 @@ export default function StaffPortal() {
                     </Link>
                   </div>
                   <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border)', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                    Questions? Text <a href="tel:+13125889401" style={{ color: 'var(--amber)' }}>(312) 588-9401</a>
+                    Questions? Text <a href={COMPANY_PHONE_TEL} style={{ color: 'var(--amber)' }}>{COMPANY_PHONE}</a>
                     {' '}or email <a href="mailto:contact@drbartender.com" style={{ color: 'var(--amber)' }}>contact@drbartender.com</a>
                   </div>
                 </div>

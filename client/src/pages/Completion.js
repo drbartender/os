@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { WHATSAPP_GROUP_URL, COMPANY_PHONE, COMPANY_PHONE_TEL } from '../utils/constants';
 
 export default function Completion() {
   const navigate = useNavigate();
@@ -42,7 +43,7 @@ export default function Completion() {
             <li style={{ marginBottom: '0.35rem' }}>You'll receive a Staff Portal invite via email once approved.</li>
             <li style={{ marginBottom: '0.35rem' }}>
               Join our team WhatsApp group for scheduling updates:{' '}
-              <a href="https://chat.whatsapp.com/GjZsSHG5BsRCR2yc9Z2b5A" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', fontWeight: 600 }}>
+              <a href={WHATSAPP_GROUP_URL} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', fontWeight: 600 }}>
                 Join the WhatsApp Group →
               </a>
             </li>
@@ -51,7 +52,7 @@ export default function Completion() {
 
         <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.25rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
           Have questions?{' '}
-          <a href="tel:+13125889401">Text us at (312) 588-9401</a>
+          <a href={COMPANY_PHONE_TEL}>Text us at {COMPANY_PHONE}</a>
           {' '}or{' '}
           <a href="mailto:contact@drbartender.com">contact@drbartender.com</a>
           <p style={{ marginTop: '0.5rem', fontStyle: 'italic', color: 'var(--amber)', fontFamily: 'var(--font-display)' }}>

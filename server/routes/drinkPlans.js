@@ -42,14 +42,13 @@ router.put('/t/:token', async (req, res) => {
     }
 
     const newStatus = status === 'submitted' ? 'submitted' : 'draft';
-    const submittedAt = newStatus === 'submitted' ? 'NOW()' : 'NULL';
 
     const result = await pool.query(`
       UPDATE drink_plans SET
         serving_type = COALESCE($1, serving_type),
         selections = COALESCE($2, selections),
         status = $3,
-        submitted_at = ${submittedAt}
+        submitted_at = CASE WHEN $3 = 'submitted' THEN NOW() ELSE submitted_at END
       WHERE token = $4
       RETURNING id, token, status, serving_type, selections, submitted_at
     `, [

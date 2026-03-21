@@ -103,10 +103,6 @@ CREATE TABLE IF NOT EXISTS payment_profiles (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Add Direct Deposit columns to existing deployments
-ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS routing_number VARCHAR(20);
-ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS account_number VARCHAR(30);
-
 -- Applications table (replaces Google Form)
 CREATE TABLE IF NOT EXISTS applications (
   id SERIAL PRIMARY KEY,
@@ -177,7 +173,7 @@ CREATE TABLE IF NOT EXISTS applications (
 CREATE TABLE IF NOT EXISTS interview_notes (
   id SERIAL PRIMARY KEY,
   user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-  admin_id INTEGER REFERENCES users(id),
+  admin_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
   note TEXT NOT NULL,
   note_type VARCHAR(20) DEFAULT 'note',
   created_at TIMESTAMPTZ DEFAULT NOW()
@@ -683,3 +679,64 @@ CREATE TABLE IF NOT EXISTS proposal_payments (
   status VARCHAR(50) DEFAULT 'pending',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ─── Performance Indexes ─────────────────────────────────────────
+
+-- Users
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+CREATE INDEX IF NOT EXISTS idx_users_onboarding_status ON users(onboarding_status);
+
+-- Applications
+CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id);
+
+-- Contractor Profiles
+CREATE INDEX IF NOT EXISTS idx_contractor_profiles_user_id ON contractor_profiles(user_id);
+
+-- Agreements
+CREATE INDEX IF NOT EXISTS idx_agreements_user_id ON agreements(user_id);
+
+-- Payment Profiles
+CREATE INDEX IF NOT EXISTS idx_payment_profiles_user_id ON payment_profiles(user_id);
+
+-- Interview Notes
+CREATE INDEX IF NOT EXISTS idx_interview_notes_user_id ON interview_notes(user_id);
+
+-- Proposals
+CREATE INDEX IF NOT EXISTS idx_proposals_client_id ON proposals(client_id);
+CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
+CREATE INDEX IF NOT EXISTS idx_proposals_token ON proposals(token);
+CREATE INDEX IF NOT EXISTS idx_proposals_created_by ON proposals(created_by);
+CREATE INDEX IF NOT EXISTS idx_proposals_created_at ON proposals(created_at);
+
+-- Proposal Activity Log
+CREATE INDEX IF NOT EXISTS idx_proposal_activity_log_proposal_id ON proposal_activity_log(proposal_id);
+
+-- Proposal Payments
+CREATE INDEX IF NOT EXISTS idx_proposal_payments_proposal_id ON proposal_payments(proposal_id);
+
+-- Shifts
+CREATE INDEX IF NOT EXISTS idx_shifts_event_date ON shifts(event_date);
+CREATE INDEX IF NOT EXISTS idx_shifts_status ON shifts(status);
+CREATE INDEX IF NOT EXISTS idx_shifts_created_by ON shifts(created_by);
+
+-- Shift Requests
+CREATE INDEX IF NOT EXISTS idx_shift_requests_shift_id ON shift_requests(shift_id);
+CREATE INDEX IF NOT EXISTS idx_shift_requests_user_id ON shift_requests(user_id);
+
+-- Drink Plans
+CREATE INDEX IF NOT EXISTS idx_drink_plans_token ON drink_plans(token);
+CREATE INDEX IF NOT EXISTS idx_drink_plans_proposal_id ON drink_plans(proposal_id);
+
+-- ─── FK Migrations (idempotent) ─────────────────────────────────
+
+-- Fix interview_notes.admin_id FK to SET NULL on delete (for existing deployments)
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'interview_notes_admin_id_fkey' AND table_name = 'interview_notes'
+  ) THEN
+    ALTER TABLE interview_notes DROP CONSTRAINT interview_notes_admin_id_fkey;
+    ALTER TABLE interview_notes ADD CONSTRAINT interview_notes_admin_id_fkey
+      FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;

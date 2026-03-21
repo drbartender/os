@@ -4,12 +4,10 @@ import axios from 'axios';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import SignaturePad from '../../components/SignaturePad';
+import { API_BASE_URL as BASE_URL } from '../../utils/api';
+import { COMPANY_PHONE } from '../../utils/constants';
 
 const stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY);
-
-const BASE_URL = process.env.REACT_APP_API_URL
-  ? `${process.env.REACT_APP_API_URL}/api`
-  : '/api';
 
 const DEPOSIT_CENTS = parseInt(process.env.REACT_APP_DEPOSIT_AMOUNT) || 10000;
 const DEPOSIT_DOLLARS = DEPOSIT_CENTS / 100;
@@ -630,7 +628,7 @@ export default function ProposalView() {
         {/* Footer */}
         <div style={styles.footer}>
           <p style={{ fontSize: '0.85rem', color: '#8b7355' }}>
-            Questions? Contact us at contact@drbartender.com or (312) 588-9401
+            Questions? Contact us at contact@drbartender.com or {COMPANY_PHONE}
           </p>
         </div>
       </div>

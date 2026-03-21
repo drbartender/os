@@ -65,7 +65,7 @@ System design reference for the Dr. Bartender platform.
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/` | Yes | Get user's onboarding progress |
-| POST | `/:step` | Yes | Mark a step as completed |
+| PUT | `/step` | Yes | Mark a step as completed |
 
 ### Contractor Agreement — `/api/agreement`
 | Method | Path | Auth | Description |
@@ -97,7 +97,18 @@ System design reference for the Dr. Bartender platform.
 | GET | `/users` | Admin | Paginated user list, filterable by status |
 | GET | `/users/:id` | Admin | Full user detail (profile, agreement, payment, application, notes) |
 | PUT | `/users/:id/status` | Admin | Change onboarding status (hire, approve, reject, deactivate) |
-| POST | `/users/:id/email-status-update` | Admin | Send status notification email via Resend |
+| PUT | `/users/:id/profile` | Admin | Edit contractor profile + payment info |
+| PUT | `/users/:id/permissions` | Admin | Update user role and permission flags |
+| GET | `/applications` | Admin | Paginated application list with status filters |
+| GET | `/applications/:userId` | Admin | Application detail with interview notes |
+| POST | `/applications/:userId/notes` | Admin | Add interview note |
+| DELETE | `/notes/:noteId` | Admin | Delete interview note |
+| GET | `/active-staff` | Staffing | Paginated list of onboarded staff |
+| GET | `/managers` | Admin | List all managers |
+| POST | `/managers` | Admin | Elevate staff to manager |
+| PUT | `/managers/:id` | Admin | Update manager permissions |
+| DELETE | `/managers/:id` | Admin | Demote manager to staff |
+| POST | `/test-email` | Admin | Send test email via Resend |
 
 ### Drink Plans — `/api/drink-plans`
 | Method | Path | Auth | Description |
@@ -105,6 +116,10 @@ System design reference for the Dr. Bartender platform.
 | GET | `/` | Admin | List all plans with filters |
 | POST | `/` | Admin | Create new plan (generates UUID token) |
 | GET | `/by-proposal/:proposalId` | Admin | Fetch plan linked to a proposal |
+| GET | `/:id` | Admin | Fetch single plan by ID |
+| PATCH | `/:id/notes` | Admin | Update admin notes |
+| PATCH | `/:id/status` | Admin | Update plan status |
+| DELETE | `/:id` | Admin | Delete a plan |
 | GET | `/t/:token` | Public | Fetch questionnaire by token |
 | PUT | `/t/:token` | Public | Save draft or submit selections |
 
@@ -128,6 +143,11 @@ System design reference for the Dr. Bartender platform.
 | POST | `/calculate` | Admin | Preview pricing without saving |
 | GET | `/packages` | Admin | List service packages |
 | GET | `/addons` | Admin | List add-ons |
+| GET | `/:id` | Admin | Get single proposal with addons + activity log |
+| PATCH | `/:id` | Admin | Update event details and recalculate pricing |
+| PATCH | `/:id/status` | Admin | Update proposal status |
+| PATCH | `/:id/notes` | Admin | Update admin notes |
+| DELETE | `/:id` | Admin | Delete a proposal |
 | GET | `/t/:token` | Public | Fetch proposal by token (tracks views + geolocation) |
 | POST | `/t/:token/sign` | Public | Client signature + acceptance |
 | PATCH | `/:id/balance-due-date` | Admin | Override balance due date for a proposal |
@@ -153,9 +173,15 @@ System design reference for the Dr. Bartender platform.
 ### Shifts — `/api/shifts`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/` | Yes | List shifts |
-| POST | `/` | Admin | Create shift |
+| GET | `/` | Yes | List shifts (staff see open upcoming; admin see all) |
+| GET | `/my-requests` | Yes | Current user's shift request history |
+| POST | `/` | Staffing | Create shift |
+| PUT | `/:id` | Staffing | Update shift |
+| DELETE | `/:id` | Staffing | Delete shift |
 | POST | `/:id/request` | Yes | Request assignment to a shift |
+| DELETE | `/requests/:requestId` | Yes | Cancel own request (admin can cancel any) |
+| GET | `/:id/requests` | Staffing | Get all requests for a shift |
+| PUT | `/requests/:requestId` | Staffing | Approve or deny a request (sends SMS on approve) |
 
 ### Other
 | Method | Path | Auth | Description |

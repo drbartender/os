@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import { formatPhoneInput } from '../../utils/formatPhone';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import LocationInput from '../../components/LocationInput';
 
@@ -13,14 +14,6 @@ for (let h = 6; h < 24; h++) {
     const ampm = h >= 12 ? 'PM' : 'AM';
     TIME_OPTIONS.push({ value: val, label: `${hour12}:${m} ${ampm}` });
   });
-}
-
-function formatPhone(value) {
-  const digits = value.replace(/\D/g, '').slice(0, 10);
-  if (digits.length === 0) return '';
-  if (digits.length <= 3) return `(${digits}`;
-  if (digits.length <= 6) return `(${digits.slice(0, 3)})${digits.slice(3)}`;
-  return `(${digits.slice(0, 3)})${digits.slice(3, 6)}-${digits.slice(6)}`;
 }
 
 export default function ProposalCreate() {
@@ -45,6 +38,8 @@ export default function ProposalCreate() {
     ]).then(([pkgRes, addonRes]) => {
       setPackages(pkgRes.data);
       setAddons(addonRes.data);
+    }).catch(err => {
+      console.error('Failed to load packages/addons:', err);
     });
   }, []);
 
@@ -141,7 +136,7 @@ export default function ProposalCreate() {
                   <input
                     className="form-input"
                     value={form.client_phone}
-                    onChange={e => update('client_phone', formatPhone(e.target.value))}
+                    onChange={e => update('client_phone', formatPhoneInput(e.target.value))}
                     placeholder="(312)555-1234"
                   />
                 </div>

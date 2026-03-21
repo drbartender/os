@@ -9,6 +9,8 @@ function requireAdmin(req, res, next) {
   return res.status(403).json({ error: 'Admin access required.' });
 }
 
+const VALID_SOURCES = ['direct', 'thumbtack', 'referral', 'website'];
+
 /** GET /api/clients — list all clients */
 router.get('/', auth, requireAdmin, async (req, res) => {
   const { search, page = 1, limit = 50 } = req.query;
@@ -38,11 +40,14 @@ router.get('/', auth, requireAdmin, async (req, res) => {
 /** POST /api/clients — create a new client */
 router.post('/', auth, requireAdmin, async (req, res) => {
   const { name, email, phone, source, notes } = req.body;
-  if (!name) return res.status(400).json({ error: 'Client name is required.' });
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Client name is required.' });
+  if (source && !VALID_SOURCES.includes(source)) {
+    return res.status(400).json({ error: `Invalid source. Must be one of: ${VALID_SOURCES.join(', ')}` });
+  }
   try {
     const result = await pool.query(
       `INSERT INTO clients (name, email, phone, source, notes) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [name, email || null, phone || null, source || 'direct', notes || null]
+      [name.trim(), email || null, phone || null, source || 'direct', notes || null]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -75,6 +80,12 @@ router.get('/:id', auth, requireAdmin, async (req, res) => {
 /** PUT /api/clients/:id — update client */
 router.put('/:id', auth, requireAdmin, async (req, res) => {
   const { name, email, phone, source, notes } = req.body;
+  if (name !== undefined && !name.trim()) {
+    return res.status(400).json({ error: 'Client name cannot be empty.' });
+  }
+  if (source && !VALID_SOURCES.includes(source)) {
+    return res.status(400).json({ error: `Invalid source. Must be one of: ${VALID_SOURCES.join(', ')}` });
+  }
   try {
     const result = await pool.query(`
       UPDATE clients SET
@@ -82,7 +93,7 @@ router.put('/:id', auth, requireAdmin, async (req, res) => {
         phone = COALESCE($3, phone), source = COALESCE($4, source),
         notes = COALESCE($5, notes)
       WHERE id = $6 RETURNING *
-    `, [name, email, phone, source, notes, req.params.id]);
+    `, [name ? name.trim() : name, email, phone, source, notes, req.params.id]);
 
     if (!result.rows[0]) return res.status(404).json({ error: 'Client not found.' });
     res.json(result.rows[0]);

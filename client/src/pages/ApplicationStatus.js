@@ -2,6 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import BrandLogo from '../components/BrandLogo';
+import { COMPANY_PHONE, COMPANY_PHONE_TEL } from '../utils/constants';
 
 export default function ApplicationStatus() {
   const { user, logout } = useAuth();
@@ -73,7 +74,7 @@ export default function ApplicationStatus() {
 
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.25rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
                 Have questions?{' '}
-                <a href="tel:+13125889401">Text us at (312) 588-9401</a>
+                <a href={COMPANY_PHONE_TEL}>Text us at {COMPANY_PHONE}</a>
                 {' '}or{' '}
                 <a href="mailto:contact@drbartender.com">contact@drbartender.com</a>
               </div>

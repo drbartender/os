@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import FileUpload from '../components/FileUpload';
 import W9Form from '../components/W9Form';
 import api from '../utils/api';
+import { COMPANY_PHONE } from '../utils/constants';
 
 const PAYMENT_METHODS = ['Venmo', 'Zelle', 'Cash App', 'PayPal', 'Direct Deposit / ACH', 'Check'];
 
@@ -160,7 +161,7 @@ export default function PaydayProtocols() {
         </div>
         <p style={{ fontSize: '0.9rem', marginBottom: '0.75rem' }}>If you're running late, call someone:</p>
         <ul style={{ paddingLeft: '1.25rem', fontSize: '0.9rem' }}>
-          <li style={{ marginBottom: '0.35rem' }}>Dr. Bartender Company Line: <strong>(312) 588-9401</strong></li>
+          <li style={{ marginBottom: '0.35rem' }}>Dr. Bartender Company Line: <strong>{COMPANY_PHONE}</strong></li>
           <li style={{ marginBottom: '0.35rem' }}>The client contact info will be shared before the event.</li>
         </ul>
         <p className="text-small text-muted italic" style={{ marginTop: '0.75rem' }}>
