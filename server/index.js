@@ -65,6 +65,7 @@ app.use('/api/proposals', require('./routes/proposals'));
 app.use('/api/clients', require('./routes/clients'));
 app.use('/api/messages', require('./routes/messages'));
 app.use('/api/stripe', require('./routes/stripe'));
+app.use('/api/calendar', require('./routes/calendar'));
 
 // Health check — must be registered BEFORE the React catch-all below
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));

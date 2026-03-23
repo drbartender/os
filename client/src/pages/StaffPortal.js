@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import BrandLogo from '../components/BrandLogo';
@@ -86,6 +86,55 @@ export default function StaffPortal() {
     } catch (e) {
       console.error(e);
     }
+  }
+
+  // ── Calendar helpers ──
+  const [calFeedUrl, setCalFeedUrl] = useState('');
+  const [calCopied, setCalCopied] = useState(false);
+  const [calLoading, setCalLoading] = useState(false);
+
+  const fetchCalendarUrl = useCallback(async () => {
+    if (calFeedUrl) return; // already fetched
+    setCalLoading(true);
+    try {
+      const res = await api.get('/calendar/token');
+      setCalFeedUrl(res.data.feed_url);
+    } catch (err) {
+      console.error('Failed to fetch calendar URL:', err);
+    } finally {
+      setCalLoading(false);
+    }
+  }, [calFeedUrl]);
+
+  async function downloadShiftIcs(shiftId) {
+    try {
+      const res = await api.get(`/calendar/event/${shiftId}.ics`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'event.ics';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to download calendar event:', err);
+    }
+  }
+
+  async function copyCalUrl() {
+    try {
+      await navigator.clipboard.writeText(calFeedUrl);
+    } catch {
+      const input = document.createElement('input');
+      input.value = calFeedUrl;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+    }
+    setCalCopied(true);
+    setTimeout(() => setCalCopied(false), 2000);
   }
 
   const displayName = user?.preferred_name || user?.email?.split('@')[0] || 'there';
@@ -278,29 +327,65 @@ export default function StaffPortal() {
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginTop: '0.5rem' }}>
                     {myRequests.map(req => (
-                      <div key={req.id} className="card" style={{ padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
-                        <div>
-                          <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>{req.event_name}</div>
-                          <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
-                            {fmtDate(req.event_date)}
-                            {req.start_time && <> · {req.start_time}{req.end_time && ` – ${req.end_time}`}</>}
-                            {req.location && <> · {req.location}</>}
-                          </div>
-                          {req.position && (
-                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                              Position requested: {req.position}
+                      <div key={req.id} className="card" style={{ padding: '1rem 1.25rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+                          <div>
+                            <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>{req.event_name}</div>
+                            <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
+                              {fmtDate(req.event_date)}
+                              {req.start_time && <> · {req.start_time}{req.end_time && ` – ${req.end_time}`}</>}
+                              {req.location && <> · {req.location}</>}
                             </div>
-                          )}
+                            {req.position && (
+                              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                                Position: {req.position}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                            <StatusPill status={req.status} />
+                            {req.status === 'pending' && (
+                              <button className="btn btn-secondary btn-sm"
+                                onClick={() => cancelRequest(req.id)}>
+                                Cancel
+                              </button>
+                            )}
+                            {req.status === 'approved' && (
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                title="One-time import. Use 'Sync My Shifts' in Resources for ongoing updates."
+                                onClick={() => downloadShiftIcs(req.shift_id)}
+                              >
+                                Add to Calendar
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                          <StatusPill status={req.status} />
-                          {req.status === 'pending' && (
-                            <button className="btn btn-secondary btn-sm"
-                              onClick={() => cancelRequest(req.id)}>
-                              Cancel
-                            </button>
-                          )}
-                        </div>
+
+                        {/* Dr. Bartender Team */}
+                        {req.status === 'approved' && req.team && req.team.length > 0 && (
+                          <div style={{ marginTop: '0.65rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border)' }}>
+                            <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--deep-brown)', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                              Dr. Bartender Team
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                              {req.team.map((t, i) => (
+                                <span key={i} style={{
+                                  fontSize: '0.78rem',
+                                  padding: '0.15rem 0.55rem',
+                                  borderRadius: 99,
+                                  background: t.user_id === user?.id ? 'var(--amber)' : 'var(--cream)',
+                                  color: t.user_id === user?.id ? 'white' : 'var(--warm-brown)',
+                                  border: t.user_id === user?.id ? 'none' : '1px solid var(--border)',
+                                  fontWeight: t.user_id === user?.id ? 700 : 500,
+                                }}>
+                                  {t.user_id === user?.id ? `You (${t.name})` : t.name}
+                                  {t.position ? ` — ${t.position}` : ''}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -333,19 +418,59 @@ export default function StaffPortal() {
                   </div>
                 </div>
 
-                <div className="card">
-                  <h3 style={{ marginBottom: '1rem', fontSize: '1rem' }}>Update Your Info</h3>
-                  <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
-                    Keep your contact info, emergency contact, equipment, and documents up to date.
-                  </p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                    <Link to="/contractor-profile" className="btn btn-primary" style={{ textAlign: 'left', textDecoration: 'none' }}>
-                      ✏️ Edit Contractor Profile
-                    </Link>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                  <div className="card">
+                    <h3 style={{ marginBottom: '0.75rem', fontSize: '1rem' }}>Calendar Sync</h3>
+                    <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                      Subscribe to your confirmed shifts in any calendar app. This keeps your calendar updated automatically as shifts are added or changed.
+                    </p>
+
+                    {!calFeedUrl ? (
+                      <button className="btn btn-secondary btn-sm" onClick={fetchCalendarUrl} disabled={calLoading}>
+                        {calLoading ? 'Loading...' : 'Get Sync URL'}
+                      </button>
+                    ) : (
+                      <>
+                        <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.6rem' }}>
+                          <input
+                            type="text" readOnly value={calFeedUrl}
+                            onClick={e => e.target.select()}
+                            style={{
+                              flex: 1, padding: '0.45rem 0.6rem', fontSize: '0.75rem',
+                              border: '1px solid var(--border)', borderRadius: '6px',
+                              background: 'var(--cream)', fontFamily: 'monospace',
+                            }}
+                          />
+                          <button className="btn btn-primary btn-sm" onClick={copyCalUrl} style={{ whiteSpace: 'nowrap' }}>
+                            {calCopied ? 'Copied!' : 'Copy'}
+                          </button>
+                        </div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                          <strong>Google Calendar</strong> (desktop): "+" next to Other calendars → From URL → paste<br />
+                          <strong>Apple Calendar</strong>: File → New Calendar Subscription → paste<br />
+                          <strong>Outlook</strong>: Add calendar → Subscribe from web → paste
+                        </div>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--warm-brown)', marginTop: '0.5rem', marginBottom: 0, fontStyle: 'italic' }}>
+                          Keep this link private — anyone with it can see your schedule.
+                        </p>
+                      </>
+                    )}
                   </div>
-                  <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border)', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                    Questions? Text <a href={COMPANY_PHONE_TEL} style={{ color: 'var(--amber)' }}>{COMPANY_PHONE}</a>
-                    {' '}or email <a href="mailto:contact@drbartender.com" style={{ color: 'var(--amber)' }}>contact@drbartender.com</a>
+
+                  <div className="card">
+                    <h3 style={{ marginBottom: '1rem', fontSize: '1rem' }}>Update Your Info</h3>
+                    <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                      Keep your contact info, emergency contact, equipment, and documents up to date.
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                      <Link to="/contractor-profile" className="btn btn-primary" style={{ textAlign: 'left', textDecoration: 'none' }}>
+                        ✏️ Edit Contractor Profile
+                      </Link>
+                    </div>
+                    <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border)', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                      Questions? Text <a href={COMPANY_PHONE_TEL} style={{ color: 'var(--amber)' }}>{COMPANY_PHONE}</a>
+                      {' '}or email <a href="mailto:contact@drbartender.com" style={{ color: 'var(--amber)' }}>contact@drbartender.com</a>
+                    </div>
                   </div>
                 </div>
               </div>

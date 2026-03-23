@@ -68,7 +68,7 @@ router.get('/', auth, requireOnboarded, async (req, res) => {
   }
 });
 
-/** GET /shifts/my-requests — current user's shift history */
+/** GET /shifts/my-requests — current user's shift history (with team for approved) */
 router.get('/my-requests', auth, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -78,7 +78,46 @@ router.get('/my-requests', auth, async (req, res) => {
       WHERE sr.user_id = $1
       ORDER BY s.event_date DESC
     `, [req.user.id]);
-    res.json(result.rows);
+
+    const requests = result.rows;
+
+    // Fetch approved teammates for shifts where this user is approved
+    const approvedShiftIds = requests
+      .filter(r => r.status === 'approved')
+      .map(r => r.shift_id);
+
+    let teamsMap = new Map();
+    if (approvedShiftIds.length > 0) {
+      const teamRes = await pool.query(`
+        SELECT sr.shift_id, sr.user_id, sr.position,
+          COALESCE(cp.preferred_name, u.first_name || ' ' || u.last_name, u.email) AS name
+        FROM shift_requests sr
+        JOIN users u ON u.id = sr.user_id
+        LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
+        WHERE sr.shift_id = ANY($1) AND sr.status = 'approved'
+        ORDER BY name ASC
+      `, [approvedShiftIds]);
+
+      for (const row of teamRes.rows) {
+        if (!teamsMap.has(row.shift_id)) teamsMap.set(row.shift_id, []);
+        teamsMap.get(row.shift_id).push(row);
+      }
+    }
+
+    // Attach team to each request, moving current user to top
+    const enriched = requests.map(r => {
+      const team = teamsMap.get(r.shift_id) || [];
+      // Move current user to top of list
+      const sorted = [...team];
+      const myIdx = sorted.findIndex(t => t.user_id === req.user.id);
+      if (myIdx > 0) {
+        const [me] = sorted.splice(myIdx, 1);
+        sorted.unshift(me);
+      }
+      return { ...r, team: r.status === 'approved' ? sorted : [] };
+    });
+
+    res.json(enriched);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });

@@ -190,6 +190,8 @@ ALTER TABLE users ADD CONSTRAINT users_role_check
   CHECK (role IN ('staff', 'admin', 'manager'));
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_hire BOOLEAN DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS can_staff BOOLEAN DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_token UUID UNIQUE DEFAULT gen_random_uuid();
+ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_token_created_at TIMESTAMPTZ DEFAULT NOW();
 
 -- ─── Shifts ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS shifts (
