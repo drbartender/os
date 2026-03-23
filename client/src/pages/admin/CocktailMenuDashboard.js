@@ -226,7 +226,7 @@ function CategoryTable({ categories, drinkCounts, editingId, editForm, onStartEd
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function CocktailMenuDashboard() {
+export default function CocktailMenuDashboard({ embedded = false }) {
   // ── Navigation ─────────────────────────────────────────────────
   const [drinkType, setDrinkType] = useState('cocktails');
   const [subTab, setSubTab] = useState('drinks');
@@ -514,16 +514,18 @@ export default function CocktailMenuDashboard() {
   const activeMocktails = mocktails.filter(m => m.is_active).length;
 
   return (
-    <div className="page-container wide">
+    <div className={embedded ? '' : 'page-container wide'}>
       {/* ── Header ── */}
-      <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '1rem' }}>
-        <div>
-          <h2 style={{ fontFamily: 'var(--font-display)', margin: 0 }}>Drink Menu</h2>
-          <p className="text-muted text-small mt-1">
-            {activeCocktails} active cocktails · {activeMocktails} active mocktails
-          </p>
+      {!embedded && (
+        <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '1rem' }}>
+          <div>
+            <h2 style={{ fontFamily: 'var(--font-display)', margin: 0 }}>Drink Menu</h2>
+            <p className="text-muted text-small mt-1">
+              {activeCocktails} active cocktails · {activeMocktails} active mocktails
+            </p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ── Type tabs ── */}
       <div className="tab-nav mb-2">

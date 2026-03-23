@@ -8,7 +8,6 @@ const NAV_ITEMS = [
   { label: 'Events',      path: '/admin/events',      icon: '📅' },
   { label: 'Proposals',   path: '/admin/proposals',   icon: '📋' },
   { label: 'Clients',     path: '/admin/clients',     icon: '🤝' },
-  { label: 'Drink Menus', path: '/admin/drink-menu',  icon: '🍹' },
   { label: 'Staff',       path: '/admin/staffing',    icon: '👥' },
   { label: 'Hiring',      path: '/admin/hiring',      icon: '📝' },
   { label: 'Financials',  path: '/admin/financials',  icon: '📒' },

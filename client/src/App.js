@@ -26,7 +26,7 @@ import HiringDashboard from './pages/admin/HiringDashboard';
 import SettingsDashboard from './pages/admin/SettingsDashboard';
 import DrinkPlansDashboard from './pages/admin/DrinkPlansDashboard';
 import DrinkPlanDetail from './pages/admin/DrinkPlanDetail';
-import CocktailMenuDashboard from './pages/admin/CocktailMenuDashboard';
+
 import PotionPlanningLab from './pages/plan/PotionPlanningLab';
 import ProposalsDashboard from './pages/admin/ProposalsDashboard';
 import ProposalCreate from './pages/admin/ProposalCreate';
@@ -147,8 +147,8 @@ function AppRoutes() {
         <Route path="hiring" element={<HiringDashboard />} />
         <Route path="drink-plans" element={<DrinkPlansDashboard />} />
         <Route path="drink-plans/:id" element={<DrinkPlanDetail />} />
-        <Route path="cocktail-menu" element={<Navigate to="/admin/drink-menu" replace />} />
-        <Route path="drink-menu" element={<CocktailMenuDashboard />} />
+        <Route path="cocktail-menu" element={<Navigate to="/admin/settings" replace />} />
+        <Route path="drink-menu" element={<Navigate to="/admin/settings" replace />} />
         <Route path="proposals" element={<ProposalsDashboard />} />
         <Route path="proposals/new" element={<ProposalCreate />} />
         <Route path="proposals/:id" element={<ProposalDetail />} />

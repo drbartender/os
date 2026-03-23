@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../../utils/api';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import LocationInput from '../../components/LocationInput';
+import DrinkPlanSelections from '../../components/DrinkPlanSelections';
 import { formatPhone } from '../../utils/formatPhone';
 
 const STATUS_LABELS = {
@@ -61,6 +62,10 @@ export default function ProposalDetail() {
   const [drinkPlan, setDrinkPlan] = useState(null);
   const [drinkPlanLoading, setDrinkPlanLoading] = useState(false);
   const [drinkPlanCopied, setDrinkPlanCopied] = useState(false);
+  const [planCocktails, setPlanCocktails] = useState([]);
+  const [planMocktails, setPlanMocktails] = useState([]);
+  const [drinkPlanNotes, setDrinkPlanNotes] = useState('');
+  const [savingDrinkPlanNotes, setSavingDrinkPlanNotes] = useState(false);
 
   // Edit mode state
   const [editing, setEditing] = useState(false);
@@ -81,12 +86,21 @@ export default function ProposalDetail() {
 
   useEffect(() => { loadProposal(); }, [id]); // eslint-disable-line
 
-  // Fetch drink plan when viewing as event
+  // Fetch drink plan + cocktail/mocktail data when viewing as event
   useEffect(() => {
     if (!isEventContext || !id) return;
     setDrinkPlanLoading(true);
-    api.get(`/drink-plans/by-proposal/${id}`)
-      .then(res => setDrinkPlan(res.data))
+    Promise.all([
+      api.get(`/drink-plans/by-proposal/${id}`),
+      api.get('/cocktails'),
+      api.get('/mocktails').catch(() => ({ data: { mocktails: [] } })),
+    ])
+      .then(([planRes, cocktailsRes, mocktailsRes]) => {
+        setDrinkPlan(planRes.data);
+        setDrinkPlanNotes(planRes.data.admin_notes || '');
+        setPlanCocktails(cocktailsRes.data.cocktails || []);
+        setPlanMocktails(mocktailsRes.data.mocktails || []);
+      })
       .catch(() => setDrinkPlan(null))
       .finally(() => setDrinkPlanLoading(false));
   }, [id, isEventContext]);
@@ -680,16 +694,16 @@ export default function ProposalDetail() {
             </div>
           )}
 
-          {/* Drink Plan (event context) */}
+          {/* Potion Planner (event context) */}
           {isEventContext && (
             <div className="card mb-2">
-              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>Drink Plan</h3>
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>Potion Planner</h3>
               {drinkPlanLoading ? (
                 <div style={{ padding: '1rem', textAlign: 'center' }}><div className="spinner" /></div>
               ) : drinkPlan ? (
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                    <span className={`badge ${drinkPlan.status === 'submitted' ? 'badge-submitted' : drinkPlan.status === 'reviewed' ? 'badge-approved' : drinkPlan.status === 'draft' ? 'badge-inprogress' : 'badge-inprogress'}`}>
+                    <span className={`badge ${drinkPlan.status === 'submitted' ? 'badge-submitted' : drinkPlan.status === 'reviewed' ? 'badge-approved' : 'badge-inprogress'}`}>
                       {drinkPlan.status === 'pending' ? 'Pending' : drinkPlan.status === 'draft' ? 'Draft' : drinkPlan.status === 'submitted' ? 'Submitted' : 'Reviewed'}
                     </span>
                     {drinkPlan.submitted_at && (
@@ -698,9 +712,11 @@ export default function ProposalDetail() {
                       </span>
                     )}
                   </div>
-                  <div className="flex gap-05" style={{ flexWrap: 'wrap' }}>
+
+                  {/* Action buttons */}
+                  <div className="flex gap-05 mb-2" style={{ flexWrap: 'wrap' }}>
                     <button className="btn btn-sm" onClick={() => navigate(`/admin/drink-plans/${drinkPlan.id}`)}>
-                      View Details
+                      View Full Details
                     </button>
                     <button className="btn btn-sm btn-secondary" onClick={() => {
                       const url = `${window.location.origin}/plan/${drinkPlan.token}`;
@@ -710,6 +726,53 @@ export default function ProposalDetail() {
                       });
                     }}>
                       {drinkPlanCopied ? 'Copied!' : 'Copy Client Link'}
+                    </button>
+                    {drinkPlan.status === 'submitted' && (
+                      <button className="btn btn-sm btn-success" onClick={async () => {
+                        try {
+                          const res = await api.patch(`/drink-plans/${drinkPlan.id}/status`, { status: 'reviewed' });
+                          setDrinkPlan(prev => ({ ...prev, status: res.data.status }));
+                        } catch (err) {
+                          console.error('Failed to update status:', err);
+                        }
+                      }}>
+                        Mark as Reviewed
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Inline selections */}
+                  {drinkPlan.status !== 'pending' && (
+                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
+                      <DrinkPlanSelections plan={drinkPlan} cocktails={planCocktails} mocktails={planMocktails} />
+                    </div>
+                  )}
+
+                  {/* Admin notes */}
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
+                    <strong style={{ display: 'block', marginBottom: '0.5rem' }}>Admin Notes</strong>
+                    <textarea
+                      className="form-textarea"
+                      rows={3}
+                      placeholder="Internal notes about this plan..."
+                      value={drinkPlanNotes}
+                      onChange={(e) => setDrinkPlanNotes(e.target.value)}
+                    />
+                    <button
+                      className="btn btn-sm mt-1"
+                      onClick={async () => {
+                        setSavingDrinkPlanNotes(true);
+                        try {
+                          await api.patch(`/drink-plans/${drinkPlan.id}/notes`, { admin_notes: drinkPlanNotes });
+                        } catch (err) {
+                          console.error('Failed to save notes:', err);
+                        } finally {
+                          setSavingDrinkPlanNotes(false);
+                        }
+                      }}
+                      disabled={savingDrinkPlanNotes}
+                    >
+                      {savingDrinkPlanNotes ? 'Saving...' : 'Save Notes'}
                     </button>
                   </div>
                 </div>
