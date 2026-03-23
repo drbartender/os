@@ -118,7 +118,7 @@ export default function EventsDashboard() {
             const approvedCount = requests.filter(r => r.status === 'approved').length;
 
             return (
-              <div key={event.id} className="card" style={{ padding: '1.25rem 1.5rem' }}>
+              <div key={event.id} className="card card-clickable" style={{ padding: '1.25rem 1.5rem' }} onClick={() => event.proposal_id && navigate(`/admin/events/${event.proposal_id}`)}>
                 {/* Event header */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem' }}>
                   <div style={{ flex: 1, minWidth: 240 }}>
@@ -185,7 +185,7 @@ export default function EventsDashboard() {
 
                   {/* Actions */}
                   <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, flexDirection: 'column', alignItems: 'flex-end' }}>
-                    <button className="btn btn-secondary btn-sm" onClick={() => {
+                    <button className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation();
                       if (isExpanded) {
                         setExpandedShift(null);
                       } else {
@@ -195,15 +195,6 @@ export default function EventsDashboard() {
                     }}>
                       {isExpanded ? 'Hide Requests' : `Requests (${event.request_count || 0})`}
                     </button>
-                    {event.proposal_id && (
-                      <button
-                        className="btn btn-sm"
-                        style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
-                        onClick={() => navigate(`/admin/events/${event.proposal_id}`)}
-                      >
-                        View Details
-                      </button>
-                    )}
                   </div>
                 </div>
 
@@ -245,19 +236,19 @@ export default function EventsDashboard() {
                                 <div style={{ display: 'flex', gap: '0.3rem' }}>
                                   {req.status !== 'approved' && (
                                     <button className="btn btn-primary btn-sm"
-                                      onClick={() => updateRequestStatus(req.id, 'approved', event.id)}>
+                                      onClick={(e) => { e.stopPropagation(); updateRequestStatus(req.id, 'approved', event.id); }}>
                                       Approve
                                     </button>
                                   )}
                                   {req.status !== 'denied' && (
                                     <button className="btn btn-danger btn-sm"
-                                      onClick={() => updateRequestStatus(req.id, 'denied', event.id)}>
+                                      onClick={(e) => { e.stopPropagation(); updateRequestStatus(req.id, 'denied', event.id); }}>
                                       Deny
                                     </button>
                                   )}
                                   {req.status !== 'pending' && (
                                     <button className="btn btn-secondary btn-sm"
-                                      onClick={() => updateRequestStatus(req.id, 'pending', event.id)}>
+                                      onClick={(e) => { e.stopPropagation(); updateRequestStatus(req.id, 'pending', event.id); }}>
                                       Reset
                                     </button>
                                   )}
