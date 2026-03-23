@@ -295,8 +295,7 @@ router.get('/feed/:token', rateLimitByToken, async (req, res) => {
         FROM shifts s
         LEFT JOIN proposals p ON p.id = s.proposal_id
         LEFT JOIN clients c ON c.id = p.client_id
-        WHERE s.event_date >= CURRENT_DATE - INTERVAL '7 days'
-          AND s.event_date <= CURRENT_DATE + INTERVAL '365 days'
+        WHERE s.event_date <= CURRENT_DATE + INTERVAL '365 days'
         ORDER BY s.event_date ASC
       `);
       shifts = result.rows;
@@ -308,7 +307,6 @@ router.get('/feed/:token', rateLimitByToken, async (req, res) => {
         FROM shift_requests sr
         JOIN shifts s ON s.id = sr.shift_id
         WHERE sr.user_id = $1 AND sr.status = 'approved'
-          AND s.event_date >= CURRENT_DATE - INTERVAL '7 days'
           AND s.event_date <= CURRENT_DATE + INTERVAL '365 days'
         ORDER BY s.event_date ASC
       `, [user.id]);
