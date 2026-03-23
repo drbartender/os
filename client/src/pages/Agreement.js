@@ -3,6 +3,7 @@ import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import SignaturePad from '../components/SignaturePad';
 import api from '../utils/api';
+import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 
 export default function Agreement() {
   const navigate = useNavigate();
@@ -130,7 +131,7 @@ export default function Agreement() {
 
             <div className="form-group">
               <label className="form-label">Phone</label>
-              <input name="phone" type="tel" className="form-input" value={form.phone} onChange={handle} placeholder="(555) 000-0000" />
+              <input name="phone" type="tel" className="form-input" value={formatPhoneInput(form.phone)} onChange={e => setForm(f => ({ ...f, phone: stripPhone(e.target.value) }))} placeholder="(555) 000-0000" />
               <p className="form-helper">By providing your phone number you grant us permission to contact you via SMS or voice.</p>
             </div>
 

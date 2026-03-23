@@ -4,6 +4,7 @@ import FileUpload from '../components/FileUpload';
 import W9Form from '../components/W9Form';
 import api from '../utils/api';
 import { COMPANY_PHONE } from '../utils/constants';
+import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 
 const PAYMENT_METHODS = ['Venmo', 'Zelle', 'Cash App', 'PayPal', 'Direct Deposit / ACH', 'Check'];
 
@@ -231,7 +232,7 @@ export default function PaydayProtocols() {
                 <label className="form-label">Zelle Phone Number</label>
                 <input
                   name="zelle_phone" type="tel" className="form-input"
-                  value={form.zelle_phone} onChange={handle}
+                  value={formatPhoneInput(form.zelle_phone)} onChange={e => setForm(f => ({ ...f, zelle_phone: stripPhone(e.target.value) }))}
                   placeholder="(555) 000-0000"
                 />
               </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
-import { formatPhone } from '../../utils/formatPhone';
+import { formatPhone, formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 
 const SOURCE_LABELS = { direct: 'Direct', thumbtack: 'Thumbtack', referral: 'Referral', website: 'Website' };
 
@@ -73,7 +73,7 @@ export default function ClientsDashboard() {
               </div>
               <div className="form-group">
                 <label className="form-label">Phone</label>
-                <input className="form-input" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
+                <input className="form-input" type="tel" value={formatPhoneInput(form.phone)} onChange={e => setForm(f => ({ ...f, phone: stripPhone(e.target.value) }))} />
               </div>
               <div className="form-group">
                 <label className="form-label">Source</label>

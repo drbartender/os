@@ -1,5 +1,6 @@
 import React from 'react';
 import { QUICK_PICKS } from '../data/servingTypes';
+import { formatPhoneInput } from '../../../utils/formatPhone';
 
 export default function ConfirmationStep({ plan, quickPickChoice, activeModules, selections, cocktails = [], mocktails = [], onSubmit, saving, error }) {
   const pick = QUICK_PICKS.find(p => p.key === quickPickChoice);
@@ -135,7 +136,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           {logistics.dayOfContact?.name && (
             <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
               Day-of contact: {logistics.dayOfContact.name}
-              {logistics.dayOfContact.phone && ` — ${logistics.dayOfContact.phone}`}
+              {logistics.dayOfContact.phone && ` — ${formatPhoneInput(logistics.dayOfContact.phone)}`}
             </p>
           )}
           {logistics.parking && (

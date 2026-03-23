@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
-import { formatPhone } from '../../utils/formatPhone';
+import { formatPhone, formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
@@ -84,7 +84,7 @@ export default function ClientDetail() {
               </div>
               <div className="form-group">
                 <label className="form-label">Phone</label>
-                <input className="form-input" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
+                <input className="form-input" type="tel" value={formatPhoneInput(form.phone)} onChange={e => setForm(f => ({ ...f, phone: stripPhone(e.target.value) }))} />
               </div>
               <div className="form-group">
                 <label className="form-label">Source</label>

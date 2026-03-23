@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import api from '../../utils/api';
 import PricingBreakdown from '../../components/PricingBreakdown';
+import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import LocationInput from '../../components/LocationInput';
 import DrinkPlanSelections from '../../components/DrinkPlanSelections';
 import { formatPhone } from '../../utils/formatPhone';
@@ -378,7 +379,7 @@ export default function ProposalDetail() {
                 </div>
                 <div className="form-group">
                   <label className="form-label">Phone</label>
-                  <input className="form-input" value={editForm.client_phone} onChange={e => updateEdit('client_phone', e.target.value)} />
+                  <input className="form-input" type="tel" value={formatPhoneInput(editForm.client_phone)} onChange={e => updateEdit('client_phone', stripPhone(e.target.value))} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Source</label>

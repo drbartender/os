@@ -1,5 +1,6 @@
 import React from 'react';
 import { QUICK_PICKS } from '../pages/plan/data/servingTypes';
+import { formatPhoneInput } from '../utils/formatPhone';
 
 const LEGACY_SERVING_TYPES = {
   'full-bar-signature': 'Full Bar + Signature Drinks',
@@ -140,7 +141,7 @@ function NewSelections({ plan, sel, cocktails, mocktails }) {
         {logistics.dayOfContact?.name && (
           <p className="text-muted">
             Day-of contact: {logistics.dayOfContact.name}
-            {logistics.dayOfContact.phone && ` — ${logistics.dayOfContact.phone}`}
+            {logistics.dayOfContact.phone && ` — ${formatPhoneInput(logistics.dayOfContact.phone)}`}
           </p>
         )}
         {logistics.parking && (

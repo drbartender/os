@@ -39,7 +39,7 @@ function StatusBadge({ status }) {
   return <span className={`badge ${cls}`}>{label}</span>;
 }
 
-const APP_FILTER_KEYS  = ['all', 'applied', 'interviewing', 'hired', 'archived'];
+const APP_FILTER_KEYS  = ['all', 'applied', 'interviewing', 'archived'];
 const USER_FILTER_KEYS = ['all', 'hired', 'in_progress', 'deactivated'];
 
 export default function HiringDashboard() {
@@ -125,9 +125,10 @@ export default function HiringDashboard() {
     try {
       await api.put(`/admin/users/${userId}/status`, { status: newStatus });
 
-      if (newStatus === 'rejected') {
+      if (newStatus === 'rejected' || newStatus === 'hired') {
+        // Remove from applications list — rejected goes to archive, hired moves to onboarding
         setApps(prev => prev.filter(a => a.id !== userId));
-        setArchivedCount(prev => prev + 1);
+        if (newStatus === 'rejected') setArchivedCount(prev => prev + 1);
         setAppTotal(prev => Math.max(0, prev - 1));
         if (oldStatus) {
           setStatusCounts(prev => ({

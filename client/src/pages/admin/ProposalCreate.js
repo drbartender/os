@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
-import { formatPhoneInput } from '../../utils/formatPhone';
+import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import LocationInput from '../../components/LocationInput';
 
@@ -135,8 +135,8 @@ export default function ProposalCreate() {
                   <label className="form-label">Phone</label>
                   <input
                     className="form-input"
-                    value={form.client_phone}
-                    onChange={e => update('client_phone', formatPhoneInput(e.target.value))}
+                    value={formatPhoneInput(form.client_phone)}
+                    onChange={e => update('client_phone', stripPhone(e.target.value))}
                     placeholder="(312)555-1234"
                   />
                 </div>

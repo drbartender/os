@@ -164,8 +164,8 @@ router.post('/', auth, async (req, res) => {
     const result = await pool.query('SELECT * FROM applications WHERE user_id = $1', [req.user.id]);
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    console.error('Application submit error:', err);
+    res.status(500).json({ error: err.message || 'Server error' });
   }
 });
 

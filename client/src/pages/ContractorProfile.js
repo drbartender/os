@@ -3,6 +3,7 @@ import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import FileUpload from '../components/FileUpload';
 import api from '../utils/api';
+import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const STATES = ['Illinois','Indiana','Michigan','Minnesota','Wisconsin','AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
@@ -129,7 +130,7 @@ export default function ContractorProfile() {
             </div>
             <div className="form-group">
               <label className="form-label">Phone *</label>
-              <input name="phone" type="tel" className="form-input" value={form.phone} onChange={handle} required placeholder="(555) 000-0000" />
+              <input name="phone" type="tel" className="form-input" value={formatPhoneInput(form.phone)} onChange={e => setForm(f => ({ ...f, phone: stripPhone(e.target.value) }))} required placeholder="(555) 000-0000" />
             </div>
           </div>
           <div className="form-group">
@@ -239,7 +240,7 @@ export default function ContractorProfile() {
             </div>
             <div className="form-group">
               <label className="form-label">Contact Phone</label>
-              <input name="emergency_contact_phone" type="tel" className="form-input" value={form.emergency_contact_phone} onChange={handle} />
+              <input name="emergency_contact_phone" type="tel" className="form-input" value={formatPhoneInput(form.emergency_contact_phone)} onChange={e => setForm(f => ({ ...f, emergency_contact_phone: stripPhone(e.target.value) }))} />
             </div>
           </div>
           <div className="form-group">

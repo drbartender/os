@@ -225,10 +225,10 @@ router.get('/applications', auth, adminOnly, async (req, res) => {
     const offset = (page - 1) * limit;
     const archived = req.query.archived === 'true';
 
-    // Status filter: archived view shows only rejected; default excludes rejected
+    // Status filter: archived view shows only rejected; default shows only applied/interviewing
     const statusClause = archived
       ? "u.onboarding_status = 'rejected'"
-      : "u.onboarding_status != 'rejected'";
+      : "u.onboarding_status IN ('applied', 'interviewing')";
 
     const [appsResult, countResult, statusCountsResult, archivedCountResult] = await Promise.all([
       pool.query(`
@@ -248,11 +248,11 @@ router.get('/applications', auth, adminOnly, async (req, res) => {
       pool.query(
         `SELECT COUNT(*) FROM applications a INNER JOIN users u ON u.id = a.user_id WHERE u.role IN ('staff', 'manager') AND ${statusClause}`
       ),
-      // Active status counts (always excludes rejected)
+      // Active status counts (only applied/interviewing)
       pool.query(`
         SELECT u.onboarding_status, COUNT(*) as count
         FROM users u INNER JOIN applications a ON a.user_id = u.id
-        WHERE u.role IN ('staff', 'manager') AND u.onboarding_status != 'rejected'
+        WHERE u.role IN ('staff', 'manager') AND u.onboarding_status IN ('applied', 'interviewing')
         GROUP BY u.onboarding_status
       `),
       // Archived (rejected) count — always returned regardless of view

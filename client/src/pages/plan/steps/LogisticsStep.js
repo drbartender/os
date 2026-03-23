@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatPhoneInput, stripPhone } from '../../../utils/formatPhone';
 
 const PARKING_OPTIONS = [
   { value: 'free', label: 'Yes, free on-site parking available' },
@@ -72,8 +73,8 @@ export default function LogisticsStep({ logistics, onChange }) {
               type="tel"
               className="form-input"
               placeholder="(555) 555-5555"
-              value={dayOfContact.phone}
-              onChange={(e) => updateContact('phone', e.target.value)}
+              value={formatPhoneInput(dayOfContact.phone)}
+              onChange={(e) => updateContact('phone', stripPhone(e.target.value))}
             />
           </div>
         </div>

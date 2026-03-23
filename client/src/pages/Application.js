@@ -4,6 +4,59 @@ import { useAuth } from '../context/AuthContext';
 import FileUpload from '../components/FileUpload';
 import BrandLogo from '../components/BrandLogo';
 import api from '../utils/api';
+import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
+
+const FUN_COLORS = [
+  { hex: '#ff0000', name: 'Cherry Red' },
+  { hex: '#dc143c', name: 'Crimson Crush' },
+  { hex: '#ff4500', name: 'Blaze Orange' },
+  { hex: '#ff6347', name: 'Tomato Tango' },
+  { hex: '#ff8c00', name: 'Sunset Orange' },
+  { hex: '#ffa500', name: 'Tangerine Dream' },
+  { hex: '#ffd700', name: 'Golden Hour' },
+  { hex: '#ffff00', name: 'Electric Lemon' },
+  { hex: '#adff2f', name: 'Lime Zest' },
+  { hex: '#32cd32', name: 'Lucky Clover' },
+  { hex: '#00ff00', name: 'Neon Green' },
+  { hex: '#2e8b57', name: 'Emerald Isle' },
+  { hex: '#008080', name: 'Teal Vibe' },
+  { hex: '#00ced1', name: 'Turquoise Splash' },
+  { hex: '#00bfff', name: 'Electric Blue' },
+  { hex: '#1e90ff', name: 'Dodger Blue' },
+  { hex: '#0000ff', name: 'Bold Blue' },
+  { hex: '#4b0082', name: 'Midnight Indigo' },
+  { hex: '#7c3aed', name: 'Royal Purple' },
+  { hex: '#9370db', name: 'Lavender Haze' },
+  { hex: '#ff69b4', name: 'Hot Pink' },
+  { hex: '#ff1493', name: 'Flamingo Pink' },
+  { hex: '#c71585', name: 'Berry Blast' },
+  { hex: '#8b4513', name: 'Saddle Brown' },
+  { hex: '#d2691e', name: 'Cinnamon Spice' },
+  { hex: '#000000', name: 'Midnight Black' },
+  { hex: '#708090', name: 'Stormy Gray' },
+  { hex: '#ffffff', name: 'Snowflake White' },
+  { hex: '#ffc0cb', name: 'Bubblegum Pink' },
+  { hex: '#f0e68c', name: 'Buttery Yellow' },
+];
+
+function hexToRgb(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return [r, g, b];
+}
+
+function nearestColorName(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  let best = FUN_COLORS[0];
+  let bestDist = Infinity;
+  for (const c of FUN_COLORS) {
+    const [cr, cg, cb] = hexToRgb(c.hex);
+    const dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
+    if (dist < bestDist) { bestDist = dist; best = c; }
+  }
+  return best;
+}
 
 const STATES = ['Illinois', 'Indiana', 'Michigan', 'Minnesota', 'Wisconsin'];
 const TRAVEL_OPTIONS = ['Up to 25 miles', 'Up to 50 miles', 'Up to 100 miles', 'More than 100 miles'];
@@ -35,9 +88,10 @@ export default function Application() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [files, setFiles] = useState({ resume: null, headshot: null, basset: null });
+  const [colorHex, setColorHex] = useState('#7c3aed');
 
   const [form, setForm] = useState({
-    full_name: '', phone: '', favorite_color: '',
+    full_name: '', phone: '', favorite_color: 'Royal Purple',
     street_address: '', city: '', state: '', zip_code: '',
     birth_month: '', birth_day: '', birth_year: '',
     travel_distance: '', reliable_transportation: '',
@@ -172,13 +226,26 @@ export default function Application() {
               </div>
               <div className="form-group">
                 <label className="form-label">Phone Number *</label>
-                <input name="phone" type="tel" className="form-input" value={form.phone} onChange={handle} placeholder="(555) 000-0000" required />
+                <input name="phone" type="tel" className="form-input" value={formatPhoneInput(form.phone)} onChange={e => setForm(f => ({ ...f, phone: stripPhone(e.target.value) }))} placeholder="(555) 000-0000" required />
               </div>
             </div>
 
             <div className="form-group">
               <label className="form-label">Favorite Color *</label>
-              <input name="favorite_color" className="form-input" value={form.favorite_color} onChange={handle} required />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <input
+                  type="color"
+                  value={colorHex}
+                  onChange={e => {
+                    const hex = e.target.value;
+                    setColorHex(hex);
+                    const match = nearestColorName(hex);
+                    setForm(f => ({ ...f, favorite_color: match.name }));
+                  }}
+                  style={{ width: 48, height: 40, border: '2px solid var(--border-dark)', borderRadius: 'var(--radius)', cursor: 'pointer', padding: 2 }}
+                />
+                <span style={{ fontWeight: 600, fontSize: '0.95rem' }}>{form.favorite_color}</span>
+              </div>
             </div>
 
             <h4 style={{ marginBottom: '0.75rem', marginTop: '0.5rem' }}>Date of Birth *</h4>
@@ -521,7 +588,7 @@ export default function Application() {
               </div>
               <div className="form-group">
                 <label className="form-label">Contact Phone</label>
-                <input name="emergency_contact_phone" type="tel" className="form-input" value={form.emergency_contact_phone} onChange={handle} />
+                <input name="emergency_contact_phone" type="tel" className="form-input" value={formatPhoneInput(form.emergency_contact_phone)} onChange={e => setForm(f => ({ ...f, emergency_contact_phone: stripPhone(e.target.value) }))} />
               </div>
             </div>
             <div className="form-group">

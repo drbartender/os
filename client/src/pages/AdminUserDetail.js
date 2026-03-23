@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../utils/api';
+import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 
 function Section({ title, children }) {
   return (
@@ -25,17 +26,21 @@ function Field({ label, value, editing, editKey, editValue, onChange, type = 'te
         </div>
       );
     }
+    const isTel = type === 'tel';
     return (
       <div style={{ marginBottom: '0.75rem' }}>
         <div style={labelStyle}>{label}</div>
-        <input className="form-input" style={{ marginBottom: 0 }} type={type} value={editValue || ''} onChange={e => onChange(editKey, e.target.value)} />
+        <input className="form-input" style={{ marginBottom: 0 }} type={type}
+          value={isTel ? formatPhoneInput(editValue || '') : (editValue || '')}
+          onChange={e => onChange(editKey, isTel ? stripPhone(e.target.value) : e.target.value)} />
       </div>
     );
   }
+  const displayValue = type === 'tel' && value ? formatPhoneInput(value) : value;
   return (
     <div style={{ marginBottom: '0.75rem' }}>
       <div style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--warm-brown)', marginBottom: '0.15rem' }}>{label}</div>
-      <div style={{ fontSize: '0.9rem', color: 'var(--deep-brown)' }}>{value || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Not provided</span>}</div>
+      <div style={{ fontSize: '0.9rem', color: 'var(--deep-brown)' }}>{displayValue || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Not provided</span>}</div>
     </div>
   );
 }
