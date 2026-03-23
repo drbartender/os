@@ -46,7 +46,7 @@ router.put('/t/:token', async (req, res) => {
     const result = await pool.query(`
       UPDATE drink_plans SET
         serving_type = COALESCE($1, serving_type),
-        selections = COALESCE($2, selections),
+        selections = COALESCE($2::jsonb, selections),
         status = $3,
         submitted_at = CASE WHEN $3 = 'submitted' THEN NOW() ELSE submitted_at END
       WHERE token = $4
