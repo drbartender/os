@@ -38,7 +38,9 @@ function calculateStaffing(pkg, guestCount, durationHours, numBartendersOverride
   const required = Math.ceil(guestCount / perBartender);
   const actual = numBartendersOverride != null ? numBartendersOverride : required;
   const extra = Math.max(0, actual - included);
-  const cost = extra * durationHours * hourlyRate;
+  // Hosted (per_guest) packages include additional bartenders in the per-guest rate
+  const isHosted = pkg.pricing_type === 'per_guest';
+  const cost = isHosted ? 0 : extra * durationHours * hourlyRate;
 
   return { required, actual, included, extra, hourlyRate, cost };
 }
