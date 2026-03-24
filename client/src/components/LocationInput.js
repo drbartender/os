@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 /**
  * Address autocomplete using Nominatim (OpenStreetMap) — free, no API key.
  */
-export default function LocationInput({ value, onChange, placeholder = 'Start typing an address...', className = 'form-input' }) {
+export default function LocationInput({ value, onChange, onSelect, placeholder = 'Start typing an address...', className = 'form-input' }) {
   const [query, setQuery] = useState(value || '');
   const [suggestions, setSuggestions] = useState([]);
   const [open, setOpen] = useState(false);
@@ -43,9 +43,13 @@ export default function LocationInput({ value, onChange, placeholder = 'Start ty
     )
       .then(r => r.json())
       .then(data => {
-        const formatted = data.map(d => formatAddress(d)).filter(Boolean);
-        setSuggestions(formatted);
-        setOpen(formatted.length > 0);
+        const results = data.map(d => ({
+          address: formatAddress(d),
+          lat: parseFloat(d.lat),
+          lng: parseFloat(d.lon),
+        })).filter(r => r.address);
+        setSuggestions(results);
+        setOpen(results.length > 0);
         setActiveIdx(-1);
       })
       .catch(() => { setSuggestions([]); setOpen(false); });
@@ -59,9 +63,13 @@ export default function LocationInput({ value, onChange, placeholder = 'Start ty
     debounceRef.current = setTimeout(() => fetchSuggestions(q), 350);
   };
 
-  const select = (address) => {
+  const select = (item) => {
+    const address = typeof item === 'string' ? item : item.address;
     setQuery(address);
     onChange(address);
+    if (onSelect && item.lat != null && item.lng != null) {
+      onSelect(address, { lat: item.lat, lng: item.lng });
+    }
     setSuggestions([]);
     setOpen(false);
   };
@@ -74,7 +82,7 @@ export default function LocationInput({ value, onChange, placeholder = 'Start ty
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setActiveIdx(i => Math.max(i - 1, 0));
-    } else if (e.key === 'Enter' && activeIdx >= 0) {
+    } else if (e.key === 'Enter' && activeIdx >= 0 && suggestions[activeIdx]) {
       e.preventDefault();
       select(suggestions[activeIdx]);
     } else if (e.key === 'Escape') {
@@ -89,7 +97,7 @@ export default function LocationInput({ value, onChange, placeholder = 'Start ty
         value={query}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        onFocus={() => suggestions.length > 0 && setOpen(true)}
+        onFocus={() => { if (suggestions.length > 0) setOpen(true); }}
         placeholder={placeholder}
         autoComplete="off"
       />
@@ -113,7 +121,7 @@ export default function LocationInput({ value, onChange, placeholder = 'Start ty
                 borderBottom: i < suggestions.length - 1 ? '1px solid #ede3d3' : 'none',
               }}
             >
-              {s}
+              {s.address || s}
             </li>
           ))}
         </ul>

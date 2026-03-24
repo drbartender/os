@@ -68,6 +68,12 @@ export default function AdminUserDetail() {
   const [editForm, setEditForm] = useState({});
   const [saving, setSaving] = useState(false);
 
+  // Seniority state
+  const [seniority, setSeniority] = useState(null);
+  const [seniorityLoading, setSeniorityLoading] = useState(false);
+  const [seniorityForm, setSeniorityForm] = useState({ seniority_adjustment: 0, hire_date: '' });
+  const [senioritySaving, setSenioritySaving] = useState(false);
+
   // Messages state
   const [userMessages, setUserMessages] = useState([]);
   const [userMsgLoading, setUserMsgLoading] = useState(false);
@@ -82,6 +88,39 @@ export default function AdminUserDetail() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [id]);
+
+  // Fetch seniority data
+  useEffect(() => {
+    if (tab !== 'seniority') return;
+    setSeniorityLoading(true);
+    api.get(`/admin/users/${id}/seniority`)
+      .then(r => {
+        setSeniority(r.data);
+        setSeniorityForm({
+          seniority_adjustment: r.data.seniority_adjustment || 0,
+          hire_date: r.data.hire_date ? r.data.hire_date.slice(0, 10) : '',
+        });
+      })
+      .catch(console.error)
+      .finally(() => setSeniorityLoading(false));
+  }, [tab, id]);
+
+  async function saveSeniority() {
+    setSenioritySaving(true);
+    try {
+      await api.put(`/admin/users/${id}/seniority`, {
+        seniority_adjustment: parseInt(seniorityForm.seniority_adjustment, 10) || 0,
+        hire_date: seniorityForm.hire_date || null,
+      });
+      // Refresh
+      const r = await api.get(`/admin/users/${id}/seniority`);
+      setSeniority(r.data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSenioritySaving(false);
+    }
+  }
 
   // Fetch message history for this user
   useEffect(() => {
@@ -184,6 +223,7 @@ export default function AdminUserDetail() {
       equipment_table_with_spandex: !!p.equipment_table_with_spandex,
       equipment_none_but_open: !!p.equipment_none_but_open,
       equipment_no_space: !!p.equipment_no_space,
+      equipment_will_pickup: !!p.equipment_will_pickup,
       emergency_contact_name: p.emergency_contact_name || '',
       emergency_contact_phone: p.emergency_contact_phone || '',
       emergency_contact_relationship: p.emergency_contact_relationship || '',
@@ -225,6 +265,7 @@ export default function AdminUserDetail() {
     ['equipment_table_with_spandex', '6ft Table w/ Spandex'],
     ['equipment_none_but_open', 'Open to Getting Equipment'],
     ['equipment_no_space', 'No Space'],
+    ['equipment_will_pickup', 'Will Pick Up from Storage'],
   ].filter(([key]) => profile[key]);
 
   return (
@@ -278,6 +319,7 @@ export default function AdminUserDetail() {
             ...(application?.id ? [['application', 'Application']] : []),
             ['progress', 'Onboarding'],
             ['payment', 'Payment'],
+            ['seniority', 'Seniority'],
             ['permissions', 'Permissions'],
             ['messages', 'Messages'],
           ].map(([key, label]) => (
@@ -345,6 +387,7 @@ export default function AdminUserDetail() {
                       ['equipment_table_with_spandex', '6ft Table w/ Spandex'],
                       ['equipment_none_but_open', 'Open to Getting Equipment'],
                       ['equipment_no_space', 'No Space'],
+                      ['equipment_will_pickup', 'Will Pick Up from Storage'],
                     ].map(([key, label]) => (
                       <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
                         <input type="checkbox" checked={!!editForm[key]} onChange={e => updateField(key, e.target.checked)} style={{ width: 16, height: 16 }} />
@@ -514,6 +557,57 @@ export default function AdminUserDetail() {
               <Field label="Account Number" value={payment.account_number} editing={editing} editKey="account_number" editValue={editForm.account_number} onChange={updateField} />
             </Section>
           </>
+        )}
+
+        {/* ── Seniority Tab ── */}
+        {tab === 'seniority' && (
+          <div style={{ maxWidth: 520 }}>
+            {seniorityLoading ? (
+              <div className="loading"><div className="spinner" />Loading seniority data…</div>
+            ) : seniority ? (
+              <>
+                <Section title="Seniority Score">
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
+                    <div style={{ textAlign: 'center', padding: '1rem', background: 'var(--parchment)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--deep-brown)' }}>{seniority.computed_score}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Total Score</div>
+                    </div>
+                    <div style={{ textAlign: 'center', padding: '1rem', background: 'var(--parchment)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--warm-brown)' }}>{seniority.events_worked}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Events Worked</div>
+                    </div>
+                    <div style={{ textAlign: 'center', padding: '1rem', background: 'var(--parchment)', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--warm-brown)' }}>{seniority.tenure_months}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Months Tenure</div>
+                    </div>
+                  </div>
+                </Section>
+
+                <Section title="Adjustments">
+                  <div className="form-group" style={{ marginBottom: '1rem' }}>
+                    <label className="form-label">Hire Date</label>
+                    <input type="date" className="form-input" style={{ maxWidth: 200 }}
+                      value={seniorityForm.hire_date}
+                      onChange={e => setSeniorityForm(f => ({ ...f, hire_date: e.target.value }))} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: '1rem' }}>
+                    <label className="form-label">Manual Seniority Adjustment</label>
+                    <input type="number" className="form-input" style={{ maxWidth: 120 }}
+                      value={seniorityForm.seniority_adjustment}
+                      onChange={e => setSeniorityForm(f => ({ ...f, seniority_adjustment: e.target.value }))} />
+                    <p className="text-small text-muted" style={{ marginTop: '0.25rem' }}>
+                      Positive values boost this staff member's score; negative values reduce it.
+                    </p>
+                  </div>
+                  <button className="btn btn-primary btn-sm" disabled={senioritySaving} onClick={saveSeniority}>
+                    {senioritySaving ? 'Saving…' : 'Save'}
+                  </button>
+                </Section>
+              </>
+            ) : (
+              <div className="card"><p className="text-muted italic">No seniority data available.</p></div>
+            )}
+          </div>
         )}
 
         {/* ── Permissions Tab ── */}

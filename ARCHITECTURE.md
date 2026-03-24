@@ -182,6 +182,16 @@ System design reference for the Dr. Bartender platform.
 | DELETE | `/requests/:requestId` | Yes | Cancel own request (admin can cancel any) |
 | GET | `/:id/requests` | Staffing | Get all requests for a shift |
 | PUT | `/requests/:requestId` | Staffing | Approve or deny a request (sends SMS on approve) |
+| POST | `/:id/auto-assign` | Staffing | Run auto-assign algorithm (dry_run for preview, or execute to approve top candidates) |
+
+### Admin — `/api/admin` (continued)
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/users/:id/seniority` | Admin | Get seniority score, events worked, tenure |
+| PUT | `/users/:id/seniority` | Admin | Update seniority_adjustment and hire_date |
+| GET | `/settings` | Admin | Get app_settings (auto-assign weights, max distance) |
+| PUT | `/settings` | Admin | Update app_settings key-value pairs |
+| POST | `/backfill-geocodes` | Admin | Geocode all staff/shift addresses and backfill hire dates |
 
 ### Messages — `/api/messages`
 | Method | Path | Auth | Description |
@@ -220,6 +230,10 @@ System design reference for the Dr. Bartender platform.
 - `user_id` FK → users
 - Name, phone, email, DOB, address (city, state, street, zip)
 - Travel distance, transportation, equipment checkboxes
+- `lat`, `lng` — Geocoded coordinates (auto-populated via Nominatim on save)
+- `hire_date` — Set when status changes to 'hired'
+- `seniority_adjustment` — Admin manual score override (+/-)
+- `equipment_will_pickup` — Willing to pick up equipment from storage
 - File URLs: `alcohol_certification_file_url`, `resume_file_url`, `headshot_file_url`
 - Emergency contact fields
 
@@ -323,10 +337,16 @@ System design reference for the Dr. Bartender platform.
 - `event_name`, `event_date`, `start_time`, `end_time`, `location`
 - `positions_needed` (JSON text array, e.g. `["Bartender","Bartender"]`), `status`, `created_by`
 - `proposal_id` FK (nullable) — links to the proposal that created this shift (auto-created on deposit payment)
+- `lat`, `lng` — Geocoded event coordinates
+- `equipment_required` (JSON text array, e.g. `["portable_bar","cooler"]`)
+- `auto_assign_days_before` — Schedule auto-assign N days before event; `auto_assigned_at` — timestamp of last auto-assign run
 
 **shift_requests** — Staff applying for shifts
 - `shift_id` FK, `user_id` FK (unique together)
 - `position`, `status` (pending/approved/rejected), `notes`
+
+**app_settings** — Configurable settings (auto-assign weights, max distance, etc.)
+- `key` VARCHAR PK, `value` TEXT, `updated_at`
 
 ### Messaging
 

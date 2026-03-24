@@ -2,6 +2,7 @@ const express = require('express');
 const { pool } = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
+const { geocodeAddress, buildAddressString, delay } = require('../utils/geocode');
 
 const router = express.Router();
 
@@ -98,7 +99,7 @@ router.put('/users/:id/status', auth, adminOnly, async (req, res) => {
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
 
-    // When hiring, ensure onboarding progress record exists
+    // When hiring, ensure onboarding progress record exists and set hire_date
     if (status === 'hired') {
       const progressExists = await pool.query('SELECT id FROM onboarding_progress WHERE user_id = $1', [req.params.id]);
       if (!progressExists.rows[0]) {
@@ -107,6 +108,17 @@ router.put('/users/:id/status', auth, adminOnly, async (req, res) => {
           [req.params.id]
         );
       }
+      // Auto-set hire_date if not already set
+      await pool.query(`
+        UPDATE contractor_profiles SET hire_date = CURRENT_DATE
+        WHERE user_id = $1 AND hire_date IS NULL
+      `, [req.params.id]);
+      // Also insert a profile row if none exists (hire_date needs somewhere to live)
+      await pool.query(`
+        INSERT INTO contractor_profiles (user_id, hire_date)
+        VALUES ($1, CURRENT_DATE)
+        ON CONFLICT (user_id) DO NOTHING
+      `, [req.params.id]);
     }
 
     // Log status change as a system note in the interview_notes table
@@ -136,7 +148,7 @@ router.put('/users/:id/profile', auth, adminOnly, async (req, res) => {
     preferred_name, phone, email: profileEmail, birth_month, birth_day, birth_year,
     city, state, street_address, zip_code, travel_distance, reliable_transportation,
     equipment_portable_bar, equipment_cooler, equipment_table_with_spandex,
-    equipment_none_but_open, equipment_no_space,
+    equipment_none_but_open, equipment_no_space, equipment_will_pickup,
     emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
     preferred_payment_method, payment_username, routing_number, account_number,
   } = req.body;
@@ -148,24 +160,35 @@ router.put('/users/:id/profile', auth, adminOnly, async (req, res) => {
         user_id, preferred_name, phone, email, birth_month, birth_day, birth_year,
         city, state, street_address, zip_code, travel_distance, reliable_transportation,
         equipment_portable_bar, equipment_cooler, equipment_table_with_spandex,
-        equipment_none_but_open, equipment_no_space,
+        equipment_none_but_open, equipment_no_space, equipment_will_pickup,
         emergency_contact_name, emergency_contact_phone, emergency_contact_relationship
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
       ON CONFLICT (user_id) DO UPDATE SET
         preferred_name=$2, phone=$3, email=$4, birth_month=$5, birth_day=$6, birth_year=$7,
         city=$8, state=$9, street_address=$10, zip_code=$11, travel_distance=$12, reliable_transportation=$13,
         equipment_portable_bar=$14, equipment_cooler=$15, equipment_table_with_spandex=$16,
-        equipment_none_but_open=$17, equipment_no_space=$18,
-        emergency_contact_name=$19, emergency_contact_phone=$20, emergency_contact_relationship=$21
+        equipment_none_but_open=$17, equipment_no_space=$18, equipment_will_pickup=$19,
+        emergency_contact_name=$20, emergency_contact_phone=$21, emergency_contact_relationship=$22
     `, [
       userId, preferred_name || null, phone || null, profileEmail || null,
       birth_month || null, birth_day || null, birth_year || null,
       city || null, state || null, street_address || null, zip_code || null,
       travel_distance || null, reliable_transportation || null,
       equipment_portable_bar || false, equipment_cooler || false, equipment_table_with_spandex || false,
-      equipment_none_but_open || false, equipment_no_space || false,
+      equipment_none_but_open || false, equipment_no_space || false, equipment_will_pickup || false,
       emergency_contact_name || null, emergency_contact_phone || null, emergency_contact_relationship || null,
     ]);
+
+    // Geocode address in background
+    if (street_address || city || state || zip_code) {
+      geocodeAddress(buildAddressString({ street_address, city, state, zip_code }))
+        .then(coords => {
+          if (coords) {
+            pool.query('UPDATE contractor_profiles SET lat = $1, lng = $2 WHERE user_id = $3', [coords.lat, coords.lng, userId]);
+          }
+        })
+        .catch(err => console.error('[Admin] Geocode error:', err.message));
+    }
 
     // Upsert payment profile
     await pool.query(`
@@ -508,6 +531,173 @@ router.post('/test-email', auth, adminOnly, async (req, res) => {
   } catch (err) {
     console.error('Test email failed:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Seniority Management ────────────────────────────────────────
+
+// Get seniority info for a user
+router.get('/users/:id/seniority', auth, adminOnly, async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    const [profileRes, eventsRes] = await Promise.all([
+      pool.query(
+        'SELECT hire_date, seniority_adjustment FROM contractor_profiles WHERE user_id = $1',
+        [userId]
+      ),
+      pool.query(`
+        SELECT COUNT(*) AS events_worked
+        FROM shift_requests sr
+        JOIN shifts s ON s.id = sr.shift_id
+        WHERE sr.user_id = $1 AND sr.status = 'approved' AND s.event_date < CURRENT_DATE
+      `, [userId])
+    ]);
+
+    const profile = profileRes.rows[0] || {};
+    const eventsWorked = parseInt(eventsRes.rows[0]?.events_worked || 0, 10);
+
+    let tenureMonths = 0;
+    if (profile.hire_date) {
+      const hire = new Date(profile.hire_date);
+      const now = new Date();
+      tenureMonths = Math.max(0, (now.getFullYear() - hire.getFullYear()) * 12 + (now.getMonth() - hire.getMonth()));
+    }
+
+    const seniorityAdjustment = profile.seniority_adjustment || 0;
+    const computedScore = eventsWorked * 0.7 + tenureMonths * 0.3 + seniorityAdjustment;
+
+    res.json({
+      hire_date: profile.hire_date,
+      seniority_adjustment: seniorityAdjustment,
+      events_worked: eventsWorked,
+      tenure_months: tenureMonths,
+      computed_score: Math.round(computedScore * 100) / 100,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Update seniority adjustment and hire_date
+router.put('/users/:id/seniority', auth, adminOnly, async (req, res) => {
+  const { seniority_adjustment, hire_date } = req.body;
+  try {
+    await pool.query(`
+      UPDATE contractor_profiles
+      SET seniority_adjustment = COALESCE($1, seniority_adjustment),
+          hire_date = COALESCE($2, hire_date)
+      WHERE user_id = $3
+    `, [
+      seniority_adjustment != null ? seniority_adjustment : null,
+      hire_date || null,
+      req.params.id
+    ]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ─── App Settings ────────────────────────────────────────────────
+
+router.get('/settings', auth, adminOnly, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT key, value FROM app_settings');
+    const settings = {};
+    for (const row of result.rows) {
+      settings[row.key] = row.value;
+    }
+    res.json(settings);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/settings', auth, adminOnly, async (req, res) => {
+  const entries = Object.entries(req.body);
+  if (entries.length === 0) return res.status(400).json({ error: 'No settings provided.' });
+
+  try {
+    for (const [key, value] of entries) {
+      await pool.query(`
+        INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+        ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
+      `, [key, String(value)]);
+    }
+
+    const result = await pool.query('SELECT key, value FROM app_settings');
+    const settings = {};
+    for (const row of result.rows) {
+      settings[row.key] = row.value;
+    }
+    res.json(settings);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ─── Backfill Geocodes ──────────────────────────────────────────
+
+router.post('/backfill-geocodes', auth, adminOnly, async (req, res) => {
+  try {
+    // Backfill contractor_profiles
+    const profiles = await pool.query(`
+      SELECT user_id, street_address, city, state, zip_code
+      FROM contractor_profiles
+      WHERE lat IS NULL AND (street_address IS NOT NULL OR city IS NOT NULL)
+    `);
+
+    let profileCount = 0;
+    for (const p of profiles.rows) {
+      const addr = buildAddressString(p);
+      if (!addr) continue;
+      const coords = await geocodeAddress(addr);
+      if (coords) {
+        await pool.query('UPDATE contractor_profiles SET lat = $1, lng = $2 WHERE user_id = $3', [coords.lat, coords.lng, p.user_id]);
+        profileCount++;
+      }
+      await delay(1100); // Nominatim rate limit
+    }
+
+    // Backfill shifts
+    const shifts = await pool.query(`
+      SELECT id, location FROM shifts WHERE lat IS NULL AND location IS NOT NULL
+    `);
+
+    let shiftCount = 0;
+    for (const s of shifts.rows) {
+      const coords = await geocodeAddress(s.location);
+      if (coords) {
+        await pool.query('UPDATE shifts SET lat = $1, lng = $2 WHERE id = $3', [coords.lat, coords.lng, s.id]);
+        shiftCount++;
+      }
+      await delay(1100);
+    }
+
+    // Backfill hire_date for hired staff without one
+    const hireResult = await pool.query(`
+      UPDATE contractor_profiles cp
+      SET hire_date = u.created_at::date
+      FROM users u
+      WHERE cp.user_id = u.id
+        AND cp.hire_date IS NULL
+        AND u.onboarding_status IN ('hired', 'submitted', 'reviewed', 'approved')
+    `);
+
+    res.json({
+      profiles_geocoded: profileCount,
+      shifts_geocoded: shiftCount,
+      hire_dates_backfilled: hireResult.rowCount,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Server error' });
   }
 });
 

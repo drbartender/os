@@ -27,6 +27,7 @@ export default function ContractorProfile() {
     travel_distance: '', reliable_transportation: '',
     equipment_portable_bar: false, equipment_cooler: false,
     equipment_table_with_spandex: false, equipment_none_but_open: false, equipment_no_space: false,
+    equipment_will_pickup: false,
     emergency_contact_name: '', emergency_contact_phone: '', emergency_contact_relationship: '',
   });
 
@@ -53,6 +54,7 @@ export default function ContractorProfile() {
           equipment_table_with_spandex: d.equipment_table_with_spandex || false,
           equipment_none_but_open: d.equipment_none_but_open || false,
           equipment_no_space: d.equipment_no_space || false,
+          equipment_will_pickup: d.equipment_will_pickup || false,
           emergency_contact_name: d.emergency_contact_name || '',
           emergency_contact_phone: d.emergency_contact_phone || '',
           emergency_contact_relationship: d.emergency_contact_relationship || '',
@@ -226,8 +228,14 @@ export default function ContractorProfile() {
               </label>
             ))}
           </div>
-          <p className="text-small text-muted italic">
-            Staff with equipment may be prioritized for certain events, but there will be plenty of gigs where equipment is provided or not needed.
+          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
+            <label className="checkbox-group">
+              <input type="checkbox" name="equipment_will_pickup" checked={form.equipment_will_pickup} onChange={handle} />
+              <span className="checkbox-label">I'm willing to pick up equipment from the storage unit before events</span>
+            </label>
+          </div>
+          <p className="text-small text-muted italic" style={{ marginTop: '0.75rem' }}>
+            Staff with equipment or willing to pick up may be prioritized for certain events, but there will be plenty of gigs where equipment is provided or not needed.
           </p>
         </div>
 

@@ -5,6 +5,7 @@ const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { isValidUpload } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
+const { geocodeAddress, buildAddressString } = require('../utils/geocode');
 
 const router = express.Router();
 
@@ -65,7 +66,7 @@ router.post('/', auth, async (req, res) => {
     street_address, city, state, zip_code,
     travel_distance, reliable_transportation,
     equipment_portable_bar, equipment_cooler, equipment_table_with_spandex,
-    equipment_none_but_open, equipment_no_space,
+    equipment_none_but_open, equipment_no_space, equipment_will_pickup,
     emergency_contact_name, emergency_contact_phone, emergency_contact_relationship
   } = req.body;
 
@@ -123,17 +124,17 @@ router.post('/', auth, async (req, res) => {
          birth_year=$6, street_address=$7, city=$8, state=$9, zip_code=$10,
          travel_distance=$11, reliable_transportation=$12,
          equipment_portable_bar=$13, equipment_cooler=$14, equipment_table_with_spandex=$15,
-         equipment_none_but_open=$16, equipment_no_space=$17,
-         emergency_contact_name=$18, emergency_contact_phone=$19, emergency_contact_relationship=$20,
-         alcohol_certification_file_url=$21, alcohol_certification_filename=$22,
-         resume_file_url=$23, resume_filename=$24,
-         headshot_file_url=$25, headshot_filename=$26
-         WHERE user_id=$27`,
+         equipment_none_but_open=$16, equipment_no_space=$17, equipment_will_pickup=$18,
+         emergency_contact_name=$19, emergency_contact_phone=$20, emergency_contact_relationship=$21,
+         alcohol_certification_file_url=$22, alcohol_certification_filename=$23,
+         resume_file_url=$24, resume_filename=$25,
+         headshot_file_url=$26, headshot_filename=$27
+         WHERE user_id=$28`,
         [preferred_name, phone, email, birth_month, birth_day, birth_year,
          street_address, city, state, zip_code,
          travel_distance, reliable_transportation,
          toBool(equipment_portable_bar), toBool(equipment_cooler), toBool(equipment_table_with_spandex),
-         toBool(equipment_none_but_open), toBool(equipment_no_space),
+         toBool(equipment_none_but_open), toBool(equipment_no_space), toBool(equipment_will_pickup),
          emergency_contact_name || null, emergency_contact_phone || null, emergency_contact_relationship || null,
          alcohol_cert_url, alcohol_cert_name, resume_url, resume_name,
          headshot_url, headshot_name, req.user.id]
@@ -144,21 +145,35 @@ router.post('/', auth, async (req, res) => {
          birth_year, street_address, city, state, zip_code,
          travel_distance, reliable_transportation,
          equipment_portable_bar, equipment_cooler, equipment_table_with_spandex,
-         equipment_none_but_open, equipment_no_space,
+         equipment_none_but_open, equipment_no_space, equipment_will_pickup,
          emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
          alcohol_certification_file_url, alcohol_certification_filename,
          resume_file_url, resume_filename,
          headshot_file_url, headshot_filename)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
         [req.user.id, preferred_name, phone, email, birth_month, birth_day, birth_year,
          street_address, city, state, zip_code,
          travel_distance, reliable_transportation,
          toBool(equipment_portable_bar), toBool(equipment_cooler), toBool(equipment_table_with_spandex),
-         toBool(equipment_none_but_open), toBool(equipment_no_space),
+         toBool(equipment_none_but_open), toBool(equipment_no_space), toBool(equipment_will_pickup),
          emergency_contact_name || null, emergency_contact_phone || null, emergency_contact_relationship || null,
          alcohol_cert_url, alcohol_cert_name, resume_url, resume_name,
          headshot_url, headshot_name]
       );
+    }
+
+    // Geocode address in background (don't block the response)
+    if (street_address || city || state || zip_code) {
+      geocodeAddress(buildAddressString({ street_address, city, state, zip_code }))
+        .then(coords => {
+          if (coords) {
+            pool.query(
+              'UPDATE contractor_profiles SET lat = $1, lng = $2 WHERE user_id = $3',
+              [coords.lat, coords.lng, req.user.id]
+            );
+          }
+        })
+        .catch(err => console.error('[Contractor] Geocode error:', err.message));
     }
 
     // Mark step complete

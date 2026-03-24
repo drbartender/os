@@ -2,6 +2,8 @@ const express = require('express');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { sendSMS, normalizePhone } = require('../utils/sms');
+const { geocodeAddress } = require('../utils/geocode');
+const { autoAssignShift } = require('../utils/autoAssign');
 
 const router = express.Router();
 
@@ -167,23 +169,41 @@ router.delete('/requests/:requestId', auth, async (req, res) => {
 
 /** POST /shifts — create a new shift */
 router.post('/', auth, requireStaffing, async (req, res) => {
-  const { event_name, event_date, start_time, end_time, location, positions_needed, notes } = req.body;
+  const { event_name, event_date, start_time, end_time, location, positions_needed, notes,
+          equipment_required, auto_assign_days_before, lat, lng } = req.body;
   if (!event_name || !event_date) {
     return res.status(400).json({ error: 'Event name and date are required.' });
   }
   try {
     const result = await pool.query(`
-      INSERT INTO shifts (event_name, event_date, start_time, end_time, location, positions_needed, notes, created_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *
+      INSERT INTO shifts (event_name, event_date, start_time, end_time, location, positions_needed, notes,
+                          equipment_required, auto_assign_days_before, lat, lng, created_by)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *
     `, [
       event_name, event_date,
       start_time || null, end_time || null,
       location || null,
       positions_needed ? JSON.stringify(positions_needed) : '[]',
       notes || null,
+      equipment_required ? JSON.stringify(equipment_required) : '[]',
+      auto_assign_days_before != null ? auto_assign_days_before : null,
+      lat || null, lng || null,
       req.user.id
     ]);
-    res.status(201).json(result.rows[0]);
+
+    // Geocode location in background if no lat/lng provided
+    const shift = result.rows[0];
+    if (!lat && !lng && location) {
+      geocodeAddress(location)
+        .then(coords => {
+          if (coords) {
+            pool.query('UPDATE shifts SET lat = $1, lng = $2 WHERE id = $3', [coords.lat, coords.lng, shift.id]);
+          }
+        })
+        .catch(err => console.error('[Shifts] Geocode error:', err.message));
+    }
+
+    res.status(201).json(shift);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -192,25 +212,45 @@ router.post('/', auth, requireStaffing, async (req, res) => {
 
 /** PUT /shifts/:id — update a shift */
 router.put('/:id', auth, requireStaffing, async (req, res) => {
-  const { event_name, event_date, start_time, end_time, location, positions_needed, notes, status } = req.body;
+  const { event_name, event_date, start_time, end_time, location, positions_needed, notes, status,
+          equipment_required, auto_assign_days_before, lat, lng } = req.body;
   try {
     const result = await pool.query(`
       UPDATE shifts SET
         event_name = $1, event_date = $2,
         start_time = $3, end_time = $4, location = $5,
         positions_needed = $6, notes = $7,
-        status = COALESCE($8, status)
-      WHERE id = $9 RETURNING *
+        status = COALESCE($8, status),
+        equipment_required = $9,
+        auto_assign_days_before = $10,
+        lat = COALESCE($11, lat), lng = COALESCE($12, lng)
+      WHERE id = $13 RETURNING *
     `, [
       event_name, event_date,
       start_time || null, end_time || null,
       location || null,
       positions_needed ? JSON.stringify(positions_needed) : '[]',
       notes || null, status || null,
+      equipment_required ? JSON.stringify(equipment_required) : '[]',
+      auto_assign_days_before != null ? auto_assign_days_before : null,
+      lat || null, lng || null,
       req.params.id
     ]);
     if (!result.rows[0]) return res.status(404).json({ error: 'Shift not found.' });
-    res.json(result.rows[0]);
+
+    // Re-geocode if location changed and no explicit lat/lng
+    const shift = result.rows[0];
+    if (!lat && !lng && location) {
+      geocodeAddress(location)
+        .then(coords => {
+          if (coords) {
+            pool.query('UPDATE shifts SET lat = $1, lng = $2 WHERE id = $3', [coords.lat, coords.lng, shift.id]);
+          }
+        })
+        .catch(err => console.error('[Shifts] Geocode error:', err.message));
+    }
+
+    res.json(shift);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -297,6 +337,30 @@ router.put('/requests/:requestId', auth, requireStaffing, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** POST /shifts/:id/auto-assign — run auto-assign algorithm on pending requests */
+router.post('/:id/auto-assign', auth, requireStaffing, async (req, res) => {
+  const { dry_run } = req.body;
+  try {
+    // Ensure shift has lat/lng; geocode if missing
+    const shiftRes = await pool.query('SELECT id, location, lat, lng FROM shifts WHERE id = $1', [req.params.id]);
+    if (!shiftRes.rows[0]) return res.status(404).json({ error: 'Shift not found.' });
+
+    const shift = shiftRes.rows[0];
+    if (shift.lat == null && shift.lng == null && shift.location) {
+      const coords = await geocodeAddress(shift.location);
+      if (coords) {
+        await pool.query('UPDATE shifts SET lat = $1, lng = $2 WHERE id = $3', [coords.lat, coords.lng, shift.id]);
+      }
+    }
+
+    const result = await autoAssignShift(req.params.id, { dryRun: !!dry_run });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Server error' });
   }
 });
 

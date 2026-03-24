@@ -8,6 +8,7 @@ const { initDb } = require('./db');
 const { auth } = require('./middleware/auth');
 const { getSignedUrl } = require('./utils/storage');
 const { processAutopayCharges } = require('./utils/balanceScheduler');
+const { processScheduledAutoAssigns } = require('./utils/autoAssignScheduler');
 
 const app = express();
 app.set('trust proxy', 1); // Required for Render/Heroku reverse proxies (rate limiter, IP detection)
@@ -81,6 +82,10 @@ async function start() {
       // Autopay balance scheduler — check hourly for due balances
       setTimeout(processAutopayCharges, 30000); // initial run after 30s
       setInterval(processAutopayCharges, 60 * 60 * 1000); // then every hour
+
+      // Auto-assign scheduler — check hourly for shifts needing auto-assignment
+      setTimeout(processScheduledAutoAssigns, 60000); // initial run after 60s
+      setInterval(processScheduledAutoAssigns, 60 * 60 * 1000); // then every hour
     });
   } catch (err) {
     console.error('Failed to start server:', err);

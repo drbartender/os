@@ -764,3 +764,35 @@ DO $$ BEGIN
       FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL;
   END IF;
 END $$;
+
+-- ─── Auto-Assign: contractor_profiles additions ──────────────────
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS seniority_adjustment INTEGER DEFAULT 0;
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS hire_date DATE;
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS equipment_will_pickup BOOLEAN DEFAULT false;
+
+-- ─── Auto-Assign: shifts additions ───────────────────────────────
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS equipment_required TEXT DEFAULT '[]';
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS auto_assign_days_before INTEGER;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS auto_assigned_at TIMESTAMPTZ;
+
+-- ─── Auto-Assign: app settings ──────────────────────────────────
+CREATE TABLE IF NOT EXISTS app_settings (
+  key VARCHAR(100) PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO app_settings (key, value) VALUES
+  ('auto_assign_default_days_before', '3'),
+  ('seniority_weight_events', '0.7'),
+  ('seniority_weight_tenure', '0.3'),
+  ('geo_max_distance_miles', '100')
+ON CONFLICT (key) DO NOTHING;
+
+-- ─── Auto-Assign: indexes ───────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_contractor_profiles_lat_lng ON contractor_profiles(lat, lng);
+CREATE INDEX IF NOT EXISTS idx_shifts_auto_assign ON shifts(event_date, auto_assign_days_before);

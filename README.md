@@ -109,7 +109,10 @@ dr-bartender/
 │       ├── fileValidation.js   # Magic-byte file type validation
 │       ├── pricingEngine.js    # Pure pricing calculation engine
 │       ├── eventCreation.js   # Auto-create shifts from paid proposals
-│       └── balanceScheduler.js # Autopay balance charge scheduler
+│       ├── balanceScheduler.js # Autopay balance charge scheduler
+│       ├── geocode.js          # Nominatim geocoding (address → lat/lng)
+│       ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)
+│       └── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
 ├── client/
 │   ├── src/
 │   │   ├── App.js              # All routes, auth guards (ProtectedRoute, RequireHired, etc.)
@@ -172,6 +175,16 @@ dr-bartender/
 - Admin can also manually trigger shift creation via `POST /api/proposals/:id/create-shift`
 - Once paid, proposals automatically transition out of the Proposals dashboard and into the Events dashboard
 - Events dashboard shows all confirmed events with staffing status and staff request management
+
+### Auto-Assign Staffing
+- Intelligent shift auto-assignment based on seniority (events worked + tenure), geographic proximity, and equipment match
+- Admin can click "Auto-Assign" on any shift to preview ranked candidates with scores, then confirm to approve
+- Per-shift configuration: required equipment (portable bar, cooler, table) and scheduled auto-assign days before event
+- Scheduled auto-assign runs hourly for shifts approaching their event date
+- Seniority scores are adjustable per staff member (admin can boost/reduce via manual adjustment)
+- Geocoding via Nominatim: staff addresses and event locations are automatically geocoded for distance calculations
+- Equipment constraint: at least one approved staff member must have required equipment or be willing to pick up from storage
+- Configurable algorithm weights and max distance in Settings > Auto-Assign
 
 ### Admin Dashboard
 - **Staffing**: Application review, hire/reject, interview notes, user management, SMS messaging (compose, recipient picker, shift invitation templates, grouped message history)

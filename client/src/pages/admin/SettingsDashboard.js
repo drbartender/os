@@ -5,6 +5,7 @@ import api from '../../utils/api';
 const TABS = [
   { key: 'drink-menu', label: 'Drink Menu' },
   { key: 'calendar', label: 'Calendar Sync' },
+  { key: 'auto-assign', label: 'Auto-Assign' },
 ];
 
 function CalendarSyncSection() {
@@ -141,6 +142,124 @@ function CalendarSyncSection() {
   );
 }
 
+function AutoAssignSettings() {
+  const [settings, setSettings] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillResult, setBackfillResult] = useState(null);
+  const [form, setForm] = useState({
+    auto_assign_default_days_before: '3',
+    seniority_weight_events: '0.7',
+    seniority_weight_tenure: '0.3',
+    geo_max_distance_miles: '100',
+  });
+
+  useEffect(() => {
+    api.get('/admin/settings')
+      .then(r => {
+        setSettings(r.data);
+        setForm(f => ({ ...f, ...r.data }));
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const r = await api.put('/admin/settings', form);
+      setSettings(r.data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleBackfill = async () => {
+    if (!window.confirm('This will geocode all staff and shift addresses. It may take a while due to rate limits. Continue?')) return;
+    setBackfilling(true);
+    setBackfillResult(null);
+    try {
+      const r = await api.post('/admin/backfill-geocodes');
+      setBackfillResult(r.data);
+    } catch (e) {
+      setBackfillResult({ error: e.response?.data?.error || 'Backfill failed' });
+    } finally {
+      setBackfilling(false);
+    }
+  };
+
+  if (loading) return <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Loading...</div>;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: 560 }}>
+      <div className="card" style={{ padding: '1.5rem' }}>
+        <h3 style={{ marginBottom: '1rem', fontSize: '1rem' }}>Algorithm Weights</h3>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+          Control how the auto-assign algorithm scores candidates. Seniority uses a weighted combination of events worked and tenure.
+        </p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+          <div className="form-group">
+            <label className="form-label">Events Weight</label>
+            <input type="number" className="form-input" step="0.1" min="0" max="1"
+              value={form.seniority_weight_events}
+              onChange={e => setForm(f => ({ ...f, seniority_weight_events: e.target.value }))} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Tenure Weight</label>
+            <input type="number" className="form-input" step="0.1" min="0" max="1"
+              value={form.seniority_weight_tenure}
+              onChange={e => setForm(f => ({ ...f, seniority_weight_tenure: e.target.value }))} />
+          </div>
+        </div>
+
+        <p className="text-small text-muted" style={{ marginBottom: '1rem' }}>
+          Events and tenure weights should ideally sum to 1.0. Currently: {(parseFloat(form.seniority_weight_events || 0) + parseFloat(form.seniority_weight_tenure || 0)).toFixed(1)}
+        </p>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+          <div className="form-group">
+            <label className="form-label">Default Auto-Assign Days Before</label>
+            <input type="number" className="form-input" min="0" max="30"
+              value={form.auto_assign_default_days_before}
+              onChange={e => setForm(f => ({ ...f, auto_assign_default_days_before: e.target.value }))} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Max Distance (miles)</label>
+            <input type="number" className="form-input" min="1" max="500"
+              value={form.geo_max_distance_miles}
+              onChange={e => setForm(f => ({ ...f, geo_max_distance_miles: e.target.value }))} />
+          </div>
+        </div>
+
+        <button className="btn btn-primary btn-sm" disabled={saving} onClick={handleSave}>
+          {saving ? 'Saving…' : 'Save Settings'}
+        </button>
+      </div>
+
+      <div className="card" style={{ padding: '1.5rem' }}>
+        <h3 style={{ marginBottom: '0.75rem', fontSize: '1rem' }}>Geocode Backfill</h3>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+          Geocode all staff addresses and shift locations that don't have coordinates yet. Also backfills hire dates for existing staff. This is rate-limited and may take a while.
+        </p>
+        <button className="btn btn-secondary btn-sm" disabled={backfilling} onClick={handleBackfill}>
+          {backfilling ? 'Backfilling…' : 'Run Backfill'}
+        </button>
+        {backfillResult && (
+          <div className={`alert ${backfillResult.error ? 'alert-error' : 'alert-success'}`} style={{ marginTop: '0.75rem' }}>
+            {backfillResult.error
+              ? backfillResult.error
+              : `Done: ${backfillResult.profiles_geocoded} profiles, ${backfillResult.shifts_geocoded} shifts geocoded, ${backfillResult.hire_dates_backfilled} hire dates set.`}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsDashboard() {
   const [activeTab, setActiveTab] = useState('drink-menu');
 
@@ -167,6 +286,7 @@ export default function SettingsDashboard() {
 
       {activeTab === 'drink-menu' && <CocktailMenuDashboard embedded />}
       {activeTab === 'calendar' && <CalendarSyncSection />}
+      {activeTab === 'auto-assign' && <AutoAssignSettings />}
     </div>
   );
 }
