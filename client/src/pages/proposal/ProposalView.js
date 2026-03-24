@@ -452,15 +452,28 @@ export default function ProposalView() {
               <span style={styles.paymentValue}>{formatDateShort(balanceDueDate)}</span>
             </div>
           </div>
+
+          {/* CTA button */}
+          {(showSignAndPay || showPayOnly) && (
+            <button
+              onClick={() => document.getElementById('sign-pay-section')?.scrollIntoView({ behavior: 'smooth' })}
+              style={styles.ctaButton}
+            >
+              {showSignAndPay ? 'Sign & Secure Your Date' : 'Complete Your Payment'}
+            </button>
+          )}
         </div>
 
         {/* ── Signature + Payment Form ── */}
         {showSignAndPay && (
-          <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>Sign &amp; Pay</h2>
+          <div id="sign-pay-section" style={styles.signPaySection}>
+            <h2 style={styles.signPayTitle}>Sign &amp; Secure Your Date</h2>
+            <p style={{ color: '#6b4226', fontSize: '0.95rem', marginTop: 0, marginBottom: '1.5rem' }}>
+              Complete the form below to accept the terms above and reserve your event.
+            </p>
 
             {/* Signature */}
-            <div style={{ marginTop: '1.5rem' }}>
+            <div>
               <label style={styles.label}>Full Legal Name</label>
               <input
                 type="text"
@@ -576,8 +589,8 @@ export default function ProposalView() {
 
         {/* ── Pay-only section (backward compat: already signed, not paid) ── */}
         {showPayOnly && (
-          <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>Complete Your Payment</h2>
+          <div id="sign-pay-section" style={styles.signPaySection}>
+            <h2 style={styles.signPayTitle}>Complete Your Payment</h2>
             <p style={{ color: '#6b4226', marginBottom: '0.5rem', fontSize: '0.95rem' }}>
               Your proposal has been accepted! Choose a payment option below to secure your booking.
             </p>
@@ -839,6 +852,33 @@ const styles = {
     fontSize: '0.95rem',
     fontWeight: 600,
     color: '#3a2218',
+  },
+  ctaButton: {
+    display: 'block',
+    width: '100%',
+    marginTop: '1.25rem',
+    padding: '1rem',
+    background: '#2d6a4f',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '8px',
+    fontSize: '1.1rem',
+    fontWeight: 700,
+    cursor: 'pointer',
+    letterSpacing: '0.02em',
+    fontFamily: 'Georgia, "Times New Roman", serif',
+  },
+  signPaySection: {
+    padding: '2rem',
+    background: '#f9f5ef',
+    borderBottom: '1px solid #e8e0d4',
+  },
+  signPayTitle: {
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontSize: '1.3rem',
+    color: '#2d6a4f',
+    marginBottom: '0.25rem',
+    marginTop: 0,
   },
   label: {
     display: 'block',
