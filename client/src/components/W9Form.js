@@ -37,6 +37,7 @@ export default function W9Form({ onComplete }) {
     exempt_payee_code: '',
   });
   const [signatureData, setSignatureData] = useState('');
+  const [signatureMethod, setSignatureMethod] = useState(null);
   const [error, setError] = useState('');
   const [sigError, setSigError] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -218,12 +219,21 @@ export default function W9Form({ onComplete }) {
       doc.setDrawColor(160, 160, 160);
       doc.rect(sigBoxX, y - 2, sigBoxW, sigBoxH);
 
-      try {
-        doc.addImage(signatureData, 'PNG', sigBoxX + 3, y, sigBoxW - 6, sigBoxH - 8);
-      } catch (imgErr) {
-        doc.setFontSize(8);
-        doc.setTextColor(100, 100, 100);
-        doc.text('[Signature on file]', sigBoxX + 5, y + 20);
+      if (signatureMethod === 'draw') {
+        try {
+          doc.addImage(signatureData, 'PNG', sigBoxX + 3, y, sigBoxW - 6, sigBoxH - 8);
+        } catch (imgErr) {
+          doc.setFontSize(8);
+          doc.setTextColor(100, 100, 100);
+          doc.text('[Signature on file]', sigBoxX + 5, y + 20);
+        }
+      } else {
+        // Typed signature — render the name in italic
+        doc.setFont('helvetica', 'bolditalic');
+        doc.setFontSize(16);
+        doc.setTextColor(0, 0, 0);
+        doc.text(signatureData, sigBoxX + 8, y + 24);
+        doc.setFont('helvetica', 'normal');
       }
 
       // Date box
@@ -379,7 +389,7 @@ export default function W9Form({ onComplete }) {
         <p style={{ fontSize: '0.8rem', color: 'var(--warm-brown)', fontWeight: 600, marginBottom: '0.4rem' }}>
           Sign below with your mouse or finger:
         </p>
-        <SignaturePad onChange={setSignatureData} value={signatureData} />
+        <SignaturePad onChange={(data, method) => { setSignatureData(data); setSignatureMethod(method); }} value={signatureData} />
         {sigError && <p style={{ color: 'var(--error)', fontSize: '0.8rem', marginTop: '0.35rem' }}>{sigError}</p>}
         <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
           Date: <strong>{new Date().toLocaleDateString()}</strong>

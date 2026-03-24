@@ -103,6 +103,7 @@ export default function ProposalView() {
   // Signing state
   const [sigName, setSigName] = useState('');
   const [sigData, setSigData] = useState('');
+  const [sigMethod, setSigMethod] = useState(null);
   const [sigError, setSigError] = useState('');
 
   // Payment option state
@@ -188,6 +189,7 @@ export default function ProposalView() {
       await axios.post(`${BASE_URL}/proposals/t/${token}/sign`, {
         client_signed_name: sigName.trim(),
         client_signature_data: sigData,
+        client_signature_method: sigMethod,
       });
       setProposal(prev => ({ ...prev, status: 'accepted', client_signed_at: new Date().toISOString() }));
     } catch (err) {
@@ -406,7 +408,7 @@ export default function ProposalView() {
 
             <div style={{ marginTop: '1rem' }}>
               <label style={styles.label}>Signature</label>
-              <SignaturePad value={sigData} onChange={setSigData} />
+              <SignaturePad value={sigData} onChange={(data, method) => { setSigData(data); setSigMethod(method); }} />
             </div>
 
             {sigError && (

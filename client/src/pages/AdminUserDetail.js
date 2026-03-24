@@ -429,10 +429,23 @@ export default function AdminUserDetail() {
                   </div>
                   {agreement.signature_data && (
                     <div>
-                      <div style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--warm-brown)', marginBottom: '0.5rem' }}>Digital Signature</div>
-                      <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', display: 'inline-block', background: 'white', padding: '0.5rem' }}>
-                        <img src={agreement.signature_data} alt="Signature" style={{ maxWidth: 280, display: 'block' }} />
+                      <div style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--warm-brown)', marginBottom: '0.5rem' }}>
+                        Digital Signature {agreement.signature_method === 'type' ? '(Typed)' : '(Drawn)'}
                       </div>
+                      {agreement.signature_method === 'type' ? (
+                        <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', display: 'inline-block', background: 'white', padding: '0.75rem 1.25rem' }}>
+                          <span style={{ fontFamily: "'Brush Script MT', 'Segoe Script', 'Apple Chancery', cursive", fontSize: '1.5rem', color: '#1A1410' }}>{agreement.signature_data}</span>
+                        </div>
+                      ) : (
+                        <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', display: 'inline-block', background: 'white', padding: '0.5rem' }}>
+                          <img src={agreement.signature_data} alt="Signature" style={{ maxWidth: 280, display: 'block' }} />
+                        </div>
+                      )}
+                      {agreement.signature_ip && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                          IP: {agreement.signature_ip} | Document: {agreement.signature_document_version}
+                        </div>
+                      )}
                     </div>
                   )}
                 </>

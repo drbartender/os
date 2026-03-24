@@ -67,11 +67,16 @@ router.get('/t/:token', async (req, res) => {
   }
 });
 
+const PROPOSAL_DOCUMENT_VERSION = 'event-services-agreement-v1';
+
 /** POST /api/proposals/t/:token/sign — client signs and accepts proposal */
 router.post('/t/:token/sign', async (req, res) => {
-  const { client_signed_name, client_signature_data } = req.body;
+  const { client_signed_name, client_signature_data, client_signature_method } = req.body;
   if (!client_signed_name || !client_signature_data) {
     return res.status(400).json({ error: 'Name and signature are required.' });
+  }
+  if (client_signature_method !== 'draw' && client_signature_method !== 'type') {
+    return res.status(400).json({ error: 'Invalid signature method.' });
   }
   try {
     const result = await pool.query(
@@ -85,18 +90,25 @@ router.post('/t/:token/sign', async (req, res) => {
       return res.status(400).json({ error: 'Proposal has already been paid.' });
     }
 
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
+    const userAgent = req.headers['user-agent'] || null;
+
     await pool.query(`
       UPDATE proposals SET
         client_signed_name = $1,
         client_signature_data = $2,
         client_signed_at = NOW(),
+        client_signature_method = $3,
+        client_signature_ip = $4,
+        client_signature_user_agent = $5,
+        client_signature_document_version = $6,
         status = 'accepted'
-      WHERE id = $3
-    `, [client_signed_name, client_signature_data, proposal.id]);
+      WHERE id = $7
+    `, [client_signed_name, client_signature_data, client_signature_method, ip, userAgent, PROPOSAL_DOCUMENT_VERSION, proposal.id]);
 
     await pool.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'signed', 'client', $2)`,
-      [proposal.id, JSON.stringify({ signed_name: client_signed_name })]
+      [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method })]
     );
 
     res.json({ success: true, status: 'accepted' });

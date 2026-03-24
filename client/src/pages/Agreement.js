@@ -19,7 +19,8 @@ export default function Agreement() {
     sms_consent: false,
     acknowledged_field_guide: false,
     agreed_non_solicitation: false,
-    signature_data: ''
+    signature_data: '',
+    signature_method: null
   });
 
   useEffect(() => {
@@ -164,7 +165,7 @@ export default function Agreement() {
               <label className="form-label">Digital Signature</label>
               <SignaturePad
                 value={form.signature_data}
-                onChange={data => setForm(f => ({ ...f, signature_data: data }))}
+                onChange={(data, method) => setForm(f => ({ ...f, signature_data: data, signature_method: method }))}
               />
             </div>
 

@@ -85,10 +85,19 @@ CREATE TABLE IF NOT EXISTS agreements (
   acknowledged_field_guide BOOLEAN DEFAULT false,
   agreed_non_solicitation BOOLEAN DEFAULT false,
   signature_data TEXT,
+  signature_method VARCHAR(10),
+  signature_ip VARCHAR(45),
+  signature_user_agent TEXT,
+  signature_document_version VARCHAR(50),
   signed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS signature_method VARCHAR(10);
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS signature_ip VARCHAR(45);
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS signature_user_agent TEXT;
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS signature_document_version VARCHAR(50);
 
 CREATE TABLE IF NOT EXISTS payment_profiles (
   id SERIAL PRIMARY KEY,
@@ -634,6 +643,10 @@ CREATE TABLE IF NOT EXISTS proposal_activity_log (
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signed_name VARCHAR(255);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_data TEXT;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signed_at TIMESTAMPTZ;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_method VARCHAR(10);
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_ip VARCHAR(45);
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_user_agent TEXT;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_document_version VARCHAR(50);
 
 -- ─── Stripe Payment Sessions ───────────────────────────────────────
 
