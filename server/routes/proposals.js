@@ -67,7 +67,7 @@ router.get('/t/:token', async (req, res) => {
   }
 });
 
-const PROPOSAL_DOCUMENT_VERSION = 'event-services-agreement-v1';
+const PROPOSAL_DOCUMENT_VERSION = 'event-services-agreement-v2';
 
 /** POST /api/proposals/t/:token/sign — client signs and accepts proposal */
 router.post('/t/:token/sign', async (req, res) => {

@@ -364,35 +364,100 @@ export default function ProposalView() {
           </table>
         </div>
 
-        {/* ── Combined Contract + Signature + Payment ── */}
+        {/* ── Terms & Conditions (always visible) ── */}
+        <div style={styles.section}>
+          <h2 style={styles.sectionTitle}>Standard Terms and Conditions</h2>
+          <div style={styles.contractScroll}>
+            <p style={styles.contractText}>
+              This agreement is made between <strong>Dr. Bartender, LLC</strong> ("Dr. Bartender") and the Client. These terms govern the provision of bartending services and outline the responsibilities of both parties.
+            </p>
+
+            <p style={{ ...styles.contractText, fontWeight: 600 }}>2. Termination and Cancellation</p>
+            <ul style={styles.contractList}>
+              <li style={styles.contractListItem}><strong>Client Cancellation:</strong> If canceled within 30 days of the event, the full contract amount is due. Outside of 30 days, only the deposit is non-refundable.</li>
+              <li style={styles.contractListItem}><strong>Dr. Bartender Cancellation:</strong> If Dr. Bartender cancels, the Client will receive a full refund of any paid amount, including the deposit.</li>
+            </ul>
+
+            <p style={{ ...styles.contractText, fontWeight: 600 }}>3. Dr. Bartender's Duties</p>
+            <ul style={styles.contractList}>
+              <li style={styles.contractListItem}>Perform all services professionally and safely.</li>
+              <li style={styles.contractListItem}>Staff events based on the anticipated number of guests.</li>
+              <li style={styles.contractListItem}>Clean and remove all equipment brought to the event.</li>
+              <li style={styles.contractListItem}>Maintain necessary permits and liquor liability insurance.</li>
+              <li style={styles.contractListItem}>Act as the sole provider of bartending services unless otherwise agreed upon.</li>
+            </ul>
+
+            <p style={{ ...styles.contractText, fontWeight: 600 }}>4. Client's Duties</p>
+            <ul style={styles.contractList}>
+              <li style={styles.contractListItem}>Provide prompt payment as outlined in the Event-Specific Agreement.</li>
+              <li style={styles.contractListItem}>Supply an accurate guest count no later than 14 days before the event.</li>
+              <li style={styles.contractListItem}>Specify whether Dr. Bartender will supply alcohol. If the Client provides alcohol, they assume responsibility for quality and quantity.</li>
+            </ul>
+
+            <p style={{ ...styles.contractText, fontWeight: 600 }}>5. Insurance</p>
+            <p style={styles.contractText}>
+              Dr. Bartender maintains liquor liability insurance with a $1,000,000 limit per occurrence and a $2,000,000 aggregate. Proof of insurance is available upon request.
+            </p>
+
+            <p style={{ ...styles.contractText, fontWeight: 600 }}>6. Indemnification</p>
+            <ul style={styles.contractList}>
+              <li style={styles.contractListItem}><strong>Dr. Bartender:</strong> Will indemnify the Client for claims arising directly from its services, excluding incidents caused by event guests.</li>
+              <li style={styles.contractListItem}><strong>Client:</strong> Will indemnify Dr. Bartender for incidents arising from willful conduct, error, or negligence by the Client or event guests.</li>
+            </ul>
+
+            <p style={{ ...styles.contractText, fontWeight: 600 }}>7. Force Majeure</p>
+            <p style={styles.contractText}>
+              Neither party is responsible for performance delays due to uncontrollable events (e.g., natural disasters, acts of God). Services will resume once conditions permit.
+            </p>
+
+            <p style={{ ...styles.contractText, fontWeight: 600 }}>8. Photography and Social Media</p>
+            <p style={styles.contractText}>
+              The Client consents to Dr. Bartender photographing the event for promotional use. Dr. Bartender agrees to provide the Client with copies of event photos upon request.
+            </p>
+
+            <p style={{ ...styles.contractText, fontWeight: 600 }}>9. Service of Alcohol</p>
+            <ul style={styles.contractList}>
+              <li style={styles.contractListItem}><strong>Age Verification:</strong> Alcohol will only be served to legally eligible guests with valid identification.</li>
+              <li style={styles.contractListItem}><strong>Right to Refuse Service:</strong> Dr. Bartender reserves the right to refuse service to intoxicated or inappropriate guests.</li>
+              <li style={styles.contractListItem}><strong>Drink Limit Policy:</strong> All-inclusive packages do not imply unlimited alcohol; limits are set to ensure guest safety.</li>
+            </ul>
+
+            <p style={{ ...styles.contractText, fontWeight: 600 }}>10. Miscellaneous Terms</p>
+            <ul style={styles.contractList}>
+              <li style={styles.contractListItem}><strong>Independent Contractor:</strong> Dr. Bartender acts as an independent contractor.</li>
+              <li style={styles.contractListItem}><strong>Jurisdiction:</strong> This agreement is governed by Illinois state law, with any disputes settled in Winnebago County, IL.</li>
+              <li style={styles.contractListItem}><strong>Entire Agreement:</strong> These terms represent the entire understanding between the Client and Dr. Bartender.</li>
+            </ul>
+
+            <p style={styles.contractText}>
+              By signing below, the Client agrees to all terms above and confirms that the event details in this proposal are accurate.
+            </p>
+          </div>
+        </div>
+
+        {/* ── Payment Summary (always visible) ── */}
+        <div style={styles.section}>
+          <h2 style={styles.sectionTitle}>Payment Terms</h2>
+          <div style={styles.paymentSummary}>
+            <div style={styles.paymentRow}>
+              <span style={styles.paymentLabel}>Deposit Due at Signing</span>
+              <span style={styles.paymentValue}>{fmt(DEPOSIT_DOLLARS)}</span>
+            </div>
+            <div style={styles.paymentRow}>
+              <span style={styles.paymentLabel}>Remaining Balance</span>
+              <span style={styles.paymentValue}>{fmt(balanceAmount)}</span>
+            </div>
+            <div style={{ ...styles.paymentRow, borderBottom: 'none' }}>
+              <span style={styles.paymentLabel}>Balance Due By</span>
+              <span style={styles.paymentValue}>{formatDateShort(balanceDueDate)}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Signature + Payment Form ── */}
         {showSignAndPay && (
           <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>Event Services Agreement</h2>
-
-            {/* Contract in scrollable container */}
-            <div style={styles.contractScroll}>
-              <p style={styles.contractText}>
-                This Event Services Agreement ("Agreement") is entered into between <strong>Dr. Bartender</strong> ("Service Provider") and the client named below ("Client").
-              </p>
-              <p style={styles.contractText}>
-                <strong>Services:</strong> Dr. Bartender agrees to provide bartending services as outlined in this proposal, including the package, add-ons, and staffing described above, for the event date and location specified.
-              </p>
-              <p style={styles.contractText}>
-                <strong>Deposit &amp; Payment:</strong> A non-refundable deposit of <strong>{fmt(DEPOSIT_DOLLARS)}</strong> is due upon signing to secure your date. The remaining balance is due no later than <strong>14 days before the event date</strong>. Failure to pay the balance by this date may result in cancellation.
-              </p>
-              <p style={styles.contractText}>
-                <strong>Cancellation:</strong> The deposit is non-refundable. If the Client cancels within 14 days of the event, the full remaining balance may be owed. Dr. Bartender reserves the right to cancel due to circumstances beyond our control, in which case the deposit will be refunded in full.
-              </p>
-              <p style={styles.contractText}>
-                <strong>Conduct &amp; Safety:</strong> Dr. Bartender staff reserves the right to refuse service to guests who appear intoxicated or are under the legal drinking age. The Client is responsible for ensuring a safe working environment for our staff.
-              </p>
-              <p style={styles.contractText}>
-                <strong>Liability:</strong> Dr. Bartender's liability is limited to the total amount paid for services. The Client agrees to indemnify Dr. Bartender against claims arising from third-party actions at the event.
-              </p>
-              <p style={styles.contractText}>
-                By signing below, the Client agrees to all terms above and confirms that the event details in this proposal are accurate.
-              </p>
-            </div>
+            <h2 style={styles.sectionTitle}>Sign &amp; Pay</h2>
 
             {/* Signature */}
             <div style={{ marginTop: '1.5rem' }}>
@@ -742,6 +807,38 @@ const styles = {
     lineHeight: 1.6,
     marginBottom: '0.75rem',
     marginTop: 0,
+  },
+  contractList: {
+    margin: '0 0 0.75rem 0',
+    padding: '0 0 0 1.2rem',
+    color: '#4a3520',
+  },
+  contractListItem: {
+    fontSize: '0.875rem',
+    lineHeight: 1.6,
+    marginBottom: '0.35rem',
+  },
+  paymentSummary: {
+    background: '#faf5ef',
+    border: '1px solid #e8e0d4',
+    borderRadius: '8px',
+    padding: '0.25rem 1.25rem',
+  },
+  paymentRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '0.75rem 0',
+    borderBottom: '1px solid #e8e0d4',
+  },
+  paymentLabel: {
+    fontSize: '0.9rem',
+    color: '#6b4226',
+  },
+  paymentValue: {
+    fontSize: '0.95rem',
+    fontWeight: 600,
+    color: '#3a2218',
   },
   label: {
     display: 'block',
