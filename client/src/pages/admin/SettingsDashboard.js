@@ -143,7 +143,7 @@ function CalendarSyncSection() {
 }
 
 function AutoAssignSettings() {
-  const [settings, setSettings] = useState(null);
+  const [, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
