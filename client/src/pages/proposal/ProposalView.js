@@ -221,8 +221,20 @@ export default function ProposalView() {
   }
 
   const snapshot = proposal.pricing_snapshot;
-  const includes = proposal.package_includes || [];
   const bartenders = snapshot?.staffing?.actual;
+  const durationHours = snapshot?.inputs?.durationHours;
+
+  // Replace dynamic placeholders in package includes
+  const rawIncludes = proposal.package_includes || [];
+  const includes = rawIncludes.map(item => {
+    let text = item;
+    if (durationHours != null) text = text.replace(/\{hours\}/g, durationHours);
+    if (bartenders != null) {
+      text = text.replace(/\{bartenders\}/g, bartenders);
+      text = text.replace(/\{bartenders_s\}/g, bartenders !== 1 ? 's' : '');
+    }
+    return text;
+  });
   const totalPrice = snapshot ? Number(snapshot.total) : 0;
   const balanceAmount = totalPrice - DEPOSIT_DOLLARS;
 

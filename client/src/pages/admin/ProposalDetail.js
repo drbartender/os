@@ -303,7 +303,18 @@ export default function ProposalDetail() {
   if (!proposal) return null;
 
   const snapshot = proposal.pricing_snapshot;
-  const includes = proposal.package_includes || [];
+  const bartenders = snapshot?.staffing?.actual;
+  const durationHours = snapshot?.inputs?.durationHours;
+  const rawIncludes = proposal.package_includes || [];
+  const includes = rawIncludes.map(item => {
+    let text = item;
+    if (durationHours != null) text = text.replace(/\{hours\}/g, durationHours);
+    if (bartenders != null) {
+      text = text.replace(/\{bartenders\}/g, bartenders);
+      text = text.replace(/\{bartenders_s\}/g, bartenders !== 1 ? 's' : '');
+    }
+    return text;
+  });
 
   // Edit mode — derived state
   const editSelectedPkg = editForm && packages.find(p => p.id === Number(editForm?.package_id));
