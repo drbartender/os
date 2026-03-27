@@ -116,6 +116,7 @@ System design reference for the Dr. Bartender platform.
 | GET | `/` | Admin | List all plans with filters |
 | POST | `/` | Admin | Create new plan (generates UUID token) |
 | GET | `/by-proposal/:proposalId` | Admin | Fetch plan linked to a proposal |
+| GET | `/:id/shopping-list-data` | Admin | Shaped data for shopping list generation (joins proposal for guest_count, resolves cocktail ingredients) |
 | GET | `/:id` | Admin | Fetch single plan by ID |
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | PATCH | `/:id/status` | Admin | Update plan status |
@@ -326,7 +327,7 @@ System design reference for the Dr. Bartender platform.
 
 **cocktail_categories** (5 rows) + **cocktails** (25 rows) — Cocktail menu
 - Categories: Crowd Favorites, Light & Refreshing, Classic, Bold, Bartender's Picks
-- Each cocktail: name, emoji, base_spirit, description, sort_order, is_active
+- Each cocktail: name, emoji, base_spirit, description, sort_order, is_active, ingredients (JSONB array of strings — used by the Shopping List Generator)
 
 **mocktail_categories** (4 rows) + **mocktails** (16 rows) — Mocktail menu
 - Categories: Fruity & Refreshing, Creamy & Sweet, Sparkling & Light, Bold & Complex
@@ -359,6 +360,19 @@ System design reference for the Dr. Bartender platform.
 - `to_phone`, `body`
 - `twilio_sid`, `status` — delivery tracking
 - `sent_by` FK → users (admin who sent)
+
+### Shopping List Generator
+
+Located in `client/src/components/ShoppingList/`. Fully client-side PDF generation (no backend persistence).
+
+- **`shoppingListPars.js`** — 100-guest baseline quantities (single source of truth for standard bar pars)
+- **`generateShoppingList.js`** — Scales pars by `guestCount / 100`, merges signature cocktail ingredients, boosts shared ingredients
+- **`ShoppingListPDF.jsx`** — `@react-pdf/renderer` Document with IM Fell English fonts and Dr. Bartender brand colors
+- **`ShoppingListButton.jsx`** — Fetches `GET /api/drink-plans/:id/shopping-list-data`, handles missing guest count prompt, opens the modal
+- **`ShoppingListModal.jsx`** — Full-screen editable modal: add/remove/rename items, edit quantities, change guest count with recalculate prompt, then Download PDF
+- **`logoBase64.js`** — Logo embedded as base64 data URI for use in PDFs
+
+Accessible via the "Shopping List" button on Drink Plan Detail (admin), visible when plan status is `submitted` or `reviewed`.
 
 ### Cross-Cutting Patterns
 - All tables have `created_at` / `updated_at` with auto-update triggers

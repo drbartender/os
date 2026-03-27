@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import DrinkPlanSelections from '../../components/DrinkPlanSelections';
+import ShoppingListButton from '../../components/ShoppingList/ShoppingListButton';
 
 const STATUS_LABELS = {
   pending: 'Pending',
@@ -178,6 +179,9 @@ export default function DrinkPlanDetail() {
           <button className="btn btn-success" onClick={markReviewed}>
             Mark as Reviewed
           </button>
+        )}
+        {(plan.status === 'submitted' || plan.status === 'reviewed') && (
+          <ShoppingListButton planId={id} />
         )}
         <button className="btn btn-danger btn-sm" onClick={deletePlan}>
           Delete Plan

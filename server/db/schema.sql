@@ -333,6 +333,9 @@ ON CONFLICT (id) DO NOTHING;
 -- Add base_spirit column (idempotent)
 ALTER TABLE cocktails ADD COLUMN IF NOT EXISTS base_spirit VARCHAR(100);
 
+-- Add ingredients column for shopping list generation (idempotent)
+ALTER TABLE cocktails ADD COLUMN IF NOT EXISTS ingredients JSONB DEFAULT '[]';
+
 INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order) VALUES
   ('vodka-berry-lemonade','Berry Vodka Lemonade','crowd-favorites','🍓','Bright vodka lemonade with mixed berries and a pop of pink.',1),
   ('moscow-mule','Moscow Mule','crowd-favorites','🫙','Vodka, ginger beer, and lime — crisp and refreshing.',2),

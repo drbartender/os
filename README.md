@@ -167,6 +167,7 @@ dr-bartender/
 - Public questionnaire sent to clients via unique token link
 - Clients select cocktails, mocktails, and serving preferences
 - Admin review dashboard
+- **Shopping List Generator**: On any submitted/reviewed drink plan, admin clicks "Shopping List" to open an editable modal pre-populated with scaled quantities (100-guest pars × actual guest count). Add/remove items, change quantities, then download a branded PDF. Signature cocktail ingredients are automatically merged into the list. Cocktail ingredients are managed in the Drink Menu admin.
 
 ### Proposal → Event Pipeline
 - When a client signs the contract and pays (deposit or full), a shift is automatically created

@@ -68,6 +68,15 @@ export default function ProposalDetail() {
   const [drinkPlanNotes, setDrinkPlanNotes] = useState('');
   const [savingDrinkPlanNotes, setSavingDrinkPlanNotes] = useState(false);
 
+  // Staffing state (event context only)
+  const [shift, setShift] = useState(null);
+  const [shiftLoading, setShiftLoading] = useState(false);
+  const [shiftRequests, setShiftRequests] = useState([]);
+  const [autoAssignPreview, setAutoAssignPreview] = useState(null);
+  const [autoAssignLoading, setAutoAssignLoading] = useState(false);
+  const [equipmentForm, setEquipmentForm] = useState({ portable_bar: false, cooler: false, table_with_spandex: false, auto_assign_days_before: '' });
+  const [savingEquipment, setSavingEquipment] = useState(false);
+
   // Edit mode state
   const [editing, setEditing] = useState(false);
   const [packages, setPackages] = useState([]);
@@ -105,6 +114,83 @@ export default function ProposalDetail() {
       .catch(() => setDrinkPlan(null))
       .finally(() => setDrinkPlanLoading(false));
   }, [id, isEventContext]);
+
+  // Fetch shift data when viewing as event
+  const loadShift = (proposalId) => {
+    return api.get(`/shifts/by-proposal/${proposalId}`).then(res => {
+      setShift(res.data);
+      let required = [];
+      try { required = JSON.parse(res.data.equipment_required || '[]'); } catch (e) {}
+      setEquipmentForm({
+        portable_bar: required.includes('portable_bar'),
+        cooler: required.includes('cooler'),
+        table_with_spandex: required.includes('table_with_spandex'),
+        auto_assign_days_before: res.data.auto_assign_days_before ?? '',
+      });
+      return api.get(`/shifts/${res.data.id}/requests`);
+    }).then(res => { if (res) setShiftRequests(res.data); })
+      .catch(() => setShift(null));
+  };
+
+  useEffect(() => {
+    if (!isEventContext || !id) return;
+    setShiftLoading(true);
+    loadShift(id).finally(() => setShiftLoading(false));
+  }, [id, isEventContext]); // eslint-disable-line
+
+  const loadRequests = (shiftId) => {
+    api.get(`/shifts/${shiftId}/requests`)
+      .then(res => setShiftRequests(res.data))
+      .catch(e => console.error(e));
+  };
+
+  const refreshShift = () => { if (id) loadShift(id); };
+
+  const updateRequestStatus = async (requestId, status) => {
+    try {
+      await api.put(`/shifts/requests/${requestId}`, { status });
+      if (shift) loadRequests(shift.id);
+      refreshShift();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleAutoAssignPreview = async () => {
+    if (!shift) return;
+    setAutoAssignLoading(true);
+    try {
+      const res = await api.post(`/shifts/${shift.id}/auto-assign`, { dry_run: true });
+      setAutoAssignPreview({ shiftId: shift.id, ...res.data });
+    } catch (e) {
+      alert(e.response?.data?.error || 'Auto-assign failed');
+    } finally { setAutoAssignLoading(false); }
+  };
+
+  const handleAutoAssignConfirm = async () => {
+    if (!autoAssignPreview) return;
+    try {
+      await api.post(`/shifts/${autoAssignPreview.shiftId}/auto-assign`, { dry_run: false });
+      setAutoAssignPreview(null);
+      refreshShift();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Auto-assign failed');
+    }
+  };
+
+  const saveEquipmentConfig = async () => {
+    if (!shift) return;
+    const equipment_required = ['portable_bar', 'cooler', 'table_with_spandex'].filter(k => equipmentForm[k]);
+    const days = equipmentForm.auto_assign_days_before;
+    setSavingEquipment(true);
+    try {
+      await api.put(`/shifts/${shift.id}`, {
+        equipment_required,
+        auto_assign_days_before: days !== '' ? parseInt(days, 10) : null,
+      });
+      refreshShift();
+    } catch (e) {
+      alert('Failed to save');
+    } finally { setSavingEquipment(false); }
+  };
 
   // Fetch packages/addons when edit mode is opened
   useEffect(() => {
@@ -289,14 +375,36 @@ export default function ProposalDetail() {
     } finally { setRecordingPayment(false); }
   };
 
-  const formatDate = (d) => {
+  const formatDate = (d, options) => {
     if (!d) return '—';
-    return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const dateStr = typeof d === 'string' ? d.slice(0, 10) : new Date(d).toISOString().slice(0, 10);
+    return new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', options || { month: 'short', day: 'numeric', year: 'numeric' });
   };
+
+  const formatDateWithDay = (d) => formatDate(d, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 
   const formatDateTime = (d) => {
     if (!d) return '—';
     return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+  };
+
+  const formatTime12 = (t) => {
+    if (!t) return '?';
+    const [h, m] = t.split(':').map(Number);
+    const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    return `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+  };
+
+  const getServiceTime = () => {
+    const start = proposal?.event_start_time;
+    const duration = Number(proposal?.event_duration_hours) || 0;
+    if (!start) return '—';
+    const [h, m] = start.split(':').map(Number);
+    const endH = h + Math.floor(duration) + Math.floor((m + (duration % 1) * 60) / 60);
+    const endM = (m + (duration % 1) * 60) % 60;
+    const endTime = `${String(endH).padStart(2, '0')}:${String(Math.round(endM)).padStart(2, '0')}`;
+    return `${formatTime12(start)} – ${formatTime12(endTime)} (${duration}hr${duration !== 1 ? 's' : ''})`;
   };
 
   if (loading) return <div className="page-container" style={{ textAlign: 'center', padding: '3rem' }}><div className="spinner" /></div>;
@@ -325,10 +433,26 @@ export default function ProposalDetail() {
     return true;
   });
 
+  // Staffing derived values
+  let shiftPositions = [];
+  if (shift) { try { shiftPositions = JSON.parse(shift.positions_needed || '[]'); } catch (e) {} }
+  const shiftApprovedCount = Number(shift?.approved_count) || shiftRequests.filter(r => r.status === 'approved').length;
+  const pendingRequests = shiftRequests.filter(r => r.status === 'pending');
+
   return (
     <div className="page-container wide">
+      {/* Header */}
       <div className="flex-between mb-2">
-        <h1 style={{ fontFamily: 'var(--font-display)' }}>{isEventContext ? (proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : `Event #${proposal.id}`)) : `Proposal #${proposal.id}`}</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <h1 style={{ fontFamily: 'var(--font-display)', margin: 0 }}>
+            {isEventContext
+              ? (proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : `Event #${proposal.id}`))
+              : `Proposal #${proposal.id}`}
+          </h1>
+          <span className={`badge ${STATUS_CLASSES[proposal.status] || ''}`} style={{ fontSize: '0.9rem' }}>
+            {STATUS_LABELS[proposal.status] || proposal.status}
+          </span>
+        </div>
         <div className="flex gap-1">
           <button className="btn btn-secondary" onClick={() => navigate(isEventContext ? '/admin/events' : '/admin/proposals')}>Back</button>
           {!editing && <button className="btn btn-secondary" onClick={() => setEditing(true)}>Edit</button>}
@@ -336,40 +460,66 @@ export default function ProposalDetail() {
         </div>
       </div>
 
+      {/* Event context: overview card at top */}
+      {isEventContext && !editing && (
+        <div className="card mb-2">
+          <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              <div style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--deep-brown)' }}>{formatDateWithDay(proposal.event_date)}</div>
+              <div style={{ fontSize: '0.9rem', color: 'var(--warm-brown)' }}>{getServiceTime()}</div>
+              {proposal.event_location && <div style={{ fontSize: '0.9rem', color: 'var(--warm-brown)' }}>{proposal.event_location}</div>}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+              <div style={{ fontSize: '0.9rem', color: 'var(--warm-brown)' }}>{proposal.guest_count} guests</div>
+              <div style={{ fontSize: '0.9rem', color: 'var(--warm-brown)' }}>{proposal.package_name || '—'} &middot; {fmt(proposal.total_price)}</div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+              <div style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--deep-brown)' }}>{proposal.client_name || '—'}</div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--warm-brown)' }}>{formatPhone(proposal.client_phone)}</div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--warm-brown)' }}>{proposal.client_email || '—'}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Proposal context: original status card */}
+      {!isEventContext && (
+        <div className="card mb-2">
+          <div className="flex-between" style={{ alignItems: 'center' }}>
+            <div>
+              <span className={`badge ${STATUS_CLASSES[proposal.status] || ''}`} style={{ fontSize: '0.9rem' }}>
+                {STATUS_LABELS[proposal.status] || proposal.status}
+              </span>
+              {proposal.view_count > 0 && (
+                <span className="text-muted text-small" style={{ marginLeft: '0.75rem' }}>
+                  Viewed {proposal.view_count} time{proposal.view_count !== 1 ? 's' : ''}
+                  {proposal.last_viewed_at && <> · Last: {formatDateTime(proposal.last_viewed_at)}</>}
+                </span>
+              )}
+            </div>
+            <div className="flex gap-05">
+              {proposal.status === 'draft' && <button className="btn btn-sm" onClick={() => updateStatus('sent')}>Mark Sent</button>}
+              {proposal.status === 'viewed' && <button className="btn btn-sm" onClick={() => updateStatus('accepted')}>Mark Accepted</button>}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', alignItems: 'start' }}>
         {/* Left column */}
         <div>
-          {/* Status */}
-          <div className="card mb-2">
-            <div className="flex-between" style={{ alignItems: 'center' }}>
-              <div>
-                <span className={`badge ${STATUS_CLASSES[proposal.status] || ''}`} style={{ fontSize: '0.9rem' }}>
-                  {STATUS_LABELS[proposal.status] || proposal.status}
-                </span>
-                {proposal.view_count > 0 && (
-                  <span className="text-muted text-small" style={{ marginLeft: '0.75rem' }}>
-                    Viewed {proposal.view_count} time{proposal.view_count !== 1 ? 's' : ''}
-                    {proposal.last_viewed_at && <> · Last: {formatDateTime(proposal.last_viewed_at)}</>}
-                  </span>
-                )}
-              </div>
-              <div className="flex gap-05">
-                {proposal.status === 'draft' && <button className="btn btn-sm" onClick={() => updateStatus('sent')}>Mark Sent</button>}
-                {proposal.status === 'viewed' && <button className="btn btn-sm" onClick={() => updateStatus('accepted')}>Mark Accepted</button>}
+          {/* Client Info — proposal context shows labeled grid with source; event context skips (shown in overview) */}
+          {!isEventContext && (
+            <div className="card mb-2">
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Client</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                <div><span className="text-muted text-small">Name</span><div>{proposal.client_name || '—'}</div></div>
+                <div><span className="text-muted text-small">Email</span><div>{proposal.client_email || '—'}</div></div>
+                <div><span className="text-muted text-small">Phone</span><div>{formatPhone(proposal.client_phone)}</div></div>
+                <div><span className="text-muted text-small">Source</span><div>{proposal.client_source || '—'}</div></div>
               </div>
             </div>
-          </div>
-
-          {/* Client Info */}
-          <div className="card mb-2">
-            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Client</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-              <div><span className="text-muted text-small">Name</span><div>{proposal.client_name || '—'}</div></div>
-              <div><span className="text-muted text-small">Email</span><div>{proposal.client_email || '—'}</div></div>
-              <div><span className="text-muted text-small">Phone</span><div>{formatPhone(proposal.client_phone)}</div></div>
-              <div><span className="text-muted text-small">Source</span><div>{proposal.client_source || '—'}</div></div>
-            </div>
-          </div>
+          )}
 
           {/* Event Details — view or edit */}
           {editing && editForm ? (
@@ -377,7 +527,6 @@ export default function ProposalDetail() {
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Edit Proposal</h3>
               {editError && <div style={{ color: '#c0392b', marginBottom: '0.75rem', fontSize: '0.9rem' }}>{editError}</div>}
 
-              {/* Client fields */}
               <h4 style={{ color: 'var(--warm-brown)', marginBottom: '0.5rem' }}>Client</h4>
               <div className="two-col" style={{ gap: '0.75rem', marginBottom: '1rem' }}>
                 <div className="form-group">
@@ -403,7 +552,6 @@ export default function ProposalDetail() {
                 </div>
               </div>
 
-              {/* Event fields */}
               <h4 style={{ color: 'var(--warm-brown)', marginBottom: '0.5rem' }}>Event</h4>
               <div className="two-col" style={{ gap: '0.75rem' }}>
                 <div className="form-group">
@@ -447,7 +595,6 @@ export default function ProposalDetail() {
                 </div>
               </div>
 
-              {/* Package selection in edit mode */}
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: '1rem 0 0.75rem' }}>Package</h3>
               <div style={{ display: 'grid', gap: '0.5rem', marginBottom: '1rem' }}>
                 {packages.map(pkg => (
@@ -464,7 +611,6 @@ export default function ProposalDetail() {
                 ))}
               </div>
 
-              {/* Add-ons in edit mode */}
               {editFilteredAddons.length > 0 && (
                 <>
                   <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: '0 0 0.75rem' }}>Add-ons</h3>
@@ -483,7 +629,6 @@ export default function ProposalDetail() {
                 </>
               )}
 
-              {/* Save / cancel */}
               <div className="flex gap-1">
                 <button className="btn" onClick={handleSaveEdit} disabled={saving}>
                   {saving ? 'Saving...' : 'Save Changes'}
@@ -493,19 +638,18 @@ export default function ProposalDetail() {
                 </button>
               </div>
             </div>
-          ) : (
+          ) : !isEventContext ? (
             <div className="card mb-2">
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Event</h3>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
                 <div><span className="text-muted text-small">Event</span><div>{proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : '—')}</div></div>
-                <div><span className="text-muted text-small">Date</span><div>{formatDate(proposal.event_date)}</div></div>
-                <div><span className="text-muted text-small">Start Time</span><div>{proposal.event_start_time || '—'}</div></div>
-                <div><span className="text-muted text-small">Duration</span><div>{proposal.event_duration_hours}hrs</div></div>
+                <div><span className="text-muted text-small">Date</span><div>{formatDateWithDay(proposal.event_date)}</div></div>
+                <div><span className="text-muted text-small">Service Time</span><div>{getServiceTime()}</div></div>
                 <div><span className="text-muted text-small">Guests</span><div>{proposal.guest_count}</div></div>
-                <div><span className="text-muted text-small">Location</span><div>{proposal.event_location || '—'}</div></div>
+                <div style={{ gridColumn: '1 / -1' }}><span className="text-muted text-small">Location</span><div>{proposal.event_location || '—'}</div></div>
               </div>
             </div>
-          )}
+          ) : null}
 
           {/* Admin Notes */}
           <div className="card mb-2">
@@ -515,7 +659,7 @@ export default function ProposalDetail() {
               rows={4}
               value={notes}
               onChange={e => setNotes(e.target.value)}
-              placeholder="Internal notes about this proposal..."
+              placeholder="Internal notes about this event..."
               style={{ resize: 'vertical' }}
             />
             <button className="btn btn-sm mt-1" onClick={saveNotes} disabled={savingNotes}>
@@ -526,7 +670,130 @@ export default function ProposalDetail() {
 
         {/* Right column */}
         <div>
-          {/* Package & Pricing — show edit preview when editing */}
+          {/* Staffing — event context only */}
+          {isEventContext && (
+            <div className="card mb-2">
+              <div className="flex-between" style={{ alignItems: 'center', marginBottom: '0.75rem' }}>
+                <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>Staffing</h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  {shift && (
+                    <span className={`badge ${shift.status === 'open' ? 'badge-approved' : shift.status === 'filled' ? 'badge-reviewed' : 'badge-deactivated'}`}>
+                      {shift.status}
+                    </span>
+                  )}
+                  {shiftPositions.length > 0 && (
+                    <span style={{
+                      fontSize: '0.85rem', fontWeight: 600,
+                      color: shiftApprovedCount >= shiftPositions.length ? 'var(--success)' : 'var(--warm-brown)',
+                    }}>
+                      {shiftApprovedCount}/{shiftPositions.length} filled
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {shiftLoading ? (
+                <div style={{ padding: '1rem', textAlign: 'center' }}><div className="spinner" /></div>
+              ) : !shift ? (
+                <p className="text-muted text-small" style={{ margin: 0 }}>No shift created yet.</p>
+              ) : (
+                <>
+                  {/* Equipment config */}
+                  <div style={{ borderBottom: '1px solid var(--cream-dark, #e8e0d4)', paddingBottom: '0.75rem', marginBottom: '0.75rem' }}>
+                    <strong style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.4rem', color: 'var(--warm-brown)' }}>Required Equipment</strong>
+                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                      {[
+                        { key: 'portable_bar', label: 'Portable Bar' },
+                        { key: 'cooler', label: 'Cooler' },
+                        { key: 'table_with_spandex', label: '6ft Table w/ Spandex' },
+                      ].map(item => (
+                        <label key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={equipmentForm[item.key]}
+                            onChange={(e) => setEquipmentForm(f => ({ ...f, [item.key]: e.target.checked }))} />
+                          {item.label}
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>Auto-assign</span>
+                      <input type="number" className="form-input" style={{ width: 60, fontSize: '0.82rem', padding: '0.2rem 0.4rem' }}
+                        placeholder="—" min="0" max="30"
+                        value={equipmentForm.auto_assign_days_before}
+                        onChange={(e) => setEquipmentForm(f => ({ ...f, auto_assign_days_before: e.target.value }))} />
+                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>days before</span>
+                      <button className="btn btn-sm btn-secondary" onClick={saveEquipmentConfig} disabled={savingEquipment} style={{ marginLeft: 'auto' }}>
+                        {savingEquipment ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Auto-assign + requests */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                    <strong style={{ fontSize: '0.85rem', color: 'var(--warm-brown)' }}>Requests ({shiftRequests.length})</strong>
+                    {pendingRequests.length > 0 && shift.status === 'open' && (
+                      <button className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }}
+                        disabled={autoAssignLoading}
+                        onClick={handleAutoAssignPreview}>
+                        {autoAssignLoading ? 'Analyzing...' : 'Auto-Assign'}
+                      </button>
+                    )}
+                  </div>
+
+                  {shiftRequests.length === 0 ? (
+                    <p className="text-muted text-small" style={{ margin: 0 }}>No staff requests yet.</p>
+                  ) : (
+                    <table className="admin-table" style={{ margin: 0 }}>
+                      <thead>
+                        <tr>
+                          <th>Staff</th>
+                          <th>Position</th>
+                          <th>Notes</th>
+                          <th>Status</th>
+                          <th>Requested</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {shiftRequests.map(req => (
+                          <tr key={req.id}>
+                            <td>
+                              <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>{req.preferred_name || req.email}</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{req.phone ? formatPhone(req.phone) : req.email}</div>
+                            </td>
+                            <td style={{ fontSize: '0.82rem' }}>{req.position || '—'}</td>
+                            <td style={{ fontSize: '0.82rem', maxWidth: 180 }}>{req.notes || '—'}</td>
+                            <td>
+                              <span className={`badge ${req.status === 'approved' ? 'badge-approved' : req.status === 'denied' ? 'badge-deactivated' : 'badge-inprogress'}`}>
+                                {req.status}
+                              </span>
+                            </td>
+                            <td style={{ fontSize: '0.78rem', whiteSpace: 'nowrap' }}>
+                              {new Date(req.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', gap: '0.3rem' }}>
+                                {req.status !== 'approved' && (
+                                  <button className="btn btn-primary btn-sm" onClick={() => updateRequestStatus(req.id, 'approved')}>Approve</button>
+                                )}
+                                {req.status !== 'denied' && (
+                                  <button className="btn btn-danger btn-sm" onClick={() => updateRequestStatus(req.id, 'denied')}>Deny</button>
+                                )}
+                                {req.status !== 'pending' && (
+                                  <button className="btn btn-secondary btn-sm" onClick={() => updateRequestStatus(req.id, 'pending')}>Reset</button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Package & Pricing */}
           <div className="card mb-2">
             <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
               {editing && editSelectedPkg ? editSelectedPkg.name : (proposal.package_name || 'Package')}
@@ -541,7 +808,7 @@ export default function ProposalDetail() {
 
           {/* Payment Status */}
           <div className="card mb-2">
-            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Payment Status</h3>
+            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Payment</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
               <div>
                 <span className="text-muted text-small">Total</span>
@@ -556,7 +823,7 @@ export default function ProposalDetail() {
                 <div>{fmt(Number(proposal.total_price || 0) - Number(proposal.amount_paid || 0))}</div>
               </div>
               <div>
-                <span className="text-muted text-small">Payment Type</span>
+                <span className="text-muted text-small">Type</span>
                 <div>{proposal.payment_type === 'full' ? 'Paid in Full' : 'Deposit'}</div>
               </div>
               {proposal.autopay_enrolled && (
@@ -567,7 +834,6 @@ export default function ProposalDetail() {
               )}
             </div>
 
-            {/* Balance Due Date — editable for deposit_paid proposals */}
             {proposal.status === 'deposit_paid' && (
               <div style={{ borderTop: '1px solid var(--cream-dark, #e8e0d4)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
                 <label className="text-muted text-small" style={{ display: 'block', marginBottom: '0.3rem' }}>Balance Due Date</label>
@@ -586,7 +852,6 @@ export default function ProposalDetail() {
               </div>
             )}
 
-            {/* Charge Balance button for autopay proposals */}
             {proposal.status === 'deposit_paid' && proposal.autopay_enrolled && proposal.stripe_payment_method_id && (
               <div style={{ borderTop: '1px solid var(--cream-dark, #e8e0d4)', paddingTop: '0.75rem' }}>
                 <button className="btn btn-sm" onClick={chargeBalance} disabled={chargingBalance}>
@@ -600,7 +865,6 @@ export default function ProposalDetail() {
               </div>
             )}
 
-            {/* Payment link generation — for proposals not yet paid */}
             {!['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status) && (
               <div style={{ borderTop: '1px solid var(--cream-dark, #e8e0d4)', paddingTop: '0.75rem' }}>
                 <p className="text-muted text-small" style={{ marginBottom: '0.5rem' }}>
@@ -624,7 +888,6 @@ export default function ProposalDetail() {
               </div>
             )}
 
-            {/* Record manual payment — for proposals not fully paid */}
             {!['balance_paid', 'confirmed'].includes(proposal.status) && (
               <div style={{ borderTop: '1px solid var(--cream-dark, #e8e0d4)', paddingTop: '0.75rem' }}>
                 {!showRecordPayment ? (
@@ -691,18 +954,16 @@ export default function ProposalDetail() {
             )}
           </div>
 
-          {/* Event Shift */}
-          {(['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status)) && (
+          {/* Event Shift — proposal context only (link to events) */}
+          {!isEventContext && (['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status)) && (
             <div className="card mb-2">
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>Event Shift</h3>
               <p className="text-muted text-small" style={{ marginBottom: '0.75rem' }}>
                 A shift has been created for this event. Staff can now request to work it.
               </p>
-              {!isEventContext && (
-                <button className="btn btn-sm" onClick={() => navigate('/admin/events')}>
-                  View in Events
-                </button>
-              )}
+              <button className="btn btn-sm" onClick={() => navigate(`/admin/events/${proposal.id}`)}>
+                View in Events
+              </button>
             </div>
           )}
 
@@ -725,7 +986,6 @@ export default function ProposalDetail() {
                     )}
                   </div>
 
-                  {/* Action buttons */}
                   <div className="flex gap-05 mb-2" style={{ flexWrap: 'wrap' }}>
                     <button className="btn btn-sm" onClick={() => navigate(`/admin/drink-plans/${drinkPlan.id}`)}>
                       View Full Details
@@ -753,14 +1013,12 @@ export default function ProposalDetail() {
                     )}
                   </div>
 
-                  {/* Inline selections */}
                   {drinkPlan.status !== 'pending' && (
                     <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
                       <DrinkPlanSelections plan={drinkPlan} cocktails={planCocktails} mocktails={planMocktails} />
                     </div>
                   )}
 
-                  {/* Admin notes */}
                   <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
                     <strong style={{ display: 'block', marginBottom: '0.5rem' }}>Admin Notes</strong>
                     <textarea
@@ -811,11 +1069,6 @@ export default function ProposalDetail() {
                       <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>
                         {entry.actor_type} · {formatDateTime(entry.created_at)}
                       </span>
-                      {details.location && (
-                        <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>
-                          · 📍 {details.location}
-                        </span>
-                      )}
                     </div>
                   );
                 })}
@@ -824,6 +1077,65 @@ export default function ProposalDetail() {
           )}
         </div>
       </div>
+
+      {/* Auto-Assign Preview Modal */}
+      {autoAssignPreview && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setAutoAssignPreview(null)}>
+          <div className="card" style={{ maxWidth: 700, width: '95%', maxHeight: '80vh', overflow: 'auto', padding: '1.5rem' }}
+            onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ fontFamily: 'var(--font-display)', marginBottom: '0.5rem' }}>Auto-Assign Preview</h3>
+            <p className="text-muted text-small" style={{ marginBottom: '1rem' }}>
+              {autoAssignPreview.slots_remaining} position{autoAssignPreview.slots_remaining !== 1 ? 's' : ''} to fill. Top candidates will be approved.
+            </p>
+            {autoAssignPreview.scores?.length > 0 ? (
+              <table className="admin-table" style={{ margin: 0, fontSize: '0.82rem' }}>
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>Name</th>
+                    <th>Location</th>
+                    <th>Total</th>
+                    <th>Seniority</th>
+                    <th>Geography</th>
+                    <th>Equipment</th>
+                    <th>Distance</th>
+                    <th>Events</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {autoAssignPreview.scores.map((s, i) => {
+                    const isSelected = autoAssignPreview.selected?.includes(s.request_id);
+                    return (
+                      <tr key={s.request_id} style={{ background: isSelected ? 'rgba(76, 175, 80, 0.08)' : undefined }}>
+                        <td style={{ fontWeight: 600 }}>{isSelected ? '>' : ''} {i + 1}</td>
+                        <td style={{ fontWeight: 600 }}>{s.preferred_name || `User ${s.user_id}`}</td>
+                        <td style={{ fontSize: '0.78rem' }}>{[s.city, s.state].filter(Boolean).join(', ') || '—'}</td>
+                        <td style={{ fontWeight: 700 }}>{s.scores.total}</td>
+                        <td>{s.scores.seniority}</td>
+                        <td>{s.scores.geography}</td>
+                        <td>{s.scores.equipment}</td>
+                        <td>{s.scores.distance_miles != null ? `${s.scores.distance_miles} mi` : '—'}</td>
+                        <td>{s.scores.events_worked}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-muted">No pending requests to score.</p>
+            )}
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem', justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setAutoAssignPreview(null)}>Cancel</button>
+              {autoAssignPreview.selected?.length > 0 && (
+                <button className="btn btn-primary" onClick={handleAutoAssignConfirm}>
+                  Approve {autoAssignPreview.selected.length} Staff
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

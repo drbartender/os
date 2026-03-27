@@ -50,6 +50,7 @@ function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCa
             <th>Name</th>
             <th className="col-desc">Description</th>
             {withSpirit && <th className="col-spirit" style={{ width: '100px' }}>Spirit</th>}
+            {withSpirit && <th style={{ minWidth: '140px' }}>Ingredients</th>}
             <th style={{ width: '60px' }}>Active</th>
             <th style={{ width: '70px' }}></th>
           </tr>
@@ -87,6 +88,13 @@ function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCa
                       </select>
                     </td>
                   )}
+                  {withSpirit && (
+                    <td>
+                      <input className="form-input" placeholder="e.g. Vodka, Lime Juice, Sprite"
+                        value={editForm.ingredients || ''}
+                        onChange={e => onEditFormChange({ ingredients: e.target.value })} />
+                    </td>
+                  )}
                   <td>
                     <input type="checkbox" checked={editForm.is_active}
                       onChange={e => onEditFormChange({ is_active: e.target.checked })} />
@@ -105,6 +113,13 @@ function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCa
                   <td><strong>{c.name}</strong></td>
                   <td className="col-desc text-muted text-small"><span className="desc-cell-text">{c.description || '—'}</span></td>
                   {withSpirit && <td className="col-spirit text-muted text-small">{c.base_spirit || '—'}</td>}
+                  {withSpirit && (
+                    <td className="text-muted text-small">
+                      <span className="desc-cell-text">
+                        {Array.isArray(c.ingredients) && c.ingredients.length > 0 ? c.ingredients.join(', ') : '—'}
+                      </span>
+                    </td>
+                  )}
                   <td>
                     <button
                       className={`btn btn-sm ${c.is_active ? 'btn-success' : 'btn-secondary'}`}
@@ -239,7 +254,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
   const [editingCocktail, setEditingCocktail] = useState(null);
   const [editCocktailForm, setEditCocktailForm] = useState({});
   const [addCocktailCategory, setAddCocktailCategory] = useState(null);
-  const [newCocktailForm, setNewCocktailForm] = useState({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '' });
+  const [newCocktailForm, setNewCocktailForm] = useState({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '' });
   const [cocktailError, setCocktailError] = useState('');
 
   const [editingCocktailCat, setEditingCocktailCat] = useState(null);
@@ -295,7 +310,11 @@ export default function CocktailMenuDashboard({ embedded = false }) {
   // ── Cocktail CRUD ─────────────────────────────────────────────────
   const saveEditCocktail = async (id) => {
     try {
-      const res = await api.put(`/cocktails/${id}`, editCocktailForm);
+      const body = { ...editCocktailForm };
+      if (typeof body.ingredients === 'string') {
+        body.ingredients = body.ingredients.split(',').map(s => s.trim()).filter(Boolean);
+      }
+      const res = await api.put(`/cocktails/${id}`, body);
       setCocktails(prev => prev.map(c => c.id === id ? { ...c, ...res.data } : c));
       setEditingCocktail(null);
     } catch (err) {
@@ -323,9 +342,10 @@ export default function CocktailMenuDashboard({ embedded = false }) {
         description: newCocktailForm.description.trim() || null,
         sort_order: cocktails.filter(c => c.category_id === categoryId).length,
         base_spirit: newCocktailForm.base_spirit || null,
+        ingredients: newCocktailForm.ingredients.split(',').map(s => s.trim()).filter(Boolean),
       });
       setCocktails(prev => [...prev, res.data]);
-      setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '' });
+      setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '' });
       setAddCocktailCategory(null);
       setCocktailError('');
     } catch (err) {
@@ -557,7 +577,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                   <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>{cat.label}</h3>
                   <button className="btn btn-sm btn-secondary" onClick={() => {
                     setAddCocktailCategory(cat.id); setCocktailError('');
-                    setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '' });
+                    setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '' });
                   }}>+ Add Cocktail</button>
                 </div>
 
@@ -576,6 +596,9 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                       <option value="">Base Spirit (optional)</option>
                       {SPIRIT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
+                    <input className="form-input mb-1" placeholder="Ingredients (comma-separated, e.g. Vodka, Lime Juice, Sprite)"
+                      value={newCocktailForm.ingredients}
+                      onChange={e => setNewCocktailForm(p => ({ ...p, ingredients: e.target.value }))} />
                     <div className="flex gap-1">
                       <button className="btn btn-sm" onClick={() => addCocktail(cat.id)}>Save</button>
                       <button className="btn btn-sm btn-secondary" onClick={() => setAddCocktailCategory(null)}>Cancel</button>
@@ -592,7 +615,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                     editingId={editingCocktail}
                     editForm={editCocktailForm}
                     withSpirit
-                    onStartEdit={(c) => { setEditingCocktail(c.id); setEditCocktailForm({ name: c.name, emoji: c.emoji || '', description: c.description || '', sort_order: c.sort_order, category_id: c.category_id || '', is_active: c.is_active, base_spirit: c.base_spirit || '' }); setCocktailError(''); }}
+                    onStartEdit={(c) => { setEditingCocktail(c.id); setEditCocktailForm({ name: c.name, emoji: c.emoji || '', description: c.description || '', sort_order: c.sort_order, category_id: c.category_id || '', is_active: c.is_active, base_spirit: c.base_spirit || '', ingredients: (c.ingredients || []).join(', ') }); setCocktailError(''); }}
                     onCancelEdit={() => { setEditingCocktail(null); setEditCocktailForm({}); }}
                     onSaveEdit={saveEditCocktail}
                     onToggleActive={toggleCocktailActive}

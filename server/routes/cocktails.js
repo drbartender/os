@@ -169,13 +169,13 @@ router.delete('/categories/:id', auth, requireAdmin, async (req, res) => {
 
 /** POST /api/cocktails — create cocktail */
 router.post('/', auth, requireAdmin, async (req, res) => {
-  const { id, name, category_id, emoji, description, sort_order, base_spirit } = req.body;
+  const { id, name, category_id, emoji, description, sort_order, base_spirit, ingredients } = req.body;
   if (!id || !name) return res.status(400).json({ error: 'id and name are required.' });
   try {
     const result = await pool.query(
-      `INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order, base_spirit)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [id, name, category_id || null, emoji || null, description || null, sort_order || 0, base_spirit || null]
+      `INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order, base_spirit, ingredients)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [id, name, category_id || null, emoji || null, description || null, sort_order || 0, base_spirit || null, JSON.stringify(ingredients || [])]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -187,7 +187,7 @@ router.post('/', auth, requireAdmin, async (req, res) => {
 
 /** PUT /api/cocktails/:id — update cocktail */
 router.put('/:id', auth, requireAdmin, async (req, res) => {
-  const { name, category_id, emoji, description, sort_order, is_active, base_spirit } = req.body;
+  const { name, category_id, emoji, description, sort_order, is_active, base_spirit, ingredients } = req.body;
   try {
     const result = await pool.query(
       `UPDATE cocktails SET
@@ -197,8 +197,9 @@ router.put('/:id', auth, requireAdmin, async (req, res) => {
         description = COALESCE($4, description),
         sort_order  = COALESCE($5, sort_order),
         is_active   = COALESCE($6, is_active),
-        base_spirit = COALESCE($7, base_spirit)
-       WHERE id = $8 RETURNING *`,
+        base_spirit = COALESCE($7, base_spirit),
+        ingredients = COALESCE($8::jsonb, ingredients)
+       WHERE id = $9 RETURNING *`,
       [
         name || null,
         category_id || null,
@@ -207,6 +208,7 @@ router.put('/:id', auth, requireAdmin, async (req, res) => {
         sort_order ?? null,
         is_active ?? null,
         base_spirit || null,
+        ingredients !== undefined ? JSON.stringify(ingredients) : null,
         req.params.id,
       ]
     );

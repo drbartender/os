@@ -139,6 +139,53 @@ router.get('/by-proposal/:proposalId', auth, requireAdmin, async (req, res) => {
   }
 });
 
+/** GET /api/drink-plans/:id/shopping-list-data — fetch shaped data for shopping list generation */
+router.get('/:id/shopping-list-data', auth, requireAdmin, async (req, res) => {
+  try {
+    // Fetch the drink plan, joining proposals for guest_count
+    const planResult = await pool.query(
+      `SELECT dp.*, p.guest_count
+       FROM drink_plans dp
+       LEFT JOIN proposals p ON p.id = dp.proposal_id
+       WHERE dp.id = $1`,
+      [req.params.id]
+    );
+    if (!planResult.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
+    const plan = planResult.rows[0];
+
+    // Resolve signature cocktail IDs to names + ingredients
+    const signatureDrinkIds = (plan.selections && plan.selections.signatureDrinks) || [];
+    let signatureCocktails = [];
+    if (signatureDrinkIds.length > 0) {
+      const cocktailResult = await pool.query(
+        `SELECT id, name, ingredients FROM cocktails WHERE id = ANY($1::text[])`,
+        [signatureDrinkIds]
+      );
+      // Preserve the order from selections
+      const byId = Object.fromEntries(cocktailResult.rows.map(c => [c.id, c]));
+      signatureCocktails = signatureDrinkIds
+        .filter(id => byId[id])
+        .map(id => ({
+          name: byId[id].name,
+          ingredients: byId[id].ingredients || [],
+        }));
+    }
+
+    res.json({
+      client_name: plan.client_name,
+      event_name: plan.event_name,
+      event_date: plan.event_date,
+      guest_count: plan.guest_count || null,
+      service_style: plan.serving_type || 'full_bar',
+      signature_cocktails: signatureCocktails,
+      notes: plan.admin_notes || '',
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 /** GET /api/drink-plans/:id — fetch single plan by id */
 router.get('/:id', auth, requireAdmin, async (req, res) => {
   try {

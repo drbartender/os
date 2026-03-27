@@ -42,7 +42,8 @@ router.get('/', auth, requireOnboarded, async (req, res) => {
           c.name AS client_name,
           c.phone AS client_phone,
           c.email AS client_email,
-          (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count
+          (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
+          (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count
         FROM shifts s
         LEFT JOIN users u ON u.id = s.created_by
         LEFT JOIN proposals p ON p.id = s.proposal_id
@@ -120,6 +121,25 @@ router.get('/my-requests', auth, async (req, res) => {
     });
 
     res.json(enriched);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** GET /shifts/by-proposal/:proposalId — fetch shift for a specific proposal */
+router.get('/by-proposal/:proposalId', auth, requireStaffing, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT s.*,
+        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
+        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count
+      FROM shifts s
+      WHERE s.proposal_id = $1
+      LIMIT 1
+    `, [req.params.proposalId]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'No shift found for this proposal.' });
+    res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
