@@ -184,6 +184,7 @@ System design reference for the Dr. Bartender platform.
 | GET | `/:id/requests` | Staffing | Get all requests for a shift |
 | PUT | `/requests/:requestId` | Staffing | Approve or deny a request (sends SMS on approve) |
 | POST | `/:id/auto-assign` | Staffing | Run auto-assign algorithm (dry_run for preview, or execute to approve top candidates) |
+| GET | `/by-proposal/:proposalId` | Staffing | Get shift for a specific proposal (used by event detail page) |
 
 ### Admin — `/api/admin` (continued)
 | Method | Path | Auth | Description |
