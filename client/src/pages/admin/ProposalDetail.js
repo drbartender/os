@@ -1059,19 +1059,14 @@ export default function ProposalDetail() {
             <div className="card">
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Activity</h3>
               <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                {proposal.activity.map((entry, i) => {
-                  const details = entry.details
-                    ? (typeof entry.details === 'string' ? JSON.parse(entry.details) : entry.details)
-                    : {};
-                  return (
+                {proposal.activity.map((entry, i) => (
                     <div key={i} style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--cream-dark, #e8e0d4)' }}>
                       <span className="text-small" style={{ fontWeight: 500 }}>{entry.action}</span>
                       <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>
                         {entry.actor_type} · {formatDateTime(entry.created_at)}
                       </span>
                     </div>
-                  );
-                })}
+                ))}
               </div>
             </div>
           )}
