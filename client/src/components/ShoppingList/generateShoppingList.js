@@ -30,7 +30,7 @@ function scaleQty(qty100, guestCount) {
 }
 
 /** Events with 50 or fewer guests get 750mL bottles instead of 1.75L handles. */
-function shouldUseBottles(guestCount) {
+function needsBottles(guestCount) {
   return guestCount <= 50;
 }
 
@@ -48,7 +48,7 @@ function shouldUseBottles(guestCount) {
 export function generateShoppingList(eventData) {
   const { clientName, guestCount, signatureCocktails = [], eventDate, notes } = eventData;
   const scale = (qty) => scaleQty(qty, guestCount);
-  const bottles = shouldUseBottles(guestCount);
+  const bottles = needsBottles(guestCount);
 
   // Build base lists from pars, scaling qty and swapping sizes for small events
   let liquorBeerWine = PARS_100.liquorBeerWine.map(item => ({
