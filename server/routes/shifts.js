@@ -4,6 +4,8 @@ const { auth } = require('../middleware/auth');
 const { sendSMS, normalizePhone } = require('../utils/sms');
 const { geocodeAddress } = require('../utils/geocode');
 const { autoAssignShift } = require('../utils/autoAssign');
+const { sendEmail } = require('../utils/email');
+const emailTemplates = require('../utils/emailTemplates');
 
 const router = express.Router();
 
@@ -163,6 +165,29 @@ router.post('/:id/request', auth, requireOnboarded, async (req, res) => {
       ON CONFLICT (shift_id, user_id) DO UPDATE SET position = $3, notes = $4, status = 'pending'
       RETURNING *
     `, [req.params.id, req.user.id, position || null, notes || null]);
+
+    // Notify admin of new shift request (non-blocking)
+    try {
+      const adminEmail = process.env.ADMIN_EMAIL;
+      if (adminEmail) {
+        const shiftInfo = await pool.query(`
+          SELECT s.event_name, s.event_date, cp.preferred_name
+          FROM shifts s LEFT JOIN contractor_profiles cp ON cp.user_id = $2
+          WHERE s.id = $1
+        `, [req.params.id, req.user.id]);
+        const si = shiftInfo.rows[0];
+        const staffName = si?.preferred_name || req.user.email || 'A staff member';
+        const eventDate = si?.event_date
+          ? new Date(si.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+          : 'TBD';
+        const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+        const tpl = emailTemplates.shiftRequestAdmin({ staffName, eventName: si?.event_name, eventDate, position: position || 'Bartender', adminUrl: `${clientUrl}/admin/shifts` });
+        await sendEmail({ to: adminEmail, ...tpl });
+      }
+    } catch (emailErr) {
+      console.error('Shift request email failed (non-blocking):', emailErr);
+    }
+
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -350,6 +375,36 @@ router.put('/requests/:requestId', auth, requireStaffing, async (req, res) => {
         }
       } catch (smsErr) {
         console.error('SMS notification failed (non-blocking):', smsErr.message);
+      }
+
+      // Email the staff member (non-blocking)
+      try {
+        const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [result.rows[0].user_id]);
+        const staffEmail = userRes.rows[0]?.email;
+        const infoForEmail = (await pool.query(`
+          SELECT s.event_name, s.event_date, s.start_time, s.end_time, s.location,
+                 cp.preferred_name
+          FROM shift_requests sr
+          JOIN shifts s ON s.id = sr.shift_id
+          LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
+          WHERE sr.id = $1
+        `, [req.params.requestId])).rows[0];
+        if (staffEmail && infoForEmail) {
+          const date = infoForEmail.event_date
+            ? new Date(infoForEmail.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+            : 'TBD';
+          const tpl = emailTemplates.shiftRequestApproved({
+            staffName: infoForEmail.preferred_name || 'there',
+            eventName: infoForEmail.event_name,
+            eventDate: date,
+            startTime: infoForEmail.start_time || 'TBD',
+            endTime: infoForEmail.end_time || 'TBD',
+            location: infoForEmail.location || 'TBD',
+          });
+          await sendEmail({ to: staffEmail, ...tpl });
+        }
+      } catch (emailErr) {
+        console.error('Shift approval email failed (non-blocking):', emailErr);
       }
     }
 

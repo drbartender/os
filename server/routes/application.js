@@ -5,6 +5,8 @@ const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { isValidUpload } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
+const { sendEmail } = require('../utils/email');
+const emailTemplates = require('../utils/emailTemplates');
 
 const router = express.Router();
 
@@ -160,6 +162,22 @@ router.post('/', auth, async (req, res) => {
 
     // Update user status to 'applied'
     await pool.query("UPDATE users SET onboarding_status = 'applied' WHERE id = $1", [req.user.id]);
+
+    // Email notifications (non-blocking)
+    try {
+      const adminEmail = process.env.ADMIN_EMAIL;
+      const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+      if (adminEmail) {
+        const tpl = emailTemplates.newApplicationAdmin({ applicantName: full_name, applicantEmail: req.user.email, adminUrl: `${clientUrl}/admin/staff` });
+        await sendEmail({ to: adminEmail, ...tpl });
+      }
+      if (req.user.email) {
+        const tpl = emailTemplates.applicationReceivedConfirmation({ applicantName: full_name });
+        await sendEmail({ to: req.user.email, ...tpl });
+      }
+    } catch (emailErr) {
+      console.error('Application email failed (non-blocking):', emailErr);
+    }
 
     const result = await pool.query('SELECT * FROM applications WHERE user_id = $1', [req.user.id]);
     res.status(201).json(result.rows[0]);

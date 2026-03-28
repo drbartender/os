@@ -3,6 +3,8 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { createEventShifts } = require('../utils/eventCreation');
+const { sendEmail } = require('../utils/email');
+const emailTemplates = require('../utils/emailTemplates');
 
 const router = express.Router();
 
@@ -295,6 +297,32 @@ router.post('/webhook', async (req, res) => {
         );
         console.log(`Payment (${paymentType}) received for proposal ${proposalId}: $${(intent.amount / 100).toFixed(2)}`);
 
+        // Email notifications (non-blocking)
+        try {
+          const payInfo = await pool.query(`
+            SELECT p.event_name, c.name AS client_name, c.email AS client_email
+            FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+            WHERE p.id = $1
+          `, [proposalId]);
+          const pi = payInfo.rows[0];
+          const amountFormatted = (intent.amount / 100).toFixed(2);
+          const payLabel = paymentType === 'full' ? 'full payment' : paymentType === 'balance' ? 'balance payment' : 'deposit';
+
+          if (pi?.client_email) {
+            const tpl = emailTemplates.paymentReceivedClient({ clientName: pi.client_name, eventName: pi.event_name, amount: amountFormatted, paymentType: payLabel });
+            await sendEmail({ to: pi.client_email, ...tpl });
+          }
+          const adminEmail = process.env.ADMIN_EMAIL;
+          if (adminEmail) {
+            const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+            const adminUrl = `${clientUrl}/admin/proposals/${proposalId}`;
+            const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventName: pi?.event_name, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
+            await sendEmail({ to: adminEmail, ...tpl });
+          }
+        } catch (emailErr) {
+          console.error('Stripe payment email failed (non-blocking):', emailErr);
+        }
+
         // Auto-create event shift from the proposal
         try {
           const shift = await createEventShifts(proposalId);
@@ -331,6 +359,32 @@ router.post('/webhook', async (req, res) => {
           [proposalId, JSON.stringify({ amount: session.amount_total, payment_link: session.payment_link })]
         );
         console.log(`Deposit paid (payment link) for proposal ${proposalId}`);
+
+        // Email notifications (non-blocking)
+        try {
+          const payInfo = await pool.query(`
+            SELECT p.event_name, c.name AS client_name, c.email AS client_email
+            FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+            WHERE p.id = $1
+          `, [proposalId]);
+          const pi = payInfo.rows[0];
+          const amountFormatted = ((session.amount_total || 0) / 100).toFixed(2);
+
+          if (pi?.client_email) {
+            const tpl = emailTemplates.paymentReceivedClient({ clientName: pi.client_name, eventName: pi.event_name, amount: amountFormatted, paymentType: 'deposit' });
+            await sendEmail({ to: pi.client_email, ...tpl });
+          }
+          const adminEmail = process.env.ADMIN_EMAIL;
+          if (adminEmail) {
+            const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+            const adminUrl = `${clientUrl}/admin/proposals/${proposalId}`;
+            const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventName: pi?.event_name, amount: amountFormatted, paymentType: 'deposit', proposalId, adminUrl });
+            await sendEmail({ to: adminEmail, ...tpl });
+          }
+        } catch (emailErr) {
+          console.error('Checkout payment email failed (non-blocking):', emailErr);
+        }
+
         // Auto-create event shift from the proposal
         try {
           const shift = await createEventShifts(proposalId);

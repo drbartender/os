@@ -3,6 +3,8 @@ const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { calculateProposal } = require('../utils/pricingEngine');
 const { createEventShifts } = require('../utils/eventCreation');
+const { sendEmail } = require('../utils/email');
+const emailTemplates = require('../utils/emailTemplates');
 
 const router = express.Router();
 
@@ -110,6 +112,29 @@ router.post('/t/:token/sign', async (req, res) => {
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'signed', 'client', $2)`,
       [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method })]
     );
+
+    // Email notifications (non-blocking)
+    try {
+      const fp = await pool.query(`
+        SELECT p.id, p.event_name, c.name AS client_name, c.email AS client_email
+        FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+        WHERE p.id = $1
+      `, [proposal.id]);
+      const pd = fp.rows[0];
+      if (pd?.client_email) {
+        const tpl = emailTemplates.proposalSignedConfirmation({ clientName: pd.client_name, eventName: pd.event_name });
+        await sendEmail({ to: pd.client_email, ...tpl });
+      }
+      const adminEmail = process.env.ADMIN_EMAIL;
+      if (adminEmail && pd) {
+        const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+        const adminUrl = `${clientUrl}/admin/proposals/${pd.id}`;
+        const tpl = emailTemplates.clientSignedAdmin({ clientName: pd.client_name, eventName: pd.event_name, proposalId: pd.id, adminUrl });
+        await sendEmail({ to: adminEmail, ...tpl });
+      }
+    } catch (emailErr) {
+      console.error('Proposal sign emails failed (non-blocking):', emailErr);
+    }
 
     res.json({ success: true, status: 'accepted' });
   } catch (err) {
@@ -448,6 +473,26 @@ router.patch('/:id/status', auth, requireAdmin, async (req, res) => {
       [req.params.id, req.user.id, JSON.stringify({ new_status: status })]
     );
 
+    // Email client when proposal is sent (non-blocking)
+    if (status === 'sent') {
+      try {
+        const pd = await pool.query(`
+          SELECT p.token, p.event_name, c.name AS client_name, c.email AS client_email
+          FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+          WHERE p.id = $1
+        `, [req.params.id]);
+        const p = pd.rows[0];
+        if (p?.client_email && p?.token) {
+          const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+          const proposalUrl = `${clientUrl}/proposal/${p.token}`;
+          const tpl = emailTemplates.proposalSent({ clientName: p.client_name, eventName: p.event_name, proposalUrl });
+          await sendEmail({ to: p.client_email, ...tpl });
+        }
+      } catch (emailErr) {
+        console.error('Proposal sent email failed (non-blocking):', emailErr);
+      }
+    }
+
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -559,6 +604,32 @@ router.post('/:id/record-payment', auth, requireAdmin, async (req, res) => {
       [proposal.id, isFullyPaid ? 'paid_in_full' : 'deposit_paid', req.user.id,
         JSON.stringify({ amount: paymentAmount, method: method || 'manual', new_total_paid: newAmountPaid })]
     );
+
+    // Email notifications for payment (non-blocking)
+    try {
+      const payData = await pool.query(`
+        SELECT p.event_name, c.name AS client_name, c.email AS client_email
+        FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+        WHERE p.id = $1
+      `, [proposal.id]);
+      const pd = payData.rows[0];
+      const amountFormatted = paymentAmount.toFixed(2);
+      const payType = isFullyPaid ? 'full payment' : 'deposit';
+
+      if (pd?.client_email) {
+        const tpl = emailTemplates.paymentReceivedClient({ clientName: pd.client_name, eventName: pd.event_name, amount: amountFormatted, paymentType: payType });
+        await sendEmail({ to: pd.client_email, ...tpl });
+      }
+      const adminEmail = process.env.ADMIN_EMAIL;
+      if (adminEmail) {
+        const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+        const adminUrl = `${clientUrl}/admin/proposals/${proposal.id}`;
+        const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pd?.client_name, eventName: pd?.event_name, amount: amountFormatted, paymentType: payType, proposalId: proposal.id, adminUrl });
+        await sendEmail({ to: adminEmail, ...tpl });
+      }
+    } catch (emailErr) {
+      console.error('Payment email failed (non-blocking):', emailErr);
+    }
 
     // Auto-create event shift
     try {
