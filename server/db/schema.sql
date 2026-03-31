@@ -667,7 +667,7 @@ CREATE TABLE IF NOT EXISTS stripe_sessions (
 
 ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_status_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
-  CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed'));
+  CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed'));
 
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS payment_type VARCHAR(20) DEFAULT 'deposit';
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS autopay_enrolled BOOLEAN DEFAULT false;

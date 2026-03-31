@@ -630,7 +630,7 @@ export default function ProposalDetail() {
             </div>
           )}
 
-          {/* Two-column: Client+Financial | Service Config+Staffing */}
+          {/* Two-column: Client+Staffing | Event Details */}
           <div className="event-columns">
             {/* Left Column */}
             <div>
@@ -656,214 +656,6 @@ export default function ProposalDetail() {
                     onClick={() => navigate(`/admin/clients/${proposal.client_id}`)}>
                     View Client Profile
                   </button>
-                )}
-              </div>
-
-              {/* Financial Standing */}
-              <div className="card mb-2">
-                <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Financial</h3>
-                <div className="financial-row">
-                  <span className="financial-label">Total</span>
-                  <span className="financial-amount">{fmt(totalPrice)}</span>
-                </div>
-                <div className="financial-row">
-                  <span className="financial-label">Paid</span>
-                  <span className="financial-amount">{fmt(amountPaid)}</span>
-                </div>
-                <div className="financial-row" style={{ borderTop: '1px solid var(--border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
-                  <span className="financial-label">Balance</span>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span className="financial-amount">{fmt(balanceDue)}</span>
-                    {balanceDue > 0 && <span className="financial-badge-due">Due</span>}
-                  </span>
-                </div>
-                {proposal.autopay_enrolled && (
-                  <div className="financial-row">
-                    <span className="financial-label">Autopay</span>
-                    <span style={{ color: '#2d6a4f', fontWeight: 500, fontSize: '0.85rem' }}>Enrolled</span>
-                  </div>
-                )}
-
-                {/* Collapsible payment actions */}
-                {balanceDue > 0 && (
-                  <div style={{ marginTop: '0.75rem' }}>
-                    <button className="section-toggle" onClick={() => setShowPaymentActions(!showPaymentActions)}>
-                      {showPaymentActions ? 'Hide Payment Actions' : 'Payment Actions'}
-                    </button>
-                    {showPaymentActions && (
-                      <div style={{ marginTop: '0.75rem' }}>
-                        {proposal.status === 'deposit_paid' && (
-                          <div style={{ marginBottom: '0.75rem' }}>
-                            <label className="text-muted text-small" style={{ display: 'block', marginBottom: '0.3rem' }}>Balance Due Date</label>
-                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                              <input type="date" className="form-input" value={balanceDueDate}
-                                onChange={e => setBalanceDueDate(e.target.value)}
-                                style={{ flex: 1, fontSize: '0.85rem', padding: '0.35rem 0.5rem' }} />
-                              <button className="btn btn-sm btn-secondary" onClick={saveBalanceDueDate} disabled={savingDueDate}>
-                                {savingDueDate ? 'Saving...' : 'Save'}
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        {proposal.status === 'deposit_paid' && proposal.autopay_enrolled && proposal.stripe_payment_method_id && (
-                          <div style={{ marginBottom: '0.75rem' }}>
-                            <button className="btn btn-sm" onClick={chargeBalance} disabled={chargingBalance}>
-                              {chargingBalance ? 'Charging...' : `Charge Balance (${fmt(balanceDue)})`}
-                            </button>
-                            {chargeResult && (
-                              <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: chargeResult.includes('success') ? '#2d6a4f' : '#c0392b' }}>
-                                {chargeResult}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                        {!['deposit_paid', 'balance_paid', 'confirmed', 'completed'].includes(proposal.status) && (
-                          <div style={{ marginBottom: '0.75rem' }}>
-                            <button className="btn btn-sm" onClick={generatePaymentLink} disabled={generatingLink}>
-                              {generatingLink ? 'Generating...' : 'Generate Payment Link'}
-                            </button>
-                            {linkError && <p style={{ color: '#c0392b', fontSize: '0.85rem', marginTop: '0.5rem' }}>{linkError}</p>}
-                            {paymentLinkUrl && (
-                              <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                                <input readOnly value={paymentLinkUrl} onClick={e => e.target.select()}
-                                  style={{ flex: 1, fontSize: '0.8rem', padding: '0.4rem 0.5rem', border: '1px solid var(--cream-dark)', borderRadius: '4px', background: '#faf5ef', color: 'var(--deep-brown)' }} />
-                                <button className="btn btn-sm btn-secondary" onClick={copyPaymentLink}>
-                                  {linkCopied ? 'Copied!' : 'Copy'}
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                        {!['balance_paid', 'confirmed', 'completed'].includes(proposal.status) && (
-                          <div>
-                            {!showRecordPayment ? (
-                              <button className="btn btn-sm btn-secondary" onClick={() => setShowRecordPayment(true)}>Record Payment</button>
-                            ) : (
-                              <div>
-                                <label className="text-muted text-small" style={{ display: 'block', marginBottom: '0.4rem' }}>Record Outside Payment</label>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                  <select className="form-select" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}
-                                    style={{ fontSize: '0.85rem', padding: '0.35rem 0.5rem' }}>
-                                    <option value="cash">Cash</option>
-                                    <option value="venmo">Venmo</option>
-                                    <option value="zelle">Zelle</option>
-                                    <option value="check">Check</option>
-                                    <option value="other">Other</option>
-                                  </select>
-                                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--deep-brown)' }}>
-                                    <input type="checkbox" checked={paymentPaidInFull}
-                                      onChange={e => { setPaymentPaidInFull(e.target.checked); if (e.target.checked) setPaymentAmount(''); }}
-                                      style={{ accentColor: 'var(--deep-brown)' }} />
-                                    Paid in full ({fmt(balanceDue)} remaining)
-                                  </label>
-                                  {!paymentPaidInFull && (
-                                    <input type="number" className="form-input" placeholder="Amount ($)" value={paymentAmount}
-                                      onChange={e => setPaymentAmount(e.target.value)} min="0.01" step="0.01"
-                                      style={{ fontSize: '0.85rem', padding: '0.35rem 0.5rem' }} />
-                                  )}
-                                  <div className="flex gap-05">
-                                    <button className="btn btn-sm" onClick={recordPayment} disabled={recordingPayment}>
-                                      {recordingPayment ? 'Recording...' : 'Confirm'}
-                                    </button>
-                                    <button className="btn btn-sm btn-secondary" onClick={() => { setShowRecordPayment(false); setPaymentResult(''); }}>
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                            {paymentResult && (
-                              <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: paymentResult.includes('success') ? '#2d6a4f' : '#c0392b' }}>
-                                {paymentResult}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Right Column */}
-            <div>
-              {/* Service Configuration */}
-              <div className="card mb-2">
-                <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
-                  {proposal.package_name || 'Service'}
-                </h3>
-                <div style={{ fontSize: '0.9rem', color: 'var(--warm-brown)', marginBottom: '0.5rem' }}>
-                  {fmt(totalPrice)} &middot; {proposal.guest_count} guests &middot; {Number(proposal.event_duration_hours) || 0}hrs
-                </div>
-                {equipmentList.length > 0 && (
-                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-                    {equipmentList.map(eq => (
-                      <span key={eq} className="equipment-badge">{EQUIP_LABELS[eq] || eq}</span>
-                    ))}
-                  </div>
-                )}
-                {getSignatureDrink() && (
-                  <div style={{ fontSize: '0.85rem', color: 'var(--warm-brown)', marginBottom: '0.75rem' }}>
-                    Signature: {getSignatureDrink()}
-                  </div>
-                )}
-                <div style={{ marginTop: '0.5rem' }}>
-                  <PricingBreakdown snapshot={snapshot} />
-                </div>
-                {includes.length > 0 && (
-                  <div style={{ marginTop: '0.75rem' }}>
-                    <button className="section-toggle" onClick={() => setShowPackageDetails(!showPackageDetails)}>
-                      {showPackageDetails ? 'Hide Package Details' : 'View Package Details'}
-                    </button>
-                    {showPackageDetails && (
-                      <ul style={{ margin: '0.5rem 0 0 0', padding: '0 0 0 1.2rem', color: 'var(--warm-brown)' }}>
-                        {includes.map((item, i) => <li key={i} className="text-small" style={{ marginBottom: '0.2rem' }}>{item}</li>)}
-                      </ul>
-                    )}
-                  </div>
-                )}
-
-                {/* Equipment & Setup config */}
-                {shift && (
-                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginTop: '0.75rem' }}>
-                    <div className="service-config-label">Equipment &amp; Setup</div>
-                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-                      {[
-                        { key: 'portable_bar', label: 'Portable Bar' },
-                        { key: 'cooler', label: 'Cooler' },
-                        { key: 'table_with_spandex', label: '6ft Table w/ Spandex' },
-                      ].map(item => (
-                        <label key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem', cursor: 'pointer' }}>
-                          <input type="checkbox" checked={equipmentForm[item.key]}
-                            onChange={e => setEquipmentForm(f => ({ ...f, [item.key]: e.target.checked }))} />
-                          {item.label}
-                        </label>
-                      ))}
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>Auto-assign</span>
-                      <input type="number" className="form-input" style={{ width: 60, fontSize: '0.82rem', padding: '0.2rem 0.4rem' }}
-                        placeholder="--" min="0" max="30"
-                        value={equipmentForm.auto_assign_days_before}
-                        onChange={e => setEquipmentForm(f => ({ ...f, auto_assign_days_before: e.target.value }))} />
-                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>days before</span>
-                      <button className="btn btn-sm btn-secondary" onClick={saveEquipmentConfig} disabled={savingEquipment}>
-                        {savingEquipment ? 'Saving...' : 'Save'}
-                      </button>
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
-                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>Setup</span>
-                      <input type="number" className="form-input" style={{ width: 60, fontSize: '0.82rem', padding: '0.2rem 0.4rem' }}
-                        min="0" max="180" step="15"
-                        value={setupMinutes}
-                        onChange={e => setSetupMinutes(e.target.value)} />
-                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>min before</span>
-                      <button className="btn btn-sm btn-secondary" onClick={saveSetupTime} disabled={savingSetup}>
-                        {savingSetup ? 'Saving...' : 'Save'}
-                      </button>
-                    </div>
-                  </div>
                 )}
               </div>
 
@@ -1025,6 +817,215 @@ export default function ProposalDetail() {
                       )}
                     </div>
                   </>
+                )}
+              </div>
+            </div>
+
+            {/* Right Column */}
+            <div>
+              {/* Event Details — combined service config + financial */}
+              <div className="card mb-2">
+                <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
+                  {proposal.package_name || 'Event Details'}
+                </h3>
+                <div style={{ fontSize: '0.9rem', color: 'var(--warm-brown)', marginBottom: '0.5rem' }}>
+                  {proposal.guest_count} guests &middot; {Number(proposal.event_duration_hours) || 0}hrs
+                </div>
+                {equipmentList.length > 0 && (
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                    {equipmentList.map(eq => (
+                      <span key={eq} className="equipment-badge">{EQUIP_LABELS[eq] || eq}</span>
+                    ))}
+                  </div>
+                )}
+                {getSignatureDrink() && (
+                  <div style={{ fontSize: '0.85rem', color: 'var(--warm-brown)', marginBottom: '0.75rem' }}>
+                    Signature: {getSignatureDrink()}
+                  </div>
+                )}
+
+                {/* Pricing + Financial */}
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginTop: '0.5rem' }}>
+                  <div className="financial-row">
+                    <span className="financial-label">Total</span>
+                    <span className="financial-amount">{fmt(totalPrice)}</span>
+                  </div>
+                  <div className="financial-row">
+                    <span className="financial-label">Paid</span>
+                    <span className="financial-amount">{fmt(amountPaid)}</span>
+                  </div>
+                  <div className="financial-row" style={{ borderTop: '1px solid var(--border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+                    <span className="financial-label">Balance</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span className="financial-amount">{fmt(balanceDue)}</span>
+                      {balanceDue > 0 && <span className="financial-badge-due">Due</span>}
+                    </span>
+                  </div>
+                  {proposal.autopay_enrolled && (
+                    <div className="financial-row">
+                      <span className="financial-label">Autopay</span>
+                      <span style={{ color: '#2d6a4f', fontWeight: 500, fontSize: '0.85rem' }}>Enrolled</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Collapsible payment actions */}
+                {balanceDue > 0 && (
+                  <div style={{ marginTop: '0.75rem' }}>
+                    <button className="section-toggle" onClick={() => setShowPaymentActions(!showPaymentActions)}>
+                      {showPaymentActions ? 'Hide Payment Actions' : 'Payment Actions'}
+                    </button>
+                    {showPaymentActions && (
+                      <div style={{ marginTop: '0.75rem' }}>
+                        {proposal.status === 'deposit_paid' && (
+                          <div style={{ marginBottom: '0.75rem' }}>
+                            <label className="text-muted text-small" style={{ display: 'block', marginBottom: '0.3rem' }}>Balance Due Date</label>
+                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                              <input type="date" className="form-input" value={balanceDueDate}
+                                onChange={e => setBalanceDueDate(e.target.value)}
+                                style={{ flex: 1, fontSize: '0.85rem', padding: '0.35rem 0.5rem' }} />
+                              <button className="btn btn-sm btn-secondary" onClick={saveBalanceDueDate} disabled={savingDueDate}>
+                                {savingDueDate ? 'Saving...' : 'Save'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {proposal.status === 'deposit_paid' && proposal.autopay_enrolled && proposal.stripe_payment_method_id && (
+                          <div style={{ marginBottom: '0.75rem' }}>
+                            <button className="btn btn-sm" onClick={chargeBalance} disabled={chargingBalance}>
+                              {chargingBalance ? 'Charging...' : `Charge Balance (${fmt(balanceDue)})`}
+                            </button>
+                            {chargeResult && (
+                              <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: chargeResult.includes('success') ? '#2d6a4f' : '#c0392b' }}>
+                                {chargeResult}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {!['deposit_paid', 'balance_paid', 'confirmed', 'completed'].includes(proposal.status) && (
+                          <div style={{ marginBottom: '0.75rem' }}>
+                            <button className="btn btn-sm" onClick={generatePaymentLink} disabled={generatingLink}>
+                              {generatingLink ? 'Generating...' : 'Generate Payment Link'}
+                            </button>
+                            {linkError && <p style={{ color: '#c0392b', fontSize: '0.85rem', marginTop: '0.5rem' }}>{linkError}</p>}
+                            {paymentLinkUrl && (
+                              <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                <input readOnly value={paymentLinkUrl} onClick={e => e.target.select()}
+                                  style={{ flex: 1, fontSize: '0.8rem', padding: '0.4rem 0.5rem', border: '1px solid var(--cream-dark)', borderRadius: '4px', background: '#faf5ef', color: 'var(--deep-brown)' }} />
+                                <button className="btn btn-sm btn-secondary" onClick={copyPaymentLink}>
+                                  {linkCopied ? 'Copied!' : 'Copy'}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {!['balance_paid', 'confirmed', 'completed'].includes(proposal.status) && (
+                          <div>
+                            {!showRecordPayment ? (
+                              <button className="btn btn-sm btn-secondary" onClick={() => setShowRecordPayment(true)}>Record Payment</button>
+                            ) : (
+                              <div>
+                                <label className="text-muted text-small" style={{ display: 'block', marginBottom: '0.4rem' }}>Record Outside Payment</label>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                  <select className="form-select" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}
+                                    style={{ fontSize: '0.85rem', padding: '0.35rem 0.5rem' }}>
+                                    <option value="cash">Cash</option>
+                                    <option value="venmo">Venmo</option>
+                                    <option value="zelle">Zelle</option>
+                                    <option value="check">Check</option>
+                                    <option value="other">Other</option>
+                                  </select>
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--deep-brown)' }}>
+                                    <input type="checkbox" checked={paymentPaidInFull}
+                                      onChange={e => { setPaymentPaidInFull(e.target.checked); if (e.target.checked) setPaymentAmount(''); }}
+                                      style={{ accentColor: 'var(--deep-brown)' }} />
+                                    Paid in full ({fmt(balanceDue)} remaining)
+                                  </label>
+                                  {!paymentPaidInFull && (
+                                    <input type="number" className="form-input" placeholder="Amount ($)" value={paymentAmount}
+                                      onChange={e => setPaymentAmount(e.target.value)} min="0.01" step="0.01"
+                                      style={{ fontSize: '0.85rem', padding: '0.35rem 0.5rem' }} />
+                                  )}
+                                  <div className="flex gap-05">
+                                    <button className="btn btn-sm" onClick={recordPayment} disabled={recordingPayment}>
+                                      {recordingPayment ? 'Recording...' : 'Confirm'}
+                                    </button>
+                                    <button className="btn btn-sm btn-secondary" onClick={() => { setShowRecordPayment(false); setPaymentResult(''); }}>
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            {paymentResult && (
+                              <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: paymentResult.includes('success') ? '#2d6a4f' : '#c0392b' }}>
+                                {paymentResult}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Pricing breakdown toggle */}
+                <div style={{ marginTop: '0.75rem' }}>
+                  <PricingBreakdown snapshot={snapshot} />
+                </div>
+                {includes.length > 0 && (
+                  <div style={{ marginTop: '0.75rem' }}>
+                    <button className="section-toggle" onClick={() => setShowPackageDetails(!showPackageDetails)}>
+                      {showPackageDetails ? 'Hide Package Details' : 'View Package Details'}
+                    </button>
+                    {showPackageDetails && (
+                      <ul style={{ margin: '0.5rem 0 0 0', padding: '0 0 0 1.2rem', color: 'var(--warm-brown)' }}>
+                        {includes.map((item, i) => <li key={i} className="text-small" style={{ marginBottom: '0.2rem' }}>{item}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                )}
+
+                {/* Equipment & Setup config */}
+                {shift && (
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginTop: '0.75rem' }}>
+                    <div className="service-config-label">Equipment &amp; Setup</div>
+                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                      {[
+                        { key: 'portable_bar', label: 'Portable Bar' },
+                        { key: 'cooler', label: 'Cooler' },
+                        { key: 'table_with_spandex', label: '6ft Table w/ Spandex' },
+                      ].map(item => (
+                        <label key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={equipmentForm[item.key]}
+                            onChange={e => setEquipmentForm(f => ({ ...f, [item.key]: e.target.checked }))} />
+                          {item.label}
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>Auto-assign</span>
+                      <input type="number" className="form-input" style={{ width: 60, fontSize: '0.82rem', padding: '0.2rem 0.4rem' }}
+                        placeholder="--" min="0" max="30"
+                        value={equipmentForm.auto_assign_days_before}
+                        onChange={e => setEquipmentForm(f => ({ ...f, auto_assign_days_before: e.target.value }))} />
+                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>days before</span>
+                      <button className="btn btn-sm btn-secondary" onClick={saveEquipmentConfig} disabled={savingEquipment}>
+                        {savingEquipment ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
+                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>Setup</span>
+                      <input type="number" className="form-input" style={{ width: 60, fontSize: '0.82rem', padding: '0.2rem 0.4rem' }}
+                        min="0" max="180" step="15"
+                        value={setupMinutes}
+                        onChange={e => setSetupMinutes(e.target.value)} />
+                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>min before</span>
+                      <button className="btn btn-sm btn-secondary" onClick={saveSetupTime} disabled={savingSetup}>
+                        {savingSetup ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
