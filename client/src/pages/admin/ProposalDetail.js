@@ -606,22 +606,26 @@ export default function ProposalDetail() {
           {proposal.status !== 'completed' && (
             <div className="event-tags">
               {balanceDue > 0 && (
-                <span className={`event-tag ${amountPaid === 0 ? 'event-tag-highlight' : ''}`}>
-                  $$$ {fmt(balanceDue)} due
+                <span className={`event-tag ${amountPaid === 0 ? 'event-tag-highlight' : ''}`}
+                  title={`${fmt(balanceDue)} balance due`}>
+                  $$$
                 </span>
               )}
               {shift && openCount > 0 && (
-                <span className={`event-tag ${shiftApprovedCount === 0 ? 'event-tag-highlight' : ''}`}>
-                  Staff &middot; {openCount} open
+                <span className={`event-tag ${shiftApprovedCount === 0 ? 'event-tag-highlight' : ''}`}
+                  title={`${openCount} open position${openCount !== 1 ? 's' : ''} of ${neededCount} needed`}>
+                  Staff
                 </span>
               )}
-              {!drinkPlanLoading && (!drinkPlan || drinkPlan.status !== 'reviewed') && (
-                <span className={`event-tag ${!drinkPlan ? 'event-tag-highlight' : ''}`}>
-                  List &middot; {!drinkPlan ? 'Not Started' : drinkPlan.status === 'submitted' ? 'Needs Review' : 'In Progress'}
+              {!drinkPlanLoading && drinkPlan && drinkPlan.status === 'submitted' && (
+                <span className="event-tag" title="Drink plan submitted, needs review">
+                  List
                 </span>
               )}
               {proposal.feedback_request_sent_at && proposal.feedback_status !== 'received' && (
-                <span className="event-tag">Feedback</span>
+                <span className="event-tag" title="Feedback requested, awaiting response">
+                  Feedback
+                </span>
               )}
             </div>
           )}
@@ -804,17 +808,19 @@ export default function ProposalDetail() {
                     Signature: {getSignatureDrink()}
                   </div>
                 )}
-                <button className="section-toggle" onClick={() => setShowPackageDetails(!showPackageDetails)}>
-                  {showPackageDetails ? 'Hide Package Details' : 'View Package Details'}
-                </button>
-                {showPackageDetails && (
+                <div style={{ marginTop: '0.5rem' }}>
+                  <PricingBreakdown snapshot={snapshot} />
+                </div>
+                {includes.length > 0 && (
                   <div style={{ marginTop: '0.75rem' }}>
-                    {includes.length > 0 && (
-                      <ul style={{ margin: '0 0 1rem 0', padding: '0 0 0 1.2rem', color: 'var(--warm-brown)' }}>
+                    <button className="section-toggle" onClick={() => setShowPackageDetails(!showPackageDetails)}>
+                      {showPackageDetails ? 'Hide Package Details' : 'View Package Details'}
+                    </button>
+                    {showPackageDetails && (
+                      <ul style={{ margin: '0.5rem 0 0 0', padding: '0 0 0 1.2rem', color: 'var(--warm-brown)' }}>
                         {includes.map((item, i) => <li key={i} className="text-small" style={{ marginBottom: '0.2rem' }}>{item}</li>)}
                       </ul>
                     )}
-                    <PricingBreakdown snapshot={snapshot} />
                   </div>
                 )}
 
