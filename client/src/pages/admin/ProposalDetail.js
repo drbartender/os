@@ -9,12 +9,13 @@ import { formatPhone } from '../../utils/formatPhone';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
-  accepted: 'Accepted', deposit_paid: 'Deposit Paid', balance_paid: 'Paid in Full', confirmed: 'Confirmed',
+  accepted: 'Accepted', deposit_paid: 'Deposit Paid', balance_paid: 'Paid in Full',
+  confirmed: 'Confirmed', completed: 'Completed',
 };
 const STATUS_CLASSES = {
   draft: 'badge-inprogress', sent: 'badge-submitted', viewed: 'badge-submitted',
   modified: 'badge-inprogress', accepted: 'badge-approved', deposit_paid: 'badge-approved',
-  balance_paid: 'badge-approved', confirmed: 'badge-approved',
+  balance_paid: 'badge-approved', confirmed: 'badge-approved', completed: 'badge-reviewed',
 };
 
 const fmt = (n) => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -77,6 +78,19 @@ export default function ProposalDetail() {
   const [equipmentForm, setEquipmentForm] = useState({ portable_bar: false, cooler: false, table_with_spandex: false, auto_assign_days_before: '' });
   const [savingEquipment, setSavingEquipment] = useState(false);
 
+  // Event context: collapsible sections & manual assign
+  const [showRequests, setShowRequests] = useState(false);
+  const [showPackageDetails, setShowPackageDetails] = useState(false);
+  const [showPaymentActions, setShowPaymentActions] = useState(false);
+  const [assignSearch, setAssignSearch] = useState('');
+  const [activeStaff, setActiveStaff] = useState([]);
+  const [showAssignPicker, setShowAssignPicker] = useState(false);
+  const [assigningStaff, setAssigningStaff] = useState(false);
+  const [assignPosition, setAssignPosition] = useState('');
+  const [selectedStaffToAssign, setSelectedStaffToAssign] = useState(null);
+  const [setupMinutes, setSetupMinutes] = useState(60);
+  const [savingSetup, setSavingSetup] = useState(false);
+
   // Edit mode state
   const [editing, setEditing] = useState(false);
   const [packages, setPackages] = useState([]);
@@ -119,6 +133,7 @@ export default function ProposalDetail() {
   const loadShift = (proposalId) => {
     return api.get(`/shifts/by-proposal/${proposalId}`).then(res => {
       setShift(res.data);
+      setSetupMinutes(res.data.setup_minutes_before ?? 60);
       let required = [];
       try { required = JSON.parse(res.data.equipment_required || '[]'); } catch (e) {}
       setEquipmentForm({
@@ -137,6 +152,40 @@ export default function ProposalDetail() {
     setShiftLoading(true);
     loadShift(id).finally(() => setShiftLoading(false));
   }, [id, isEventContext]); // eslint-disable-line
+
+  // Fetch active staff for manual assign picker (event context)
+  useEffect(() => {
+    if (!isEventContext) return;
+    api.get('/admin/active-staff?limit=100')
+      .then(res => setActiveStaff(res.data.users || []))
+      .catch(() => setActiveStaff([]));
+  }, [isEventContext]);
+
+  const handleManualAssign = async (userId, position) => {
+    if (!shift) return;
+    setAssigningStaff(true);
+    try {
+      await api.post(`/shifts/${shift.id}/assign`, { user_id: userId, position });
+      setShowAssignPicker(false);
+      setAssignSearch('');
+      setSelectedStaffToAssign(null);
+      setAssignPosition('');
+      refreshShift();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to assign staff');
+    } finally { setAssigningStaff(false); }
+  };
+
+  const saveSetupTime = async () => {
+    if (!shift) return;
+    setSavingSetup(true);
+    try {
+      await api.put(`/shifts/${shift.id}`, { ...shift, setup_minutes_before: parseInt(setupMinutes, 10) || 60 });
+      refreshShift();
+    } catch (e) {
+      alert('Failed to save setup time');
+    } finally { setSavingSetup(false); }
+  };
 
   const loadRequests = (shiftId) => {
     api.get(`/shifts/${shiftId}/requests`)
@@ -436,11 +485,632 @@ export default function ProposalDetail() {
   // Staffing derived values
   let shiftPositions = [];
   if (shift) { try { shiftPositions = JSON.parse(shift.positions_needed || '[]'); } catch (e) {} }
-  const shiftApprovedCount = Number(shift?.approved_count) || shiftRequests.filter(r => r.status === 'approved').length;
+  const approvedRequests = shiftRequests.filter(r => r.status === 'approved');
+  const shiftApprovedCount = approvedRequests.length;
   const pendingRequests = shiftRequests.filter(r => r.status === 'pending');
+  const neededCount = shiftPositions.length;
+  const openCount = Math.max(0, neededCount - shiftApprovedCount);
+
+  // Equipment flags
+  let equipmentList = [];
+  if (shift) { try { equipmentList = JSON.parse(shift.equipment_required || '[]'); } catch (e) {} }
+  const EQUIP_LABELS = { portable_bar: 'Portable Bar', cooler: 'Cooler', table_with_spandex: '6ft Table w/ Spandex' };
+
+  // Setup time calculation
+  const getSetupTime = () => {
+    if (!proposal?.event_start_time) return null;
+    const mins = shift?.setup_minutes_before ?? 60;
+    const [h, m] = proposal.event_start_time.split(':').map(Number);
+    const totalMins = h * 60 + m - mins;
+    const setupH = Math.floor(totalMins / 60);
+    const setupM = totalMins % 60;
+    return formatTime12(`${String(setupH).padStart(2, '0')}:${String(setupM).padStart(2, '0')}`);
+  };
+
+  // Staffing names for header
+  const getStaffingDisplay = () => {
+    if (!shift || neededCount === 0) return null;
+    const names = approvedRequests.map(r => {
+      const name = r.preferred_name || r.email;
+      if (!name) return '?';
+      const parts = name.split(' ');
+      return parts.length > 1 ? `${parts[0]} ${parts[parts.length - 1][0]}.` : parts[0];
+    });
+    if (shiftApprovedCount === 0) return `Unstaffed (${neededCount} needed)`;
+    return `${shiftApprovedCount}/${neededCount} — ${names.join(', ')}`;
+  };
+
+  // Staffing status label
+  const getStaffingStatus = () => {
+    if (!shift || neededCount === 0) return null;
+    if (shiftApprovedCount === 0) return 'Unstaffed';
+    if (shiftApprovedCount >= neededCount) return 'Fully Staffed';
+    return 'Partially Staffed';
+  };
+
+  // Open roles (count unfilled positions)
+  const getOpenRoles = () => {
+    if (!shift || openCount <= 0) return [];
+    const filledPositions = approvedRequests.map(r => r.position || 'Bartender');
+    const allPositions = [...shiftPositions];
+    const open = [];
+    for (const pos of allPositions) {
+      const idx = filledPositions.indexOf(pos);
+      if (idx >= 0) { filledPositions.splice(idx, 1); }
+      else { open.push(pos); }
+    }
+    return open.length > 0 ? open : Array(openCount).fill('Bartender');
+  };
+
+  // Balance
+  const totalPrice = Number(proposal.total_price || 0);
+  const amountPaid = Number(proposal.amount_paid || 0);
+  const balanceDue = totalPrice - amountPaid;
+
+  // Assign picker: filter staff
+  const filteredStaff = assignSearch.length >= 1
+    ? activeStaff.filter(s => {
+        const name = (s.preferred_name || s.email || '').toLowerCase();
+        return name.includes(assignSearch.toLowerCase());
+      }).slice(0, 8)
+    : [];
+
+  // Signature drink from drink plan
+  const getSignatureDrink = () => {
+    if (!drinkPlan || !drinkPlan.cocktail_selections) return null;
+    let selections = drinkPlan.cocktail_selections;
+    if (typeof selections === 'string') { try { selections = JSON.parse(selections); } catch (e) { return null; } }
+    if (!Array.isArray(selections) || selections.length === 0) return null;
+    const cocktailId = selections[0];
+    const cocktail = planCocktails.find(c => c.id === cocktailId);
+    return cocktail ? cocktail.name : null;
+  };
 
   return (
     <div className="page-container wide">
+      {/* ─── EVENT CONTEXT VIEW ─── */}
+      {isEventContext && !editing && (
+        <>
+          {/* Header Band */}
+          <div className="event-header">
+            <div className="event-breadcrumb">
+              <a href="/admin/events" onClick={e => { e.preventDefault(); navigate('/admin/events'); }}>Events</a>
+              <span> / {proposal.event_name || `Event #${proposal.id}`}</span>
+            </div>
+            <div className="event-header-top">
+              <h1 className="event-title">
+                {proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : `Event #${proposal.id}`)}
+              </h1>
+              <div className="event-header-actions">
+                <button className="event-detail-btn" onClick={() => setEditing(true)}>Edit</button>
+                <button className="event-detail-btn" onClick={copyLink}>{copyMessage || 'Copy Link'}</button>
+              </div>
+            </div>
+            <div className="event-meta-row">
+              <div className="event-meta-item">{formatDateWithDay(proposal.event_date)}</div>
+              <div className="event-meta-item">{getServiceTime()}</div>
+              {proposal.event_location && (
+                <div className="event-meta-item">{proposal.event_location}</div>
+              )}
+              <div className="event-meta-item">{proposal.guest_count} guests</div>
+            </div>
+            {shift && (
+              <div className="event-meta-row" style={{ marginTop: '0.25rem' }}>
+                <div className="event-meta-item">Setup at {getSetupTime() || '--'} ({shift.setup_minutes_before ?? 60}min before)</div>
+                <div className="event-meta-item">{getStaffingDisplay() || '--'}</div>
+              </div>
+            )}
+          </div>
+
+          {/* Operational Tags — hidden when completed */}
+          {proposal.status !== 'completed' && (
+            <div className="event-tags">
+              {balanceDue > 0 && (
+                <span className={`event-tag ${amountPaid === 0 ? 'event-tag-highlight' : ''}`}>
+                  $$$ {fmt(balanceDue)} due
+                </span>
+              )}
+              {shift && openCount > 0 && (
+                <span className={`event-tag ${shiftApprovedCount === 0 ? 'event-tag-highlight' : ''}`}>
+                  Staff &middot; {openCount} open
+                </span>
+              )}
+              {!drinkPlanLoading && (!drinkPlan || drinkPlan.status !== 'reviewed') && (
+                <span className={`event-tag ${!drinkPlan ? 'event-tag-highlight' : ''}`}>
+                  List &middot; {!drinkPlan ? 'Not Started' : drinkPlan.status === 'submitted' ? 'Needs Review' : 'In Progress'}
+                </span>
+              )}
+              {proposal.feedback_request_sent_at && proposal.feedback_status !== 'received' && (
+                <span className="event-tag">Feedback</span>
+              )}
+            </div>
+          )}
+
+          {/* Two-column: Client+Financial | Service Config+Staffing */}
+          <div className="event-columns">
+            {/* Left Column */}
+            <div>
+              {/* Client Card */}
+              <div className="card mb-2">
+                <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+                  {proposal.client_name || 'Client'}
+                </h3>
+                {proposal.client_email && (
+                  <div className="client-contact-item">
+                    <span className="client-contact-icon">&#9993;</span>
+                    <a href={`mailto:${proposal.client_email}`} style={{ color: 'inherit', textDecoration: 'none' }}>{proposal.client_email}</a>
+                  </div>
+                )}
+                {proposal.client_phone && (
+                  <div className="client-contact-item">
+                    <span className="client-contact-icon">&#9742;</span>
+                    <a href={`tel:${proposal.client_phone}`} style={{ color: 'inherit', textDecoration: 'none' }}>{formatPhone(proposal.client_phone)}</a>
+                  </div>
+                )}
+                {proposal.client_id && (
+                  <button className="section-toggle" style={{ marginTop: '0.5rem' }}
+                    onClick={() => navigate(`/admin/clients/${proposal.client_id}`)}>
+                    View Client Profile
+                  </button>
+                )}
+              </div>
+
+              {/* Financial Standing */}
+              <div className="card mb-2">
+                <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Financial</h3>
+                <div className="financial-row">
+                  <span className="financial-label">Total</span>
+                  <span className="financial-amount">{fmt(totalPrice)}</span>
+                </div>
+                <div className="financial-row">
+                  <span className="financial-label">Paid</span>
+                  <span className="financial-amount">{fmt(amountPaid)}</span>
+                </div>
+                <div className="financial-row" style={{ borderTop: '1px solid var(--border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+                  <span className="financial-label">Balance</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span className="financial-amount">{fmt(balanceDue)}</span>
+                    {balanceDue > 0 && <span className="financial-badge-due">Due</span>}
+                  </span>
+                </div>
+                {proposal.autopay_enrolled && (
+                  <div className="financial-row">
+                    <span className="financial-label">Autopay</span>
+                    <span style={{ color: '#2d6a4f', fontWeight: 500, fontSize: '0.85rem' }}>Enrolled</span>
+                  </div>
+                )}
+
+                {/* Collapsible payment actions */}
+                {balanceDue > 0 && (
+                  <div style={{ marginTop: '0.75rem' }}>
+                    <button className="section-toggle" onClick={() => setShowPaymentActions(!showPaymentActions)}>
+                      {showPaymentActions ? 'Hide Payment Actions' : 'Payment Actions'}
+                    </button>
+                    {showPaymentActions && (
+                      <div style={{ marginTop: '0.75rem' }}>
+                        {proposal.status === 'deposit_paid' && (
+                          <div style={{ marginBottom: '0.75rem' }}>
+                            <label className="text-muted text-small" style={{ display: 'block', marginBottom: '0.3rem' }}>Balance Due Date</label>
+                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                              <input type="date" className="form-input" value={balanceDueDate}
+                                onChange={e => setBalanceDueDate(e.target.value)}
+                                style={{ flex: 1, fontSize: '0.85rem', padding: '0.35rem 0.5rem' }} />
+                              <button className="btn btn-sm btn-secondary" onClick={saveBalanceDueDate} disabled={savingDueDate}>
+                                {savingDueDate ? 'Saving...' : 'Save'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {proposal.status === 'deposit_paid' && proposal.autopay_enrolled && proposal.stripe_payment_method_id && (
+                          <div style={{ marginBottom: '0.75rem' }}>
+                            <button className="btn btn-sm" onClick={chargeBalance} disabled={chargingBalance}>
+                              {chargingBalance ? 'Charging...' : `Charge Balance (${fmt(balanceDue)})`}
+                            </button>
+                            {chargeResult && (
+                              <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: chargeResult.includes('success') ? '#2d6a4f' : '#c0392b' }}>
+                                {chargeResult}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {!['deposit_paid', 'balance_paid', 'confirmed', 'completed'].includes(proposal.status) && (
+                          <div style={{ marginBottom: '0.75rem' }}>
+                            <button className="btn btn-sm" onClick={generatePaymentLink} disabled={generatingLink}>
+                              {generatingLink ? 'Generating...' : 'Generate Payment Link'}
+                            </button>
+                            {linkError && <p style={{ color: '#c0392b', fontSize: '0.85rem', marginTop: '0.5rem' }}>{linkError}</p>}
+                            {paymentLinkUrl && (
+                              <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                <input readOnly value={paymentLinkUrl} onClick={e => e.target.select()}
+                                  style={{ flex: 1, fontSize: '0.8rem', padding: '0.4rem 0.5rem', border: '1px solid var(--cream-dark)', borderRadius: '4px', background: '#faf5ef', color: 'var(--deep-brown)' }} />
+                                <button className="btn btn-sm btn-secondary" onClick={copyPaymentLink}>
+                                  {linkCopied ? 'Copied!' : 'Copy'}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {!['balance_paid', 'confirmed', 'completed'].includes(proposal.status) && (
+                          <div>
+                            {!showRecordPayment ? (
+                              <button className="btn btn-sm btn-secondary" onClick={() => setShowRecordPayment(true)}>Record Payment</button>
+                            ) : (
+                              <div>
+                                <label className="text-muted text-small" style={{ display: 'block', marginBottom: '0.4rem' }}>Record Outside Payment</label>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                  <select className="form-select" value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}
+                                    style={{ fontSize: '0.85rem', padding: '0.35rem 0.5rem' }}>
+                                    <option value="cash">Cash</option>
+                                    <option value="venmo">Venmo</option>
+                                    <option value="zelle">Zelle</option>
+                                    <option value="check">Check</option>
+                                    <option value="other">Other</option>
+                                  </select>
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--deep-brown)' }}>
+                                    <input type="checkbox" checked={paymentPaidInFull}
+                                      onChange={e => { setPaymentPaidInFull(e.target.checked); if (e.target.checked) setPaymentAmount(''); }}
+                                      style={{ accentColor: 'var(--deep-brown)' }} />
+                                    Paid in full ({fmt(balanceDue)} remaining)
+                                  </label>
+                                  {!paymentPaidInFull && (
+                                    <input type="number" className="form-input" placeholder="Amount ($)" value={paymentAmount}
+                                      onChange={e => setPaymentAmount(e.target.value)} min="0.01" step="0.01"
+                                      style={{ fontSize: '0.85rem', padding: '0.35rem 0.5rem' }} />
+                                  )}
+                                  <div className="flex gap-05">
+                                    <button className="btn btn-sm" onClick={recordPayment} disabled={recordingPayment}>
+                                      {recordingPayment ? 'Recording...' : 'Confirm'}
+                                    </button>
+                                    <button className="btn btn-sm btn-secondary" onClick={() => { setShowRecordPayment(false); setPaymentResult(''); }}>
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            {paymentResult && (
+                              <p style={{ fontSize: '0.85rem', marginTop: '0.5rem', color: paymentResult.includes('success') ? '#2d6a4f' : '#c0392b' }}>
+                                {paymentResult}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Right Column */}
+            <div>
+              {/* Service Configuration */}
+              <div className="card mb-2">
+                <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
+                  {proposal.package_name || 'Service'}
+                </h3>
+                <div style={{ fontSize: '0.9rem', color: 'var(--warm-brown)', marginBottom: '0.5rem' }}>
+                  {fmt(totalPrice)} &middot; {proposal.guest_count} guests &middot; {Number(proposal.event_duration_hours) || 0}hrs
+                </div>
+                {equipmentList.length > 0 && (
+                  <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                    {equipmentList.map(eq => (
+                      <span key={eq} className="equipment-badge">{EQUIP_LABELS[eq] || eq}</span>
+                    ))}
+                  </div>
+                )}
+                {getSignatureDrink() && (
+                  <div style={{ fontSize: '0.85rem', color: 'var(--warm-brown)', marginBottom: '0.75rem' }}>
+                    Signature: {getSignatureDrink()}
+                  </div>
+                )}
+                <button className="section-toggle" onClick={() => setShowPackageDetails(!showPackageDetails)}>
+                  {showPackageDetails ? 'Hide Package Details' : 'View Package Details'}
+                </button>
+                {showPackageDetails && (
+                  <div style={{ marginTop: '0.75rem' }}>
+                    {includes.length > 0 && (
+                      <ul style={{ margin: '0 0 1rem 0', padding: '0 0 0 1.2rem', color: 'var(--warm-brown)' }}>
+                        {includes.map((item, i) => <li key={i} className="text-small" style={{ marginBottom: '0.2rem' }}>{item}</li>)}
+                      </ul>
+                    )}
+                    <PricingBreakdown snapshot={snapshot} />
+                  </div>
+                )}
+
+                {/* Equipment & Setup config */}
+                {shift && (
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginTop: '0.75rem' }}>
+                    <div className="service-config-label">Equipment &amp; Setup</div>
+                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                      {[
+                        { key: 'portable_bar', label: 'Portable Bar' },
+                        { key: 'cooler', label: 'Cooler' },
+                        { key: 'table_with_spandex', label: '6ft Table w/ Spandex' },
+                      ].map(item => (
+                        <label key={item.key} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={equipmentForm[item.key]}
+                            onChange={e => setEquipmentForm(f => ({ ...f, [item.key]: e.target.checked }))} />
+                          {item.label}
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>Auto-assign</span>
+                      <input type="number" className="form-input" style={{ width: 60, fontSize: '0.82rem', padding: '0.2rem 0.4rem' }}
+                        placeholder="--" min="0" max="30"
+                        value={equipmentForm.auto_assign_days_before}
+                        onChange={e => setEquipmentForm(f => ({ ...f, auto_assign_days_before: e.target.value }))} />
+                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>days before</span>
+                      <button className="btn btn-sm btn-secondary" onClick={saveEquipmentConfig} disabled={savingEquipment}>
+                        {savingEquipment ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.5rem' }}>
+                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>Setup</span>
+                      <input type="number" className="form-input" style={{ width: 60, fontSize: '0.82rem', padding: '0.2rem 0.4rem' }}
+                        min="0" max="180" step="15"
+                        value={setupMinutes}
+                        onChange={e => setSetupMinutes(e.target.value)} />
+                      <span style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>min before</span>
+                      <button className="btn btn-sm btn-secondary" onClick={saveSetupTime} disabled={savingSetup}>
+                        {savingSetup ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Staffing Summary */}
+              <div className="card mb-2">
+                <div className="flex-between" style={{ alignItems: 'center', marginBottom: '0.75rem' }}>
+                  <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>Staffing</h3>
+                  {shift && (
+                    <span className={`badge ${
+                      getStaffingStatus() === 'Fully Staffed' ? 'badge-approved' :
+                      getStaffingStatus() === 'Partially Staffed' ? 'badge-inprogress' :
+                      'badge-deactivated'
+                    }`}>
+                      {getStaffingStatus()}
+                    </span>
+                  )}
+                </div>
+
+                {shiftLoading ? (
+                  <div style={{ padding: '1rem', textAlign: 'center' }}><div className="spinner" /></div>
+                ) : !shift ? (
+                  <p className="text-muted text-small" style={{ margin: 0 }}>No shift created yet.</p>
+                ) : (
+                  <>
+                    {/* Stats */}
+                    <div className="staffing-stats">
+                      <div className="staffing-stat"><strong>{neededCount}</strong> Needed</div>
+                      <div className="staffing-stat"><strong>{shiftApprovedCount}</strong> Assigned</div>
+                      <div className="staffing-stat"><strong>{openCount}</strong> Open</div>
+                    </div>
+
+                    {/* Assigned staff */}
+                    {approvedRequests.map(req => (
+                      <div className="assigned-staff-item" key={req.id}>
+                        <span>{req.preferred_name || req.email}</span>
+                        <span className="badge badge-approved">{req.position || 'Bartender'}</span>
+                      </div>
+                    ))}
+
+                    {/* Open roles */}
+                    {getOpenRoles().map((role, i) => (
+                      <div className="open-role-item" key={i}>-- {role} (open)</div>
+                    ))}
+
+                    {/* Manual assign picker */}
+                    {openCount > 0 && (
+                      <div style={{ marginTop: '0.75rem' }}>
+                        {!showAssignPicker ? (
+                          <button className="section-toggle" onClick={() => setShowAssignPicker(true)}>
+                            + Assign Staff Manually
+                          </button>
+                        ) : (
+                          <div className="staff-assign-wrapper">
+                            <input
+                              className="staff-assign-search"
+                              placeholder="Search staff by name..."
+                              value={assignSearch}
+                              onChange={e => { setAssignSearch(e.target.value); setSelectedStaffToAssign(null); }}
+                              autoFocus
+                            />
+                            {filteredStaff.length > 0 && !selectedStaffToAssign && (
+                              <div className="staff-assign-dropdown">
+                                {filteredStaff.map(s => (
+                                  <div key={s.id} className="staff-assign-item" onClick={() => {
+                                    setSelectedStaffToAssign(s);
+                                    setAssignSearch(s.preferred_name || s.email);
+                                  }}>
+                                    <div className="staff-assign-item-name">{s.preferred_name || s.email}</div>
+                                    <div className="staff-assign-item-meta">{s.email}{s.city ? ` \u00b7 ${s.city}` : ''}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {selectedStaffToAssign && (
+                              <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                <select className="form-select" value={assignPosition} onChange={e => setAssignPosition(e.target.value)}
+                                  style={{ fontSize: '0.82rem', padding: '0.3rem 0.5rem', flex: '0 0 auto' }}>
+                                  <option value="">Position...</option>
+                                  <option value="Bartender">Bartender</option>
+                                  <option value="Barback">Barback</option>
+                                  <option value="Server">Server</option>
+                                </select>
+                                <button className="btn btn-sm btn-primary" disabled={assigningStaff}
+                                  onClick={() => handleManualAssign(selectedStaffToAssign.id, assignPosition || 'Bartender')}>
+                                  {assigningStaff ? 'Assigning...' : 'Assign'}
+                                </button>
+                                <button className="btn btn-sm btn-secondary" onClick={() => {
+                                  setShowAssignPicker(false);
+                                  setAssignSearch('');
+                                  setSelectedStaffToAssign(null);
+                                  setAssignPosition('');
+                                }}>Cancel</button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Collapsible requests */}
+                    <div style={{ marginTop: '0.75rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <button className="section-toggle" onClick={() => setShowRequests(!showRequests)}>
+                          {showRequests ? 'Hide Requests' : `View Requests (${shiftRequests.length})`}
+                        </button>
+                        {showRequests && pendingRequests.length > 0 && shift.status === 'open' && (
+                          <button className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }}
+                            disabled={autoAssignLoading} onClick={handleAutoAssignPreview}>
+                            {autoAssignLoading ? 'Analyzing...' : 'Auto-Assign'}
+                          </button>
+                        )}
+                      </div>
+                      {showRequests && (
+                        <div style={{ marginTop: '0.5rem' }}>
+                          {shiftRequests.length === 0 ? (
+                            <p className="text-muted text-small" style={{ margin: 0 }}>No staff requests yet.</p>
+                          ) : (
+                            <table className="admin-table" style={{ margin: 0 }}>
+                              <thead>
+                                <tr>
+                                  <th>Staff</th>
+                                  <th>Position</th>
+                                  <th>Status</th>
+                                  <th>Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {shiftRequests.map(req => (
+                                  <tr key={req.id}>
+                                    <td>
+                                      <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>{req.preferred_name || req.email}</div>
+                                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{req.phone ? formatPhone(req.phone) : req.email}</div>
+                                    </td>
+                                    <td style={{ fontSize: '0.82rem' }}>{req.position || '--'}</td>
+                                    <td>
+                                      <span className={`badge ${req.status === 'approved' ? 'badge-approved' : req.status === 'denied' ? 'badge-deactivated' : 'badge-inprogress'}`}>
+                                        {req.status}
+                                      </span>
+                                    </td>
+                                    <td>
+                                      <div style={{ display: 'flex', gap: '0.3rem' }}>
+                                        {req.status !== 'approved' && (
+                                          <button className="btn btn-primary btn-sm" onClick={() => updateRequestStatus(req.id, 'approved')}>Approve</button>
+                                        )}
+                                        {req.status !== 'denied' && (
+                                          <button className="btn btn-danger btn-sm" onClick={() => updateRequestStatus(req.id, 'denied')}>Deny</button>
+                                        )}
+                                        {req.status !== 'pending' && (
+                                          <button className="btn btn-secondary btn-sm" onClick={() => updateRequestStatus(req.id, 'pending')}>Reset</button>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Secondary Row: Potion Planner | Admin Notes */}
+          <div className="event-columns" style={{ marginTop: '1.5rem' }}>
+            {/* Potion Planner */}
+            <div className="card">
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>Potion Planner</h3>
+              {drinkPlanLoading ? (
+                <div style={{ padding: '1rem', textAlign: 'center' }}><div className="spinner" /></div>
+              ) : drinkPlan ? (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                    <span className={`badge ${drinkPlan.status === 'submitted' ? 'badge-submitted' : drinkPlan.status === 'reviewed' ? 'badge-approved' : 'badge-inprogress'}`}>
+                      {drinkPlan.status === 'pending' ? 'Pending' : drinkPlan.status === 'draft' ? 'Draft' : drinkPlan.status === 'submitted' ? 'Submitted' : 'Reviewed'}
+                    </span>
+                    {drinkPlan.submitted_at && (
+                      <span className="text-muted text-small">Submitted {formatDateTime(drinkPlan.submitted_at)}</span>
+                    )}
+                  </div>
+                  <div className="flex gap-05 mb-2" style={{ flexWrap: 'wrap' }}>
+                    <button className="btn btn-sm" onClick={() => navigate(`/admin/drink-plans/${drinkPlan.id}`)}>View Full Details</button>
+                    <button className="btn btn-sm btn-secondary" onClick={() => {
+                      const url = `${window.location.origin}/plan/${drinkPlan.token}`;
+                      navigator.clipboard.writeText(url).then(() => { setDrinkPlanCopied(true); setTimeout(() => setDrinkPlanCopied(false), 2000); });
+                    }}>{drinkPlanCopied ? 'Copied!' : 'Copy Client Link'}</button>
+                    {drinkPlan.status === 'submitted' && (
+                      <button className="btn btn-sm btn-success" onClick={async () => {
+                        try { const res = await api.patch(`/drink-plans/${drinkPlan.id}/status`, { status: 'reviewed' }); setDrinkPlan(prev => ({ ...prev, status: res.data.status })); }
+                        catch (err) { console.error('Failed to update status:', err); }
+                      }}>Mark as Reviewed</button>
+                    )}
+                  </div>
+                  {drinkPlan.status !== 'pending' && (
+                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
+                      <DrinkPlanSelections plan={drinkPlan} cocktails={planCocktails} mocktails={planMocktails} />
+                    </div>
+                  )}
+                  {/* Drink plan admin notes */}
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginTop: '0.75rem' }}>
+                    <strong style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Plan Notes</strong>
+                    <textarea className="form-textarea" rows={3} placeholder="Internal notes about this plan..."
+                      value={drinkPlanNotes} onChange={e => setDrinkPlanNotes(e.target.value)} />
+                    <button className="btn btn-sm mt-1" onClick={async () => {
+                      setSavingDrinkPlanNotes(true);
+                      try { await api.patch(`/drink-plans/${drinkPlan.id}/notes`, { admin_notes: drinkPlanNotes }); }
+                      catch (err) { console.error('Failed to save notes:', err); }
+                      finally { setSavingDrinkPlanNotes(false); }
+                    }} disabled={savingDrinkPlanNotes}>
+                      {savingDrinkPlanNotes ? 'Saving...' : 'Save Notes'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-muted text-small" style={{ margin: 0 }}>No drink plan created yet.</p>
+              )}
+            </div>
+
+            {/* Admin Notes */}
+            <div className="card">
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Admin Notes</h3>
+              <textarea className="form-input" rows={4} value={notes} onChange={e => setNotes(e.target.value)}
+                placeholder="Internal notes about this event..." style={{ resize: 'vertical' }} />
+              <button className="btn btn-sm mt-1" onClick={saveNotes} disabled={savingNotes}>
+                {savingNotes ? 'Saving...' : 'Save Notes'}
+              </button>
+            </div>
+          </div>
+
+          {/* Activity Log */}
+          {proposal.activity && proposal.activity.length > 0 && (
+            <div className="card" style={{ marginTop: '1.5rem' }}>
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Activity</h3>
+              <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                {proposal.activity.map((entry, i) => (
+                  <div key={i} style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--cream-dark, #e8e0d4)' }}>
+                    <span className="text-small" style={{ fontWeight: 500 }}>{entry.action}</span>
+                    <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>
+                      {entry.actor_type} &middot; {formatDateTime(entry.created_at)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ─── PROPOSAL CONTEXT / EDIT MODE ─── */}
+      {(!isEventContext || editing) && (<>
       {/* Header */}
       <div className="flex-between mb-2">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -1072,6 +1742,7 @@ export default function ProposalDetail() {
           )}
         </div>
       </div>
+      </>)}
 
       {/* Auto-Assign Preview Modal */}
       {autoAssignPreview && (

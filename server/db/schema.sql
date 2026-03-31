@@ -814,3 +814,17 @@ ON CONFLICT (key) DO NOTHING;
 -- ─── Auto-Assign: indexes ───────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_contractor_profiles_lat_lng ON contractor_profiles(lat, lng);
 CREATE INDEX IF NOT EXISTS idx_shifts_auto_assign ON shifts(event_date, auto_assign_days_before);
+
+-- ─── Event Detail Redesign ──────────────────────────────────────
+
+-- Setup time (default 1 hour before event start)
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS setup_minutes_before INTEGER DEFAULT 60;
+
+-- Add 'completed' to proposal status
+ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_status_check;
+ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
+  CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed'));
+
+-- Feedback tracking (fields only, feature built later)
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS feedback_request_sent_at TIMESTAMPTZ;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS feedback_status VARCHAR(20) DEFAULT 'none';

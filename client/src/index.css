@@ -1766,3 +1766,256 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   .dashboard-stat-number { font-size: 1.5rem; }
   .dashboard-grid { grid-template-columns: 1fr; }
 }
+
+/* ─── Event Detail Redesign ──────────────────────────────────── */
+
+/* Header band */
+.event-header { margin-bottom: 1.5rem; }
+.event-breadcrumb {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.75rem;
+  color: var(--amber-light);
+  margin-bottom: 0.5rem;
+}
+.event-breadcrumb a { color: var(--amber-light); text-decoration: none; }
+.event-breadcrumb a:hover { text-decoration: underline; }
+.event-breadcrumb span { color: var(--text-muted); }
+.event-title {
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  color: var(--cream-text);
+  margin: 0 0 0.75rem 0;
+}
+.event-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+.event-header-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+.event-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  color: var(--cream-text);
+  font-size: 0.9rem;
+  margin-bottom: 0.4rem;
+}
+.event-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.event-meta-icon { color: var(--amber-light); font-size: 0.85rem; }
+
+/* Operational tags */
+.event-tags { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; }
+.event-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.7rem;
+  border: 1px solid var(--amber-light);
+  border-radius: var(--radius);
+  color: var(--amber-light);
+  font-size: 0.75rem;
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.event-tag-highlight {
+  background: var(--error);
+  border-color: var(--error);
+  color: var(--cream-text);
+}
+
+/* Action buttons — outlined style */
+.event-detail-btn {
+  border: 1.5px solid var(--amber-light);
+  color: var(--amber-light);
+  background: transparent;
+  padding: 0.4rem 1rem;
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.8rem;
+  cursor: pointer;
+  border-radius: var(--radius);
+  transition: background 0.2s, color 0.2s;
+}
+.event-detail-btn:hover { background: var(--amber-light); color: var(--dark-ink); }
+
+/* Main two-column grid */
+.event-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+@media (max-width: 768px) { .event-columns { grid-template-columns: 1fr; } }
+
+/* Client card */
+.client-contact-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--cream-text);
+  margin-bottom: 0.5rem;
+}
+.client-contact-icon {
+  color: var(--amber-light);
+  width: 16px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+/* Financial standing */
+.financial-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0;
+}
+.financial-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+  color: var(--warm-brown);
+  font-family: var(--font-display);
+}
+.financial-amount {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--cream-text);
+  font-family: var(--font-display);
+}
+.financial-badge-due {
+  background: var(--error);
+  color: var(--cream-text);
+  padding: 0.15rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-family: var(--font-display);
+}
+
+/* Service configuration */
+.service-config-label {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.7rem;
+  color: var(--amber-light);
+  margin-bottom: 0.3rem;
+  font-family: var(--font-display);
+}
+.service-config-toggle {
+  color: var(--amber-light);
+  cursor: pointer;
+  font-size: 0.8rem;
+  background: none;
+  border: none;
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0;
+}
+.service-config-toggle:hover { text-decoration: underline; }
+
+/* Staffing summary */
+.staffing-stats {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+.staffing-stat {
+  font-size: 0.85rem;
+  color: var(--cream-text);
+}
+.staffing-stat strong { color: var(--amber-light); }
+.assigned-staff-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  font-size: 0.88rem;
+  color: var(--cream-text);
+}
+.assigned-staff-item .badge { font-size: 0.7rem; }
+.open-role-item {
+  font-size: 0.85rem;
+  color: var(--warm-brown);
+  font-style: italic;
+  padding: 0.2rem 0;
+}
+
+/* Staff assign picker */
+.staff-assign-wrapper { position: relative; margin-top: 0.5rem; }
+.staff-assign-search {
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--dark-ink);
+  color: var(--cream-text);
+  font-family: var(--font-body);
+}
+.staff-assign-search::placeholder { color: var(--text-muted); }
+.staff-assign-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 100;
+}
+.staff-assign-item {
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  color: var(--deep-brown);
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--parchment);
+}
+.staff-assign-item:hover { background: var(--cream); }
+.staff-assign-item:last-child { border-bottom: none; }
+.staff-assign-item-name { font-weight: 600; }
+.staff-assign-item-meta { font-size: 0.75rem; color: var(--warm-brown); }
+
+/* Collapsible section toggle */
+.section-toggle {
+  background: none;
+  border: none;
+  color: var(--amber-light);
+  font-size: 0.82rem;
+  cursor: pointer;
+  padding: 0;
+  font-family: var(--font-body);
+}
+.section-toggle:hover { text-decoration: underline; }
+
+/* Equipment badges */
+.equipment-badge {
+  display: inline-flex;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.72rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--cream-text);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}

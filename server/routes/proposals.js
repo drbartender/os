@@ -457,7 +457,7 @@ router.patch('/:id', auth, requireAdmin, async (req, res) => {
 /** PATCH /api/proposals/:id/status — update status */
 router.patch('/:id/status', auth, requireAdmin, async (req, res) => {
   const { status } = req.body;
-  const validStatuses = ['draft', 'sent', 'viewed', 'modified', 'accepted', 'deposit_paid', 'balance_paid', 'confirmed'];
+  const validStatuses = ['draft', 'sent', 'viewed', 'modified', 'accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed'];
   if (!validStatuses.includes(status)) {
     return res.status(400).json({ error: 'Invalid status.' });
   }

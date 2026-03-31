@@ -57,4 +57,36 @@ async function processAutopayCharges() {
   }
 }
 
-module.exports = { processAutopayCharges };
+/**
+ * Auto-complete events that have ended and are fully paid.
+ * Transitions proposals from balance_paid/confirmed → completed
+ * when event_date + duration has passed and no outstanding balance remains.
+ */
+async function processEventCompletions() {
+  try {
+    const result = await pool.query(`
+      UPDATE proposals
+      SET status = 'completed', updated_at = NOW()
+      WHERE status IN ('balance_paid', 'confirmed')
+        AND event_date IS NOT NULL
+        AND (event_date + (event_duration_hours || ' hours')::interval + (event_start_time || ':00')::interval) < NOW()
+        AND (COALESCE(total_price, 0) - COALESCE(amount_paid, 0)) <= 0
+      RETURNING id, event_name
+    `);
+
+    if (result.rows.length > 0) {
+      console.log(`[BalanceScheduler] Auto-completed ${result.rows.length} event(s): ${result.rows.map(r => `#${r.id}`).join(', ')}`);
+
+      for (const proposal of result.rows) {
+        await pool.query(
+          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'status_changed', 'system', $2)`,
+          [proposal.id, JSON.stringify({ from: 'confirmed/balance_paid', to: 'completed', reason: 'auto_complete' })]
+        );
+      }
+    }
+  } catch (err) {
+    console.error('[BalanceScheduler] Auto-completion error:', err);
+  }
+}
+
+module.exports = { processAutopayCharges, processEventCompletions };
