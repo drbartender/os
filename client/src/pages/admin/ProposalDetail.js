@@ -844,17 +844,32 @@ export default function ProposalDetail() {
                   </div>
                 )}
 
-                {/* Pricing + Financial */}
+                {/* Line items + total */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginTop: '0.5rem' }}>
-                  <div className="financial-row">
-                    <span className="financial-label">Total</span>
-                    <span className="financial-amount">{fmt(totalPrice)}</span>
+                  <PricingBreakdown snapshot={snapshot} />
+                </div>
+
+                {/* Package descriptions (expandable) */}
+                {includes.length > 0 && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <button className="section-toggle" onClick={() => setShowPackageDetails(!showPackageDetails)}>
+                      {showPackageDetails ? 'Hide Package Details' : 'View Package Details'}
+                    </button>
+                    {showPackageDetails && (
+                      <ul style={{ margin: '0.5rem 0 0 0', padding: '0 0 0 1.2rem', color: 'var(--warm-brown)' }}>
+                        {includes.map((item, i) => <li key={i} className="text-small" style={{ marginBottom: '0.2rem' }}>{item}</li>)}
+                      </ul>
+                    )}
                   </div>
+                )}
+
+                {/* Paid / Balance */}
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.5rem', marginTop: '0.75rem' }}>
                   <div className="financial-row">
                     <span className="financial-label">Paid</span>
                     <span className="financial-amount">{fmt(amountPaid)}</span>
                   </div>
-                  <div className="financial-row" style={{ borderTop: '1px solid var(--border)', paddingTop: '0.5rem', marginTop: '0.25rem' }}>
+                  <div className="financial-row">
                     <span className="financial-label">Balance</span>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <span className="financial-amount">{fmt(balanceDue)}</span>
@@ -965,23 +980,6 @@ export default function ProposalDetail() {
                           </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Pricing breakdown toggle */}
-                <div style={{ marginTop: '0.75rem' }}>
-                  <PricingBreakdown snapshot={snapshot} />
-                </div>
-                {includes.length > 0 && (
-                  <div style={{ marginTop: '0.75rem' }}>
-                    <button className="section-toggle" onClick={() => setShowPackageDetails(!showPackageDetails)}>
-                      {showPackageDetails ? 'Hide Package Details' : 'View Package Details'}
-                    </button>
-                    {showPackageDetails && (
-                      <ul style={{ margin: '0.5rem 0 0 0', padding: '0 0 0 1.2rem', color: 'var(--warm-brown)' }}>
-                        {includes.map((item, i) => <li key={i} className="text-small" style={{ marginBottom: '0.2rem' }}>{item}</li>)}
-                      </ul>
                     )}
                   </div>
                 )}
