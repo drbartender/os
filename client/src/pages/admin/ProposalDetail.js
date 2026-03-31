@@ -596,7 +596,7 @@ export default function ProposalDetail() {
             </div>
             {shift && (
               <div className="event-meta-row" style={{ marginTop: '0.25rem' }}>
-                <div className="event-meta-item">Setup at {getSetupTime() || '--'} ({shift.setup_minutes_before ?? 60}min before)</div>
+                <div className="event-meta-item">Setup at {getSetupTime() || '--'}</div>
                 <div className="event-meta-item">{getStaffingDisplay() || '--'}</div>
               </div>
             )}
