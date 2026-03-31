@@ -258,7 +258,7 @@ router.post('/', auth, requireStaffing, async (req, res) => {
 /** PUT /shifts/:id — update a shift */
 router.put('/:id', auth, requireStaffing, async (req, res) => {
   const { event_name, event_date, start_time, end_time, location, positions_needed, notes, status,
-          equipment_required, auto_assign_days_before, lat, lng } = req.body;
+          equipment_required, auto_assign_days_before, setup_minutes_before, lat, lng } = req.body;
   try {
     const result = await pool.query(`
       UPDATE shifts SET
@@ -268,7 +268,8 @@ router.put('/:id', auth, requireStaffing, async (req, res) => {
         status = COALESCE($8, status),
         equipment_required = $9,
         auto_assign_days_before = $10,
-        lat = COALESCE($11, lat), lng = COALESCE($12, lng)
+        lat = COALESCE($11, lat), lng = COALESCE($12, lng),
+        setup_minutes_before = COALESCE($14, setup_minutes_before)
       WHERE id = $13 RETURNING *
     `, [
       event_name, event_date,
@@ -279,7 +280,8 @@ router.put('/:id', auth, requireStaffing, async (req, res) => {
       equipment_required ? JSON.stringify(equipment_required) : '[]',
       auto_assign_days_before != null ? auto_assign_days_before : null,
       lat || null, lng || null,
-      req.params.id
+      req.params.id,
+      setup_minutes_before != null ? parseInt(setup_minutes_before, 10) : null,
     ]);
     if (!result.rows[0]) return res.status(404).json({ error: 'Shift not found.' });
 
@@ -308,6 +310,86 @@ router.delete('/:id', auth, requireStaffing, async (req, res) => {
     const result = await pool.query('DELETE FROM shifts WHERE id = $1 RETURNING id', [req.params.id]);
     if (!result.rows[0]) return res.status(404).json({ error: 'Shift not found.' });
     res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** POST /shifts/:id/assign — admin manually assigns a staff member */
+router.post('/:id/assign', auth, requireStaffing, async (req, res) => {
+  const { user_id, position } = req.body;
+  if (!user_id) return res.status(400).json({ error: 'user_id is required.' });
+
+  try {
+    // Verify the shift exists
+    const shiftRes = await pool.query('SELECT * FROM shifts WHERE id = $1', [req.params.id]);
+    if (!shiftRes.rows[0]) return res.status(404).json({ error: 'Shift not found.' });
+
+    // Insert or update the shift request as approved
+    const result = await pool.query(`
+      INSERT INTO shift_requests (shift_id, user_id, position, status)
+      VALUES ($1, $2, $3, 'approved')
+      ON CONFLICT (shift_id, user_id) DO UPDATE SET status = 'approved', position = $3, updated_at = NOW()
+      RETURNING *
+    `, [req.params.id, user_id, position || 'Bartender']);
+
+    const request = result.rows[0];
+    const shift = shiftRes.rows[0];
+
+    // Send SMS notification (non-blocking)
+    try {
+      const cpRes = await pool.query(
+        'SELECT preferred_name, phone FROM contractor_profiles WHERE user_id = $1',
+        [user_id]
+      );
+      const cp = cpRes.rows[0];
+      if (cp?.phone) {
+        const date = shift.event_date
+          ? new Date(shift.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+          : 'TBD';
+        const time = shift.start_time && shift.end_time
+          ? `${shift.start_time}–${shift.end_time}`
+          : shift.start_time || 'TBD';
+        const location = shift.location || 'TBD';
+        const name = cp.preferred_name ? `, ${cp.preferred_name}` : '';
+
+        await sendSMS({
+          to: normalizePhone(cp.phone) || cp.phone,
+          body: `Hey${name}! You've been assigned to ${shift.event_name} on ${date} at ${time} — ${location}. See you there! - Dr. Bartender`,
+        });
+      }
+    } catch (smsErr) {
+      console.error('SMS notification failed (non-blocking):', smsErr.message);
+    }
+
+    // Send email notification (non-blocking)
+    try {
+      const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [user_id]);
+      const staffEmail = userRes.rows[0]?.email;
+      const cpRes2 = await pool.query(
+        'SELECT preferred_name FROM contractor_profiles WHERE user_id = $1',
+        [user_id]
+      );
+      if (staffEmail) {
+        const date = shift.event_date
+          ? new Date(shift.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+          : 'TBD';
+        const tpl = emailTemplates.shiftRequestApproved({
+          staffName: cpRes2.rows[0]?.preferred_name || 'there',
+          eventName: shift.event_name,
+          eventDate: date,
+          startTime: shift.start_time || 'TBD',
+          endTime: shift.end_time || 'TBD',
+          location: shift.location || 'TBD',
+        });
+        await sendEmail({ to: staffEmail, ...tpl });
+      }
+    } catch (emailErr) {
+      console.error('Staff assignment email failed (non-blocking):', emailErr.message);
+    }
+
+    res.status(201).json(request);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });

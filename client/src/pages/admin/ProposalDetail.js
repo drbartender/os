@@ -9,12 +9,13 @@ import { formatPhone } from '../../utils/formatPhone';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
-  accepted: 'Accepted', deposit_paid: 'Deposit Paid', balance_paid: 'Paid in Full', confirmed: 'Confirmed',
+  accepted: 'Accepted', deposit_paid: 'Deposit Paid', balance_paid: 'Paid in Full',
+  confirmed: 'Confirmed', completed: 'Completed',
 };
 const STATUS_CLASSES = {
   draft: 'badge-inprogress', sent: 'badge-submitted', viewed: 'badge-submitted',
   modified: 'badge-inprogress', accepted: 'badge-approved', deposit_paid: 'badge-approved',
-  balance_paid: 'badge-approved', confirmed: 'badge-approved',
+  balance_paid: 'badge-approved', confirmed: 'badge-approved', completed: 'badge-reviewed',
 };
 
 const fmt = (n) => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -77,6 +78,19 @@ export default function ProposalDetail() {
   const [equipmentForm, setEquipmentForm] = useState({ portable_bar: false, cooler: false, table_with_spandex: false, auto_assign_days_before: '' });
   const [savingEquipment, setSavingEquipment] = useState(false);
 
+  // Event context: collapsible sections & manual assign
+  const [showRequests, setShowRequests] = useState(false);
+  const [showPackageDetails, setShowPackageDetails] = useState(false);
+  const [showPaymentActions, setShowPaymentActions] = useState(false);
+  const [assignSearch, setAssignSearch] = useState('');
+  const [activeStaff, setActiveStaff] = useState([]);
+  const [showAssignPicker, setShowAssignPicker] = useState(false);
+  const [assigningStaff, setAssigningStaff] = useState(false);
+  const [assignPosition, setAssignPosition] = useState('');
+  const [selectedStaffToAssign, setSelectedStaffToAssign] = useState(null);
+  const [setupMinutes, setSetupMinutes] = useState(60);
+  const [savingSetup, setSavingSetup] = useState(false);
+
   // Edit mode state
   const [editing, setEditing] = useState(false);
   const [packages, setPackages] = useState([]);
@@ -119,6 +133,7 @@ export default function ProposalDetail() {
   const loadShift = (proposalId) => {
     return api.get(`/shifts/by-proposal/${proposalId}`).then(res => {
       setShift(res.data);
+      setSetupMinutes(res.data.setup_minutes_before ?? 60);
       let required = [];
       try { required = JSON.parse(res.data.equipment_required || '[]'); } catch (e) {}
       setEquipmentForm({
@@ -137,6 +152,40 @@ export default function ProposalDetail() {
     setShiftLoading(true);
     loadShift(id).finally(() => setShiftLoading(false));
   }, [id, isEventContext]); // eslint-disable-line
+
+  // Fetch active staff for manual assign picker (event context)
+  useEffect(() => {
+    if (!isEventContext) return;
+    api.get('/admin/active-staff?limit=100')
+      .then(res => setActiveStaff(res.data.users || []))
+      .catch(() => setActiveStaff([]));
+  }, [isEventContext]);
+
+  const handleManualAssign = async (userId, position) => {
+    if (!shift) return;
+    setAssigningStaff(true);
+    try {
+      await api.post(`/shifts/${shift.id}/assign`, { user_id: userId, position });
+      setShowAssignPicker(false);
+      setAssignSearch('');
+      setSelectedStaffToAssign(null);
+      setAssignPosition('');
+      refreshShift();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Failed to assign staff');
+    } finally { setAssigningStaff(false); }
+  };
+
+  const saveSetupTime = async () => {
+    if (!shift) return;
+    setSavingSetup(true);
+    try {
+      await api.put(`/shifts/${shift.id}`, { ...shift, setup_minutes_before: parseInt(setupMinutes, 10) || 60 });
+      refreshShift();
+    } catch (e) {
+      alert('Failed to save setup time');
+    } finally { setSavingSetup(false); }
+  };
 
   const loadRequests = (shiftId) => {
     api.get(`/shifts/${shiftId}/requests`)
@@ -436,8 +485,86 @@ export default function ProposalDetail() {
   // Staffing derived values
   let shiftPositions = [];
   if (shift) { try { shiftPositions = JSON.parse(shift.positions_needed || '[]'); } catch (e) {} }
-  const shiftApprovedCount = Number(shift?.approved_count) || shiftRequests.filter(r => r.status === 'approved').length;
+  const approvedRequests = shiftRequests.filter(r => r.status === 'approved');
+  const shiftApprovedCount = approvedRequests.length;
   const pendingRequests = shiftRequests.filter(r => r.status === 'pending');
+  const neededCount = shiftPositions.length;
+  const openCount = Math.max(0, neededCount - shiftApprovedCount);
+
+  // Equipment flags
+  let equipmentList = [];
+  if (shift) { try { equipmentList = JSON.parse(shift.equipment_required || '[]'); } catch (e) {} }
+  const EQUIP_LABELS = { portable_bar: 'Portable Bar', cooler: 'Cooler', table_with_spandex: '6ft Table w/ Spandex' };
+
+  // Setup time calculation
+  const getSetupTime = () => {
+    if (!proposal?.event_start_time) return null;
+    const mins = shift?.setup_minutes_before ?? 60;
+    const [h, m] = proposal.event_start_time.split(':').map(Number);
+    const totalMins = h * 60 + m - mins;
+    const setupH = Math.floor(totalMins / 60);
+    const setupM = totalMins % 60;
+    return formatTime12(`${String(setupH).padStart(2, '0')}:${String(setupM).padStart(2, '0')}`);
+  };
+
+  // Staffing names for header
+  const getStaffingDisplay = () => {
+    if (!shift || neededCount === 0) return null;
+    const names = approvedRequests.map(r => {
+      const name = r.preferred_name || r.email;
+      if (!name) return '?';
+      const parts = name.split(' ');
+      return parts.length > 1 ? `${parts[0]} ${parts[parts.length - 1][0]}.` : parts[0];
+    });
+    if (shiftApprovedCount === 0) return `Unstaffed (${neededCount} needed)`;
+    return `${shiftApprovedCount}/${neededCount} — ${names.join(', ')}`;
+  };
+
+  // Staffing status label
+  const getStaffingStatus = () => {
+    if (!shift || neededCount === 0) return null;
+    if (shiftApprovedCount === 0) return 'Unstaffed';
+    if (shiftApprovedCount >= neededCount) return 'Fully Staffed';
+    return 'Partially Staffed';
+  };
+
+  // Open roles (count unfilled positions)
+  const getOpenRoles = () => {
+    if (!shift || openCount <= 0) return [];
+    const filledPositions = approvedRequests.map(r => r.position || 'Bartender');
+    const allPositions = [...shiftPositions];
+    const open = [];
+    for (const pos of allPositions) {
+      const idx = filledPositions.indexOf(pos);
+      if (idx >= 0) { filledPositions.splice(idx, 1); }
+      else { open.push(pos); }
+    }
+    return open.length > 0 ? open : Array(openCount).fill('Bartender');
+  };
+
+  // Balance
+  const totalPrice = Number(proposal.total_price || 0);
+  const amountPaid = Number(proposal.amount_paid || 0);
+  const balanceDue = totalPrice - amountPaid;
+
+  // Assign picker: filter staff
+  const filteredStaff = assignSearch.length >= 1
+    ? activeStaff.filter(s => {
+        const name = (s.preferred_name || s.email || '').toLowerCase();
+        return name.includes(assignSearch.toLowerCase());
+      }).slice(0, 8)
+    : [];
+
+  // Signature drink from drink plan
+  const getSignatureDrink = () => {
+    if (!drinkPlan || !drinkPlan.cocktail_selections) return null;
+    let selections = drinkPlan.cocktail_selections;
+    if (typeof selections === 'string') { try { selections = JSON.parse(selections); } catch (e) { return null; } }
+    if (!Array.isArray(selections) || selections.length === 0) return null;
+    const cocktailId = selections[0];
+    const cocktail = planCocktails.find(c => c.id === cocktailId);
+    return cocktail ? cocktail.name : null;
+  };
 
   return (
     <div className="page-container wide">
