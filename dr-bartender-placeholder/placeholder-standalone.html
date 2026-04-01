@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dr. Bartender — Placeholder Landing Page</title>
+    <meta
+      name="description"
+      content="Temporary landing page for Dr. Bartender while the full website is rebuilt."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./dr-bartender-placeholder.css" />
+    <style>
+      .db-page-shell {
+        padding-bottom: 1px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script>
+      document.getElementById('root').innerHTML = `
+        <div class="db-page-shell">
+          <div class="db-page-noise" aria-hidden="true"></div>
+
+          <header class="db-site-header">
+            <a class="db-brand" href="#top">
+              <span class="db-brand-mark">DB</span>
+              <span>
+                <strong>Dr. Bartender</strong>
+                <small>Mobile Bar • Cocktail Lab</small>
+              </span>
+            </a>
+
+            <nav class="db-nav" aria-label="Primary">
+              <a href="#services">Services</a>
+              <a href="#why-us">Why Us</a>
+              <a href="#process">Process</a>
+              <a href="#faq">FAQ</a>
+              <a class="db-nav-cta" href="#quote">Get a Quote</a>
+            </nav>
+          </header>
+
+          <main id="top">
+            <section class="db-hero section-shell">
+              <div class="db-hero-copy">
+                <p class="db-kicker">Mobile Bar • Cocktail Lab</p>
+                <h1>Your event’s bar, engineered.</h1>
+                <p class="db-hero-subhead">(No chaos in the bar)</p>
+                <p class="db-lead">
+                  Dr. Bartender brings a clean, confident cocktail experience — built like a
+                  well-run experiment. You get a polished setup, smart menu planning, and a
+                  bartender who knows how to keep the room moving.
+                </p>
+
+                <div class="db-button-row">
+                  <a class="db-btn db-btn-primary" href="#quote">Start a Quote</a>
+                  <a class="db-btn db-btn-secondary" href="#services">See what’s included</a>
+                </div>
+              </div>
+
+              <aside class="db-lab-board parchment-card">
+                <div class="db-board-tab">The Lab Board</div>
+                <ol>
+                  <li>
+                    <strong>Event Proposal</strong>
+                    <span>Calibrated to your event — scope, style, and chemistry included.</span>
+                  </li>
+                  <li>
+                    <strong>Booking the Experience</strong>
+                    <span>Sign, reserve your date, and move forward with confidence.</span>
+                  </li>
+                  <li>
+                    <strong>Menu Planning</strong>
+                    <span>Beer, wine, cocktails, or a full bar — precisely curated to your taste.</span>
+                  </li>
+                  <li>
+                    <strong>Execution</strong>
+                    <span>We run the experiment. You enjoy the results.</span>
+                  </li>
+                </ol>
+              </aside>
+            </section>
+
+            <section class="db-strap section-shell" id="services">
+              <h2>Everything you need. Nothing you don’t.</h2>
+              <p>
+                First time hiring a bartender? Welcome to the lab. We follow a proven method,
+                fine-tune the formula, and leave room for experimentation — so your bar setup
+                feels effortless and well-balanced.
+              </p>
+            </section>
+
+            <section class="db-why section-shell" id="why-us">
+              <div class="db-section-heading">
+                <p class="db-kicker">Why us</p>
+                <h2>Why Choose Dr. Bartender?</h2>
+              </div>
+
+              <div class="parchment-card db-origin-story">
+                <p>
+                  Dr. Bartender was born from equal parts passion, precision, and a dash of
+                  rebellion. After years behind the bar, chasing the perfect balance of flavor
+                  and experience, I decided to build something that reflected both my initials —
+                  D.R. — and my philosophy: bartending is as much a science as it is an art.
+                </p>
+              </div>
+
+              <div class="db-card-grid">
+                <article class="db-feature-card">
+                  <span class="db-card-pill">Precision</span>
+                  <h3>Clean, confident service</h3>
+                  <p>
+                    A polished bar experience built to keep the room moving. You get a calm
+                    presence, thoughtful pacing, and a setup that feels intentional from the
+                    first pour to the last call.
+                  </p>
+                </article>
+
+                <article class="db-feature-card">
+                  <span class="db-card-pill">Planning</span>
+                  <h3>Quality, not chaos</h3>
+                  <p>
+                    We help shape the service before event day so the bar runs smoothly.
+                    Packages, guest flow, menu direction, and add-ons are all mapped out ahead
+                    of time.
+                  </p>
+                </article>
+
+                <article class="db-feature-card">
+                  <span class="db-card-pill">Cocktails</span>
+                  <h3>Signature drinks with personality</h3>
+                  <p>
+                    From crowd-pleasers to custom cocktails, your menu is curated to match your
+                    event. The goal is a bar that feels memorable without feeling complicated.
+                  </p>
+                </article>
+              </div>
+            </section>
+
+            <section class="db-process section-shell" id="process">
+              <div class="db-section-heading">
+                <p class="db-kicker">Process</p>
+                <h2>How It Works</h2>
+              </div>
+
+              <div class="db-process-grid">
+                <article class="db-step-card">
+                  <div class="db-step-number">01</div>
+                  <h3>Start with your event details</h3>
+                  <p>
+                    Tell us the date, guest count, venue, and whether you want a BYOB setup or
+                    a fully hosted bar. We use that to recommend the right service level.
+                  </p>
+                </article>
+
+                <article class="db-step-card">
+                  <div class="db-step-number">02</div>
+                  <h3>Choose the package and reserve your date</h3>
+                  <p>
+                    Review your proposal, add any extras you need, and lock in the event with a
+                    signed agreement and deposit.
+                  </p>
+                </article>
+
+                <article class="db-step-card">
+                  <div class="db-step-number">03</div>
+                  <h3>Plan the menu</h3>
+                  <p>
+                    We fine-tune cocktail selections, mocktail options, and service notes so
+                    your bar feels tailored to your crowd instead of generic.
+                  </p>
+                </article>
+
+                <article class="db-step-card">
+                  <div class="db-step-number">04</div>
+                  <h3>We show up and run the bar</h3>
+                  <p>
+                    On event day, we handle the setup, service, and flow so you can focus on
+                    hosting while guests enjoy the experience.
+                  </p>
+                </article>
+              </div>
+            </section>
+
+            <section class="db-faq section-shell" id="faq">
+              <div class="db-section-heading">
+                <p class="db-kicker">FAQ</p>
+                <h2>Quick answers</h2>
+              </div>
+
+              <div class="db-faq-grid">
+                <article class="db-faq-item">
+                  <h3>Do you handle weddings and private events?</h3>
+                  <p>
+                    Yes. This placeholder covers weddings, parties, corporate events, and other
+                    private gatherings while the full site is being rebuilt.
+                  </p>
+                </article>
+
+                <article class="db-faq-item">
+                  <h3>Can I get a custom cocktail menu?</h3>
+                  <p>
+                    Absolutely. Signature cocktails, mocktails, and crowd-friendly options can
+                    all be tailored to the event and guest list.
+                  </p>
+                </article>
+
+                <article class="db-faq-item">
+                  <h3>How do I reserve a date?</h3>
+                  <p>
+                    Use the quote button below and we’ll follow up with package options,
+                    availability, and next steps.
+                  </p>
+                </article>
+              </div>
+            </section>
+
+            <section class="db-quote section-shell parchment-card" id="quote">
+              <div>
+                <p class="db-kicker db-kicker-dark">Ready when you are</p>
+                <h2>Want a quote that makes sense?</h2>
+                <p>
+                  This is a temporary landing page while the full Dr. Bartender site is rebuilt.
+                  It keeps the brand vibe alive and gives visitors a clear place to contact you.
+                </p>
+              </div>
+
+              <div class="db-button-row">
+                <a class="db-btn db-btn-primary" href="mailto:hello@drbartender.com">Let’s do it</a>
+                <a class="db-btn db-btn-dark" href="tel:+10000000000">Call now</a>
+              </div>
+            </section>
+          </main>
+        </div>
+      `;
+    </script>
+  </body>
+</html>
