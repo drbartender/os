@@ -177,19 +177,42 @@ export default function Website() {
           </div>
         </section>
 
-        {/* Reviews (stub) */}
+        {/* Reviews — TODO: wire to DB / auto-import from Google & Thumbtack */}
         <section className="ws-section" id="reviews">
           <div className="ws-section-heading">
             <p className="ws-kicker">Reviews</p>
             <h2>What Our Clients Say</h2>
           </div>
-          <div className="ws-reviews-placeholder">
-            <div className="ws-review-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-            <p>Client reviews coming soon. In the meantime, check us out on Google and Thumbtack.</p>
-            <div className="ws-review-badges">
-              <span className="ws-badge">Google Reviews</span>
-              <span className="ws-badge">Thumbtack Top Pro</span>
-            </div>
+          <div className="ws-reviews-grid">
+            {/* TODO: wire to DB — these are hardcoded placeholders */}
+            <article className="ws-review-card">
+              <div className="ws-review-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+              <p>"Dr. Bartender made our wedding bar feel effortless. The cocktails were a hit, the service was smooth, and we didn't have to worry about a thing. Guests are still talking about the signature drinks."</p>
+              <div className="ws-review-author">
+                <strong>Sarah & James M.</strong>
+                <span>Wedding Reception &middot; 120 guests</span>
+              </div>
+            </article>
+            <article className="ws-review-card">
+              <div className="ws-review-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+              <p>"Hired them for a corporate holiday party and it was exactly what we needed — professional, well-paced, and the menu was dialed in. Will definitely book again next year."</p>
+              <div className="ws-review-author">
+                <strong>Marcus T.</strong>
+                <span>Corporate Event &middot; 85 guests</span>
+              </div>
+            </article>
+            <article className="ws-review-card">
+              <div className="ws-review-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+              <p>"The whole process was easy — got a quote online, picked our package, and they handled everything from there. Bar setup looked great and the bartender kept the energy up all night."</p>
+              <div className="ws-review-author">
+                <strong>Priya & Dev R.</strong>
+                <span>Birthday Party &middot; 60 guests</span>
+              </div>
+            </article>
+          </div>
+          <div className="ws-review-badges" style={{ textAlign: 'center', marginTop: '1.5rem' }}>
+            <span className="ws-badge">Google Reviews</span>
+            <span className="ws-badge">Thumbtack Top Pro</span>
           </div>
         </section>
 
