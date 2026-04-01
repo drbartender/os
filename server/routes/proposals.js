@@ -143,6 +143,200 @@ router.post('/t/:token/sign', async (req, res) => {
   }
 });
 
+// ─── Public website endpoints (no auth) ─────────────────────────
+
+/** GET /api/proposals/public/packages — list active packages (public, limited fields) */
+router.get('/public/packages', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, slug, category, description, pricing_type, includes,
+              base_rate_3hr, base_rate_4hr, base_rate_3hr_small, base_rate_4hr_small,
+              extra_hour_rate, extra_hour_rate_small, min_guests,
+              guests_per_bartender, bartenders_included, extra_bartender_hourly,
+              first_bar_fee, additional_bar_fee
+       FROM service_packages WHERE is_active = true ORDER BY sort_order`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** GET /api/proposals/public/addons — list active add-ons (public, limited fields) */
+router.get('/public/addons', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, slug, billing_type, rate, extra_hour_rate, minimum_hours, applies_to
+       FROM service_addons WHERE is_active = true ORDER BY sort_order`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** POST /api/proposals/public/calculate — preview pricing (public, no save) */
+router.post('/public/calculate', async (req, res) => {
+  const { package_id, guest_count, duration_hours, num_bars, addon_ids } = req.body;
+  try {
+    const pkgResult = await pool.query('SELECT * FROM service_packages WHERE id = $1 AND is_active = true', [package_id]);
+    if (!pkgResult.rows[0]) return res.status(400).json({ error: 'Package not found.' });
+
+    let addons = [];
+    if (addon_ids && addon_ids.length > 0) {
+      const addonResult = await pool.query(
+        'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
+        [addon_ids]
+      );
+      addons = addonResult.rows;
+    }
+
+    const snapshot = calculateProposal({
+      pkg: pkgResult.rows[0],
+      guestCount: guest_count || 50,
+      durationHours: duration_hours || 4,
+      numBars: num_bars ?? 0,
+      addons
+    });
+
+    res.json(snapshot);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** POST /api/proposals/public/submit — create a proposal from the public website quote wizard */
+router.post('/public/submit', async (req, res) => {
+  const {
+    client_name, client_email, client_phone,
+    event_name, event_date, event_start_time, event_duration_hours,
+    event_location, guest_count, package_id, num_bars, addon_ids
+  } = req.body;
+
+  if (!client_name || !client_name.trim()) return res.status(400).json({ error: 'Name is required.' });
+  if (!client_email || !client_email.trim()) return res.status(400).json({ error: 'Email is required.' });
+  if (!package_id) return res.status(400).json({ error: 'Package is required.' });
+  if (!guest_count || guest_count < 1) return res.status(400).json({ error: 'Guest count is required.' });
+
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    // Create or find existing client by email
+    let clientResult = await dbClient.query(
+      'SELECT id FROM clients WHERE email = $1 LIMIT 1',
+      [client_email.trim().toLowerCase()]
+    );
+    let finalClientId;
+    if (clientResult.rows[0]) {
+      finalClientId = clientResult.rows[0].id;
+      // Update name/phone if provided
+      await dbClient.query(
+        'UPDATE clients SET name = COALESCE(NULLIF($1, name), name), phone = COALESCE($2, phone) WHERE id = $3',
+        [client_name.trim(), client_phone || null, finalClientId]
+      );
+    } else {
+      const newClient = await dbClient.query(
+        'INSERT INTO clients (name, email, phone, source) VALUES ($1, $2, $3, $4) RETURNING id',
+        [client_name.trim(), client_email.trim().toLowerCase(), client_phone || null, 'website']
+      );
+      finalClientId = newClient.rows[0].id;
+    }
+
+    // Fetch package
+    const pkgResult = await dbClient.query('SELECT * FROM service_packages WHERE id = $1 AND is_active = true', [package_id]);
+    if (!pkgResult.rows[0]) {
+      await dbClient.query('ROLLBACK');
+      return res.status(400).json({ error: 'Package not found.' });
+    }
+
+    // Fetch add-ons
+    let addons = [];
+    if (addon_ids && addon_ids.length > 0) {
+      const addonResult = await dbClient.query(
+        'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
+        [addon_ids]
+      );
+      addons = addonResult.rows;
+    }
+
+    // Calculate pricing
+    const gc = Number(guest_count) || 50;
+    const dh = Number(event_duration_hours) || 4;
+    const nb = Number(num_bars) || 0;
+    const snapshot = calculateProposal({
+      pkg: pkgResult.rows[0],
+      guestCount: gc,
+      durationHours: dh,
+      numBars: nb,
+      addons
+    });
+
+    // Insert proposal
+    const proposalResult = await dbClient.query(`
+      INSERT INTO proposals (client_id, event_name, event_date, event_start_time, event_duration_hours,
+        event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, status)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'sent')
+      RETURNING *
+    `, [
+      finalClientId, event_name || `${client_name.trim()}'s Event`, event_date || null,
+      event_start_time || null, dh, event_location || null, gc, package_id, nb,
+      snapshot.staffing.actual, JSON.stringify(snapshot), snapshot.total
+    ]);
+
+    const proposal = proposalResult.rows[0];
+
+    // Insert proposal add-ons
+    for (const addon of snapshot.addons) {
+      await dbClient.query(`
+        INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `, [proposal.id, addon.id, addon.name, addon.billing_type, addon.rate, addon.quantity, addon.line_total]);
+    }
+
+    // Log creation
+    await dbClient.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'created', 'client', $2)`,
+      [proposal.id, JSON.stringify({ source: 'website_quote_wizard', total: snapshot.total, package: snapshot.package.name })]
+    );
+
+    await dbClient.query('COMMIT');
+
+    // Send email notifications (non-blocking)
+    try {
+      const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+      const proposalUrl = `${clientUrl}/proposal/${proposal.token}`;
+      const tpl = emailTemplates.proposalSent({ clientName: client_name.trim(), eventName: proposal.event_name, proposalUrl });
+      await sendEmail({ to: client_email.trim().toLowerCase(), ...tpl });
+
+      const adminEmail = process.env.ADMIN_EMAIL;
+      if (adminEmail) {
+        const adminUrl = `${clientUrl}/admin/proposals/${proposal.id}`;
+        const tpl2 = emailTemplates.clientSignedAdmin({
+          clientName: client_name.trim(),
+          eventName: proposal.event_name,
+          proposalId: proposal.id,
+          adminUrl
+        });
+        await sendEmail({ to: adminEmail, subject: `New Website Quote: ${proposal.event_name}`, html: tpl2.html });
+      }
+    } catch (emailErr) {
+      console.error('Public proposal emails failed (non-blocking):', emailErr);
+    }
+
+    res.status(201).json({ token: proposal.token, total: snapshot.total });
+  } catch (err) {
+    await dbClient.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    dbClient.release();
+  }
+});
+
 // ─── Package & add-on listing (auth required) ────────────────────
 
 /** GET /api/proposals/packages — list active packages */

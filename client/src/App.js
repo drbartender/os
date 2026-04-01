@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/Layout';
 import api from './utils/api';
+import Website from './pages/website/Website';
 import Register from './pages/Register';
 import Login from './pages/Login';
 import Application from './pages/Application';
@@ -34,6 +35,17 @@ import ProposalDetail from './pages/admin/ProposalDetail';
 import ClientDetail from './pages/admin/ClientDetail';
 import Dashboard from './pages/admin/Dashboard';
 import ProposalView from './pages/proposal/ProposalView';
+
+/** Check if we're on the public marketing site (drbartender.com) vs admin subdomain */
+function isPublicSite() {
+  const host = window.location.hostname;
+  // admin.drbartender.com → admin/staff app
+  if (host.startsWith('admin.')) return false;
+  // localhost → show app routes (website accessible at /website)
+  if (host === 'localhost' || host === '127.0.0.1') return false;
+  // drbartender.com, www.drbartender.com → public website
+  return true;
+}
 
 /** Determine where a logged-in user should go based on their role and status */
 function getHomePath(user) {
@@ -109,13 +121,32 @@ function ApiAuthSetup({ children }) {
   return children;
 }
 
+function PublicWebsiteRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<Website />} />
+      {/* These public token-based routes work on both domains */}
+      <Route path="/plan/:token" element={<PotionPlanningLab />} />
+      <Route path="/proposal/:token" element={<ProposalView />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
 function AppRoutes() {
+  const publicSite = isPublicSite();
+
+  // On the public domain (drbartender.com), only show the marketing site + public routes
+  if (publicSite) return <PublicWebsiteRoutes />;
+
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/register" replace />} />
       {/* Public pages (no auth) */}
       <Route path="/plan/:token" element={<PotionPlanningLab />} />
       <Route path="/proposal/:token" element={<ProposalView />} />
+      {/* Website accessible on admin domain for preview */}
+      <Route path="/website" element={<Website />} />
 
       <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
       <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
