@@ -127,7 +127,7 @@ router.post('/t/:token/sign', async (req, res) => {
       }
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail && pd) {
-        const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+        const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
         const adminUrl = `${clientUrl}/admin/proposals/${pd.id}`;
         const tpl = emailTemplates.clientSignedAdmin({ clientName: pd.client_name, eventName: pd.event_name, proposalId: pd.id, adminUrl });
         await sendEmail({ to: adminEmail, ...tpl });
@@ -483,7 +483,7 @@ router.patch('/:id/status', auth, requireAdmin, async (req, res) => {
         `, [req.params.id]);
         const p = pd.rows[0];
         if (p?.client_email && p?.token) {
-          const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+          const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
           const proposalUrl = `${clientUrl}/proposal/${p.token}`;
           const tpl = emailTemplates.proposalSent({ clientName: p.client_name, eventName: p.event_name, proposalUrl });
           await sendEmail({ to: p.client_email, ...tpl });
@@ -622,7 +622,7 @@ router.post('/:id/record-payment', auth, requireAdmin, async (req, res) => {
       }
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
-        const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+        const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
         const adminUrl = `${clientUrl}/admin/proposals/${proposal.id}`;
         const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pd?.client_name, eventName: pd?.event_name, amount: amountFormatted, paymentType: payType, proposalId: proposal.id, adminUrl });
         await sendEmail({ to: adminEmail, ...tpl });

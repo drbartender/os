@@ -166,7 +166,7 @@ router.post('/', auth, async (req, res) => {
     // Email notifications (non-blocking)
     try {
       const adminEmail = process.env.ADMIN_EMAIL;
-      const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+      const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
       if (adminEmail) {
         const tpl = emailTemplates.newApplicationAdmin({ applicantName: full_name, applicantEmail: req.user.email, adminUrl: `${clientUrl}/admin/staff` });
         await sendEmail({ to: adminEmail, ...tpl });

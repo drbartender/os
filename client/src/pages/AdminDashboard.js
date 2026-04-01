@@ -544,7 +544,7 @@ export default function AdminDashboard() {
                             : 'TBD';
                           const time = shift.start_time && shift.end_time
                             ? `${shift.start_time}\u2013${shift.end_time}` : shift.start_time || 'TBD';
-                          setMsgBody(`Hey! We have an event coming up: ${shift.event_name} on ${date} at ${time} \u2014 ${shift.location || 'TBD'}. Interested in working it? Request the shift in your portal: https://os-mocha.vercel.app/portal - Dr. Bartender`);
+                          setMsgBody(`Hey! We have an event coming up: ${shift.event_name} on ${date} at ${time} \u2014 ${shift.location || 'TBD'}. Interested in working it? Request the shift in your portal: https://admin.drbartender.com/portal - Dr. Bartender`);
                         }
                       }}>
                       <option value="">Select a shift…</option>

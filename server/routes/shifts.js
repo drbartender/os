@@ -180,7 +180,7 @@ router.post('/:id/request', auth, requireOnboarded, async (req, res) => {
         const eventDate = si?.event_date
           ? new Date(si.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
           : 'TBD';
-        const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+        const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
         const tpl = emailTemplates.shiftRequestAdmin({ staffName, eventName: si?.event_name, eventDate, position: position || 'Bartender', adminUrl: `${clientUrl}/admin/shifts` });
         await sendEmail({ to: adminEmail, ...tpl });
       }

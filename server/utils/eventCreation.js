@@ -61,7 +61,7 @@ async function createDrinkPlan(proposalId, proposal) {
 
   // Email the drink plan link to the client
   if (clientEmail && drinkPlan.token) {
-    const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+    const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
     const planUrl = `${clientUrl}/plan/${drinkPlan.token}`;
     const eventName = drinkPlan.event_name || 'your upcoming event';
 
