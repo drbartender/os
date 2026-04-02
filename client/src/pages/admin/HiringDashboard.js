@@ -289,7 +289,7 @@ export default function HiringDashboard() {
                       const isEditing = editingStatus === a.id;
 
                       return (
-                        <tr key={a.id} onClick={() => navigate(`/admin/staffing/applications/${a.id}`)}>
+                        <tr key={a.id} onClick={() => navigate(`/admin/staffing/applications/${a.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/staffing/applications/${a.id}`)} tabIndex={0} role="link">
                           <td>
                             <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{a.full_name}</div>
                             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{a.email}</div>
@@ -399,7 +399,7 @@ export default function HiringDashboard() {
                     {filteredUsers.map(u => {
                       const pct = calcPct(u);
                       return (
-                        <tr key={u.id} onClick={() => navigate(`/admin/staffing/users/${u.id}`)}>
+                        <tr key={u.id} onClick={() => navigate(`/admin/staffing/users/${u.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/staffing/users/${u.id}`)} tabIndex={0} role="link">
                           <td>
                             <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{u.preferred_name || '—'}</div>
                             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{u.email}</div>

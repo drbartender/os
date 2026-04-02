@@ -16,6 +16,7 @@ const EMPTY_FORM = {
   excerpt: '',
   cover_image_url: '',
   published: false,
+  published_at: '',
   blocks: [{ type: 'text', content: '' }],
 };
 
@@ -41,9 +42,11 @@ function BlockEditor({ blocks, onChange, onUploadImage }) {
   };
 
   const addBlock = (type) => {
-    const block = type === 'text'
-      ? { type: 'text', content: '' }
-      : { type: 'image', url: '', caption: '' };
+    const block = type === 'heading'
+      ? { type: 'heading', content: '', level: 'h2' }
+      : type === 'text'
+        ? { type: 'text', content: '' }
+        : { type: 'image', url: '', caption: '' };
     onChange([...blocks, block]);
   };
 
@@ -58,7 +61,7 @@ function BlockEditor({ blocks, onChange, onUploadImage }) {
         <div key={i} className="blog-editor-block">
           <div className="blog-editor-block-header">
             <span className="blog-editor-block-type">
-              {block.type === 'text' ? 'Text' : 'Image'}
+              {block.type === 'heading' ? 'Heading' : block.type === 'text' ? 'Text' : 'Image'}
             </span>
             <div className="blog-editor-block-actions">
               <button type="button" className="btn-icon" onClick={() => moveBlock(i, -1)} disabled={i === 0} title="Move up">&uarr;</button>
@@ -66,7 +69,28 @@ function BlockEditor({ blocks, onChange, onUploadImage }) {
               <button type="button" className="btn-icon btn-icon-danger" onClick={() => removeBlock(i)} disabled={blocks.length <= 1} title="Remove">&times;</button>
             </div>
           </div>
-          {block.type === 'text' ? (
+          {block.type === 'heading' ? (
+            <div className="blog-editor-heading-block">
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <select
+                  className="form-input"
+                  value={block.level || 'h2'}
+                  onChange={e => updateBlock(i, { level: e.target.value })}
+                  style={{ width: '80px' }}
+                >
+                  <option value="h2">H2</option>
+                  <option value="h3">H3</option>
+                </select>
+                <input
+                  className="form-input"
+                  value={block.content}
+                  onChange={e => updateBlock(i, { content: e.target.value })}
+                  placeholder="Section heading..."
+                  style={{ flex: 1 }}
+                />
+              </div>
+            </div>
+          ) : block.type === 'text' ? (
             <textarea
               className="form-textarea blog-editor-textarea"
               value={block.content}
@@ -105,6 +129,7 @@ function BlockEditor({ blocks, onChange, onUploadImage }) {
         </div>
       ))}
       <div className="blog-editor-add-buttons">
+        <button type="button" className="btn btn-secondary" onClick={() => addBlock('heading')}>+ Heading</button>
         <button type="button" className="btn btn-secondary" onClick={() => addBlock('text')}>+ Text Block</button>
         <button type="button" className="btn btn-secondary" onClick={() => addBlock('image')}>+ Image Block</button>
       </div>
@@ -175,9 +200,22 @@ function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, o
         />
       </div>
 
-      <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-        <input type="checkbox" id="blog-published" checked={form.published} onChange={e => setForm(f => ({ ...f, published: e.target.checked }))} />
-        <label htmlFor="blog-published" className="form-label" style={{ margin: 0 }}>Published</label>
+      <div className="two-col">
+        <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <input type="checkbox" id="blog-published" checked={form.published} onChange={e => setForm(f => ({ ...f, published: e.target.checked }))} />
+          <label htmlFor="blog-published" className="form-label" style={{ margin: 0 }}>Published</label>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Publish Date</label>
+          <input
+            className="form-input"
+            type="date"
+            value={form.published_at ? form.published_at.slice(0, 10) : ''}
+            onChange={e => setForm(f => ({ ...f, published_at: e.target.value || '' }))}
+            placeholder="Leave blank for current date"
+          />
+          <small style={{ color: 'var(--text-muted)', marginTop: '0.25rem', display: 'block' }}>Leave blank to use today's date when published</small>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
@@ -245,6 +283,7 @@ export default function BlogDashboard() {
     setError('');
     try {
       const { blocks, _prevTitle, ...rest } = createForm;
+      if (!rest.published_at) delete rest.published_at;
       await api.post('/admin/blog', { ...rest, body: serializeBlocks(blocks) });
       setCreateForm({ ...EMPTY_FORM });
       setShowCreateForm(false);
@@ -263,6 +302,7 @@ export default function BlogDashboard() {
       excerpt: post.excerpt || '',
       cover_image_url: post.cover_image_url || '',
       published: post.published,
+      published_at: post.published_at || '',
       blocks: parseBody(post.body),
       _prevTitle: post.title,
     });
@@ -273,6 +313,7 @@ export default function BlogDashboard() {
     setError('');
     try {
       const { blocks, _prevTitle, ...rest } = editForm;
+      if (!rest.published_at) delete rest.published_at;
       await api.put(`/admin/blog/${editingId}`, { ...rest, body: serializeBlocks(blocks) });
       setEditingId(null);
       fetchPosts();

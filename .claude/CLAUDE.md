@@ -148,3 +148,79 @@ The rule: **if you change X, search the codebase for everything that depends on 
 After any significant change (new feature, new route, schema change, new integration), update:
 1. **README.md** — reflect new features, env vars, or setup steps
 2. **ARCHITECTURE.md** — reflect new routes, schema tables, integrations, or deployment changes
+
+---
+
+## Code Verification System
+
+This project is vibe-coded — the author relies on Claude to catch issues. Verification is split into three tiers to balance thoroughness with cost.
+
+### Tier 1: Inline Self-Check (Every Change — Free)
+
+Before presenting ANY code change, silently verify:
+
+**Security**
+- All SQL uses parameterized queries (`$1`, `$2`) — never string concatenation
+- All non-public routes have `auth` middleware; admin routes check `req.user.role`
+- Endpoints filter by `req.user.id` to prevent accessing other users' data (IDOR)
+- No secrets hardcoded — everything from `process.env`
+- User input validated on server side (type, length, format)
+- File uploads validated with magic bytes via `fileValidation.js`
+- Error responses never leak stack traces, SQL, or internals
+
+**Data Integrity**
+- Multi-table writes wrapped in `BEGIN/COMMIT/ROLLBACK`
+- Schema changes are idempotent (`IF NOT EXISTS`)
+- Money stored as integer cents, never floats
+- Changed columns updated in ALL routes that touch that table
+
+**Frontend**
+- Async ops have loading, error, and empty states
+- API calls go through `utils/api.js` — never raw fetch/axios
+- New routes added to `App.js` with correct auth guards
+- Client-side validation matches server-side rules
+
+**Logic**
+- Null/undefined handled for DB results, API responses, optional fields
+- Date ranges and pagination boundaries correct
+- No race conditions on payment/mutation endpoints
+
+### Tier 2: Automatic Lightweight Agents (After Completing a Feature)
+
+After finishing a feature or significant change (new route, new page, schema change), automatically launch these **in parallel** using the haiku model to keep costs low:
+
+**Security Scan Agent** — Grep the changed files for:
+- String concatenation in SQL queries
+- Missing `auth` middleware on route files
+- `dangerouslySetInnerHTML` usage
+- Hardcoded strings that look like keys/tokens
+- Missing ownership checks (`req.user.id`) on data access
+Report only confirmed issues, not style nits.
+
+**Consistency Agent** — For each changed file, verify:
+- If a DB column was added/changed: grep all routes that SELECT/INSERT/UPDATE that table — are they all updated?
+- If a route was added: is it mounted in `index.js`? Does `App.js` have a corresponding frontend route?
+- If pricing logic changed: do all consumers (`ProposalCreate`, `ProposalDetail`, `PricingBreakdown`) reflect it?
+- If an API response shape changed: do all frontend consumers handle the new shape?
+Report only actual mismatches found.
+
+**Error Handling Agent** — Scan changed code for:
+- `async` functions missing try/catch
+- `.query()` calls without error handling
+- API calls in React without `.catch()` or error state
+- Unhandled promise rejections
+Report only missing error handling, not style.
+
+### Tier 3: Deep Review Agents (On-Demand Only — Expensive)
+
+Only run when the user explicitly asks (e.g., "review security", "full review", "review before deploy"):
+
+**Full Security Audit** — Scan the ENTIRE codebase for OWASP Top 10 vulnerabilities, auth bypass paths, missing rate limiting, insecure token handling, CORS misconfig.
+
+**Full Code Quality Review** — Dead code, duplicated logic, functions over 50 lines, unused imports, console.logs left in production, naming inconsistencies.
+
+**UI/UX Review** — Use the ui-ux-reviewer agent to screenshot key pages, check mobile responsiveness, accessibility, visual consistency.
+
+**Database Review** — Analyze schema for missing indexes, N+1 query patterns, unprotected cascading deletes, missing foreign keys.
+
+**Full Pre-Deploy Review** — Run ALL of the above. Reserve for deploy prep only.

@@ -7,6 +7,8 @@ import api from './utils/api';
 import Website from './pages/website/Website';
 import Register from './pages/Register';
 import Login from './pages/Login';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import Application from './pages/Application';
 import ApplicationStatus from './pages/ApplicationStatus';
 import Welcome from './pages/Welcome';
@@ -79,7 +81,7 @@ function getHomePath(user) {
 /** Requires auth. adminOnly also allows managers (they share the dashboard). */
 function ProtectedRoute({ children, adminOnly = false }) {
   const { user, loading } = useAuth();
-  if (loading) return <div className="loading"><div className="spinner" />Loading...</div>;
+  if (loading) return <div className="loading" role="status" aria-live="polite"><div className="spinner" aria-hidden="true" />Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
   if (adminOnly && user.role !== 'admin' && user.role !== 'manager') {
     return <Navigate to={getHomePath(user)} replace />;
@@ -89,7 +91,7 @@ function ProtectedRoute({ children, adminOnly = false }) {
 
 function RedirectIfLoggedIn({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <div className="loading"><div className="spinner" />Loading...</div>;
+  if (loading) return <div className="loading" role="status" aria-live="polite"><div className="spinner" aria-hidden="true" />Loading...</div>;
   if (user) return <Navigate to={getHomePath(user)} replace />;
   return children;
 }
@@ -97,7 +99,7 @@ function RedirectIfLoggedIn({ children }) {
 /** Onboarding flow — accessible for hired staff still working through steps */
 function RequireHired({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <div className="loading"><div className="spinner" />Loading...</div>;
+  if (loading) return <div className="loading" role="status" aria-live="polite"><div className="spinner" aria-hidden="true" />Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
   const allowed = ['hired', 'in_progress', 'submitted', 'reviewed', 'approved'];
   if (!allowed.includes(user.onboarding_status)) {
@@ -109,7 +111,7 @@ function RequireHired({ children }) {
 /** Requires completed onboarding (submitted / reviewed / approved) */
 function RequirePortal({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <div className="loading"><div className="spinner" />Loading...</div>;
+  if (loading) return <div className="loading" role="status" aria-live="polite"><div className="spinner" aria-hidden="true" />Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
   const allowed = ['submitted', 'reviewed', 'approved'];
   if (!allowed.includes(user.onboarding_status)) {
@@ -135,8 +137,8 @@ function PublicWebsiteRoutes() {
         {/* These public token-based routes work on both domains */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
-        <Route path="/blog" element={<Blog />} />
-        <Route path="/blog/:slug" element={<BlogPost />} />
+        <Route path="/labnotes" element={<Blog />} />
+        <Route path="/labnotes/:slug" element={<BlogPost />} />
         <Route path="/login" element={<ClientLogin />} />
         <Route path="/my-proposals" element={<ClientDashboard />} />
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -160,14 +162,16 @@ function AppRoutes() {
       <Route path="/proposal/:token" element={<ProposalView />} />
       {/* Website accessible on admin domain for preview */}
       <Route path="/website" element={<Website />} />
-      <Route path="/blog" element={<Blog />} />
-      <Route path="/blog/:slug" element={<BlogPost />} />
+      <Route path="/labnotes" element={<Blog />} />
+      <Route path="/labnotes/:slug" element={<BlogPost />} />
       {/* Client portal */}
       <Route path="/client-login" element={<ClientLogin />} />
       <Route path="/my-proposals" element={<ClientDashboard />} />
 
       <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
       <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
+      <Route path="/forgot-password" element={<RedirectIfLoggedIn><ForgotPassword /></RedirectIfLoggedIn>} />
+      <Route path="/reset-password/:token" element={<RedirectIfLoggedIn><ResetPassword /></RedirectIfLoggedIn>} />
 
       {/* Application flow (logged in, not yet hired) */}
       <Route path="/apply" element={<ProtectedRoute><Application /></ProtectedRoute>} />

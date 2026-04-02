@@ -5,7 +5,7 @@ export default function BrandLogo({ admin = false }) {
 
   return (
     <div className="site-brand">
-      <div className="site-logo-mark" aria-hidden>
+      <div className="site-logo-mark" aria-hidden={!missingLogo}>
         {!missingLogo ? (
           <img
             src="/images/logo.png"

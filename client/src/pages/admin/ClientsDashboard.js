@@ -53,7 +53,7 @@ export default function ClientsDashboard() {
           <h1 style={{ fontFamily: 'var(--font-display)', marginBottom: '0.2rem' }}>Clients</h1>
           <p className="text-muted text-small">Client relationships and lead management</p>
         </div>
-        <button className="btn" onClick={() => setShowCreate(!showCreate)}>
+        <button className="btn btn-primary" onClick={() => setShowCreate(!showCreate)}>
           {showCreate ? 'Cancel' : '+ New Client'}
         </button>
       </div>
@@ -119,7 +119,7 @@ export default function ClientsDashboard() {
           </thead>
           <tbody>
             {clients.map(c => (
-              <tr key={c.id} onClick={() => navigate(`/admin/clients/${c.id}`)} style={{ cursor: 'pointer' }}>
+              <tr key={c.id} onClick={() => navigate(`/admin/clients/${c.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/clients/${c.id}`)} tabIndex={0} role="link" style={{ cursor: 'pointer' }}>
                 <td><strong>{c.name}</strong></td>
                 <td>{c.email || '—'}</td>
                 <td>{formatPhone(c.phone)}</td>

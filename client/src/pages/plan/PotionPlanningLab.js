@@ -259,8 +259,12 @@ export default function PotionPlanningLab() {
       <div className="auth-page">
         <div className="page-container" style={{ textAlign: 'center', paddingTop: '4rem' }}>
           <div className="card">
-            <h2>Oops!</h2>
-            <p className="text-muted">{error}</p>
+            <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>⚗️</div>
+            <h2 style={{ fontFamily: 'var(--font-display)', marginBottom: '0.75rem' }}>Something Went Wrong</h2>
+            <p className="text-muted" style={{ marginBottom: '1rem' }}>{error}</p>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+              This link may have expired. Please contact Dr. Bartender for a new link.
+            </p>
           </div>
         </div>
       </div>

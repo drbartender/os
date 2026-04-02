@@ -63,7 +63,7 @@ export default function ProposalsDashboard() {
     <div className="page-container wide">
       <div className="flex-between mb-2">
         <h1 style={{ fontFamily: 'var(--font-display)' }}>Proposals</h1>
-        <button className="btn" onClick={() => navigate('/admin/proposals/new')}>
+        <button className="btn btn-primary" onClick={() => navigate('/admin/proposals/new')}>
           + New Proposal
         </button>
       </div>
@@ -115,7 +115,7 @@ export default function ProposalsDashboard() {
           </thead>
           <tbody>
             {proposals.map(p => (
-              <tr key={p.id} onClick={() => navigate(`/admin/proposals/${p.id}`)} style={{ cursor: 'pointer' }}>
+              <tr key={p.id} onClick={() => navigate(`/admin/proposals/${p.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/proposals/${p.id}`)} tabIndex={0} role="link" style={{ cursor: 'pointer' }}>
                 <td>
                   <strong>{p.client_name || '—'}</strong>
                   {p.client_email && <div className="text-muted text-small">{p.client_email}</div>}

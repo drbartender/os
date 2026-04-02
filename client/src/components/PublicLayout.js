@@ -11,7 +11,7 @@ export default function PublicLayout({ children }) {
 
   const navLinks = [
     { label: 'Home', to: '/' },
-    { label: 'Blog', to: '/blog' },
+    { label: 'Blog', to: '/labnotes' },
     { label: isAuthed ? 'My Proposals' : 'Sign In', to: isAuthed ? '/my-proposals' : '/login' },
   ];
 
@@ -53,7 +53,7 @@ export default function PublicLayout({ children }) {
           </div>
           <div className="ws-footer-links">
             <Link to="/">Home</Link>
-            <Link to="/blog">Blog</Link>
+            <Link to="/labnotes">Blog</Link>
             <Link to={isAuthed ? '/my-proposals' : '/login'}>{isAuthed ? 'My Proposals' : 'Sign In'}</Link>
           </div>
           <div className="ws-footer-copy">

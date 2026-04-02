@@ -22,6 +22,10 @@ function renderBlocks(bodyStr) {
   return (
     <div className="blog-post-body">
       {blocks.map((block, i) => {
+        if (block.type === 'heading') {
+          const Tag = block.level === 'h3' ? 'h3' : 'h2';
+          return <Tag key={i} className="blog-post-subheading">{block.content}</Tag>;
+        }
         if (block.type === 'image') {
           return (
             <figure key={i} className="blog-post-figure">
@@ -87,7 +91,7 @@ export default function BlogPost() {
           <div className="blog-post-not-found">
             <h1>Post Not Found</h1>
             <p>The post you're looking for doesn't exist or has been removed.</p>
-            <Link to="/blog" className="btn btn-primary">Back to Blog</Link>
+            <Link to="/labnotes" className="btn btn-primary">Back to Blog</Link>
           </div>
         </section>
       </PublicLayout>
@@ -103,7 +107,7 @@ export default function BlogPost() {
           </div>
         )}
         <div className="blog-post-content">
-          <Link to="/blog" className="blog-back-link">&larr; Back to Blog</Link>
+          <Link to="/labnotes" className="blog-back-link">&larr; Back to Blog</Link>
           <h1>{post.title}</h1>
           <p className="blog-post-date">{formatDate(post.published_at)}</p>
           {renderBlocks(post.body)}

@@ -594,7 +594,7 @@ router.put('/users/:id/seniority', auth, adminOnly, async (req, res) => {
           hire_date = COALESCE($2, hire_date)
       WHERE user_id = $3
     `, [
-      seniority_adjustment != null ? seniority_adjustment : null,
+      seniority_adjustment !== null && seniority_adjustment !== undefined ? seniority_adjustment : null,
       hire_date || null,
       req.params.id
     ]);
@@ -727,12 +727,16 @@ router.get('/blog', auth, adminOnly, async (req, res) => {
 // Create post
 router.post('/blog', auth, adminOnly, async (req, res) => {
   try {
-    let { title, slug, excerpt, body, cover_image_url, published } = req.body;
+    let { title, slug, excerpt, body, cover_image_url, published, published_at } = req.body; // eslint-disable-line prefer-const
     if (!title || !body) {
       return res.status(400).json({ error: 'Title and body are required' });
     }
     if (!slug) slug = slugify(title);
-    const published_at = published ? new Date() : null;
+    if (published_at) {
+      published_at = new Date(published_at);
+    } else {
+      published_at = published ? new Date() : null;
+    }
 
     const result = await pool.query(
       `INSERT INTO blog_posts (title, slug, excerpt, body, cover_image_url, published, published_at)
@@ -781,7 +785,7 @@ router.post('/blog/upload-image', auth, adminOnly, async (req, res) => {
 router.put('/blog/:id', auth, adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, slug, excerpt, body, cover_image_url, published } = req.body;
+    const { title, slug, excerpt, body, cover_image_url, published, published_at: reqPublishedAt } = req.body;
 
     // Fetch current state to check publish transition
     const current = await pool.query('SELECT * FROM blog_posts WHERE id = $1', [id]);
@@ -790,10 +794,14 @@ router.put('/blog/:id', auth, adminOnly, async (req, res) => {
     }
 
     const post = current.rows[0];
-    // Set published_at on first publish (false → true and no existing published_at)
-    let published_at = post.published_at;
-    if (published && !post.published && !post.published_at) {
+    // Use explicitly provided date, or auto-set on first publish
+    let published_at;
+    if (reqPublishedAt) {
+      published_at = new Date(reqPublishedAt);
+    } else if (published && !post.published && !post.published_at) {
       published_at = new Date();
+    } else {
+      published_at = post.published_at;
     }
 
     const result = await pool.query(

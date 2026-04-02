@@ -75,6 +75,10 @@ export default function Login() {
               </button>
             </form>
 
+            <p className="text-center text-small" style={{ marginTop: '0.75rem' }}>
+              <Link to="/forgot-password">Forgot your password?</Link>
+            </p>
+
             <div className="divider" />
             <p className="text-center text-small">
               New contractor? <Link to="/register">Create your account</Link>

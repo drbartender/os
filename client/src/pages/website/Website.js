@@ -91,7 +91,7 @@ export default function Website() {
             <button onClick={() => scrollTo('why-us')}>Why Us</button>
             <button onClick={() => scrollTo('process')}>How It Works</button>
             <button onClick={() => scrollTo('faq')}>FAQ</button>
-            <a href="/blog">Blog</a>
+            <a href="/labnotes">Blog</a>
             <button className="ws-nav-cta" onClick={() => scrollTo('quote')}>Get a Quote</button>
           </nav>
         </div>
@@ -254,7 +254,7 @@ export default function Website() {
               <button onClick={() => scrollTo('why-us')}>Why Us</button>
               <button onClick={() => scrollTo('process')}>How It Works</button>
               <button onClick={() => scrollTo('faq')}>FAQ</button>
-              <a href="/blog">Blog</a>
+              <a href="/labnotes">Blog</a>
               <button onClick={() => scrollTo('quote')}>Get a Quote</button>
             </div>
             <div className="ws-footer-copy">

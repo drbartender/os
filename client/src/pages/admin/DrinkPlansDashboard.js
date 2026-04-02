@@ -75,7 +75,7 @@ export default function DrinkPlansDashboard() {
     <div className="page-container wide">
       <div className="flex-between mb-2">
         <h1 style={{ fontFamily: 'var(--font-display)' }}>Drink Plans</h1>
-        <button className="btn" onClick={() => setShowCreate(!showCreate)}>
+        <button className="btn btn-primary" onClick={() => setShowCreate(!showCreate)}>
           {showCreate ? 'Cancel' : '+ New Plan'}
         </button>
       </div>
@@ -181,7 +181,7 @@ export default function DrinkPlansDashboard() {
           </thead>
           <tbody>
             {plans.map(plan => (
-              <tr key={plan.id} onClick={() => navigate(`/admin/drink-plans/${plan.id}`)} style={{ cursor: 'pointer' }}>
+              <tr key={plan.id} onClick={() => navigate(`/admin/drink-plans/${plan.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/drink-plans/${plan.id}`)} tabIndex={0} role="link" style={{ cursor: 'pointer' }}>
                 <td>
                   <strong>{plan.client_name || '—'}</strong>
                   {plan.client_email && <div className="text-muted text-small">{plan.client_email}</div>}

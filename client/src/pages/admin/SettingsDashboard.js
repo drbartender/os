@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import CocktailMenuDashboard from './CocktailMenuDashboard';
+import ConfirmModal from '../../components/ConfirmModal';
 import api from '../../utils/api';
 
 const TABS = [
@@ -13,6 +14,7 @@ function CalendarSyncSection() {
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [showRegenConfirm, setShowRegenConfirm] = useState(false);
 
   const fetchToken = useCallback(async () => {
     try {
@@ -46,7 +48,6 @@ function CalendarSyncSection() {
   };
 
   const handleRegenerate = async () => {
-    if (!window.confirm('This will break any existing calendar subscriptions using the current URL. Are you sure?')) return;
     setRegenerating(true);
     try {
       const res = await api.post('/calendar/token/regenerate');
@@ -55,6 +56,7 @@ function CalendarSyncSection() {
       console.error('Failed to regenerate token:', err);
     } finally {
       setRegenerating(false);
+      setShowRegenConfirm(false);
     }
   };
 
@@ -89,11 +91,18 @@ function CalendarSyncSection() {
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <button
             className="btn btn-secondary btn-sm"
-            onClick={handleRegenerate}
+            onClick={() => setShowRegenConfirm(true)}
             disabled={regenerating}
           >
             {regenerating ? 'Regenerating...' : 'Regenerate URL'}
           </button>
+          <ConfirmModal
+            isOpen={showRegenConfirm}
+            title="Regenerate Calendar URL?"
+            message="This will break any existing calendar subscriptions using the current URL. Are you sure?"
+            onConfirm={handleRegenerate}
+            onCancel={() => setShowRegenConfirm(false)}
+          />
           <span style={{ fontSize: '0.78rem', color: 'var(--warm-brown)' }}>
             Anyone with this link can view your event calendar.
           </span>
@@ -148,6 +157,7 @@ function AutoAssignSettings() {
   const [saving, setSaving] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
   const [backfillResult, setBackfillResult] = useState(null);
+  const [showBackfillConfirm, setShowBackfillConfirm] = useState(false);
   const [form, setForm] = useState({
     auto_assign_default_days_before: '3',
     seniority_weight_events: '0.7',
@@ -178,7 +188,6 @@ function AutoAssignSettings() {
   };
 
   const handleBackfill = async () => {
-    if (!window.confirm('This will geocode all staff and shift addresses. It may take a while due to rate limits. Continue?')) return;
     setBackfilling(true);
     setBackfillResult(null);
     try {
@@ -188,6 +197,7 @@ function AutoAssignSettings() {
       setBackfillResult({ error: e.response?.data?.error || 'Backfill failed' });
     } finally {
       setBackfilling(false);
+      setShowBackfillConfirm(false);
     }
   };
 
@@ -245,9 +255,16 @@ function AutoAssignSettings() {
         <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
           Geocode all staff addresses and shift locations that don't have coordinates yet. Also backfills hire dates for existing staff. This is rate-limited and may take a while.
         </p>
-        <button className="btn btn-secondary btn-sm" disabled={backfilling} onClick={handleBackfill}>
+        <button className="btn btn-secondary btn-sm" disabled={backfilling} onClick={() => setShowBackfillConfirm(true)}>
           {backfilling ? 'Backfilling…' : 'Run Backfill'}
         </button>
+        <ConfirmModal
+          isOpen={showBackfillConfirm}
+          title="Run Geocode Backfill?"
+          message="This will geocode all staff and shift addresses. It may take a while due to rate limits. Continue?"
+          onConfirm={handleBackfill}
+          onCancel={() => setShowBackfillConfirm(false)}
+        />
         {backfillResult && (
           <div className={`alert ${backfillResult.error ? 'alert-error' : 'alert-success'}`} style={{ marginTop: '0.75rem' }}>
             {backfillResult.error

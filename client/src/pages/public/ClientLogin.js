@@ -124,6 +124,7 @@ export default function ClientLogin() {
                 placeholder="000000"
                 maxLength={6}
                 inputMode="numeric"
+                autoComplete="one-time-code"
                 pattern="[0-9]{6}"
                 required
                 autoFocus

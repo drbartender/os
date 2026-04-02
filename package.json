@@ -7,7 +7,11 @@
     "dev": "concurrently \"nodemon server/index.js\" \"cd client && npm start\"",
     "build": "cd client && npm run build",
     "install:all": "npm install && cd client && npm install",
-    "seed": "node server/db/seed.js"
+    "seed": "node server/db/seed.js",
+    "lint": "eslint server/",
+    "lint:fix": "eslint server/ --fix",
+    "audit:check": "npm audit --omit=dev || true",
+    "prepare": "husky"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.540.0",
@@ -28,7 +32,16 @@
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
+    "eslint": "^10.1.0",
+    "eslint-plugin-security": "^4.0.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "nodemon": "^3.0.2"
+  },
+  "lint-staged": {
+    "server/**/*.js": [
+      "eslint"
+    ]
   },
   "engines": {
     "node": ">=18.0.0"

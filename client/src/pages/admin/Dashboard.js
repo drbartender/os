@@ -106,7 +106,7 @@ export default function Dashboard() {
               <thead><tr><th>Event</th><th>Date</th><th>Client</th></tr></thead>
               <tbody>
                 {upcomingEvents.slice(0, 5).map(e => (
-                  <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/events/${e.id}`)}>
+                  <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/events/${e.id}`)} onKeyDown={(e2) => e2.key === 'Enter' && navigate(`/admin/events/${e.id}`)} tabIndex={0} role="link">
                     <td>{e.event_name || '—'}</td>
                     <td>{fmtDate(e.event_date)}</td>
                     <td>{e.client_name || '—'}</td>
@@ -130,7 +130,7 @@ export default function Dashboard() {
               <thead><tr><th>Client</th><th>Status</th><th>Total</th></tr></thead>
               <tbody>
                 {pendingProposals.slice(0, 5).map(p => (
-                  <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/proposals/${p.id}`)}>
+                  <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/proposals/${p.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/proposals/${p.id}`)} tabIndex={0} role="link">
                     <td>{p.client_name || p.client_email || '—'}</td>
                     <td><span className={`badge ${p.status === 'sent' || p.status === 'viewed' ? 'badge-submitted' : 'badge-inprogress'}`}>{p.status}</span></td>
                     <td>{formatCurrency(p.total_price)}</td>
@@ -154,7 +154,7 @@ export default function Dashboard() {
               <thead><tr><th>Client</th><th>Event</th><th>Balance</th></tr></thead>
               <tbody>
                 {paymentsDue.slice(0, 5).map(p => (
-                  <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/proposals/${p.id}`)}>
+                  <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/proposals/${p.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/proposals/${p.id}`)} tabIndex={0} role="link">
                     <td>{p.client_name || p.client_email || '—'}</td>
                     <td>{p.event_name || fmtDate(p.event_date)}</td>
                     <td>{formatCurrency(p.total_price)}</td>
@@ -178,7 +178,7 @@ export default function Dashboard() {
               <thead><tr><th>Event</th><th>Date</th><th>Filled</th></tr></thead>
               <tbody>
                 {unstaffedEvents.slice(0, 5).map(e => (
-                  <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/events/${e.id}`)}>
+                  <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/events/${e.id}`)} onKeyDown={(e2) => e2.key === 'Enter' && navigate(`/admin/events/${e.id}`)} tabIndex={0} role="link">
                     <td>{e.event_name || '—'}</td>
                     <td>{fmtDate(e.event_date)}</td>
                     <td>{Number(e.request_count || 0)} / {Number(e.bartenders_needed || e.positions_needed || 1)}</td>
@@ -202,7 +202,7 @@ export default function Dashboard() {
               <thead><tr><th>Applicant</th><th>Applied</th></tr></thead>
               <tbody>
                 {staffingRequests.slice(0, 5).map(a => (
-                  <tr key={a.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/staffing/applications/${a.id}`)}>
+                  <tr key={a.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/staffing/applications/${a.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/staffing/applications/${a.id}`)} tabIndex={0} role="link">
                     <td>{a.email}</td>
                     <td>{fmtDate(a.created_at)}</td>
                   </tr>

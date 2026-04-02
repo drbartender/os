@@ -849,6 +849,15 @@ CREATE TRIGGER update_blog_posts_updated_at
   BEFORE UPDATE ON blog_posts
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- ─── Password Reset Tokens ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ─── Client Auth (OTP login) ────────────────────────────────────────
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token_expires_at TIMESTAMPTZ;

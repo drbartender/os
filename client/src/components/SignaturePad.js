@@ -115,9 +115,11 @@ export default function SignaturePad({ onChange, value }) {
   return (
     <div>
       {/* Mode toggle */}
-      <div className="sig-mode-toggle">
+      <div className="sig-mode-toggle" role="tablist" aria-label="Signature method">
         <button
           type="button"
+          role="tab"
+          aria-selected={mode === 'draw'}
           className={`sig-mode-btn ${mode === 'draw' ? 'sig-mode-active' : ''}`}
           onClick={() => switchMode('draw')}
         >
@@ -125,6 +127,8 @@ export default function SignaturePad({ onChange, value }) {
         </button>
         <button
           type="button"
+          role="tab"
+          aria-selected={mode === 'type'}
           className={`sig-mode-btn ${mode === 'type' ? 'sig-mode-active' : ''}`}
           onClick={() => switchMode('type')}
         >

@@ -52,18 +52,6 @@ export default function Welcome() {
             This will take about 10–15 minutes — short, but important.
           </p>
 
-          <ul style={{ paddingLeft: '1.25rem', marginBottom: '1.5rem' }}>
-            {[
-              'Review the Field Guide',
-              'Sign your acknowledgment',
-              'Upload your W-9 and payment info',
-              'Join our WhatsApp crew chat'
-            ].map(item => (
-              <li key={item} style={{ marginBottom: '0.4rem', fontSize: '0.95rem', color: 'var(--deep-brown)' }}>
-                {item}
-              </li>
-            ))}
-          </ul>
 
           <div className="alert alert-info">
             Once submitted, you'll get an email invite to view and request shifts.

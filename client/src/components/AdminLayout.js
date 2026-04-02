@@ -38,7 +38,7 @@ export default function AdminLayout() {
           <BrandLogo admin />
         </div>
         <div className="header-actions">
-          <span className="header-user">{user?.email}</span>
+          <span className="header-user">{user?.name || user?.email}</span>
           <button className="btn btn-secondary btn-sm" onClick={handleLogout}>Sign Out</button>
         </div>
       </header>

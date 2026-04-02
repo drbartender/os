@@ -59,7 +59,7 @@ export default function ClientDetail() {
         <h1 style={{ fontFamily: 'var(--font-display)' }}>{client.name}</h1>
         <div className="flex gap-1">
           <button className="btn btn-secondary" onClick={() => navigate('/admin/clients')}>Back</button>
-          <button className="btn" onClick={() => navigate('/admin/proposals/new')}>+ New Proposal</button>
+          <button className="btn btn-primary" onClick={() => navigate('/admin/proposals/new')}>+ New Proposal</button>
         </div>
       </div>
 
