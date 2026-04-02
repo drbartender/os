@@ -848,3 +848,7 @@ DROP TRIGGER IF EXISTS update_blog_posts_updated_at ON blog_posts;
 CREATE TRIGGER update_blog_posts_updated_at
   BEFORE UPDATE ON blog_posts
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ─── Client Auth (OTP login) ────────────────────────────────────────
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token TEXT;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token_expires_at TIMESTAMPTZ;
