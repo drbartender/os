@@ -43,7 +43,6 @@ export default function Register() {
         <div style={{ width: '100%', maxWidth: 460 }}>
           <div className="text-center mb-3">
             <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>⚗️</div>
-            <h1 style={{ marginBottom: '0.25rem' }}>Staff Portal</h1>
             <p className="text-muted italic">Apply to join the Dr. Bartender team</p>
           </div>
 

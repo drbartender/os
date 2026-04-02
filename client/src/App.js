@@ -59,7 +59,7 @@ function getHomePath(user) {
     case 'applied':
     case 'interviewing':
       return '/application-status';
-    // Completed onboarding → staff portal
+    // Completed onboarding → portal
     case 'submitted':
     case 'reviewed':
     case 'approved':
@@ -103,7 +103,7 @@ function RequireHired({ children }) {
   return children;
 }
 
-/** Staff portal — requires completed onboarding (submitted / reviewed / approved) */
+/** Requires completed onboarding (submitted / reviewed / approved) */
 function RequirePortal({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="loading"><div className="spinner" />Loading...</div>;
@@ -172,7 +172,7 @@ function AppRoutes() {
         <Route path="/complete" element={<Completion />} />
       </Route>
 
-      {/* Staff portal (onboarding completed) */}
+      {/* Portal (onboarding completed) */}
       <Route path="/portal" element={<RequirePortal><StaffPortal /></RequirePortal>} />
 
       {/* Admin + Manager shell */}
