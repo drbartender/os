@@ -1,14 +1,18 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import BrandLogo from './BrandLogo';
+import { useClientAuth } from '../context/ClientAuthContext';
 
 export default function PublicLayout({ children }) {
   const [mobileNav, setMobileNav] = useState(false);
   const location = useLocation();
+  const clientAuth = useClientAuth();
+  const isAuthed = clientAuth?.isClientAuthenticated;
 
   const navLinks = [
     { label: 'Home', to: '/' },
     { label: 'Blog', to: '/blog' },
+    { label: isAuthed ? 'My Proposals' : 'Sign In', to: isAuthed ? '/my-proposals' : '/login' },
   ];
 
   return (
@@ -50,6 +54,7 @@ export default function PublicLayout({ children }) {
           <div className="ws-footer-links">
             <Link to="/">Home</Link>
             <Link to="/blog">Blog</Link>
+            <Link to={isAuthed ? '/my-proposals' : '/login'}>{isAuthed ? 'My Proposals' : 'Sign In'}</Link>
           </div>
           <div className="ws-footer-copy">
             &copy; {new Date().getFullYear()} Dr. Bartender. All rights reserved.

@@ -3083,3 +3083,235 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   .blog-index-section { padding: 2rem 1rem 3rem; }
   .blog-editor-add-buttons { flex-direction: column; }
 }
+
+/* === CLIENT PORTAL === */
+
+.client-login-section {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 60vh;
+  padding: 3rem 1.5rem;
+}
+
+.client-login-card {
+  max-width: 420px;
+  width: 100%;
+  padding: 2.5rem 2rem;
+  text-align: center;
+}
+
+.client-login-card h2 {
+  font-family: var(--font-display);
+  color: var(--deep-brown);
+  margin-bottom: 0.5rem;
+}
+
+.client-login-subtitle {
+  color: var(--text-muted);
+  margin-bottom: 1.5rem;
+  font-size: 0.95rem;
+}
+
+.client-label {
+  display: block;
+  text-align: left;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  color: var(--deep-brown);
+  margin-bottom: 0.4rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.client-input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-family: var(--font-body);
+  font-size: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--cream);
+  color: var(--deep-brown);
+  margin-bottom: 1rem;
+  transition: border-color 0.2s;
+}
+
+.client-input:focus {
+  outline: none;
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px rgba(193, 125, 60, 0.15);
+}
+
+.client-otp-input {
+  text-align: center;
+  font-size: 1.75rem;
+  letter-spacing: 0.5rem;
+  font-weight: bold;
+}
+
+.client-btn-primary {
+  width: 100%;
+  background: var(--warm-brown);
+  color: var(--cream-text);
+  border: none;
+  padding: 0.75rem 1.5rem;
+  font-family: var(--font-display);
+  font-size: 1rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.2s;
+  text-align: center;
+  display: block;
+  text-decoration: none;
+}
+
+.client-btn-primary:hover { background: var(--deep-brown); }
+.client-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.client-btn-outline {
+  background: transparent;
+  color: var(--cream-text);
+  border: 1px solid var(--cream-text);
+  padding: 0.5rem 1.25rem;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.client-btn-outline:hover {
+  background: var(--cream-text);
+  color: var(--deep-brown);
+}
+
+.client-resend-link {
+  background: none;
+  border: none;
+  color: var(--warm-brown);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  cursor: pointer;
+  margin-top: 0.75rem;
+  text-decoration: underline;
+  display: block;
+  width: 100%;
+  text-align: center;
+}
+
+.client-resend-link:hover { color: var(--deep-brown); }
+.client-resend-link:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.client-alert {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.client-alert-error {
+  background: #fdf2f2;
+  color: var(--error);
+  border: 1px solid #e8b4b4;
+}
+
+.client-alert-success {
+  background: #f2fdf4;
+  color: var(--success);
+  border: 1px solid #b4e8bb;
+}
+
+/* Client Dashboard */
+
+.client-dashboard-section {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem;
+}
+
+.client-dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+.client-dashboard-header h2 {
+  font-family: var(--font-display);
+  color: var(--cream-text);
+  margin: 0;
+}
+
+.client-proposals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1.25rem;
+}
+
+.client-proposal-card {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.client-proposal-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.client-proposal-card-header h3 {
+  font-family: var(--font-display);
+  color: var(--deep-brown);
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.client-proposal-card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.client-proposal-detail {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: var(--deep-brown);
+}
+
+.client-detail-label {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.client-btn-view {
+  margin-top: auto;
+}
+
+.client-empty-card {
+  text-align: center;
+  padding: 3rem 2rem;
+}
+
+.client-empty-card h3 {
+  color: var(--deep-brown);
+  margin-bottom: 0.5rem;
+}
+
+@media (max-width: 600px) {
+  .client-dashboard-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  .client-proposals-grid {
+    grid-template-columns: 1fr;
+  }
+  .client-login-card {
+    padding: 2rem 1.25rem;
+  }
+}

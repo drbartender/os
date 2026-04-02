@@ -38,6 +38,9 @@ import ProposalView from './pages/proposal/ProposalView';
 import BlogDashboard from './pages/admin/BlogDashboard';
 import Blog from './pages/public/Blog';
 import BlogPost from './pages/public/BlogPost';
+import ClientLogin from './pages/public/ClientLogin';
+import ClientDashboard from './pages/public/ClientDashboard';
+import { ClientAuthProvider } from './context/ClientAuthContext';
 
 /** Check if we're on the public marketing site (drbartender.com) vs admin subdomain */
 function isPublicSite() {
@@ -126,15 +129,19 @@ function ApiAuthSetup({ children }) {
 
 function PublicWebsiteRoutes() {
   return (
-    <Routes>
-      <Route path="/" element={<Website />} />
-      {/* These public token-based routes work on both domains */}
-      <Route path="/plan/:token" element={<PotionPlanningLab />} />
-      <Route path="/proposal/:token" element={<ProposalView />} />
-      <Route path="/blog" element={<Blog />} />
-      <Route path="/blog/:slug" element={<BlogPost />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <ClientAuthProvider>
+      <Routes>
+        <Route path="/" element={<Website />} />
+        {/* These public token-based routes work on both domains */}
+        <Route path="/plan/:token" element={<PotionPlanningLab />} />
+        <Route path="/proposal/:token" element={<ProposalView />} />
+        <Route path="/blog" element={<Blog />} />
+        <Route path="/blog/:slug" element={<BlogPost />} />
+        <Route path="/login" element={<ClientLogin />} />
+        <Route path="/my-proposals" element={<ClientDashboard />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </ClientAuthProvider>
   );
 }
 
@@ -145,6 +152,7 @@ function AppRoutes() {
   if (publicSite) return <PublicWebsiteRoutes />;
 
   return (
+    <ClientAuthProvider>
     <Routes>
       <Route path="/" element={<Navigate to="/register" replace />} />
       {/* Public pages (no auth) */}
@@ -154,6 +162,9 @@ function AppRoutes() {
       <Route path="/website" element={<Website />} />
       <Route path="/blog" element={<Blog />} />
       <Route path="/blog/:slug" element={<BlogPost />} />
+      {/* Client portal */}
+      <Route path="/client-login" element={<ClientLogin />} />
+      <Route path="/my-proposals" element={<ClientDashboard />} />
 
       <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
       <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
@@ -201,6 +212,7 @@ function AppRoutes() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </ClientAuthProvider>
   );
 }
 

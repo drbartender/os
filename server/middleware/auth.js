@@ -33,4 +33,20 @@ const adminOnly = (req, res, next) => {
   next();
 };
 
-module.exports = { auth, adminOnly };
+const clientAuth = async (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'No token provided' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (decoded.role !== 'client') return res.status(401).json({ error: 'Invalid token' });
+    const result = await pool.query('SELECT id, name, email, phone FROM clients WHERE id = $1', [decoded.id]);
+    if (!result.rows[0]) return res.status(401).json({ error: 'Client not found' });
+    req.user = { ...result.rows[0], role: 'client' };
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
+module.exports = { auth, adminOnly, clientAuth };

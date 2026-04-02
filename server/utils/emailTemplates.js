@@ -114,6 +114,24 @@ function drinkPlanLink({ clientName, eventName, planUrl }) {
   };
 }
 
+function clientOtp({ name, otp }) {
+  const n = name || 'there';
+  return {
+    subject: 'Your Dr. Bartender login code',
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Your Login Code</h2>
+      <p>Hi ${n},</p>
+      <p>Use the code below to sign in to your Dr. Bartender client portal:</p>
+      <div style="text-align:center;margin:2rem 0;">
+        <span style="display:inline-block;padding:16px 32px;background:${BRAND.bg};border:2px solid ${BRAND.secondary};border-radius:8px;font-size:32px;font-weight:bold;letter-spacing:8px;color:${BRAND.primary};">${otp}</span>
+      </div>
+      <p style="font-size:14px;color:${BRAND.secondary};">This code expires in 15 minutes. If you didn't request this, you can safely ignore this email.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${n}, your Dr. Bartender login code is: ${otp}. This code expires in 15 minutes. If you didn't request this, you can safely ignore this email. — The Dr. Bartender Team`,
+  };
+}
+
 // ─── Admin-Facing Templates ──────────────────────────────────────
 
 function clientSignedAdmin({ clientName, eventName, proposalId, adminUrl }) {
@@ -211,6 +229,7 @@ function applicationReceivedConfirmation({ applicantName }) {
 module.exports = {
   wrapEmail,
   ctaButton,
+  clientOtp,
   proposalSent,
   proposalSignedConfirmation,
   paymentReceivedClient,
