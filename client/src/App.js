@@ -35,6 +35,9 @@ import ProposalDetail from './pages/admin/ProposalDetail';
 import ClientDetail from './pages/admin/ClientDetail';
 import Dashboard from './pages/admin/Dashboard';
 import ProposalView from './pages/proposal/ProposalView';
+import BlogDashboard from './pages/admin/BlogDashboard';
+import Blog from './pages/public/Blog';
+import BlogPost from './pages/public/BlogPost';
 
 /** Check if we're on the public marketing site (drbartender.com) vs admin subdomain */
 function isPublicSite() {
@@ -128,6 +131,8 @@ function PublicWebsiteRoutes() {
       {/* These public token-based routes work on both domains */}
       <Route path="/plan/:token" element={<PotionPlanningLab />} />
       <Route path="/proposal/:token" element={<ProposalView />} />
+      <Route path="/blog" element={<Blog />} />
+      <Route path="/blog/:slug" element={<BlogPost />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
@@ -147,6 +152,8 @@ function AppRoutes() {
       <Route path="/proposal/:token" element={<ProposalView />} />
       {/* Website accessible on admin domain for preview */}
       <Route path="/website" element={<Website />} />
+      <Route path="/blog" element={<Blog />} />
+      <Route path="/blog/:slug" element={<BlogPost />} />
 
       <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
       <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
@@ -189,6 +196,7 @@ function AppRoutes() {
         <Route path="clients/:id" element={<ClientDetail />} />
         <Route path="financials" element={<FinancialsDashboard />} />
         <Route path="settings" element={<SettingsDashboard />} />
+        <Route path="blog" element={<BlogDashboard />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />
