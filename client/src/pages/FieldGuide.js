@@ -133,7 +133,7 @@ const SECTIONS = [
         <p>Good science needs good signal. Here's how we keep the lab connected.</p>
         <ul>
           <li>If you say you're available, plan to work — we staff based on what you tell us.</li>
-          <li>Shifts will be posted in the Staff Portal, where you can view details and request or confirm fits.</li>
+          <li>Shifts will be posted here, where you can view details and request or confirm fits.</li>
           <li>Day-of or urgent issues? Text or Call {COMPANY_PHONE}</li>
           <li>If something goes great — or off the rails — we want to know. Feedback helps us keep evolving.</li>
         </ul>

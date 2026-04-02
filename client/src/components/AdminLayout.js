@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { label: 'Staff',       path: '/admin/staffing',    icon: '👥' },
   { label: 'Hiring',      path: '/admin/hiring',      icon: '📝' },
   { label: 'Financials',  path: '/admin/financials',  icon: '📒' },
+  { label: 'Blog',        path: '/admin/blog',        icon: '✏' },
   'divider',
   { label: 'Settings',    path: '/admin/settings',    icon: '⚙' },
 ];

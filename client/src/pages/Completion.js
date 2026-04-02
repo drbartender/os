@@ -29,7 +29,7 @@ export default function Completion() {
         <div className="alert alert-success" style={{ textAlign: 'left', marginBottom: '1.5rem' }}>
           <strong>Keep an eye on your inbox!</strong>
           <p style={{ marginTop: '0.35rem', marginBottom: 0, fontSize: '0.9rem' }}>
-            You'll receive an invite to the Dr. Bartender Staff Portal, where you can view upcoming gigs and request events.
+            You'll receive an invite to Dr. Bartender, where you can view upcoming gigs and request events.
           </p>
         </div>
 
@@ -40,7 +40,7 @@ export default function Completion() {
           <h4 style={{ marginBottom: '0.5rem' }}>What Happens Next</h4>
           <ul style={{ paddingLeft: '1.25rem', fontSize: '0.9rem' }}>
             <li style={{ marginBottom: '0.35rem' }}>Your onboarding will be reviewed by the Dr. Bartender team.</li>
-            <li style={{ marginBottom: '0.35rem' }}>You'll receive a Staff Portal invite via email once approved.</li>
+            <li style={{ marginBottom: '0.35rem' }}>You'll receive an invite via email once approved.</li>
             <li style={{ marginBottom: '0.35rem' }}>
               Join our team WhatsApp group for scheduling updates:{' '}
               <a href={WHATSAPP_GROUP_URL} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', fontWeight: 600 }}>

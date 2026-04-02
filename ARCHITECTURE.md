@@ -43,7 +43,7 @@ System design reference for the Dr. Bartender platform.
    → Blocks deactivated/rejected staff with 403
 
 5. Role-based access:
-   - staff: onboarding pages, staff portal, application
+   - staff: onboarding pages, portal, application
    - admin: full admin dashboard access
    - manager: admin dashboard access (same as admin in routing)
 

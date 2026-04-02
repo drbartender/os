@@ -828,3 +828,23 @@ ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
 -- Feedback tracking (fields only, feature built later)
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS feedback_request_sent_at TIMESTAMPTZ;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS feedback_status VARCHAR(20) DEFAULT 'none';
+
+-- ─── Blog Posts ─────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS blog_posts (
+  id SERIAL PRIMARY KEY,
+  slug TEXT UNIQUE NOT NULL,
+  title TEXT NOT NULL,
+  excerpt TEXT,
+  body TEXT NOT NULL,
+  cover_image_url TEXT,
+  published BOOLEAN DEFAULT false,
+  published_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS update_blog_posts_updated_at ON blog_posts;
+CREATE TRIGGER update_blog_posts_updated_at
+  BEFORE UPDATE ON blog_posts
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

@@ -3,6 +3,10 @@ const { pool } = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
 const { geocodeAddress, buildAddressString, delay } = require('../utils/geocode');
+const { v4: uuidv4 } = require('uuid');
+const path = require('path');
+const { uploadFile } = require('../utils/storage');
+const { isValidUpload } = require('../utils/fileValidation');
 
 const router = express.Router();
 
@@ -698,6 +702,132 @@ router.post('/backfill-geocodes', auth, adminOnly, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Server error' });
+  }
+});
+
+// ─── Blog Posts (admin CRUD) ─────────────────────────────────────
+
+function slugify(title) {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+}
+
+// List all posts (drafts + published)
+router.get('/blog', auth, adminOnly, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM blog_posts ORDER BY created_at DESC'
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Create post
+router.post('/blog', auth, adminOnly, async (req, res) => {
+  try {
+    let { title, slug, excerpt, body, cover_image_url, published } = req.body;
+    if (!title || !body) {
+      return res.status(400).json({ error: 'Title and body are required' });
+    }
+    if (!slug) slug = slugify(title);
+    const published_at = published ? new Date() : null;
+
+    const result = await pool.query(
+      `INSERT INTO blog_posts (title, slug, excerpt, body, cover_image_url, published, published_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [title, slug, excerpt, body, cover_image_url || null, !!published, published_at]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505' && err.constraint?.includes('slug')) {
+      return res.status(400).json({ error: 'A post with that slug already exists' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Upload blog image
+router.post('/blog/upload-image', auth, adminOnly, async (req, res) => {
+  try {
+    if (!req.files?.image) {
+      return res.status(400).json({ error: 'No image provided' });
+    }
+    const file = req.files.image;
+    if (!isValidUpload(file)) {
+      return res.status(400).json({ error: 'Invalid file type. Use JPEG or PNG only.' });
+    }
+    // Only allow image types (not PDF)
+    const mime = file.mimetype?.toLowerCase() || '';
+    if (mime === 'application/pdf') {
+      return res.status(400).json({ error: 'PDF files are not allowed for blog images.' });
+    }
+
+    const ext = path.extname(file.name);
+    const filename = `blog_${uuidv4()}${ext}`;
+    await uploadFile(file.data, filename);
+
+    res.json({ url: `/api/blog/images/${filename}` });
+  } catch (err) {
+    console.error('Blog image upload error:', err);
+    res.status(500).json({ error: 'Upload failed' });
+  }
+});
+
+// Update post
+router.put('/blog/:id', auth, adminOnly, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, slug, excerpt, body, cover_image_url, published } = req.body;
+
+    // Fetch current state to check publish transition
+    const current = await pool.query('SELECT * FROM blog_posts WHERE id = $1', [id]);
+    if (current.rows.length === 0) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    const post = current.rows[0];
+    // Set published_at on first publish (false → true and no existing published_at)
+    let published_at = post.published_at;
+    if (published && !post.published && !post.published_at) {
+      published_at = new Date();
+    }
+
+    const result = await pool.query(
+      `UPDATE blog_posts
+       SET title = $1, slug = $2, excerpt = $3, body = $4, cover_image_url = $5,
+           published = $6, published_at = $7
+       WHERE id = $8
+       RETURNING *`,
+      [title, slug, excerpt, body, cover_image_url || null, !!published, published_at, id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505' && err.constraint?.includes('slug')) {
+      return res.status(400).json({ error: 'A post with that slug already exists' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Delete post
+router.delete('/blog/:id', auth, adminOnly, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'DELETE FROM blog_posts WHERE id = $1 RETURNING id',
+      [req.params.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+    res.json({ message: 'Post deleted' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

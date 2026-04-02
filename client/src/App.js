@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/Layout';
 import api from './utils/api';
+import Website from './pages/website/Website';
 import Register from './pages/Register';
 import Login from './pages/Login';
 import Application from './pages/Application';
@@ -34,6 +35,20 @@ import ProposalDetail from './pages/admin/ProposalDetail';
 import ClientDetail from './pages/admin/ClientDetail';
 import Dashboard from './pages/admin/Dashboard';
 import ProposalView from './pages/proposal/ProposalView';
+import BlogDashboard from './pages/admin/BlogDashboard';
+import Blog from './pages/public/Blog';
+import BlogPost from './pages/public/BlogPost';
+
+/** Check if we're on the public marketing site (drbartender.com) vs admin subdomain */
+function isPublicSite() {
+  const host = window.location.hostname;
+  // admin.drbartender.com → admin/staff app
+  if (host.startsWith('admin.')) return false;
+  // localhost → show app routes (website accessible at /website)
+  if (host === 'localhost' || host === '127.0.0.1') return false;
+  // drbartender.com, www.drbartender.com → public website
+  return true;
+}
 
 /** Determine where a logged-in user should go based on their role and status */
 function getHomePath(user) {
@@ -44,7 +59,7 @@ function getHomePath(user) {
     case 'applied':
     case 'interviewing':
       return '/application-status';
-    // Completed onboarding → staff portal
+    // Completed onboarding → portal
     case 'submitted':
     case 'reviewed':
     case 'approved':
@@ -88,7 +103,7 @@ function RequireHired({ children }) {
   return children;
 }
 
-/** Staff portal — requires completed onboarding (submitted / reviewed / approved) */
+/** Requires completed onboarding (submitted / reviewed / approved) */
 function RequirePortal({ children }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="loading"><div className="spinner" />Loading...</div>;
@@ -109,13 +124,36 @@ function ApiAuthSetup({ children }) {
   return children;
 }
 
+function PublicWebsiteRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<Website />} />
+      {/* These public token-based routes work on both domains */}
+      <Route path="/plan/:token" element={<PotionPlanningLab />} />
+      <Route path="/proposal/:token" element={<ProposalView />} />
+      <Route path="/blog" element={<Blog />} />
+      <Route path="/blog/:slug" element={<BlogPost />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
 function AppRoutes() {
+  const publicSite = isPublicSite();
+
+  // On the public domain (drbartender.com), only show the marketing site + public routes
+  if (publicSite) return <PublicWebsiteRoutes />;
+
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/register" replace />} />
       {/* Public pages (no auth) */}
       <Route path="/plan/:token" element={<PotionPlanningLab />} />
       <Route path="/proposal/:token" element={<ProposalView />} />
+      {/* Website accessible on admin domain for preview */}
+      <Route path="/website" element={<Website />} />
+      <Route path="/blog" element={<Blog />} />
+      <Route path="/blog/:slug" element={<BlogPost />} />
 
       <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
       <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
@@ -134,7 +172,7 @@ function AppRoutes() {
         <Route path="/complete" element={<Completion />} />
       </Route>
 
-      {/* Staff portal (onboarding completed) */}
+      {/* Portal (onboarding completed) */}
       <Route path="/portal" element={<RequirePortal><StaffPortal /></RequirePortal>} />
 
       {/* Admin + Manager shell */}
@@ -158,6 +196,7 @@ function AppRoutes() {
         <Route path="clients/:id" element={<ClientDetail />} />
         <Route path="financials" element={<FinancialsDashboard />} />
         <Route path="settings" element={<SettingsDashboard />} />
+        <Route path="blog" element={<BlogDashboard />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

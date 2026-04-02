@@ -66,7 +66,7 @@ export default function Welcome() {
           </ul>
 
           <div className="alert alert-info">
-            Once submitted, you'll get an email invite to the Staff Portal to view and request shifts.
+            Once submitted, you'll get an email invite to view and request shifts.
           </div>
 
           <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: '1.5rem', fontSize: '0.9rem' }}>

@@ -17,9 +17,21 @@ const PORT = process.env.PORT || 5000;
 // Security headers (CSP disabled — React inline styles require careful CSP tuning)
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 
-// Middleware
+// Middleware — allow requests from both public site and admin subdomain
+const allowedOrigins = [
+  process.env.CLIENT_URL || 'http://localhost:3000',
+  'https://drbartender.com',
+  'https://www.drbartender.com',
+  'https://admin.drbartender.com',
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (server-to-server, curl, mobile apps)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true
 }));
 
@@ -67,6 +79,7 @@ app.use('/api/clients', require('./routes/clients'));
 app.use('/api/messages', require('./routes/messages'));
 app.use('/api/stripe', require('./routes/stripe'));
 app.use('/api/calendar', require('./routes/calendar'));
+app.use('/api/blog', require('./routes/blog'));
 
 // Health check — must be registered BEFORE the React catch-all below
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));

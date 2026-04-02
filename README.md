@@ -172,7 +172,7 @@ dr-bartender/
 ### Proposal → Event Pipeline
 - When a client signs the contract and pays (deposit or full), a shift is automatically created
 - Shift is populated from proposal data (event name, date, time, duration, location, bartenders needed)
-- Staff can immediately see and request the shift via the Staff Portal
+- Staff can immediately see and request the shift
 - Admin can also manually trigger shift creation via `POST /api/proposals/:id/create-shift`
 - Once paid, proposals automatically transition out of the Proposals dashboard and into the Events dashboard
 - Events dashboard shows clean, scannable event cards with staffing fill status; click to open event detail
@@ -204,7 +204,7 @@ dr-bartender/
 - Per-user message history on individual staff profiles
 - Filters by SMS consent — only staff who opted in are eligible
 
-### Staff Portal
+### Shifts & Profile
 - View available shifts and request assignments
 - Profile and notification management
 
