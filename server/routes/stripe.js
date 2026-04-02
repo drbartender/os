@@ -314,7 +314,7 @@ router.post('/webhook', async (req, res) => {
           }
           const adminEmail = process.env.ADMIN_EMAIL;
           if (adminEmail) {
-            const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+            const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
             const adminUrl = `${clientUrl}/admin/proposals/${proposalId}`;
             const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventName: pi?.event_name, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
             await sendEmail({ to: adminEmail, ...tpl });
@@ -376,7 +376,7 @@ router.post('/webhook', async (req, res) => {
           }
           const adminEmail = process.env.ADMIN_EMAIL;
           if (adminEmail) {
-            const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
+            const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
             const adminUrl = `${clientUrl}/admin/proposals/${proposalId}`;
             const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventName: pi?.event_name, amount: amountFormatted, paymentType: 'deposit', proposalId, adminUrl });
             await sendEmail({ to: adminEmail, ...tpl });
