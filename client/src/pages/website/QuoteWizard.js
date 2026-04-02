@@ -48,11 +48,11 @@ export default function QuoteWizard() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API_BASE}/api/proposals/public/packages`).then(r => r.json()),
-      fetch(`${API_BASE}/api/proposals/public/addons`).then(r => r.json()),
+      fetch(`${API_BASE}/api/proposals/public/packages`).then(r => { if (!r.ok) throw new Error('Failed to load packages'); return r.json(); }),
+      fetch(`${API_BASE}/api/proposals/public/addons`).then(r => { if (!r.ok) throw new Error('Failed to load addons'); return r.json(); }),
     ]).then(([pkgs, adds]) => {
-      setPackages(pkgs);
-      setAddons(adds);
+      if (Array.isArray(pkgs)) setPackages(pkgs);
+      if (Array.isArray(adds)) setAddons(adds);
     }).catch(err => console.error('Failed to load packages:', err));
   }, []);
 
@@ -72,8 +72,10 @@ export default function QuoteWizard() {
           addon_ids: form.addon_ids.map(Number),
         }),
       });
+      if (!res.ok) { setPreview(null); return; }
       const data = await res.json();
-      setPreview(data);
+      if (data && data.total != null) setPreview(data);
+      else setPreview(null);
     } catch { setPreview(null); }
   }, [form.package_id, form.guest_count, form.event_duration_hours, numBars, form.addon_ids]);
 
