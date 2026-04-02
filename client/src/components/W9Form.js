@@ -145,12 +145,13 @@ export default function W9Form({ onComplete }) {
       y += 42;
 
       // ── PART I: TIN ───────────────────────────────────────────
+      doc.setDrawColor(180, 180, 180);
+      doc.line(ML, y - 6, PW - ML, y - 6);
+
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(10);
       doc.setTextColor(0, 0, 0);
-      doc.text('Part I', ML, y);
-      doc.setFontSize(10);
-      doc.text('    Taxpayer Identification Number (TIN)', ML, y);
+      doc.text('Part I    Taxpayer Identification Number (TIN)', ML, y);
 
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
@@ -184,6 +185,9 @@ export default function W9Form({ onComplete }) {
       y += 40;
 
       // ── PART II: CERTIFICATION ────────────────────────────────
+      doc.setDrawColor(180, 180, 180);
+      doc.line(ML, y - 6, PW - ML, y - 6);
+
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(10);
       doc.setTextColor(0, 0, 0);
@@ -241,7 +245,7 @@ export default function W9Form({ onComplete }) {
       doc.setTextColor(0, 0, 0);
       doc.text('Date ►', sigBoxX + sigBoxW + 8, y + 14);
       doc.setDrawColor(160, 160, 160);
-      doc.rect(sigBoxX + sigBoxW + 35, y - 2, 100, 24);
+      doc.rect(sigBoxX + sigBoxW + 35, y - 2, 100, sigBoxH);
       doc.text(today, sigBoxX + sigBoxW + 38, y + 14);
 
       y += 50;
@@ -381,10 +385,10 @@ export default function W9Form({ onComplete }) {
           borderRadius: 'var(--radius)', padding: '0.85rem', marginBottom: '0.75rem',
           fontSize: '0.8rem', color: 'var(--deep-brown)', lineHeight: 1.6
         }}>
-          Under penalties of perjury, I certify that: <strong>(1)</strong> The number shown on this form is my correct taxpayer identification number;{' '}
-          <strong>(2)</strong> I am not subject to backup withholding;{' '}
+          Under penalties of perjury, I certify that: <strong>(1)</strong> The number shown on this form is my correct taxpayer identification number (or I am waiting for a number to be issued to me);{' '}
+          <strong>(2)</strong> I am not subject to backup withholding because: (a) I am exempt from backup withholding, or (b) I have not been notified by the Internal Revenue Service (IRS) that I am subject to backup withholding as a result of a failure to report all interest or dividends, or (c) the IRS has notified me that I am no longer subject to backup withholding;{' '}
           <strong>(3)</strong> I am a U.S. citizen or other U.S. person;{' '}
-          <strong>(4)</strong> The FATCA code(s) entered on this form (if any) are correct.
+          <strong>(4)</strong> The FATCA code(s) entered on this form (if any) indicating that I am exempt from FATCA reporting is correct.
         </div>
         <p style={{ fontSize: '0.8rem', color: 'var(--warm-brown)', fontWeight: 600, marginBottom: '0.4rem' }}>
           Sign below with your mouse or finger:

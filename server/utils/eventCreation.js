@@ -33,7 +33,7 @@ function formatTime12(timeStr) {
  * @param {object} proposal - Proposal row (must include client_name, client_email, event_name, event_date, created_by)
  * @returns {object|null} The created drink_plan row, or null if skipped
  */
-async function createDrinkPlan(proposalId, proposal) {
+async function createDrinkPlan(proposalId, proposal, { skipEmail = false } = {}) {
   // Idempotency: skip if a drink plan already exists for this proposal
   const existing = await pool.query(
     'SELECT id FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
@@ -59,8 +59,8 @@ async function createDrinkPlan(proposalId, proposal) {
 
   const drinkPlan = result.rows[0];
 
-  // Email the drink plan link to the client
-  if (clientEmail && drinkPlan.token) {
+  // Email the drink plan link to the client (unless caller handles it)
+  if (!skipEmail && clientEmail && drinkPlan.token) {
     const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
     const planUrl = `${clientUrl}/plan/${drinkPlan.token}`;
     const eventName = drinkPlan.event_name || 'your upcoming event';

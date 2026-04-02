@@ -45,9 +45,13 @@ function ctaButton(url, label) {
 
 // ─── Client-Facing Templates ─────────────────────────────────────
 
-function proposalSent({ clientName, eventName, proposalUrl }) {
+function proposalSent({ clientName, eventName, proposalUrl, planUrl }) {
   const name = clientName || 'there';
   const event = eventName || 'your upcoming event';
+  const planSection = planUrl
+    ? `<p>We've also created a personalized drink planning questionnaire for your event. Use it to tell us your preferences &mdash; signature cocktails, mocktails, beer &amp; wine, and everything in between.</p>
+       ${ctaButton(planUrl, 'Plan Your Drinks')}`
+    : '';
   return {
     subject: `Your Proposal for ${event} — Dr. Bartender`,
     html: wrapEmail(`
@@ -55,10 +59,11 @@ function proposalSent({ clientName, eventName, proposalUrl }) {
       <p>Hi ${name},</p>
       <p>We've put together a proposal for <strong>${event}</strong>. Take a look, review the details, and sign when you're ready.</p>
       ${ctaButton(proposalUrl, 'View Proposal')}
+      ${planSection}
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
       <p>Cheers,<br/>The Dr. Bartender Team</p>
     `),
-    text: `Hi ${name}, your proposal for ${event} is ready! View it here: ${proposalUrl} — The Dr. Bartender Team`,
+    text: `Hi ${name}, your proposal for ${event} is ready! View it here: ${proposalUrl}${planUrl ? ` Plan your drinks here: ${planUrl}` : ''} — The Dr. Bartender Team`,
   };
 }
 

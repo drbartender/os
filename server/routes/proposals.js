@@ -2,7 +2,7 @@ const express = require('express');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { calculateProposal } = require('../utils/pricingEngine');
-const { createEventShifts } = require('../utils/eventCreation');
+const { createEventShifts, createDrinkPlan } = require('../utils/eventCreation');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 
@@ -671,7 +671,8 @@ router.patch('/:id/status', auth, requireAdmin, async (req, res) => {
     if (status === 'sent') {
       try {
         const pd = await pool.query(`
-          SELECT p.token, p.event_name, c.name AS client_name, c.email AS client_email
+          SELECT p.token, p.event_name, p.event_date, p.created_by,
+                 c.name AS client_name, c.email AS client_email
           FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
           WHERE p.id = $1
         `, [req.params.id]);
@@ -679,7 +680,35 @@ router.patch('/:id/status', auth, requireAdmin, async (req, res) => {
         if (p?.client_email && p?.token) {
           const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
           const proposalUrl = `${clientUrl}/proposal/${p.token}`;
-          const tpl = emailTemplates.proposalSent({ clientName: p.client_name, eventName: p.event_name, proposalUrl });
+
+          // Create drink plan and include link in email
+          let planUrl = null;
+          try {
+            const drinkPlan = await createDrinkPlan(req.params.id, {
+              client_name: p.client_name,
+              client_email: p.client_email,
+              event_name: p.event_name,
+              event_date: p.event_date,
+              created_by: p.created_by,
+            }, { skipEmail: true });
+
+            if (drinkPlan?.token) {
+              planUrl = `${clientUrl}/plan/${drinkPlan.token}`;
+            } else {
+              // Already exists — look up existing token
+              const existingPlan = await pool.query(
+                'SELECT token FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
+                [req.params.id]
+              );
+              if (existingPlan.rows[0]?.token) {
+                planUrl = `${clientUrl}/plan/${existingPlan.rows[0].token}`;
+              }
+            }
+          } catch (planErr) {
+            console.error('Drink plan creation failed (non-blocking):', planErr);
+          }
+
+          const tpl = emailTemplates.proposalSent({ clientName: p.client_name, eventName: p.event_name, proposalUrl, planUrl });
           await sendEmail({ to: p.client_email, ...tpl });
         }
       } catch (emailErr) {

@@ -1120,9 +1120,9 @@ export default function ProposalDetail() {
       <div className="flex-between mb-2">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
           <h1 style={{ fontFamily: 'var(--font-display)', margin: 0 }}>
-            {isEventContext
-              ? (proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : `Event #${proposal.id}`))
-              : `Proposal #${proposal.id}`}
+            {proposal.event_name
+              || (proposal.client_name ? `${proposal.client_name}'s Event` : null)
+              || (isEventContext ? `Event #${proposal.id}` : `Proposal #${proposal.id}`)}
           </h1>
           <span className={`badge ${STATUS_CLASSES[proposal.status] || ''}`} style={{ fontSize: '0.9rem' }}>
             {STATUS_LABELS[proposal.status] || proposal.status}
