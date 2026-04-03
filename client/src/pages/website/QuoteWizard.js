@@ -14,12 +14,17 @@ for (let h = 8; h < 23; h++) {
   });
 }
 
-const STEPS = [
-  { key: 'event', label: 'Event Details' },
-  { key: 'package', label: 'Package' },
-  { key: 'addons', label: 'Extras' },
-  { key: 'contact', label: 'Your Info' },
-];
+// Build the dynamic step list based on alcohol choice
+function getSteps(alcoholProvider) {
+  const steps = [{ key: 'event', label: 'Event Details' }];
+  // BYOB and mocktail auto-select their package, skip package step
+  if (alcoholProvider === 'hosted') {
+    steps.push({ key: 'package', label: 'Package' });
+  }
+  steps.push({ key: 'addons', label: 'Extras' });
+  steps.push({ key: 'contact', label: 'Your Info' });
+  return steps;
+}
 
 export default function QuoteWizard() {
   const navigate = useNavigate();
@@ -38,6 +43,8 @@ export default function QuoteWizard() {
     event_start_time: '17:00',
     event_name: '',
     event_location: '',
+    alcohol_provider: '',   // 'byob' | 'hosted' | 'mocktail'
+    bar_type: '',           // 'full_bar' | 'beer_and_wine' (set in package step)
     needs_bar: false,
     package_id: '',
     addon_ids: [],
@@ -45,6 +52,8 @@ export default function QuoteWizard() {
     client_email: '',
     client_phone: '',
   });
+
+  const steps = getSteps(form.alcohol_provider);
 
   useEffect(() => {
     Promise.all([
@@ -55,6 +64,21 @@ export default function QuoteWizard() {
       if (Array.isArray(adds)) setAddons(adds);
     }).catch(err => console.error('Failed to load packages:', err));
   }, []);
+
+  // Auto-select package for BYOB and mocktail paths
+  useEffect(() => {
+    if (form.alcohol_provider === 'byob') {
+      const corePkg = packages.find(p => p.bar_type === 'service_only');
+      if (corePkg && form.package_id !== String(corePkg.id)) {
+        setForm(f => ({ ...f, package_id: String(corePkg.id), addon_ids: [] }));
+      }
+    } else if (form.alcohol_provider === 'mocktail') {
+      const mocktailPkg = packages.find(p => p.bar_type === 'mocktail');
+      if (mocktailPkg && form.package_id !== String(mocktailPkg.id)) {
+        setForm(f => ({ ...f, package_id: String(mocktailPkg.id), addon_ids: [] }));
+      }
+    }
+  }, [form.alcohol_provider, form.package_id, packages]);
 
   const numBars = form.needs_bar ? 1 : 0;
 
@@ -90,8 +114,36 @@ export default function QuoteWizard() {
     }));
   };
 
+  // When alcohol_provider changes, reset downstream selections
+  const handleAlcoholChange = (value) => {
+    setForm(f => ({
+      ...f,
+      alcohol_provider: value,
+      bar_type: '',
+      package_id: '',
+      addon_ids: [],
+    }));
+  };
+
+  // When bar_type changes in the package step, reset package and addons
+  const handleBarTypeChange = (value) => {
+    setForm(f => ({
+      ...f,
+      bar_type: value,
+      package_id: '',
+      addon_ids: [],
+    }));
+  };
+
   const selectedPkg = packages.find(p => p.id === Number(form.package_id));
   const isHosted = selectedPkg && selectedPkg.pricing_type === 'per_guest';
+
+  // Filter packages for the package selection step
+  const filteredPackages = packages.filter(p => {
+    if (p.bar_type === 'class') return false;
+    if (form.bar_type) return p.bar_type === form.bar_type;
+    return false;
+  });
 
   const filteredAddons = addons.filter(a => {
     if (a.applies_to !== 'all' && (!selectedPkg || a.applies_to !== selectedPkg.category)) return false;
@@ -99,12 +151,19 @@ export default function QuoteWizard() {
     return true;
   });
 
+  // Determine current step key
+  const currentStepKey = steps[step]?.key;
+
   const canAdvance = () => {
-    switch (step) {
-      case 0: return form.guest_count >= 1 && form.event_duration_hours >= 1;
-      case 1: return !!form.package_id;
-      case 2: return true; // addons are optional
-      case 3: return form.client_name.trim() && form.client_email.trim();
+    switch (currentStepKey) {
+      case 'event': {
+        if (Number(form.guest_count) < 1 || Number(form.event_duration_hours) < 1) return false;
+        if (!form.alcohol_provider) return false;
+        return true;
+      }
+      case 'package': return !!form.package_id;
+      case 'addons': return true;
+      case 'contact': return form.client_name.trim() && form.client_email.trim();
       default: return false;
     }
   };
@@ -180,7 +239,7 @@ export default function QuoteWizard() {
 
       {/* Step indicators */}
       <div className="wz-steps">
-        {STEPS.map((s, i) => (
+        {steps.map((s, i) => (
           <button
             key={s.key}
             className={`wz-step-dot ${i === step ? 'active' : ''} ${i < step ? 'done' : ''}`}
@@ -195,8 +254,8 @@ export default function QuoteWizard() {
 
       <div className="wz-body">
         <div className="wz-form-area">
-          {/* Step 0: Event Details */}
-          {step === 0 && (
+          {/* Step: Event Details */}
+          {currentStepKey === 'event' && (
             <div className="wz-card">
               <h3>Tell us about your event</h3>
               <div className="wz-grid">
@@ -213,6 +272,7 @@ export default function QuoteWizard() {
                 <div className="form-group">
                   <label className="form-label">Event Date</label>
                   <input className="form-input" type="date" value={form.event_date}
+                    min={new Date().toISOString().split('T')[0]}
                     onChange={e => update('event_date', e.target.value)} />
                 </div>
                 <div className="form-group">
@@ -228,6 +288,19 @@ export default function QuoteWizard() {
                   <input className="form-input" value={form.event_location}
                     onChange={e => update('event_location', e.target.value)} placeholder="City or venue name" />
                 </div>
+
+                {/* Alcohol provider */}
+                <div className="form-group">
+                  <label className="form-label">Who provides the alcohol? *</label>
+                  <select className="form-select" value={form.alcohol_provider}
+                    onChange={e => handleAlcoholChange(e.target.value)}>
+                    <option value="">-- Select --</option>
+                    <option value="byob">I'll provide the alcohol</option>
+                    <option value="hosted">Dr. Bartender provides the alcohol</option>
+                    <option value="mocktail">No alcohol (mocktails only)</option>
+                  </select>
+                </div>
+
                 <div className="form-group">
                   <label className="form-label">Need a Portable Bar?</label>
                   <select className="form-select" value={form.needs_bar ? 'yes' : 'no'}
@@ -237,42 +310,74 @@ export default function QuoteWizard() {
                   </select>
                 </div>
               </div>
+
+              {/* Cocktail class link */}
+              <p className="wz-class-link">
+                Looking for a cocktail class? <a href="/quote/class">Book a Doctor's Orders session</a>
+              </p>
             </div>
           )}
 
-          {/* Step 1: Package Selection */}
-          {step === 1 && (
+          {/* Step: Package Selection (hosted only) */}
+          {currentStepKey === 'package' && (
             <div className="wz-card">
-              <h3>Choose your package</h3>
-              <div className="wz-pkg-list">
-                {packages.map(pkg => (
-                  <label key={pkg.id} className={`wz-pkg-option ${Number(form.package_id) === pkg.id ? 'selected' : ''}`}>
-                    <input type="radio" name="package" value={pkg.id}
-                      checked={Number(form.package_id) === pkg.id}
-                      onChange={e => { update('package_id', e.target.value); update('addon_ids', []); }}
-                    />
-                    <div className="wz-pkg-content">
-                      <div className="wz-pkg-name">{pkg.name}</div>
-                      {pkg.description && <div className="wz-pkg-desc">{pkg.description}</div>}
-                      <div className="wz-pkg-price">
-                        {pkg.pricing_type === 'per_guest' ? (
-                          <>From ${Number(pkg.base_rate_4hr)}/guest</>
-                        ) : (
-                          <>From ${Number(pkg.base_rate_3hr || pkg.base_rate_4hr)}{pkg.base_rate_3hr ? '/3hr' : '/4hr'}</>
-                        )}
-                      </div>
-                      {pkg.includes && (
-                        <div className="wz-pkg-includes">{pkg.includes}</div>
-                      )}
-                    </div>
-                  </label>
-                ))}
-              </div>
+              {/* Bar type picker */}
+              {!form.bar_type ? (
+                <>
+                  <h3>What are you serving?</h3>
+                  <div className="wz-choice-group wz-choice-group-lg">
+                    <button type="button" className="wz-choice-btn"
+                      onClick={() => handleBarTypeChange('full_bar')}>
+                      <strong>Full bar with cocktails</strong>
+                      <span>Spirits, beer, wine, and mixed drinks</span>
+                    </button>
+                    <button type="button" className="wz-choice-btn"
+                      onClick={() => handleBarTypeChange('beer_and_wine')}>
+                      <strong>Beer &amp; wine only</strong>
+                      <span>No liquor or mixed drinks</span>
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="wz-package-header">
+                    <h3>Choose your package</h3>
+                    <button type="button" className="wz-change-type"
+                      onClick={() => handleBarTypeChange('')}>
+                      Change bar type
+                    </button>
+                  </div>
+                  <div className="wz-pkg-list">
+                    {filteredPackages.map(pkg => (
+                      <label key={pkg.id} className={`wz-pkg-option ${Number(form.package_id) === pkg.id ? 'selected' : ''}`}>
+                        <input type="radio" name="package" value={pkg.id}
+                          checked={Number(form.package_id) === pkg.id}
+                          onChange={e => { update('package_id', e.target.value); update('addon_ids', []); }}
+                        />
+                        <div className="wz-pkg-content">
+                          <div className="wz-pkg-name">{pkg.name}</div>
+                          {pkg.description && <div className="wz-pkg-desc">{pkg.description}</div>}
+                          <div className="wz-pkg-price">
+                            {pkg.pricing_type === 'per_guest' ? (
+                              <>From ${Number(pkg.base_rate_4hr)}/guest</>
+                            ) : (
+                              <>From ${Number(pkg.base_rate_3hr || pkg.base_rate_4hr)}{pkg.base_rate_3hr ? '/3hr' : '/4hr'}</>
+                            )}
+                          </div>
+                          {pkg.includes && (
+                            <div className="wz-pkg-includes">{pkg.includes}</div>
+                          )}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
-          {/* Step 2: Add-ons */}
-          {step === 2 && (
+          {/* Step: Add-ons */}
+          {currentStepKey === 'addons' && (
             <div className="wz-card">
               <h3>Any extras?</h3>
               {filteredAddons.length > 0 ? (
@@ -299,8 +404,8 @@ export default function QuoteWizard() {
             </div>
           )}
 
-          {/* Step 3: Contact Info */}
-          {step === 3 && (
+          {/* Step: Contact Info */}
+          {currentStepKey === 'contact' && (
             <div className="wz-card">
               <h3>Where should we send your proposal?</h3>
               <div className="wz-grid">
@@ -365,7 +470,7 @@ export default function QuoteWizard() {
           </button>
         )}
         <div style={{ flex: 1 }} />
-        {step < STEPS.length - 1 ? (
+        {step < steps.length - 1 ? (
           <button className="btn btn-primary" type="button" disabled={!canAdvance()}
             onClick={() => setStep(s => s + 1)}>
             Next

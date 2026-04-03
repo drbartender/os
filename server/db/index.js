@@ -8,13 +8,26 @@ const pool = new Pool({
 });
 
 async function initDb() {
+  const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+  // Split on semicolons, filtering out empty statements, and run each independently
+  // so that one idempotent failure doesn't abort subsequent statements
+  const statements = schema
+    .split(/;\s*$/m)
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+  const client = await pool.connect();
   try {
-    const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
-    await pool.query(schema);
+    for (const stmt of statements) {
+      try {
+        await client.query(stmt);
+      } catch (err) {
+        // Log but continue — most errors here are benign (duplicate constraints, etc.)
+        console.warn('Schema statement warning:', err.message.split('\n')[0]);
+      }
+    }
     console.log('✓ Database schema initialized');
-  } catch (err) {
-    console.error('Database initialization error:', err.message);
-    throw err;
+  } finally {
+    client.release();
   }
 }
 

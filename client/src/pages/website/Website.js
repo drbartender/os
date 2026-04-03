@@ -113,8 +113,7 @@ function FadeUp({ children, className = '', delay = 0, ...props }) {
 export default function Website() {
   const [openFaq, setOpenFaq] = useState(null);
   const [mobileNav, setMobileNav] = useState(false);
-  const [formData, setFormData] = useState({ name: '', email: '', eventType: '', message: '' });
-  const [formSent, setFormSent] = useState(false);
+
 
   const scrollTo = (id) => {
     setMobileNav(false);
@@ -122,12 +121,7 @@ export default function Website() {
     if (el) el.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const handleContactSubmit = (e) => {
-    e.preventDefault();
-    setFormSent(true);
-    setFormData({ name: '', email: '', eventType: '', message: '' });
-    setTimeout(() => setFormSent(false), 5000);
-  };
+
 
   return (
     <div className="ws-shell">
@@ -289,79 +283,6 @@ export default function Website() {
               </button>
             ))}
           </div>
-        </section>
-
-        {/* Contact Form */}
-        <section className="ws-section ws-contact-section" id="contact">
-          <FadeUp className="ws-section-heading">
-            <p className="ws-kicker">Ready When You Are</p>
-            <h2>Start the Experiment</h2>
-            <div className="ws-divider ws-divider-center" />
-            <p className="ws-section-sub">
-              No templates, no guesswork &mdash; just a conversation. Tell us a bit about your
-              upcoming occasion, and let's work together to curate an experience that feels
-              entirely yours.
-            </p>
-          </FadeUp>
-          <FadeUp>
-            <form className="ws-contact-form" onSubmit={handleContactSubmit}>
-              <div className="ws-form-field">
-                <label htmlFor="contact-name">Your Name</label>
-                <input
-                  type="text"
-                  id="contact-name"
-                  required
-                  placeholder="Your name"
-                  value={formData.name}
-                  onChange={e => setFormData({ ...formData, name: e.target.value })}
-                />
-              </div>
-              <div className="ws-form-field">
-                <label htmlFor="contact-email">Email</label>
-                <input
-                  type="email"
-                  id="contact-email"
-                  required
-                  placeholder="your@email.com"
-                  value={formData.email}
-                  onChange={e => setFormData({ ...formData, email: e.target.value })}
-                />
-              </div>
-              <div className="ws-form-field">
-                <label htmlFor="contact-event">Nature of the Occasion</label>
-                <select
-                  id="contact-event"
-                  required
-                  value={formData.eventType}
-                  onChange={e => setFormData({ ...formData, eventType: e.target.value })}
-                >
-                  <option value="">Select one...</option>
-                  <option>Private Gathering</option>
-                  <option>Wedding or Gala</option>
-                  <option>Corporate Event</option>
-                  <option>Other</option>
-                </select>
-              </div>
-              <div className="ws-form-field">
-                <label htmlFor="contact-message">Your Message</label>
-                <textarea
-                  id="contact-message"
-                  rows="4"
-                  placeholder="Tell us about your event..."
-                  value={formData.message}
-                  onChange={e => setFormData({ ...formData, message: e.target.value })}
-                />
-              </div>
-              <button type="submit" className="btn btn-primary ws-contact-submit">
-                Send Your Enquiry
-              </button>
-              {formSent && (
-                <p className="ws-form-success">
-                  Your message has been received. We shall respond posthaste. &#10022;
-                </p>
-              )}
-            </form>
-          </FadeUp>
         </section>
 
         {/* Quote Wizard */}

@@ -482,45 +482,48 @@ DROP TRIGGER IF EXISTS update_service_packages_updated_at ON service_packages;
 CREATE TRIGGER update_service_packages_updated_at BEFORE UPDATE ON service_packages
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-INSERT INTO service_packages (slug, name, description, category, pricing_type, base_rate_3hr, base_rate_4hr, extra_hour_rate, min_guests, base_rate_3hr_small, base_rate_4hr_small, extra_hour_rate_small, bartenders_included, includes, sort_order) VALUES
+ALTER TABLE service_packages ADD COLUMN IF NOT EXISTS bar_type VARCHAR(50) DEFAULT 'full_bar' CHECK (bar_type IN ('full_bar', 'beer_and_wine', 'mocktail', 'service_only', 'class'));
+
+INSERT INTO service_packages (slug, name, description, category, pricing_type, base_rate_3hr, base_rate_4hr, extra_hour_rate, min_guests, base_rate_3hr_small, base_rate_4hr_small, extra_hour_rate_small, bartenders_included, bar_type, includes, sort_order) VALUES
   ('the-core-reaction', 'The Core Reaction', 'Service-only. Built to flex. Our most budget-friendly Dry Lab setup. You provide the alcohol and supplies — or grab exactly what we recommend from our customized shopping list. We show up with the know-how, the setup, and the steady hands.', 'byob', 'flat',
-    NULL, 350, 100, NULL, NULL, NULL, NULL, 1,
+    NULL, 350, 100, NULL, NULL, NULL, NULL, 1, 'service_only',
     '["{bartenders} professional bartender{bartenders_s}","Setup & breakdown","Cooler","Bar tools + clean service layout","Menu planning session","Precise, event-specific alcohol shopping list","Bespoke menu graphic","$2 million liquor liability insurance"]', 1),
   ('the-doctors-orders', 'The Doctor''s Orders', 'Our signature Mixology Lab. Stir, shake, and serve with flair. This hands-on session includes everything you need to learn and create — shakers, tools, mixers, juices, garnishes — everything but the liquor.', 'byob', 'flat',
-    300, NULL, 100, NULL, NULL, NULL, NULL, 1,
+    300, NULL, 100, NULL, NULL, NULL, NULL, 1, 'class',
     '["{bartenders} professional instructor{bartenders_s}","Setup & breakdown","Cooler","Menu planning session","Precise alcohol shopping list","Custom menu graphic","Digital Curriculum (recipes & instructions)","Up to {hours} hours of service","$2 million liquor liability insurance"]', 2),
   ('the-base-compound', 'The Base Compound', 'Minimal inputs. Maximum efficiency. A stripped-down formula ideal for casual environments and efficient service — delivering a solid range without experimental overload.', 'hosted', 'per_guest',
-    NULL, 18, 5, 50, NULL, 23, 5, 1,
+    NULL, 18, 5, 50, NULL, 23, 5, 1, 'full_bar',
     '["Two Signature Cocktails — Pre-formulated in our lab for rapid, reliable deployment","Miller Lite","Michelob Ultra","One Red Wine — balanced, medium-bodied","One White Wine — bright and approachable","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 3),
   ('the-midrange-reaction', 'The Midrange Reaction', 'More variables. Still controlled. This formula expands the spirit selection and mixer profile, offering crowd-pleasing flexibility while staying efficient and focused. Ideal for weddings, milestone events, and hosts who want to level up without losing control of the experiment.', 'hosted', 'per_guest',
-    NULL, 22, 6, 50, NULL, 27, 6, 1,
+    NULL, 22, 6, 50, NULL, 27, 6, 1, 'full_bar',
     '["Svedka Vodka","New Amsterdam Gin","Bacardi Superior Rum","Jim Beam Bourbon","Margaritaville Tequila","Dewar''s Scotch","Miller Lite, Michelob Ultra","One Red Wine, One White Wine","Coke, Diet Coke, Sprite","Soda Water & Tonic","Cranberry, Orange & Pineapple Juices","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 4),
   ('the-enhanced-solution', 'The Enhanced Solution', 'Refined inputs. Amplified output. Premium spirits with expanded modifiers.', 'hosted', 'per_guest',
-    NULL, 28, 8, 50, NULL, 33, 8, 1,
+    NULL, 28, 8, 50, NULL, 33, 8, 1, 'full_bar',
     '["Six premium spirits","Three beers","Four wines","Sparkling wine","Expanded mixers/modifiers including bitters and citrus juices","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 5),
   ('formula-no-5', 'Formula No. 5', 'Precision over excess. Five spirits. Fully dialed. This tier is about clean lines, deliberate choices, and confident pours. Premium ingredients, zero clutter. A high-end setup for hosts who want quality without overstock.', 'hosted', 'per_guest',
-    NULL, 33, 9, 50, NULL, 39, 9, 1,
+    NULL, 33, 9, 50, NULL, 39, 9, 1, 'full_bar',
     '["Grey Goose Vodka","Hendrick''s Gin","Appleton Estate Rum","Casamigos Tequila","Bulleit Bourbon","Stella Artois","One Red Wine & One White Wine","Coke, Diet Coke, Sprite","Ginger Ale, Soda, Tonic","Orange, Cranberry & Pineapple Juices","Simple Syrup & Bitters","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 6),
   ('the-grand-experiment', 'The Grand Experiment', 'No corners cut. No questions unanswered. Apex formula with celebrated spirits and comprehensive bar experience.', 'hosted', 'per_guest',
-    NULL, 40, 11.25, 50, NULL, 46, 11.25, 1,
+    NULL, 40, 11.25, 50, NULL, 46, 11.25, 1, 'full_bar',
     '["Nine spirits","Three beers","Four premium wines","Sparkling wine","Craft beer selection","Full mixer/modifier range including fresh citrus","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 7),
   ('the-clear-reaction', 'The Clear Reaction', 'Mocktail Bar. Perfect for corporate, baby showers, religious/cultural events, or sober-curious crowds.', 'hosted', 'per_guest',
-    NULL, 14, 4, 50, NULL, 18, 4, 1,
+    NULL, 14, 4, 50, NULL, 18, 4, 1, 'mocktail',
     '["3-4 signature mocktail recipes","All mixers, garnishes, syrups","Premium presentation","Full bar setup","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 8),
   ('the-primary-culture', 'The Primary Culture', 'Bare Bones. Fully Functional. A simple yet stable foundation. Great for casual parties and backyard weddings where beer and wine get the job done.', 'hosted', 'per_guest',
-    NULL, 12, 4, 50, NULL, 17, 4, 1,
+    NULL, 12, 4, 50, NULL, 17, 4, 1, 'beer_and_wine',
     '["Miller Lite","Michelob Ultra","One Red Wine & One White Wine","Infused Water Station — citrus, cucumber, or herbs depending on season","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 9),
   ('the-refined-reaction', 'The Refined Reaction', 'A polished experiment in crowd-pleasing sophistication. Still streamlined, but with a noticeable bump in quality — perfect for weddings, cocktail hours, and milestone celebrations.', 'hosted', 'per_guest',
-    NULL, 14, 5, 50, NULL, 19, 5, 1,
+    NULL, 14, 5, 50, NULL, 19, 5, 1, 'beer_and_wine',
     '["Stella Artois","Corona Extra","One Red & One White Wine","Sparkling Wine","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 10),
   ('the-carbon-suspension', 'The Carbon Suspension', 'Expanded range. Zero pretense. For bigger crowds or events that need a little more variety — without drifting into fancy territory. Balanced. Approachable. Ready to pour.', 'hosted', 'per_guest',
-    NULL, 15, 5.75, 50, NULL, 20, 5.75, 1,
+    NULL, 15, 5.75, 50, NULL, 20, 5.75, 1, 'beer_and_wine',
     '["Miller Lite","Michelob Ultra","Yuengling Lager","Rotating Seltzer flavors","Two Red Wines & Two White Wines","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 11),
   ('the-cultivated-complex', 'The Cultivated Complex', 'Curated elegance. Lab-certified crowd-pleaser. Designed for hosts who want elevated beer and wine service with enough sparkle, variety, and quality to make it feel like the full experience — minus the liquor cabinet.', 'hosted', 'per_guest',
-    NULL, 17, 6.25, 50, NULL, 22, 6.25, 1,
+    NULL, 17, 6.25, 50, NULL, 22, 6.25, 1, 'beer_and_wine',
     '["Miller Lite","Michelob Ultra","Yuengling Lager","Two Rotating Craft or Local Beers","Seasonal Seltzer","Two Premium Red Wines & Two Premium White Wines","Sparkling Wine","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 12)
 ON CONFLICT (slug) DO UPDATE SET
   description = EXCLUDED.description,
+  bar_type = EXCLUDED.bar_type,
   includes = EXCLUDED.includes;
 
 -- ─── Service Add-ons ────────────────────────────────────────────────
@@ -540,6 +543,8 @@ CREATE TABLE IF NOT EXISTS service_addons (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE service_addons ADD COLUMN IF NOT EXISTS minimum_hours NUMERIC(4,1);
 
 DROP TRIGGER IF EXISTS update_service_addons_updated_at ON service_addons;
 CREATE TRIGGER update_service_addons_updated_at BEFORE UPDATE ON service_addons

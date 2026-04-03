@@ -152,7 +152,7 @@ router.post('/t/:token/sign', async (req, res) => {
 router.get('/public/packages', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, name, slug, category, description, pricing_type, includes,
+      `SELECT id, name, slug, category, bar_type, description, pricing_type, includes,
               base_rate_3hr, base_rate_4hr, base_rate_3hr_small, base_rate_4hr_small,
               extra_hour_rate, extra_hour_rate_small, min_guests,
               guests_per_bartender, bartenders_included, extra_bartender_hourly,
@@ -170,7 +170,7 @@ router.get('/public/packages', async (req, res) => {
 router.get('/public/addons', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, name, slug, billing_type, rate, extra_hour_rate, minimum_hours, applies_to
+      `SELECT id, name, slug, description, billing_type, rate, extra_hour_rate, applies_to
        FROM service_addons WHERE is_active = true ORDER BY sort_order`
     );
     res.json(result.rows);
