@@ -28,6 +28,7 @@ app.use(helmet({
     },
   },
   crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 
 // Middleware — allow requests from both public site and admin subdomain
