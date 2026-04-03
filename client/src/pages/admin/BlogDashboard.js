@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../utils/api';
+import RichTextEditor from '../../components/RichTextEditor';
 
 function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -17,125 +18,8 @@ const EMPTY_FORM = {
   cover_image_url: '',
   published: false,
   published_at: '',
-  blocks: [{ type: 'text', content: '' }],
+  body: '',
 };
-
-// ─── Block Editor ────────────────────────────────────────────────
-
-function BlockEditor({ blocks, onChange, onUploadImage }) {
-  const updateBlock = (index, updates) => {
-    const next = blocks.map((b, i) => i === index ? { ...b, ...updates } : b);
-    onChange(next);
-  };
-
-  const removeBlock = (index) => {
-    if (blocks.length <= 1) return;
-    onChange(blocks.filter((_, i) => i !== index));
-  };
-
-  const moveBlock = (index, dir) => {
-    const target = index + dir;
-    if (target < 0 || target >= blocks.length) return;
-    const next = [...blocks];
-    [next[index], next[target]] = [next[target], next[index]];
-    onChange(next);
-  };
-
-  const addBlock = (type) => {
-    const block = type === 'heading'
-      ? { type: 'heading', content: '', level: 'h2' }
-      : type === 'text'
-        ? { type: 'text', content: '' }
-        : { type: 'image', url: '', caption: '' };
-    onChange([...blocks, block]);
-  };
-
-  const handleImageUpload = async (index, file) => {
-    const url = await onUploadImage(file);
-    if (url) updateBlock(index, { url });
-  };
-
-  return (
-    <div className="blog-editor-blocks">
-      {blocks.map((block, i) => (
-        <div key={i} className="blog-editor-block">
-          <div className="blog-editor-block-header">
-            <span className="blog-editor-block-type">
-              {block.type === 'heading' ? 'Heading' : block.type === 'text' ? 'Text' : 'Image'}
-            </span>
-            <div className="blog-editor-block-actions">
-              <button type="button" className="btn-icon" onClick={() => moveBlock(i, -1)} disabled={i === 0} title="Move up">&uarr;</button>
-              <button type="button" className="btn-icon" onClick={() => moveBlock(i, 1)} disabled={i === blocks.length - 1} title="Move down">&darr;</button>
-              <button type="button" className="btn-icon btn-icon-danger" onClick={() => removeBlock(i)} disabled={blocks.length <= 1} title="Remove">&times;</button>
-            </div>
-          </div>
-          {block.type === 'heading' ? (
-            <div className="blog-editor-heading-block">
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <select
-                  className="form-input"
-                  value={block.level || 'h2'}
-                  onChange={e => updateBlock(i, { level: e.target.value })}
-                  style={{ width: '80px' }}
-                >
-                  <option value="h2">H2</option>
-                  <option value="h3">H3</option>
-                </select>
-                <input
-                  className="form-input"
-                  value={block.content}
-                  onChange={e => updateBlock(i, { content: e.target.value })}
-                  placeholder="Section heading..."
-                  style={{ flex: 1 }}
-                />
-              </div>
-            </div>
-          ) : block.type === 'text' ? (
-            <textarea
-              className="form-textarea blog-editor-textarea"
-              value={block.content}
-              onChange={e => updateBlock(i, { content: e.target.value })}
-              placeholder="Write your content here... Double line breaks become paragraphs."
-              rows={6}
-            />
-          ) : (
-            <div className="blog-editor-image-block">
-              {block.url ? (
-                <div className="blog-editor-image-preview">
-                  <img src={block.url} alt="Uploaded" />
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => updateBlock(i, { url: '' })}>Replace Image</button>
-                </div>
-              ) : (
-                <label className="blog-editor-image-upload">
-                  <input
-                    type="file"
-                    accept=".jpg,.jpeg,.png"
-                    style={{ display: 'none' }}
-                    onChange={e => {
-                      if (e.target.files[0]) handleImageUpload(i, e.target.files[0]);
-                    }}
-                  />
-                  <span className="blog-editor-upload-placeholder">Click to upload an image (JPEG or PNG)</span>
-                </label>
-              )}
-              <input
-                className="form-input"
-                value={block.caption || ''}
-                onChange={e => updateBlock(i, { caption: e.target.value })}
-                placeholder="Caption (optional)"
-              />
-            </div>
-          )}
-        </div>
-      ))}
-      <div className="blog-editor-add-buttons">
-        <button type="button" className="btn btn-secondary" onClick={() => addBlock('heading')}>+ Heading</button>
-        <button type="button" className="btn btn-secondary" onClick={() => addBlock('text')}>+ Text Block</button>
-        <button type="button" className="btn btn-secondary" onClick={() => addBlock('image')}>+ Image Block</button>
-      </div>
-    </div>
-  );
-}
 
 // ─── Post Form ───────────────────────────────────────────────────
 
@@ -143,7 +27,6 @@ function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, o
   const handleTitleChange = (e) => {
     const title = e.target.value;
     const updates = { title };
-    // Auto-generate slug only if slug is empty or matches auto-generated version of previous title
     if (!form.slug || form.slug === slugify(form._prevTitle || '')) {
       updates.slug = slugify(title);
     }
@@ -185,7 +68,7 @@ function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, o
           </div>
         ) : (
           <label className="blog-editor-image-upload">
-            <input type="file" accept=".jpg,.jpeg,.png" style={{ display: 'none' }} onChange={handleCoverUpload} />
+            <input type="file" accept=".jpg,.jpeg,.png,.webp" style={{ display: 'none' }} onChange={handleCoverUpload} />
             <span className="blog-editor-upload-placeholder">Click to upload a cover image</span>
           </label>
         )}
@@ -193,9 +76,9 @@ function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, o
 
       <div className="form-group">
         <label className="form-label">Content</label>
-        <BlockEditor
-          blocks={form.blocks}
-          onChange={blocks => setForm(f => ({ ...f, blocks }))}
+        <RichTextEditor
+          content={form.body}
+          onChange={body => setForm(f => ({ ...f, body }))}
           onUploadImage={onUploadImage}
         />
       </div>
@@ -232,8 +115,6 @@ export default function BlogDashboard() {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [createForm, setCreateForm] = useState({ ...EMPTY_FORM });
   const [editForm, setEditForm] = useState({ ...EMPTY_FORM });
@@ -269,24 +150,13 @@ export default function BlogDashboard() {
     }
   };
 
-  const parseBody = (bodyStr) => {
-    try {
-      const parsed = JSON.parse(bodyStr);
-      if (Array.isArray(parsed)) return parsed;
-    } catch {}
-    // Fallback for plain text/HTML body
-    return [{ type: 'text', content: bodyStr || '' }];
-  };
-
-  const serializeBlocks = (blocks) => JSON.stringify(blocks);
-
   const handleCreate = async (e) => {
     e.preventDefault();
     setError('');
     try {
-      const { blocks, _prevTitle, ...rest } = createForm;
+      const { _prevTitle, ...rest } = createForm;
       if (!rest.published_at) delete rest.published_at;
-      await api.post('/admin/blog', { ...rest, body: serializeBlocks(blocks) });
+      await api.post('/admin/blog', rest);
       setCreateForm({ ...EMPTY_FORM });
       setShowCreateForm(false);
       fetchPosts();
@@ -305,7 +175,7 @@ export default function BlogDashboard() {
       cover_image_url: post.cover_image_url || '',
       published: post.published,
       published_at: post.published_at || '',
-      blocks: parseBody(post.body),
+      body: post.body || '',
       _prevTitle: post.title,
     });
   };
@@ -314,9 +184,9 @@ export default function BlogDashboard() {
     e.preventDefault();
     setError('');
     try {
-      const { blocks, _prevTitle, ...rest } = editForm;
+      const { _prevTitle, ...rest } = editForm;
       if (!rest.published_at) delete rest.published_at;
-      await api.put(`/admin/blog/${editingId}`, { ...rest, body: serializeBlocks(blocks) });
+      await api.put(`/admin/blog/${editingId}`, rest);
       setEditingId(null);
       fetchPosts();
     } catch (err) {
@@ -341,34 +211,11 @@ export default function BlogDashboard() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <h1>Blog Posts</h1>
         {!showCreateForm && !editingId && (
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button className="btn btn-primary" onClick={() => { setShowCreateForm(true); setEditingId(null); }}>New Post</button>
-            <button
-              className="btn btn-secondary"
-              disabled={importing}
-              onClick={async () => {
-                if (!window.confirm('Import previous blog posts from blog_posts.json? This will upload images and create posts.')) return;
-                setImporting(true);
-                setImportResult(null);
-                try {
-                  const { data } = await api.post('/admin/blog/import');
-                  setImportResult(`Imported ${data.imported} post(s), skipped ${data.skipped}.`);
-                  fetchPosts();
-                } catch (err) {
-                  setImportResult('Import failed: ' + (err.response?.data?.error || err.message));
-                } finally {
-                  setImporting(false);
-                }
-              }}
-            >
-              {importing ? 'Importing...' : 'Import Previous Posts'}
-            </button>
-          </div>
+          <button className="btn btn-primary" onClick={() => { setShowCreateForm(true); setEditingId(null); }}>New Post</button>
         )}
       </div>
 
       {error && <div className="alert alert-error" style={{ marginBottom: '1rem' }}>{error}</div>}
-      {importResult && <div className="alert" style={{ marginBottom: '1rem' }}>{importResult}</div>}
 
       {showCreateForm && (
         <div className="card" style={{ marginBottom: '2rem' }}>

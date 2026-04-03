@@ -9,56 +9,6 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-function renderBlocks(bodyStr) {
-  let blocks;
-  try {
-    blocks = JSON.parse(bodyStr);
-    if (!Array.isArray(blocks)) throw new Error('not array');
-  } catch {
-    // Fallback: treat as plain text/HTML
-    return <div className="blog-post-body" dangerouslySetInnerHTML={{ __html: bodyStr }} />;
-  }
-
-  return (
-    <div className="blog-post-body">
-      {blocks.map((block, i) => {
-        if (block.type === 'heading') {
-          const Tag = block.level === 'h3' ? 'h3' : 'h2';
-          return <Tag key={i} className="blog-post-subheading">{block.content}</Tag>;
-        }
-        if (block.type === 'image') {
-          return (
-            <figure key={i} className="blog-post-figure">
-              <img src={block.url} alt={block.caption || ''} />
-              {block.caption && <figcaption>{block.caption}</figcaption>}
-            </figure>
-          );
-        }
-        // Text block — split on double newlines for paragraphs
-        const paragraphs = (block.content || '').split(/\n\n+/);
-        return (
-          <div key={i} className="blog-post-text-block">
-            {paragraphs.map((p, j) => {
-              // Single newlines become <br>
-              const parts = p.split('\n');
-              return (
-                <p key={j}>
-                  {parts.map((line, k) => (
-                    <React.Fragment key={k}>
-                      {k > 0 && <br />}
-                      {line}
-                    </React.Fragment>
-                  ))}
-                </p>
-              );
-            })}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 export default function BlogPost() {
   const { slug } = useParams();
   const [post, setPost] = useState(null);
@@ -87,11 +37,11 @@ export default function BlogPost() {
   if (notFound || !post) {
     return (
       <PublicLayout>
-        <section className="ws-section blog-post-section">
+        <section className="ws-section lab-notebook">
           <div className="blog-post-not-found">
             <h1>Post Not Found</h1>
             <p>The post you're looking for doesn't exist or has been removed.</p>
-            <Link to="/labnotes" className="btn btn-primary">Back to Blog</Link>
+            <Link to="/labnotes" className="btn btn-primary">Back to Lab Notes</Link>
           </div>
         </section>
       </PublicLayout>
@@ -100,17 +50,30 @@ export default function BlogPost() {
 
   return (
     <PublicLayout>
-      <article className="blog-post-section">
+      <article className="lab-notebook">
         {post.cover_image_url && (
-          <div className="blog-post-cover">
+          <div className="lab-notebook-cover">
             <img src={post.cover_image_url} alt={post.title} />
           </div>
         )}
-        <div className="blog-post-content">
-          <Link to="/labnotes" className="blog-back-link">&larr; Back to Blog</Link>
-          <h1>{post.title}</h1>
-          <p className="blog-post-date">{formatDate(post.published_at)}</p>
-          {renderBlocks(post.body)}
+        <div className="lab-notebook-header">
+          <Link to="/labnotes" className="lab-notebook-back">&larr; Back to Lab Notes</Link>
+          {post.chapter_number && (
+            <span className="lab-notebook-chapter">Lab Notes No. {post.chapter_number}</span>
+          )}
+          <h1 className="lab-notebook-title">{post.title}</h1>
+          <div className="lab-notebook-meta">
+            <span>{formatDate(post.published_at)}</span>
+            <span className="lab-notebook-meta-sep">&middot;</span>
+            <span>Dr. Bartender</span>
+          </div>
+        </div>
+        <div
+          className="lab-notebook-body"
+          dangerouslySetInnerHTML={{ __html: post.body }}
+        />
+        <div className="lab-notebook-footer">
+          <Link to="/labnotes" className="lab-notebook-back">&larr; Back to Lab Notes</Link>
         </div>
       </article>
     </PublicLayout>

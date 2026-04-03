@@ -10,7 +10,8 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT id, slug, title, excerpt, cover_image_url, published_at
+      SELECT id, slug, title, excerpt, cover_image_url, published_at,
+             ROW_NUMBER() OVER (ORDER BY published_at ASC) as chapter_number
       FROM blog_posts
       WHERE published = true
       ORDER BY published_at DESC
@@ -40,9 +41,12 @@ router.get('/images/:filename', async (req, res) => {
 router.get('/:slug', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, slug, title, excerpt, body, cover_image_url, published_at
-       FROM blog_posts
-       WHERE slug = $1 AND published = true`,
+      `SELECT bp.*, cn.chapter_number FROM blog_posts bp
+       JOIN (
+         SELECT id, ROW_NUMBER() OVER (ORDER BY published_at ASC) as chapter_number
+         FROM blog_posts WHERE published = true
+       ) cn ON cn.id = bp.id
+       WHERE bp.slug = $1 AND bp.published = true`,
       [req.params.slug]
     );
     if (result.rows.length === 0) {

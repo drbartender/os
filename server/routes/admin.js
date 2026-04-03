@@ -7,6 +7,14 @@ const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const { uploadFile } = require('../utils/storage');
 const { isValidUpload } = require('../utils/fileValidation');
+const createDOMPurify = require('dompurify');
+const { JSDOM } = require('jsdom');
+const DOMPurify = createDOMPurify(new JSDOM('').window);
+
+const BLOG_SANITIZE_OPTIONS = {
+  ALLOWED_TAGS: ['h2', 'h3', 'p', 'br', 'strong', 'em', 'a', 'img', 'figure', 'figcaption', 'ul', 'ol', 'li', 'blockquote', 'hr'],
+  ALLOWED_ATTR: ['href', 'src', 'alt', 'target', 'rel', 'class'],
+};
 
 const router = express.Router();
 
@@ -830,6 +838,7 @@ router.post('/blog', auth, adminOnly, async (req, res) => {
     if (!title || !body) {
       return res.status(400).json({ error: 'Title and body are required' });
     }
+    body = DOMPurify.sanitize(body, BLOG_SANITIZE_OPTIONS);
     if (!slug) slug = slugify(title);
     if (published_at) {
       published_at = new Date(published_at);
@@ -884,7 +893,8 @@ router.post('/blog/upload-image', auth, adminOnly, async (req, res) => {
 router.put('/blog/:id', auth, adminOnly, async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, slug, excerpt, body, cover_image_url, published, published_at: reqPublishedAt } = req.body;
+    const { title, slug, excerpt, cover_image_url, published, published_at: reqPublishedAt } = req.body;
+    const body = req.body.body ? DOMPurify.sanitize(req.body.body, BLOG_SANITIZE_OPTIONS) : req.body.body;
 
     // Fetch current state to check publish transition
     const current = await pool.query('SELECT * FROM blog_posts WHERE id = $1', [id]);

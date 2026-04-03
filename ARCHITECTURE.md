@@ -208,9 +208,11 @@ System design reference for the Dr. Bartender platform.
 ### Blog — `/api/blog`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/` | No | List all published blog posts |
-| GET | `/images/:filename` | No | Serve blog post images |
-| GET | `/:slug` | No | Get single blog post by slug |
+| GET | `/` | No | List published posts (includes chapter_number) |
+| GET | `/images/:filename` | No | Serve blog images via R2 signed URL |
+| GET | `/:slug` | No | Get single post by slug (includes chapter_number) |
+
+Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor uses TipTap (WYSIWYG) and the public view renders HTML directly.
 
 ### Calendar — `/api/calendar`
 | Method | Path | Auth | Description |
@@ -402,6 +404,15 @@ Located in `client/src/components/ShoppingList/`. Fully client-side PDF generati
 - **`logoBase64.js`** — Logo embedded as base64 data URI for use in PDFs
 
 Accessible via the "Shopping List" button on Drink Plan Detail (admin), visible when plan status is `submitted` or `reviewed`.
+
+### Blog
+
+**blog_posts** — Lab Notes blog content
+- `id` SERIAL PK, `slug` UNIQUE
+- `title`, `excerpt`, `body` (sanitized HTML)
+- `cover_image_url` — R2-hosted cover image
+- `published` BOOLEAN, `published_at` TIMESTAMPTZ
+- `chapter_number` — derived via `ROW_NUMBER()` (not stored)
 
 ### Cross-Cutting Patterns
 - All tables have `created_at` / `updated_at` with auto-update triggers

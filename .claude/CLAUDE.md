@@ -10,6 +10,8 @@
 - **Payments**: Stripe (server SDK + React Elements)
 - **Email**: Resend
 - **SMS**: Twilio
+- **Rich Text Editor**: TipTap (ProseMirror-based WYSIWYG) for blog admin
+- **HTML Sanitization**: DOMPurify + jsdom (server-side, for blog post bodies)
 - **Styling**: Vanilla CSS (no Tailwind, no preprocessors)
 - **Dev tools**: nodemon, concurrently, ESLint + eslint-plugin-security, husky + lint-staged
 
@@ -58,8 +60,9 @@ dr-bartender/
 │   │   ├── sms.js             # Twilio wrapper
 │   │   └── storage.js         # R2 upload/signed-URL helpers
 │   └── scripts/
-│       ├── importBlogPosts.js # Blog post import script
-│       └── migrate-to-gcs.js  # Storage migration script
+│       ├── importBlogPosts.js     # Blog post import script (legacy)
+│       ├── migrateBlogBodies.js  # One-time: convert blog blocks → HTML
+│       └── migrate-to-gcs.js    # Storage migration script
 ├── client/
 │   ├── src/
 │   │   ├── App.js            # All routes + auth guards
@@ -81,6 +84,7 @@ dr-bartender/
 │   │   │   ├── LocationInput.js   # Nominatim address autocomplete
 │   │   │   ├── PricingBreakdown.js # Proposal pricing display
 │   │   │   ├── PublicLayout.js    # Public-facing layout wrapper
+│   │   │   ├── RichTextEditor.js  # TipTap WYSIWYG editor (blog admin)
 │   │   │   ├── SignaturePad.js    # E-signature canvas
 │   │   │   ├── W9Form.js         # W-9 tax form component
 │   │   │   └── ShoppingList/     # Shopping list generator

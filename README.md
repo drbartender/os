@@ -14,6 +14,8 @@ A full-stack platform for Dr. Bartender's bartending service business. Handles c
 | Payments | Stripe (Elements + webhooks) |
 | Email | Resend |
 | SMS | Twilio |
+| Rich Text Editor | TipTap (ProseMirror-based WYSIWYG, blog admin) |
+| HTML Sanitization | DOMPurify + jsdom (server-side) |
 | Styling | Vanilla CSS |
 
 ## Prerequisites
@@ -119,7 +121,8 @@ dr-bartender/
 │   │   ├── sms.js              # Twilio SMS wrapper
 │   │   └── storage.js          # Cloudflare R2 upload + signed URL helpers
 │   └── scripts/
-│       ├── importBlogPosts.js  # Blog post import script
+│       ├── importBlogPosts.js     # Blog post import script (legacy)
+│       ├── migrateBlogBodies.js  # One-time: convert blog blocks → HTML
 │       └── migrate-to-gcs.js   # Storage migration script
 ├── client/
 │   ├── src/
@@ -131,7 +134,7 @@ dr-bartender/
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── constants.js    # App-wide constants
 │   │   │   └── formatPhone.js  # Phone number formatting
-│   │   ├── components/         # Layout, SignaturePad, FileUpload, PricingBreakdown, etc.
+│   │   ├── components/         # Layout, SignaturePad, FileUpload, PricingBreakdown, RichTextEditor, etc.
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
 │   │   ├── pages/
 │   │   │   ├── (auth)          # Login, Register, ForgotPassword, ResetPassword

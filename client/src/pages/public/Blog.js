@@ -23,35 +23,41 @@ export default function Blog() {
 
   return (
     <PublicLayout>
-      <section className="ws-section blog-index-section">
-        <div className="ws-section-heading">
-          <p className="ws-kicker">Blog</p>
-          <h1>From the Lab</h1>
+      <section className="ws-section lab-index-section">
+        <div className="lab-index-header">
+          <span className="lab-index-kicker">Field Notes &amp; Findings</span>
+          <h1 className="lab-index-title">Lab Notes</h1>
+          <p className="lab-index-subtitle">
+            Experiments, observations, and dispatches from behind the bar.
+          </p>
         </div>
 
         {loading ? (
           <div className="loading"><div className="spinner" />Loading...</div>
         ) : posts.length === 0 ? (
-          <div className="blog-empty">
-            <p>No posts yet — check back soon!</p>
+          <div className="lab-index-empty">
+            <p>The lab notebook is empty — experiments in progress. Check back soon!</p>
           </div>
         ) : (
-          <div className="blog-grid">
+          <div className="lab-index-grid">
             {posts.map(post => (
-              <Link to={`/labnotes/${post.slug}`} key={post.id} className="blog-card">
-                {post.cover_image_url ? (
-                  <div className="blog-card-image">
-                    <img src={post.cover_image_url} alt={post.title} />
-                  </div>
-                ) : (
-                  <div className="blog-card-image blog-card-placeholder">
-                    <span>Dr. B</span>
-                  </div>
-                )}
-                <div className="blog-card-body">
-                  <h3>{post.title}</h3>
-                  {post.excerpt && <p>{post.excerpt}</p>}
-                  <span className="blog-card-meta">{formatDate(post.published_at)}</span>
+              <Link to={`/labnotes/${post.slug}`} key={post.id} className="lab-card">
+                <div className="lab-card-image-wrap">
+                  {post.cover_image_url ? (
+                    <img src={post.cover_image_url} alt={post.title} className="lab-card-image" />
+                  ) : (
+                    <div className="lab-card-placeholder">
+                      <span>Dr. B</span>
+                    </div>
+                  )}
+                </div>
+                <div className="lab-card-body">
+                  {post.chapter_number && (
+                    <span className="lab-card-chapter">No. {post.chapter_number}</span>
+                  )}
+                  <h3 className="lab-card-title">{post.title}</h3>
+                  {post.excerpt && <p className="lab-card-excerpt">{post.excerpt}</p>}
+                  <span className="lab-card-date">{formatDate(post.published_at)}</span>
                 </div>
               </Link>
             ))}
