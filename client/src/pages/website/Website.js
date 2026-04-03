@@ -1,45 +1,55 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import BrandLogo from '../../components/BrandLogo';
 import QuoteWizard from './QuoteWizard';
 
-const WHY_CARDS = [
+const SERVICES = [
   {
-    label: 'Precision',
-    title: 'Clean, confident service',
-    text: 'A polished bar experience built to keep the room moving. You get a calm presence, thoughtful pacing, and a setup that feels intentional from the first pour to the last call.',
+    icon: '\u{1F4CB}',
+    title: 'Consultation + Menu Planning',
+    text: 'We work directly with you to design a drink menu that fits your event, budget, and crowd \u2014 then hand over a custom shopping list so nothing gets left to guesswork.',
   },
   {
-    label: 'Planning',
-    title: 'Quality, not chaos',
-    text: 'We help shape the service before event day so the bar runs smoothly. Packages, guest flow, menu direction, and add-ons are all mapped out ahead of time.',
+    icon: '\u{1F3A8}',
+    title: 'Bespoke Menu Graphic',
+    text: 'Every event gets a custom-designed cocktail menu. Polished presentation that elevates the whole experience.',
   },
   {
-    label: 'Cocktails',
-    title: 'Signature drinks with personality',
-    text: 'From crowd-pleasers to custom cocktails, your menu is curated to match your event. The goal is a bar that feels memorable without feeling complicated.',
+    icon: '\u{1F6E1}',
+    title: 'Licensed + Insured',
+    text: 'Professional staff, full liability coverage, and day-of bar management. Creativity meets precision.',
   },
 ];
 
 const STEPS = [
   {
-    number: '01',
-    title: 'Start with your event details',
-    text: 'Tell us the date, guest count, venue, and whether you want a BYOB setup or a fully hosted bar. We use that to recommend the right service level.',
+    number: '1',
+    title: 'Proposal & Deposit',
+    text: 'We send a custom proposal. Confirm your booking with a $100 deposit and we\u2019re locked in.',
   },
   {
-    number: '02',
-    title: 'Choose the package and reserve your date',
-    text: 'Review your proposal, add any extras you need, and lock in the event with a signed agreement and deposit.',
+    number: '2',
+    title: 'The Potion Planner',
+    text: 'We have a consultation where you complete our Potion Planner form. This helps us curate your shopping list and menu.',
   },
   {
-    number: '03',
-    title: 'Plan the menu',
-    text: 'We fine-tune cocktail selections, mocktail options, and service notes so your bar feels tailored to your crowd instead of generic.',
+    number: '3',
+    title: 'Execute & Enjoy',
+    text: 'We execute the experiment day-of. You focus on your guests \u2014 we handle the bar.',
+  },
+];
+
+const TESTIMONIALS = [
+  {
+    text: '"They transformed our garden party into a Victorian speakeasy. The smoked rosemary gin fizz was nothing short of sorcery."',
+    author: 'Eleanor V.',
   },
   {
-    number: '04',
-    title: 'We show up and run the bar',
-    text: 'On event day, we handle the setup, service, and flow so you can focus on hosting while guests enjoy the experience.',
+    text: '"The attention to detail was extraordinary \u2014 from the hand-labelled bottles to the copper jiggers. Our wedding guests are still talking about it."',
+    author: 'James & Sarah K.',
+  },
+  {
+    text: '"Hired them for a corporate holiday party and it was exactly what we needed \u2014 professional, well-paced, and the menu was dialed in. Will definitely book again next year."',
+    author: 'Marcus T.',
   },
 ];
 
@@ -66,14 +76,57 @@ const FAQS = [
   },
 ];
 
+function useFadeUp() {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          el.classList.add('ws-visible');
+          observer.unobserve(el);
+        }
+      },
+      { threshold: 0.15 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return ref;
+}
+
+function FadeUp({ children, className = '', delay = 0, ...props }) {
+  const ref = useFadeUp();
+  return (
+    <div
+      ref={ref}
+      className={`ws-fade-up ${className}`}
+      style={delay ? { transitionDelay: `${delay}s` } : undefined}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function Website() {
   const [openFaq, setOpenFaq] = useState(null);
   const [mobileNav, setMobileNav] = useState(false);
+  const [formData, setFormData] = useState({ name: '', email: '', eventType: '', message: '' });
+  const [formSent, setFormSent] = useState(false);
 
   const scrollTo = (id) => {
     setMobileNav(false);
     const el = document.getElementById(id);
     if (el) el.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const handleContactSubmit = (e) => {
+    e.preventDefault();
+    setFormSent(true);
+    setFormData({ name: '', email: '', eventType: '', message: '' });
+    setTimeout(() => setFormSent(false), 5000);
   };
 
   return (
@@ -88,8 +141,9 @@ export default function Website() {
             <span /><span /><span />
           </button>
           <nav className={`ws-nav ${mobileNav ? 'open' : ''}`} aria-label="Primary">
-            <button onClick={() => scrollTo('why-us')}>Why Us</button>
-            <button onClick={() => scrollTo('process')}>How It Works</button>
+            <button onClick={() => scrollTo('services')}>The Bar</button>
+            <button onClick={() => scrollTo('process')}>The Protocol</button>
+            <button onClick={() => scrollTo('testimonials')}>Our Story</button>
             <button onClick={() => scrollTo('faq')}>FAQ</button>
             <a href="/labnotes">Blog</a>
             <button className="ws-nav-cta" onClick={() => scrollTo('quote')}>Get a Quote</button>
@@ -101,128 +155,124 @@ export default function Website() {
         {/* Hero */}
         <section className="ws-hero">
           <div className="ws-hero-inner">
-            <div className="ws-hero-copy">
-              <p className="ws-kicker">Mobile Bar &middot; Cocktail Lab</p>
+            <FadeUp className="ws-hero-copy">
+              <p className="ws-kicker">Mixing Science with Celebration</p>
               <h1>Your event's bar, engineered.</h1>
-              <p className="ws-hero-sub">Dr. Bartender brings a clean, confident cocktail experience — built like a well-run experiment. You get a polished setup, smart menu planning, and a bartender who knows how to keep the room moving.</p>
+              <p className="ws-hero-subtitle">Mobile Bar &middot; Cocktail Lab</p>
+              <div className="ws-divider" />
+              <p className="ws-hero-sub">
+                Dr. Bartender brings a clean, confident cocktail experience &mdash; built like a
+                well-run experiment. You get a polished setup, smart menu planning, and a
+                bartender who knows how to keep the room moving.
+              </p>
               <div className="ws-hero-btns">
-                <button className="btn btn-primary" onClick={() => scrollTo('quote')}>Start a Quote</button>
-                <button className="btn btn-secondary" onClick={() => scrollTo('why-us')}>See what's included</button>
+                <button className="btn btn-primary" onClick={() => scrollTo('quote')}>Get a Quote</button>
+                <button className="btn btn-secondary" onClick={() => scrollTo('services')}>What We Offer</button>
               </div>
-            </div>
-            <aside className="ws-lab-board">
-              <div className="ws-board-tab">The Lab Board</div>
-              <ol>
-                <li>
-                  <strong>Event Proposal</strong>
-                  <span>Calibrated to your event — scope, style, and chemistry included.</span>
-                </li>
-                <li>
-                  <strong>Booking the Experience</strong>
-                  <span>Sign, reserve your date, and move forward with confidence.</span>
-                </li>
-                <li>
-                  <strong>Menu Planning</strong>
-                  <span>Beer, wine, cocktails, or a full bar — precisely curated to your taste.</span>
-                </li>
-                <li>
-                  <strong>Execution</strong>
-                  <span>We run the experiment. You enjoy the results.</span>
-                </li>
-              </ol>
-            </aside>
+            </FadeUp>
+            <FadeUp className="ws-hero-image" delay={0.2}>
+              <img
+                src="https://i.imgur.com/Plqd51Z.png"
+                alt="Dr. Bartender Apothecary Bottle"
+                loading="lazy"
+              />
+            </FadeUp>
+          </div>
+        </section>
+
+        {/* Services */}
+        <section className="ws-section" id="services">
+          <FadeUp className="ws-section-heading">
+            <h2>Everything you need. Nothing you don't.</h2>
+            <p className="ws-section-sub">
+              First time hiring a bartender? Welcome to the lab. We follow a proven method,
+              fine-tune the formula, and leave room for experimentation &mdash; so your bar setup
+              feels effortless and well-balanced.
+            </p>
+            <div className="ws-divider ws-divider-center" />
+          </FadeUp>
+          <div className="ws-services-grid">
+            {SERVICES.map((svc, i) => (
+              <FadeUp key={svc.title} delay={i * 0.1}>
+                <article className="ws-service-card">
+                  <div className="ws-service-icon">{svc.icon}</div>
+                  <h3>{svc.title}</h3>
+                  <p>{svc.text}</p>
+                </article>
+              </FadeUp>
+            ))}
+          </div>
+        </section>
+
+        {/* The Protocol (How It Works) */}
+        <section className="ws-section ws-protocol-section" id="process">
+          <FadeUp className="ws-section-heading">
+            <p className="ws-kicker">How It Works</p>
+            <h2>The Protocol</h2>
+            <div className="ws-divider ws-divider-center" />
+          </FadeUp>
+          <div className="ws-protocol-grid">
+            {STEPS.map((step, i) => (
+              <FadeUp key={step.number} delay={i * 0.12}>
+                <article className="ws-protocol-step">
+                  <div className="ws-protocol-number">
+                    <span>{step.number}</span>
+                  </div>
+                  <h3>{step.title}</h3>
+                  <p>{step.text}</p>
+                </article>
+              </FadeUp>
+            ))}
           </div>
         </section>
 
         {/* Why Us */}
         <section className="ws-section" id="why-us">
-          <div className="ws-section-heading">
-            <p className="ws-kicker">Why Us</p>
-            <h2>Why Choose Dr. Bartender?</h2>
-          </div>
+          <FadeUp className="ws-section-heading">
+            <p className="ws-kicker">Our Story</p>
+            <h2>Why Dr. Bartender?</h2>
+            <div className="ws-divider ws-divider-center" />
+          </FadeUp>
 
-          <div className="ws-origin-card">
-            <p>
-              Dr. Bartender was born from equal parts passion, precision, and a dash of
-              rebellion. After years behind the bar, chasing the perfect balance of flavor
-              and experience, I decided to build something that reflected both my initials —
-              D.R. — and my philosophy: bartending is as much a science as it is an art.
-            </p>
-          </div>
-
-          <div className="ws-card-grid">
-            {WHY_CARDS.map(card => (
-              <article key={card.title} className="ws-feature-card">
-                <span className="ws-card-pill">{card.label}</span>
-                <h3>{card.title}</h3>
-                <p>{card.text}</p>
-              </article>
-            ))}
-          </div>
+          <FadeUp>
+            <div className="ws-origin-card">
+              <p>
+                Dr. Bartender was born from equal parts passion, precision, and a dash of
+                rebellion. After years behind the bar, chasing the perfect balance of flavor
+                and experience, I decided to build something that reflected both my initials &mdash;
+                D.R. &mdash; and my philosophy: bartending is as much a science as it is an art.
+              </p>
+            </div>
+          </FadeUp>
         </section>
 
-        {/* How It Works */}
-        <section className="ws-section" id="process">
-          <div className="ws-section-heading">
-            <p className="ws-kicker">Process</p>
-            <h2>How It Works</h2>
-          </div>
-          <div className="ws-process-grid">
-            {STEPS.map(step => (
-              <article key={step.number} className="ws-step-card">
-                <div className="ws-step-num">{step.number}</div>
-                <h3>{step.title}</h3>
-                <p>{step.text}</p>
-              </article>
+        {/* Testimonials */}
+        <section className="ws-section ws-testimonials-section" id="testimonials">
+          <FadeUp className="ws-section-heading">
+            <p className="ws-kicker">Kind Words</p>
+            <h2>From Our Patrons</h2>
+            <div className="ws-divider ws-divider-center" />
+          </FadeUp>
+          <div className="ws-testimonials-grid">
+            {TESTIMONIALS.map((t, i) => (
+              <FadeUp key={i} delay={i * 0.1}>
+                <article className="ws-testimonial-card">
+                  <div className="ws-review-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+                  <p>{t.text}</p>
+                  <cite className="ws-testimonial-author">&mdash; {t.author}</cite>
+                </article>
+              </FadeUp>
             ))}
-          </div>
-        </section>
-
-        {/* Reviews — TODO: wire to DB / auto-import from Google & Thumbtack */}
-        <section className="ws-section" id="reviews">
-          <div className="ws-section-heading">
-            <p className="ws-kicker">Reviews</p>
-            <h2>What Our Clients Say</h2>
-          </div>
-          <div className="ws-reviews-grid">
-            {/* TODO: wire to DB — these are hardcoded placeholders */}
-            <article className="ws-review-card">
-              <div className="ws-review-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-              <p>"Dr. Bartender made our wedding bar feel effortless. The cocktails were a hit, the service was smooth, and we didn't have to worry about a thing. Guests are still talking about the signature drinks."</p>
-              <div className="ws-review-author">
-                <strong>Sarah & James M.</strong>
-                <span>Wedding Reception &middot; 120 guests</span>
-              </div>
-            </article>
-            <article className="ws-review-card">
-              <div className="ws-review-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-              <p>"Hired them for a corporate holiday party and it was exactly what we needed — professional, well-paced, and the menu was dialed in. Will definitely book again next year."</p>
-              <div className="ws-review-author">
-                <strong>Marcus T.</strong>
-                <span>Corporate Event &middot; 85 guests</span>
-              </div>
-            </article>
-            <article className="ws-review-card">
-              <div className="ws-review-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
-              <p>"The whole process was easy — got a quote online, picked our package, and they handled everything from there. Bar setup looked great and the bartender kept the energy up all night."</p>
-              <div className="ws-review-author">
-                <strong>Priya & Dev R.</strong>
-                <span>Birthday Party &middot; 60 guests</span>
-              </div>
-            </article>
-          </div>
-          <div className="ws-review-badges" style={{ textAlign: 'center', marginTop: '1.5rem' }}>
-            <span className="ws-badge">Google Reviews</span>
-            <span className="ws-badge">Thumbtack Top Pro</span>
           </div>
         </section>
 
         {/* FAQ */}
         <section className="ws-section" id="faq">
-          <div className="ws-section-heading">
+          <FadeUp className="ws-section-heading">
             <p className="ws-kicker">FAQ</p>
             <h2>Quick Answers</h2>
-          </div>
+            <div className="ws-divider ws-divider-center" />
+          </FadeUp>
           <div className="ws-faq-list">
             {FAQS.map((faq, i) => (
               <button
@@ -240,6 +290,79 @@ export default function Website() {
           </div>
         </section>
 
+        {/* Contact Form */}
+        <section className="ws-section ws-contact-section" id="contact">
+          <FadeUp className="ws-section-heading">
+            <p className="ws-kicker">Ready When You Are</p>
+            <h2>Start the Experiment</h2>
+            <div className="ws-divider ws-divider-center" />
+            <p className="ws-section-sub">
+              No templates, no guesswork &mdash; just a conversation. Tell us a bit about your
+              upcoming occasion, and let's work together to curate an experience that feels
+              entirely yours.
+            </p>
+          </FadeUp>
+          <FadeUp>
+            <form className="ws-contact-form" onSubmit={handleContactSubmit}>
+              <div className="ws-form-field">
+                <label htmlFor="contact-name">Your Name</label>
+                <input
+                  type="text"
+                  id="contact-name"
+                  required
+                  placeholder="Your name"
+                  value={formData.name}
+                  onChange={e => setFormData({ ...formData, name: e.target.value })}
+                />
+              </div>
+              <div className="ws-form-field">
+                <label htmlFor="contact-email">Email</label>
+                <input
+                  type="email"
+                  id="contact-email"
+                  required
+                  placeholder="your@email.com"
+                  value={formData.email}
+                  onChange={e => setFormData({ ...formData, email: e.target.value })}
+                />
+              </div>
+              <div className="ws-form-field">
+                <label htmlFor="contact-event">Nature of the Occasion</label>
+                <select
+                  id="contact-event"
+                  required
+                  value={formData.eventType}
+                  onChange={e => setFormData({ ...formData, eventType: e.target.value })}
+                >
+                  <option value="">Select one...</option>
+                  <option>Private Gathering</option>
+                  <option>Wedding or Gala</option>
+                  <option>Corporate Event</option>
+                  <option>Other</option>
+                </select>
+              </div>
+              <div className="ws-form-field">
+                <label htmlFor="contact-message">Your Message</label>
+                <textarea
+                  id="contact-message"
+                  rows="4"
+                  placeholder="Tell us about your event..."
+                  value={formData.message}
+                  onChange={e => setFormData({ ...formData, message: e.target.value })}
+                />
+              </div>
+              <button type="submit" className="btn btn-primary ws-contact-submit">
+                Send Your Enquiry
+              </button>
+              {formSent && (
+                <p className="ws-form-success">
+                  Your message has been received. We shall respond posthaste. &#10022;
+                </p>
+              )}
+            </form>
+          </FadeUp>
+        </section>
+
         {/* Quote Wizard */}
         <QuoteWizard />
 
@@ -251,12 +374,13 @@ export default function Website() {
               <p>Mobile Bar &middot; Cocktail Lab</p>
             </div>
             <div className="ws-footer-links">
-              <button onClick={() => scrollTo('why-us')}>Why Us</button>
-              <button onClick={() => scrollTo('process')}>How It Works</button>
+              <button onClick={() => scrollTo('services')}>The Bar</button>
+              <button onClick={() => scrollTo('process')}>The Protocol</button>
               <button onClick={() => scrollTo('faq')}>FAQ</button>
               <a href="/labnotes">Blog</a>
               <button onClick={() => scrollTo('quote')}>Get a Quote</button>
             </div>
+            <p className="ws-footer-email">contact@drbartender.com</p>
             <div className="ws-footer-copy">
               &copy; {new Date().getFullYear()} Dr. Bartender. All rights reserved.
             </div>
