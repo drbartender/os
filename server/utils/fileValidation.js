@@ -1,5 +1,5 @@
 /**
- * Allowed MIME / magic bytes for uploads (PDF, JPEG, PNG).
+ * Allowed MIME / magic bytes for uploads (PDF, JPEG, PNG, WebP).
  * express-fileupload provides file.data buffer.
  */
 const ALLOWED = [
