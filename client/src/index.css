@@ -2146,9 +2146,12 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 
 /* ── Main ───────────────────────────────────────────────── */
 .ws-main {
-  background: url('./images/chalkboard_background.png') center top repeat;
-  background-size: cover;
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(42, 42, 42, 0.3) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(42, 42, 42, 0.25) 0%, transparent 50%),
+    url('./images/chalkboard_background.png') center top / 1200px auto repeat;
   background-color: var(--chalkboard);
+  background-attachment: scroll, scroll, fixed;
 }
 
 /* ── Kicker / Section Heading ───────────────────────────── */
