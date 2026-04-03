@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import api from '../../utils/api';
+import api, { API_BASE_URL } from '../../utils/api';
 import RichTextEditor from '../../components/RichTextEditor';
+
+function resolveImageUrl(url) {
+  if (!url) return url;
+  if (url.startsWith('/api/')) {
+    const base = API_BASE_URL.replace(/\/api$/, '');
+    return `${base}${url}`;
+  }
+  return url;
+}
 
 function slugify(str) {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
@@ -63,7 +72,7 @@ function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, o
         <label className="form-label">Cover Image</label>
         {form.cover_image_url ? (
           <div className="blog-editor-image-preview">
-            <img src={form.cover_image_url} alt="Cover" />
+            <img src={resolveImageUrl(form.cover_image_url)} alt="Cover" />
             <button type="button" className="btn btn-secondary btn-sm" onClick={() => setForm(f => ({ ...f, cover_image_url: '' }))}>Remove</button>
           </div>
         ) : (
@@ -141,7 +150,7 @@ export default function BlogDashboard() {
       const formData = new FormData();
       formData.append('image', file);
       const { data } = await api.post('/admin/blog/upload-image', formData);
-      return data.url;
+      return resolveImageUrl(data.url);
     } catch (err) {
       setError(err.response?.data?.error || 'Image upload failed');
       return null;

@@ -1,8 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import DOMPurify from 'dompurify';
 import PublicLayout from '../../components/PublicLayout';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
+
+function resolveImageUrl(url) {
+  if (!url) return url;
+  if (url.startsWith('/api/')) return `${API_BASE}${url}`;
+  return url;
+}
+
+function resolveBodyImageUrls(html) {
+  if (!html || !API_BASE) return html;
+  return html.replace(/src="(\/api\/[^"]+)"/g, `src="${API_BASE}$1"`);
+}
 
 function formatDate(d) {
   if (!d) return '';
@@ -53,7 +65,7 @@ export default function BlogPost() {
       <article className="lab-notebook">
         {post.cover_image_url && (
           <div className="lab-notebook-cover">
-            <img src={post.cover_image_url} alt={post.title} />
+            <img src={resolveImageUrl(post.cover_image_url)} alt={post.title} />
           </div>
         )}
         <div className="lab-notebook-header">
@@ -70,7 +82,7 @@ export default function BlogPost() {
         </div>
         <div
           className="lab-notebook-body"
-          dangerouslySetInnerHTML={{ __html: post.body }}
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(resolveBodyImageUrls(post.body)) }}
         />
         <div className="lab-notebook-footer">
           <Link to="/labnotes" className="lab-notebook-back">&larr; Back to Lab Notes</Link>

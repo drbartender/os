@@ -4,6 +4,12 @@ import PublicLayout from '../../components/PublicLayout';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
+function resolveImageUrl(url) {
+  if (!url) return url;
+  if (url.startsWith('/api/')) return `${API_BASE}${url}`;
+  return url;
+}
+
 function formatDate(d) {
   if (!d) return '';
   return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
@@ -44,7 +50,7 @@ export default function Blog() {
               <Link to={`/labnotes/${post.slug}`} key={post.id} className="lab-card">
                 <div className="lab-card-image-wrap">
                   {post.cover_image_url ? (
-                    <img src={post.cover_image_url} alt={post.title} className="lab-card-image" />
+                    <img src={resolveImageUrl(post.cover_image_url)} alt={post.title} className="lab-card-image" />
                   ) : (
                     <div className="lab-card-placeholder">
                       <span>Dr. B</span>
