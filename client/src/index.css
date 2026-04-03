@@ -3143,11 +3143,21 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 }
 
 .lab-notebook-body figure img {
-  max-width: 100%;
+  width: 100%;
   height: auto;
   border-radius: var(--radius);
   display: block;
-  margin: 0 auto;
+}
+
+/* Standalone images (not in a figure) — match text width */
+.lab-notebook-body > img,
+.lab-notebook-body p > img {
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+  display: block;
+  margin: 2rem 0;
+  border: 1px solid var(--border-dark);
 }
 
 .lab-notebook-body figcaption {
@@ -3391,7 +3401,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 }
 
 .rte-content .tiptap img {
-  max-width: 100%;
+  width: 100%;
   height: auto;
   border-radius: var(--radius);
   margin: 1rem 0;
