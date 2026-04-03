@@ -87,49 +87,70 @@ dr-bartender/
 │   ├── middleware/
 │   │   └── auth.js             # JWT verification + role guards (auth, adminOnly)
 │   ├── routes/
-│   │   ├── auth.js             # POST /register, POST /login, GET /me
-│   │   ├── progress.js         # Onboarding step tracking
-│   │   ├── agreement.js        # Contractor agreement + digital signature
-│   │   ├── contractor.js       # Contractor profile + file uploads
-│   │   ├── payment.js          # Payment method + W-9 upload
-│   │   ├── application.js      # Contractor application form
 │   │   ├── admin.js            # Admin user management, status changes
-│   │   ├── drinkPlans.js       # Client event planning questionnaire
-│   │   ├── cocktails.js        # Cocktail menu CRUD
-│   │   ├── mocktails.js        # Mocktail menu CRUD
-│   │   ├── proposals.js        # Service proposals + pricing calculator
-│   │   ├── stripe.js           # Payment intents, payment links, webhooks
+│   │   ├── agreement.js        # Contractor agreement + digital signature
+│   │   ├── application.js      # Contractor application form
+│   │   ├── auth.js             # POST /register, POST /login, GET /me
+│   │   ├── blog.js             # Blog post endpoints
+│   │   ├── calendar.js         # Calendar/scheduling endpoints
+│   │   ├── clientAuth.js       # Client authentication (separate from staff auth)
+│   │   ├── clientPortal.js     # Client portal endpoints
 │   │   ├── clients.js          # Client CRUD
+│   │   ├── cocktails.js        # Cocktail menu CRUD
+│   │   ├── contractor.js       # Contractor profile + file uploads
+│   │   ├── drinkPlans.js       # Client event planning questionnaire
+│   │   ├── messages.js         # SMS messaging to staff
+│   │   ├── mocktails.js        # Mocktail menu CRUD
+│   │   ├── payment.js          # Payment method + W-9 upload
+│   │   ├── progress.js         # Onboarding step tracking
+│   │   ├── proposals.js        # Service proposals + pricing calculator
 │   │   ├── shifts.js           # Shift scheduling
-│   │   └── messages.js         # SMS messaging to staff
-│   └── utils/
-│       ├── email.js            # Resend email wrapper
-│       ├── sms.js              # Twilio SMS wrapper
-│       ├── storage.js          # Cloudflare R2 upload + signed URL helpers
-│       ├── fileValidation.js   # Magic-byte file type validation
-│       ├── pricingEngine.js    # Pure pricing calculation engine
-│       ├── eventCreation.js   # Auto-create shifts from paid proposals
-│       ├── balanceScheduler.js # Autopay balance charge scheduler
-│       ├── geocode.js          # Nominatim geocoding (address → lat/lng)
-│       ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)
-│       └── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
+│   │   └── stripe.js           # Payment intents, payment links, webhooks
+│   ├── utils/
+│   │   ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)
+│   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
+│   │   ├── balanceScheduler.js # Autopay balance charge scheduler
+│   │   ├── email.js            # Resend email wrapper
+│   │   ├── emailTemplates.js   # Email template helpers
+│   │   ├── eventCreation.js    # Auto-create shifts from paid proposals
+│   │   ├── fileValidation.js   # Magic-byte file type validation
+│   │   ├── geocode.js          # Nominatim geocoding (address → lat/lng)
+│   │   ├── pricingEngine.js    # Pure pricing calculation engine
+│   │   ├── sms.js              # Twilio SMS wrapper
+│   │   └── storage.js          # Cloudflare R2 upload + signed URL helpers
+│   └── scripts/
+│       ├── importBlogPosts.js  # Blog post import script
+│       └── migrate-to-gcs.js   # Storage migration script
 ├── client/
 │   ├── src/
 │   │   ├── App.js              # All routes, auth guards (ProtectedRoute, RequireHired, etc.)
 │   │   ├── context/
-│   │   │   └── AuthContext.js  # React auth state (login, logout, user)
+│   │   │   ├── AuthContext.js       # Staff/admin auth state (login, logout, user)
+│   │   │   └── ClientAuthContext.js # Client auth state
 │   │   ├── utils/
-│   │   │   └── api.js          # Axios instance with JWT interceptor
+│   │   │   ├── api.js          # Axios instance with JWT interceptor
+│   │   │   ├── constants.js    # App-wide constants
+│   │   │   └── formatPhone.js  # Phone number formatting
 │   │   ├── components/         # Layout, SignaturePad, FileUpload, PricingBreakdown, etc.
-│   │   ├── pages/              # Register, Login, onboarding steps, StaffPortal, admin pages
-│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, drink plans, menus)
-│   │   │   ├── plan/           # PotionPlanningLab — public event questionnaire
-│   │   │   └── proposal/       # ProposalView — public client-facing proposal
+│   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
+│   │   ├── pages/
+│   │   │   ├── (auth)          # Login, Register, ForgotPassword, ResetPassword
+│   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
+│   │   │   ├── (staff)         # Application, ApplicationStatus, StaffPortal
+│   │   │   ├── (admin)         # AdminDashboard, AdminApplicationDetail, AdminUserDetail
+│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, menus, hiring, blog)
+│   │   │   ├── plan/           # PotionPlanningLab — public event questionnaire (with steps/ and data/)
+│   │   │   ├── proposal/       # ProposalView — public client-facing proposal
+│   │   │   ├── public/         # Client portal (ClientLogin, ClientDashboard, Blog, BlogPost)
+│   │   │   └── website/        # Public website (Website, QuoteWizard)
 │   │   ├── images/             # Brand assets
 │   │   └── index.css           # Global styles
 │   ├── vercel.json             # SPA rewrite rule for Vercel
 │   └── package.json            # React deps, proxy: localhost:5000
+├── .claude/agents/             # Claude Code review agents (7 agents)
+├── .husky/pre-commit           # Pre-commit hook (lint-staged)
 ├── .env.example                # Environment variable template
+├── eslint.config.mjs           # ESLint flat config + security plugin
 ├── package.json                # Server deps + npm scripts
 └── render.yaml                 # Render deployment blueprint
 ```
@@ -143,6 +164,9 @@ dr-bartender/
 | `npm run build` | Build React frontend to `client/build/` |
 | `npm run install:all` | Install both server and client dependencies |
 | `npm run seed` | Create admin account from `ADMIN_EMAIL`/`ADMIN_PASSWORD` |
+| `npm run lint` | Run ESLint on all server code |
+| `npm run lint:fix` | Run ESLint with auto-fix on server code |
+| `npm run audit:check` | Check for known dependency vulnerabilities |
 
 ## Key Features
 

@@ -205,6 +205,34 @@ System design reference for the Dr. Bartender platform.
 | GET | `/user/:userId` | Admin | Message history for a specific staff member |
 | GET | `/shifts` | Admin | Shifts available for invitation picker |
 
+### Blog — `/api/blog`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/` | No | List all published blog posts |
+| GET | `/images/:filename` | No | Serve blog post images |
+| GET | `/:slug` | No | Get single blog post by slug |
+
+### Calendar — `/api/calendar`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/feed/:token` | Token | iCal feed of shifts (rate-limited per token) |
+| GET | `/event/:shiftId.ics` | Yes | Download single shift as .ics file |
+| GET | `/token` | Yes | Get user's calendar subscription token |
+| POST | `/token/regenerate` | Yes | Regenerate calendar subscription token |
+
+### Client Auth — `/api/client-auth`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/request` | No | Request OTP code (rate-limited) |
+| POST | `/verify` | No | Verify OTP and get client JWT |
+| GET | `/me` | Client | Get current client profile |
+
+### Client Portal — `/api/client-portal`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/proposals` | Client | List client's proposals |
+| GET | `/proposals/:token` | Client | Get single proposal by token |
+
 ### Other
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -452,3 +480,22 @@ The result is stored as a `pricing_snapshot` JSONB on the proposal for historica
 - **Frontend**: Vercel static site. `vercel.json` rewrites all paths to `index.html` for client-side routing. `REACT_APP_API_URL` set at build time.
 - **Database**: Render-managed PostgreSQL. Schema initialization is idempotent — `schema.sql` uses `IF NOT EXISTS` and `ADD COLUMN IF NOT EXISTS` throughout.
 - **No manual deploy step**: push to `main` triggers both Render and Vercel builds automatically.
+
+## Dev Tooling & Code Quality
+
+### ESLint + Security Plugin
+- **Config**: `eslint.config.mjs` (ESLint v10 flat config)
+- **Plugin**: `eslint-plugin-security` — flags SQL injection patterns, unsafe regex, object injection sinks, eval usage
+- **Rules**: `eqeqeq` (strict equality), `no-eval`, `no-implied-eval`, `no-new-func`, `prefer-const`, `require-await`
+- **Run**: `npm run lint` (check) or `npm run lint:fix` (auto-fix)
+
+### Pre-Commit Hooks (Husky + lint-staged)
+- **Hook**: `.husky/pre-commit` runs `npx lint-staged`
+- **Scope**: Only lints staged `server/**/*.js` files (fast — not full codebase)
+- **Behavior**: Blocks commits with ESLint errors; allows warnings
+
+### Claude Code Review Agents
+Seven custom agents in `.claude/agents/` provide automated code review:
+- **Tier 2 (automatic, haiku)**: `security-scan`, `consistency-check`, `error-handling-check` — run in parallel after completing features
+- **Tier 3 (on-demand, sonnet)**: `full-security-audit`, `full-code-review`, `database-review`, `ui-ux-review` — run when explicitly requested
+- See `CLAUDE.md` § Code Verification System for full details

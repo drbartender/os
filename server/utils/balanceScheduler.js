@@ -1,4 +1,8 @@
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? require('stripe')(process.env.STRIPE_SECRET_KEY)
+  : null;
+
+if (!stripe) console.warn('⚠️  STRIPE_SECRET_KEY not set — autopay scheduler disabled');
 const { pool } = require('../db');
 
 /**
@@ -6,6 +10,7 @@ const { pool } = require('../db');
  * Runs hourly via setInterval in server/index.js.
  */
 async function processAutopayCharges() {
+  if (!stripe) return;
   try {
     const result = await pool.query(`
       SELECT id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id, event_name

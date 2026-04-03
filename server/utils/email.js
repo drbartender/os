@@ -1,6 +1,10 @@
 const { Resend } = require('resend');
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = process.env.RESEND_API_KEY
+  ? new Resend(process.env.RESEND_API_KEY)
+  : null;
+
+if (!resend) console.warn('⚠️  RESEND_API_KEY not set — emails will be logged but not sent');
 
 const FROM_EMAIL = 'Dr. Bartender <no-reply@drbartender.com>';
 
@@ -16,6 +20,11 @@ const FROM_EMAIL = 'Dr. Bartender <no-reply@drbartender.com>';
  * @returns {Promise<{id: string}>}
  */
 async function sendEmail({ to, subject, html, text, from, replyTo }) {
+  if (!resend) {
+    console.log(`[DEV] Email skipped → ${to} | Subject: ${subject}`);
+    return { id: 'dev-skipped' };
+  }
+
   const { data, error } = await resend.emails.send({
     from: from || FROM_EMAIL,
     to: Array.isArray(to) ? to : [to],

@@ -1,6 +1,10 @@
 const twilio = require('twilio');
 
-const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const client = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
+  ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+  : null;
+
+if (!client) console.warn('⚠️  Twilio credentials not set — SMS will be logged but not sent');
 
 /**
  * Send an SMS via Twilio
@@ -11,6 +15,10 @@ const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TO
  */
 async function sendSMS({ to, body }) {
   if (!to) throw new Error('SMS recipient phone number is required');
+  if (!client) {
+    console.log(`[DEV] SMS skipped → ${to} | Body: ${body}`);
+    return { sid: 'dev-skipped' };
+  }
   const message = await client.messages.create({
     from: process.env.TWILIO_PHONE_NUMBER,
     to,

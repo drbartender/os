@@ -11,7 +11,7 @@
 - **Email**: Resend
 - **SMS**: Twilio
 - **Styling**: Vanilla CSS (no Tailwind, no preprocessors)
-- **Dev tools**: nodemon, concurrently
+- **Dev tools**: nodemon, concurrently, ESLint + eslint-plugin-security, husky + lint-staged
 
 ## Folder Structure
 
@@ -30,58 +30,115 @@ dr-bartender/
 │   │   ├── agreement.js       # Staff agreement/contract signing
 │   │   ├── application.js     # Staff application submission
 │   │   ├── auth.js            # Login, register, JWT refresh
+│   │   ├── blog.js            # Blog post endpoints
+│   │   ├── calendar.js        # Calendar/scheduling endpoints
+│   │   ├── clientAuth.js      # Client authentication (separate from staff auth)
+│   │   ├── clientPortal.js    # Client portal endpoints
 │   │   ├── clients.js         # Client CRM endpoints
 │   │   ├── cocktails.js       # Cocktail menu management
 │   │   ├── contractor.js      # Contractor profile endpoints
 │   │   ├── drinkPlans.js      # Public drink plan (Potion Planning Lab)
+│   │   ├── messages.js        # SMS messaging to staff
 │   │   ├── mocktails.js       # Mocktail menu management
 │   │   ├── payment.js         # Payment tracking
 │   │   ├── progress.js        # Onboarding progress tracking
 │   │   ├── proposals.js       # Proposal CRUD + public token view
 │   │   ├── shifts.js          # Shift management
 │   │   └── stripe.js          # Stripe checkout + webhooks
-│   └── utils/
-│       ├── balanceScheduler.js # Scheduled balance/payment tasks
-│       ├── email.js           # Resend wrapper
-│       ├── eventCreation.js   # Event creation helpers
-│       ├── fileValidation.js  # Magic-byte validation
-│       ├── pricingEngine.js   # Pure pricing calculation functions
-│       ├── sms.js             # Twilio wrapper
-│       └── storage.js         # R2 upload/signed-URL helpers
+│   ├── utils/
+│   │   ├── autoAssign.js      # Auto-assign algorithm (seniority + geo + equipment)
+│   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
+│   │   ├── balanceScheduler.js # Scheduled balance/payment tasks
+│   │   ├── email.js           # Resend wrapper
+│   │   ├── emailTemplates.js  # Email template helpers
+│   │   ├── eventCreation.js   # Event creation helpers
+│   │   ├── fileValidation.js  # Magic-byte validation
+│   │   ├── geocode.js         # Nominatim geocoding (address → lat/lng)
+│   │   ├── pricingEngine.js   # Pure pricing calculation functions
+│   │   ├── sms.js             # Twilio wrapper
+│   │   └── storage.js         # R2 upload/signed-URL helpers
+│   └── scripts/
+│       ├── importBlogPosts.js # Blog post import script
+│       └── migrate-to-gcs.js  # Storage migration script
 ├── client/
 │   ├── src/
 │   │   ├── App.js            # All routes + auth guards
-│   │   ├── context/AuthContext.js
-│   │   ├── utils/api.js      # Axios instance with JWT interceptor
+│   │   ├── context/
+│   │   │   ├── AuthContext.js      # Staff/admin auth state
+│   │   │   └── ClientAuthContext.js # Client auth state
+│   │   ├── utils/
+│   │   │   ├── api.js             # Axios instance with JWT interceptor
+│   │   │   ├── constants.js       # App-wide constants
+│   │   │   └── formatPhone.js     # Phone number formatting
 │   │   ├── components/
 │   │   │   ├── AdminLayout.js     # Admin sidebar + header layout
 │   │   │   ├── BrandLogo.js       # Dr. Bartender logo component
+│   │   │   ├── ConfirmModal.js    # Confirmation dialog component
+│   │   │   ├── DrinkPlanSelections.js # Drink plan selection display
 │   │   │   ├── ErrorBoundary.js   # React error boundary
 │   │   │   ├── FileUpload.js      # Drag-and-drop file upload
 │   │   │   ├── Layout.js          # Staff-facing layout wrapper
 │   │   │   ├── LocationInput.js   # Nominatim address autocomplete
 │   │   │   ├── PricingBreakdown.js # Proposal pricing display
+│   │   │   ├── PublicLayout.js    # Public-facing layout wrapper
 │   │   │   ├── SignaturePad.js    # E-signature canvas
-│   │   │   └── W9Form.js         # W-9 tax form component
+│   │   │   ├── W9Form.js         # W-9 tax form component
+│   │   │   └── ShoppingList/     # Shopping list generator
+│   │   │       ├── ShoppingListButton.jsx
+│   │   │       ├── ShoppingListModal.jsx
+│   │   │       ├── ShoppingListPDF.jsx
+│   │   │       ├── generateShoppingList.js
+│   │   │       ├── logoBase64.js
+│   │   │       └── shoppingListPars.js
 │   │   ├── pages/
+│   │   │   ├── Login.js, Register.js, ForgotPassword.js, ResetPassword.js
+│   │   │   ├── Welcome.js, FieldGuide.js, Agreement.js
+│   │   │   ├── ContractorProfile.js, PaydayProtocols.js, Completion.js
+│   │   │   ├── Application.js, ApplicationStatus.js
+│   │   │   ├── AdminDashboard.js, AdminApplicationDetail.js, AdminUserDetail.js
+│   │   │   ├── StaffPortal.js
 │   │   │   ├── admin/
+│   │   │   │   ├── BlogDashboard.js
 │   │   │   │   ├── ClientDetail.js
 │   │   │   │   ├── ClientsDashboard.js
 │   │   │   │   ├── CocktailMenuDashboard.js
+│   │   │   │   ├── Dashboard.js
 │   │   │   │   ├── DrinkPlanDetail.js
 │   │   │   │   ├── DrinkPlansDashboard.js
 │   │   │   │   ├── EventsDashboard.js
 │   │   │   │   ├── FinancialsDashboard.js
+│   │   │   │   ├── HiringDashboard.js
 │   │   │   │   ├── ProposalCreate.js
 │   │   │   │   ├── ProposalDetail.js
 │   │   │   │   ├── ProposalsDashboard.js
 │   │   │   │   └── SettingsDashboard.js
-│   │   │   ├── plan/         # PotionPlanningLab (public questionnaire)
-│   │   │   └── proposal/     # ProposalView (public client-facing)
+│   │   │   ├── plan/             # PotionPlanningLab (public questionnaire)
+│   │   │   │   ├── PotionPlanningLab.js
+│   │   │   │   ├── data/         # cocktailMenu.js, servingTypes.js
+│   │   │   │   └── steps/        # WelcomeStep, LogisticsStep, FullBarStep, etc.
+│   │   │   ├── proposal/         # ProposalView (public client-facing)
+│   │   │   ├── public/           # Client portal pages
+│   │   │   │   ├── Blog.js, BlogPost.js
+│   │   │   │   ├── ClientDashboard.js
+│   │   │   │   └── ClientLogin.js
+│   │   │   └── website/          # Public website pages
+│   │   │       ├── Website.js
+│   │   │       └── QuoteWizard.js
 │   │   └── index.css         # Global styles
 │   ├── package.json          # proxy: localhost:5000
 │   └── vercel.json           # SPA rewrite for Vercel deployment
+├── .claude/
+│   └── agents/               # Claude Code review agents
+│       ├── security-scan.md       # Tier 2: lightweight security scan (haiku)
+│       ├── consistency-check.md   # Tier 2: cross-file consistency (haiku)
+│       ├── error-handling-check.md # Tier 2: missing error handling (haiku)
+│       ├── full-security-audit.md # Tier 3: OWASP full audit (sonnet)
+│       ├── full-code-review.md    # Tier 3: code quality review (sonnet)
+│       ├── database-review.md     # Tier 3: schema + query review (sonnet)
+│       └── ui-ux-review.md        # Tier 3: Playwright UI/UX review (sonnet)
 ├── .env / .env.example
+├── .husky/pre-commit         # Pre-commit hook (runs lint-staged)
+├── eslint.config.mjs         # ESLint flat config + security plugin
 ├── package.json              # Root (server deps + scripts)
 └── render.yaml               # Render blueprint
 ```
@@ -145,9 +202,20 @@ The rule: **if you change X, search the codebase for everything that depends on 
 
 ## Mandatory Documentation Updates
 
-After any significant change (new feature, new route, schema change, new integration), update:
-1. **README.md** — reflect new features, env vars, or setup steps
-2. **ARCHITECTURE.md** — reflect new routes, schema tables, integrations, or deployment changes
+**This is not optional.** When you add, rename, or remove files, update ALL THREE docs in the same change. The pre-commit hook will warn if you don't.
+
+| What changed | Update in CLAUDE.md | Update in README.md | Update in ARCHITECTURE.md |
+|---|---|---|---|
+| New/removed route file | Folder structure tree | Folder structure tree | Add/remove API route table |
+| New/removed util file | Folder structure tree | Folder structure tree | Mention in relevant section |
+| New/removed component | Folder structure tree | Folder structure tree | — |
+| New/removed page | Folder structure tree | Folder structure tree | — |
+| New/removed context | Folder structure tree | Folder structure tree | — |
+| Schema column/table change | — | — | Database Schema section |
+| New env variable | Environment Variables table | Environment Variables table | — |
+| New npm script | — | NPM Scripts table | — |
+| New integration | Tech Stack list | Tech Stack table | Third-Party Integrations |
+| New feature | — | Key Features section | Relevant architecture section |
 
 ---
 
@@ -187,9 +255,9 @@ Before presenting ANY code change, silently verify:
 
 ### Tier 2: Automatic Lightweight Agents (After Completing a Feature)
 
-After finishing a feature or significant change (new route, new page, schema change), automatically launch these **in parallel** using the haiku model to keep costs low:
+After finishing a feature or significant change (new route, new page, schema change), automatically launch these **in parallel** using the haiku model to keep costs low. Agents are defined in `.claude/agents/`:
 
-**Security Scan Agent** — Grep the changed files for:
+**@security-scan** — Grep the changed files for:
 - String concatenation in SQL queries
 - Missing `auth` middleware on route files
 - `dangerouslySetInnerHTML` usage
@@ -197,14 +265,14 @@ After finishing a feature or significant change (new route, new page, schema cha
 - Missing ownership checks (`req.user.id`) on data access
 Report only confirmed issues, not style nits.
 
-**Consistency Agent** — For each changed file, verify:
+**@consistency-check** — For each changed file, verify:
 - If a DB column was added/changed: grep all routes that SELECT/INSERT/UPDATE that table — are they all updated?
 - If a route was added: is it mounted in `index.js`? Does `App.js` have a corresponding frontend route?
 - If pricing logic changed: do all consumers (`ProposalCreate`, `ProposalDetail`, `PricingBreakdown`) reflect it?
 - If an API response shape changed: do all frontend consumers handle the new shape?
 Report only actual mismatches found.
 
-**Error Handling Agent** — Scan changed code for:
+**@error-handling-check** — Scan changed code for:
 - `async` functions missing try/catch
 - `.query()` calls without error handling
 - API calls in React without `.catch()` or error state
@@ -213,14 +281,14 @@ Report only missing error handling, not style.
 
 ### Tier 3: Deep Review Agents (On-Demand Only — Expensive)
 
-Only run when the user explicitly asks (e.g., "review security", "full review", "review before deploy"):
+Only run when the user explicitly asks (e.g., "review security", "full review", "review before deploy"). Invoke with `@agent-name`:
 
-**Full Security Audit** — Scan the ENTIRE codebase for OWASP Top 10 vulnerabilities, auth bypass paths, missing rate limiting, insecure token handling, CORS misconfig.
+**@full-security-audit** — Scan the ENTIRE codebase for OWASP Top 10 vulnerabilities, auth bypass paths, missing rate limiting, insecure token handling, CORS misconfig. (sonnet)
 
-**Full Code Quality Review** — Dead code, duplicated logic, functions over 50 lines, unused imports, console.logs left in production, naming inconsistencies.
+**@full-code-review** — Dead code, duplicated logic, functions over 50 lines, unused imports, console.logs left in production, naming inconsistencies. (sonnet)
 
-**UI/UX Review** — Use the ui-ux-reviewer agent to screenshot key pages, check mobile responsiveness, accessibility, visual consistency.
+**@ui-ux-review** — Uses Playwright MCP to screenshot key pages, check mobile responsiveness, accessibility, visual consistency. Requires app running locally (`npm run dev`). (sonnet)
 
-**Database Review** — Analyze schema for missing indexes, N+1 query patterns, unprotected cascading deletes, missing foreign keys.
+**@database-review** — Analyze schema for missing indexes, N+1 query patterns, unprotected cascading deletes, missing foreign keys. (sonnet)
 
-**Full Pre-Deploy Review** — Run ALL of the above. Reserve for deploy prep only.
+**Full Pre-Deploy Review** — Run ALL four agents above in parallel. Reserve for deploy prep only.

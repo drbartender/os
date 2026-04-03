@@ -43,6 +43,12 @@ You are a consistency checker for a Node.js/Express + React application with Pos
 - Is it in `.env.example`?
 - Is it referenced in deployment config (`render.yaml`)?
 
+**If any new file was added or removed:**
+- Is it listed in the folder structure in `.claude/CLAUDE.md`?
+- Is it listed in the folder structure in `README.md`?
+- If it's a new route: is the API table in `ARCHITECTURE.md` updated?
+- If it's a new util/component: is it mentioned where relevant in docs?
+
 ## Output format
 
 If no issues found, say: "Consistency check passed — all related files are in sync."

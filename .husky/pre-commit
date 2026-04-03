@@ -1,1 +1,2 @@
+bash scripts/check-docs-drift.sh
 npx lint-staged
