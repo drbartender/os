@@ -10,11 +10,22 @@ const client = new S3Client({
   },
 });
 
+const MIME_TYPES = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.pdf': 'application/pdf',
+};
+
 async function uploadFile(buffer, filename) {
+  const ext = (filename.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
   await client.send(new PutObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME,
     Key: filename,
     Body: buffer,
+    ContentType: contentType,
   }));
 }
 
