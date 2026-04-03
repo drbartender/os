@@ -232,6 +232,8 @@ export default function BlogDashboard() {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [createForm, setCreateForm] = useState({ ...EMPTY_FORM });
   const [editForm, setEditForm] = useState({ ...EMPTY_FORM });
@@ -339,11 +341,34 @@ export default function BlogDashboard() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <h1>Blog Posts</h1>
         {!showCreateForm && !editingId && (
-          <button className="btn btn-primary" onClick={() => { setShowCreateForm(true); setEditingId(null); }}>New Post</button>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button className="btn btn-primary" onClick={() => { setShowCreateForm(true); setEditingId(null); }}>New Post</button>
+            <button
+              className="btn btn-secondary"
+              disabled={importing}
+              onClick={async () => {
+                if (!window.confirm('Import previous blog posts from blog_posts.json? This will upload images and create posts.')) return;
+                setImporting(true);
+                setImportResult(null);
+                try {
+                  const { data } = await api.post('/admin/blog/import');
+                  setImportResult(`Imported ${data.imported} post(s), skipped ${data.skipped}.`);
+                  fetchPosts();
+                } catch (err) {
+                  setImportResult('Import failed: ' + (err.response?.data?.error || err.message));
+                } finally {
+                  setImporting(false);
+                }
+              }}
+            >
+              {importing ? 'Importing...' : 'Import Previous Posts'}
+            </button>
+          </div>
         )}
       </div>
 
       {error && <div className="alert alert-error" style={{ marginBottom: '1rem' }}>{error}</div>}
+      {importResult && <div className="alert" style={{ marginBottom: '1rem' }}>{importResult}</div>}
 
       {showCreateForm && (
         <div className="card" style={{ marginBottom: '2rem' }}>

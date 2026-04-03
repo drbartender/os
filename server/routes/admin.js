@@ -724,6 +724,105 @@ router.get('/blog', auth, adminOnly, async (req, res) => {
   }
 });
 
+// Import blog posts from blog_posts.json (one-time migration)
+router.post('/blog/import', auth, adminOnly, async (req, res) => {
+  try {
+    const fs = require('fs');
+    const importDir = path.resolve(__dirname, '../..', 'blog-import');
+    const jsonPath = path.join(importDir, 'blog_posts.json');
+    const imagesDir = path.join(importDir, 'images');
+
+    if (!fs.existsSync(jsonPath)) {
+      return res.status(404).json({ error: 'blog_posts.json not found on server' });
+    }
+
+    const posts = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+    const results = [];
+
+    const uploadImg = async (filename) => {
+      const fullPath = path.join(imagesDir, path.basename(filename));
+      if (!fs.existsSync(fullPath)) return null;
+      const data = fs.readFileSync(fullPath);
+      const ext = path.extname(filename);
+      const name = `blog_${uuidv4()}${ext}`;
+      await uploadFile(data, name);
+      return `/api/blog/images/${name}`;
+    };
+
+    const parseBlocks = (text) => {
+      const blocks = [];
+      const sections = text.split(/\n{2,}/);
+      for (const raw of sections) {
+        const section = raw.trim();
+        if (!section) continue;
+        const lines = section.split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length === 1 && section.length < 100 && !section.endsWith('.') && !section.startsWith('"') && !section.startsWith('\u201C')) {
+          blocks.push({ type: 'heading', content: section, level: 'h2' });
+        } else {
+          blocks.push({ type: 'text', content: section });
+        }
+      }
+      return blocks;
+    };
+
+    for (let i = 0; i < posts.length; i++) {
+      const post = posts[i];
+      const postNum = i + 1;
+
+      // Upload cover image
+      const coverFilename = `cover-post${postNum}.webp`;
+      let coverUrl = null;
+      if (fs.existsSync(path.join(imagesDir, coverFilename))) {
+        coverUrl = await uploadImg(coverFilename);
+      }
+
+      // Parse body into blocks
+      const blocks = parseBlocks(post.body);
+
+      // Upload inline images
+      const imageBlocks = [];
+      for (const img of (post.images || [])) {
+        const url = await uploadImg(img.local_path);
+        if (url) imageBlocks.push({ type: 'image', url, caption: img.alt || '' });
+      }
+
+      // Distribute images after headings
+      let imgIdx = 0;
+      const finalBlocks = [];
+      for (const block of blocks) {
+        finalBlocks.push(block);
+        if (block.type === 'heading' && imgIdx < imageBlocks.length) {
+          finalBlocks.push(imageBlocks[imgIdx++]);
+        }
+      }
+      while (imgIdx < imageBlocks.length) finalBlocks.push(imageBlocks[imgIdx++]);
+
+      const body = JSON.stringify(finalBlocks);
+      const firstText = finalBlocks.find(b => b.type === 'text');
+      const excerpt = firstText ? firstText.content.slice(0, 200).replace(/\n/g, ' ').trim() + '...' : '';
+
+      const result = await pool.query(
+        `INSERT INTO blog_posts (title, slug, excerpt, body, cover_image_url, published, published_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (slug) DO NOTHING
+         RETURNING id`,
+        [post.title, post.slug, excerpt, body, coverUrl, true, new Date(post.date)]
+      );
+
+      results.push({
+        title: post.title,
+        status: result.rows.length ? 'imported' : 'skipped (slug exists)',
+        id: result.rows[0]?.id || null
+      });
+    }
+
+    res.json({ imported: results.filter(r => r.status === 'imported').length, skipped: results.filter(r => r.status !== 'imported').length, results });
+  } catch (err) {
+    console.error('Blog import error:', err);
+    res.status(500).json({ error: 'Import failed: ' + err.message });
+  }
+});
+
 // Create post
 router.post('/blog', auth, adminOnly, async (req, res) => {
   try {
