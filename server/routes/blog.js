@@ -29,7 +29,14 @@ router.get('/images/:filename', async (req, res) => {
   const filename = path.basename(req.params.filename);
   try {
     const url = await getSignedUrl(filename);
-    res.redirect(url);
+    // Proxy the image instead of redirecting to avoid CORS/mixed-content issues
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('R2 fetch failed');
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', 'public, max-age=600');
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.send(buffer);
   } catch (err) {
     console.error('Blog image error:', err);
     res.status(404).json({ error: 'Image not found' });
