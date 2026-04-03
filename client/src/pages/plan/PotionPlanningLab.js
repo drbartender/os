@@ -409,7 +409,7 @@ export default function PotionPlanningLab() {
               <button className="btn btn-secondary" onClick={handleBack}>Back</button>
             ) : <div />}
             {showNext ? (
-              <button className="btn" onClick={handleNext}>Next</button>
+              <button className="btn btn-primary" onClick={handleNext}>Next</button>
             ) : <div />}
           </div>
         )}

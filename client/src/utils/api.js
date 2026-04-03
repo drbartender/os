@@ -21,9 +21,13 @@ api.interceptors.response.use(
   res => res,
   err => {
     if (err.response?.status === 401) {
-      localStorage.removeItem('token');
-      if (onUnauthorized) onUnauthorized('/login');
-      else window.location.href = '/login';
+      // Don't intercept 401s on auth endpoints — let the login page handle its own errors
+      const url = err.config?.url || '';
+      if (!url.startsWith('/auth/')) {
+        localStorage.removeItem('token');
+        if (onUnauthorized) onUnauthorized('/login');
+        else window.location.href = '/login';
+      }
     }
     return Promise.reject(err);
   }

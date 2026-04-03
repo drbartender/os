@@ -76,12 +76,18 @@ router.get('/users/:id', auth, adminOnly, async (req, res) => {
 
     if (!userRes.rows[0]) return res.status(404).json({ error: 'User not found' });
 
+    const payment = paymentRes.rows[0] || {};
+    if (payment) {
+      if (payment.routing_number) payment.routing_number = '****' + payment.routing_number.slice(-4);
+      if (payment.account_number) payment.account_number = '****' + payment.account_number.slice(-4);
+    }
+
     res.json({
       user: userRes.rows[0],
       progress: progressRes.rows[0] || {},
       profile: profileRes.rows[0] || {},
       agreement: agreementRes.rows[0] || {},
-      payment: paymentRes.rows[0] || {},
+      payment,
       application: appRes.rows[0] || {}
     });
   } catch (err) {
@@ -542,7 +548,7 @@ router.post('/test-email', auth, adminOnly, async (req, res) => {
     res.json({ success: true, id: result.id });
   } catch (err) {
     console.error('Test email failed:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -709,7 +715,7 @@ router.post('/backfill-geocodes', auth, adminOnly, async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message || 'Server error' });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -827,7 +833,7 @@ router.post('/blog/import', auth, adminOnly, async (req, res) => {
     res.json({ imported: results.filter(r => r.status === 'imported').length, skipped: results.filter(r => r.status !== 'imported').length, results });
   } catch (err) {
     console.error('Blog import error:', err);
-    res.status(500).json({ error: 'Import failed: ' + err.message });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

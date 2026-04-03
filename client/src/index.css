@@ -207,6 +207,11 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   cursor: not-allowed;
 }
 
+.btn:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 3px;
+}
+
 .btn-primary {
   background: var(--amber);
   color: white;

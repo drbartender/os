@@ -98,6 +98,7 @@ export default function ProposalDetail() {
   const [editForm, setEditForm] = useState(null);
   const [editPreview, setEditPreview] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [staffError, setStaffError] = useState('');
   const [editError, setEditError] = useState('');
 
   const loadProposal = () => {
@@ -157,7 +158,7 @@ export default function ProposalDetail() {
   useEffect(() => {
     if (!isEventContext) return;
     api.get('/admin/active-staff?limit=100')
-      .then(res => setActiveStaff(res.data.users || []))
+      .then(res => setActiveStaff(res.data.staff || []))
       .catch(() => setActiveStaff([]));
   }, [isEventContext]);
 
@@ -172,7 +173,8 @@ export default function ProposalDetail() {
       setAssignPosition('');
       refreshShift();
     } catch (e) {
-      alert(e.response?.data?.error || 'Failed to assign staff');
+      console.error('Failed to assign staff:', e);
+      setStaffError(e.response?.data?.error || 'Failed to assign staff');
     } finally { setAssigningStaff(false); }
   };
 
@@ -183,7 +185,8 @@ export default function ProposalDetail() {
       await api.put(`/shifts/${shift.id}`, { ...shift, setup_minutes_before: parseInt(setupMinutes, 10) || 60 });
       refreshShift();
     } catch (e) {
-      alert('Failed to save setup time');
+      console.error('Failed to save setup time:', e);
+      setStaffError('Failed to save setup time');
     } finally { setSavingSetup(false); }
   };
 
@@ -210,7 +213,8 @@ export default function ProposalDetail() {
       const res = await api.post(`/shifts/${shift.id}/auto-assign`, { dry_run: true });
       setAutoAssignPreview({ shiftId: shift.id, ...res.data });
     } catch (e) {
-      alert(e.response?.data?.error || 'Auto-assign failed');
+      console.error('Auto-assign preview failed:', e);
+      setStaffError(e.response?.data?.error || 'Auto-assign failed');
     } finally { setAutoAssignLoading(false); }
   };
 
@@ -221,7 +225,8 @@ export default function ProposalDetail() {
       setAutoAssignPreview(null);
       refreshShift();
     } catch (e) {
-      alert(e.response?.data?.error || 'Auto-assign failed');
+      console.error('Auto-assign confirm failed:', e);
+      setStaffError(e.response?.data?.error || 'Auto-assign failed');
     }
   };
 
@@ -237,7 +242,8 @@ export default function ProposalDetail() {
       });
       refreshShift();
     } catch (e) {
-      alert('Failed to save');
+      console.error('Failed to save equipment config:', e);
+      setStaffError('Failed to save');
     } finally { setSavingEquipment(false); }
   };
 
@@ -660,6 +666,7 @@ export default function ProposalDetail() {
               </div>
 
               {/* Staffing Summary */}
+              {staffError && <div className="alert alert-error mb-1" style={{ cursor: 'pointer' }} onClick={() => setStaffError('')}>{staffError}</div>}
               <div className="card mb-2">
                 <div className="flex-between" style={{ alignItems: 'center', marginBottom: '0.75rem' }}>
                   <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>Staffing</h3>

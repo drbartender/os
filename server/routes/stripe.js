@@ -242,6 +242,8 @@ router.post('/webhook', async (req, res) => {
 
     if (proposalId) {
       try {
+        await pool.query('BEGIN');
+
         // Determine new status and amount_paid based on payment type
         if (paymentType === 'full') {
           await pool.query(`
@@ -295,6 +297,8 @@ router.post('/webhook', async (req, res) => {
           `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, $2, 'system', $3)`,
           [proposalId, action, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType })]
         );
+
+        await pool.query('COMMIT');
         console.log(`Payment (${paymentType}) received for proposal ${proposalId}: $${(intent.amount / 100).toFixed(2)}`);
 
         // Email notifications (non-blocking)
@@ -331,6 +335,7 @@ router.post('/webhook', async (req, res) => {
           console.error('Shift auto-creation failed (non-blocking):', shiftErr);
         }
       } catch (dbErr) {
+        await pool.query('ROLLBACK');
         console.error('Webhook DB error:', dbErr);
       }
     }

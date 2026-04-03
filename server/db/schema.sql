@@ -861,3 +861,15 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 -- ─── Client Auth (OTP login) ────────────────────────────────────────
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token_expires_at TIMESTAMPTZ;
+
+-- Missing indexes identified by database review
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_email_unique ON clients(email) WHERE email IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_clients_created_at ON clients(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_blog_posts_published_at ON blog_posts(published_at DESC) WHERE published = true;
+CREATE INDEX IF NOT EXISTS idx_blog_posts_slug ON blog_posts(slug);
+CREATE INDEX IF NOT EXISTS idx_proposals_event_date ON proposals(event_date);
+CREATE INDEX IF NOT EXISTS idx_proposals_autopay ON proposals(autopay_enrolled, status) WHERE autopay_enrolled = true;
+CREATE INDEX IF NOT EXISTS idx_users_calendar_token ON users(calendar_token);
+CREATE INDEX IF NOT EXISTS idx_sms_messages_recipient_id ON sms_messages(recipient_id);
+CREATE INDEX IF NOT EXISTS idx_interview_notes_admin_id ON interview_notes(admin_id);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);

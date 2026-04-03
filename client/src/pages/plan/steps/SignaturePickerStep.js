@@ -188,7 +188,7 @@ export default function SignaturePickerStep({
                       Skip Mocktails
                     </button>
                   )}
-                  <button className="btn" onClick={onNext}>
+                  <button className="btn btn-primary" onClick={onNext}>
                     {isMocktailsActive ? 'Continue to Mocktails' : 'Continue'}
                   </button>
                 </div>

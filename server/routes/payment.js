@@ -52,6 +52,8 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ error: 'A signed W-9 is required.' });
     }
 
+    await pool.query('BEGIN');
+
     if (existing.rows[0]) {
       await pool.query(
         `UPDATE payment_profiles
@@ -80,9 +82,12 @@ router.post('/', auth, async (req, res) => {
     // Update user onboarding status
     await pool.query("UPDATE users SET onboarding_status='submitted' WHERE id=$1", [req.user.id]);
 
+    await pool.query('COMMIT');
+
     const result = await pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [req.user.id]);
     res.json(result.rows[0]);
   } catch (err) {
+    await pool.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }

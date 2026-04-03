@@ -2,7 +2,7 @@
 name: full-code-review
 description: Full code quality review of the entire codebase. Only use when explicitly asked for a code review or before a major deploy. This is expensive.
 tools: Read, Grep, Glob, Bash
-model: sonnet
+model: opus
 color: blue
 maxTurns: 30
 ---

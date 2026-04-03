@@ -6,7 +6,6 @@ const ALLOWED = [
   { mime: 'application/pdf', magic: Buffer.from([0x25, 0x50, 0x44, 0x46]) },  // %PDF
   { mime: 'image/jpeg', magic: Buffer.from([0xff, 0xd8, 0xff]) },
   { mime: 'image/png', magic: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) },
-  { mime: 'image/webp', magic: Buffer.from([0x52, 0x49, 0x46, 0x46]) },  // RIFF (WebP)
 ];
 
 function isValidUpload(file) {
@@ -14,6 +13,12 @@ function isValidUpload(file) {
   const buf = file.data;
   for (const { magic } of ALLOWED) {
     if (buf.length >= magic.length && buf.slice(0, magic.length).equals(magic)) return true;
+  }
+  // WebP: RIFF....WEBP (check both RIFF header and WEBP signature at offset 8)
+  if (buf.length >= 12 &&
+      buf.slice(0, 4).equals(Buffer.from([0x52, 0x49, 0x46, 0x46])) &&
+      buf.slice(8, 12).equals(Buffer.from([0x57, 0x45, 0x42, 0x50]))) {
+    return true;
   }
   return false;
 }

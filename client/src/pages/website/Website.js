@@ -278,6 +278,7 @@ export default function Website() {
               <button
                 key={i}
                 className={`ws-faq-item ${openFaq === i ? 'open' : ''}`}
+                aria-expanded={openFaq === i}
                 onClick={() => setOpenFaq(openFaq === i ? null : i)}
               >
                 <div className="ws-faq-q">

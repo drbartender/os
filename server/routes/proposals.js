@@ -1,4 +1,5 @@
 const express = require('express');
+const net = require('net');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { calculateProposal } = require('../utils/pricingEngine');
@@ -32,9 +33,11 @@ router.get('/t/:token', async (req, res) => {
     const proposal = result.rows[0];
 
     // Track views and flip status
-    const updates = ['view_count = view_count + 1', 'last_viewed_at = NOW()'];
-    if (proposal.status === 'sent') updates.push("status = 'viewed'");
-    await pool.query(`UPDATE proposals SET ${updates.join(', ')} WHERE id = $1`, [proposal.id]);
+    const newStatus = proposal.status === 'sent' ? 'viewed' : proposal.status;
+    await pool.query(
+      `UPDATE proposals SET view_count = view_count + 1, last_viewed_at = NOW(), status = $1 WHERE id = $2`,
+      [newStatus, proposal.id]
+    );
 
     // Fetch add-ons
     const addons = await pool.query(
@@ -46,9 +49,9 @@ router.get('/t/:token', async (req, res) => {
     const rawIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || '';
     const ip = rawIp.replace(/^::ffff:/, ''); // strip IPv4-mapped prefix
     let location = null;
-    if (ip && ip !== '::1' && ip !== '127.0.0.1') {
+    if (ip && net.isIP(ip) && ip !== '::1' && ip !== '127.0.0.1') {
       try {
-        const geoRes = await fetch(`http://ip-api.com/json/${ip}?fields=status,city,regionName`);
+        const geoRes = await fetch(`https://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,city,regionName`);
         const geo = await geoRes.json();
         if (geo.status === 'success' && geo.city) {
           location = `${geo.city}, ${geo.regionName}`;
@@ -809,6 +812,8 @@ router.post('/:id/record-payment', auth, requireAdmin, async (req, res) => {
     const isFullyPaid = newAmountPaid >= totalPrice;
     const newStatus = isFullyPaid ? 'balance_paid' : 'deposit_paid';
 
+    await pool.query('BEGIN');
+
     await pool.query(
       'UPDATE proposals SET amount_paid = $1, status = $2 WHERE id = $3',
       [newAmountPaid, newStatus, proposal.id]
@@ -827,6 +832,8 @@ router.post('/:id/record-payment', auth, requireAdmin, async (req, res) => {
       [proposal.id, isFullyPaid ? 'paid_in_full' : 'deposit_paid', req.user.id,
         JSON.stringify({ amount: paymentAmount, method: method || 'manual', new_total_paid: newAmountPaid })]
     );
+
+    await pool.query('COMMIT');
 
     // Email notifications for payment (non-blocking)
     try {
@@ -864,6 +871,7 @@ router.post('/:id/record-payment', auth, requireAdmin, async (req, res) => {
 
     res.json({ success: true, status: newStatus, amount_paid: newAmountPaid });
   } catch (err) {
+    await pool.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }

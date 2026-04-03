@@ -231,7 +231,7 @@ router.post('/', auth, requireStaffing, async (req, res) => {
       positions_needed ? JSON.stringify(positions_needed) : '[]',
       notes || null,
       equipment_required ? JSON.stringify(equipment_required) : '[]',
-      auto_assign_days_before != null ? auto_assign_days_before : null,
+      auto_assign_days_before !== null && auto_assign_days_before !== undefined ? auto_assign_days_before : null,
       lat || null, lng || null,
       req.user.id
     ]);
@@ -278,10 +278,10 @@ router.put('/:id', auth, requireStaffing, async (req, res) => {
       positions_needed ? JSON.stringify(positions_needed) : '[]',
       notes || null, status || null,
       equipment_required ? JSON.stringify(equipment_required) : '[]',
-      auto_assign_days_before != null ? auto_assign_days_before : null,
+      auto_assign_days_before !== null && auto_assign_days_before !== undefined ? auto_assign_days_before : null,
       lat || null, lng || null,
       req.params.id,
-      setup_minutes_before != null ? parseInt(setup_minutes_before, 10) : null,
+      setup_minutes_before !== null && setup_minutes_before !== undefined ? parseInt(setup_minutes_before, 10) : null,
     ]);
     if (!result.rows[0]) return res.status(404).json({ error: 'Shift not found.' });
 
@@ -506,7 +506,7 @@ router.post('/:id/auto-assign', auth, requireStaffing, async (req, res) => {
     if (!shiftRes.rows[0]) return res.status(404).json({ error: 'Shift not found.' });
 
     const shift = shiftRes.rows[0];
-    if (shift.lat == null && shift.lng == null && shift.location) {
+    if (shift.lat === null && shift.lng === null && shift.location) {
       const coords = await geocodeAddress(shift.location);
       if (coords) {
         await pool.query('UPDATE shifts SET lat = $1, lng = $2 WHERE id = $3', [coords.lat, coords.lng, shift.id]);
@@ -517,7 +517,7 @@ router.post('/:id/auto-assign', auth, requireStaffing, async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: err.message || 'Server error' });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

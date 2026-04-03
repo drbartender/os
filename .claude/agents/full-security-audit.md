@@ -2,7 +2,7 @@
 name: full-security-audit
 description: Full OWASP security audit of the entire codebase. Only use when explicitly asked for a security review or before a major deploy. This is expensive.
 tools: Read, Grep, Glob, Bash
-model: sonnet
+model: opus
 color: red
 maxTurns: 30
 ---

@@ -86,7 +86,7 @@ export default function CustomSetupStep({ onConfirm }) {
       )}
 
       <div style={{ textAlign: 'center', marginTop: '1.5rem' }}>
-        <button className="btn" onClick={handleContinue}>
+        <button className="btn btn-primary" onClick={handleContinue}>
           Continue
         </button>
       </div>

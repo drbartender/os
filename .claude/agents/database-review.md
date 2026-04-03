@@ -2,7 +2,7 @@
 name: database-review
 description: Database schema and query review. Only use when explicitly asked or before a major deploy. Analyzes schema design, query patterns, and migration safety.
 tools: Read, Grep, Glob, Bash
-model: sonnet
+model: opus
 color: purple
 maxTurns: 20
 ---

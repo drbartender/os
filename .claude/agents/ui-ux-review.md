@@ -2,7 +2,7 @@
 name: ui-ux-review
 description: UI/UX reviewer using Playwright. Use when explicitly asked to review UI, check a page visually, or before a major deploy. Navigates to pages, takes screenshots, and provides design and accessibility feedback.
 tools: Read, Glob, Grep, Bash
-model: sonnet
+model: opus
 color: pink
 maxTurns: 25
 mcpServers:

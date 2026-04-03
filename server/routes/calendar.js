@@ -1,36 +1,12 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// ─── Rate limiting (simple in-memory, per-token) ─────────────────
-const rateLimits = new Map();
-const RATE_LIMIT_WINDOW = 60 * 60 * 1000; // 1 hour
-const RATE_LIMIT_MAX = 60;
-
-function rateLimitByToken(req, res, next) {
-  const token = req.params.token;
-  const now = Date.now();
-  const entry = rateLimits.get(token);
-  if (!entry || now - entry.start > RATE_LIMIT_WINDOW) {
-    rateLimits.set(token, { start: now, count: 1 });
-    return next();
-  }
-  entry.count++;
-  if (entry.count > RATE_LIMIT_MAX) {
-    return res.status(429).set('Retry-After', '3600').send('Too many requests');
-  }
-  return next();
-}
-
-// Clean up stale rate-limit entries every 10 minutes
-setInterval(() => {
-  const cutoff = Date.now() - RATE_LIMIT_WINDOW;
-  for (const [key, val] of rateLimits) {
-    if (val.start < cutoff) rateLimits.delete(key);
-  }
-}, 10 * 60 * 1000).unref();
+// ─── Rate limiting (express-rate-limit, per-token) ───────────────
+const calendarLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, keyGenerator: (req) => req.params.token || req.ip });
 
 // ─── Time parsing helpers ─────────────────────────────────────────
 
@@ -185,7 +161,7 @@ async function fetchTeamsByShiftIds(shiftIds) {
 /** Format team list for iCal description. currentUserId moves that user to top. */
 function formatTeamList(team, currentUserId) {
   if (!team || !team.length) return '';
-  let sorted = [...team];
+  const sorted = [...team];
   if (currentUserId) {
     const me = sorted.findIndex(t => t.user_id === currentUserId);
     if (me > -1) {
@@ -274,7 +250,7 @@ function buildStaffDescription(shift, teamList) {
 // ─── Routes ───────────────────────────────────────────────────────
 
 /** GET /api/calendar/feed/:token — iCal feed (public, token-gated) */
-router.get('/feed/:token', rateLimitByToken, async (req, res) => {
+router.get('/feed/:token', calendarLimiter, async (req, res) => {
   try {
     // Look up user by calendar token
     const userRes = await pool.query(

@@ -22,6 +22,15 @@ router.put('/step', auth, async (req, res) => {
   if (!validSteps.includes(step)) return res.status(400).json({ error: 'Invalid step' });
 
   try {
+    if (step === 'onboarding_completed') {
+      const prog = await pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]);
+      const p = prog.rows[0];
+      if (!p || !p.welcome_viewed || !p.field_guide_completed || !p.agreement_completed ||
+          !p.contractor_profile_completed || !p.payday_protocols_completed) {
+        return res.status(400).json({ error: 'Complete all prior steps first.' });
+      }
+    }
+
     await pool.query(`
       UPDATE onboarding_progress SET
         welcome_viewed = CASE WHEN $1 = 'welcome_viewed' THEN true ELSE welcome_viewed END,

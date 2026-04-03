@@ -143,7 +143,7 @@ export default function MocktailStep({
                 {onBack ? (
                   <button className="btn btn-secondary" onClick={onBack}>Back</button>
                 ) : <div />}
-                <button className="btn" onClick={onNext}>
+                <button className="btn btn-primary" onClick={onNext}>
                   Continue
                 </button>
               </div>

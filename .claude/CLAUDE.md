@@ -287,12 +287,12 @@ Report only missing error handling, not style.
 
 Only run when the user explicitly asks (e.g., "review security", "full review", "review before deploy"). Invoke with `@agent-name`:
 
-**@full-security-audit** — Scan the ENTIRE codebase for OWASP Top 10 vulnerabilities, auth bypass paths, missing rate limiting, insecure token handling, CORS misconfig. (sonnet)
+**@full-security-audit** — Scan the ENTIRE codebase for OWASP Top 10 vulnerabilities, auth bypass paths, missing rate limiting, insecure token handling, CORS misconfig. (opus)
 
-**@full-code-review** — Dead code, duplicated logic, functions over 50 lines, unused imports, console.logs left in production, naming inconsistencies. (sonnet)
+**@full-code-review** — Dead code, duplicated logic, functions over 50 lines, unused imports, console.logs left in production, naming inconsistencies. (opus)
 
-**@ui-ux-review** — Uses Playwright MCP to screenshot key pages, check mobile responsiveness, accessibility, visual consistency. Requires app running locally (`npm run dev`). (sonnet)
+**@ui-ux-review** — Uses Playwright MCP to screenshot key pages, check mobile responsiveness, accessibility, visual consistency. Requires app running locally (`npm run dev`). (opus)
 
-**@database-review** — Analyze schema for missing indexes, N+1 query patterns, unprotected cascading deletes, missing foreign keys. (sonnet)
+**@database-review** — Analyze schema for missing indexes, N+1 query patterns, unprotected cascading deletes, missing foreign keys. (opus)
 
 **Full Pre-Deploy Review** — Run ALL four agents above in parallel. Reserve for deploy prep only.
