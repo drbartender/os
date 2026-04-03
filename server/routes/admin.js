@@ -870,7 +870,7 @@ router.post('/blog/upload-image', auth, adminOnly, async (req, res) => {
     }
     const file = req.files.image;
     if (!isValidUpload(file)) {
-      return res.status(400).json({ error: 'Invalid file type. Use JPEG or PNG only.' });
+      return res.status(400).json({ error: 'Invalid file type. Use JPEG, PNG, or WebP.' });
     }
     // Only allow image types (not PDF)
     const mime = file.mimetype?.toLowerCase() || '';
