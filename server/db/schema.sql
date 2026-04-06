@@ -878,3 +878,156 @@ CREATE INDEX IF NOT EXISTS idx_users_calendar_token ON users(calendar_token);
 CREATE INDEX IF NOT EXISTS idx_sms_messages_recipient_id ON sms_messages(recipient_id);
 CREATE INDEX IF NOT EXISTS idx_interview_notes_admin_id ON interview_notes(admin_id);
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);
+
+-- ─── Email Marketing: Leads ────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS email_leads (
+  id SERIAL PRIMARY KEY,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  name VARCHAR(255) NOT NULL,
+  email VARCHAR(255) NOT NULL,
+  company VARCHAR(255),
+  event_type VARCHAR(100),
+  location VARCHAR(255),
+  lead_source VARCHAR(100) DEFAULT 'manual'
+    CHECK (lead_source IN ('manual','csv_import','website','thumbtack','referral','instagram','facebook','google','other')),
+  notes TEXT,
+  status VARCHAR(30) DEFAULT 'active'
+    CHECK (status IN ('active','unsubscribed','bounced','complained')),
+  unsubscribed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_email_leads_email ON email_leads(email);
+CREATE INDEX IF NOT EXISTS idx_email_leads_status ON email_leads(status);
+CREATE INDEX IF NOT EXISTS idx_email_leads_lead_source ON email_leads(lead_source);
+
+DROP TRIGGER IF EXISTS update_email_leads_updated_at ON email_leads;
+CREATE TRIGGER update_email_leads_updated_at BEFORE UPDATE ON email_leads
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ─── Email Marketing: Campaigns ────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS email_campaigns (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  type VARCHAR(20) NOT NULL DEFAULT 'blast'
+    CHECK (type IN ('blast','sequence')),
+  subject VARCHAR(500),
+  html_body TEXT,
+  text_body TEXT,
+  from_email VARCHAR(255),
+  reply_to VARCHAR(255),
+  status VARCHAR(20) DEFAULT 'draft'
+    CHECK (status IN ('draft','scheduled','sending','sent','active','paused','archived')),
+  scheduled_at TIMESTAMPTZ,
+  sent_at TIMESTAMPTZ,
+  target_sources JSONB,
+  target_event_types JSONB,
+  created_by INTEGER REFERENCES users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS update_email_campaigns_updated_at ON email_campaigns;
+CREATE TRIGGER update_email_campaigns_updated_at BEFORE UPDATE ON email_campaigns
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ─── Email Marketing: Sequence Steps ───────────────────────────────
+
+CREATE TABLE IF NOT EXISTS email_sequence_steps (
+  id SERIAL PRIMARY KEY,
+  campaign_id INTEGER NOT NULL REFERENCES email_campaigns(id) ON DELETE CASCADE,
+  step_order INTEGER NOT NULL DEFAULT 1,
+  subject VARCHAR(500) NOT NULL,
+  html_body TEXT NOT NULL,
+  text_body TEXT,
+  delay_days INTEGER NOT NULL DEFAULT 0,
+  delay_hours INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(campaign_id, step_order)
+);
+
+DROP TRIGGER IF EXISTS update_email_sequence_steps_updated_at ON email_sequence_steps;
+CREATE TRIGGER update_email_sequence_steps_updated_at BEFORE UPDATE ON email_sequence_steps
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ─── Email Marketing: Sequence Enrollments ─────────────────────────
+
+CREATE TABLE IF NOT EXISTS email_sequence_enrollments (
+  id SERIAL PRIMARY KEY,
+  campaign_id INTEGER NOT NULL REFERENCES email_campaigns(id) ON DELETE CASCADE,
+  lead_id INTEGER NOT NULL REFERENCES email_leads(id) ON DELETE CASCADE,
+  current_step INTEGER NOT NULL DEFAULT 0,
+  status VARCHAR(20) DEFAULT 'active'
+    CHECK (status IN ('active','completed','paused','unsubscribed')),
+  enrolled_at TIMESTAMPTZ DEFAULT NOW(),
+  last_step_sent_at TIMESTAMPTZ,
+  next_step_due_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(campaign_id, lead_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_enrollments_next_due
+  ON email_sequence_enrollments(next_step_due_at)
+  WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_enrollments_campaign ON email_sequence_enrollments(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_enrollments_lead ON email_sequence_enrollments(lead_id);
+
+-- ─── Email Marketing: Sends ────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS email_sends (
+  id SERIAL PRIMARY KEY,
+  campaign_id INTEGER REFERENCES email_campaigns(id) ON DELETE SET NULL,
+  sequence_step_id INTEGER REFERENCES email_sequence_steps(id) ON DELETE SET NULL,
+  lead_id INTEGER NOT NULL REFERENCES email_leads(id) ON DELETE CASCADE,
+  resend_id VARCHAR(255),
+  subject VARCHAR(500),
+  status VARCHAR(20) DEFAULT 'queued'
+    CHECK (status IN ('queued','sent','delivered','opened','clicked','bounced','complained','failed')),
+  opened_at TIMESTAMPTZ,
+  clicked_at TIMESTAMPTZ,
+  bounced_at TIMESTAMPTZ,
+  complained_at TIMESTAMPTZ,
+  error_message TEXT,
+  sent_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_sends_resend_id ON email_sends(resend_id);
+CREATE INDEX IF NOT EXISTS idx_email_sends_campaign ON email_sends(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_email_sends_lead ON email_sends(lead_id);
+
+-- ─── Email Marketing: Conversations ────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS email_conversations (
+  id SERIAL PRIMARY KEY,
+  lead_id INTEGER NOT NULL REFERENCES email_leads(id) ON DELETE CASCADE,
+  email_send_id INTEGER REFERENCES email_sends(id) ON DELETE SET NULL,
+  direction VARCHAR(10) NOT NULL CHECK (direction IN ('inbound','outbound')),
+  subject VARCHAR(500),
+  body_text TEXT,
+  body_html TEXT,
+  resend_id VARCHAR(255),
+  admin_id INTEGER REFERENCES users(id),
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_conversations_lead ON email_conversations(lead_id);
+
+-- ─── Email Marketing: Webhook Events ───────────────────────────────
+
+CREATE TABLE IF NOT EXISTS email_webhook_events (
+  id SERIAL PRIMARY KEY,
+  resend_id VARCHAR(255),
+  event_type VARCHAR(50) NOT NULL,
+  payload JSONB NOT NULL DEFAULT '{}',
+  processed BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_events_resend_id ON email_webhook_events(resend_id);

@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { label: 'Hiring',      path: '/admin/hiring',      icon: '📝' },
   { label: 'Financials',  path: '/admin/financials',  icon: '📒' },
   { label: 'Blog',        path: '/admin/blog',        icon: '✏' },
+  { label: 'Email',       path: '/admin/email-marketing', icon: '✉' },
   'divider',
   { label: 'Settings',    path: '/admin/settings',    icon: '⚙' },
 ];

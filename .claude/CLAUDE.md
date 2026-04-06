@@ -46,13 +46,16 @@ dr-bartender/
 │   │   ├── progress.js        # Onboarding progress tracking
 │   │   ├── proposals.js       # Proposal CRUD + public token view
 │   │   ├── shifts.js          # Shift management
-│   │   └── stripe.js          # Stripe checkout + webhooks
+│   │   ├── stripe.js          # Stripe checkout + webhooks
+│   │   ├── emailMarketing.js  # Email marketing (leads, campaigns, sequences, conversations)
+│   │   └── emailMarketingWebhook.js # Resend webhook receiver (tracking events)
 │   ├── utils/
 │   │   ├── autoAssign.js      # Auto-assign algorithm (seniority + geo + equipment)
 │   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
 │   │   ├── balanceScheduler.js # Scheduled balance/payment tasks
-│   │   ├── email.js           # Resend wrapper
-│   │   ├── emailTemplates.js  # Email template helpers
+│   │   ├── email.js           # Resend wrapper (send + batch)
+│   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
+│   │   ├── emailTemplates.js  # Email template helpers (transactional + marketing)
 │   │   ├── eventCreation.js   # Event creation helpers
 │   │   ├── fileValidation.js  # Magic-byte validation
 │   │   ├── geocode.js         # Nominatim geocoding (address → lat/lng)
@@ -84,9 +87,13 @@ dr-bartender/
 │   │   │   ├── LocationInput.js   # Nominatim address autocomplete
 │   │   │   ├── PricingBreakdown.js # Proposal pricing display
 │   │   │   ├── PublicLayout.js    # Public-facing layout wrapper
-│   │   │   ├── RichTextEditor.js  # TipTap WYSIWYG editor (blog admin)
+│   │   │   ├── RichTextEditor.js  # TipTap WYSIWYG editor (blog + email marketing)
 │   │   │   ├── SignaturePad.js    # E-signature canvas
 │   │   │   ├── W9Form.js         # W-9 tax form component
+│   │   │   ├── LeadImportModal.js # CSV lead import modal
+│   │   │   ├── AudienceSelector.js # Campaign audience filter/selector
+│   │   │   ├── SequenceStepEditor.js # Drip sequence step editor
+│   │   │   ├── CampaignMetricsBar.js # Campaign performance metrics bar
 │   │   │   └── ShoppingList/     # Shopping list generator
 │   │   │       ├── ShoppingListButton.jsx
 │   │   │       ├── ShoppingListModal.jsx
@@ -115,7 +122,15 @@ dr-bartender/
 │   │   │   │   ├── ProposalCreate.js
 │   │   │   │   ├── ProposalDetail.js
 │   │   │   │   ├── ProposalsDashboard.js
-│   │   │   │   └── SettingsDashboard.js
+│   │   │   │   ├── SettingsDashboard.js
+│   │   │   │   ├── EmailMarketingDashboard.js  # Email marketing hub (tabs)
+│   │   │   │   ├── EmailLeadsDashboard.js      # Lead list + import
+│   │   │   │   ├── EmailLeadDetail.js          # Lead profile + history
+│   │   │   │   ├── EmailCampaignsDashboard.js  # Campaign list
+│   │   │   │   ├── EmailCampaignCreate.js      # Campaign builder
+│   │   │   │   ├── EmailCampaignDetail.js      # Campaign detail + metrics
+│   │   │   │   ├── EmailAnalyticsDashboard.js  # Analytics overview
+│   │   │   │   └── EmailConversations.js       # Conversation inbox
 │   │   │   ├── plan/             # PotionPlanningLab (public questionnaire)
 │   │   │   │   ├── PotionPlanningLab.js
 │   │   │   │   ├── data/         # cocktailMenu.js, servingTypes.js
@@ -158,6 +173,7 @@ See `.env.example` for the full list. Key ones:
 | `CLIENT_URL` | Frontend origin (CORS) |
 | `R2_*` | Cloudflare R2 credentials |
 | `RESEND_API_KEY` | Resend email |
+| `RESEND_WEBHOOK_SECRET` | Resend webhook signing secret (svix) |
 | `TWILIO_*` | Twilio SMS |
 | `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe payments |
 | `STRIPE_DEPOSIT_AMOUNT` | Deposit in cents (default 10000 = $100) |

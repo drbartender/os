@@ -38,6 +38,14 @@ import ClientDetail from './pages/admin/ClientDetail';
 import Dashboard from './pages/admin/Dashboard';
 import ProposalView from './pages/proposal/ProposalView';
 import BlogDashboard from './pages/admin/BlogDashboard';
+import EmailMarketingDashboard from './pages/admin/EmailMarketingDashboard';
+import EmailLeadsDashboard from './pages/admin/EmailLeadsDashboard';
+import EmailLeadDetail from './pages/admin/EmailLeadDetail';
+import EmailCampaignsDashboard from './pages/admin/EmailCampaignsDashboard';
+import EmailCampaignCreate from './pages/admin/EmailCampaignCreate';
+import EmailCampaignDetail from './pages/admin/EmailCampaignDetail';
+import EmailAnalyticsDashboard from './pages/admin/EmailAnalyticsDashboard';
+import EmailConversations from './pages/admin/EmailConversations';
 import Blog from './pages/public/Blog';
 import BlogPost from './pages/public/BlogPost';
 import ClientLogin from './pages/public/ClientLogin';
@@ -212,6 +220,16 @@ function AppRoutes() {
         <Route path="financials" element={<FinancialsDashboard />} />
         <Route path="settings" element={<SettingsDashboard />} />
         <Route path="blog" element={<BlogDashboard />} />
+        <Route path="email-marketing" element={<EmailMarketingDashboard />}>
+          <Route index element={<EmailLeadsDashboard />} />
+          <Route path="leads" element={<EmailLeadsDashboard />} />
+          <Route path="leads/:id" element={<EmailLeadDetail />} />
+          <Route path="campaigns" element={<EmailCampaignsDashboard />} />
+          <Route path="campaigns/new" element={<EmailCampaignCreate />} />
+          <Route path="campaigns/:id" element={<EmailCampaignDetail />} />
+          <Route path="analytics" element={<EmailAnalyticsDashboard />} />
+          <Route path="conversations" element={<EmailConversations />} />
+        </Route>
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

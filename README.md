@@ -63,6 +63,7 @@ Copy `.env.example` and fill in values. All variables:
 | `R2_ACCESS_KEY_ID` | For uploads | R2 access key |
 | `R2_SECRET_ACCESS_KEY` | For uploads | R2 secret key |
 | `RESEND_API_KEY` | For email | Resend API key |
+| `RESEND_WEBHOOK_SECRET` | For email tracking | Resend webhook signing secret (svix) |
 | `TWILIO_ACCOUNT_SID` | For SMS | Twilio account SID |
 | `TWILIO_AUTH_TOKEN` | For SMS | Twilio auth token |
 | `TWILIO_PHONE_NUMBER` | For SMS | Twilio sender number |
@@ -107,13 +108,16 @@ dr-bartender/
 │   │   ├── progress.js         # Onboarding step tracking
 │   │   ├── proposals.js        # Service proposals + pricing calculator
 │   │   ├── shifts.js           # Shift scheduling
-│   │   └── stripe.js           # Payment intents, payment links, webhooks
+│   │   ├── stripe.js           # Payment intents, payment links, webhooks
+│   │   ├── emailMarketing.js   # Email marketing leads, campaigns, sequences, conversations
+│   │   └── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
 │   ├── utils/
 │   │   ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)
 │   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
 │   │   ├── balanceScheduler.js # Autopay balance charge scheduler
-│   │   ├── email.js            # Resend email wrapper
-│   │   ├── emailTemplates.js   # Email template helpers
+│   │   ├── email.js            # Resend email wrapper (send + batch)
+│   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
+│   │   ├── emailTemplates.js   # Email template helpers (transactional + marketing)
 │   │   ├── eventCreation.js    # Auto-create shifts from paid proposals
 │   │   ├── fileValidation.js   # Magic-byte file type validation
 │   │   ├── geocode.js          # Nominatim geocoding (address → lat/lng)
@@ -134,14 +138,15 @@ dr-bartender/
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── constants.js    # App-wide constants
 │   │   │   └── formatPhone.js  # Phone number formatting
-│   │   ├── components/         # Layout, SignaturePad, FileUpload, PricingBreakdown, RichTextEditor, etc.
+│   │   ├── components/         # Layout, SignaturePad, FileUpload, PricingBreakdown, RichTextEditor,
+│   │   │                       # LeadImportModal, AudienceSelector, SequenceStepEditor, CampaignMetricsBar
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
 │   │   ├── pages/
 │   │   │   ├── (auth)          # Login, Register, ForgotPassword, ResetPassword
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
 │   │   │   ├── (staff)         # Application, ApplicationStatus, StaffPortal
 │   │   │   ├── (admin)         # AdminDashboard, AdminApplicationDetail, AdminUserDetail
-│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, menus, hiring, blog)
+│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, menus, hiring, blog, email marketing)
 │   │   │   ├── plan/           # PotionPlanningLab — public event questionnaire (with steps/ and data/)
 │   │   │   ├── proposal/       # ProposalView — public client-facing proposal
 │   │   │   ├── public/         # Client portal (ClientLogin, ClientDashboard, Blog, BlogPost)

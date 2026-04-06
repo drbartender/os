@@ -43,4 +43,35 @@ async function sendEmail({ to, subject, html, text, from, replyTo }) {
   return data;
 }
 
-module.exports = { sendEmail, FROM_EMAIL };
+/**
+ * Send batch emails via Resend (up to 100 per call)
+ * @param {Array<{from?: string, to: string|string[], subject: string, html: string, text?: string, reply_to?: string}>} emails
+ * @returns {Promise<Array<{id: string}>>}
+ */
+async function sendBatchEmails(emails) {
+  if (!resend) {
+    console.log(`[DEV] Batch email skipped — ${emails.length} emails`);
+    return emails.map(() => ({ id: 'dev-skipped' }));
+  }
+
+  const formatted = emails.map(e => ({
+    from: e.from || FROM_EMAIL,
+    to: Array.isArray(e.to) ? e.to : [e.to],
+    subject: e.subject,
+    html: e.html,
+    ...(e.text && { text: e.text }),
+    ...(e.reply_to && { reply_to: e.reply_to }),
+  }));
+
+  const { data, error } = await resend.batch.send(formatted);
+
+  if (error) {
+    console.error('Resend batch error:', error);
+    throw new Error(`Failed to send batch: ${error.message}`);
+  }
+
+  console.log(`Batch sent: ${data.data.length} emails`);
+  return data.data;
+}
+
+module.exports = { sendEmail, sendBatchEmails, FROM_EMAIL };

@@ -9,6 +9,7 @@ const { auth } = require('./middleware/auth');
 const { getSignedUrl } = require('./utils/storage');
 const { processAutopayCharges, processEventCompletions } = require('./utils/balanceScheduler');
 const { processScheduledAutoAssigns } = require('./utils/autoAssignScheduler');
+const { processSequenceSteps } = require('./utils/emailSequenceScheduler');
 
 const app = express();
 app.set('trust proxy', 1); // Required for Render/Heroku reverse proxies (rate limiter, IP detection)
@@ -96,6 +97,8 @@ app.use('/api/calendar', require('./routes/calendar'));
 app.use('/api/blog', require('./routes/blog'));
 app.use('/api/client-auth', require('./routes/clientAuth'));
 app.use('/api/client-portal', require('./routes/clientPortal'));
+app.use('/api/email-marketing', require('./routes/emailMarketing'));
+app.use('/api/email-marketing/webhook', require('./routes/emailMarketingWebhook'));
 
 // Health check — must be registered BEFORE the React catch-all below
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
@@ -119,6 +122,10 @@ async function start() {
       // Auto-assign scheduler — check hourly for shifts needing auto-assignment
       setTimeout(processScheduledAutoAssigns, 60000); // initial run after 60s
       setInterval(processScheduledAutoAssigns, 60 * 60 * 1000); // then every hour
+
+      // Email sequence scheduler — check every 15 min for due drip steps
+      setTimeout(processSequenceSteps, 90000); // initial run after 90s
+      setInterval(processSequenceSteps, 15 * 60 * 1000); // then every 15 minutes
     });
   } catch (err) {
     console.error('Failed to start server:', err);

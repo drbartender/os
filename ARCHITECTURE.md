@@ -222,6 +222,39 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | GET | `/token` | Yes | Get user's calendar subscription token |
 | POST | `/token/regenerate` | Yes | Regenerate calendar subscription token |
 
+### Email Marketing — `/api/email-marketing`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/leads` | Admin | List leads with search, filter by source/status, pagination |
+| POST | `/leads` | Admin | Create single lead |
+| POST | `/leads/import` | Admin | CSV bulk import |
+| GET | `/leads/:id` | Admin | Lead detail with send history and conversations |
+| PUT | `/leads/:id` | Admin | Update lead |
+| DELETE | `/leads/:id` | Admin | Soft-delete (set status to unsubscribed) |
+| GET | `/campaigns` | Admin | List campaigns with type filter |
+| POST | `/campaigns` | Admin | Create campaign (blast or sequence) |
+| GET | `/campaigns/:id` | Admin | Campaign detail with stats, sends, steps, enrollments |
+| PUT | `/campaigns/:id` | Admin | Update campaign |
+| DELETE | `/campaigns/:id` | Admin | Archive campaign |
+| POST | `/campaigns/:id/send` | Admin | Execute blast send |
+| POST | `/campaigns/:id/schedule` | Admin | Schedule blast for future |
+| GET | `/campaigns/:id/steps` | Admin | List sequence steps |
+| POST | `/campaigns/:id/steps` | Admin | Add sequence step |
+| PUT | `/campaigns/:id/steps/:stepId` | Admin | Update sequence step |
+| DELETE | `/campaigns/:id/steps/:stepId` | Admin | Delete step and reorder |
+| POST | `/campaigns/:id/activate` | Admin | Activate drip sequence |
+| POST | `/campaigns/:id/pause` | Admin | Pause drip sequence |
+| POST | `/campaigns/:id/enroll` | Admin | Enroll leads in sequence |
+| GET | `/campaigns/:id/enrollments` | Admin | List enrollments with progress |
+| GET | `/analytics/overview` | Admin | Aggregate stats (leads, campaigns, sends, rates) |
+| GET | `/conversations` | Admin | List conversations grouped by lead |
+| GET | `/conversations/:leadId` | Admin | Conversation thread for a lead |
+| POST | `/conversations/:leadId/reply` | Admin | Admin sends reply email |
+| PUT | `/conversations/:conversationId/read` | Admin | Mark conversation as read |
+| POST | `/conversations/:leadId/mark-replied` | Admin | Manual mark reply received |
+| GET | `/unsubscribe` | Public | JWT-verified unsubscribe |
+| POST | `/webhook/resend` | Resend | Webhook receiver (tracking events, svix-verified) |
+
 ### Client Auth — `/api/client-auth`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -414,6 +447,50 @@ Accessible via the "Shopping List" button on Drink Plan Detail (admin), visible 
 - `published` BOOLEAN, `published_at` TIMESTAMPTZ
 - `chapter_number` — derived via `ROW_NUMBER()` (not stored)
 
+### Email Marketing
+
+**email_leads** — Marketing contacts (separate from clients)
+- `id` SERIAL PK, `client_id` FK → clients (nullable, for converted leads)
+- `name`, `email` UNIQUE, `company`, `event_type`, `location`
+- `lead_source`: manual | csv_import | website | thumbtack | referral | instagram | facebook | google | other
+- `status`: active | unsubscribed | bounced | complained
+- `unsubscribed_at`
+
+**email_campaigns** — Blast campaigns and drip sequences
+- `id` SERIAL PK, `name`, `type`: blast | sequence
+- `subject`, `html_body`, `text_body`, `from_email`, `reply_to`
+- `status`: draft | scheduled | sending | sent | active | paused | archived
+- `scheduled_at`, `sent_at`
+- `target_sources` JSONB, `target_event_types` JSONB — audience targeting
+- `created_by` FK → users
+
+**email_sequence_steps** — Individual steps in a drip sequence
+- `id` SERIAL PK, `campaign_id` FK → email_campaigns
+- `step_order`, `subject`, `html_body`, `text_body`
+- `delay_days`, `delay_hours` — delay after previous step
+- UNIQUE(campaign_id, step_order)
+
+**email_sequence_enrollments** — Lead progress through a sequence
+- `id` SERIAL PK, `campaign_id` FK, `lead_id` FK
+- `current_step`, `status`: active | completed | paused | unsubscribed
+- `enrolled_at`, `last_step_sent_at`, `next_step_due_at`, `completed_at`
+- UNIQUE(campaign_id, lead_id)
+
+**email_sends** — Individual email send records
+- `id` SERIAL PK, `campaign_id` FK, `sequence_step_id` FK, `lead_id` FK
+- `resend_id` — Resend message ID for webhook correlation
+- `subject`, `status`: queued | sent | delivered | opened | clicked | bounced | complained | failed
+- `opened_at`, `clicked_at`, `bounced_at`, `complained_at`, `error_message`
+
+**email_conversations** — Two-way conversation records
+- `id` SERIAL PK, `lead_id` FK, `email_send_id` FK
+- `direction`: inbound | outbound
+- `subject`, `body_text`, `body_html`, `resend_id`, `admin_id` FK
+- `read_at`
+
+**email_webhook_events** — Raw webhook event audit log
+- `id` SERIAL PK, `resend_id`, `event_type`, `payload` JSONB, `processed`
+
 ### Cross-Cutting Patterns
 - All tables have `created_at` / `updated_at` with auto-update triggers
 - UUID tokens on `drink_plans` and `proposals` for public access without auth
@@ -448,9 +525,13 @@ The result is stored as a `pricing_snapshot` JSONB on the proposal for historica
 - **Important**: Stripe webhook route (`/api/stripe/webhook`) must receive raw body — registered before `express.json()` in `server/index.js`
 
 ### Resend (Email)
-- **Wrapper**: `server/utils/email.js`
+- **Wrapper**: `server/utils/email.js` (single send + batch)
 - **From**: `Dr. Bartender <no-reply@drbartender.com>`
-- **Used for**: Status update notifications to contractors
+- **Used for**: Transactional notifications (proposals, OTPs, shifts) + email marketing (blasts, drip sequences)
+- **Marketing**: `server/routes/emailMarketing.js` — leads, campaigns, sequences, conversations, analytics
+- **Webhooks**: `server/routes/emailMarketingWebhook.js` — receives tracking events (sent/delivered/opened/clicked/bounced/complained), verified via `svix`
+- **Scheduler**: `server/utils/emailSequenceScheduler.js` — processes drip sequence steps every 15 minutes
+- **Templates**: `server/utils/emailTemplates.js` — `wrapEmail()` for transactional, `wrapMarketingEmail()` for marketing (includes unsubscribe link)
 
 ### Twilio (SMS)
 - **Wrapper**: `server/utils/sms.js` (includes `normalizePhone()` for E.164 formatting)

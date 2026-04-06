@@ -231,8 +231,41 @@ function applicationReceivedConfirmation({ applicantName }) {
   };
 }
 
+// ─── Marketing Email Template ──────────────────────────────────────
+
+/**
+ * Wrap marketing email content in branded layout with unsubscribe footer.
+ * @param {string} innerHtml - The email body content
+ * @param {string} [unsubscribeUrl] - Unsubscribe link URL
+ */
+function wrapMarketingEmail(innerHtml, unsubscribeUrl) {
+  const unsubscribeSection = unsubscribeUrl
+    ? `<p style="margin:8px 0 0;font-size:11px;"><a href="${unsubscribeUrl}" style="color:${BRAND.secondary};text-decoration:underline;">Unsubscribe</a> from future emails</p>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:${BRAND.bg};font-family:Georgia,serif;color:${BRAND.primary};">
+  <div style="max-width:600px;margin:0 auto;background:${BRAND.white};">
+    <div style="background:${BRAND.dark};padding:24px;text-align:center;">
+      <span style="color:${BRAND.white};font-size:22px;font-weight:bold;letter-spacing:1px;">Dr. Bartender</span>
+    </div>
+    <div style="padding:32px 28px;">
+      ${innerHtml}
+    </div>
+    <div style="border-top:1px solid #e0d6cf;padding:20px 28px;text-align:center;">
+      <p style="margin:0;font-size:12px;color:${BRAND.secondary};">Dr. Bartender &middot; drbartender.com</p>
+      ${unsubscribeSection}
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 module.exports = {
   wrapEmail,
+  wrapMarketingEmail,
   ctaButton,
   clientOtp,
   proposalSent,
