@@ -693,18 +693,22 @@ router.post('/campaigns/:id/enroll', auth, requireAdmin, async (req, res) => {
     let enrolled = 0;
     for (const leadId of lead_ids) {
       try {
-        let nextDueAt = 'NOW()';
-        const params = [req.params.id, leadId];
         if (firstStep.rows[0]) {
           const { delay_days, delay_hours } = firstStep.rows[0];
-          nextDueAt = `NOW() + INTERVAL '${delay_days} days' + INTERVAL '${delay_hours} hours'`;
+          await pool.query(
+            `INSERT INTO email_sequence_enrollments (campaign_id, lead_id, next_step_due_at)
+             VALUES ($1, $2, NOW() + MAKE_INTERVAL(days => $3, hours => $4))
+             ON CONFLICT (campaign_id, lead_id) DO NOTHING`,
+            [req.params.id, leadId, delay_days, delay_hours]
+          );
+        } else {
+          await pool.query(
+            `INSERT INTO email_sequence_enrollments (campaign_id, lead_id, next_step_due_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (campaign_id, lead_id) DO NOTHING`,
+            [req.params.id, leadId]
+          );
         }
-        await pool.query(
-          `INSERT INTO email_sequence_enrollments (campaign_id, lead_id, next_step_due_at)
-           VALUES ($1, $2, ${nextDueAt})
-           ON CONFLICT (campaign_id, lead_id) DO NOTHING`,
-          params
-        );
         enrolled++;
       } catch (enrollErr) {
         console.error(`Error enrolling lead ${leadId}:`, enrollErr);

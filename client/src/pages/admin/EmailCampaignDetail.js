@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import DOMPurify from 'dompurify';
 import api from '../../utils/api';
 import CampaignMetricsBar from '../../components/CampaignMetricsBar';
 import SequenceStepEditor from '../../components/SequenceStepEditor';
@@ -157,7 +158,7 @@ export default function EmailCampaignDetail() {
           {campaign.subject && <p><strong>Subject:</strong> {campaign.subject}</p>}
           {campaign.html_body && (
             <div className="em-preview-frame">
-              <div dangerouslySetInnerHTML={{ __html: campaign.html_body }} />
+              <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(campaign.html_body) }} />
             </div>
           )}
         </div>

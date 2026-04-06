@@ -79,21 +79,24 @@ async function processSequenceSteps() {
           [enrollment.campaign_id, nextStepOrder + 1]
         );
 
-        let nextDueUpdate;
+        // Update enrollment progress
         if (nextNextStep.rows[0]) {
           const { delay_days, delay_hours } = nextNextStep.rows[0];
-          nextDueUpdate = `NOW() + INTERVAL '${delay_days} days' + INTERVAL '${delay_hours} hours'`;
+          await pool.query(
+            `UPDATE email_sequence_enrollments SET
+              current_step = $1, last_step_sent_at = NOW(),
+              next_step_due_at = NOW() + MAKE_INTERVAL(days => $3, hours => $4)
+            WHERE id = $2`,
+            [nextStepOrder, enrollment.id, delay_days, delay_hours]
+          );
         } else {
-          nextDueUpdate = 'NULL';
+          await pool.query(
+            `UPDATE email_sequence_enrollments SET
+              current_step = $1, last_step_sent_at = NOW(), next_step_due_at = NULL
+            WHERE id = $2`,
+            [nextStepOrder, enrollment.id]
+          );
         }
-
-        // Update enrollment progress
-        await pool.query(
-          `UPDATE email_sequence_enrollments SET
-            current_step = $1, last_step_sent_at = NOW(), next_step_due_at = ${nextDueUpdate}
-          WHERE id = $2`,
-          [nextStepOrder, enrollment.id]
-        );
 
         console.log(`[SequenceScheduler] Sent step ${nextStepOrder} to ${enrollment.email}`);
 
