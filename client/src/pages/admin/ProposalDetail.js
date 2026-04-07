@@ -6,6 +6,9 @@ import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import LocationInput from '../../components/LocationInput';
 import DrinkPlanSelections from '../../components/DrinkPlanSelections';
 import { formatPhone } from '../../utils/formatPhone';
+import { getPackageItems } from '../../data/packages';
+import SyrupPicker from '../../components/SyrupPicker';
+import { SYRUPS } from '../../data/syrups';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
@@ -260,6 +263,7 @@ export default function ProposalDetail() {
     // Pre-populate edit form from current proposal
     if (proposal && !editForm) {
       const currentAddonIds = (proposal.addons || []).map(a => a.addon_id);
+      const snapshot = proposal.pricing_snapshot || {};
       setEditForm({
         // Client fields
         client_name: proposal.client_name || '',
@@ -276,6 +280,7 @@ export default function ProposalDetail() {
         package_id: proposal.package_id || '',
         needs_bar: proposal.num_bars > 0,
         addon_ids: currentAddonIds,
+        syrup_selections: snapshot.syrups?.selections || [],
       });
     }
   }, [editing]); // eslint-disable-line
@@ -288,9 +293,10 @@ export default function ProposalDetail() {
       guest_count: Number(editForm.guest_count) || 50,
       duration_hours: Number(editForm.event_duration_hours) || 4,
       num_bars: editForm.needs_bar ? 1 : 0,
-      addon_ids: (editForm.addon_ids || []).map(Number)
+      addon_ids: (editForm.addon_ids || []).map(Number),
+      syrup_selections: editForm.syrup_selections || [],
     }).then(res => setEditPreview(res.data)).catch(() => setEditPreview(null));
-  }, [editing, editForm?.package_id, editForm?.guest_count, editForm?.event_duration_hours, editForm?.needs_bar, editForm?.addon_ids]); // eslint-disable-line
+  }, [editing, editForm?.package_id, editForm?.guest_count, editForm?.event_duration_hours, editForm?.needs_bar, editForm?.addon_ids, editForm?.syrup_selections]); // eslint-disable-line
 
   const updateEdit = (field, value) => setEditForm(f => ({ ...f, [field]: value }));
 
@@ -325,7 +331,8 @@ export default function ProposalDetail() {
         guest_count: Number(editForm.guest_count),
         package_id: Number(editForm.package_id),
         num_bars: editForm.needs_bar ? 1 : 0,
-        addon_ids: (editForm.addon_ids || []).map(Number)
+        addon_ids: (editForm.addon_ids || []).map(Number),
+        syrup_selections: editForm.syrup_selections || [],
       });
       setLoading(true);
       await loadProposal();
@@ -856,16 +863,37 @@ export default function ProposalDetail() {
                   <PricingBreakdown snapshot={snapshot} />
                 </div>
 
+                {/* Syrup selections detail */}
+                {snapshot?.syrups?.selections?.length > 0 && (
+                  <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--warm-brown)' }}>
+                    <strong style={{ color: 'var(--deep-brown)' }}>Syrups:</strong>{' '}
+                    {snapshot.syrups.selections.map(id => SYRUPS.find(s => s.id === id)?.name || id).join(', ')}
+                  </div>
+                )}
+
                 {/* Package descriptions (expandable) */}
-                {includes.length > 0 && (
+                {(getPackageItems(proposal.package_slug) || includes.length > 0) && (
                   <div style={{ marginTop: '0.5rem' }}>
                     <button className="section-toggle" onClick={() => setShowPackageDetails(!showPackageDetails)}>
                       {showPackageDetails ? 'Hide Package Details' : 'View Package Details'}
                     </button>
                     {showPackageDetails && (
-                      <ul style={{ margin: '0.5rem 0 0 0', padding: '0 0 0 1.2rem', color: 'var(--warm-brown)' }}>
-                        {includes.map((item, i) => <li key={i} className="text-small" style={{ marginBottom: '0.2rem' }}>{item}</li>)}
-                      </ul>
+                      getPackageItems(proposal.package_slug) ? (
+                        <div style={{ margin: '0.5rem 0 0 0', color: 'var(--warm-brown)' }}>
+                          {getPackageItems(proposal.package_slug).map((section, si) => (
+                            <div key={si} style={{ marginBottom: '0.5rem' }}>
+                              <div className="text-small" style={{ fontWeight: 600, marginBottom: '0.15rem' }}>{section.heading}</div>
+                              <ul style={{ margin: 0, padding: '0 0 0 1.2rem' }}>
+                                {section.items.map((item, i) => <li key={i} className="text-small" style={{ marginBottom: '0.1rem' }}>{item}</li>)}
+                              </ul>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <ul style={{ margin: '0.5rem 0 0 0', padding: '0 0 0 1.2rem', color: 'var(--warm-brown)' }}>
+                          {includes.map((item, i) => <li key={i} className="text-small" style={{ marginBottom: '0.2rem' }}>{item}</li>)}
+                        </ul>
+                      )
                     )}
                   </div>
                 )}
@@ -1311,7 +1339,14 @@ export default function ProposalDetail() {
                 </>
               )}
 
-              <div className="flex gap-1">
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: '0 0 0.75rem' }}>Handcrafted Syrups</h3>
+              <SyrupPicker
+                selected={editForm.syrup_selections || []}
+                onChange={(syrups) => updateEdit('syrup_selections', syrups)}
+                compact
+              />
+
+              <div className="flex gap-1" style={{ marginTop: '1rem' }}>
                 <button className="btn" onClick={handleSaveEdit} disabled={saving}>
                   {saving ? 'Saving...' : 'Save Changes'}
                 </button>
@@ -1325,6 +1360,7 @@ export default function ProposalDetail() {
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Event</h3>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
                 <div><span className="text-muted text-small">Event</span><div>{proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : '—')}</div></div>
+                {proposal.event_type && <div><span className="text-muted text-small">Event Type</span><div>{proposal.event_type_custom || proposal.event_type}</div></div>}
                 <div><span className="text-muted text-small">Date</span><div>{formatDateWithDay(proposal.event_date)}</div></div>
                 <div><span className="text-muted text-small">Service Time</span><div>{getServiceTime()}</div></div>
                 <div><span className="text-muted text-small">Guests</span><div>{proposal.guest_count}</div></div>
@@ -1480,11 +1516,22 @@ export default function ProposalDetail() {
             <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
               {editing && editSelectedPkg ? editSelectedPkg.name : (proposal.package_name || 'Package')}
             </h3>
-            {!editing && includes.length > 0 && (
+            {!editing && (getPackageItems(proposal.package_slug) ? (
+              <div style={{ margin: '0 0 1rem 0', color: 'var(--warm-brown, #6b4226)' }}>
+                {getPackageItems(proposal.package_slug).map((section, si) => (
+                  <div key={si} style={{ marginBottom: '0.5rem' }}>
+                    <div className="text-small" style={{ fontWeight: 600, marginBottom: '0.15rem' }}>{section.heading}</div>
+                    <ul style={{ margin: 0, padding: '0 0 0 1.2rem' }}>
+                      {section.items.map((item, i) => <li key={i} className="text-small" style={{ marginBottom: '0.1rem' }}>{item}</li>)}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            ) : includes.length > 0 && (
               <ul style={{ margin: '0 0 1rem 0', padding: '0 0 0 1.2rem', color: 'var(--warm-brown, #6b4226)' }}>
                 {includes.map((item, i) => <li key={i} className="text-small" style={{ marginBottom: '0.2rem' }}>{item}</li>)}
               </ul>
-            )}
+            ))}
             <PricingBreakdown snapshot={editing ? editPreview : snapshot} />
           </div>
 

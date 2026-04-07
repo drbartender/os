@@ -154,7 +154,7 @@ router.get('/public/packages', async (req, res) => {
     const result = await pool.query(
       `SELECT id, name, slug, category, bar_type, description, pricing_type, includes,
               base_rate_3hr, base_rate_4hr, base_rate_3hr_small, base_rate_4hr_small,
-              extra_hour_rate, extra_hour_rate_small, min_guests,
+              extra_hour_rate, extra_hour_rate_small, min_guests, min_total,
               guests_per_bartender, bartenders_included, extra_bartender_hourly,
               first_bar_fee, additional_bar_fee
        FROM service_packages WHERE is_active = true ORDER BY sort_order`
@@ -170,7 +170,7 @@ router.get('/public/packages', async (req, res) => {
 router.get('/public/addons', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, name, slug, description, billing_type, rate, extra_hour_rate, applies_to
+      `SELECT id, name, slug, description, billing_type, rate, extra_hour_rate, applies_to, category, requires_addon_slug
        FROM service_addons WHERE is_active = true ORDER BY sort_order`
     );
     res.json(result.rows);
@@ -182,7 +182,7 @@ router.get('/public/addons', async (req, res) => {
 
 /** POST /api/proposals/public/calculate — preview pricing (public, no save) */
 router.post('/public/calculate', async (req, res) => {
-  const { package_id, guest_count, duration_hours, num_bars, addon_ids } = req.body;
+  const { package_id, guest_count, duration_hours, num_bars, addon_ids, addon_quantities, syrup_selections } = req.body;
   try {
     const pkgResult = await pool.query('SELECT * FROM service_packages WHERE id = $1 AND is_active = true', [package_id]);
     if (!pkgResult.rows[0]) return res.status(400).json({ error: 'Package not found.' });
@@ -193,7 +193,10 @@ router.post('/public/calculate', async (req, res) => {
         'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
         [addon_ids]
       );
-      addons = addonResult.rows;
+      addons = addonResult.rows.map(a => ({
+        ...a,
+        quantity: addon_quantities?.[String(a.id)] || 1,
+      }));
     }
 
     const snapshot = calculateProposal({
@@ -201,7 +204,8 @@ router.post('/public/calculate', async (req, res) => {
       guestCount: guest_count || 50,
       durationHours: duration_hours || 4,
       numBars: num_bars ?? 0,
-      addons
+      addons,
+      syrupSelections: syrup_selections || [],
     });
 
     res.json(snapshot);
@@ -211,12 +215,55 @@ router.post('/public/calculate', async (req, res) => {
   }
 });
 
+/** POST /api/proposals/public/capture-lead — capture partial lead from quote wizard (fire-and-forget from client) */
+router.post('/public/capture-lead', async (req, res) => {
+  try {
+    const { name, email, phone, guest_count, event_date, source } = req.body;
+    if (!email || !email.trim()) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanName = name ? name.trim() : null;
+
+    // Build notes JSON with any extra context from the wizard
+    const notes = JSON.stringify({
+      guest_count: guest_count || null,
+      event_date: event_date || null,
+      phone: phone ? phone.trim() : null,
+    });
+
+    // Upsert into email_leads — update name if they already exist
+    await pool.query(
+      `INSERT INTO email_leads (email, name, lead_source, notes, status)
+       VALUES ($1, $2, $3, $4, 'active')
+       ON CONFLICT (email) DO UPDATE SET
+         name = COALESCE(EXCLUDED.name, email_leads.name),
+         notes = COALESCE(EXCLUDED.notes, email_leads.notes),
+         updated_at = NOW()`,
+      [
+        cleanEmail,
+        cleanName || 'Unknown',
+        source || 'website',
+        notes,
+      ]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Lead capture error:', err.message);
+    // Don't fail the client — this is fire-and-forget
+    res.json({ ok: true });
+  }
+});
+
 /** POST /api/proposals/public/submit — create a proposal from the public website quote wizard */
 router.post('/public/submit', async (req, res) => {
   const {
     client_name, client_email, client_phone,
     event_name, event_date, event_start_time, event_duration_hours,
-    event_location, guest_count, package_id, num_bars, addon_ids
+    event_location, guest_count, package_id, num_bars, addon_ids,
+    addon_quantities, syrup_selections,
+    event_type, event_type_category, event_type_custom
   } = req.body;
 
   if (!client_name || !client_name.trim()) return res.status(400).json({ error: 'Name is required.' });
@@ -229,7 +276,7 @@ router.post('/public/submit', async (req, res) => {
     await dbClient.query('BEGIN');
 
     // Create or find existing client by email
-    let clientResult = await dbClient.query(
+    const clientResult = await dbClient.query(
       'SELECT id FROM clients WHERE email = $1 LIMIT 1',
       [client_email.trim().toLowerCase()]
     );
@@ -263,7 +310,10 @@ router.post('/public/submit', async (req, res) => {
         'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
         [addon_ids]
       );
-      addons = addonResult.rows;
+      addons = addonResult.rows.map(a => ({
+        ...a,
+        quantity: addon_quantities?.[String(a.id)] || 1,
+      }));
     }
 
     // Calculate pricing
@@ -275,19 +325,27 @@ router.post('/public/submit', async (req, res) => {
       guestCount: gc,
       durationHours: dh,
       numBars: nb,
-      addons
+      addons,
+      syrupSelections: syrup_selections || [],
     });
+
+    // Derive event_name: "{Client Name} - {Event Type}" or fallback
+    const eventTypeLabel = event_type_custom || event_type || null;
+    const derivedEventName = event_name
+      || (eventTypeLabel ? `${client_name.trim()} - ${eventTypeLabel}` : `${client_name.trim()}'s Event`);
 
     // Insert proposal
     const proposalResult = await dbClient.query(`
       INSERT INTO proposals (client_id, event_name, event_date, event_start_time, event_duration_hours,
-        event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, status)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'sent')
+        event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, status,
+        event_type, event_type_category, event_type_custom)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'sent',$13,$14,$15)
       RETURNING *
     `, [
-      finalClientId, event_name || `${client_name.trim()}'s Event`, event_date || null,
+      finalClientId, derivedEventName, event_date || null,
       event_start_time || null, dh, event_location || null, gc, package_id, nb,
-      snapshot.staffing.actual, JSON.stringify(snapshot), snapshot.total
+      snapshot.staffing.actual, JSON.stringify(snapshot), snapshot.total,
+      eventTypeLabel || null, event_type_category || null, event_type_custom || null
     ]);
 
     const proposal = proposalResult.rows[0];
@@ -370,7 +428,7 @@ router.get('/addons', auth, requireAdmin, async (req, res) => {
 
 /** POST /api/proposals/calculate — preview pricing without saving */
 router.post('/calculate', auth, requireAdmin, async (req, res) => {
-  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids } = req.body;
+  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, syrup_selections } = req.body;
   try {
     const pkgResult = await pool.query('SELECT * FROM service_packages WHERE id = $1', [package_id]);
     if (!pkgResult.rows[0]) return res.status(400).json({ error: 'Package not found.' });
@@ -390,7 +448,8 @@ router.post('/calculate', auth, requireAdmin, async (req, res) => {
       durationHours: duration_hours || 4,
       numBars: num_bars ?? 1,
       numBartenders: num_bartenders,
-      addons
+      addons,
+      syrupSelections: syrup_selections || [],
     });
 
     res.json(snapshot);
@@ -447,7 +506,8 @@ router.post('/', auth, requireAdmin, async (req, res) => {
   const {
     client_id, client_name, client_email, client_phone, client_source,
     event_name, event_date, event_start_time, event_duration_hours,
-    event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids
+    event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
+    syrup_selections, event_type, event_type_category, event_type_custom
   } = req.body;
 
   if (!package_id) return res.status(400).json({ error: 'Package is required.' });
@@ -493,19 +553,22 @@ router.post('/', auth, requireAdmin, async (req, res) => {
       durationHours: dh,
       numBars: nb,
       numBartenders: num_bartenders,
-      addons
+      addons,
+      syrupSelections: syrup_selections || [],
     });
 
     // Insert proposal
     const proposalResult = await dbClient.query(`
       INSERT INTO proposals (client_id, event_name, event_date, event_start_time, event_duration_hours,
-        event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, created_by,
+        event_type, event_type_category, event_type_custom)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
       RETURNING *
     `, [
       finalClientId, event_name || null, event_date || null, event_start_time || null, dh,
       event_location || null, gc, package_id, nb,
-      snapshot.staffing.actual, JSON.stringify(snapshot), snapshot.total, req.user.id
+      snapshot.staffing.actual, JSON.stringify(snapshot), snapshot.total, req.user.id,
+      event_type || null, event_type_category || null, event_type_custom || null
     ]);
 
     const proposal = proposalResult.rows[0];
@@ -571,7 +634,8 @@ router.get('/:id', auth, requireAdmin, async (req, res) => {
 router.patch('/:id', auth, requireAdmin, async (req, res) => {
   const {
     event_name, event_date, event_start_time, event_duration_hours,
-    event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids
+    event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
+    syrup_selections, event_type, event_type_category, event_type_custom
   } = req.body;
 
   const dbClient = await pool.connect();
@@ -601,12 +665,16 @@ router.patch('/:id', auth, requireAdmin, async (req, res) => {
       addons = addonResult.rows;
     }
 
+    // Use provided syrup selections, or fall back to existing snapshot syrups
+    const oldSnapshot = old.pricing_snapshot || {};
+    const syrups = syrup_selections ?? (oldSnapshot.syrups?.selections || []);
+
     const gc = guest_count ?? old.guest_count;
     const dh = event_duration_hours ?? Number(old.event_duration_hours);
     const nb = num_bars ?? old.num_bars;
     const snapshot = calculateProposal({
       pkg: pkgResult.rows[0], guestCount: gc, durationHours: dh, numBars: nb,
-      numBartenders: num_bartenders, addons
+      numBartenders: num_bartenders, addons, syrupSelections: syrups,
     });
 
     await dbClient.query(`
@@ -615,12 +683,16 @@ router.patch('/:id', auth, requireAdmin, async (req, res) => {
         event_start_time = COALESCE($3, event_start_time), event_duration_hours = $4,
         event_location = COALESCE($5, event_location), guest_count = $6,
         package_id = $7, num_bars = $8, num_bartenders = $9,
-        pricing_snapshot = $10, total_price = $11
+        pricing_snapshot = $10, total_price = $11,
+        event_type = COALESCE($13, event_type),
+        event_type_category = COALESCE($14, event_type_category),
+        event_type_custom = COALESCE($15, event_type_custom)
       WHERE id = $12
     `, [
       event_name, event_date, event_start_time, dh, event_location, gc,
       pkgId, nb, snapshot.staffing.actual,
-      JSON.stringify(snapshot), snapshot.total, req.params.id
+      JSON.stringify(snapshot), snapshot.total, req.params.id,
+      event_type || null, event_type_category || null, event_type_custom || null
     ]);
 
     // Replace proposal add-ons

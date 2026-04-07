@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import LocationInput from '../../components/LocationInput';
+import useFormValidation from '../../hooks/useFormValidation';
+import EVENT_TYPES from '../../data/eventTypes';
 
 // Generate 30-minute time slots from 6:00 AM to 11:30 PM
 const TIME_OPTIONS = [];
@@ -23,10 +25,12 @@ export default function ProposalCreate() {
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
   const [form, setForm] = useState({
     client_name: '', client_email: '', client_phone: '', client_source: 'thumbtack',
-    event_name: '', event_date: '', event_start_time: '17:00', event_duration_hours: 4,
+    event_name: '', event_type: '', event_type_category: '', event_type_custom: '',
+    event_date: '', event_start_time: '17:00', event_duration_hours: 4,
     event_location: '', guest_count: 50, package_id: '', needs_bar: false,
     num_bartenders: null, addon_ids: []
   });
@@ -62,13 +66,56 @@ export default function ProposalCreate() {
 
   useEffect(() => { fetchPreview(); }, [fetchPreview]);
 
-  const update = (field, value) => setForm(f => ({ ...f, [field]: value }));
+  const update = (field, value) => { setForm(f => ({ ...f, [field]: value })); clearField(field); };
 
   const toggleAddon = (id) => {
     setForm(f => ({
       ...f,
       addon_ids: f.addon_ids.includes(id) ? f.addon_ids.filter(a => a !== id) : [...f.addon_ids, id]
     }));
+  };
+
+  // Event type autocomplete
+  const [eventTypeQuery, setEventTypeQuery] = useState('');
+  const [eventTypeOpen, setEventTypeOpen] = useState(false);
+  const [eventTypeHighlight, setEventTypeHighlight] = useState(-1);
+  const eventTypeRef = useRef(null);
+
+  const eventTypeFiltered = eventTypeQuery.length >= 1
+    ? EVENT_TYPES.filter(et => et.id === 'other' || et.label.toLowerCase().includes(eventTypeQuery.toLowerCase()))
+    : EVENT_TYPES;
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (eventTypeRef.current && !eventTypeRef.current.contains(e.target)) setEventTypeOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const selectEventType = (et) => {
+    const label = et.label === 'Other' ? (form.event_type_custom || 'Other') : et.label;
+    setForm(f => ({
+      ...f,
+      event_type: et.label,
+      event_type_category: et.category,
+      event_type_custom: et.id === 'other' ? f.event_type_custom : '',
+      // Auto-generate event_name
+      event_name: f.client_name ? `${f.client_name.trim()} - ${label}` : label,
+    }));
+    setEventTypeQuery(et.label === 'Other' ? '' : et.label);
+    setEventTypeOpen(false);
+    setEventTypeHighlight(-1);
+    clearField('event_type');
+  };
+
+  const handleEventTypeKeyDown = (e) => {
+    if (!eventTypeOpen) return;
+    const list = eventTypeFiltered;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setEventTypeHighlight(h => Math.min(h + 1, list.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setEventTypeHighlight(h => Math.max(h - 1, 0)); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (eventTypeHighlight >= 0 && eventTypeHighlight < list.length) selectEventType(list[eventTypeHighlight]); }
+    else if (e.key === 'Escape') setEventTypeOpen(false);
   };
 
   const selectedPkg = packages.find(p => p.id === Number(form.package_id));
@@ -83,8 +130,12 @@ export default function ProposalCreate() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.client_name.trim()) { setError('Client name is required.'); return; }
-    if (!form.package_id) { setError('Please select a package.'); return; }
+    const rules = [
+      { field: 'client_name', label: 'Client Name' },
+      { field: 'package_id', label: 'Package' },
+    ];
+    const result = validate(rules, form);
+    if (!result.valid) { setError(result.message); return; }
     setError('');
     setSubmitting(true);
     try {
@@ -123,9 +174,9 @@ export default function ProposalCreate() {
             <div className="card mb-2">
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Client Info</h3>
               <div className="two-col" style={{ gap: '1rem' }}>
-                <div className="form-group">
+                <div className={"form-group" + fieldClass('client_name')}>
                   <label className="form-label">Client Name *</label>
-                  <input className="form-input" value={form.client_name} onChange={e => update('client_name', e.target.value)} required />
+                  <input className={"form-input" + inputClass('client_name')} value={form.client_name} onChange={e => update('client_name', e.target.value)} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Email</label>
@@ -156,9 +207,53 @@ export default function ProposalCreate() {
             <div className="card mb-2">
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Event Details</h3>
               <div className="two-col" style={{ gap: '1rem' }}>
-                <div className="form-group">
-                  <label className="form-label">Event Name</label>
-                  <input className="form-input" value={form.event_name} onChange={e => update('event_name', e.target.value)} placeholder="Smith Wedding" />
+                <div className="form-group" style={{ position: 'relative' }} ref={eventTypeRef}>
+                  <label className="form-label">Event Type</label>
+                  <input
+                    className="form-input"
+                    value={eventTypeQuery}
+                    onChange={e => {
+                      setEventTypeQuery(e.target.value);
+                      setEventTypeOpen(true);
+                      setEventTypeHighlight(-1);
+                      if (form.event_type) setForm(f => ({ ...f, event_type: '', event_type_category: '', event_type_custom: '' }));
+                    }}
+                    onFocus={() => setEventTypeOpen(true)}
+                    onKeyDown={handleEventTypeKeyDown}
+                    placeholder="Start typing... e.g. Wedding, Birthday"
+                    autoComplete="off"
+                  />
+                  {eventTypeOpen && eventTypeFiltered.length > 0 && (
+                    <ul className="wz-event-type-dropdown">
+                      {eventTypeFiltered.map((et, i) => (
+                        <li key={et.id}
+                          className={`wz-event-type-option${i === eventTypeHighlight ? ' highlighted' : ''}`}
+                          onMouseDown={() => selectEventType(et)}
+                          onMouseEnter={() => setEventTypeHighlight(i)}
+                        >{et.label}</li>
+                      ))}
+                    </ul>
+                  )}
+                  {form.event_type === 'Other' && (
+                    <input className="form-input" value={form.event_type_custom}
+                      onChange={e => {
+                        update('event_type_custom', e.target.value);
+                        // Update event_name with custom value
+                        setForm(f => ({
+                          ...f,
+                          event_type_custom: e.target.value,
+                          event_name: f.client_name ? `${f.client_name.trim()} - ${e.target.value}` : e.target.value,
+                        }));
+                      }}
+                      placeholder="Describe the event type"
+                      style={{ marginTop: '0.5rem' }}
+                    />
+                  )}
+                  {form.event_name && (
+                    <div style={{ marginTop: '0.35rem', fontSize: '0.85rem', color: 'var(--warm-brown)' }}>
+                      Title: {form.event_name}
+                    </div>
+                  )}
                 </div>
                 <div className="form-group">
                   <label className="form-label">Event Date</label>
@@ -199,8 +294,8 @@ export default function ProposalCreate() {
             </div>
 
             {/* Package Selection */}
-            <div className="card mb-2">
-              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Package</h3>
+            <div className={"card mb-2" + fieldClass('package_id')}>
+              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Package *</h3>
               <div style={{ display: 'grid', gap: '0.75rem' }}>
                 {packages.map(pkg => (
                   <label key={pkg.id} style={{

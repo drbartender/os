@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import LeadImportModal from '../../components/LeadImportModal';
+import useFormValidation from '../../hooks/useFormValidation';
 
 const LEAD_SOURCES = ['manual', 'csv_import', 'website', 'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other'];
 
@@ -19,6 +20,7 @@ export default function EmailLeadsDashboard() {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', company: '', event_type: '', location: '', lead_source: 'manual', notes: '' });
   const [error, setError] = useState('');
+  const { validate, inputClass, clearField } = useFormValidation();
 
   const fetchLeads = useCallback(async () => {
     setLoading(true);
@@ -41,6 +43,11 @@ export default function EmailLeadsDashboard() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    const result = validate([
+      { field: 'name', label: 'Name' },
+      { field: 'email', label: 'Email' },
+    ], form);
+    if (!result.valid) { setError(result.message); return; }
     setCreating(true);
     setError('');
     try {
@@ -69,8 +76,8 @@ export default function EmailLeadsDashboard() {
       {showCreate && (
         <form className="em-create-form" onSubmit={handleCreate}>
           <div className="em-form-grid">
-            <input className="form-input" placeholder="Name *" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
-            <input className="form-input" placeholder="Email *" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
+            <input className={"form-input" + inputClass('name')} placeholder="Name *" value={form.name} onChange={e => { setForm({ ...form, name: e.target.value }); clearField('name'); }} />
+            <input className={"form-input" + inputClass('email')} placeholder="Email *" type="email" value={form.email} onChange={e => { setForm({ ...form, email: e.target.value }); clearField('email'); }} />
             <input className="form-input" placeholder="Company" value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} />
             <input className="form-input" placeholder="Event Type" value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })} />
             <input className="form-input" placeholder="Location" value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} />

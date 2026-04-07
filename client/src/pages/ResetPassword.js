@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import api from '../utils/api';
 import BrandLogo from '../components/BrandLogo';
+import useFormValidation from '../hooks/useFormValidation';
 
 export default function ResetPassword() {
   const { token } = useParams();
@@ -9,19 +10,22 @@ export default function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  const { validate, fieldClass, inputClass, clearField } = useFormValidation();
+
+  const rules = [
+    { field: 'password', label: 'Password', test: v => v.length >= 8 },
+    { field: 'confirmPassword', label: 'Confirm Password' },
+  ];
 
   function handle(e) {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
+    clearField(e.target.name);
   }
 
   async function submit(e) {
     e.preventDefault();
-    setError('');
-
-    if (form.password.length < 8) {
-      setError('Password must be at least 8 characters.');
-      return;
-    }
+    const result = validate(rules, form);
+    if (!result.valid) { setError(result.message); return; }
     if (form.password !== form.confirmPassword) {
       setError('Passwords do not match.');
       return;
@@ -64,28 +68,26 @@ export default function ResetPassword() {
               <>
                 {error && <div className="alert alert-error">{error}</div>}
                 <form onSubmit={submit}>
-                  <div className="form-group">
+                  <div className={"form-group" + fieldClass('password')}>
                     <label className="form-label">New Password</label>
                     <input
                       name="password"
                       type="password"
-                      className="form-input"
+                      className={"form-input" + inputClass('password')}
                       placeholder="At least 8 characters"
                       value={form.password}
                       onChange={handle}
-                      required
                     />
                   </div>
-                  <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                  <div className={"form-group" + fieldClass('confirmPassword')} style={{ marginBottom: '1.5rem' }}>
                     <label className="form-label">Confirm Password</label>
                     <input
                       name="confirmPassword"
                       type="password"
-                      className="form-input"
+                      className={"form-input" + inputClass('confirmPassword')}
                       placeholder="Re-enter your password"
                       value={form.confirmPassword}
                       onChange={handle}
-                      required
                     />
                   </div>
                   <button type="submit" className="btn btn-primary btn-full" disabled={loading}>

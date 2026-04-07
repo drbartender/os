@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import BrandLogo from '../components/BrandLogo';
+import useFormValidation from '../hooks/useFormValidation';
 
 export default function Login() {
   const { login } = useAuth();
@@ -10,13 +11,22 @@ export default function Login() {
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const { validate, fieldClass, inputClass, clearField } = useFormValidation();
+
+  const rules = [
+    { field: 'email', label: 'Email' },
+    { field: 'password', label: 'Password' },
+  ];
 
   function handle(e) {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
+    clearField(e.target.name);
   }
 
   async function submit(e) {
     e.preventDefault();
+    const result = validate(rules, form);
+    if (!result.valid) { setError(result.message); return; }
     setError('');
     setLoading(true);
     try {
@@ -52,21 +62,21 @@ export default function Login() {
             {error && <div className="alert alert-error">{error}</div>}
 
             <form onSubmit={submit}>
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('email')}>
                 <label className="form-label">Email Address</label>
                 <input
-                  name="email" type="email" className="form-input"
+                  name="email" type="email" className={"form-input" + inputClass('email')}
                   placeholder="your@email.com"
-                  value={form.email} onChange={handle} required
+                  value={form.email} onChange={handle}
                 />
               </div>
 
-              <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+              <div className={"form-group" + fieldClass('password')} style={{ marginBottom: '1.5rem' }}>
                 <label className="form-label">Password</label>
                 <input
-                  name="password" type="password" className="form-input"
+                  name="password" type="password" className={"form-input" + inputClass('password')}
                   placeholder="Your password"
-                  value={form.password} onChange={handle} required
+                  value={form.password} onChange={handle}
                 />
               </div>
 

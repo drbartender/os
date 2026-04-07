@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import FileUpload from '../components/FileUpload';
 import api from '../utils/api';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
+import useFormValidation from '../hooks/useFormValidation';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const STATES = ['Illinois','Indiana','Michigan','Minnesota','Wisconsin','AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
@@ -68,9 +69,19 @@ export default function ContractorProfile() {
     }).catch(() => setLoadError("We couldn't load your saved profile. You can still fill out the form below."));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const { validate, fieldClass, inputClass, clearField } = useFormValidation();
+
+  const rules = [
+    { field: 'preferred_name', label: 'Preferred Name' },
+    { field: 'phone', label: 'Phone' },
+    { field: 'city', label: 'City' },
+    { field: 'state', label: 'State' },
+  ];
+
   function handle(e) {
     const { name, value, type, checked } = e.target;
     setForm(f => ({ ...f, [name]: type === 'checkbox' ? checked : value }));
+    clearField(name);
   }
 
   function handleFile(name, file) {
@@ -79,10 +90,8 @@ export default function ContractorProfile() {
 
   async function submit(e) {
     e.preventDefault();
-    setError('');
-    if (!form.preferred_name || !form.phone || !form.city || !form.state) {
-      return setError('Please fill in all required fields.');
-    }
+    const result = validate(rules, form);
+    if (!result.valid) { setError(result.message); return; }
 
     setLoading(true);
     try {
@@ -126,13 +135,13 @@ export default function ContractorProfile() {
         <div className="card">
           <h3 style={{ marginBottom: '1.25rem' }}>Personal Info</h3>
           <div className="two-col">
-            <div className="form-group">
+            <div className={"form-group" + fieldClass('preferred_name')}>
               <label className="form-label">Preferred Name *</label>
-              <input name="preferred_name" className="form-input" value={form.preferred_name} onChange={handle} required />
+              <input name="preferred_name" className={"form-input" + inputClass('preferred_name')} value={form.preferred_name} onChange={handle} />
             </div>
-            <div className="form-group">
+            <div className={"form-group" + fieldClass('phone')}>
               <label className="form-label">Phone *</label>
-              <input name="phone" type="tel" className="form-input" value={formatPhoneInput(form.phone)} onChange={e => setForm(f => ({ ...f, phone: stripPhone(e.target.value) }))} required placeholder="(555) 000-0000" />
+              <input name="phone" type="tel" className={"form-input" + inputClass('phone')} value={formatPhoneInput(form.phone)} onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearField('phone'); }} placeholder="(555) 000-0000" />
             </div>
           </div>
           <div className="form-group">
@@ -167,13 +176,13 @@ export default function ContractorProfile() {
             <input name="street_address" className="form-input" value={form.street_address} onChange={handle} placeholder="123 Main St, Apt 4" />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr', gap: '0.75rem' }}>
-            <div className="form-group">
+            <div className={"form-group" + fieldClass('city')}>
               <label className="form-label">City *</label>
-              <input name="city" className="form-input" value={form.city} onChange={handle} required />
+              <input name="city" className={"form-input" + inputClass('city')} value={form.city} onChange={handle} />
             </div>
-            <div className="form-group">
+            <div className={"form-group" + fieldClass('state')}>
               <label className="form-label">State *</label>
-              <select name="state" className="form-select" value={form.state} onChange={handle} required>
+              <select name="state" className={"form-select" + inputClass('state')} value={form.state} onChange={handle}>
                 <option value="">Select state</option>
                 {[...new Set(STATES)].map(s => <option key={s} value={s}>{s}</option>)}
               </select>

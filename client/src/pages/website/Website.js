@@ -2,39 +2,33 @@ import React, { useState, useEffect, useRef } from 'react';
 import BrandLogo from '../../components/BrandLogo';
 import QuoteWizard from './QuoteWizard';
 
-const SERVICES = [
-  {
-    icon: '\u{1F4CB}',
-    title: 'Consultation + Menu Planning',
-    text: 'We work directly with you to design a drink menu that fits your event, budget, and crowd \u2014 then hand over a custom shopping list so nothing gets left to guesswork.',
-  },
-  {
-    icon: '\u{1F3A8}',
-    title: 'Bespoke Menu Graphic',
-    text: 'Every event gets a custom-designed cocktail menu. Polished presentation that elevates the whole experience.',
-  },
-  {
-    icon: '\u{1F6E1}',
-    title: 'Licensed + Insured',
-    text: 'Professional staff, full liability coverage, and day-of bar management. Creativity meets precision.',
-  },
+const SERVICE_IMAGES = [
+  { src: 'https://i.imgur.com/iHkv9dI.png', alt: 'Consultation + Menu Planning' },
+  { src: 'https://i.imgur.com/K5vxw25.png', alt: 'Bespoke Menu Graphic' },
+  { src: 'https://i.imgur.com/0Q1UMdE.png', alt: 'Licensed + Insured' },
 ];
 
 const STEPS = [
   {
-    number: '1',
-    title: 'Proposal & Deposit',
-    text: 'We send a custom proposal. Confirm your booking with a $100 deposit and we\u2019re locked in.',
+    title: 'The Prescription',
+    text: 'We craft a custom proposal tailored to your event. Once you approve it, a $100 deposit secures your date and your bar is officially booked.',
+    image: 'https://i.imgur.com/RtN224c.png',
+    imageAlt: 'The Prescription',
+    align: 'left',
   },
   {
-    number: '2',
     title: 'The Potion Planner',
-    text: 'We have a consultation where you complete our Potion Planner form. This helps us curate your shopping list and menu.',
+    text: 'Next, we have a quick consultation and complete your Potion Planner. This is where we design your drink menu and create a personalized shopping list.',
+    image: 'https://i.imgur.com/uJ1JrvN.png',
+    imageAlt: 'The Potion Planner',
+    align: 'right',
   },
   {
-    number: '3',
-    title: 'Execute & Enjoy',
-    text: 'We execute the experiment day-of. You focus on your guests \u2014 we handle the bar.',
+    title: 'The Big Experiment',
+    text: 'Event day arrives and the magic happens. We run the bar, mix the drinks, and keep the good times flowing \u2014 you relax and enjoy with your guests.',
+    image: 'https://i.imgur.com/DlX1bdI.png',
+    imageAlt: 'The Big Experiment',
+    align: 'left',
   },
 ];
 
@@ -163,11 +157,22 @@ export default function Website() {
                 <button className="btn btn-primary" onClick={() => scrollTo('quote')}>Get a Quote</button>
                 <button className="btn btn-secondary" onClick={() => scrollTo('services')}>What We Offer</button>
               </div>
+              <img
+                className="ws-hero-accent"
+                src="https://i.imgur.com/rl26NX2.png"
+                alt="Accent"
+                loading="lazy"
+              />
             </FadeUp>
-            <FadeUp className="ws-hero-image" delay={0.2}>
+            <FadeUp className="ws-hero-image ws-hero-image-stack" delay={0.2}>
               <img
                 src="https://i.imgur.com/Plqd51Z.png"
                 alt="Dr. Bartender Apothecary Bottle"
+                loading="lazy"
+              />
+              <img
+                src="https://i.imgur.com/buVhsQH.png"
+                alt="Bar Equipment"
                 loading="lazy"
               />
             </FadeUp>
@@ -186,13 +191,11 @@ export default function Website() {
             <div className="ws-divider ws-divider-center" />
           </FadeUp>
           <div className="ws-services-grid">
-            {SERVICES.map((svc, i) => (
-              <FadeUp key={svc.title} delay={i * 0.1}>
-                <article className="ws-service-card">
-                  <div className="ws-service-icon">{svc.icon}</div>
-                  <h3>{svc.title}</h3>
-                  <p>{svc.text}</p>
-                </article>
+            {SERVICE_IMAGES.map((svc, i) => (
+              <FadeUp key={svc.alt} delay={i * 0.1}>
+                <div className="ws-service-image-card">
+                  <img src={svc.src} alt={svc.alt} loading="lazy" />
+                </div>
               </FadeUp>
             ))}
           </div>
@@ -205,16 +208,18 @@ export default function Website() {
             <h2>The Protocol</h2>
             <div className="ws-divider ws-divider-center" />
           </FadeUp>
-          <div className="ws-protocol-grid">
+          <div className="ws-protocol-steps">
             {STEPS.map((step, i) => (
-              <FadeUp key={step.number} delay={i * 0.12}>
-                <article className="ws-protocol-step">
-                  <div className="ws-protocol-number">
-                    <span>{step.number}</span>
+              <FadeUp key={step.title} delay={i * 0.12}>
+                <div className={`ws-protocol-row ${step.align === 'right' ? 'ws-protocol-row-reverse' : ''}`}>
+                  <div className="ws-protocol-text">
+                    <h3>{step.title}</h3>
+                    <p>{step.text}</p>
                   </div>
-                  <h3>{step.title}</h3>
-                  <p>{step.text}</p>
-                </article>
+                  <div className="ws-protocol-image">
+                    <img src={step.image} alt={step.imageAlt} loading="lazy" />
+                  </div>
+                </div>
               </FadeUp>
             ))}
           </div>
@@ -229,13 +234,47 @@ export default function Website() {
           </FadeUp>
 
           <FadeUp>
-            <div className="ws-origin-card">
-              <p>
-                Dr. Bartender was born from equal parts passion, precision, and a dash of
-                rebellion. After years behind the bar, chasing the perfect balance of flavor
-                and experience, I decided to build something that reflected both my initials &mdash;
-                D.R. &mdash; and my philosophy: bartending is as much a science as it is an art.
-              </p>
+            <div className="ws-story-card">
+              <img src="https://i.imgur.com/Rgy52mF.png" alt="Our Story" loading="lazy" />
+              <div className="ws-story-card-overlay">
+                <p>
+                  Dr. Bartender was born from equal parts passion, precision, and a dash of
+                  rebellion. After years behind the bar, chasing the perfect balance of flavor
+                  and experience, I decided to build something that reflected both my initials &mdash;
+                  D.R. &mdash; and my philosophy: bartending is as much a science as it is an art.
+                </p>
+              </div>
+            </div>
+          </FadeUp>
+
+          <FadeUp delay={0.15}>
+            <div className="ws-story-columns">
+              <div className="ws-story-columns-image">
+                <img src="https://i.imgur.com/ZUcJudg.png" alt="About Dr. Bartender" loading="lazy" />
+              </div>
+              <div className="ws-story-columns-text">
+                <p>
+                  We serve IL, IN &amp; MI with 20+ years' experience, vetted pros, and $2M
+                  liquor liability &mdash; so you can relax while we handle the science.
+                </p>
+                <p>
+                  We don't just mix drinks &mdash; we engineer experiences. Prescribing exactly
+                  what every celebration needs: quality, creativity, and a bit of controlled chaos.
+                </p>
+              </div>
+            </div>
+          </FadeUp>
+
+          <FadeUp delay={0.3}>
+            <div className="ws-story-card">
+              <img src="https://i.imgur.com/Rgy52mF.png" alt="Our Journey" loading="lazy" />
+              <div className="ws-story-card-overlay">
+                <p>
+                  What started as one bartender's pursuit of the perfect cocktail has evolved into a
+                  mobile bar experience unlike any other &mdash; where every event becomes its own
+                  experiment, and every guest leaves a willing test subject of good times.
+                </p>
+              </div>
             </div>
           </FadeUp>
         </section>

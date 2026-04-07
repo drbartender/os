@@ -5,6 +5,7 @@ import FileUpload from '../components/FileUpload';
 import BrandLogo from '../components/BrandLogo';
 import api from '../utils/api';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
+import useFormValidation from '../hooks/useFormValidation';
 
 const FUN_COLORS = [
   { hex: '#ff0000', name: 'Cherry Red' },
@@ -108,26 +109,41 @@ export default function Application() {
   const [tools, setTools] = useState({});
   const [equipment, setEquipment] = useState({});
 
+  const { validate, fieldClass, inputClass, clearField } = useFormValidation();
+
   function handle(e) {
     const { name, value, type, checked } = e.target;
     setForm(f => ({ ...f, [name]: type === 'checkbox' ? checked : value }));
+    clearField(name);
   }
 
   function handleFile(name, file) {
     setFiles(f => ({ ...f, [name]: file }));
+    clearField(name);
   }
 
   async function submit(e) {
     e.preventDefault();
     setError('');
 
-    // Validation
-    if (!form.full_name || !form.phone || !form.city || !form.state) {
-      return setError('Please fill in all required fields in Basic Information.');
-    }
-    if (!form.birth_month || !form.birth_day || !form.birth_year) {
-      return setError('Date of birth is required.');
-    }
+    const rules = [
+      { field: 'full_name', label: 'Full Name' },
+      { field: 'phone', label: 'Phone' },
+      { field: 'city', label: 'City' },
+      { field: 'state', label: 'State' },
+      { field: 'birth_month', label: 'Date of Birth', test: () => form.birth_month && form.birth_day && form.birth_year },
+      { field: 'birth_day', label: null, test: () => form.birth_month && form.birth_day && form.birth_year },
+      { field: 'birth_year', label: null, test: () => form.birth_month && form.birth_day && form.birth_year },
+      { field: 'travel_distance', label: 'Travel Distance' },
+      { field: 'reliable_transportation', label: 'Transportation' },
+      { field: 'positions', label: 'Position', test: () => Object.values(positions).some(Boolean) },
+      { field: 'why_dr_bartender', label: 'Why Dr. Bartender' },
+      { field: 'resume', label: 'Resume', test: () => !!files.resume },
+      { field: 'basset', label: 'BASSET Certification', test: () => !!files.basset },
+    ];
+
+    const result = validate(rules, form);
+    if (!result.valid) { setError(result.message); return; }
 
     // Age check (21+)
     const today = new Date();
@@ -137,15 +153,7 @@ export default function Application() {
     if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) age--;
     if (age < 21) return setError('You must be at least 21 years old to apply.');
 
-    if (!form.travel_distance) return setError('Please select your travel distance.');
-    if (!form.reliable_transportation) return setError('Please select a transportation option.');
-
     const selectedPositions = Object.keys(positions).filter(k => positions[k]);
-    if (selectedPositions.length === 0) return setError('Please select at least one position you\'re interested in.');
-
-    if (!form.why_dr_bartender) return setError('Please tell us why you want to work with Dr. Bartender.');
-    if (!files.resume) return setError('Please upload your resume.');
-    if (!files.basset) return setError('Please upload your BASSET / alcohol certification.');
 
     setLoading(true);
     try {
@@ -220,13 +228,13 @@ export default function Application() {
             </p>
 
             <div className="two-col">
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('full_name')}>
                 <label className="form-label">Full Name *</label>
-                <input name="full_name" className="form-input" value={form.full_name} onChange={handle} placeholder="First and last name" required />
+                <input name="full_name" className={"form-input" + inputClass('full_name')} value={form.full_name} onChange={handle} placeholder="First and last name" />
               </div>
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('phone')}>
                 <label className="form-label">Phone Number *</label>
-                <input name="phone" type="tel" className="form-input" value={formatPhoneInput(form.phone)} onChange={e => setForm(f => ({ ...f, phone: stripPhone(e.target.value) }))} placeholder="(555) 000-0000" required />
+                <input name="phone" type="tel" className={"form-input" + inputClass('phone')} value={formatPhoneInput(form.phone)} onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearField('phone'); }} placeholder="(555) 000-0000" />
               </div>
             </div>
 
@@ -251,20 +259,20 @@ export default function Application() {
             <h4 style={{ marginBottom: '0.75rem', marginTop: '0.5rem' }}>Date of Birth *</h4>
             <p className="text-muted text-small" style={{ marginBottom: '0.75rem' }}>You must be 21 or older to work with Dr. Bartender.</p>
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.5fr', gap: '0.75rem' }}>
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('birth_month')}>
                 <label className="form-label">Month</label>
-                <select name="birth_month" className="form-select" value={form.birth_month} onChange={handle} required>
+                <select name="birth_month" className={"form-select" + inputClass('birth_month')} value={form.birth_month} onChange={handle}>
                   <option value="">Month</option>
                   {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
                 </select>
               </div>
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('birth_day')}>
                 <label className="form-label">Day</label>
-                <input name="birth_day" type="number" className="form-input" value={form.birth_day} onChange={handle} placeholder="DD" min="1" max="31" required />
+                <input name="birth_day" type="number" className={"form-input" + inputClass('birth_day')} value={form.birth_day} onChange={handle} placeholder="DD" min="1" max="31" />
               </div>
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('birth_year')}>
                 <label className="form-label">Year</label>
-                <input name="birth_year" type="number" className="form-input" value={form.birth_year} onChange={handle} placeholder="YYYY" min="1940" max="2010" required />
+                <input name="birth_year" type="number" className={"form-input" + inputClass('birth_year')} value={form.birth_year} onChange={handle} placeholder="YYYY" min="1940" max="2010" />
               </div>
             </div>
           </div>
@@ -282,13 +290,13 @@ export default function Application() {
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr', gap: '0.75rem' }}>
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('city')}>
                 <label className="form-label">City *</label>
-                <input name="city" className="form-input" value={form.city} onChange={handle} required />
+                <input name="city" className={"form-input" + inputClass('city')} value={form.city} onChange={handle} />
               </div>
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('state')}>
                 <label className="form-label">State *</label>
-                <select name="state" className="form-select" value={form.state} onChange={handle} required>
+                <select name="state" className={"form-select" + inputClass('state')} value={form.state} onChange={handle}>
                   <option value="">Select state</option>
                   {STATES.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
@@ -299,7 +307,7 @@ export default function Application() {
               </div>
             </div>
 
-            <div className="form-group">
+            <div className={"form-group" + fieldClass('travel_distance')}>
               <label className="form-label">How far are you willing to travel for events? *</label>
               <div className="radio-group">
                 {TRAVEL_OPTIONS.map(opt => (
@@ -311,7 +319,7 @@ export default function Application() {
               </div>
             </div>
 
-            <div className="form-group">
+            <div className={"form-group" + fieldClass('reliable_transportation')}>
               <label className="form-label">Do you have reliable transportation? *</label>
               <div className="radio-group" style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
                 {['Yes', 'No', 'Maybe'].map(opt => (
@@ -533,10 +541,10 @@ export default function Application() {
               Last few questions, plus your resume, headshot, and BASSET certification.
             </p>
 
-            <div className="form-group">
+            <div className={"form-group" + fieldClass('why_dr_bartender')}>
               <label className="form-label">Why do you want to work with Dr. Bartender? *</label>
-              <textarea name="why_dr_bartender" className="form-input" rows={3}
-                value={form.why_dr_bartender} onChange={handle} required
+              <textarea name="why_dr_bartender" className={"form-input" + inputClass('why_dr_bartender')} rows={3}
+                value={form.why_dr_bartender} onChange={handle}
                 placeholder="Tell us what drew you to apply..." />
             </div>
 
@@ -547,13 +555,15 @@ export default function Application() {
                 placeholder="Anything else we should know..." />
             </div>
 
-            <FileUpload
-              label="Upload Your Resume *"
-              name="resume"
-              helper="PDF, JPEG, or PNG accepted."
-              onChange={handleFile}
-              currentFile={files.resume}
-            />
+            <div className={"form-group" + fieldClass('resume')}>
+              <FileUpload
+                label="Upload Your Resume *"
+                name="resume"
+                helper="PDF, JPEG, or PNG accepted."
+                onChange={handleFile}
+                currentFile={files.resume}
+              />
+            </div>
 
             <FileUpload
               label="Upload a Headshot"
@@ -565,13 +575,15 @@ export default function Application() {
               camera={true}
             />
 
-            <FileUpload
-              label="Upload Your BASSET / Alcohol Certification *"
-              name="basset"
-              helper="BASSET, TIPS, ServSafe, or equivalent. Required for all positions."
-              onChange={handleFile}
-              currentFile={files.basset}
-            />
+            <div className={"form-group" + fieldClass('basset')}>
+              <FileUpload
+                label="Upload Your BASSET / Alcohol Certification *"
+                name="basset"
+                helper="BASSET, TIPS, ServSafe, or equivalent. Required for all positions."
+                onChange={handleFile}
+                currentFile={files.basset}
+              />
+            </div>
           </div>
 
           {/* ── Section 8: Emergency Contact ── */}

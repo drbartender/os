@@ -1,6 +1,7 @@
 import React from 'react';
 import { QUICK_PICKS } from '../data/servingTypes';
 import { formatPhoneInput } from '../../../utils/formatPhone';
+import { SYRUPS, calculateSyrupCost } from '../../../data/syrups';
 
 export default function ConfirmationStep({ plan, quickPickChoice, activeModules, selections, cocktails = [], mocktails = [], onSubmit, saving, error }) {
   const pick = QUICK_PICKS.find(p => p.key === quickPickChoice);
@@ -108,6 +109,26 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
             )}
           </div>
         )}
+
+        {/* Syrups */}
+        {(selections.syrupSelections || []).length > 0 && (() => {
+          const syrupIds = selections.syrupSelections;
+          const cost = calculateSyrupCost(syrupIds.length);
+          return (
+            <div className="mb-2">
+              <strong>Handcrafted Syrups</strong>
+              <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
+                {syrupIds.map(id => {
+                  const s = SYRUPS.find(sy => sy.id === id);
+                  return s ? <li key={id}>{s.name}</li> : null;
+                })}
+              </ul>
+              <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
+                {cost.count} bottle{cost.count !== 1 ? 's' : ''} — ${cost.total}
+              </p>
+            </div>
+          );
+        })()}
 
         {/* Menu Design */}
         {selections.customMenuDesign === true && (

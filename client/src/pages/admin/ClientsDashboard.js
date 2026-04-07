@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { formatPhone, formatPhoneInput, stripPhone } from '../../utils/formatPhone';
+import useFormValidation from '../../hooks/useFormValidation';
 
 const SOURCE_LABELS = { direct: 'Direct', thumbtack: 'Thumbtack', referral: 'Referral', website: 'Website' };
 
@@ -13,6 +14,8 @@ export default function ClientsDashboard() {
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', phone: '', source: 'direct' });
+  const [error, setError] = useState('');
+  const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
   const fetchClients = useCallback(async () => {
     try {
@@ -29,7 +32,9 @@ export default function ClientsDashboard() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    if (!form.name.trim()) return;
+    const result = validate([{ field: 'name', label: 'Name' }], form);
+    if (!result.valid) { setError(result.message); return; }
+    setError('');
     setCreating(true);
     try {
       const res = await api.post('/clients', form);
@@ -61,11 +66,12 @@ export default function ClientsDashboard() {
       {showCreate && (
         <div className="card mb-2">
           <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Add New Client</h3>
+          {error && <div className="alert alert-error mb-1">{error}</div>}
           <form onSubmit={handleCreate}>
             <div className="two-col" style={{ gap: '1rem' }}>
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('name')}>
                 <label className="form-label">Name *</label>
-                <input className="form-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required />
+                <input className={"form-input" + inputClass('name')} value={form.name} onChange={e => { setForm(f => ({ ...f, name: e.target.value })); clearField('name'); }} />
               </div>
               <div className="form-group">
                 <label className="form-label">Email</label>

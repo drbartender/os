@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import RichTextEditor from '../../components/RichTextEditor';
 import AudienceSelector from '../../components/AudienceSelector';
+import useFormValidation from '../../hooks/useFormValidation';
 
 export default function EmailCampaignCreate() {
   const navigate = useNavigate();
@@ -18,10 +19,12 @@ export default function EmailCampaignCreate() {
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    if (!form.name.trim()) return setError('Campaign name is required.');
+    const result = validate([{ field: 'name', label: 'Campaign Name' }], form);
+    if (!result.valid) { setError(result.message); return; }
     setSaving(true);
     setError('');
     try {
@@ -53,9 +56,9 @@ export default function EmailCampaignCreate() {
 
       <form onSubmit={handleCreate}>
         <div className="em-form-grid">
-          <div className="form-group">
+          <div className={"form-group" + fieldClass('name')}>
             <label className="form-label">Campaign Name *</label>
-            <input className="form-input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Summer Wedding Promo" required />
+            <input className={"form-input" + inputClass('name')} value={form.name} onChange={e => { setForm({ ...form, name: e.target.value }); clearField('name'); }} placeholder="Summer Wedding Promo" />
           </div>
           <div className="form-group">
             <label className="form-label">Type</label>

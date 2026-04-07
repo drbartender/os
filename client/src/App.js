@@ -4,7 +4,9 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/Layout';
 import api from './utils/api';
-import Website from './pages/website/Website';
+import HomePage from './pages/website/HomePage';
+import QuotePage from './pages/website/QuotePage';
+import FaqPage from './pages/website/FaqPage';
 import Register from './pages/Register';
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
@@ -50,6 +52,7 @@ import Blog from './pages/public/Blog';
 import BlogPost from './pages/public/BlogPost';
 import ClientLogin from './pages/public/ClientLogin';
 import ClientDashboard from './pages/public/ClientDashboard';
+import ClassWizard from './pages/website/ClassWizard';
 import { ClientAuthProvider } from './context/ClientAuthContext';
 
 /** Check if we're on the public marketing site (drbartender.com) vs admin subdomain */
@@ -141,7 +144,10 @@ function PublicWebsiteRoutes() {
   return (
     <ClientAuthProvider>
       <Routes>
-        <Route path="/" element={<Website />} />
+        <Route path="/" element={<HomePage />} />
+        <Route path="/quote" element={<QuotePage />} />
+        <Route path="/faq" element={<FaqPage />} />
+        <Route path="/classes" element={<ClassWizard />} />
         {/* These public token-based routes work on both domains */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
@@ -169,7 +175,10 @@ function AppRoutes() {
       <Route path="/plan/:token" element={<PotionPlanningLab />} />
       <Route path="/proposal/:token" element={<ProposalView />} />
       {/* Website accessible on admin domain for preview */}
-      <Route path="/website" element={<Website />} />
+      <Route path="/website" element={<HomePage />} />
+      <Route path="/quote" element={<QuotePage />} />
+      <Route path="/faq" element={<FaqPage />} />
+      <Route path="/classes" element={<ClassWizard />} />
       <Route path="/labnotes" element={<Blog />} />
       <Route path="/labnotes/:slug" element={<BlogPost />} />
       {/* Client portal */}

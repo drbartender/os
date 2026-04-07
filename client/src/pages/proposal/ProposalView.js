@@ -6,6 +6,7 @@ import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-
 import SignaturePad from '../../components/SignaturePad';
 import { API_BASE_URL as BASE_URL } from '../../utils/api';
 import { COMPANY_PHONE } from '../../utils/constants';
+import { getPackageBySlug } from '../../data/packages';
 
 const stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY);
 
@@ -258,6 +259,18 @@ export default function ProposalView() {
     (snapshot.addons || []).forEach(a => {
       lineItems.push({ label: a.name, amount: a.line_total });
     });
+    if (snapshot.syrups?.total > 0) {
+      let syrupLabel = 'Handcrafted Syrups';
+      const sc = snapshot.syrups;
+      if (sc.packs > 0 && sc.singles > 0) {
+        syrupLabel += ` (${sc.packs} three-pack${sc.packs !== 1 ? 's' : ''} + ${sc.singles} single${sc.singles !== 1 ? 's' : ''})`;
+      } else if (sc.packs > 0) {
+        syrupLabel += ` (${sc.packs} three-pack${sc.packs !== 1 ? 's' : ''})`;
+      } else {
+        syrupLabel += ` (${sc.singles} bottle${sc.singles !== 1 ? 's' : ''})`;
+      }
+      lineItems.push({ label: syrupLabel, amount: sc.total });
+    }
   }
 
   const isAlreadySigned = !!proposal.client_signed_at;
@@ -290,6 +303,12 @@ export default function ProposalView() {
         <div style={styles.section}>
           <h2 style={styles.sectionTitle}>{proposal.event_name || 'Your Event'}</h2>
           <div style={styles.detailGrid}>
+            {proposal.event_type && (
+              <div style={{ ...styles.detailItem, gridColumn: '1 / -1' }}>
+                <span style={styles.detailLabel}>Event Type</span>
+                <span style={styles.detailValue}>{proposal.event_type_custom || proposal.event_type}</span>
+              </div>
+            )}
             {proposal.event_date && (
               <div style={{ ...styles.detailItem, gridColumn: '1 / -1' }}>
                 <span style={styles.detailLabel}>Date</span>
@@ -326,13 +345,34 @@ export default function ProposalView() {
         {/* Package */}
         <div style={styles.section}>
           <h2 style={styles.sectionTitle}>{proposal.package_name}</h2>
-          {includes.length > 0 && (
-            <ul style={styles.includesList}>
-              {includes.map((item, i) => (
-                <li key={i} style={styles.includesItem}>{item}</li>
-              ))}
-            </ul>
-          )}
+          {(() => {
+            const detail = getPackageBySlug(proposal.package_slug);
+            if (detail) {
+              return (
+                <>
+                  <p style={{ color: '#6b4226', fontSize: '0.95rem', marginBottom: '1rem', fontStyle: 'italic' }}>{detail.description}</p>
+                  {detail.sections.map((section, si) => (
+                    <div key={si} style={{ marginBottom: '0.75rem' }}>
+                      <h3 style={{ fontSize: '0.85rem', fontWeight: 600, color: '#4a2c17', margin: '0 0 0.25rem 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{section.heading}</h3>
+                      <ul style={styles.includesList}>
+                        {section.items.map((item, i) => (
+                          <li key={i} style={styles.includesItem}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                  <p style={{ color: '#6b4226', fontSize: '0.85rem', marginTop: '0.5rem', fontStyle: 'italic' }}>{detail.serviceIncludes}</p>
+                </>
+              );
+            }
+            return includes.length > 0 ? (
+              <ul style={styles.includesList}>
+                {includes.map((item, i) => (
+                  <li key={i} style={styles.includesItem}>{item}</li>
+                ))}
+              </ul>
+            ) : null;
+          })()}
         </div>
 
         {/* Pricing */}

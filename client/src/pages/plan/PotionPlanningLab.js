@@ -12,6 +12,7 @@ import FullBarStep from './steps/FullBarStep';
 import MocktailStep from './steps/MocktailStep';
 import MenuDesignStep from './steps/MenuDesignStep';
 import LogisticsStep from './steps/LogisticsStep';
+import SyrupUpsellStep from './steps/SyrupUpsellStep';
 import ConfirmationStep from './steps/ConfirmationStep';
 
 const DEFAULT_ACTIVE_MODULES = { signatureDrinks: false, mocktails: false, fullBar: false, beerWineOnly: false };
@@ -33,6 +34,7 @@ const DEFAULT_SELECTIONS = {
   wineFromBeerWine: [],
   wineOtherBeerWine: '',
   beerWineBalanceBeerWine: '',
+  syrupSelections: [],
   customMenuDesign: null,
   menuTheme: '',
   drinkNaming: '',
@@ -289,7 +291,7 @@ export default function PotionPlanningLab() {
   }
 
   // Steps that manage their own nav buttons (hide global nav)
-  const selfNavigatingSteps = [MODULE_STEP_MAP.signatureDrinks, MODULE_STEP_MAP.mocktails];
+  const selfNavigatingSteps = [MODULE_STEP_MAP.signatureDrinks, MODULE_STEP_MAP.mocktails, MODULE_STEP_MAP.syrupUpsell];
   const hideGlobalNav = selfNavigatingSteps.includes(step);
 
   const showBack = !['welcome', 'quickPick'].includes(step) && !hideGlobalNav;
@@ -319,6 +321,17 @@ export default function PotionPlanningLab() {
             onNext={() => handleNext()}
             onBack={() => handleBack()}
             onSkipMocktails={() => handleSkipToAfter(MODULE_STEP_MAP.mocktails)}
+          />
+        );
+      case MODULE_STEP_MAP.syrupUpsell:
+        return (
+          <SyrupUpsellStep
+            selectedDrinkIds={selections.signatureDrinks}
+            cocktails={cocktails}
+            syrupSelections={selections.syrupSelections || []}
+            onChange={(val) => updateSelections('syrupSelections', val)}
+            onNext={() => handleNext()}
+            onBack={() => handleBack()}
           />
         );
       case MODULE_STEP_MAP.mocktails:

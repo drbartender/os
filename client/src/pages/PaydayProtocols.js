@@ -5,11 +5,13 @@ import W9Form from '../components/W9Form';
 import api from '../utils/api';
 import { COMPANY_PHONE } from '../utils/constants';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
+import useFormValidation from '../hooks/useFormValidation';
 
 const PAYMENT_METHODS = ['Venmo', 'Zelle', 'Cash App', 'PayPal', 'Direct Deposit / ACH', 'Check'];
 
 export default function PaydayProtocols() {
   const navigate = useNavigate();
+  const { validate, fieldClass, inputClass, clearField } = useFormValidation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
@@ -61,6 +63,7 @@ export default function PaydayProtocols() {
 
   function handle(e) {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
+    clearField(e.target.name);
   }
 
   async function submit(e) {
@@ -68,21 +71,31 @@ export default function PaydayProtocols() {
     setError('');
 
     const method = form.preferred_payment_method;
-    if (!method) return setError('Please select a payment method.');
 
-    // Method-specific validation
-    if (method === 'Venmo' && !form.venmo_handle.trim())
-      return setError('Please enter your Venmo @handle.');
-    if (method === 'Cash App' && !form.cashtag.trim())
-      return setError('Please enter your Cash App $cashtag.');
-    if (method === 'Zelle' && !form.zelle_email.trim() && !form.zelle_phone.trim())
-      return setError('Please enter the email address or phone number linked to your Zelle account.');
-    if (method === 'PayPal' && !form.paypal_email.trim())
-      return setError('Please enter your PayPal email or @username.');
+    // Build rules dynamically based on selected payment method
+    const rules = [
+      { field: 'preferred_payment_method', label: 'Payment Method' },
+    ];
+
+    if (method === 'Venmo')
+      rules.push({ field: 'venmo_handle', label: 'Venmo @Handle' });
+    if (method === 'Cash App')
+      rules.push({ field: 'cashtag', label: 'Cash App $Cashtag' });
+    if (method === 'Zelle')
+      rules.push({
+        field: 'zelle_email',
+        label: 'Zelle Email or Phone',
+        test: (val, data) => (val && val.trim()) || (data.zelle_phone && data.zelle_phone.trim()),
+      });
+    if (method === 'PayPal')
+      rules.push({ field: 'paypal_email', label: 'PayPal Email or @Username' });
     if (method === 'Direct Deposit / ACH') {
-      if (!form.routing_number.trim()) return setError('Routing number is required for Direct Deposit.');
-      if (!form.account_number.trim()) return setError('Account number is required for Direct Deposit.');
+      rules.push({ field: 'routing_number', label: 'Routing Number' });
+      rules.push({ field: 'account_number', label: 'Account Number' });
     }
+
+    const result = validate(rules, form);
+    if (!result.valid) { setError(result.message); return; }
 
     if (!w9File && !existingW9) return setError('Please complete or upload your W-9.');
 
@@ -182,9 +195,9 @@ export default function PaydayProtocols() {
 
         <form onSubmit={submit}>
           {/* ── Payment Method ── */}
-          <div className="form-group">
+          <div className={`form-group${fieldClass('preferred_payment_method')}`}>
             <label className="form-label">Preferred Method of Payment *</label>
-            <select name="preferred_payment_method" className="form-select" value={method} onChange={handle} required>
+            <select name="preferred_payment_method" className={`form-select${inputClass('preferred_payment_method')}`} value={method} onChange={handle}>
               <option value="">Select method</option>
               {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
@@ -192,10 +205,10 @@ export default function PaydayProtocols() {
 
           {/* ── Method-specific fields ── */}
           {method === 'Venmo' && (
-            <div className="form-group">
+            <div className={`form-group${fieldClass('venmo_handle')}`}>
               <label className="form-label">Venmo @Handle *</label>
               <input
-                name="venmo_handle" className="form-input"
+                name="venmo_handle" className={`form-input${inputClass('venmo_handle')}`}
                 value={form.venmo_handle} onChange={handle}
                 placeholder="@yourname"
               />
@@ -204,10 +217,10 @@ export default function PaydayProtocols() {
           )}
 
           {method === 'Cash App' && (
-            <div className="form-group">
+            <div className={`form-group${fieldClass('cashtag')}`}>
               <label className="form-label">Cash App $Cashtag *</label>
               <input
-                name="cashtag" className="form-input"
+                name="cashtag" className={`form-input${inputClass('cashtag')}`}
                 value={form.cashtag} onChange={handle}
                 placeholder="$yourname"
               />
@@ -217,10 +230,10 @@ export default function PaydayProtocols() {
 
           {method === 'Zelle' && (
             <div>
-              <div className="form-group">
+              <div className={`form-group${fieldClass('zelle_email')}`}>
                 <label className="form-label">Zelle Email Address</label>
                 <input
-                  name="zelle_email" type="email" className="form-input"
+                  name="zelle_email" type="email" className={`form-input${inputClass('zelle_email')}`}
                   value={form.zelle_email} onChange={handle}
                   placeholder="you@email.com"
                 />
@@ -228,11 +241,11 @@ export default function PaydayProtocols() {
               <div style={{ textAlign: 'center', margin: '-0.5rem 0 0.75rem', color: 'var(--text-muted)', fontSize: '0.85rem', fontStyle: 'italic' }}>
                 — or —
               </div>
-              <div className="form-group">
+              <div className={`form-group${fieldClass('zelle_email')}`}>
                 <label className="form-label">Zelle Phone Number</label>
                 <input
-                  name="zelle_phone" type="tel" className="form-input"
-                  value={formatPhoneInput(form.zelle_phone)} onChange={e => setForm(f => ({ ...f, zelle_phone: stripPhone(e.target.value) }))}
+                  name="zelle_phone" type="tel" className={`form-input${inputClass('zelle_email')}`}
+                  value={formatPhoneInput(form.zelle_phone)} onChange={e => { setForm(f => ({ ...f, zelle_phone: stripPhone(e.target.value) })); clearField('zelle_email'); }}
                   placeholder="(555) 000-0000"
                 />
               </div>
@@ -243,10 +256,10 @@ export default function PaydayProtocols() {
           )}
 
           {method === 'PayPal' && (
-            <div className="form-group">
+            <div className={`form-group${fieldClass('paypal_email')}`}>
               <label className="form-label">PayPal Email or @Username *</label>
               <input
-                name="paypal_email" className="form-input"
+                name="paypal_email" className={`form-input${inputClass('paypal_email')}`}
                 value={form.paypal_email} onChange={handle}
                 placeholder="you@email.com or @yourname"
               />
@@ -259,20 +272,20 @@ export default function PaydayProtocols() {
               <div style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--warm-brown)', marginBottom: '0.85rem' }}>
                 🏦 Bank Account Details
               </div>
-              <div className="form-group">
+              <div className={`form-group${fieldClass('routing_number')}`}>
                 <label className="form-label">Routing Number *</label>
                 <input
-                  name="routing_number" className="form-input"
+                  name="routing_number" className={`form-input${inputClass('routing_number')}`}
                   value={form.routing_number} onChange={handle}
                   placeholder="9 digits" maxLength={9} inputMode="numeric"
                   style={{ fontFamily: 'monospace', letterSpacing: '0.15em' }}
                 />
                 <p className="form-helper">The 9-digit number on the bottom-left of your check</p>
               </div>
-              <div className="form-group" style={{ marginBottom: 0 }}>
+              <div className={`form-group${fieldClass('account_number')}`} style={{ marginBottom: 0 }}>
                 <label className="form-label">Account Number *</label>
                 <input
-                  name="account_number" className="form-input"
+                  name="account_number" className={`form-input${inputClass('account_number')}`}
                   value={form.account_number} onChange={handle}
                   placeholder="Your account number"
                   style={{ fontFamily: 'monospace', letterSpacing: '0.15em' }}

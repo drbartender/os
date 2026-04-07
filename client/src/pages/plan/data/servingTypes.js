@@ -40,6 +40,7 @@ export const QUICK_PICKS = [
 // Module flow order
 export const MODULE_ORDER = [
   'signatureDrinks',
+  'syrupUpsell',
   'mocktails',
   'fullBar',
   'beerWineOnly',
@@ -50,6 +51,7 @@ export const MODULE_ORDER = [
 // Map module key to step identifier used by orchestrator
 export const MODULE_STEP_MAP = {
   signatureDrinks: 'stepSignatureDrinks',
+  syrupUpsell: 'stepSyrupUpsell',
   mocktails: 'stepMocktails',
   fullBar: 'stepFullBar',
   beerWineOnly: 'stepBeerWineOnly',
@@ -63,6 +65,10 @@ export function buildStepQueue(activeModules) {
   for (const mod of MODULE_ORDER) {
     if (mod === 'menuDesign' || mod === 'logistics') {
       steps.push(MODULE_STEP_MAP[mod]);
+    } else if (mod === 'syrupUpsell') {
+      if (activeModules.signatureDrinks) {
+        steps.push(MODULE_STEP_MAP[mod]);
+      }
     } else if (activeModules[mod]) {
       if (mod === 'beerWineOnly' && activeModules.fullBar) continue;
       steps.push(MODULE_STEP_MAP[mod]);

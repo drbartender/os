@@ -474,9 +474,12 @@ CREATE TABLE IF NOT EXISTS service_packages (
   includes JSONB DEFAULT '[]',
   sort_order INTEGER DEFAULT 0,
   is_active BOOLEAN DEFAULT true,
+  min_total NUMERIC(10,2),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE service_packages ADD COLUMN IF NOT EXISTS min_total NUMERIC(10,2);
 
 DROP TRIGGER IF EXISTS update_service_packages_updated_at ON service_packages;
 CREATE TRIGGER update_service_packages_updated_at BEFORE UPDATE ON service_packages
@@ -484,46 +487,47 @@ CREATE TRIGGER update_service_packages_updated_at BEFORE UPDATE ON service_packa
 
 ALTER TABLE service_packages ADD COLUMN IF NOT EXISTS bar_type VARCHAR(50) DEFAULT 'full_bar' CHECK (bar_type IN ('full_bar', 'beer_and_wine', 'mocktail', 'service_only', 'class'));
 
-INSERT INTO service_packages (slug, name, description, category, pricing_type, base_rate_3hr, base_rate_4hr, extra_hour_rate, min_guests, base_rate_3hr_small, base_rate_4hr_small, extra_hour_rate_small, bartenders_included, bar_type, includes, sort_order) VALUES
+INSERT INTO service_packages (slug, name, description, category, pricing_type, base_rate_3hr, base_rate_4hr, extra_hour_rate, min_guests, base_rate_3hr_small, base_rate_4hr_small, extra_hour_rate_small, bartenders_included, bar_type, min_total, includes, sort_order) VALUES
   ('the-core-reaction', 'The Core Reaction', 'Service-only. Built to flex. Our most budget-friendly Dry Lab setup. You provide the alcohol and supplies — or grab exactly what we recommend from our customized shopping list. We show up with the know-how, the setup, and the steady hands.', 'byob', 'flat',
-    NULL, 350, 100, NULL, NULL, NULL, NULL, 1, 'service_only',
+    NULL, 350, 100, NULL, NULL, NULL, NULL, 1, 'service_only', NULL,
     '["{bartenders} professional bartender{bartenders_s}","Setup & breakdown","Cooler","Bar tools + clean service layout","Menu planning session","Precise, event-specific alcohol shopping list","Bespoke menu graphic","$2 million liquor liability insurance"]', 1),
   ('the-doctors-orders', 'The Doctor''s Orders', 'Our signature Mixology Lab. Stir, shake, and serve with flair. This hands-on session includes everything you need to learn and create — shakers, tools, mixers, juices, garnishes — everything but the liquor.', 'byob', 'flat',
-    300, NULL, 100, NULL, NULL, NULL, NULL, 1, 'class',
+    300, NULL, 100, NULL, NULL, NULL, NULL, 1, 'class', NULL,
     '["{bartenders} professional instructor{bartenders_s}","Setup & breakdown","Cooler","Menu planning session","Precise alcohol shopping list","Custom menu graphic","Digital Curriculum (recipes & instructions)","Up to {hours} hours of service","$2 million liquor liability insurance"]', 2),
   ('the-base-compound', 'The Base Compound', 'Minimal inputs. Maximum efficiency. A stripped-down formula ideal for casual environments and efficient service — delivering a solid range without experimental overload.', 'hosted', 'per_guest',
-    NULL, 18, 5, 50, NULL, 23, 5, 1, 'full_bar',
+    NULL, 18, 5, 50, NULL, 23, 5, 1, 'full_bar', 500,
     '["Two Signature Cocktails — Pre-formulated in our lab for rapid, reliable deployment","Miller Lite","Michelob Ultra","One Red Wine — balanced, medium-bodied","One White Wine — bright and approachable","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 3),
   ('the-midrange-reaction', 'The Midrange Reaction', 'More variables. Still controlled. This formula expands the spirit selection and mixer profile, offering crowd-pleasing flexibility while staying efficient and focused. Ideal for weddings, milestone events, and hosts who want to level up without losing control of the experiment.', 'hosted', 'per_guest',
-    NULL, 22, 6, 50, NULL, 27, 6, 1, 'full_bar',
+    NULL, 22, 6, 50, NULL, 27, 6, 1, 'full_bar', 600,
     '["Svedka Vodka","New Amsterdam Gin","Bacardi Superior Rum","Jim Beam Bourbon","Margaritaville Tequila","Dewar''s Scotch","Miller Lite, Michelob Ultra","One Red Wine, One White Wine","Coke, Diet Coke, Sprite","Soda Water & Tonic","Cranberry, Orange & Pineapple Juices","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 4),
   ('the-enhanced-solution', 'The Enhanced Solution', 'Refined inputs. Amplified output. Premium spirits with expanded modifiers.', 'hosted', 'per_guest',
-    NULL, 28, 8, 50, NULL, 33, 8, 1, 'full_bar',
+    NULL, 28, 8, 50, NULL, 33, 8, 1, 'full_bar', 700,
     '["Six premium spirits","Three beers","Four wines","Sparkling wine","Expanded mixers/modifiers including bitters and citrus juices","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 5),
   ('formula-no-5', 'Formula No. 5', 'Precision over excess. Five spirits. Fully dialed. This tier is about clean lines, deliberate choices, and confident pours. Premium ingredients, zero clutter. A high-end setup for hosts who want quality without overstock.', 'hosted', 'per_guest',
-    NULL, 33, 9, 50, NULL, 39, 9, 1, 'full_bar',
+    NULL, 33, 9, 50, NULL, 39, 9, 1, 'full_bar', 850,
     '["Grey Goose Vodka","Hendrick''s Gin","Appleton Estate Rum","Casamigos Tequila","Bulleit Bourbon","Stella Artois","One Red Wine & One White Wine","Coke, Diet Coke, Sprite","Ginger Ale, Soda, Tonic","Orange, Cranberry & Pineapple Juices","Simple Syrup & Bitters","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 6),
   ('the-grand-experiment', 'The Grand Experiment', 'No corners cut. No questions unanswered. Apex formula with celebrated spirits and comprehensive bar experience.', 'hosted', 'per_guest',
-    NULL, 40, 11.25, 50, NULL, 46, 11.25, 1, 'full_bar',
+    NULL, 40, 11.25, 50, NULL, 46, 11.25, 1, 'full_bar', 1000,
     '["Nine spirits","Three beers","Four premium wines","Sparkling wine","Craft beer selection","Full mixer/modifier range including fresh citrus","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 7),
   ('the-clear-reaction', 'The Clear Reaction', 'Mocktail Bar. Perfect for corporate, baby showers, religious/cultural events, or sober-curious crowds.', 'hosted', 'per_guest',
-    NULL, 14, 4, 50, NULL, 18, 4, 1, 'mocktail',
+    NULL, 14, 4, 50, NULL, 18, 4, 1, 'mocktail', 400,
     '["3-4 signature mocktail recipes","All mixers, garnishes, syrups","Premium presentation","Full bar setup","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 8),
   ('the-primary-culture', 'The Primary Culture', 'Bare Bones. Fully Functional. A simple yet stable foundation. Great for casual parties and backyard weddings where beer and wine get the job done.', 'hosted', 'per_guest',
-    NULL, 12, 4, 50, NULL, 17, 4, 1, 'beer_and_wine',
+    NULL, 12, 4, 50, NULL, 17, 4, 1, 'beer_and_wine', 400,
     '["Miller Lite","Michelob Ultra","One Red Wine & One White Wine","Infused Water Station — citrus, cucumber, or herbs depending on season","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 9),
   ('the-refined-reaction', 'The Refined Reaction', 'A polished experiment in crowd-pleasing sophistication. Still streamlined, but with a noticeable bump in quality — perfect for weddings, cocktail hours, and milestone celebrations.', 'hosted', 'per_guest',
-    NULL, 14, 5, 50, NULL, 19, 5, 1, 'beer_and_wine',
+    NULL, 14, 5, 50, NULL, 19, 5, 1, 'beer_and_wine', 400,
     '["Stella Artois","Corona Extra","One Red & One White Wine","Sparkling Wine","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 10),
   ('the-carbon-suspension', 'The Carbon Suspension', 'Expanded range. Zero pretense. For bigger crowds or events that need a little more variety — without drifting into fancy territory. Balanced. Approachable. Ready to pour.', 'hosted', 'per_guest',
-    NULL, 15, 5.75, 50, NULL, 20, 5.75, 1, 'beer_and_wine',
+    NULL, 15, 5.75, 50, NULL, 20, 5.75, 1, 'beer_and_wine', 425,
     '["Miller Lite","Michelob Ultra","Yuengling Lager","Rotating Seltzer flavors","Two Red Wines & Two White Wines","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 11),
   ('the-cultivated-complex', 'The Cultivated Complex', 'Curated elegance. Lab-certified crowd-pleaser. Designed for hosts who want elevated beer and wine service with enough sparkle, variety, and quality to make it feel like the full experience — minus the liquor cabinet.', 'hosted', 'per_guest',
-    NULL, 17, 6.25, 50, NULL, 22, 6.25, 1, 'beer_and_wine',
+    NULL, 17, 6.25, 50, NULL, 22, 6.25, 1, 'beer_and_wine', 450,
     '["Miller Lite","Michelob Ultra","Yuengling Lager","Two Rotating Craft or Local Beers","Seasonal Seltzer","Two Premium Red Wines & Two Premium White Wines","Sparkling Wine","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 12)
 ON CONFLICT (slug) DO UPDATE SET
   description = EXCLUDED.description,
   bar_type = EXCLUDED.bar_type,
+  min_total = EXCLUDED.min_total,
   includes = EXCLUDED.includes;
 
 -- ─── Service Add-ons ────────────────────────────────────────────────
@@ -533,7 +537,7 @@ CREATE TABLE IF NOT EXISTS service_addons (
   slug VARCHAR(100) UNIQUE NOT NULL,
   name VARCHAR(255) NOT NULL,
   description TEXT,
-  billing_type VARCHAR(20) NOT NULL CHECK (billing_type IN ('per_guest', 'per_hour', 'flat', 'per_guest_timed')),
+  billing_type VARCHAR(20) NOT NULL CHECK (billing_type IN ('per_guest', 'per_hour', 'flat', 'per_guest_timed', 'per_staff', 'per_100_guests')),
   rate NUMERIC(10,2) NOT NULL,
   extra_hour_rate NUMERIC(10,2),
   applies_to VARCHAR(20) DEFAULT 'all' CHECK (applies_to IN ('byob', 'hosted', 'all')),
@@ -545,6 +549,8 @@ CREATE TABLE IF NOT EXISTS service_addons (
 );
 
 ALTER TABLE service_addons ADD COLUMN IF NOT EXISTS minimum_hours NUMERIC(4,1);
+ALTER TABLE service_addons ADD COLUMN IF NOT EXISTS category VARCHAR(50);
+ALTER TABLE service_addons ADD COLUMN IF NOT EXISTS requires_addon_slug VARCHAR(100);
 
 DROP TRIGGER IF EXISTS update_service_addons_updated_at ON service_addons;
 CREATE TRIGGER update_service_addons_updated_at BEFORE UPDATE ON service_addons
@@ -554,22 +560,88 @@ INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_h
   ('the-foundation', 'The Foundation', 'Ice delivery, bottled water service, premium cups, napkins, stir sticks. No mixers, no garnishes.', 'per_guest_timed', 3.00, 0.75, 'byob', 1),
   ('the-formula', 'The Formula', 'Everything in The Foundation plus mixers for signature cocktails, basic garnishes, simple syrup, bitters.', 'per_guest_timed', 5.50, 1.25, 'byob', 2),
   ('the-full-compound', 'The Full Compound', 'Everything in The Foundation plus complete mixer selection, premium garnish package, simple syrup, bitters.', 'per_guest_timed', 8.00, 2.00, 'byob', 3),
-  ('ice-delivery-only', 'Ice Delivery Only', 'Ice delivery for the event.', 'per_guest', 2.00, NULL, 'byob', 4),
-  ('cups-disposables-only', 'Cups & Disposables Only', 'Premium cups, napkins, stir sticks, straws.', 'per_guest', 1.50, NULL, 'byob', 5),
-  ('bottled-water-only', 'Bottled Water Only', 'Bottled water service.', 'per_guest', 0.50, NULL, 'byob', 6),
-  ('signature-mixers-only', 'Signature Mixers Only', 'Mixers for signature cocktails only. Does not include Foundation items.', 'per_guest', 2.00, NULL, 'byob', 7),
-  ('full-mixers-only', 'Full Mixers Only', 'Complete mixer selection. Does not include Foundation items.', 'per_guest', 4.50, NULL, 'byob', 8),
-  ('garnish-package-only', 'Garnish Package Only', 'Premium garnish package (lemons, limes, oranges, cherries, olives).', 'flat', 50.00, NULL, 'byob', 9),
+  ('ice-delivery-only', 'Ice Delivery', 'Ice delivery for the event.', 'per_guest', 2.00, NULL, 'byob', 4),
+  ('cups-disposables-only', 'Cups & Disposables', 'Premium cups, napkins, stir sticks, straws.', 'per_guest', 1.50, NULL, 'byob', 5),
+  ('bottled-water-only', 'Bottled Water', 'Bottled water service.', 'per_guest', 0.50, NULL, 'byob', 6),
+  ('signature-mixers-only', 'Signature Mixers', 'Mixers for signature cocktails only. Does not include Foundation items.', 'per_guest', 2.00, NULL, 'byob', 7),
+  ('full-mixers-only', 'Full Mixers', 'Complete mixer selection. Does not include Foundation items.', 'per_guest', 4.50, NULL, 'byob', 8),
+  ('garnish-package-only', 'Garnish Package', 'Premium garnish package (lemons, limes, oranges, cherries, olives).', 'per_100_guests', 50.00, NULL, 'byob', 9),
   ('champagne-toast', 'Champagne Toast', 'Champagne toast for all guests.', 'per_guest', 2.50, NULL, 'all', 10),
-  ('pre-batched-mocktail', 'Single Pre-Batched Mocktail Add-On', 'One pre-batched mocktail option for all guests.', 'per_guest', 1.50, NULL, 'all', 11),
-  ('soft-drink-addon', 'Soft Drink Add-On', 'Soft drinks for all guests.', 'per_guest', 3.00, NULL, 'all', 12),
-  ('mocktail-bar', 'Mocktail Bar', 'Full mocktail bar with signature recipes.', 'per_guest_timed', 7.50, 2.00, 'all', 13),
-  ('banquet-server', 'Banquet Server', 'Professional banquet server.', 'per_hour', 75.00, NULL, 'all', 14),
-  ('flavor-blaster-rental', 'Flavor Blaster Rental', 'Flavor blaster equipment rental.', 'flat', 150.00, NULL, 'all', 15),
-  ('handcrafted-syrups', 'Handcrafted Syrups', 'Single 750ml bottle of handcrafted syrup.', 'flat', 30.00, NULL, 'all', 16),
-  ('handcrafted-syrups-3pack', 'Handcrafted Syrups 3-Pack', 'Three 750ml bottles of handcrafted syrups.', 'flat', 75.00, NULL, 'all', 17),
-  ('parking-fee', 'Parking Fee', 'Parking fee per bartender.', 'flat', 20.00, NULL, 'all', 18)
+  ('soft-drink-addon', 'Soft Drink Add-On', 'Soft drinks for all guests.', 'per_guest', 3.00, NULL, 'all', 20),
+  ('pre-batched-mocktail', 'Pre-Batched Mocktail', 'A pre-batched non-alcoholic cocktail ready to pour. Great for events where you want a sophisticated NA option without the complexity of a full mocktail bar. Add more for variety.', 'per_guest', 1.50, NULL, 'all', 21),
+  ('mocktail-bar', 'Mocktail Bar', 'Full mocktail bar with signature recipes.', 'per_guest_timed', 7.50, 2.00, 'all', 22),
+  ('banquet-server', 'Banquet Server', 'Professional banquet server.', 'per_hour', 75.00, NULL, 'all', 41),
+  ('flavor-blaster-rental', 'Flavor Blaster Rental', 'Flavor blaster equipment rental.', 'flat', 150.00, NULL, 'all', 35),
+  ('handcrafted-syrups', 'Handcrafted Syrups', 'Single 750ml bottle of handcrafted syrup.', 'flat', 30.00, NULL, 'all', 30),
+  ('handcrafted-syrups-3pack', 'Handcrafted Syrups 3-Pack', 'Three 750ml bottles of handcrafted syrups.', 'flat', 75.00, NULL, 'all', 31),
+  ('parking-fee', 'Parking Fee', 'Parking fee per staff member.', 'per_staff', 20.00, NULL, 'all', 51)
 ON CONFLICT (slug) DO NOTHING;
+
+-- New add-ons (April 2026)
+INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_hour_rate, applies_to, sort_order, minimum_hours, category, requires_addon_slug) VALUES
+  ('champagne-coupe-upgrade', 'Coupe Glass Upgrade', 'Upgrade your champagne toast from disposable flutes to real coupe glasses.', 'per_guest', 2.00, NULL, 'all', 11, NULL, 'premium', 'champagne-toast'),
+  ('real-glassware', 'Real Glassware Upgrade', 'Elevate your event with actual glassware instead of plastic. Includes rocks glasses, coupes, and stemless wine glasses. Delivery, setup, bar-side rinse station, and takeaway included.', 'per_guest', 5.00, NULL, 'all', 12, NULL, 'premium', NULL),
+  ('house-made-ginger-beer', 'House-Made Ginger Beer', 'Fresh-pressed ginger, citrus, and cane sugar, carbonated live at the bar. A craft upgrade for Moscow Mules, Dark ''n'' Stormys, or enjoyed on its own. Made to order for your event, never from a can.', 'per_guest', 2.50, NULL, 'all', 32, NULL, 'craft_ingredients', NULL),
+  ('carbonated-cocktails', 'Carbonated Cocktails', 'Select up to 2 signature carbonated cocktails, made to order with fresh carbonation at the bar. Available alongside your regular menu.', 'per_guest', 2.00, NULL, 'all', 33, NULL, 'craft_ingredients', NULL),
+  ('smoked-cocktail-kit', 'Smoked Cocktail Kit', 'We bring the torch and wood chips to smoke cocktails on demand at the bar. Available for any drink your guests want, but pairs especially well with Old Fashioneds, whiskey cocktails, and darker spirits.', 'flat', 75.00, NULL, 'all', 34, NULL, 'craft_ingredients', NULL),
+  ('barback', 'Barback', 'Dedicated support to keep the bar running smoothly. Handles restocking, ice runs, bussing, cleanup, and general bar maintenance so your bartender never has to leave the station. Ideal for high-volume events or multi-bar setups. Gratuity included.', 'per_hour', 75.00, NULL, 'all', 40, 4, 'staffing', NULL),
+  ('additional-bartender', 'Additional Bartender', 'Request an extra bartender beyond what your guest count requires. We recommend 1 bartender per 100 guests, but you can add more for faster service or multiple bar stations.', 'per_hour', 40.00, NULL, 'all', 42, NULL, 'staffing', NULL)
+ON CONFLICT (slug) DO NOTHING;
+
+-- Set categories on existing add-ons
+UPDATE service_addons SET category = 'byob_support' WHERE slug IN ('the-foundation','the-formula','the-full-compound','ice-delivery-only','cups-disposables-only','bottled-water-only','signature-mixers-only','full-mixers-only');
+UPDATE service_addons SET category = 'premium' WHERE slug IN ('champagne-toast');
+UPDATE service_addons SET category = 'beverage' WHERE slug IN ('soft-drink-addon','pre-batched-mocktail','mocktail-bar');
+UPDATE service_addons SET category = 'craft_ingredients' WHERE slug IN ('handcrafted-syrups','handcrafted-syrups-3pack','house-made-ginger-beer','carbonated-cocktails','smoked-cocktail-kit','flavor-blaster-rental');
+UPDATE service_addons SET category = 'staffing' WHERE slug IN ('banquet-server','barback');
+UPDATE service_addons SET category = 'byob_support' WHERE slug = 'garnish-package-only';
+UPDATE service_addons SET category = 'logistics' WHERE slug = 'parking-fee';
+
+-- Update prices to match spec
+UPDATE service_addons SET rate = 3.50 WHERE slug = 'soft-drink-addon';
+UPDATE service_addons SET rate = 2.00 WHERE slug = 'pre-batched-mocktail';
+
+-- Update descriptions to match spec
+UPDATE service_addons SET description = 'Ice delivery, bottled water service, and premium cups and napkins. The essential bar setup for BYOB events. No mixers or garnishes included. Straws available upon request.' WHERE slug = 'the-foundation';
+UPDATE service_addons SET description = 'Everything in The Foundation, plus mixers and garnishes for your signature cocktails, along with simple syrup and bitters. Covers a standard signature menu.' WHERE slug = 'the-formula';
+UPDATE service_addons SET description = 'Everything in The Foundation, plus our complete mixer selection (all sodas, tonics, and juices) and premium garnish package (lemons, limes, oranges, cherries, olives). Gives your bartender the flexibility to craft any classic cocktail on request. Garnishes included for up to 75 guests; add $50 for 76+ guests.' WHERE slug = 'the-full-compound';
+UPDATE service_addons SET description = 'All the ice you need for drinks and chilling, delivered directly to your venue. Includes both cubed ice for drinks and ice for keeping bottles cold.' WHERE slug = 'ice-delivery-only';
+UPDATE service_addons SET description = 'Premium clear plastic cups, cocktail napkins. Everything your guests need for a polished bar experience without the hassle of glassware. Straws available upon request.' WHERE slug = 'cups-disposables-only';
+UPDATE service_addons SET description = 'Individual bottled water for your guests. Easier and more sanitary than a water station, and guests can take them on the go.' WHERE slug = 'bottled-water-only';
+UPDATE service_addons SET description = 'Add a celebratory champagne toast to your event with champagne and disposable flutes. Perfect for weddings, anniversaries, or any milestone moment. We coordinate the toast timing with your event flow.' WHERE slug = 'champagne-toast';
+UPDATE service_addons SET description = 'A simpler mocktail option — one pre-batched non-alcoholic cocktail that is ready to pour. Great for events where you want a sophisticated NA option without the complexity of a full mocktail bar.' WHERE slug = 'pre-batched-mocktail';
+UPDATE service_addons SET description = 'For designated drivers, kids, and anyone skipping the spirits but still sipping. Includes Coke, Diet Coke, Sprite, OJ, cranberry juice, pineapple juice, soda water, tonic water, and grenadine. Required for hosted parties expecting more than 10 non-drinkers.' WHERE slug = 'soft-drink-addon';
+UPDATE service_addons SET description = 'Add a dedicated mocktail menu to your bar service. We craft sophisticated non-alcoholic cocktails with the same care and presentation as our regular cocktails — premium juices, house-made syrups, fresh garnishes, unique sodas, and flavor infusions. Available with all hosted packages and BYOB packages with The Formula or The Full Compound.' WHERE slug = 'mocktail-bar';
+UPDATE service_addons SET description = 'Professional server to circulate drinks, bus glasses, assist with setup/breakdown, maintain buffet stations, handle drop-off catering, or provide additional hospitality support. Great for cocktail hours, tray-passed service, or events where you want white-glove attention to detail. 4-hour minimum per server. Gratuity included.' WHERE slug = 'banquet-server';
+UPDATE service_addons SET description = 'A showstopper. We top your cocktails with aromatic flavor bubbles that burst with fragrance right as your guests take their first sip. Includes all supplies and a trained bartender who knows how to put on a show. Works best paired with Real Glassware Upgrade.' WHERE slug = 'flavor-blaster-rental';
+UPDATE service_addons SET description = 'Housemade cocktail syrups crafted with real ingredients. Choose from over 25 flavors across fruit, heat, botanical, and specialty categories. Each 750ml bottle makes approximately 30-40 cocktails.' WHERE slug = 'handcrafted-syrups';
+UPDATE service_addons SET description = 'Three bottles at a savings. Mix and match any flavors from our full syrup menu.' WHERE slug = 'handcrafted-syrups-3pack';
+UPDATE service_addons SET description = 'Lemons, limes, oranges, cherries, and olives — everything your bartender needs to garnish properly.' WHERE slug = 'garnish-package-only';
+UPDATE service_addons SET description = 'Covers parking costs when your venue charges for staff parking or is in a metered/paid parking area. Applied per staff member working your event (bartenders, barbacks, servers).' WHERE slug = 'parking-fee';
+UPDATE service_addons SET description = 'A pre-batched non-alcoholic cocktail ready to pour. Great for events where you want a sophisticated NA option without the complexity of a full mocktail bar. Add more for variety.' WHERE slug = 'pre-batched-mocktail';
+
+-- Rename à la carte items (remove "Only") and fix mocktail name
+UPDATE service_addons SET name = 'Ice Delivery' WHERE slug = 'ice-delivery-only';
+UPDATE service_addons SET name = 'Cups & Disposables' WHERE slug = 'cups-disposables-only';
+UPDATE service_addons SET name = 'Bottled Water' WHERE slug = 'bottled-water-only';
+UPDATE service_addons SET name = 'Signature Mixers' WHERE slug = 'signature-mixers-only';
+UPDATE service_addons SET name = 'Full Mixers' WHERE slug = 'full-mixers-only';
+UPDATE service_addons SET name = 'Garnish Package' WHERE slug = 'garnish-package-only';
+UPDATE service_addons SET name = 'Pre-Batched Mocktail' WHERE slug = 'pre-batched-mocktail';
+
+-- Banquet server: 4-hour minimum
+UPDATE service_addons SET minimum_hours = 4 WHERE slug = 'banquet-server';
+
+-- Widen billing_type constraint for new types
+ALTER TABLE service_addons DROP CONSTRAINT IF EXISTS service_addons_billing_type_check;
+ALTER TABLE service_addons ADD CONSTRAINT service_addons_billing_type_check
+  CHECK (billing_type IN ('per_guest', 'per_hour', 'flat', 'per_guest_timed', 'per_staff', 'per_100_guests'));
+
+-- Parking: per staff member ($20/staff)
+UPDATE service_addons SET billing_type = 'per_staff' WHERE slug = 'parking-fee';
+
+-- Garnish: per 100 guests ($50/100 guests)
+UPDATE service_addons SET billing_type = 'per_100_guests' WHERE slug = 'garnish-package-only';
 
 -- ─── Clients ────────────────────────────────────────────────────────
 
@@ -833,6 +905,11 @@ ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
 -- Feedback tracking (fields only, feature built later)
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS feedback_request_sent_at TIMESTAMPTZ;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS feedback_status VARCHAR(20) DEFAULT 'none';
+
+-- Event type (structured selector replaces free-text event_name)
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_type VARCHAR(100);
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_type_category VARCHAR(50);
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_type_custom VARCHAR(255);
 
 -- ─── Blog Posts ─────────────────────────────────────────────────
 

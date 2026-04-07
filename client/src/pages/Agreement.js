@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import SignaturePad from '../components/SignaturePad';
 import api from '../utils/api';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
+import useFormValidation from '../hooks/useFormValidation';
 
 export default function Agreement() {
   const navigate = useNavigate();
@@ -12,6 +13,7 @@ export default function Agreement() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [loadError, setLoadError] = useState('');
+  const { validate, fieldClass, inputClass, clearField } = useFormValidation();
   const [form, setForm] = useState({
     full_name: '',
     email: user?.email || '',
@@ -41,16 +43,24 @@ export default function Agreement() {
 
   function handle(e) {
     const { name, value, type, checked } = e.target;
+    clearField(name);
     setForm(f => ({ ...f, [name]: type === 'checkbox' ? checked : value }));
   }
 
   async function submit(e) {
     e.preventDefault();
     setError('');
-    if (!form.acknowledged_field_guide) return setError('Please confirm you have read the Field Guide.');
-    if (!form.agreed_non_solicitation) return setError('Please agree to the non-solicitation terms.');
-    if (!form.signature_data) return setError('Please provide your digital signature.');
-    if (!form.full_name || !form.email) return setError('Full name and email are required.');
+
+    const rules = [
+      { field: 'full_name', label: 'Full Name' },
+      { field: 'email', label: 'Email' },
+      { field: 'acknowledged_field_guide', label: 'Field Guide acknowledgment', test: (val) => !!val },
+      { field: 'agreed_non_solicitation', label: 'Non-solicitation agreement', test: (val) => !!val },
+      { field: 'signature_data', label: 'Digital Signature', test: (val) => !!val },
+    ];
+
+    const result = validate(rules, form);
+    if (!result.valid) { setError(result.message); return; }
 
     setLoading(true);
     try {
@@ -120,19 +130,19 @@ export default function Agreement() {
 
           <form onSubmit={submit}>
             <div className="two-col">
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('full_name')}>
                 <label className="form-label">Full Name</label>
-                <input name="full_name" className="form-input" value={form.full_name} onChange={handle} required placeholder="Your legal name" />
+                <input name="full_name" className={"form-input" + inputClass('full_name')} value={form.full_name} onChange={handle} placeholder="Your legal name" />
               </div>
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('email')}>
                 <label className="form-label">Email</label>
-                <input name="email" type="email" className="form-input" value={form.email} onChange={handle} required />
+                <input name="email" type="email" className={"form-input" + inputClass('email')} value={form.email} onChange={handle} />
               </div>
             </div>
 
             <div className="form-group">
               <label className="form-label">Phone</label>
-              <input name="phone" type="tel" className="form-input" value={formatPhoneInput(form.phone)} onChange={e => setForm(f => ({ ...f, phone: stripPhone(e.target.value) }))} placeholder="(555) 000-0000" />
+              <input name="phone" type="tel" className="form-input" value={formatPhoneInput(form.phone)} onChange={e => { clearField('phone'); setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); }} placeholder="(555) 000-0000" />
               <p className="form-helper">By providing your phone number you grant us permission to contact you via SMS or voice.</p>
             </div>
 
@@ -145,27 +155,27 @@ export default function Agreement() {
 
             <div className="divider" />
 
-            <div style={{ marginBottom: '1rem' }}>
+            <div className={"form-group" + fieldClass('acknowledged_field_guide')} style={{ marginBottom: '1rem' }}>
               <label className="checkbox-group">
-                <input type="checkbox" name="acknowledged_field_guide" checked={form.acknowledged_field_guide} onChange={handle} />
+                <input type="checkbox" name="acknowledged_field_guide" className={inputClass('acknowledged_field_guide').trim()} checked={form.acknowledged_field_guide} onChange={handle} />
                 <span className="checkbox-label">
                   I've read the Dr. Bartender Field Guide and understand what's expected of me.
                 </span>
               </label>
 
-              <label className="checkbox-group" style={{ marginTop: '0.5rem' }}>
-                <input type="checkbox" name="agreed_non_solicitation" checked={form.agreed_non_solicitation} onChange={handle} />
+              <label className={"checkbox-group" + fieldClass('agreed_non_solicitation')} style={{ marginTop: '0.5rem' }}>
+                <input type="checkbox" name="agreed_non_solicitation" className={inputClass('agreed_non_solicitation').trim()} checked={form.agreed_non_solicitation} onChange={handle} />
                 <span className="checkbox-label">
                   I agree not to solicit Dr. Bartender clients, venues, or contractors — during or within 12 months after my work with the company.
                 </span>
               </label>
             </div>
 
-            <div className="form-group">
+            <div className={"form-group" + fieldClass('signature_data')}>
               <label className="form-label">Digital Signature</label>
               <SignaturePad
                 value={form.signature_data}
-                onChange={(data, method) => setForm(f => ({ ...f, signature_data: data, signature_method: method }))}
+                onChange={(data, method) => { clearField('signature_data'); setForm(f => ({ ...f, signature_data: data, signature_method: method })); }}
               />
             </div>
 

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import BrandLogo from '../components/BrandLogo';
+import useFormValidation from '../hooks/useFormValidation';
 
 export default function Register() {
   const { login } = useAuth();
@@ -10,17 +11,25 @@ export default function Register() {
   const [form, setForm] = useState({ email: '', password: '', confirmPassword: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const { validate, fieldClass, inputClass, clearField } = useFormValidation();
+
+  const rules = [
+    { field: 'email', label: 'Email' },
+    { field: 'password', label: 'Password', test: v => v.length >= 8 },
+    { field: 'confirmPassword', label: 'Confirm Password' },
+  ];
 
   function handle(e) {
     const { name, value, type, checked } = e.target;
     setForm(f => ({ ...f, [name]: type === 'checkbox' ? checked : value }));
+    clearField(name);
   }
 
   async function submit(e) {
     e.preventDefault();
-    setError('');
+    const result = validate(rules, form);
+    if (!result.valid) { setError(result.message); return; }
     if (form.password !== form.confirmPassword) return setError('Passwords do not match.');
-    if (form.password.length < 8) return setError('Password must be at least 8 characters.');
     setLoading(true);
     try {
       const res = await api.post('/auth/register', form);
@@ -58,30 +67,30 @@ export default function Register() {
             {error && <div className="alert alert-error">{error}</div>}
 
             <form onSubmit={submit}>
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('email')}>
                 <label className="form-label">Email Address</label>
                 <input
-                  name="email" type="email" className="form-input"
+                  name="email" type="email" className={"form-input" + inputClass('email')}
                   placeholder="your@email.com"
-                  value={form.email} onChange={handle} required
+                  value={form.email} onChange={handle}
                 />
               </div>
 
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('password')}>
                 <label className="form-label">Create Password</label>
                 <input
-                  name="password" type="password" className="form-input"
+                  name="password" type="password" className={"form-input" + inputClass('password')}
                   placeholder="Minimum 8 characters"
-                  value={form.password} onChange={handle} required
+                  value={form.password} onChange={handle}
                 />
               </div>
 
-              <div className="form-group">
+              <div className={"form-group" + fieldClass('confirmPassword')}>
                 <label className="form-label">Confirm Password</label>
                 <input
-                  name="confirmPassword" type="password" className="form-input"
+                  name="confirmPassword" type="password" className={"form-input" + inputClass('confirmPassword')}
                   placeholder="Confirm your password"
-                  value={form.confirmPassword} onChange={handle} required
+                  value={form.confirmPassword} onChange={handle}
                 />
               </div>
 
