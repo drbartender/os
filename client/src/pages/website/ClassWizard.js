@@ -416,11 +416,6 @@ export default function ClassWizard() {
                   <div className="wz-addon-list">
                     {equipmentAddons.map(addon => {
                       const isToolKit = TOOL_KIT_SLUGS.includes(addon.slug);
-                      const otherToolKitSelected = isToolKit && form.addon_ids.some(id => {
-                        const a = addons.find(x => x.id === id);
-                        return a && TOOL_KIT_SLUGS.includes(a.slug) && a.slug !== addon.slug;
-                      });
-
                       return (
                         <label key={addon.id} className={`wz-addon-option ${form.addon_ids.includes(addon.id) ? 'selected' : ''}`}>
                           <input

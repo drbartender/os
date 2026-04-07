@@ -4,8 +4,6 @@ import {
   SYRUP_CATEGORIES,
   SYRUP_PRICE_SINGLE,
   SYRUP_PRICE_3PACK,
-  DRINK_SYRUP_MAP,
-  NO_SYRUP_DRINKS,
   calculateSyrupCost,
   getRecommendedSyrups,
 } from '../../../data/syrups';
