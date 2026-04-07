@@ -11,6 +11,13 @@ const router = express.Router();
 router.post('/resend', async (req, res) => {
   try {
     // Verify webhook signature if secret is configured
+    if (!process.env.RESEND_WEBHOOK_SECRET && process.env.NODE_ENV === 'production') {
+      console.error('RESEND_WEBHOOK_SECRET is not set in production — rejecting webhook');
+      return res.status(500).json({ error: 'Webhook secret not configured' });
+    }
+    if (!process.env.RESEND_WEBHOOK_SECRET) {
+      console.warn('RESEND_WEBHOOK_SECRET not set — skipping signature verification (non-production)');
+    }
     if (process.env.RESEND_WEBHOOK_SECRET) {
       const { Webhook } = require('svix');
       const wh = new Webhook(process.env.RESEND_WEBHOOK_SECRET);
@@ -56,18 +63,15 @@ router.post('/resend', async (req, res) => {
     }
 
     // Update email_sends status
-    const timestampCol = {
-      'opened': 'opened_at',
-      'clicked': 'clicked_at',
-      'bounced': 'bounced_at',
-      'complained': 'complained_at',
-    }[newStatus];
+    const TIMESTAMP_QUERIES = {
+      'opened': 'UPDATE email_sends SET status = $1, opened_at = NOW() WHERE resend_id = $2',
+      'clicked': 'UPDATE email_sends SET status = $1, clicked_at = NOW() WHERE resend_id = $2',
+      'bounced': 'UPDATE email_sends SET status = $1, bounced_at = NOW() WHERE resend_id = $2',
+      'complained': 'UPDATE email_sends SET status = $1, complained_at = NOW() WHERE resend_id = $2',
+    };
 
-    if (timestampCol) {
-      await pool.query(
-        `UPDATE email_sends SET status = $1, ${timestampCol} = NOW() WHERE resend_id = $2`,
-        [newStatus, resendId]
-      );
+    if (TIMESTAMP_QUERIES[newStatus]) {
+      await pool.query(TIMESTAMP_QUERIES[newStatus], [newStatus, resendId]);
     } else {
       await pool.query(
         `UPDATE email_sends SET status = $1 WHERE resend_id = $2`,

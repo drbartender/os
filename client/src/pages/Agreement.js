@@ -131,18 +131,18 @@ export default function Agreement() {
           <form onSubmit={submit}>
             <div className="two-col">
               <div className={"form-group" + fieldClass('full_name')}>
-                <label className="form-label">Full Name</label>
-                <input name="full_name" className={"form-input" + inputClass('full_name')} value={form.full_name} onChange={handle} placeholder="Your legal name" />
+                <label htmlFor="agreement-full_name" className="form-label">Full Name</label>
+                <input id="agreement-full_name" name="full_name" className={"form-input" + inputClass('full_name')} value={form.full_name} onChange={handle} placeholder="Your legal name" />
               </div>
               <div className={"form-group" + fieldClass('email')}>
-                <label className="form-label">Email</label>
-                <input name="email" type="email" className={"form-input" + inputClass('email')} value={form.email} onChange={handle} />
+                <label htmlFor="agreement-email" className="form-label">Email</label>
+                <input id="agreement-email" name="email" type="email" className={"form-input" + inputClass('email')} value={form.email} onChange={handle} />
               </div>
             </div>
 
             <div className="form-group">
-              <label className="form-label">Phone</label>
-              <input name="phone" type="tel" className="form-input" value={formatPhoneInput(form.phone)} onChange={e => { clearField('phone'); setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); }} placeholder="(555) 000-0000" />
+              <label htmlFor="agreement-phone" className="form-label">Phone</label>
+              <input id="agreement-phone" name="phone" type="tel" className="form-input" value={formatPhoneInput(form.phone)} onChange={e => { clearField('phone'); setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); }} placeholder="(555) 000-0000" />
               <p className="form-helper">By providing your phone number you grant us permission to contact you via SMS or voice.</p>
             </div>
 

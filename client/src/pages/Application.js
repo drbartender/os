@@ -209,7 +209,7 @@ export default function Application() {
 
       <div className="page-container" style={{ maxWidth: 720 }}>
         <div className="text-center mb-3">
-          <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>⚗️</div>
+          <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }} aria-hidden="true">⚗️</div>
           <h1 style={{ marginBottom: '0.25rem' }}>Dr. Bartender Job Application</h1>
           <p className="text-muted italic">
             Thanks for applying! The next few sections will help us get to know you.
@@ -229,19 +229,20 @@ export default function Application() {
 
             <div className="two-col">
               <div className={"form-group" + fieldClass('full_name')}>
-                <label className="form-label">Full Name *</label>
-                <input name="full_name" className={"form-input" + inputClass('full_name')} value={form.full_name} onChange={handle} placeholder="First and last name" />
+                <label htmlFor="app-full_name" className="form-label">Full Name *</label>
+                <input id="app-full_name" name="full_name" className={"form-input" + inputClass('full_name')} value={form.full_name} onChange={handle} placeholder="First and last name" />
               </div>
               <div className={"form-group" + fieldClass('phone')}>
-                <label className="form-label">Phone Number *</label>
-                <input name="phone" type="tel" className={"form-input" + inputClass('phone')} value={formatPhoneInput(form.phone)} onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearField('phone'); }} placeholder="(555) 000-0000" />
+                <label htmlFor="app-phone" className="form-label">Phone Number *</label>
+                <input id="app-phone" name="phone" type="tel" className={"form-input" + inputClass('phone')} value={formatPhoneInput(form.phone)} onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearField('phone'); }} placeholder="(555) 000-0000" />
               </div>
             </div>
 
             <div className="form-group">
-              <label className="form-label">Favorite Color *</label>
+              <label htmlFor="app-favorite_color" className="form-label">Favorite Color *</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                 <input
+                  id="app-favorite_color"
                   type="color"
                   value={colorHex}
                   onChange={e => {
@@ -260,19 +261,19 @@ export default function Application() {
             <p className="text-muted text-small" style={{ marginBottom: '0.75rem' }}>You must be 21 or older to work with Dr. Bartender.</p>
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.5fr', gap: '0.75rem' }}>
               <div className={"form-group" + fieldClass('birth_month')}>
-                <label className="form-label">Month</label>
-                <select name="birth_month" className={"form-select" + inputClass('birth_month')} value={form.birth_month} onChange={handle}>
+                <label htmlFor="app-birth_month" className="form-label">Month</label>
+                <select id="app-birth_month" name="birth_month" className={"form-select" + inputClass('birth_month')} value={form.birth_month} onChange={handle}>
                   <option value="">Month</option>
                   {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
                 </select>
               </div>
               <div className={"form-group" + fieldClass('birth_day')}>
-                <label className="form-label">Day</label>
-                <input name="birth_day" type="number" className={"form-input" + inputClass('birth_day')} value={form.birth_day} onChange={handle} placeholder="DD" min="1" max="31" />
+                <label htmlFor="app-birth_day" className="form-label">Day</label>
+                <input id="app-birth_day" name="birth_day" type="number" className={"form-input" + inputClass('birth_day')} value={form.birth_day} onChange={handle} placeholder="DD" min="1" max="31" />
               </div>
               <div className={"form-group" + fieldClass('birth_year')}>
-                <label className="form-label">Year</label>
-                <input name="birth_year" type="number" className={"form-input" + inputClass('birth_year')} value={form.birth_year} onChange={handle} placeholder="YYYY" min="1940" max="2010" />
+                <label htmlFor="app-birth_year" className="form-label">Year</label>
+                <input id="app-birth_year" name="birth_year" type="number" className={"form-input" + inputClass('birth_year')} value={form.birth_year} onChange={handle} placeholder="YYYY" min="1940" max="2010" />
               </div>
             </div>
           </div>
@@ -285,25 +286,25 @@ export default function Application() {
             </p>
 
             <div className="form-group">
-              <label className="form-label">Street Address</label>
-              <input name="street_address" className="form-input" value={form.street_address} onChange={handle} placeholder="123 Main St, Apt 4" />
+              <label htmlFor="app-street_address" className="form-label">Street Address</label>
+              <input id="app-street_address" name="street_address" className="form-input" value={form.street_address} onChange={handle} placeholder="123 Main St, Apt 4" />
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr', gap: '0.75rem' }}>
               <div className={"form-group" + fieldClass('city')}>
-                <label className="form-label">City *</label>
-                <input name="city" className={"form-input" + inputClass('city')} value={form.city} onChange={handle} />
+                <label htmlFor="app-city" className="form-label">City *</label>
+                <input id="app-city" name="city" className={"form-input" + inputClass('city')} value={form.city} onChange={handle} />
               </div>
               <div className={"form-group" + fieldClass('state')}>
-                <label className="form-label">State *</label>
-                <select name="state" className={"form-select" + inputClass('state')} value={form.state} onChange={handle}>
+                <label htmlFor="app-state" className="form-label">State *</label>
+                <select id="app-state" name="state" className={"form-select" + inputClass('state')} value={form.state} onChange={handle}>
                   <option value="">Select state</option>
                   {STATES.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label">Zip Code</label>
-                <input name="zip_code" className="form-input" value={form.zip_code} onChange={handle} placeholder="60601" />
+                <label htmlFor="app-zip_code" className="form-label">Zip Code</label>
+                <input id="app-zip_code" name="zip_code" className="form-input" value={form.zip_code} onChange={handle} placeholder="60601" />
               </div>
             </div>
 
@@ -381,8 +382,8 @@ export default function Application() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Please briefly describe your bartending experience.</label>
-                  <textarea name="bartending_experience_description" className="form-input" rows={3}
+                  <label htmlFor="app-bartending_experience_description" className="form-label">Please briefly describe your bartending experience.</label>
+                  <textarea id="app-bartending_experience_description" name="bartending_experience_description" className="form-input" rows={3}
                     value={form.bartending_experience_description} onChange={handle}
                     placeholder="Types of events, venues, years of experience..." />
                 </div>
@@ -410,7 +411,8 @@ export default function Application() {
                       </label>
                     ))}
                     <div className="form-group" style={{ marginTop: '0.25rem', marginBottom: 0 }}>
-                      <input className="form-input" placeholder="Other (specify)" value={form.experience_types_other} name="experience_types_other" onChange={handle} />
+                      <label htmlFor="app-experience_types_other" className="sr-only">Other experience type</label>
+                      <input id="app-experience_types_other" className="form-input" placeholder="Other (specify)" value={form.experience_types_other} name="experience_types_other" onChange={handle} />
                     </div>
                   </div>
                 </div>
@@ -439,8 +441,8 @@ export default function Application() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Do you have any other commitments that may affect your availability?</label>
-              <input name="other_commitments" className="form-input" value={form.other_commitments} onChange={handle}
+              <label htmlFor="app-other_commitments" className="form-label">Do you have any other commitments that may affect your availability?</label>
+              <input id="app-other_commitments" name="other_commitments" className="form-input" value={form.other_commitments} onChange={handle}
                 placeholder="e.g. another part-time job, school, etc." />
             </div>
           </div>
@@ -490,7 +492,7 @@ export default function Application() {
             </p>
 
             <div className="form-group">
-              <label className="form-label">How confident are you in handling a bar setup on your own? *</label>
+              <label htmlFor="app-setup_confidence" className="form-label">How confident are you in handling a bar setup on your own? *</label>
               <p className="form-helper">This often includes assembling a portable bar.</p>
               <div style={{ padding: '0.5rem 0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: '0.85rem' }}>
@@ -501,6 +503,7 @@ export default function Application() {
                   <span style={{ color: 'var(--text-muted)' }}>💪 No Sweat</span>
                 </div>
                 <input
+                  id="app-setup_confidence"
                   type="range"
                   name="setup_confidence"
                   min="1" max="5" step="1"
@@ -527,8 +530,8 @@ export default function Application() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">How would you describe your approach to customer service?</label>
-              <textarea name="customer_service_approach" className="form-input" rows={3}
+              <label htmlFor="app-customer_service_approach" className="form-label">How would you describe your approach to customer service?</label>
+              <textarea id="app-customer_service_approach" name="customer_service_approach" className="form-input" rows={3}
                 value={form.customer_service_approach} onChange={handle}
                 placeholder="What makes you great with guests?" />
             </div>
@@ -542,15 +545,15 @@ export default function Application() {
             </p>
 
             <div className={"form-group" + fieldClass('why_dr_bartender')}>
-              <label className="form-label">Why do you want to work with Dr. Bartender? *</label>
-              <textarea name="why_dr_bartender" className={"form-input" + inputClass('why_dr_bartender')} rows={3}
+              <label htmlFor="app-why_dr_bartender" className="form-label">Why do you want to work with Dr. Bartender? *</label>
+              <textarea id="app-why_dr_bartender" name="why_dr_bartender" className={"form-input" + inputClass('why_dr_bartender')} rows={3}
                 value={form.why_dr_bartender} onChange={handle}
                 placeholder="Tell us what drew you to apply..." />
             </div>
 
             <div className="form-group">
-              <label className="form-label">Is there anything else you'd like us to know about you?</label>
-              <textarea name="additional_info" className="form-input" rows={3}
+              <label htmlFor="app-additional_info" className="form-label">Is there anything else you'd like us to know about you?</label>
+              <textarea id="app-additional_info" name="additional_info" className="form-input" rows={3}
                 value={form.additional_info} onChange={handle}
                 placeholder="Anything else we should know..." />
             </div>
@@ -595,17 +598,17 @@ export default function Application() {
 
             <div className="two-col">
               <div className="form-group">
-                <label className="form-label">Contact Name</label>
-                <input name="emergency_contact_name" className="form-input" value={form.emergency_contact_name} onChange={handle} />
+                <label htmlFor="app-emergency_contact_name" className="form-label">Contact Name</label>
+                <input id="app-emergency_contact_name" name="emergency_contact_name" className="form-input" value={form.emergency_contact_name} onChange={handle} />
               </div>
               <div className="form-group">
-                <label className="form-label">Contact Phone</label>
-                <input name="emergency_contact_phone" type="tel" className="form-input" value={formatPhoneInput(form.emergency_contact_phone)} onChange={e => setForm(f => ({ ...f, emergency_contact_phone: stripPhone(e.target.value) }))} />
+                <label htmlFor="app-emergency_contact_phone" className="form-label">Contact Phone</label>
+                <input id="app-emergency_contact_phone" name="emergency_contact_phone" type="tel" className="form-input" value={formatPhoneInput(form.emergency_contact_phone)} onChange={e => setForm(f => ({ ...f, emergency_contact_phone: stripPhone(e.target.value) }))} />
               </div>
             </div>
             <div className="form-group">
-              <label className="form-label">Relationship</label>
-              <input name="emergency_contact_relationship" className="form-input" value={form.emergency_contact_relationship} onChange={handle} placeholder="e.g. Parent, Spouse, Friend" />
+              <label htmlFor="app-emergency_contact_relationship" className="form-label">Relationship</label>
+              <input id="app-emergency_contact_relationship" name="emergency_contact_relationship" className="form-input" value={form.emergency_contact_relationship} onChange={handle} placeholder="e.g. Parent, Spouse, Friend" />
             </div>
           </div>
 

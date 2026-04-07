@@ -170,7 +170,7 @@ export default function FaqPage() {
                     className={`ws-faq-item${isOpen ? ' open' : ''}`}
                   >
                     <button className="ws-faq-q" onClick={() => toggleFaq(key)}>
-                      <h3>{item.q}</h3>
+                      <h4>{item.q}</h4>
                       <span className="ws-faq-toggle">{isOpen ? '−' : '+'}</span>
                     </button>
                     <p className="ws-faq-a">{item.a}</p>

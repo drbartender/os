@@ -53,7 +53,7 @@ export default function Login() {
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem 1rem' }}>
         <div style={{ width: '100%', maxWidth: 420 }}>
           <div className="text-center mb-3">
-            <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>⚗️</div>
+            <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }} aria-hidden="true">⚗️</div>
             <h1 style={{ marginBottom: '0.25rem' }}>Welcome Back</h1>
             <p className="text-muted italic">Sign in to your account</p>
           </div>
@@ -63,18 +63,18 @@ export default function Login() {
 
             <form onSubmit={submit}>
               <div className={"form-group" + fieldClass('email')}>
-                <label className="form-label">Email Address</label>
+                <label htmlFor="email" className="form-label">Email Address</label>
                 <input
-                  name="email" type="email" className={"form-input" + inputClass('email')}
+                  id="email" name="email" type="email" className={"form-input" + inputClass('email')}
                   placeholder="your@email.com"
                   value={form.email} onChange={handle}
                 />
               </div>
 
               <div className={"form-group" + fieldClass('password')} style={{ marginBottom: '1.5rem' }}>
-                <label className="form-label">Password</label>
+                <label htmlFor="password" className="form-label">Password</label>
                 <input
-                  name="password" type="password" className={"form-input" + inputClass('password')}
+                  id="password" name="password" type="password" className={"form-input" + inputClass('password')}
                   placeholder="Your password"
                   value={form.password} onChange={handle}
                 />

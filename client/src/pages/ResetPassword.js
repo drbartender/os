@@ -69,8 +69,9 @@ export default function ResetPassword() {
                 {error && <div className="alert alert-error">{error}</div>}
                 <form onSubmit={submit}>
                   <div className={"form-group" + fieldClass('password')}>
-                    <label className="form-label">New Password</label>
+                    <label htmlFor="reset-password" className="form-label">New Password</label>
                     <input
+                      id="reset-password"
                       name="password"
                       type="password"
                       className={"form-input" + inputClass('password')}
@@ -80,8 +81,9 @@ export default function ResetPassword() {
                     />
                   </div>
                   <div className={"form-group" + fieldClass('confirmPassword')} style={{ marginBottom: '1.5rem' }}>
-                    <label className="form-label">Confirm Password</label>
+                    <label htmlFor="reset-confirmPassword" className="form-label">Confirm Password</label>
                     <input
+                      id="reset-confirmPassword"
                       name="confirmPassword"
                       type="password"
                       className={"form-input" + inputClass('confirmPassword')}

@@ -33,6 +33,8 @@ router.post('/', auth, async (req, res) => {
   const userAgent = req.headers['user-agent'] || null;
 
   try {
+    await pool.query('BEGIN');
+
     const existing = await pool.query('SELECT id FROM agreements WHERE user_id = $1', [req.user.id]);
 
     if (existing.rows[0]) {
@@ -61,9 +63,12 @@ router.post('/', auth, async (req, res) => {
       [req.user.id]
     );
 
+    await pool.query('COMMIT');
+
     const result = await pool.query('SELECT * FROM agreements WHERE user_id = $1', [req.user.id]);
     res.json(result.rows[0]);
   } catch (err) {
+    await pool.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }

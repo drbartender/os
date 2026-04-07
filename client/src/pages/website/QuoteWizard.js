@@ -535,38 +535,38 @@ export default function QuoteWizard() {
               <h3>Tell us about your event</h3>
               <div className="wz-grid">
                 <div className={`form-group${fieldClass('guest_count')}`}>
-                  <label className="form-label">Guest Count *</label>
-                  <input className={`form-input${inputClass('guest_count')}`} type="number" min={form.alcohol_provider === 'hosted' ? 25 : 1} max="1000"
+                  <label htmlFor="wz-guest_count" className="form-label">Guest Count *</label>
+                  <input id="wz-guest_count" className={`form-input${inputClass('guest_count')}`} type="number" min={form.alcohol_provider === 'hosted' ? 25 : 1} max="1000"
                     value={form.guest_count} onChange={e => update('guest_count', e.target.value)} />
                   {form.alcohol_provider === 'hosted' && <span className="form-hint">Minimum 25 guests for hosted packages</span>}
                 </div>
                 <div className={`form-group${fieldClass('event_duration_hours')}`}>
-                  <label className="form-label">Duration (hours) *</label>
-                  <input className={`form-input${inputClass('event_duration_hours')}`} type="number" min="1" max="12" step="0.5"
+                  <label htmlFor="wz-event_duration_hours" className="form-label">Duration (hours) *</label>
+                  <input id="wz-event_duration_hours" className={`form-input${inputClass('event_duration_hours')}`} type="number" min="1" max="12" step="0.5"
                     value={form.event_duration_hours} onChange={e => update('event_duration_hours', e.target.value)} />
                 </div>
                 <div className={`form-group${fieldClass('event_date')}`}>
-                  <label className="form-label">Event Date *</label>
-                  <input className={`form-input${inputClass('event_date')}`} type="date" value={form.event_date}
+                  <label htmlFor="wz-event_date" className="form-label">Event Date *</label>
+                  <input id="wz-event_date" className={`form-input${inputClass('event_date')}`} type="date" value={form.event_date}
                     min={new Date().toISOString().split('T')[0]}
                     onChange={e => update('event_date', e.target.value)} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Start Time</label>
-                  <select className="form-select" value={form.event_start_time}
+                  <label htmlFor="wz-event_start_time" className="form-label">Start Time</label>
+                  <select id="wz-event_start_time" className="form-select" value={form.event_start_time}
                     onChange={e => update('event_start_time', e.target.value)}>
                     <option value="">-- Select --</option>
                     {TIME_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                   </select>
                 </div>
                 <div className={`form-group${fieldClass('event_city')}`}>
-                  <label className="form-label">City *</label>
-                  <input className={`form-input${inputClass('event_city')}`} value={form.event_city}
+                  <label htmlFor="wz-event_city" className="form-label">City *</label>
+                  <input id="wz-event_city" className={`form-input${inputClass('event_city')}`} value={form.event_city}
                     onChange={e => update('event_city', e.target.value)} placeholder="e.g. Chicago" />
                 </div>
                 <div className={`form-group${fieldClass('event_state')}`}>
-                  <label className="form-label">State *</label>
-                  <select className={`form-select${inputClass('event_state')}`} value={form.event_state}
+                  <label htmlFor="wz-event_state" className="form-label">State *</label>
+                  <select id="wz-event_state" className={`form-select${inputClass('event_state')}`} value={form.event_state}
                     onChange={e => update('event_state', e.target.value)}>
                     <option value="">-- Select --</option>
                     <option value="Illinois">Illinois</option>
@@ -579,8 +579,8 @@ export default function QuoteWizard() {
 
                 {/* Alcohol provider */}
                 <div className={`form-group${fieldClass('alcohol_provider')}`}>
-                  <label className="form-label">Who provides the alcohol? *</label>
-                  <select className={`form-select${inputClass('alcohol_provider')}`} value={form.alcohol_provider}
+                  <label htmlFor="wz-alcohol_provider" className="form-label">Who provides the alcohol? *</label>
+                  <select id="wz-alcohol_provider" className={`form-select${inputClass('alcohol_provider')}`} value={form.alcohol_provider}
                     onChange={e => handleAlcoholChange(e.target.value)}>
                     <option value="">-- Select --</option>
                     <option value="byob">I'll provide the alcohol</option>
@@ -590,8 +590,8 @@ export default function QuoteWizard() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Need a Portable Bar?</label>
-                  <select className="form-select" value={form.needs_bar ? 'yes' : 'no'}
+                  <label htmlFor="wz-needs_bar" className="form-label">Need a Portable Bar?</label>
+                  <select id="wz-needs_bar" className="form-select" value={form.needs_bar ? 'yes' : 'no'}
                     onChange={e => update('needs_bar', e.target.value === 'yes')}>
                     <option value="no">No - venue has a bar</option>
                     <option value="yes">Yes - bring one</option>
@@ -600,8 +600,9 @@ export default function QuoteWizard() {
 
                 {/* Event Type autocomplete */}
                 <div className={`form-group${fieldClass('event_type')}`} style={{ gridColumn: '1 / -1', position: 'relative' }} ref={eventTypeRef}>
-                  <label className="form-label">Event Type *</label>
+                  <label htmlFor="wz-event_type" className="form-label">Event Type *</label>
                   <input
+                    id="wz-event_type"
                     ref={eventTypeInputRef}
                     className={`form-input${inputClass('event_type')}`}
                     value={eventTypeQuery}
@@ -913,18 +914,18 @@ export default function QuoteWizard() {
               <h3>Where should we send your proposal?</h3>
               <div className="wz-grid">
                 <div className={`form-group${fieldClass('client_name')}`} style={{ gridColumn: '1 / -1' }}>
-                  <label className="form-label">Your Name *</label>
-                  <input className={`form-input${inputClass('client_name')}`} value={form.client_name}
+                  <label htmlFor="wz-client_name" className="form-label">Your Name *</label>
+                  <input id="wz-client_name" className={`form-input${inputClass('client_name')}`} value={form.client_name}
                     onChange={e => update('client_name', e.target.value)} placeholder="Jane Smith" />
                 </div>
                 <div className={`form-group${fieldClass('client_email')}`}>
-                  <label className="form-label">Email *</label>
-                  <input className={`form-input${inputClass('client_email')}`} type="email" value={form.client_email}
+                  <label htmlFor="wz-client_email" className="form-label">Email *</label>
+                  <input id="wz-client_email" className={`form-input${inputClass('client_email')}`} type="email" value={form.client_email}
                     onChange={e => update('client_email', e.target.value)} placeholder="jane@example.com" />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Phone</label>
-                  <input className="form-input" type="tel" value={form.client_phone}
+                  <label htmlFor="wz-client_phone" className="form-label">Phone</label>
+                  <input id="wz-client_phone" className="form-input" type="tel" value={form.client_phone}
                     onChange={e => update('client_phone', e.target.value)} placeholder="(312) 555-1234" />
                 </div>
               </div>

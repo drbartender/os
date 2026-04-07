@@ -218,8 +218,7 @@ CREATE TABLE IF NOT EXISTS shifts (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-ALTER TABLE shifts ADD COLUMN IF NOT EXISTS proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL;
-CREATE INDEX IF NOT EXISTS idx_shifts_proposal_id ON shifts(proposal_id);
+-- proposal_id FK moved after CREATE TABLE proposals (see below)
 
 DROP TRIGGER IF EXISTS update_shifts_updated_at ON shifts;
 CREATE TRIGGER update_shifts_updated_at BEFORE UPDATE ON shifts
@@ -279,14 +278,14 @@ CREATE TABLE IF NOT EXISTS drink_plans (
   serving_type VARCHAR(100),
   selections JSONB DEFAULT '{}',
   admin_notes TEXT,
-  proposal_id INTEGER REFERENCES proposals(id),
+  proposal_id INTEGER,  -- FK added after CREATE TABLE proposals (see below)
   created_by INTEGER REFERENCES users(id),
   submitted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS proposal_id INTEGER REFERENCES proposals(id);
+-- proposal_id FK added after CREATE TABLE proposals (see below)
 
 DROP TRIGGER IF EXISTS update_drink_plans_updated_at ON drink_plans;
 CREATE TRIGGER update_drink_plans_updated_at BEFORE UPDATE ON drink_plans
@@ -690,6 +689,21 @@ CREATE TABLE IF NOT EXISTS proposals (
 DROP TRIGGER IF EXISTS update_proposals_updated_at ON proposals;
 CREATE TRIGGER update_proposals_updated_at BEFORE UPDATE ON proposals
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ─── Deferred FKs: shifts & drink_plans → proposals ────────────────
+-- These were deferred because shifts and drink_plans are created before proposals.
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_shifts_proposal_id ON shifts(proposal_id);
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'drink_plans_proposal_id_fkey' AND table_name = 'drink_plans'
+  ) THEN
+    ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_proposal_id_fkey
+      FOREIGN KEY (proposal_id) REFERENCES proposals(id);
+  END IF;
+END $$;
 
 -- ─── Proposal Add-ons ───────────────────────────────────────────────
 
@@ -1108,3 +1122,12 @@ CREATE TABLE IF NOT EXISTS email_webhook_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_webhook_events_resend_id ON email_webhook_events(resend_id);
+
+-- ─── Additional Performance Indexes ─────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_shift_requests_status ON shift_requests(status);
+CREATE INDEX IF NOT EXISTS idx_email_sends_status ON email_sends(status);
+CREATE INDEX IF NOT EXISTS idx_email_campaigns_type ON email_campaigns(type);
+CREATE INDEX IF NOT EXISTS idx_email_campaigns_status ON email_campaigns(status);
+CREATE INDEX IF NOT EXISTS idx_sms_messages_sender_id ON sms_messages(sender_id);
+CREATE INDEX IF NOT EXISTS idx_sms_messages_shift_id ON sms_messages(shift_id);
+CREATE INDEX IF NOT EXISTS idx_contractor_profiles_hire_date ON contractor_profiles(hire_date);

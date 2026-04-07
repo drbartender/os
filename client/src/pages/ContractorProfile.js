@@ -136,35 +136,35 @@ export default function ContractorProfile() {
           <h3 style={{ marginBottom: '1.25rem' }}>Personal Info</h3>
           <div className="two-col">
             <div className={"form-group" + fieldClass('preferred_name')}>
-              <label className="form-label">Preferred Name *</label>
-              <input name="preferred_name" className={"form-input" + inputClass('preferred_name')} value={form.preferred_name} onChange={handle} />
+              <label htmlFor="cp-preferred_name" className="form-label">Preferred Name *</label>
+              <input id="cp-preferred_name" name="preferred_name" className={"form-input" + inputClass('preferred_name')} value={form.preferred_name} onChange={handle} />
             </div>
             <div className={"form-group" + fieldClass('phone')}>
-              <label className="form-label">Phone *</label>
-              <input name="phone" type="tel" className={"form-input" + inputClass('phone')} value={formatPhoneInput(form.phone)} onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearField('phone'); }} placeholder="(555) 000-0000" />
+              <label htmlFor="cp-phone" className="form-label">Phone *</label>
+              <input id="cp-phone" name="phone" type="tel" className={"form-input" + inputClass('phone')} value={formatPhoneInput(form.phone)} onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearField('phone'); }} placeholder="(555) 000-0000" />
             </div>
           </div>
           <div className="form-group">
-            <label className="form-label">Email</label>
-            <input name="email" type="email" className="form-input" value={form.email} onChange={handle} />
+            <label htmlFor="cp-email" className="form-label">Email</label>
+            <input id="cp-email" name="email" type="email" className="form-input" value={form.email} onChange={handle} />
           </div>
 
           <h4 style={{ marginBottom: '0.75rem', marginTop: '0.5rem' }}>Birthday</h4>
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.5fr', gap: '0.75rem' }}>
             <div className="form-group">
-              <label className="form-label">Month</label>
-              <select name="birth_month" className="form-select" value={form.birth_month} onChange={handle}>
+              <label htmlFor="cp-birth_month" className="form-label">Month</label>
+              <select id="cp-birth_month" name="birth_month" className="form-select" value={form.birth_month} onChange={handle}>
                 <option value="">Month</option>
                 {MONTHS.map((m, i) => <option key={m} value={i+1}>{m}</option>)}
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label">Day</label>
-              <input name="birth_day" type="number" className="form-input" value={form.birth_day} onChange={handle} placeholder="DD" min="1" max="31" />
+              <label htmlFor="cp-birth_day" className="form-label">Day</label>
+              <input id="cp-birth_day" name="birth_day" type="number" className="form-input" value={form.birth_day} onChange={handle} placeholder="DD" min="1" max="31" />
             </div>
             <div className="form-group">
-              <label className="form-label">Year</label>
-              <input name="birth_year" type="number" className="form-input" value={form.birth_year} onChange={handle} placeholder="YYYY" min="1940" max="2006" />
+              <label htmlFor="cp-birth_year" className="form-label">Year</label>
+              <input id="cp-birth_year" name="birth_year" type="number" className="form-input" value={form.birth_year} onChange={handle} placeholder="YYYY" min="1940" max="2006" />
             </div>
           </div>
         </div>
@@ -172,24 +172,24 @@ export default function ContractorProfile() {
         <div className="card">
           <h3 style={{ marginBottom: '1.25rem' }}>Address & Travel</h3>
           <div className="form-group">
-            <label className="form-label">Street Address</label>
-            <input name="street_address" className="form-input" value={form.street_address} onChange={handle} placeholder="123 Main St, Apt 4" />
+            <label htmlFor="cp-street_address" className="form-label">Street Address</label>
+            <input id="cp-street_address" name="street_address" className="form-input" value={form.street_address} onChange={handle} placeholder="123 Main St, Apt 4" />
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr', gap: '0.75rem' }}>
             <div className={"form-group" + fieldClass('city')}>
-              <label className="form-label">City *</label>
-              <input name="city" className={"form-input" + inputClass('city')} value={form.city} onChange={handle} />
+              <label htmlFor="cp-city" className="form-label">City *</label>
+              <input id="cp-city" name="city" className={"form-input" + inputClass('city')} value={form.city} onChange={handle} />
             </div>
             <div className={"form-group" + fieldClass('state')}>
-              <label className="form-label">State *</label>
-              <select name="state" className={"form-select" + inputClass('state')} value={form.state} onChange={handle}>
+              <label htmlFor="cp-state" className="form-label">State *</label>
+              <select id="cp-state" name="state" className={"form-select" + inputClass('state')} value={form.state} onChange={handle}>
                 <option value="">Select state</option>
                 {[...new Set(STATES)].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div className="form-group">
-              <label className="form-label">Zip Code</label>
-              <input name="zip_code" className="form-input" value={form.zip_code} onChange={handle} placeholder="60601" />
+              <label htmlFor="cp-zip_code" className="form-label">Zip Code</label>
+              <input id="cp-zip_code" name="zip_code" className="form-input" value={form.zip_code} onChange={handle} placeholder="60601" />
             </div>
           </div>
 
@@ -252,17 +252,17 @@ export default function ContractorProfile() {
           <h3 style={{ marginBottom: '1.25rem' }}>Emergency Contact</h3>
           <div className="two-col">
             <div className="form-group">
-              <label className="form-label">Contact Name</label>
-              <input name="emergency_contact_name" className="form-input" value={form.emergency_contact_name} onChange={handle} />
+              <label htmlFor="cp-emergency_contact_name" className="form-label">Contact Name</label>
+              <input id="cp-emergency_contact_name" name="emergency_contact_name" className="form-input" value={form.emergency_contact_name} onChange={handle} />
             </div>
             <div className="form-group">
-              <label className="form-label">Contact Phone</label>
-              <input name="emergency_contact_phone" type="tel" className="form-input" value={formatPhoneInput(form.emergency_contact_phone)} onChange={e => setForm(f => ({ ...f, emergency_contact_phone: stripPhone(e.target.value) }))} />
+              <label htmlFor="cp-emergency_contact_phone" className="form-label">Contact Phone</label>
+              <input id="cp-emergency_contact_phone" name="emergency_contact_phone" type="tel" className="form-input" value={formatPhoneInput(form.emergency_contact_phone)} onChange={e => setForm(f => ({ ...f, emergency_contact_phone: stripPhone(e.target.value) }))} />
             </div>
           </div>
           <div className="form-group">
-            <label className="form-label">Relationship</label>
-            <input name="emergency_contact_relationship" className="form-input" value={form.emergency_contact_relationship} onChange={handle} placeholder="e.g. Parent, Spouse, Friend" />
+            <label htmlFor="cp-emergency_contact_relationship" className="form-label">Relationship</label>
+            <input id="cp-emergency_contact_relationship" name="emergency_contact_relationship" className="form-input" value={form.emergency_contact_relationship} onChange={handle} placeholder="e.g. Parent, Spouse, Friend" />
           </div>
         </div>
 

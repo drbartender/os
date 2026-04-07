@@ -2,7 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
-const { sendEmail, sendBatchEmails, FROM_EMAIL } = require('../utils/email');
+const { sendEmail } = require('../utils/email');
 const { wrapMarketingEmail } = require('../utils/emailTemplates');
 
 const router = express.Router();

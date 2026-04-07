@@ -64,7 +64,10 @@ router.post('/login', authLimiter, async (req, res) => {
     if (!user) return res.status(401).json({ error: 'Invalid email or password' });
 
     const valid = await bcrypt.compare(password, user.password_hash);
-    if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
+    if (!valid) {
+      console.warn('Failed login attempt for', email, 'from IP', req.ip);
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
 
     if (user.onboarding_status === 'deactivated') {
       return res.status(403).json({ error: 'This account has been deactivated. Contact admin.' });
@@ -80,7 +83,7 @@ router.post('/login', authLimiter, async (req, res) => {
     const { password_hash: _, ...safeUser } = user;
     res.json({ token, user: { ...safeUser, has_application: appResult.rows.length > 0 } });
   } catch (err) {
-    console.error('LOGIN ERROR:', err.message, err.stack);
+    console.error('LOGIN ERROR:', err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });

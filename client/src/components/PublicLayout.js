@@ -45,6 +45,7 @@ export default function PublicLayout({ children }) {
 
   return (
     <div className="ws-shell">
+      <a href="#main-content" className="skip-nav">Skip to main content</a>
       <header className="ws-header">
         <div className="ws-header-inner">
           <Link to={homePath} className="ws-brand" onClick={() => setMobileNav(false)}>
@@ -70,7 +71,7 @@ export default function PublicLayout({ children }) {
         </div>
       </header>
 
-      <main className="ws-main">
+      <main className="ws-main" id="main-content">
         {children}
       </main>
 

@@ -196,8 +196,8 @@ export default function PaydayProtocols() {
         <form onSubmit={submit}>
           {/* ── Payment Method ── */}
           <div className={`form-group${fieldClass('preferred_payment_method')}`}>
-            <label className="form-label">Preferred Method of Payment *</label>
-            <select name="preferred_payment_method" className={`form-select${inputClass('preferred_payment_method')}`} value={method} onChange={handle}>
+            <label htmlFor="pp-preferred_payment_method" className="form-label">Preferred Method of Payment *</label>
+            <select id="pp-preferred_payment_method" name="preferred_payment_method" className={`form-select${inputClass('preferred_payment_method')}`} value={method} onChange={handle}>
               <option value="">Select method</option>
               {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
@@ -206,9 +206,9 @@ export default function PaydayProtocols() {
           {/* ── Method-specific fields ── */}
           {method === 'Venmo' && (
             <div className={`form-group${fieldClass('venmo_handle')}`}>
-              <label className="form-label">Venmo @Handle *</label>
+              <label htmlFor="pp-venmo_handle" className="form-label">Venmo @Handle *</label>
               <input
-                name="venmo_handle" className={`form-input${inputClass('venmo_handle')}`}
+                id="pp-venmo_handle" name="venmo_handle" className={`form-input${inputClass('venmo_handle')}`}
                 value={form.venmo_handle} onChange={handle}
                 placeholder="@yourname"
               />
@@ -218,9 +218,9 @@ export default function PaydayProtocols() {
 
           {method === 'Cash App' && (
             <div className={`form-group${fieldClass('cashtag')}`}>
-              <label className="form-label">Cash App $Cashtag *</label>
+              <label htmlFor="pp-cashtag" className="form-label">Cash App $Cashtag *</label>
               <input
-                name="cashtag" className={`form-input${inputClass('cashtag')}`}
+                id="pp-cashtag" name="cashtag" className={`form-input${inputClass('cashtag')}`}
                 value={form.cashtag} onChange={handle}
                 placeholder="$yourname"
               />
@@ -231,9 +231,9 @@ export default function PaydayProtocols() {
           {method === 'Zelle' && (
             <div>
               <div className={`form-group${fieldClass('zelle_email')}`}>
-                <label className="form-label">Zelle Email Address</label>
+                <label htmlFor="pp-zelle_email" className="form-label">Zelle Email Address</label>
                 <input
-                  name="zelle_email" type="email" className={`form-input${inputClass('zelle_email')}`}
+                  id="pp-zelle_email" name="zelle_email" type="email" className={`form-input${inputClass('zelle_email')}`}
                   value={form.zelle_email} onChange={handle}
                   placeholder="you@email.com"
                 />
@@ -242,9 +242,9 @@ export default function PaydayProtocols() {
                 — or —
               </div>
               <div className={`form-group${fieldClass('zelle_email')}`}>
-                <label className="form-label">Zelle Phone Number</label>
+                <label htmlFor="pp-zelle_phone" className="form-label">Zelle Phone Number</label>
                 <input
-                  name="zelle_phone" type="tel" className={`form-input${inputClass('zelle_email')}`}
+                  id="pp-zelle_phone" name="zelle_phone" type="tel" className={`form-input${inputClass('zelle_email')}`}
                   value={formatPhoneInput(form.zelle_phone)} onChange={e => { setForm(f => ({ ...f, zelle_phone: stripPhone(e.target.value) })); clearField('zelle_email'); }}
                   placeholder="(555) 000-0000"
                 />
@@ -257,9 +257,9 @@ export default function PaydayProtocols() {
 
           {method === 'PayPal' && (
             <div className={`form-group${fieldClass('paypal_email')}`}>
-              <label className="form-label">PayPal Email or @Username *</label>
+              <label htmlFor="pp-paypal_email" className="form-label">PayPal Email or @Username *</label>
               <input
-                name="paypal_email" className={`form-input${inputClass('paypal_email')}`}
+                id="pp-paypal_email" name="paypal_email" className={`form-input${inputClass('paypal_email')}`}
                 value={form.paypal_email} onChange={handle}
                 placeholder="you@email.com or @yourname"
               />
@@ -273,9 +273,9 @@ export default function PaydayProtocols() {
                 🏦 Bank Account Details
               </div>
               <div className={`form-group${fieldClass('routing_number')}`}>
-                <label className="form-label">Routing Number *</label>
+                <label htmlFor="pp-routing_number" className="form-label">Routing Number *</label>
                 <input
-                  name="routing_number" className={`form-input${inputClass('routing_number')}`}
+                  id="pp-routing_number" name="routing_number" className={`form-input${inputClass('routing_number')}`}
                   value={form.routing_number} onChange={handle}
                   placeholder="9 digits" maxLength={9} inputMode="numeric"
                   style={{ fontFamily: 'monospace', letterSpacing: '0.15em' }}
@@ -283,9 +283,9 @@ export default function PaydayProtocols() {
                 <p className="form-helper">The 9-digit number on the bottom-left of your check</p>
               </div>
               <div className={`form-group${fieldClass('account_number')}`} style={{ marginBottom: 0 }}>
-                <label className="form-label">Account Number *</label>
+                <label htmlFor="pp-account_number" className="form-label">Account Number *</label>
                 <input
-                  name="account_number" className={`form-input${inputClass('account_number')}`}
+                  id="pp-account_number" name="account_number" className={`form-input${inputClass('account_number')}`}
                   value={form.account_number} onChange={handle}
                   placeholder="Your account number"
                   style={{ fontFamily: 'monospace', letterSpacing: '0.15em' }}

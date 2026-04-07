@@ -1,4 +1,5 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
@@ -7,6 +8,14 @@ const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 
 const router = express.Router();
+
+const publicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: 'Too many requests. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 const DEPOSIT_AMOUNT = parseInt(process.env.STRIPE_DEPOSIT_AMOUNT) || 10000; // $100.00
 
@@ -36,7 +45,7 @@ async function getOrCreateCustomer(proposal) {
 // ─── Public: create a Payment Intent for a proposal ──────────────
 
 /** POST /api/stripe/create-intent/:token — public, token-gated */
-router.post('/create-intent/:token', async (req, res) => {
+router.post('/create-intent/:token', publicLimiter, async (req, res) => {
   try {
     const { payment_option = 'deposit', autopay = false } = req.body;
 
@@ -346,6 +355,8 @@ router.post('/webhook', async (req, res) => {
     const proposalId = session.metadata?.proposal_id;
     if (proposalId) {
       try {
+        await pool.query('BEGIN');
+
         await pool.query(
           "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')",
           [proposalId]
@@ -363,6 +374,8 @@ router.post('/webhook', async (req, res) => {
           `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'deposit_paid', 'system', $2)`,
           [proposalId, JSON.stringify({ amount: session.amount_total, payment_link: session.payment_link })]
         );
+
+        await pool.query('COMMIT');
         console.log(`Deposit paid (payment link) for proposal ${proposalId}`);
 
         // Email notifications (non-blocking)
@@ -398,6 +411,7 @@ router.post('/webhook', async (req, res) => {
           console.error('Shift auto-creation failed (non-blocking):', shiftErr);
         }
       } catch (dbErr) {
+        await pool.query('ROLLBACK');
         console.error('Webhook DB error:', dbErr);
       }
     }

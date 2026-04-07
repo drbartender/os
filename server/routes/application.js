@@ -113,6 +113,8 @@ router.post('/', auth, async (req, res) => {
 
     const toBool = v => v === 'true' || v === true || v === 'Yes';
 
+    await pool.query('BEGIN');
+
     await pool.query(
       `INSERT INTO applications (
         user_id, full_name, phone, favorite_color,
@@ -163,6 +165,8 @@ router.post('/', auth, async (req, res) => {
     // Update user status to 'applied'
     await pool.query("UPDATE users SET onboarding_status = 'applied' WHERE id = $1", [req.user.id]);
 
+    await pool.query('COMMIT');
+
     // Email notifications (non-blocking)
     try {
       const adminEmail = process.env.ADMIN_EMAIL;
@@ -182,6 +186,7 @@ router.post('/', auth, async (req, res) => {
     const result = await pool.query('SELECT * FROM applications WHERE user_id = $1', [req.user.id]);
     res.status(201).json(result.rows[0]);
   } catch (err) {
+    await pool.query('ROLLBACK');
     console.error('Application submit error:', err);
     res.status(500).json({ error: 'Server error' });
   }

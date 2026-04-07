@@ -1,5 +1,6 @@
 const express = require('express');
 const net = require('net');
+const rateLimit = require('express-rate-limit');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { calculateProposal } = require('../utils/pricingEngine');
@@ -8,6 +9,14 @@ const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 
 const router = express.Router();
+
+const publicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: 'Too many requests. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 function requireAdmin(req, res, next) {
   if (req.user.role === 'admin' || req.user.role === 'manager') return next();
@@ -75,7 +84,7 @@ router.get('/t/:token', async (req, res) => {
 const PROPOSAL_DOCUMENT_VERSION = 'event-services-agreement-v2';
 
 /** POST /api/proposals/t/:token/sign — client signs and accepts proposal */
-router.post('/t/:token/sign', async (req, res) => {
+router.post('/t/:token/sign', publicLimiter, async (req, res) => {
   const { client_signed_name, client_signature_data, client_signature_method } = req.body;
   if (!client_signed_name || !client_signature_data) {
     return res.status(400).json({ error: 'Name and signature are required.' });
@@ -216,7 +225,7 @@ router.post('/public/calculate', async (req, res) => {
 });
 
 /** POST /api/proposals/public/capture-lead — capture partial lead from quote wizard (fire-and-forget from client) */
-router.post('/public/capture-lead', async (req, res) => {
+router.post('/public/capture-lead', publicLimiter, async (req, res) => {
   try {
     const { name, email, phone, guest_count, event_date, source } = req.body;
     if (!email || !email.trim()) {
@@ -257,7 +266,7 @@ router.post('/public/capture-lead', async (req, res) => {
 });
 
 /** POST /api/proposals/public/submit — create a proposal from the public website quote wizard */
-router.post('/public/submit', async (req, res) => {
+router.post('/public/submit', publicLimiter, async (req, res) => {
   const {
     client_name, client_email, client_phone,
     event_name, event_date, event_start_time, event_duration_hours,

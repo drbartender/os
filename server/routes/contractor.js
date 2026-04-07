@@ -108,6 +108,8 @@ router.post('/', auth, async (req, res) => {
 
     const toBool = v => v === 'true' || v === true;
 
+    await pool.query('BEGIN');
+
     const existing = await pool.query(
       'SELECT id, alcohol_certification_file_url, alcohol_certification_filename, resume_file_url, resume_filename, headshot_file_url, headshot_filename FROM contractor_profiles WHERE user_id = $1',
       [req.user.id]
@@ -162,6 +164,14 @@ router.post('/', auth, async (req, res) => {
       );
     }
 
+    // Mark step complete
+    await pool.query(
+      `UPDATE onboarding_progress SET contractor_profile_completed=true, last_completed_step='contractor_profile_completed' WHERE user_id=$1`,
+      [req.user.id]
+    );
+
+    await pool.query('COMMIT');
+
     // Geocode address in background (don't block the response)
     if (street_address || city || state || zip_code) {
       geocodeAddress(buildAddressString({ street_address, city, state, zip_code }))
@@ -176,15 +186,10 @@ router.post('/', auth, async (req, res) => {
         .catch(err => console.error('[Contractor] Geocode error:', err.message));
     }
 
-    // Mark step complete
-    await pool.query(
-      `UPDATE onboarding_progress SET contractor_profile_completed=true, last_completed_step='contractor_profile_completed' WHERE user_id=$1`,
-      [req.user.id]
-    );
-
     const result = await pool.query('SELECT * FROM contractor_profiles WHERE user_id = $1', [req.user.id]);
     res.json(result.rows[0]);
   } catch (err) {
+    await pool.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }

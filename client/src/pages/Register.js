@@ -51,7 +51,7 @@ export default function Register() {
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem 1rem' }}>
         <div style={{ width: '100%', maxWidth: 460 }}>
           <div className="text-center mb-3">
-            <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>⚗️</div>
+            <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }} aria-hidden="true">⚗️</div>
             <h1 style={{ marginBottom: '0.25rem' }}>Create Your Account</h1>
             <p className="text-muted italic">Apply to join the Dr. Bartender team</p>
           </div>
@@ -68,27 +68,27 @@ export default function Register() {
 
             <form onSubmit={submit}>
               <div className={"form-group" + fieldClass('email')}>
-                <label className="form-label">Email Address</label>
+                <label htmlFor="register-email" className="form-label">Email Address</label>
                 <input
-                  name="email" type="email" className={"form-input" + inputClass('email')}
+                  id="register-email" name="email" type="email" className={"form-input" + inputClass('email')}
                   placeholder="your@email.com"
                   value={form.email} onChange={handle}
                 />
               </div>
 
               <div className={"form-group" + fieldClass('password')}>
-                <label className="form-label">Create Password</label>
+                <label htmlFor="register-password" className="form-label">Create Password</label>
                 <input
-                  name="password" type="password" className={"form-input" + inputClass('password')}
+                  id="register-password" name="password" type="password" className={"form-input" + inputClass('password')}
                   placeholder="Minimum 8 characters"
                   value={form.password} onChange={handle}
                 />
               </div>
 
               <div className={"form-group" + fieldClass('confirmPassword')}>
-                <label className="form-label">Confirm Password</label>
+                <label htmlFor="register-confirmPassword" className="form-label">Confirm Password</label>
                 <input
-                  name="confirmPassword" type="password" className={"form-input" + inputClass('confirmPassword')}
+                  id="register-confirmPassword" name="confirmPassword" type="password" className={"form-input" + inputClass('confirmPassword')}
                   placeholder="Confirm your password"
                   value={form.confirmPassword} onChange={handle}
                 />

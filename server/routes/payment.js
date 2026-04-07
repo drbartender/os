@@ -12,7 +12,14 @@ const router = express.Router();
 router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [req.user.id]);
-    res.json(result.rows[0] || {});
+    const profile = result.rows[0] || {};
+    if (profile.routing_number) {
+      profile.routing_number = '****' + profile.routing_number.slice(-4);
+    }
+    if (profile.account_number) {
+      profile.account_number = '****' + profile.account_number.slice(-4);
+    }
+    res.json(profile);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -85,7 +92,14 @@ router.post('/', auth, async (req, res) => {
     await pool.query('COMMIT');
 
     const result = await pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [req.user.id]);
-    res.json(result.rows[0]);
+    const profile = result.rows[0];
+    if (profile.routing_number) {
+      profile.routing_number = '****' + profile.routing_number.slice(-4);
+    }
+    if (profile.account_number) {
+      profile.account_number = '****' + profile.account_number.slice(-4);
+    }
+    res.json(profile);
   } catch (err) {
     await pool.query('ROLLBACK');
     console.error(err);

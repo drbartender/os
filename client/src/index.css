@@ -19,7 +19,7 @@
   --border: #9E8B6A;
   --border-dark: #7A6B4F;
   --border-light: #e0d6c2;
-  --text-muted: #8C7355;
+  --text-muted: #6B5A42;
   --card-bg: #F5EDE0;
   --shadow: 0 2px 20px rgba(0, 0, 0, 0.25);
   --shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.35);
@@ -2452,10 +2452,11 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   justify-content: space-between;
   gap: 1rem;
 }
-.ws-faq-q h3 {
+.ws-faq-q h4 {
   font-size: 1rem;
   font-family: var(--font-body);
   font-weight: 600;
+  margin: 0;
 }
 .ws-faq-toggle {
   font-size: 1.4rem;
@@ -3701,7 +3702,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   .ws-nav.open { display: flex; }
   .ws-nav button { width: 100%; text-align: left; padding: 0.75rem 1rem; }
   .ws-nav a { width: 100%; text-align: left; padding: 0.75rem 1rem; }
-  .ws-nav .ws-nav-cta { display: none; }
+  .ws-nav .ws-nav-cta { display: block; width: 100%; text-align: center; margin-top: 0.5rem; }
   .ws-hero { padding: 2.5rem 1rem 2rem; }
   .ws-hero-btns .btn-primary { width: 100%; text-align: center; font-size: 1.1rem; }
   .ws-hero-copy h1 { font-size: clamp(1.8rem, 6vw, 2.5rem); }
@@ -4858,6 +4859,32 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 
 /* Campaign create */
 .em-campaign-create h2 { color: var(--deep-brown); margin-bottom: 1.5rem; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-nav {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--amber);
+  color: #fff;
+  padding: 8px 16px;
+  z-index: 10000;
+  transition: top 0.2s;
+}
+.skip-nav:focus {
+  top: 0;
+}
 
 @media (max-width: 768px) {
   .em-convo-layout { grid-template-columns: 1fr; }
