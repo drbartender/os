@@ -24,7 +24,8 @@ dr-bartender/
 │   ├── db/
 │   │   ├── index.js          # PostgreSQL pool + schema init
 │   │   ├── schema.sql        # Full DDL (tables, triggers, seed data)
-│   │   └── seed.js           # Admin account seeder
+│   │   ├── seed.js           # Admin account seeder
+│   │   └── seedTestData.js   # Test data seeder (staff, clients, proposals)
 │   ├── middleware/
 │   │   └── auth.js           # JWT verification, role guards
 │   ├── routes/
@@ -94,6 +95,7 @@ dr-bartender/
 │   │   │   ├── AudienceSelector.js # Campaign audience filter/selector
 │   │   │   ├── SequenceStepEditor.js # Drip sequence step editor
 │   │   │   ├── CampaignMetricsBar.js # Campaign performance metrics bar
+│   │   │   ├── SyrupPicker.js    # Syrup add-on selection component
 │   │   │   └── ShoppingList/     # Shopping list generator
 │   │   │       ├── ShoppingListButton.jsx
 │   │   │       ├── ShoppingListModal.jsx
@@ -101,6 +103,13 @@ dr-bartender/
 │   │   │       ├── generateShoppingList.js
 │   │   │       ├── logoBase64.js
 │   │   │       └── shoppingListPars.js
+│   │   ├── data/
+│   │   │   ├── addonCategories.js # Add-on category definitions
+│   │   │   ├── eventTypes.js      # Event type definitions
+│   │   │   ├── packages.js        # Service package definitions
+│   │   │   └── syrups.js          # Syrup product definitions
+│   │   ├── hooks/
+│   │   │   └── useFormValidation.js # Form validation hook
 │   │   ├── pages/
 │   │   │   ├── Login.js, Register.js, ForgotPassword.js, ResetPassword.js
 │   │   │   ├── Welcome.js, FieldGuide.js, Agreement.js
@@ -133,8 +142,8 @@ dr-bartender/
 │   │   │   │   └── EmailConversations.js       # Conversation inbox
 │   │   │   ├── plan/             # PotionPlanningLab (public questionnaire)
 │   │   │   │   ├── PotionPlanningLab.js
-│   │   │   │   ├── data/         # cocktailMenu.js, servingTypes.js
-│   │   │   │   └── steps/        # WelcomeStep, LogisticsStep, FullBarStep, etc.
+│   │   │   │   ├── data/         # cocktailMenu.js, servingTypes.js, drinkUpgrades.js
+│   │   │   │   └── steps/        # WelcomeStep, LogisticsStep, FullBarStep, SyrupUpsellStep, etc.
 │   │   │   ├── proposal/         # ProposalView (public client-facing)
 │   │   │   ├── public/           # Client portal pages
 │   │   │   │   ├── Blog.js, BlogPost.js
@@ -142,7 +151,11 @@ dr-bartender/
 │   │   │   │   └── ClientLogin.js
 │   │   │   └── website/          # Public website pages
 │   │   │       ├── Website.js
-│   │   │       └── QuoteWizard.js
+│   │   │       ├── HomePage.js       # Public homepage
+│   │   │       ├── QuoteWizard.js    # Multi-step quote builder
+│   │   │       ├── QuotePage.js      # Quote page wrapper
+│   │   │       ├── FaqPage.js        # FAQ page
+│   │   │       └── ClassWizard.js    # Cocktail class booking wizard
 │   │   └── index.css         # Global styles
 │   ├── package.json          # proxy: localhost:5000
 │   └── vercel.json           # SPA rewrite for Vercel deployment

@@ -86,7 +86,8 @@ dr-bartender/
 │   ├── db/
 │   │   ├── index.js            # PostgreSQL pool connection + schema initialization
 │   │   ├── schema.sql          # Full DDL: tables, triggers, constraints, seed data
-│   │   └── seed.js             # Admin account seeder script
+│   │   ├── seed.js             # Admin account seeder script
+│   │   └── seedTestData.js     # Test data seeder (staff, clients, proposals)
 │   ├── middleware/
 │   │   └── auth.js             # JWT verification + role guards (auth, adminOnly)
 │   ├── routes/
@@ -139,8 +140,11 @@ dr-bartender/
 │   │   │   ├── constants.js    # App-wide constants
 │   │   │   └── formatPhone.js  # Phone number formatting
 │   │   ├── components/         # Layout, SignaturePad, FileUpload, PricingBreakdown, RichTextEditor,
-│   │   │                       # LeadImportModal, AudienceSelector, SequenceStepEditor, CampaignMetricsBar
+│   │   │                       # LeadImportModal, AudienceSelector, SequenceStepEditor, CampaignMetricsBar,
+│   │   │                       # SyrupPicker
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
+│   │   ├── data/               # Shared data (addonCategories, eventTypes, packages, syrups)
+│   │   ├── hooks/              # Custom hooks (useFormValidation)
 │   │   ├── pages/
 │   │   │   ├── (auth)          # Login, Register, ForgotPassword, ResetPassword
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
@@ -150,7 +154,7 @@ dr-bartender/
 │   │   │   ├── plan/           # PotionPlanningLab — public event questionnaire (with steps/ and data/)
 │   │   │   ├── proposal/       # ProposalView — public client-facing proposal
 │   │   │   ├── public/         # Client portal (ClientLogin, ClientDashboard, Blog, BlogPost)
-│   │   │   └── website/        # Public website (Website, QuoteWizard)
+│   │   │   └── website/        # Public website (Website, HomePage, QuoteWizard, QuotePage, FaqPage, ClassWizard)
 │   │   ├── images/             # Brand assets
 │   │   └── index.css           # Global styles
 │   ├── vercel.json             # SPA rewrite rule for Vercel

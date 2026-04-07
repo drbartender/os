@@ -272,6 +272,14 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/health` | No | Health check (`{ status: 'ok' }`) |
+
+### Public Website Pages (Client-Side Only)
+| Path | Component | Description |
+|---|---|---|
+| `/` | `HomePage` | Public homepage with services, stats, CTA |
+| `/quote` | `QuotePage` → `QuoteWizard` | Multi-step instant quote builder |
+| `/faq` | `FaqPage` | Frequently asked questions |
+| `/classes` | `ClassWizard` | Cocktail class booking wizard |
 | GET | `/api/files/:filename` | Admin | Redirect to R2 signed URL for file download |
 
 ## Database Schema
@@ -501,14 +509,15 @@ Accessible via the "Shopping List" button on Drink Plan Detail (admin), visible 
 
 Located in `server/utils/pricingEngine.js`. Pure functions, no database dependencies.
 
-**Inputs**: package data, guest count, duration, number of bars, number of bartenders, selected add-ons.
+**Inputs**: package data, guest count, duration, number of bars, number of bartenders, selected add-ons, selected syrups.
 
 **Calculation flow**:
 1. **Base cost**: Flat rate (BYOB) or per-guest rate (Hosted) with small-event tier pricing
 2. **Bar rental**: First bar fee + additional bar fee per extra bar
 3. **Staffing**: 1 bartender per 100 guests included; extras at $40/hr
 4. **Add-ons**: Calculated per billing type (per_guest, per_guest_timed, per_hour, flat)
-5. **Total**: Sum of all components
+5. **Syrups**: Three-pack bundles ($30) + singles ($12), optimized for best price
+6. **Total**: Sum of all components
 
 The result is stored as a `pricing_snapshot` JSONB on the proposal for historical accuracy.
 
