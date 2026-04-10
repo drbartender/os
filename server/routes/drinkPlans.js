@@ -461,7 +461,7 @@ router.patch('/:id/notes', auth, requireAdmin, async (req, res) => {
 /** PATCH /api/drink-plans/:id/status — update plan status */
 router.patch('/:id/status', auth, requireAdmin, async (req, res) => {
   const { status } = req.body;
-  if (!['pending', 'draft', 'submitted', 'reviewed'].includes(status)) {
+  if (!['pending', 'draft', 'exploration_saved', 'submitted', 'reviewed'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status.' });
   }
   try {
