@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import SyrupPicker from '../../components/SyrupPicker';
 import { getPackageBySlug } from '../../data/packages';
 import { ADDON_CATEGORIES, ADDON_ICONS } from '../../data/addonCategories';
@@ -7,6 +7,7 @@ import useFormValidation from '../../hooks/useFormValidation';
 import EVENT_TYPES from '../../data/eventTypes';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
+const DRAFT_KEY = 'drb_quote_draft';
 
 // 30-minute time slots from 8 AM to 11 PM
 const TIME_OPTIONS = [];
@@ -33,6 +34,7 @@ function getSteps(alcoholProvider) {
 
 export default function QuoteWizard() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [step, setStep] = useState(0);
   const [packages, setPackages] = useState([]);
   const [addons, setAddons] = useState([]);
@@ -41,29 +43,40 @@ export default function QuoteWizard() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(null);
+  const [resumed, setResumed] = useState(false); // true when state was restored
+  const [hasDraftToken, setHasDraftToken] = useState(false); // triggers auto-save interval
   const { validate, fieldClass, inputClass, clearField, clearAll } = useFormValidation();
 
-  const [form, setForm] = useState({
+  const defaultForm = {
     guest_count: 50,
     event_duration_hours: 4,
     event_date: '',
     event_start_time: '17:00',
-    event_type: '',           // selected event type label (e.g. "Wedding Reception")
-    event_type_category: '',  // category slug (e.g. "wedding_related")
-    event_type_custom: '',    // custom value when "Other" is selected
+    event_type: '',
+    event_type_category: '',
+    event_type_custom: '',
     event_city: '',
     event_state: '',
-    alcohol_provider: '',   // 'byob' | 'hosted' | 'mocktail'
-    bar_type: '',           // 'full_bar' | 'beer_and_wine' (set in package step)
+    alcohol_provider: '',
+    bar_type: '',
     needs_bar: false,
     package_id: '',
     addon_ids: [],
-    addon_quantities: {},   // { [addonId]: number } for qty-adjustable add-ons
+    addon_quantities: {},
     syrup_selections: [],
     client_name: '',
     client_email: '',
     client_phone: '',
-  });
+  };
+
+  const [form, setForm] = useState(defaultForm);
+
+  // Draft persistence refs
+  const draftTokenRef = useRef(null);
+  const formRef = useRef(form);
+  const stepRef = useRef(step);
+  formRef.current = form;
+  stepRef.current = step;
 
   const steps = getSteps(form.alcohol_provider);
 
@@ -103,6 +116,123 @@ export default function QuoteWizard() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Restore draft on mount — server token takes priority over localStorage
+  useEffect(() => {
+    const resumeToken = searchParams.get('resume');
+    if (resumeToken) {
+      // Resume from server (email link)
+      fetch(`${API_BASE}/api/proposals/public/quote-draft/${resumeToken}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data && data.form_state) {
+            setForm(f => ({ ...f, ...data.form_state }));
+            setStep(data.current_step || 0);
+            draftTokenRef.current = data.token;
+            setHasDraftToken(true);
+            setResumed(true);
+            // Sync event type query for autocomplete
+            if (data.form_state.event_type && data.form_state.event_type !== 'Other') {
+              setEventTypeQuery(data.form_state.event_type);
+            }
+          }
+        })
+        .catch(() => {}); // Fall through to localStorage
+    } else {
+      // Resume from localStorage (same browser return)
+      try {
+        const saved = localStorage.getItem(DRAFT_KEY);
+        if (saved) {
+          const { form: savedForm, step: savedStep, token } = JSON.parse(saved);
+          if (savedForm) {
+            setForm(f => ({ ...f, ...savedForm }));
+            setStep(savedStep || 0);
+            if (token) {
+              draftTokenRef.current = token;
+              setHasDraftToken(true);
+            }
+            setResumed(true);
+            if (savedForm.event_type && savedForm.event_type !== 'Other') {
+              setEventTypeQuery(savedForm.event_type);
+            }
+          }
+        }
+      } catch { /* ignore corrupted localStorage */ }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save draft to localStorage helper
+  const saveDraftLocal = useCallback((currentForm, currentStep, token) => {
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({
+        form: currentForm,
+        step: currentStep,
+        token: token || null,
+      }));
+    } catch { /* localStorage full or disabled */ }
+  }, []);
+
+  // Save draft to server helper
+  const saveDraftServer = useCallback(async () => {
+    const token = draftTokenRef.current;
+    if (!token) return;
+    try {
+      await fetch(`${API_BASE}/api/proposals/public/quote-draft/${token}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          form_state: formRef.current,
+          current_step: stepRef.current,
+        }),
+      });
+    } catch { /* best effort */ }
+  }, []);
+
+  // Auto-save to server every 60s when we have a draft token
+  useEffect(() => {
+    if (!hasDraftToken) return;
+    const interval = setInterval(() => {
+      if (draftTokenRef.current) saveDraftServer();
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [hasDraftToken, saveDraftServer]);
+
+  // Save on page unload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // Always save to localStorage
+      saveDraftLocal(formRef.current, stepRef.current, draftTokenRef.current);
+      // Save to server if we have a token
+      if (draftTokenRef.current) {
+        try {
+          fetch(`${API_BASE}/api/proposals/public/quote-draft/${draftTokenRef.current}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              form_state: formRef.current,
+              current_step: stepRef.current,
+            }),
+            keepalive: true,
+          });
+        } catch { /* best effort */ }
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [saveDraftLocal]);
+
+  // Dismiss the "welcome back" banner
+  const dismissResume = () => setResumed(false);
+  const startOver = () => {
+    setForm(defaultForm);
+    setStep(0);
+    setResumed(false);
+    setHasDraftToken(false);
+    draftTokenRef.current = null;
+    localStorage.removeItem(DRAFT_KEY);
+    setEventTypeQuery('');
+  };
 
   // Auto-select package for BYOB and mocktail paths
   useEffect(() => {
@@ -401,27 +531,44 @@ export default function QuoteWizard() {
     }
   };
 
-  const tryAdvance = () => {
+  const tryAdvance = async () => {
     const result = validate(getStepRules(), form);
     if (result.valid) {
       setError('');
       clearAll();
-      // Capture lead when moving past contact step
-      if (currentStepKey === 'contact') {
-        fetch(`${API_BASE}/api/proposals/public/capture-lead`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: form.client_name.trim(),
-            email: form.client_email.trim(),
-            phone: form.client_phone || null,
-            guest_count: Number(form.guest_count) || null,
-            event_date: form.event_date || null,
-            source: 'quote_wizard',
-          }),
-        }).catch(() => {}); // Fire and forget
+      setResumed(false);
+      const nextStep = step + 1;
+      // Capture lead + create server draft when moving past contact step (skip if already captured)
+      if (currentStepKey === 'contact' && !draftTokenRef.current) {
+        try {
+          const res = await fetch(`${API_BASE}/api/proposals/public/capture-lead`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: form.client_name.trim(),
+              email: form.client_email.trim(),
+              phone: form.client_phone || null,
+              guest_count: Number(form.guest_count) || null,
+              event_date: form.event_date || null,
+              source: 'quote_wizard',
+              form_state: form,
+              current_step: nextStep,
+            }),
+          });
+          const data = res.ok ? await res.json() : null;
+          if (data && data.draft_token) {
+            draftTokenRef.current = data.draft_token;
+            setHasDraftToken(true);
+            saveDraftLocal(form, nextStep, data.draft_token);
+          }
+        } catch { /* advance anyway — localStorage still works */ }
+      } else {
+        // Save to localStorage on every step advance
+        saveDraftLocal(form, nextStep, draftTokenRef.current);
+        // Save to server if we have a token
+        if (draftTokenRef.current) saveDraftServer();
       }
-      setStep(s => s + 1);
+      setStep(nextStep);
     } else {
       setError(result.message);
     }
@@ -461,6 +608,8 @@ export default function QuoteWizard() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to submit quote.');
+      localStorage.removeItem(DRAFT_KEY);
+      draftTokenRef.current = null;
       setSuccess(data);
     } catch (err) {
       setError(err.message || 'Something went wrong. Please try again.');
@@ -513,6 +662,17 @@ export default function QuoteWizard() {
         <h2>Instant pricing for your event</h2>
         <p className="ws-section-sub">Answer a few questions and get a real quote — no waiting, no back-and-forth.</p>
       </div>
+
+      {/* Welcome back banner */}
+      {resumed && (
+        <div className="wz-resume-banner">
+          <span>Welcome back! We saved your progress.</span>
+          <div className="wz-resume-actions">
+            <button type="button" className="btn btn-sm btn-primary" onClick={dismissResume}>Continue</button>
+            <button type="button" className="btn btn-sm btn-secondary" onClick={startOver}>Start Over</button>
+          </div>
+        </div>
+      )}
 
       {/* Step indicators */}
       <div className="wz-steps">

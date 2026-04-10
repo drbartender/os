@@ -9,6 +9,9 @@ const emailTemplates = require('../utils/emailTemplates');
 
 const router = express.Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_FORM_STATE_SIZE = 50 * 1024; // 50 KB
+
 // ─── Public routes (token-based) ─────────────────────────────────
 
 /** GET /api/proposals/t/:token — fetch proposal by token (public) */
@@ -207,15 +210,18 @@ router.post('/public/calculate', publicLimiter, async (req, res) => {
   }
 });
 
-/** POST /api/proposals/public/capture-lead — capture partial lead from quote wizard (fire-and-forget from client) */
+/** POST /api/proposals/public/capture-lead — capture partial lead from quote wizard + create draft */
 router.post('/public/capture-lead', publicLimiter, async (req, res) => {
+  const dbClient = await pool.connect();
   try {
-    const { name, email, phone, guest_count, event_date, source } = req.body;
+    const { name, email, phone, guest_count, event_date, source, form_state, current_step } = req.body;
     if (!email || !email.trim()) {
+      dbClient.release();
       return res.status(400).json({ error: 'Email is required' });
     }
     const cleanEmail = email.trim().toLowerCase();
     const cleanName = name ? name.trim() : null;
+    const safeStep = Math.max(0, Math.min(10, parseInt(current_step, 10) || 0));
 
     // Build notes JSON with any extra context from the wizard
     const notes = JSON.stringify({
@@ -224,14 +230,17 @@ router.post('/public/capture-lead', publicLimiter, async (req, res) => {
       phone: phone ? phone.trim() : null,
     });
 
-    // Upsert into email_leads — update name if they already exist
-    await pool.query(
+    await dbClient.query('BEGIN');
+
+    // Upsert into email_leads — prefer existing name over new submission to prevent overwrite
+    const leadResult = await dbClient.query(
       `INSERT INTO email_leads (email, name, lead_source, notes, status)
        VALUES ($1, $2, $3, $4, 'active')
        ON CONFLICT (email) DO UPDATE SET
-         name = COALESCE(EXCLUDED.name, email_leads.name),
+         name = COALESCE(email_leads.name, EXCLUDED.name),
          notes = COALESCE(EXCLUDED.notes, email_leads.notes),
-         updated_at = NOW()`,
+         updated_at = NOW()
+       RETURNING id`,
       [
         cleanEmail,
         cleanName || 'Unknown',
@@ -239,12 +248,100 @@ router.post('/public/capture-lead', publicLimiter, async (req, res) => {
         notes,
       ]
     );
+    const leadId = leadResult.rows[0].id;
 
+    // Upsert quote draft — one active draft per email
+    let draftToken = null;
+    const formStateStr = form_state && typeof form_state === 'object' ? JSON.stringify(form_state) : null;
+    if (formStateStr && formStateStr.length <= MAX_FORM_STATE_SIZE) {
+      const draftResult = await dbClient.query(
+        `INSERT INTO quote_drafts (email, lead_id, form_state, current_step, status)
+         VALUES ($1, $2, $3, $4, 'draft')
+         ON CONFLICT (email) WHERE status = 'draft'
+           DO UPDATE SET form_state = EXCLUDED.form_state, current_step = EXCLUDED.current_step, updated_at = NOW()
+         RETURNING token`,
+        [cleanEmail, leadId, formStateStr, safeStep]
+      );
+      draftToken = draftResult.rows[0].token;
+    }
+
+    await dbClient.query('COMMIT');
+
+    // Auto-enroll in abandoned quote sequence (outside transaction — non-blocking)
+    try {
+      const hasProposal = await pool.query(
+        `SELECT 1 FROM clients c JOIN proposals p ON p.client_id = c.id WHERE c.email = $1 LIMIT 1`,
+        [cleanEmail]
+      );
+      if (!hasProposal.rows[0]) {
+        const campaign = await pool.query(
+          `SELECT id FROM email_campaigns WHERE name = 'Abandoned Quote Followup' AND type = 'sequence' AND status = 'active' LIMIT 1`
+        );
+        if (campaign.rows[0]) {
+          const firstStep = await pool.query(
+            'SELECT delay_days, delay_hours FROM email_sequence_steps WHERE campaign_id = $1 ORDER BY step_order LIMIT 1',
+            [campaign.rows[0].id]
+          );
+          const { delay_days = 0, delay_hours = 2 } = firstStep.rows[0] || {};
+          await pool.query(
+            `INSERT INTO email_sequence_enrollments (campaign_id, lead_id, next_step_due_at)
+             VALUES ($1, $2, NOW() + MAKE_INTERVAL(days => $3, hours => $4))
+             ON CONFLICT (campaign_id, lead_id) DO NOTHING`,
+            [campaign.rows[0].id, leadId, delay_days, delay_hours]
+          );
+        }
+      }
+    } catch (enrollErr) {
+      console.error('Abandoned quote enrollment error (non-blocking):', enrollErr.message);
+    }
+
+    res.json({ ok: true, draft_token: draftToken });
+  } catch (err) {
+    await dbClient.query('ROLLBACK').catch(() => {});
+    console.error('Lead capture error:', err.message);
+    res.status(500).json({ ok: false });
+  } finally {
+    dbClient.release();
+  }
+});
+
+/** GET /api/proposals/public/quote-draft/:token — fetch saved draft for resume */
+router.get('/public/quote-draft/:token', publicReadLimiter, async (req, res) => {
+  try {
+    if (!UUID_RE.test(req.params.token)) return res.status(404).json({ error: 'Draft not found' });
+    const result = await pool.query(
+      `SELECT token, form_state, current_step FROM quote_drafts
+       WHERE token = $1 AND status = 'draft' AND updated_at > NOW() - INTERVAL '30 days'`,
+      [req.params.token]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Draft not found or expired' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Fetch quote draft error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** PUT /api/proposals/public/quote-draft/:token — auto-save draft state */
+router.put('/public/quote-draft/:token', publicReadLimiter, async (req, res) => {
+  try {
+    if (!UUID_RE.test(req.params.token)) return res.status(404).json({ error: 'Draft not found' });
+    const { form_state, current_step } = req.body;
+    if (!form_state || typeof form_state !== 'object') return res.status(400).json({ error: 'Invalid form state' });
+    const safeStep = Math.max(0, Math.min(10, parseInt(current_step, 10) || 0));
+    const serialized = JSON.stringify(form_state);
+    if (serialized.length > MAX_FORM_STATE_SIZE) return res.status(400).json({ error: 'Form state too large' });
+    const result = await pool.query(
+      `UPDATE quote_drafts SET form_state = $1, current_step = $2, updated_at = NOW()
+       WHERE token = $3 AND status = 'draft'
+       RETURNING token`,
+      [serialized, safeStep, req.params.token]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: 'Draft not found' });
     res.json({ ok: true });
   } catch (err) {
-    console.error('Lead capture error:', err.message);
-    // Don't fail the client — this is fire-and-forget
-    res.json({ ok: true });
+    console.error('Save quote draft error:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -353,6 +450,22 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
     await dbClient.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'created', 'client', $2)`,
       [proposal.id, JSON.stringify({ source: 'website_quote_wizard', total: snapshot.total, package: snapshot.package.name })]
+    );
+
+    // Mark any active quote draft as completed
+    await dbClient.query(
+      `UPDATE quote_drafts SET status = 'completed', completed_at = NOW()
+       WHERE email = $1 AND status = 'draft'`,
+      [client_email.trim().toLowerCase()]
+    );
+
+    // Unenroll from abandoned quote sequence
+    await dbClient.query(
+      `UPDATE email_sequence_enrollments SET status = 'completed', completed_at = NOW()
+       WHERE lead_id IN (SELECT id FROM email_leads WHERE email = $1)
+         AND campaign_id IN (SELECT id FROM email_campaigns WHERE name = 'Abandoned Quote Followup' AND type = 'sequence')
+         AND status = 'active'`,
+      [client_email.trim().toLowerCase()]
     );
 
     await dbClient.query('COMMIT');

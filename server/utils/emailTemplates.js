@@ -3,6 +3,12 @@
  * Each template function returns { subject, html, text }.
  */
 
+/** Escape HTML special characters to prevent XSS in email bodies */
+function esc(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 const BRAND = {
   dark: '#2d1810',
   primary: '#3b2314',
@@ -257,6 +263,31 @@ function applicationReceivedConfirmation({ applicantName }) {
   };
 }
 
+// ─── Abandoned Quote Email ──────────────────────────────────────────
+
+/**
+ * Reference template for abandoned quote followup emails.
+ * The actual email content is stored in the email_sequence_steps table
+ * for the "Abandoned Quote Followup" campaign, using {{name}} and
+ * {{resume_url}} placeholders that the scheduler replaces at send time.
+ */
+function abandonedQuote({ clientName, resumeUrl }) {
+  const name = clientName || 'there';
+  return {
+    subject: 'Still planning your event? Your quote is waiting',
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Pick Up Where You Left Off</h2>
+      <p>Hi ${name},</p>
+      <p>We noticed you started putting together a quote for your event but didn't finish.
+         No worries — your progress is saved and ready for you!</p>
+      ${ctaButton(resumeUrl, 'Continue Your Quote')}
+      <p style="margin-top:24px;">If you have any questions, just reply to this email — we'd love to help.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, your quote is waiting! Continue where you left off: ${resumeUrl}`,
+  };
+}
+
 // ─── Marketing Email Template ──────────────────────────────────────
 
 /**
@@ -289,6 +320,72 @@ function wrapMarketingEmail(innerHtml, unsubscribeUrl) {
 </html>`;
 }
 
+// ─── Thumbtack Admin Notifications ──────────────────────────────
+
+function newThumbtackLeadAdmin({ customerName, customerPhone, category, description, location, eventDate, details, adminUrl }) {
+  const name = esc(customerName) || 'Unknown';
+  const detailRows = (details || [])
+    .map(d => `<tr><td style="padding:6px 12px;font-weight:bold;color:${BRAND.secondary};vertical-align:top;width:140px;">${esc(d.question)}</td><td style="padding:6px 12px;">${esc(d.answer)}</td></tr>`)
+    .join('');
+  const detailsTable = detailRows
+    ? `<table style="width:100%;border-collapse:collapse;margin:1rem 0;">${detailRows}</table>`
+    : '';
+  const dateStr = eventDate ? new Date(eventDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : 'Not specified';
+
+  return {
+    subject: `New Thumbtack Lead: ${esc(customerName) || 'Unknown'}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">New Thumbtack Lead</h2>
+      <p style="background:#fff3cd;border:1px solid #ffc107;padding:12px;border-radius:6px;font-weight:bold;">
+        Action needed: Grab the customer's email from Thumbtack (lead &rarr; three dots &rarr; create estimate/invoice).
+      </p>
+      <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:120px;">Name</td><td style="padding:8px 12px;">${name}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Phone</td><td style="padding:8px 12px;">${esc(customerPhone) || 'N/A'}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Category</td><td style="padding:8px 12px;">${esc(category) || 'N/A'}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Location</td><td style="padding:8px 12px;">${esc(location) || 'N/A'}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Event Date</td><td style="padding:8px 12px;">${dateStr}</td></tr>
+      </table>
+      ${description ? `<p><strong>Description:</strong> ${esc(description)}</p>` : ''}
+      ${detailsTable}
+      ${adminUrl ? ctaButton(adminUrl, 'View Client') : ''}
+    `),
+    text: `New Thumbtack lead: ${customerName || 'Unknown'} — ${customerPhone || 'no phone'}. Category: ${category || 'N/A'}. Location: ${location || 'N/A'}. Date: ${dateStr}. ACTION: Grab email from Thumbtack.${adminUrl ? ` View: ${adminUrl}` : ''}`,
+  };
+}
+
+function newThumbtackMessageAdmin({ customerName, text, adminUrl }) {
+  const name = esc(customerName) || 'A customer';
+  const rawPreview = text && text.length > 300 ? text.slice(0, 300) + '...' : (text || '(no text)');
+  return {
+    subject: `Thumbtack Message from ${esc(customerName) || 'A customer'}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">New Thumbtack Message</h2>
+      <p><strong>${name}</strong> sent a message via Thumbtack:</p>
+      <div style="background:${BRAND.bg};padding:16px;border-radius:6px;margin:1rem 0;border-left:4px solid ${BRAND.secondary};">
+        ${esc(rawPreview)}
+      </div>
+      ${adminUrl ? ctaButton(adminUrl, 'View Client') : ''}
+    `),
+    text: `Thumbtack message from ${customerName || 'A customer'}: ${rawPreview}${adminUrl ? ` View: ${adminUrl}` : ''}`,
+  };
+}
+
+function newThumbtackReviewAdmin({ reviewerName, rating, reviewText }) {
+  const name = esc(reviewerName) || 'A customer';
+  const stars = rating !== null && rating !== undefined ? '★'.repeat(Math.round(rating)) + '☆'.repeat(5 - Math.round(rating)) : 'N/A';
+  return {
+    subject: `New Thumbtack Review: ${stars} from ${esc(reviewerName) || 'A customer'}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">New Thumbtack Review</h2>
+      <p style="font-size:24px;margin:0.5rem 0;">${stars}</p>
+      <p><strong>${name}</strong> left a ${rating !== null && rating !== undefined ? rating + '/5' : ''} review on Thumbtack:</p>
+      ${reviewText ? `<div style="background:${BRAND.bg};padding:16px;border-radius:6px;margin:1rem 0;border-left:4px solid ${BRAND.secondary};">${esc(reviewText)}</div>` : '<p style="color:#999;"><em>No review text</em></p>'}
+    `),
+    text: `New Thumbtack review from ${reviewerName || 'A customer'}: ${rating}/5 — ${reviewText || '(no text)'}`,
+  };
+}
+
 module.exports = {
   wrapEmail,
   wrapMarketingEmail,
@@ -305,4 +402,8 @@ module.exports = {
   shiftRequestAdmin,
   shiftRequestApproved,
   applicationReceivedConfirmation,
+  abandonedQuote,
+  newThumbtackLeadAdmin,
+  newThumbtackMessageAdmin,
+  newThumbtackReviewAdmin,
 };

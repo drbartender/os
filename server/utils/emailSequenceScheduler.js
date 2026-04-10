@@ -3,20 +3,27 @@ const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { wrapMarketingEmail } = require('./emailTemplates');
 
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 /**
  * Process sequence steps for active enrollments that are due.
  * Runs every 15 minutes via setInterval in server/index.js.
  */
 async function processSequenceSteps() {
   try {
-    // Find enrollments where next step is due
+    // Find enrollments where next step is due (LEFT JOIN quote_drafts for resume URL support)
     const dueEnrollments = await pool.query(`
       SELECT e.id, e.campaign_id, e.lead_id, e.current_step,
              l.email, l.name, l.status AS lead_status,
-             c.status AS campaign_status, c.from_email, c.reply_to
+             c.status AS campaign_status, c.from_email, c.reply_to,
+             qd.token AS quote_draft_token
       FROM email_sequence_enrollments e
       JOIN email_leads l ON l.id = e.lead_id
       JOIN email_campaigns c ON c.id = e.campaign_id
+      LEFT JOIN quote_drafts qd ON qd.lead_id = l.id AND qd.status = 'draft'
       WHERE e.status = 'active'
         AND e.next_step_due_at <= NOW()
         AND l.status = 'active'
@@ -54,14 +61,28 @@ async function processSequenceSteps() {
         // Build unsubscribe URL
         const unsubscribeToken = jwt.sign({ leadId: enrollment.lead_id }, process.env.JWT_SECRET, { expiresIn: '365d' });
         const unsubscribeUrl = `${unsubscribeBase}?token=${unsubscribeToken}`;
-        const html = wrapMarketingEmail(step.html_body, unsubscribeUrl);
+
+        // Replace template variables ({{name}}, {{resume_url}}) in both HTML and plaintext
+        const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+        const resumeUrl = enrollment.quote_draft_token
+          ? `${clientUrl}/quote?resume=${enrollment.quote_draft_token}`
+          : `${clientUrl}/quote`;
+        let htmlBody = step.html_body;
+        htmlBody = htmlBody.replace(/\{\{name\}\}/g, escapeHtml(enrollment.name) || 'there');
+        htmlBody = htmlBody.replace(/\{\{resume_url\}\}/g, resumeUrl);
+
+        let textBody = step.text_body || '';
+        textBody = textBody.replace(/\{\{name\}\}/g, enrollment.name || 'there');
+        textBody = textBody.replace(/\{\{resume_url\}\}/g, resumeUrl);
+
+        const html = wrapMarketingEmail(htmlBody, unsubscribeUrl);
 
         // Send the email
         const emailResult = await sendEmail({
           to: enrollment.email,
           subject: step.subject,
           html,
-          text: step.text_body || undefined,
+          text: textBody || undefined,
           from: enrollment.from_email || undefined,
           replyTo: enrollment.reply_to || undefined,
         });
@@ -118,4 +139,22 @@ async function processSequenceSteps() {
   }
 }
 
-module.exports = { processSequenceSteps };
+/**
+ * Expire stale quote wizard drafts older than 30 days.
+ * Runs alongside processSequenceSteps.
+ */
+async function expireStaleQuoteDrafts() {
+  try {
+    const result = await pool.query(
+      `UPDATE quote_drafts SET status = 'expired'
+       WHERE status = 'draft' AND updated_at < NOW() - INTERVAL '30 days'`
+    );
+    if (result.rowCount > 0) {
+      console.log(`[QuoteDrafts] Expired ${result.rowCount} stale draft(s)`);
+    }
+  } catch (err) {
+    console.error('[QuoteDrafts] Cleanup error:', err.message);
+  }
+}
+
+module.exports = { processSequenceSteps, expireStaleQuoteDrafts };

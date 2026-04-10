@@ -1024,6 +1024,7 @@ CREATE TABLE IF NOT EXISTS quote_drafts (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_quote_drafts_active_email
   ON quote_drafts(email) WHERE status = 'draft';
 CREATE INDEX IF NOT EXISTS idx_quote_drafts_token ON quote_drafts(token);
+CREATE INDEX IF NOT EXISTS idx_quote_drafts_lead_id ON quote_drafts(lead_id);
 
 DROP TRIGGER IF EXISTS update_quote_drafts_updated_at ON quote_drafts;
 CREATE TRIGGER update_quote_drafts_updated_at BEFORE UPDATE ON quote_drafts
@@ -1240,3 +1241,105 @@ CREATE INDEX IF NOT EXISTS idx_email_sends_campaign_status ON email_sends(campai
 -- ─── Drop Redundant Index ────────────────────────────────────────
 -- UNIQUE constraint on blog_posts.slug already creates an implicit index
 DROP INDEX IF EXISTS idx_blog_posts_slug;
+
+-- ─── Seed: Abandoned Quote Followup Campaign ────────────────────
+-- Plain SQL with WHERE NOT EXISTS — safe with the semicolon-based statement splitter in db/index.js.
+-- Dollar-quoted strings ($body$...$body$) avoid apostrophe escaping issues.
+
+INSERT INTO email_campaigns (name, type, subject, status, from_email, reply_to)
+SELECT 'Abandoned Quote Followup', 'sequence', 'Still planning your event?', 'active', 'hello@drbartender.com', 'hello@drbartender.com'
+WHERE NOT EXISTS (SELECT 1 FROM email_campaigns WHERE name = 'Abandoned Quote Followup' AND type = 'sequence');
+
+INSERT INTO email_sequence_steps (campaign_id, step_order, subject, html_body, text_body, delay_days, delay_hours)
+SELECT c.id, 1,
+  'Still thinking about your event? Your quote is waiting',
+  $body$<h2 style="color:#3b2314;margin-top:0;">Pick Up Where You Left Off</h2>
+<p>Hi {{name}},</p>
+<p>We noticed you started putting together a quote for your event but didn't finish. No worries — your progress is saved and ready whenever you are!</p>
+<p style="text-align:center;margin:2rem 0;">
+  <a href="{{resume_url}}" style="display:inline-block;padding:14px 32px;background:#3b2314;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:16px;">Continue Your Quote</a>
+</p>
+<p>If you have any questions about our services, just reply to this email — we'd love to help.</p>
+<p>Cheers,<br/>The Dr. Bartender Team</p>$body$,
+  $txt$Hi {{name}}, you started a quote but didn't finish. Your progress is saved! Continue here: {{resume_url}} — The Dr. Bartender Team$txt$,
+  0, 2
+FROM email_campaigns c
+WHERE c.name = 'Abandoned Quote Followup' AND c.type = 'sequence'
+  AND NOT EXISTS (SELECT 1 FROM email_sequence_steps WHERE campaign_id = c.id AND step_order = 1);
+
+INSERT INTO email_sequence_steps (campaign_id, step_order, subject, html_body, text_body, delay_days, delay_hours)
+SELECT c.id, 2,
+  'Your quote is still waiting — let us make your event unforgettable',
+  $body$<h2 style="color:#3b2314;margin-top:0;">We Saved Your Spot</h2>
+<p>Hi {{name}},</p>
+<p>Just a friendly reminder that your custom quote is still saved and ready to go. Whether it's a wedding, birthday, or corporate event, we'd love to help make it memorable.</p>
+<p style="text-align:center;margin:2rem 0;">
+  <a href="{{resume_url}}" style="display:inline-block;padding:14px 32px;background:#3b2314;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:16px;">Finish Your Quote</a>
+</p>
+<p>Have questions? Reply here or give us a call — we're happy to walk you through everything.</p>
+<p>Cheers,<br/>The Dr. Bartender Team</p>$body$,
+  $txt$Hi {{name}}, your custom quote is still saved. Finish it here: {{resume_url}} — The Dr. Bartender Team$txt$,
+  2, 0
+FROM email_campaigns c
+WHERE c.name = 'Abandoned Quote Followup' AND c.type = 'sequence'
+  AND NOT EXISTS (SELECT 1 FROM email_sequence_steps WHERE campaign_id = c.id AND step_order = 2);
+
+-- ─── Thumbtack Integration ──────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS thumbtack_leads (
+  id SERIAL PRIMARY KEY,
+  negotiation_id VARCHAR(100) UNIQUE NOT NULL,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  customer_id VARCHAR(100),
+  customer_name VARCHAR(255),
+  customer_phone VARCHAR(50),
+  category VARCHAR(255),
+  description TEXT,
+  location_city VARCHAR(255),
+  location_state VARCHAR(50),
+  location_zip VARCHAR(20),
+  location_address TEXT,
+  event_date TIMESTAMPTZ,
+  event_duration INTEGER,
+  guest_count INTEGER,
+  lead_type VARCHAR(50),
+  lead_price VARCHAR(50),
+  charge_state VARCHAR(50),
+  status VARCHAR(30) DEFAULT 'new'
+    CHECK (status IN ('new','contacted','converted','lost')),
+  raw_payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_thumbtack_leads_client_id ON thumbtack_leads(client_id);
+CREATE INDEX IF NOT EXISTS idx_thumbtack_leads_status ON thumbtack_leads(status);
+
+DROP TRIGGER IF EXISTS update_thumbtack_leads_updated_at ON thumbtack_leads;
+CREATE TRIGGER update_thumbtack_leads_updated_at BEFORE UPDATE ON thumbtack_leads
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TABLE IF NOT EXISTS thumbtack_messages (
+  id SERIAL PRIMARY KEY,
+  message_id VARCHAR(100) UNIQUE NOT NULL,
+  negotiation_id VARCHAR(100) REFERENCES thumbtack_leads(negotiation_id) ON DELETE CASCADE,
+  from_type VARCHAR(20),
+  sender_name VARCHAR(255),
+  text TEXT,
+  sent_at TIMESTAMPTZ,
+  raw_payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_thumbtack_messages_negotiation ON thumbtack_messages(negotiation_id);
+
+CREATE TABLE IF NOT EXISTS thumbtack_reviews (
+  id SERIAL PRIMARY KEY,
+  review_id VARCHAR(100) UNIQUE NOT NULL,
+  negotiation_id VARCHAR(100),
+  rating NUMERIC(2,1),
+  review_text TEXT,
+  reviewer_name VARCHAR(255),
+  raw_payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);

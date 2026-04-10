@@ -268,6 +268,13 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | GET | `/proposals` | Client | List client's proposals |
 | GET | `/proposals/:token` | Client | Get single proposal by token |
 
+### Thumbtack Integration — `/api/thumbtack`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/leads` | Webhook secret | Receive new lead from Thumbtack, create/match client, notify admin |
+| POST | `/messages` | Webhook secret | Receive customer message from Thumbtack thread |
+| POST | `/reviews` | Webhook secret | Receive new Thumbtack review |
+
 ### Other
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -486,6 +493,13 @@ Accessible via the "Shopping List" button on Drink Plan Detail (admin), visible 
 - `enrolled_at`, `last_step_sent_at`, `next_step_due_at`, `completed_at`
 - UNIQUE(campaign_id, lead_id)
 
+**quote_drafts** — Saved quote wizard progress for "pick up where you left off"
+- `id` SERIAL PK, `token` UUID UNIQUE, `lead_id` FK → email_leads
+- `email`, `form_state` JSONB (full wizard state), `current_step` INTEGER
+- `status`: draft | completed | expired
+- Partial unique index on `(email) WHERE status = 'draft'` — one active draft per email
+- Used by abandoned-quote email sequence: scheduler joins to get `token` for resume URLs
+
 **email_sends** — Individual email send records
 - `id` SERIAL PK, `campaign_id` FK, `sequence_step_id` FK, `lead_id` FK
 - `resend_id` — Resend message ID for webhook correlation
@@ -501,9 +515,33 @@ Accessible via the "Shopping List" button on Drink Plan Detail (admin), visible 
 **email_webhook_events** — Raw webhook event audit log
 - `id` SERIAL PK, `resend_id`, `event_type`, `payload` JSONB, `processed`
 
+### Thumbtack Integration
+
+**thumbtack_leads** — Leads received from Thumbtack webhooks
+- `id` SERIAL PK, `negotiation_id` VARCHAR UNIQUE (Thumbtack's lead ID)
+- `client_id` FK → clients (auto-created on lead receipt)
+- `customer_id`, `customer_name`, `customer_phone`
+- `category`, `description` — what service they're requesting
+- `location_address`, `location_city`, `location_state`, `location_zip`
+- `event_date` TIMESTAMPTZ, `event_duration` INTEGER (minutes), `guest_count`
+- `lead_type`, `lead_price`, `charge_state` — Thumbtack billing info
+- `status`: new | contacted | converted | lost
+- `raw_payload` JSONB — full original webhook body
+
+**thumbtack_messages** — Messages from Thumbtack conversation threads
+- `id` SERIAL PK, `message_id` VARCHAR UNIQUE
+- `negotiation_id` FK → thumbtack_leads
+- `from_type` (Customer | Business), `sender_name`, `text`, `sent_at`
+- `raw_payload` JSONB
+
+**thumbtack_reviews** — Reviews posted on Thumbtack
+- `id` SERIAL PK, `review_id` VARCHAR UNIQUE
+- `negotiation_id` (nullable), `rating` NUMERIC(2,1), `review_text`, `reviewer_name`
+- `raw_payload` JSONB
+
 ### Cross-Cutting Patterns
 - All tables have `created_at` / `updated_at` with auto-update triggers
-- UUID tokens on `drink_plans` and `proposals` for public access without auth
+- UUID tokens on `drink_plans`, `proposals`, and `quote_drafts` for public access without auth
 - JSONB columns for flexible data: `selections`, `pricing_snapshot`, `includes`, `details`
 - Status columns use CHECK constraints for valid values
 
@@ -549,6 +587,16 @@ The result is stored as a `pricing_snapshot` JSONB on the proposal for historica
 - **Used for**: Admin-initiated SMS to staff (general messages, shift invitations), shift approval notifications
 - **Consent**: Collected during agreement signing (`sms_consent` flag) — only consented staff appear as eligible recipients
 - **Logging**: All outbound messages logged to `sms_messages` table with delivery status tracking
+
+### Thumbtack (Lead Generation)
+- **Integration type**: Custom endpoint webhooks (V4 format with legacy fallback)
+- **Endpoints**: `server/routes/thumbtack.js` — receives lead, message, and review webhooks
+- **Auth**: Shared secret via Basic Auth header or `X-Thumbtack-Secret` custom header (`THUMBTACK_WEBHOOK_SECRET`)
+- **Lead flow**: Thumbtack sends lead → webhook creates/matches client (by phone) with `source='thumbtack'` → stores in `thumbtack_leads` → emails admin notification
+- **Important**: Thumbtack does NOT include customer email in webhooks. Admin must grab email manually from Thumbtack (lead → three-dot menu → create estimate/invoice) and add it to the client record.
+- **Messages**: Customer messages stored in `thumbtack_messages`, admin notified via email
+- **Reviews**: Stored in `thumbtack_reviews`, admin notified via email
+- **Custom domain**: `api.drbartender.com` CNAME → Render, so Thumbtack endpoints are permanent regardless of hosting changes
 
 ### Cloudflare R2 (File Storage)
 - **Wrapper**: `server/utils/storage.js`

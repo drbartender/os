@@ -9,7 +9,7 @@ const { auth } = require('./middleware/auth');
 const { getSignedUrl } = require('./utils/storage');
 const { processAutopayCharges, processEventCompletions } = require('./utils/balanceScheduler');
 const { processScheduledAutoAssigns } = require('./utils/autoAssignScheduler');
-const { processSequenceSteps } = require('./utils/emailSequenceScheduler');
+const { processSequenceSteps, expireStaleQuoteDrafts } = require('./utils/emailSequenceScheduler');
 
 // Startup guards — fail fast if critical env vars are missing
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
@@ -105,6 +105,7 @@ app.use('/api/client-auth', require('./routes/clientAuth'));
 app.use('/api/client-portal', require('./routes/clientPortal'));
 app.use('/api/email-marketing', require('./routes/emailMarketing'));
 app.use('/api/email-marketing/webhook', require('./routes/emailMarketingWebhook'));
+app.use('/api/thumbtack', require('./routes/thumbtack'));
 
 // Health check — must be registered BEFORE the React catch-all below
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
@@ -132,6 +133,10 @@ async function start() {
       // Email sequence scheduler — check every 15 min for due drip steps
       setTimeout(processSequenceSteps, 90000); // initial run after 90s
       setInterval(processSequenceSteps, 15 * 60 * 1000); // then every 15 minutes
+
+      // Quote draft cleanup — expire stale drafts daily
+      setInterval(expireStaleQuoteDrafts, 24 * 60 * 60 * 1000);
+      setTimeout(expireStaleQuoteDrafts, 120000); // initial run after 2 min
     });
   } catch (err) {
     console.error('Failed to start server:', err);
