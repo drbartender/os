@@ -183,7 +183,7 @@ router.get('/public/packages', publicLimiter, async (req, res) => {
 });
 
 /** GET /api/proposals/public/addons — list active add-ons (public, limited fields) */
-router.get('/public/addons', async (req, res) => {
+router.get('/public/addons', publicLimiter, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, name, slug, description, billing_type, rate, extra_hour_rate, applies_to, category, requires_addon_slug

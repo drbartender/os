@@ -248,7 +248,7 @@ export default function ShiftDetail() {
                       Approve
                     </button>
                     <button className="btn btn-sm btn-secondary"
-                      onClick={async () => { await api.put(`/shifts/requests/${req.id}/status`, { status: 'denied' }); loadData(); }}>
+                      onClick={async () => { await api.put(`/shifts/requests/${req.id}`, { status: 'denied' }); loadData(); }}>
                       Deny
                     </button>
                   </div>
