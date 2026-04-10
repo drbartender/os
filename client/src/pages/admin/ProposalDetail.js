@@ -4,7 +4,6 @@ import api from '../../utils/api';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import LocationInput from '../../components/LocationInput';
-import DrinkPlanSelections from '../../components/DrinkPlanSelections';
 import ShoppingListButton from '../../components/ShoppingList/ShoppingListButton';
 import { formatPhone } from '../../utils/formatPhone';
 import { getPackageItems } from '../../data/packages';
@@ -69,10 +68,6 @@ export default function ProposalDetail() {
   const [drinkPlanLoading, setDrinkPlanLoading] = useState(false);
   const [drinkPlanCopied, setDrinkPlanCopied] = useState(false);
   const [planCocktails, setPlanCocktails] = useState([]);
-  const [planMocktails, setPlanMocktails] = useState([]);
-  const [drinkPlanNotes, setDrinkPlanNotes] = useState('');
-  const [savingDrinkPlanNotes, setSavingDrinkPlanNotes] = useState(false);
-
   // Staffing state (event context only)
   const [shift, setShift] = useState(null);
   const [shiftLoading, setShiftLoading] = useState(false);
@@ -127,9 +122,7 @@ export default function ProposalDetail() {
     ])
       .then(([planRes, cocktailsRes, mocktailsRes]) => {
         setDrinkPlan(planRes.data);
-        setDrinkPlanNotes(planRes.data.admin_notes || '');
         setPlanCocktails(cocktailsRes.data.cocktails || []);
-        setPlanMocktails(mocktailsRes.data.mocktails || []);
       })
       .catch(() => setDrinkPlan(null))
       .finally(() => setDrinkPlanLoading(false));
@@ -1136,7 +1129,7 @@ export default function ProposalDetail() {
                     try {
                       const res = await api.post(`/drink-plans/for-proposal/${id}`);
                       setDrinkPlan(res.data);
-                      setDrinkPlanNotes(res.data.admin_notes || '');
+
                     } catch (err) { console.error('Failed to generate drink plan:', err); }
                   }}>Generate Drink Plan Link</button>
                 </div>
@@ -1834,7 +1827,7 @@ export default function ProposalDetail() {
                     try {
                       const res = await api.post(`/drink-plans/for-proposal/${id}`);
                       setDrinkPlan(res.data);
-                      setDrinkPlanNotes(res.data.admin_notes || '');
+
                     } catch (err) { console.error('Failed to generate drink plan:', err); }
                   }}>Generate Drink Plan Link</button>
                 </div>

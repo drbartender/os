@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 import api from '../../utils/api';
 import CampaignMetricsBar from '../../components/CampaignMetricsBar';
@@ -8,7 +8,6 @@ import AudienceSelector from '../../components/AudienceSelector';
 
 export default function EmailCampaignDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const [campaign, setCampaign] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);

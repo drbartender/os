@@ -81,11 +81,6 @@ function getSiteContext() {
   return 'public';
 }
 
-/** Legacy helper — true when on the public marketing domain */
-function isPublicSite() {
-  return getSiteContext() === 'public';
-}
-
 /** Determine where a logged-in user should go based on their role and status */
 function getHomePath(user) {
   if (!user) return '/login';

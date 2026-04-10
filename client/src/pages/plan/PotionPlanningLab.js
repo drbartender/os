@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { API_BASE_URL as BASE_URL } from '../../utils/api';
-import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue, buildExplorationQueue, EXPLORATION_STEPS, derivePhase } from './data/servingTypes';
+import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue, buildExplorationQueue, derivePhase } from './data/servingTypes';
 import WelcomeStep from './steps/WelcomeStep';
 import QuickPickStep from './steps/QuickPickStep';
 import CustomSetupStep from './steps/CustomSetupStep';
