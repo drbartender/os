@@ -1315,6 +1315,10 @@ CREATE TABLE IF NOT EXISTS thumbtack_leads (
 CREATE INDEX IF NOT EXISTS idx_thumbtack_leads_client_id ON thumbtack_leads(client_id);
 CREATE INDEX IF NOT EXISTS idx_thumbtack_leads_status ON thumbtack_leads(status);
 
+-- Functional index for phone matching (avoids full table scan)
+CREATE INDEX IF NOT EXISTS idx_clients_phone_normalized
+  ON clients(RIGHT(REGEXP_REPLACE(phone, '\D', '', 'g'), 10));
+
 DROP TRIGGER IF EXISTS update_thumbtack_leads_updated_at ON thumbtack_leads;
 CREATE TRIGGER update_thumbtack_leads_updated_at BEFORE UPDATE ON thumbtack_leads
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -1322,8 +1326,8 @@ CREATE TRIGGER update_thumbtack_leads_updated_at BEFORE UPDATE ON thumbtack_lead
 CREATE TABLE IF NOT EXISTS thumbtack_messages (
   id SERIAL PRIMARY KEY,
   message_id VARCHAR(100) UNIQUE NOT NULL,
-  negotiation_id VARCHAR(100) REFERENCES thumbtack_leads(negotiation_id) ON DELETE CASCADE,
-  from_type VARCHAR(20),
+  negotiation_id VARCHAR(100),
+  from_type VARCHAR(20) CHECK (from_type IN ('Customer', 'Business')),
   sender_name VARCHAR(255),
   text TEXT,
   sent_at TIMESTAMPTZ,
@@ -1337,9 +1341,12 @@ CREATE TABLE IF NOT EXISTS thumbtack_reviews (
   id SERIAL PRIMARY KEY,
   review_id VARCHAR(100) UNIQUE NOT NULL,
   negotiation_id VARCHAR(100),
-  rating NUMERIC(2,1),
+  rating NUMERIC(2,1) CHECK (rating >= 1 AND rating <= 5),
   review_text TEXT,
   reviewer_name VARCHAR(255),
   raw_payload JSONB NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_thumbtack_reviews_negotiation
+  ON thumbtack_reviews(negotiation_id);

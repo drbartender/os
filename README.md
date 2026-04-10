@@ -71,6 +71,7 @@ Copy `.env.example` and fill in values. All variables:
 | `STRIPE_PUBLISHABLE_KEY` | For payments | Stripe publishable key |
 | `STRIPE_WEBHOOK_SECRET` | For payments | Stripe webhook signing secret |
 | `STRIPE_DEPOSIT_AMOUNT` | No | Deposit in cents (default: 10000 = $100) |
+| `THUMBTACK_WEBHOOK_SECRET` | For Thumbtack | Shared secret for Thumbtack webhook auth |
 | `ADMIN_EMAIL` | For seed | Admin account email |
 | `ADMIN_PASSWORD` | For seed | Admin account password |
 
@@ -111,7 +112,8 @@ dr-bartender/
 │   │   ├── shifts.js           # Shift scheduling
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
 │   │   ├── emailMarketing.js   # Email marketing leads, campaigns, sequences, conversations
-│   │   └── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
+│   │   ├── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
+│   │   └── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   ├── utils/
 │   │   ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)
 │   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)

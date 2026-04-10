@@ -49,7 +49,8 @@ dr-bartender/
 │   │   ├── shifts.js          # Shift management
 │   │   ├── stripe.js          # Stripe checkout + webhooks
 │   │   ├── emailMarketing.js  # Email marketing (leads, campaigns, sequences, conversations)
-│   │   └── emailMarketingWebhook.js # Resend webhook receiver (tracking events)
+│   │   ├── emailMarketingWebhook.js # Resend webhook receiver (tracking events)
+│   │   └── thumbtack.js       # Thumbtack webhook endpoints (leads, messages, reviews)
 │   ├── utils/
 │   │   ├── autoAssign.js      # Auto-assign algorithm (seniority + geo + equipment)
 │   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
@@ -190,6 +191,7 @@ See `.env.example` for the full list. Key ones:
 | `TWILIO_*` | Twilio SMS |
 | `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe payments |
 | `STRIPE_DEPOSIT_AMOUNT` | Deposit in cents (default 10000 = $100) |
+| `THUMBTACK_WEBHOOK_SECRET` | Shared secret for Thumbtack webhook auth |
 | `REACT_APP_API_URL` | Client-side API base URL (set in client/.env.production) |
 
 ## Running Locally
