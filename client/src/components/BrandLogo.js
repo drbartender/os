@@ -4,7 +4,7 @@ export default function BrandLogo({ admin = false }) {
   const [missingLogo, setMissingLogo] = useState(false);
 
   return (
-    <div className="site-brand">
+    <a href="https://drbartender.com" className="site-brand" style={{ textDecoration: 'none', color: 'inherit' }}>
       <div className="site-logo-mark" aria-hidden={!missingLogo}>
         {!missingLogo ? (
           <img
@@ -20,6 +20,6 @@ export default function BrandLogo({ admin = false }) {
         Dr. <span>Bartender</span>
         {admin && <span className="site-admin-tag">OS</span>}
       </div>
-    </div>
+    </a>
   );
 }

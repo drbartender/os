@@ -120,10 +120,6 @@ export default function EmailCampaignDetail() {
 
   return (
     <div className="em-campaign-detail">
-      <button className="btn btn-secondary btn-sm em-back-btn" onClick={() => navigate('/admin/email-marketing/campaigns')}>
-        &larr; Back to Campaigns
-      </button>
-
       <div className="em-campaign-header">
         <div>
           <h2>{campaign.name}</h2>

@@ -74,6 +74,10 @@ export default function AdminUserDetail() {
   const [seniorityForm, setSeniorityForm] = useState({ seniority_adjustment: 0, hire_date: '' });
   const [senioritySaving, setSenioritySaving] = useState(false);
 
+  // Events state
+  const [events, setEvents] = useState(null);
+  const [eventsLoading, setEventsLoading] = useState(false);
+
   // Messages state
   const [userMessages, setUserMessages] = useState([]);
   const [userMsgLoading, setUserMsgLoading] = useState(false);
@@ -121,6 +125,16 @@ export default function AdminUserDetail() {
       setSenioritySaving(false);
     }
   }
+
+  // Fetch events data
+  useEffect(() => {
+    if (tab !== 'events') return;
+    setEventsLoading(true);
+    api.get(`/shifts/user/${id}/events`)
+      .then(r => setEvents(r.data))
+      .catch(console.error)
+      .finally(() => setEventsLoading(false));
+  }, [tab, id]);
 
   // Fetch message history for this user
   useEffect(() => {
@@ -320,6 +334,7 @@ export default function AdminUserDetail() {
             ['progress', 'Onboarding'],
             ['payment', 'Payment'],
             ['seniority', 'Seniority'],
+            ['events', 'Events'],
             ['permissions', 'Permissions'],
             ['messages', 'Messages'],
           ].map(([key, label]) => (
@@ -619,6 +634,99 @@ export default function AdminUserDetail() {
               </>
             ) : (
               <div className="card"><p className="text-muted italic">No seniority data available.</p></div>
+            )}
+          </div>
+        )}
+
+        {/* ── Events Tab ── */}
+        {tab === 'events' && (
+          <div>
+            {eventsLoading ? (
+              <div className="loading"><div className="spinner" />Loading events...</div>
+            ) : !events ? (
+              <div className="card"><p className="text-muted italic">Could not load event data.</p></div>
+            ) : (
+              <>
+                {/* Upcoming Events */}
+                <Section title={`Upcoming Events (${events.upcoming.length})`}>
+                  {events.upcoming.length === 0 ? (
+                    <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>No upcoming events scheduled.</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                      {events.upcoming.map(ev => (
+                        <div key={ev.id + '-upcoming'} style={{
+                          padding: '0.85rem 1rem', background: '#F0FFF0', border: '1px solid #90CC90',
+                          borderRadius: 'var(--radius)', display: 'flex', alignItems: 'flex-start',
+                          justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem',
+                        }}>
+                          <div style={{ flex: 1, minWidth: 200 }}>
+                            <div style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.2rem' }}>
+                              {ev.event_name || ev.proposal_event_name || 'Untitled Event'}
+                            </div>
+                            <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
+                              {ev.event_date ? new Date(ev.event_date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                              {ev.start_time && <> &middot; {ev.start_time}{ev.end_time && ` - ${ev.end_time}`}</>}
+                            </div>
+                            {ev.location && (
+                              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                                {ev.location}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexShrink: 0 }}>
+                            {ev.position && <span className="badge badge-inprogress">{ev.position}</span>}
+                            {ev.guest_count && (
+                              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{ev.guest_count} guests</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Section>
+
+                {/* Past Events */}
+                <Section title={`Past Events (${events.past.length})`}>
+                  {events.past.length === 0 ? (
+                    <p style={{ color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>No past events on record.</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {events.past.map(ev => (
+                        <div key={ev.id + '-past'} style={{
+                          padding: '0.75rem 1rem', background: 'var(--parchment)',
+                          border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+                          display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+                          flexWrap: 'wrap', gap: '0.5rem',
+                        }}>
+                          <div style={{ flex: 1, minWidth: 200 }}>
+                            <div style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.2rem' }}>
+                              {ev.event_name || ev.proposal_event_name || 'Untitled Event'}
+                            </div>
+                            <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
+                              {ev.event_date ? new Date(ev.event_date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                              {ev.start_time && <> &middot; {ev.start_time}{ev.end_time && ` - ${ev.end_time}`}</>}
+                            </div>
+                            {ev.location && (
+                              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                                {ev.location}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexShrink: 0 }}>
+                            {ev.position && <span className="badge badge-inprogress">{ev.position}</span>}
+                            {ev.guest_count && (
+                              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{ev.guest_count} guests</span>
+                            )}
+                            {ev.client_name && (
+                              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{ev.client_name}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Section>
+              </>
             )}
           </div>
         )}

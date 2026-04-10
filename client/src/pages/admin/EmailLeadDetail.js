@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import api from '../../utils/api';
 
 const LEAD_SOURCES = ['manual', 'csv_import', 'website', 'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other'];
 
 export default function EmailLeadDetail() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const [lead, setLead] = useState(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
@@ -65,10 +64,6 @@ export default function EmailLeadDetail() {
 
   return (
     <div className="em-lead-detail">
-      <button className="btn btn-secondary btn-sm em-back-btn" onClick={() => navigate('/admin/email-marketing/leads')}>
-        &larr; Back to Leads
-      </button>
-
       <div className="em-lead-header">
         <div>
           <h2>{lead.name}</h2>

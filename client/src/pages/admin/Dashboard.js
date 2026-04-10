@@ -90,6 +90,31 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* ── Revenue Summary ── */}
+      <div className="card mb-2" style={{ display: 'flex', justifyContent: 'space-around', flexWrap: 'wrap', gap: '1rem', padding: '1.25rem 1.5rem' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--amber)' }}>
+            {formatCurrency(events.reduce((s, e) => s + Number(e.proposal_total || 0), 0))}
+          </div>
+          <div className="text-muted text-small">Total Revenue</div>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--sage)' }}>
+            {formatCurrency(events.reduce((s, e) => s + Number(e.proposal_amount_paid || e.amount_paid || 0), 0))}
+          </div>
+          <div className="text-muted text-small">Collected</div>
+        </div>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--rust)' }}>
+            {formatCurrency(
+              events.reduce((s, e) => s + Number(e.proposal_total || 0), 0) -
+              events.reduce((s, e) => s + Number(e.proposal_amount_paid || e.amount_paid || 0), 0)
+            )}
+          </div>
+          <div className="text-muted text-small">Outstanding</div>
+        </div>
+      </div>
+
       {/* ── Detail Sections ── */}
       <div className="dashboard-grid">
 
@@ -106,7 +131,7 @@ export default function Dashboard() {
               <thead><tr><th>Event</th><th>Date</th><th>Client</th></tr></thead>
               <tbody>
                 {upcomingEvents.slice(0, 5).map(e => (
-                  <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/events/${e.id}`)} onKeyDown={(e2) => e2.key === 'Enter' && navigate(`/admin/events/${e.id}`)} tabIndex={0} role="link">
+                  <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/events/${e.proposal_id}`)} onKeyDown={(e2) => e2.key === 'Enter' && navigate(`/admin/events/${e.proposal_id}`)} tabIndex={0} role="link">
                     <td>{e.event_name || '—'}</td>
                     <td>{fmtDate(e.event_date)}</td>
                     <td>{e.client_name || '—'}</td>
@@ -157,7 +182,7 @@ export default function Dashboard() {
                   <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/proposals/${p.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/proposals/${p.id}`)} tabIndex={0} role="link">
                     <td>{p.client_name || p.client_email || '—'}</td>
                     <td>{p.event_name || fmtDate(p.event_date)}</td>
-                    <td>{formatCurrency(p.total_price)}</td>
+                    <td>{formatCurrency(Number(p.total_price || 0) - Number(p.amount_paid || 0))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -178,7 +203,7 @@ export default function Dashboard() {
               <thead><tr><th>Event</th><th>Date</th><th>Filled</th></tr></thead>
               <tbody>
                 {unstaffedEvents.slice(0, 5).map(e => (
-                  <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/events/${e.id}`)} onKeyDown={(e2) => e2.key === 'Enter' && navigate(`/admin/events/${e.id}`)} tabIndex={0} role="link">
+                  <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/events/${e.proposal_id}`)} onKeyDown={(e2) => e2.key === 'Enter' && navigate(`/admin/events/${e.proposal_id}`)} tabIndex={0} role="link">
                     <td>{e.event_name || '—'}</td>
                     <td>{fmtDate(e.event_date)}</td>
                     <td>{Number(e.request_count || 0)} / {Number(e.bartenders_needed || e.positions_needed || 1)}</td>
@@ -212,6 +237,13 @@ export default function Dashboard() {
           )}
         </div>
 
+      </div>
+
+      {/* ── Quick Actions ── */}
+      <div className="card" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', padding: '1.25rem 1.5rem', marginTop: '1.5rem' }}>
+        <button className="btn btn-primary" onClick={() => navigate('/admin/proposals/new')}>New Proposal</button>
+        <button className="btn btn-secondary" onClick={() => navigate('/admin/clients')}>Manage Clients</button>
+        <button className="btn btn-secondary" onClick={() => navigate('/admin/financials')}>View Financials</button>
       </div>
     </div>
   );

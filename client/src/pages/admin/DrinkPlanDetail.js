@@ -117,13 +117,7 @@ export default function DrinkPlanDetail() {
 
   return (
     <div className="page-container">
-      <button
-        className="btn btn-secondary btn-sm mb-2"
-        onClick={() => navigate('/admin/drink-plans')}
-      >
-        &larr; All Drink Plans
-      </button>
-
+      {/* Top card: client info + actions */}
       <div className="card mb-2">
         <div className="flex-between" style={{ flexWrap: 'wrap', gap: '1rem' }}>
           <div>
@@ -138,10 +132,24 @@ export default function DrinkPlanDetail() {
             <span className={`badge ${STATUS_CLASSES[plan.status] || ''}`}>
               {STATUS_LABELS[plan.status] || plan.status}
             </span>
-            <button className="btn btn-sm btn-secondary" onClick={copyLink}>
-              {copyMessage || 'Copy Client Link'}
-            </button>
           </div>
+        </div>
+        {/* Action buttons in top card */}
+        <div className="flex gap-05 mt-1" style={{ flexWrap: 'wrap' }}>
+          {(plan.status === 'submitted' || plan.status === 'reviewed') && (
+            <ShoppingListButton planId={id} planToken={plan.token} />
+          )}
+          <button className="btn btn-sm btn-secondary" onClick={copyLink}>
+            {copyMessage || 'Copy Client Link'}
+          </button>
+          {plan.status === 'submitted' && (
+            <button className="btn btn-sm btn-success" onClick={markReviewed}>
+              Mark as Reviewed
+            </button>
+          )}
+          <button className="btn btn-sm btn-danger" onClick={deletePlan} style={{ marginLeft: 'auto' }}>
+            Delete Plan
+          </button>
         </div>
       </div>
 
@@ -171,20 +179,6 @@ export default function DrinkPlanDetail() {
           disabled={saving}
         >
           {saving ? 'Saving...' : 'Save Notes'}
-        </button>
-      </div>
-
-      <div className="flex gap-1">
-        {plan.status === 'submitted' && (
-          <button className="btn btn-success" onClick={markReviewed}>
-            Mark as Reviewed
-          </button>
-        )}
-        {(plan.status === 'submitted' || plan.status === 'reviewed') && (
-          <ShoppingListButton planId={id} />
-        )}
-        <button className="btn btn-danger btn-sm" onClick={deletePlan}>
-          Delete Plan
         </button>
       </div>
     </div>

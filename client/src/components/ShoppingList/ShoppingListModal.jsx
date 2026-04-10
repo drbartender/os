@@ -1,20 +1,72 @@
-import React, { useState, useCallback } from 'react';
-import { pdf } from '@react-pdf/renderer';
-import { ShoppingListPDF } from './ShoppingListPDF';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { generateShoppingListPDF } from './ShoppingListPDF';
 import { generateShoppingList } from './generateShoppingList';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import api from '../../utils/api';
 
-export default function ShoppingListModal({ listData, onClose }) {
+export default function ShoppingListModal({ listData, onClose, planId, planToken }) {
   const [edited, setEdited] = useState(() => deepClone(listData));
   const [guestCount, setGuestCount] = useState(listData.guestCount);
   const [downloading, setDownloading] = useState(false);
+  const [pdfError, setPdfError] = useState('');
+  const [undoStack, setUndoStack] = useState([]);
+  const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'saving' | 'unsaved'
+  const [linkCopied, setLinkCopied] = useState(false);
+  const isFirstRender = useRef(true);
+  const saveTimer = useRef(null);
 
   function deepClone(d) {
+    const uid = () => typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
     return {
       ...d,
-      liquorBeerWine: d.liquorBeerWine.map(r => ({ ...r })),
-      everythingElse: d.everythingElse.map(r => ({ ...r })),
+      liquorBeerWine: d.liquorBeerWine.map(r => ({ ...r, _id: r._id || uid() })),
+      everythingElse: d.everythingElse.map(r => ({ ...r, _id: r._id || uid() })),
     };
   }
+
+  // Auto-save with debounce
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    if (!planId) return;
+
+    setSaveStatus('unsaved');
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      setSaveStatus('saving');
+      try {
+        await api.put(`/drink-plans/${planId}/shopping-list`, {
+          shopping_list: {
+            ...edited,
+            guestCount: parseInt(guestCount, 10) || edited.guestCount,
+          },
+        });
+        setSaveStatus('saved');
+      } catch (err) {
+        console.error('Auto-save failed:', err);
+        setSaveStatus('unsaved');
+      }
+    }, 1500);
+
+    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edited, guestCount, planId]);
 
   const resetList = useCallback((count = guestCount) => {
     const fresh = generateShoppingList({
@@ -25,6 +77,7 @@ export default function ShoppingListModal({ listData, onClose }) {
       notes: listData.notes,
     });
     setEdited(deepClone(fresh));
+    setUndoStack([]);
   }, [listData, guestCount]);
 
   const handleGuestCountChange = (val) => {
@@ -51,36 +104,93 @@ export default function ShoppingListModal({ listData, onClose }) {
   const removeItem = (section, index) => {
     setEdited(prev => {
       const next = deepClone(prev);
+      const removed = next[section][index];
+      setUndoStack(stack => [...stack, { section, index, item: { ...removed } }]);
       next[section] = next[section].filter((_, i) => i !== index);
       return next;
     });
   };
 
+  const undoLastDelete = () => {
+    setUndoStack(stack => {
+      if (stack.length === 0) return stack;
+      const newStack = [...stack];
+      const last = newStack.pop();
+      setEdited(prev => {
+        const next = deepClone(prev);
+        const insertAt = Math.min(last.index, next[last.section].length);
+        next[last.section].splice(insertAt, 0, { ...last.item });
+        return next;
+      });
+      return newStack;
+    });
+  };
+
   const addItem = (section) => {
+    const uid = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
     setEdited(prev => {
       const next = deepClone(prev);
-      next[section] = [...next[section], { item: '', size: '', qty: 1 }];
+      next[section] = [...next[section], { _id: uid, item: '', size: '', qty: 1 }];
+      return next;
+    });
+  };
+
+  const handleDragEnd = (section) => (event) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setEdited(prev => {
+      const next = deepClone(prev);
+      const items = next[section];
+      const oldIndex = items.findIndex(i => i._id === active.id);
+      const newIndex = items.findIndex(i => i._id === over.id);
+      if (oldIndex === -1 || newIndex === -1) return prev;
+      next[section] = arrayMove(items, oldIndex, newIndex);
       return next;
     });
   };
 
   const handleDownload = async () => {
     setDownloading(true);
+    setPdfError('');
     try {
       const finalData = { ...edited, guestCount: parseInt(guestCount, 10) || edited.guestCount };
-      const blob = await pdf(<ShoppingListPDF listData={finalData} />).toBlob();
+      const blob = await generateShoppingListPDF(finalData);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `DRB_ShoppingList_${(edited.clientName || 'Event').replace(/\s+/g, '_')}.pdf`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('PDF generation failed:', err);
+      setPdfError('PDF generation failed. Please try again.');
     } finally {
       setDownloading(false);
     }
   };
+
+  const handleShareLink = () => {
+    if (!planToken) return;
+    const url = `${window.location.origin}/shopping-list/${planToken}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    }).catch(() => {
+      window.prompt('Copy this link:', url);
+    });
+  };
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor)
+  );
+
+  const saveIndicator = saveStatus === 'saving' ? 'Saving...'
+    : saveStatus === 'saved' ? 'Saved'
+    : 'Unsaved';
+  const saveColor = saveStatus === 'saved' ? '#4caf50' : saveStatus === 'saving' ? '#D49549' : '#ff9800';
 
   return (
     <div style={{
@@ -88,12 +198,13 @@ export default function ShoppingListModal({ listData, onClose }) {
       backgroundColor: 'rgba(0,0,0,0.65)',
       display: 'flex', flexDirection: 'column',
       overflowY: 'auto',
+      paddingTop: 'calc(60px + 1.5rem)',
     }}>
       <div style={{
         backgroundColor: 'var(--cream)',
-        margin: '1.5rem auto',
+        margin: '0 auto 1.5rem',
         width: '100%',
-        maxWidth: 900,
+        maxWidth: 960,
         borderRadius: 8,
         boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
         display: 'flex',
@@ -136,6 +247,21 @@ export default function ShoppingListModal({ listData, onClose }) {
               }}
             />
           </div>
+          {planId && (
+            <span style={{ color: saveColor, fontSize: '0.72rem', fontStyle: 'italic', whiteSpace: 'nowrap' }}>
+              {saveIndicator}
+            </span>
+          )}
+          {undoStack.length > 0 && (
+            <button
+              className="btn btn-sm"
+              onClick={undoLastDelete}
+              style={{ whiteSpace: 'nowrap', backgroundColor: '#D49549', border: 'none', color: '#1A1410', fontWeight: 'bold' }}
+              title={`Undo (${undoStack.length} item${undoStack.length > 1 ? 's' : ''})`}
+            >
+              Undo ({undoStack.length})
+            </button>
+          )}
           <button
             className="btn btn-sm btn-secondary"
             onClick={() => { if (window.confirm('Reset all quantities to auto-calculated values?')) resetList(); }}
@@ -162,6 +288,8 @@ export default function ShoppingListModal({ listData, onClose }) {
             onUpdate={(i, f, v) => updateItem('liquorBeerWine', i, f, v)}
             onRemove={(i) => removeItem('liquorBeerWine', i)}
             onAdd={() => addItem('liquorBeerWine')}
+            onDragEnd={handleDragEnd('liquorBeerWine')}
+            sensors={sensors}
           />
           <EditableSection
             title="Everything Else"
@@ -169,6 +297,8 @@ export default function ShoppingListModal({ listData, onClose }) {
             onUpdate={(i, f, v) => updateItem('everythingElse', i, f, v)}
             onRemove={(i) => removeItem('everythingElse', i)}
             onAdd={() => addItem('everythingElse')}
+            onDragEnd={handleDragEnd('everythingElse')}
+            sensors={sensors}
           />
         </div>
 
@@ -202,7 +332,17 @@ export default function ShoppingListModal({ listData, onClose }) {
           padding: '1rem 1.25rem',
           borderTop: '1px solid var(--border)',
           marginTop: '1rem',
+          flexWrap: 'wrap',
+          alignItems: 'center',
         }}>
+          {pdfError && (
+            <span style={{ color: '#d32f2f', fontSize: '0.82rem', marginRight: 'auto' }}>{pdfError}</span>
+          )}
+          {planToken && (
+            <button className="btn btn-sm btn-secondary" onClick={handleShareLink}>
+              {linkCopied ? 'Link Copied!' : 'Share Client Link'}
+            </button>
+          )}
           <button className="btn btn-secondary" onClick={onClose}>Close</button>
           <button className="btn" onClick={handleDownload} disabled={downloading}>
             {downloading ? 'Generating PDF...' : 'Download PDF'}
@@ -213,7 +353,7 @@ export default function ShoppingListModal({ listData, onClose }) {
   );
 }
 
-function EditableSection({ title, items, onUpdate, onRemove, onAdd }) {
+function EditableSection({ title, items, onUpdate, onRemove, onAdd, onDragEnd, sensors }) {
   return (
     <div>
       {/* Section header */}
@@ -234,57 +374,33 @@ function EditableSection({ title, items, onUpdate, onRemove, onAdd }) {
       {/* Column headers */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: '40px 60px 1fr 28px',
+        gridTemplateColumns: '20px 40px 60px 1fr 28px',
         gap: '0.25rem',
         backgroundColor: '#2a2a2a',
         padding: '0.3rem 0.4rem',
         borderBottom: '1.5px solid #C17D3C',
         marginBottom: '0.125rem',
       }}>
+        <span />
         {['Qty', 'Size', 'Item', ''].map(h => (
           <span key={h} style={{ color: '#E8DFC4', fontSize: '0.7rem', textAlign: h === 'Qty' ? 'center' : 'left' }}>{h}</span>
         ))}
       </div>
 
-      {/* Item rows */}
-      {items.map((row, i) => (
-        <div key={i} style={{
-          display: 'grid',
-          gridTemplateColumns: '40px 60px 1fr 28px',
-          gap: '0.25rem',
-          alignItems: 'center',
-          padding: '0.2rem 0.4rem',
-          backgroundColor: i % 2 === 0 ? '#F5F0E8' : '#EDE3CC',
-          borderBottom: '0.5px solid rgba(193,125,60,0.2)',
-        }}>
-          <input
-            type="number"
-            min="0"
-            value={row.qty}
-            onChange={e => onUpdate(i, 'qty', e.target.value)}
-            style={rowInput({ textAlign: 'center', color: '#6B4226', fontWeight: 'bold' })}
-          />
-          <input
-            value={row.size}
-            onChange={e => onUpdate(i, 'size', e.target.value)}
-            style={rowInput({ color: '#7A6245', fontSize: '0.78rem' })}
-          />
-          <input
-            value={row.item}
-            onChange={e => onUpdate(i, 'item', e.target.value)}
-            style={rowInput({ fontWeight: '600', color: '#2C1F0E' })}
-          />
-          <button
-            onClick={() => onRemove(i)}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              color: '#aaa', fontSize: '0.9rem', lineHeight: 1, padding: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-            title="Remove"
-          >×</button>
-        </div>
-      ))}
+      {/* Item rows with drag-and-drop */}
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <SortableContext items={items.map(i => i._id)} strategy={verticalListSortingStrategy}>
+          {items.map((row, i) => (
+            <SortableRow
+              key={row._id}
+              row={row}
+              index={i}
+              onUpdate={onUpdate}
+              onRemove={onRemove}
+            />
+          ))}
+        </SortableContext>
+      </DndContext>
 
       {/* Add item button */}
       <button
@@ -298,6 +414,75 @@ function EditableSection({ title, items, onUpdate, onRemove, onAdd }) {
       >
         + Add Item
       </button>
+    </div>
+  );
+}
+
+function SortableRow({ row, index, onUpdate, onRemove }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: row._id });
+
+  const style = {
+    display: 'grid',
+    gridTemplateColumns: '20px 40px 60px 1fr 28px',
+    gap: '0.25rem',
+    alignItems: 'center',
+    padding: '0.2rem 0.4rem',
+    backgroundColor: isDragging ? '#D49549' : index % 2 === 0 ? '#F5F0E8' : '#EDE3CC',
+    borderBottom: '0.5px solid rgba(193,125,60,0.2)',
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.8 : 1,
+    zIndex: isDragging ? 10 : undefined,
+    cursor: isDragging ? 'grabbing' : undefined,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      {/* Drag handle */}
+      <button
+        {...attributes}
+        {...listeners}
+        style={{
+          background: 'none', border: 'none', cursor: 'grab',
+          color: '#aaa', fontSize: '0.8rem', lineHeight: 1, padding: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          touchAction: 'none',
+        }}
+        title="Drag to reorder"
+      >⠿</button>
+      <input
+        type="number"
+        min="0"
+        value={row.qty}
+        onChange={e => onUpdate(index, 'qty', e.target.value)}
+        style={rowInput({ textAlign: 'center', color: '#6B4226', fontWeight: 'bold' })}
+      />
+      <input
+        value={row.size}
+        onChange={e => onUpdate(index, 'size', e.target.value)}
+        style={rowInput({ color: '#7A6245', fontSize: '0.78rem' })}
+      />
+      <input
+        value={row.item}
+        onChange={e => onUpdate(index, 'item', e.target.value)}
+        style={rowInput({ fontWeight: '600', color: '#2C1F0E' })}
+      />
+      <button
+        onClick={() => onRemove(index)}
+        style={{
+          background: 'none', border: 'none', cursor: 'pointer',
+          color: '#aaa', fontSize: '0.9rem', lineHeight: 1, padding: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}
+        title="Remove"
+      >×</button>
     </div>
   );
 }

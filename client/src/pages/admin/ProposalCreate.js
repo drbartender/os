@@ -343,6 +343,7 @@ export default function ProposalCreate() {
                       <label key={addon.id} style={{
                         display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.5rem 0.75rem',
                         borderRadius: '6px', cursor: 'pointer',
+                        border: form.addon_ids.includes(addon.id) ? '1px solid var(--deep-brown)' : '1px solid transparent',
                         background: form.addon_ids.includes(addon.id) ? 'var(--cream-light, #faf5ef)' : 'transparent'
                       }}>
                         <input type="checkbox" checked={form.addon_ids.includes(addon.id)} onChange={() => toggleAddon(addon.id)}

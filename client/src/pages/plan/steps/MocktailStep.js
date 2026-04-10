@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import MakeItYoursPanel from './MakeItYoursPanel';
 
 export default function MocktailStep({
   selected = [],
@@ -7,10 +8,23 @@ export default function MocktailStep({
   categories = [],
   notes = '',
   onNotesChange,
+  addOns = {},
+  toggleAddOn,
+  addonPricing = [],
+  syrupSelections = [],
+  onSyrupToggle,
+  proposalSyrups = [],
+  phase = 'refinement',
   onNext,
   onBack,
 }) {
   const [activeTab, setActiveTab] = useState(categories[0]?.id || 'fruity-refreshing');
+  const [lastBrowseTab, setLastBrowseTab] = useState(categories[0]?.id || 'fruity-refreshing');
+
+  const handleTabChange = (tabKey) => {
+    if (tabKey !== 'your-menu') setLastBrowseTab(tabKey);
+    setActiveTab(tabKey);
+  };
 
   const toggleDrink = (drinkId) => {
     if (selected.includes(drinkId)) {
@@ -55,7 +69,7 @@ export default function MocktailStep({
             <button
               key={tab.key}
               className={`category-pill${activeTab === tab.key ? ' active' : ''}`}
-              onClick={() => setActiveTab(tab.key)}
+              onClick={() => handleTabChange(tab.key)}
             >
               {tab.label}
               {count > 0 && (
@@ -76,7 +90,7 @@ export default function MocktailStep({
               <button
                 key={tab.key}
                 className={`category-sidebar-btn${activeTab === tab.key ? ' active' : ''}`}
-                onClick={() => setActiveTab(tab.key)}
+                onClick={() => handleTabChange(tab.key)}
               >
                 <span>{tab.label}</span>
                 {count > 0 && (
@@ -138,11 +152,9 @@ export default function MocktailStep({
                 </div>
               </div>
 
-              {/* Navigation — only on Your Menu */}
+              {/* Navigation — on Your Menu */}
               <div className="step-nav mt-2">
-                {onBack ? (
-                  <button className="btn btn-secondary" onClick={onBack}>Back</button>
-                ) : <div />}
+                <button className="btn btn-secondary" onClick={() => handleTabChange(lastBrowseTab)}>Back</button>
                 <button className="btn btn-primary" onClick={onNext}>
                   Continue
                 </button>
@@ -152,25 +164,59 @@ export default function MocktailStep({
             <div className="drink-card-list">
               {filteredDrinks.map(drink => {
                 const isSelected = selected.includes(drink.id);
+
                 return (
-                  <button
-                    key={drink.id}
-                    className={`drink-card-horizontal${isSelected ? ' selected' : ''}`}
-                    onClick={() => toggleDrink(drink.id)}
-                  >
-                    <span className="drink-card-emoji">{drink.emoji}</span>
-                    <div className="drink-card-info">
-                      <span className="drink-card-name">{drink.name}</span>
-                      <span className="drink-card-desc">{drink.description}</span>
-                    </div>
-                    <span className="drink-check-stylized">&#10003;</span>
-                  </button>
+                  <div key={drink.id}>
+                    <button
+                      className={`drink-card-horizontal${isSelected ? ' selected' : ''}`}
+                      onClick={() => toggleDrink(drink.id)}
+                      aria-pressed={isSelected}
+                    >
+                      <span className="drink-card-emoji">{drink.emoji}</span>
+                      <div className="drink-card-info">
+                        <span className="drink-card-name">{drink.name}</span>
+                        <span className="drink-card-desc">{drink.description}</span>
+                      </div>
+                      <span className="drink-check-stylized">&#10003;</span>
+                    </button>
+                    {isSelected && (
+                      <MakeItYoursPanel
+                        drinkId={drink.id}
+                        drinkName={drink.name}
+                        phase={phase}
+                        addOns={addOns}
+                        toggleAddOn={toggleAddOn}
+                        addonPricing={addonPricing}
+                        syrupSelections={syrupSelections}
+                        onSyrupToggle={onSyrupToggle}
+                      />
+                    )}
+                  </div>
                 );
               })}
             </div>
           )}
         </div>
       </div>
+
+      {/* Persistent sticky footer — visible when browsing drinks */}
+      {!isYourMenu && (
+        <div className="drink-picker-sticky-footer">
+          <div className="sticky-footer-info">
+            <span className="sticky-footer-count">
+              {selected.length} mocktail{selected.length !== 1 ? 's' : ''} selected
+            </span>
+          </div>
+          <div className="sticky-footer-actions">
+            {onBack && (
+              <button className="btn btn-secondary btn-sm" onClick={onBack}>Back</button>
+            )}
+            <button className="btn btn-primary btn-sm" onClick={() => handleTabChange('your-menu')}>
+              Review Your Menu
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

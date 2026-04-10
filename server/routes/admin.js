@@ -222,7 +222,11 @@ router.put('/users/:id/profile', auth, adminOnly, async (req, res) => {
       pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [userId]),
     ]);
 
-    res.json({ profile: profileRes.rows[0] || {}, payment: paymentRes.rows[0] || {} });
+    const payment = paymentRes.rows[0] || {};
+    if (payment.routing_number) payment.routing_number = '****' + payment.routing_number.slice(-4);
+    if (payment.account_number) payment.account_number = '****' + payment.account_number.slice(-4);
+
+    res.json({ profile: profileRes.rows[0] || {}, payment });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -950,6 +954,29 @@ router.delete('/blog/:id', auth, adminOnly, async (req, res) => {
     res.json({ message: 'Post deleted' });
   } catch (err) {
     console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ─── Badge Counts ───────────────────────────────────────────────
+
+/** GET /api/admin/badge-counts — sidebar notification counts */
+router.get('/badge-counts', auth, adminOnly, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT
+        (SELECT COUNT(*) FROM proposals WHERE status IN ('sent', 'viewed', 'modified'))::int AS pending_proposals,
+        (SELECT COUNT(*) FROM shifts
+         WHERE event_date >= CURRENT_DATE AND status = 'open'
+           AND positions_needed IS NOT NULL AND positions_needed != '[]'
+           AND (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = shifts.id AND sr.status = 'approved')
+               < json_array_length(positions_needed::json)
+        )::int AS unstaffed_events,
+        (SELECT COUNT(*) FROM applications WHERE onboarding_status = 'applied')::int AS new_applications
+    `);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Badge counts error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

@@ -380,7 +380,7 @@ export default function AdminDashboard() {
                 {shifts.map(shift => {
                   const isExpanded = expandedShift === shift.id;
                   let positions = [];
-                  try { positions = JSON.parse(shift.positions_needed || '[]'); } catch (e) {}
+                  try { positions = JSON.parse(shift.positions_needed || '[]').map(p => typeof p === 'string' ? p : p.position || 'Bartender'); } catch (e) {}
                   const requests = shiftRequests[shift.id] || [];
 
                   return (

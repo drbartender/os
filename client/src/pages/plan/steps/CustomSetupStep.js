@@ -52,30 +52,20 @@ export default function CustomSetupStep({ onConfirm }) {
       </div>
 
       <div className="card">
-        {TOGGLES.map(toggle => (
+        {TOGGLES.map((toggle, i) => (
           <label
             key={toggle.key}
-            className="checkbox-label"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.75rem',
-              padding: '0.75rem 0',
-              borderBottom: '1px solid var(--border-color, #eee)',
-              cursor: 'pointer',
-            }}
+            className={`custom-setup-toggle${toggles[toggle.key] ? ' active' : ''}`}
+            style={i < TOGGLES.length - 1 ? { borderBottom: '1px solid var(--border)' } : undefined}
           >
             <input
               type="checkbox"
               checked={toggles[toggle.key]}
               onChange={() => handleToggle(toggle.key)}
-              style={{ width: '1.25rem', height: '1.25rem', flexShrink: 0 }}
             />
-            <div>
+            <div className="custom-setup-toggle-text">
               <strong>{toggle.label}</strong>
-              <span className="text-muted text-small" style={{ display: 'block' }}>
-                {toggle.description}
-              </span>
+              <span>{toggle.description}</span>
             </div>
           </label>
         ))}

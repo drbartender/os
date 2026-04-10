@@ -274,7 +274,8 @@ CREATE TABLE IF NOT EXISTS drink_plans (
   event_name VARCHAR(255),
   event_date DATE,
   status VARCHAR(20) DEFAULT 'pending'
-    CHECK (status IN ('pending','draft','submitted','reviewed')),
+    CHECK (status IN ('pending','draft','exploration_saved','submitted','reviewed')),
+  exploration_submitted_at TIMESTAMPTZ,
   serving_type VARCHAR(100),
   selections JSONB DEFAULT '{}',
   admin_notes TEXT,
@@ -286,6 +287,12 @@ CREATE TABLE IF NOT EXISTS drink_plans (
 );
 
 -- proposal_id FK added after CREATE TABLE proposals (see below)
+
+-- Migrations for existing tables
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS exploration_submitted_at TIMESTAMPTZ;
+ALTER TABLE drink_plans DROP CONSTRAINT IF EXISTS drink_plans_status_check;
+ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_status_check
+  CHECK (status IN ('pending', 'draft', 'exploration_saved', 'submitted', 'reviewed'));
 
 DROP TRIGGER IF EXISTS update_drink_plans_updated_at ON drink_plans;
 CREATE TRIGGER update_drink_plans_updated_at BEFORE UPDATE ON drink_plans
@@ -1131,3 +1138,13 @@ CREATE INDEX IF NOT EXISTS idx_email_campaigns_status ON email_campaigns(status)
 CREATE INDEX IF NOT EXISTS idx_sms_messages_sender_id ON sms_messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_sms_messages_shift_id ON sms_messages(shift_id);
 CREATE INDEX IF NOT EXISTS idx_contractor_profiles_hire_date ON contractor_profiles(hire_date);
+
+-- ─── Shopping List persistence ─────────────────────────────────────
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS shopping_list JSONB;
+
+-- ─── Manual Event Creation (shifts without proposals) ────────────
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS client_name VARCHAR(255);
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS client_email VARCHAR(255);
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS client_phone VARCHAR(50);
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS guest_count INTEGER;
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS event_duration_hours NUMERIC(4,1);

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import api from '../../utils/api';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import LocationInput from '../../components/LocationInput';
 import DrinkPlanSelections from '../../components/DrinkPlanSelections';
+import ShoppingListButton from '../../components/ShoppingList/ShoppingListButton';
 import { formatPhone } from '../../utils/formatPhone';
 import { getPackageItems } from '../../data/packages';
 import SyrupPicker from '../../components/SyrupPicker';
@@ -103,6 +104,7 @@ export default function ProposalDetail() {
   const [saving, setSaving] = useState(false);
   const [staffError, setStaffError] = useState('');
   const [editError, setEditError] = useState('');
+  const [showActivityPopup, setShowActivityPopup] = useState(false);
 
   const loadProposal = () => {
     return api.get(`/proposals/${id}`).then(res => {
@@ -114,9 +116,9 @@ export default function ProposalDetail() {
 
   useEffect(() => { loadProposal(); }, [id]); // eslint-disable-line
 
-  // Fetch drink plan + cocktail/mocktail data when viewing as event
-  useEffect(() => {
-    if (!isEventContext || !id) return;
+  // Fetch drink plan + cocktail/mocktail data (both proposal and event context)
+  const loadDrinkPlan = () => {
+    if (!id) return;
     setDrinkPlanLoading(true);
     Promise.all([
       api.get(`/drink-plans/by-proposal/${id}`),
@@ -131,7 +133,8 @@ export default function ProposalDetail() {
       })
       .catch(() => setDrinkPlan(null))
       .finally(() => setDrinkPlanLoading(false));
-  }, [id, isEventContext]);
+  };
+  useEffect(() => { loadDrinkPlan(); }, [id]); // eslint-disable-line
 
   // Fetch shift data when viewing as event
   const loadShift = (proposalId) => {
@@ -497,7 +500,7 @@ export default function ProposalDetail() {
 
   // Staffing derived values
   let shiftPositions = [];
-  if (shift) { try { shiftPositions = JSON.parse(shift.positions_needed || '[]'); } catch (e) {} }
+  if (shift) { try { shiftPositions = JSON.parse(shift.positions_needed || '[]').map(p => typeof p === 'string' ? p : p.position || 'Bartender'); } catch (e) {} }
   const approvedRequests = shiftRequests.filter(r => r.status === 'approved');
   const shiftApprovedCount = approvedRequests.length;
   const pendingRequests = shiftRequests.filter(r => r.status === 'pending');
@@ -586,13 +589,11 @@ export default function ProposalDetail() {
         <>
           {/* Header Band */}
           <div className="event-header">
-            <div className="event-breadcrumb">
-              <a href="/admin/events" onClick={e => { e.preventDefault(); navigate('/admin/events'); }}>Events</a>
-              <span> / {proposal.event_name || `Event #${proposal.id}`}</span>
-            </div>
             <div className="event-header-top">
               <h1 className="event-title">
-                {proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : `Event #${proposal.id}`)}
+                {proposal.client_name && proposal.event_name
+                  ? `${proposal.client_name} - ${proposal.event_name}`
+                  : proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : `Event #${proposal.id}`)}
               </h1>
               <div className="event-header-actions">
                 <button className="event-detail-btn" onClick={() => setEditing(true)}>Edit</button>
@@ -613,6 +614,30 @@ export default function ProposalDetail() {
                 <div className="event-meta-item">{getStaffingDisplay() || '--'}</div>
               </div>
             )}
+            {proposal.activity && proposal.activity.length > 0 && (() => {
+              const lastViewed = [...proposal.activity].reverse().find(
+                e => e.actor_type === 'client' || (e.action && e.action.toLowerCase().includes('viewed'))
+              );
+              return lastViewed ? (
+                <div style={{ marginTop: '0.35rem' }}>
+                  <span
+                    className="activity-last-viewed-link"
+                    onClick={() => setShowActivityPopup(true)}
+                  >
+                    Last viewed by client: {formatDateTime(lastViewed.created_at)}
+                  </span>
+                </div>
+              ) : (
+                <div style={{ marginTop: '0.35rem' }}>
+                  <span
+                    className="activity-last-viewed-link"
+                    onClick={() => setShowActivityPopup(true)}
+                  >
+                    Activity Log ({proposal.activity.length})
+                  </span>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Operational Tags — hidden when completed */}
@@ -648,27 +673,23 @@ export default function ProposalDetail() {
             {/* Left Column */}
             <div>
               {/* Client Card */}
-              <div className="card mb-2">
+              <div className="card card-clickable mb-2"
+                style={{ cursor: proposal.client_id ? 'pointer' : 'default' }}
+                onClick={() => proposal.client_id && navigate(`/admin/clients/${proposal.client_id}`)}>
                 <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
                   {proposal.client_name || 'Client'}
                 </h3>
                 {proposal.client_email && (
                   <div className="client-contact-item">
                     <span className="client-contact-icon">&#9993;</span>
-                    <a href={`mailto:${proposal.client_email}`} style={{ color: 'inherit', textDecoration: 'none' }}>{proposal.client_email}</a>
+                    <a href={`mailto:${proposal.client_email}`} onClick={e => e.stopPropagation()} style={{ color: 'inherit', textDecoration: 'none' }}>{proposal.client_email}</a>
                   </div>
                 )}
                 {proposal.client_phone && (
                   <div className="client-contact-item">
                     <span className="client-contact-icon">&#9742;</span>
-                    <a href={`tel:${proposal.client_phone}`} style={{ color: 'inherit', textDecoration: 'none' }}>{formatPhone(proposal.client_phone)}</a>
+                    <a href={`tel:${proposal.client_phone}`} onClick={e => e.stopPropagation()} style={{ color: 'inherit', textDecoration: 'none' }}>{formatPhone(proposal.client_phone)}</a>
                   </div>
-                )}
-                {proposal.client_id && (
-                  <button className="section-toggle" style={{ marginTop: '0.5rem' }}
-                    onClick={() => navigate(`/admin/clients/${proposal.client_id}`)}>
-                    View Client Profile
-                  </button>
                 )}
               </div>
 
@@ -704,7 +725,11 @@ export default function ProposalDetail() {
                     {/* Assigned staff */}
                     {approvedRequests.map(req => (
                       <div className="assigned-staff-item" key={req.id}>
-                        <span>{req.preferred_name || req.email}</span>
+                        <Link to={`/admin/users/${req.user_id}`} style={{ color: 'var(--deep-brown)', textDecoration: 'none', fontWeight: 600 }}
+                          onMouseOver={e => e.currentTarget.style.color = 'var(--amber)'}
+                          onMouseOut={e => e.currentTarget.style.color = 'var(--deep-brown)'}>
+                          {req.preferred_name || req.email}
+                        </Link>
                         <span className="badge badge-approved">{req.position || 'Bartender'}</span>
                       </div>
                     ))}
@@ -920,7 +945,7 @@ export default function ProposalDetail() {
                 </div>
 
                 {/* Collapsible payment actions */}
-                {balanceDue > 0 && (
+                {totalPrice > 0 && (
                   <div style={{ marginTop: '0.75rem' }}>
                     <button className="section-toggle" onClick={() => setShowPaymentActions(!showPaymentActions)}>
                       {showPaymentActions ? 'Hide Payment Actions' : 'Payment Actions'}
@@ -1073,16 +1098,25 @@ export default function ProposalDetail() {
                 <div style={{ padding: '1rem', textAlign: 'center' }}><div className="spinner" /></div>
               ) : drinkPlan ? (
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  {/* Summary — always visible */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
                     <span className={`badge ${drinkPlan.status === 'submitted' ? 'badge-submitted' : drinkPlan.status === 'reviewed' ? 'badge-approved' : 'badge-inprogress'}`}>
                       {drinkPlan.status === 'pending' ? 'Pending' : drinkPlan.status === 'draft' ? 'Draft' : drinkPlan.status === 'submitted' ? 'Submitted' : 'Reviewed'}
                     </span>
                     {drinkPlan.submitted_at && (
                       <span className="text-muted text-small">Submitted {formatDateTime(drinkPlan.submitted_at)}</span>
                     )}
+                    {drinkPlan.serving_type && (
+                      <span className="text-muted text-small" style={{ marginLeft: '0.25rem' }}>
+                        · {drinkPlan.serving_type.replace(/_/g, ' ')}
+                      </span>
+                    )}
                   </div>
-                  <div className="flex gap-05 mb-2" style={{ flexWrap: 'wrap' }}>
-                    <button className="btn btn-sm" onClick={() => navigate(`/admin/drink-plans/${drinkPlan.id}`)}>View Full Details</button>
+                  <div className="flex gap-05" style={{ flexWrap: 'wrap' }}>
+                    {(drinkPlan.status === 'submitted' || drinkPlan.status === 'reviewed') && (
+                      <ShoppingListButton planId={drinkPlan.id} planToken={drinkPlan.token} />
+                    )}
+                    <button className="btn btn-sm" onClick={() => navigate(`/admin/drink-plans/${drinkPlan.id}`)}>View Details</button>
                     <button className="btn btn-sm btn-secondary" onClick={() => {
                       const url = `${window.location.origin}/plan/${drinkPlan.token}`;
                       navigator.clipboard.writeText(url).then(() => { setDrinkPlanCopied(true); setTimeout(() => setDrinkPlanCopied(false), 2000); });
@@ -1094,28 +1128,18 @@ export default function ProposalDetail() {
                       }}>Mark as Reviewed</button>
                     )}
                   </div>
-                  {drinkPlan.status !== 'pending' && (
-                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
-                      <DrinkPlanSelections plan={drinkPlan} cocktails={planCocktails} mocktails={planMocktails} />
-                    </div>
-                  )}
-                  {/* Drink plan admin notes */}
-                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginTop: '0.75rem' }}>
-                    <strong style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.85rem' }}>Plan Notes</strong>
-                    <textarea className="form-textarea" rows={3} placeholder="Internal notes about this plan..."
-                      value={drinkPlanNotes} onChange={e => setDrinkPlanNotes(e.target.value)} />
-                    <button className="btn btn-sm mt-1" onClick={async () => {
-                      setSavingDrinkPlanNotes(true);
-                      try { await api.patch(`/drink-plans/${drinkPlan.id}/notes`, { admin_notes: drinkPlanNotes }); }
-                      catch (err) { console.error('Failed to save notes:', err); }
-                      finally { setSavingDrinkPlanNotes(false); }
-                    }} disabled={savingDrinkPlanNotes}>
-                      {savingDrinkPlanNotes ? 'Saving...' : 'Save Notes'}
-                    </button>
-                  </div>
                 </div>
               ) : (
-                <p className="text-muted text-small" style={{ margin: 0 }}>No drink plan created yet.</p>
+                <div>
+                  <p className="text-muted text-small" style={{ margin: '0 0 0.5rem' }}>No drink plan created yet.</p>
+                  <button className="btn btn-sm btn-primary" onClick={async () => {
+                    try {
+                      const res = await api.post(`/drink-plans/for-proposal/${id}`);
+                      setDrinkPlan(res.data);
+                      setDrinkPlanNotes(res.data.admin_notes || '');
+                    } catch (err) { console.error('Failed to generate drink plan:', err); }
+                  }}>Generate Drink Plan Link</button>
+                </div>
               )}
             </div>
 
@@ -1130,19 +1154,37 @@ export default function ProposalDetail() {
             </div>
           </div>
 
-          {/* Activity Log */}
-          {proposal.activity && proposal.activity.length > 0 && (
-            <div className="card" style={{ marginTop: '1.5rem' }}>
-              <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Activity</h3>
-              <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                {proposal.activity.map((entry, i) => (
-                  <div key={i} style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--cream-dark, #e8e0d4)' }}>
-                    <span className="text-small" style={{ fontWeight: 500 }}>{entry.action}</span>
-                    <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>
-                      {entry.actor_type} &middot; {formatDateTime(entry.created_at)}
-                    </span>
+          {/* Activity Log Popup */}
+          {showActivityPopup && proposal.activity && proposal.activity.length > 0 && (
+            <div className="activity-popup-overlay" onClick={() => setShowActivityPopup(false)}>
+              <div className="activity-popup" onClick={e => e.stopPropagation()}>
+                <div className="flex-between" style={{ alignItems: 'center', marginBottom: '1rem' }}>
+                  <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>Activity Log</h3>
+                  <button className="btn btn-secondary btn-sm" onClick={() => setShowActivityPopup(false)}>Close</button>
+                </div>
+                {proposal.activity.map((entry, i) => {
+                  const details = entry.details || {};
+                  return (
+                  <div key={i} className="activity-popup-entry">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                      <span style={{ fontWeight: 500, color: 'var(--deep-brown)', fontSize: '0.9rem' }}>{entry.action}</span>
+                      <span className="text-muted text-small" style={{ whiteSpace: 'nowrap' }}>{formatDateTime(entry.created_at)}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+                      <span className="badge badge-sm" style={{ fontSize: '0.75rem', textTransform: 'capitalize' }}>{entry.actor_type}</span>
+                      <span className="text-muted text-small">
+                        {entry.actor_type === 'client' ? 'Proposal page' : entry.actor_type === 'admin' ? 'Admin panel' : 'System'}
+                      </span>
+                    </div>
+                    {(details.ip || details.location) && (
+                      <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.3rem', fontSize: '0.78rem', color: 'var(--warm-brown, #6b4226)', opacity: 0.85 }}>
+                        {details.location && <span>{details.location}</span>}
+                        {details.ip && <span style={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>{details.ip}</span>}
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1155,9 +1197,11 @@ export default function ProposalDetail() {
       <div className="flex-between mb-2">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
           <h1 style={{ fontFamily: 'var(--font-display)', margin: 0 }}>
-            {proposal.event_name
-              || (proposal.client_name ? `${proposal.client_name}'s Event` : null)
-              || (isEventContext ? `Event #${proposal.id}` : `Proposal #${proposal.id}`)}
+            {proposal.client_name && proposal.event_name
+              ? `${proposal.client_name} - ${proposal.event_name}`
+              : proposal.event_name
+                || (proposal.client_name ? `${proposal.client_name}'s Event` : null)
+                || (isEventContext ? `Event #${proposal.id}` : `Proposal #${proposal.id}`)}
           </h1>
           <span className={`badge ${STATUS_CLASSES[proposal.status] || ''}`} style={{ fontSize: '0.9rem' }}>
             {STATUS_LABELS[proposal.status] || proposal.status}
@@ -1306,17 +1350,37 @@ export default function ProposalDetail() {
               </div>
 
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: '1rem 0 0.75rem' }}>Package</h3>
-              <div style={{ display: 'grid', gap: '0.5rem', marginBottom: '1rem' }}>
+              <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '1rem' }}>
                 {packages.map(pkg => (
                   <label key={pkg.id} style={{
-                    display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.6rem 0.75rem',
-                    borderRadius: '6px', cursor: 'pointer',
+                    display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.75rem 1rem',
+                    borderRadius: '8px', cursor: 'pointer',
                     border: Number(editForm.package_id) === pkg.id ? '2px solid var(--deep-brown)' : '1px solid var(--cream-dark, #e8e0d4)',
                     background: Number(editForm.package_id) === pkg.id ? 'var(--cream-light, #faf5ef)' : 'transparent'
                   }}>
                     <input type="radio" name="edit-package" value={pkg.id} checked={Number(editForm.package_id) === pkg.id}
-                      onChange={e => { updateEdit('package_id', e.target.value); updateEdit('addon_ids', []); }} />
-                    <span style={{ fontWeight: 600, color: 'var(--deep-brown)', fontSize: '0.9rem' }}>{pkg.name}</span>
+                      onChange={e => { updateEdit('package_id', e.target.value); updateEdit('addon_ids', []); }}
+                      style={{ marginTop: '0.2rem' }}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>{pkg.name}</div>
+                      {pkg.description && <div className="text-muted text-small" style={{ marginTop: '0.2rem' }}>{pkg.description}</div>}
+                      <div className="text-small" style={{ marginTop: '0.3rem', color: 'var(--warm-brown, #6b4226)' }}>
+                        {pkg.pricing_type === 'per_guest' ? (
+                          <>
+                            ${Number(pkg.base_rate_4hr)}/guest (50+)
+                            {pkg.base_rate_4hr_small && <> · ${Number(pkg.base_rate_4hr_small)}/guest ({'<'}50)</>}
+                            {pkg.extra_hour_rate && <> · +${Number(pkg.extra_hour_rate)}/guest/hr extra</>}
+                          </>
+                        ) : (
+                          <>
+                            {pkg.base_rate_3hr && <>${Number(pkg.base_rate_3hr)}/3hr · </>}
+                            {pkg.base_rate_4hr && <>${Number(pkg.base_rate_4hr)}/4hr</>}
+                            {pkg.extra_hour_rate && <> · +${Number(pkg.extra_hour_rate)}/hr extra</>}
+                          </>
+                        )}
+                      </div>
+                    </div>
                   </label>
                 ))}
               </div>
@@ -1324,17 +1388,34 @@ export default function ProposalDetail() {
               {editFilteredAddons.length > 0 && (
                 <>
                   <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: '0 0 0.75rem' }}>Add-ons</h3>
-                  <div style={{ display: 'grid', gap: '0.4rem', marginBottom: '1rem' }}>
-                    {editFilteredAddons.map(addon => (
-                      <label key={addon.id} style={{
-                        display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.4rem 0.75rem',
-                        borderRadius: '6px', cursor: 'pointer',
-                        background: editForm.addon_ids.includes(addon.id) ? 'var(--cream-light, #faf5ef)' : 'transparent'
-                      }}>
-                        <input type="checkbox" checked={editForm.addon_ids.includes(addon.id)} onChange={() => toggleEditAddon(addon.id)} />
-                        <span style={{ color: 'var(--deep-brown)', fontSize: '0.9rem' }}>{addon.name}</span>
-                      </label>
-                    ))}
+                  <div style={{ display: 'grid', gap: '0.5rem', marginBottom: '1rem' }}>
+                    {editFilteredAddons.map(addon => {
+                      const isBanquetServer = /banquet/i.test(addon.name || '');
+                      return (
+                        <label key={addon.id} style={{
+                          display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.5rem 0.75rem',
+                          borderRadius: '6px', cursor: 'pointer',
+                          border: editForm.addon_ids.includes(addon.id) ? '1px solid var(--deep-brown)' : '1px solid transparent',
+                          background: editForm.addon_ids.includes(addon.id) ? 'var(--cream-light, #faf5ef)' : 'transparent'
+                        }}>
+                          <input type="checkbox" checked={editForm.addon_ids.includes(addon.id)} onChange={() => toggleEditAddon(addon.id)}
+                            style={{ marginTop: '0.2rem' }}
+                          />
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 500, color: 'var(--deep-brown)' }}>
+                              {addon.name}
+                              {isBanquetServer && <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>(4hr minimum)</span>}
+                            </div>
+                            <div className="text-muted text-small">
+                              {addon.billing_type === 'per_guest' && `$${Number(addon.rate)}/guest`}
+                              {addon.billing_type === 'per_guest_timed' && `$${Number(addon.rate)}/guest (4hr) + $${Number(addon.extra_hour_rate)}/guest/hr after`}
+                              {addon.billing_type === 'per_hour' && `$${Number(addon.rate)}/hr${isBanquetServer ? ' · 4hr min' : ''}`}
+                              {addon.billing_type === 'flat' && `$${Number(addon.rate)} flat`}
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
                   </div>
                 </>
               )}
@@ -1475,7 +1556,11 @@ export default function ProposalDetail() {
                         {shiftRequests.map(req => (
                           <tr key={req.id}>
                             <td>
-                              <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>{req.preferred_name || req.email}</div>
+                              <Link to={`/admin/users/${req.user_id}`} style={{ fontWeight: 600, fontSize: '0.88rem', color: 'var(--deep-brown)', textDecoration: 'none' }}
+                                onMouseOver={e => e.currentTarget.style.color = 'var(--amber)'}
+                                onMouseOut={e => e.currentTarget.style.color = 'var(--deep-brown)'}>
+                                {req.preferred_name || req.email}
+                              </Link>
                               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{req.phone ? formatPhone(req.phone) : req.email}</div>
                             </td>
                             <td style={{ fontSize: '0.82rem' }}>{req.position || '—'}</td>
@@ -1704,21 +1789,25 @@ export default function ProposalDetail() {
                 <div style={{ padding: '1rem', textAlign: 'center' }}><div className="spinner" /></div>
               ) : drinkPlan ? (
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                  {/* Summary — always visible */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
                     <span className={`badge ${drinkPlan.status === 'submitted' ? 'badge-submitted' : drinkPlan.status === 'reviewed' ? 'badge-approved' : 'badge-inprogress'}`}>
                       {drinkPlan.status === 'pending' ? 'Pending' : drinkPlan.status === 'draft' ? 'Draft' : drinkPlan.status === 'submitted' ? 'Submitted' : 'Reviewed'}
                     </span>
                     {drinkPlan.submitted_at && (
-                      <span className="text-muted text-small">
-                        Submitted {formatDateTime(drinkPlan.submitted_at)}
+                      <span className="text-muted text-small">Submitted {formatDateTime(drinkPlan.submitted_at)}</span>
+                    )}
+                    {drinkPlan.serving_type && (
+                      <span className="text-muted text-small" style={{ marginLeft: '0.25rem' }}>
+                        · {drinkPlan.serving_type.replace(/_/g, ' ')}
                       </span>
                     )}
                   </div>
-
-                  <div className="flex gap-05 mb-2" style={{ flexWrap: 'wrap' }}>
-                    <button className="btn btn-sm" onClick={() => navigate(`/admin/drink-plans/${drinkPlan.id}`)}>
-                      View Full Details
-                    </button>
+                  <div className="flex gap-05" style={{ flexWrap: 'wrap' }}>
+                    {(drinkPlan.status === 'submitted' || drinkPlan.status === 'reviewed') && (
+                      <ShoppingListButton planId={drinkPlan.id} planToken={drinkPlan.token} />
+                    )}
+                    <button className="btn btn-sm" onClick={() => navigate(`/admin/drink-plans/${drinkPlan.id}`)}>View Details</button>
                     <button className="btn btn-sm btn-secondary" onClick={() => {
                       const url = `${window.location.origin}/plan/${drinkPlan.token}`;
                       navigator.clipboard.writeText(url).then(() => {
@@ -1733,52 +1822,22 @@ export default function ProposalDetail() {
                         try {
                           const res = await api.patch(`/drink-plans/${drinkPlan.id}/status`, { status: 'reviewed' });
                           setDrinkPlan(prev => ({ ...prev, status: res.data.status }));
-                        } catch (err) {
-                          console.error('Failed to update status:', err);
-                        }
-                      }}>
-                        Mark as Reviewed
-                      </button>
+                        } catch (err) { console.error('Failed to update status:', err); }
+                      }}>Mark as Reviewed</button>
                     )}
-                  </div>
-
-                  {drinkPlan.status !== 'pending' && (
-                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginBottom: '0.75rem' }}>
-                      <DrinkPlanSelections plan={drinkPlan} cocktails={planCocktails} mocktails={planMocktails} />
-                    </div>
-                  )}
-
-                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
-                    <strong style={{ display: 'block', marginBottom: '0.5rem' }}>Admin Notes</strong>
-                    <textarea
-                      className="form-textarea"
-                      rows={3}
-                      placeholder="Internal notes about this plan..."
-                      value={drinkPlanNotes}
-                      onChange={(e) => setDrinkPlanNotes(e.target.value)}
-                    />
-                    <button
-                      className="btn btn-sm mt-1"
-                      onClick={async () => {
-                        setSavingDrinkPlanNotes(true);
-                        try {
-                          await api.patch(`/drink-plans/${drinkPlan.id}/notes`, { admin_notes: drinkPlanNotes });
-                        } catch (err) {
-                          console.error('Failed to save notes:', err);
-                        } finally {
-                          setSavingDrinkPlanNotes(false);
-                        }
-                      }}
-                      disabled={savingDrinkPlanNotes}
-                    >
-                      {savingDrinkPlanNotes ? 'Saving...' : 'Save Notes'}
-                    </button>
                   </div>
                 </div>
               ) : (
-                <p className="text-muted text-small" style={{ margin: 0 }}>
-                  No drink plan has been created for this event yet.
-                </p>
+                <div>
+                  <p className="text-muted text-small" style={{ margin: '0 0 0.5rem' }}>No drink plan has been created for this event yet.</p>
+                  <button className="btn btn-sm btn-primary" onClick={async () => {
+                    try {
+                      const res = await api.post(`/drink-plans/for-proposal/${id}`);
+                      setDrinkPlan(res.data);
+                      setDrinkPlanNotes(res.data.admin_notes || '');
+                    } catch (err) { console.error('Failed to generate drink plan:', err); }
+                  }}>Generate Drink Plan Link</button>
+                </div>
               )}
             </div>
           )}
@@ -1788,14 +1847,23 @@ export default function ProposalDetail() {
             <div className="card">
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Activity</h3>
               <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                {proposal.activity.map((entry, i) => (
+                {proposal.activity.map((entry, i) => {
+                  const details = entry.details || {};
+                  return (
                     <div key={i} style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--cream-dark, #e8e0d4)' }}>
                       <span className="text-small" style={{ fontWeight: 500 }}>{entry.action}</span>
                       <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>
                         {entry.actor_type} · {formatDateTime(entry.created_at)}
                       </span>
+                      {(details.ip || details.location) && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--warm-brown, #6b4226)', opacity: 0.85, marginTop: '0.15rem' }}>
+                          {details.location && <span>{details.location}</span>}
+                          {details.ip && <span style={{ marginLeft: details.location ? '0.5rem' : 0, fontFamily: 'monospace' }}>{details.ip}</span>}
+                        </div>
+                      )}
                     </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

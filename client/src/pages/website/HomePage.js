@@ -149,8 +149,7 @@ export default function HomePage() {
       {/* ───── How It Works ───── */}
       <section id="process" className="ws-section ws-protocol-section">
         <FadeUp>
-          <span className="ws-kicker">How It Works</span>
-          <h2>The Protocol</h2>
+          <h2>How It Works</h2>
         </FadeUp>
         <div className="ws-protocol-steps">
           {steps.map((step, i) => (

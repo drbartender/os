@@ -86,6 +86,42 @@ export default function ClientLogin() {
   return (
     <PublicLayout>
       <section className="client-login-section">
+        <div className="client-login-benefits">
+          <h2>Your Event Portal</h2>
+          <p className="client-login-benefits-intro">
+            Log in to access everything you need for your upcoming event with Dr. Bartender.
+          </p>
+          <ul className="client-login-features">
+            <li>
+              <span className="client-feature-icon">&#128203;</span>
+              <div>
+                <strong>Event Proposals</strong>
+                <span>View, review, and approve your custom event proposals</span>
+              </div>
+            </li>
+            <li>
+              <span className="client-feature-icon">&#127864;</span>
+              <div>
+                <strong>Drink Selections</strong>
+                <span>Access your Potion Planning Lab picks and menu details</span>
+              </div>
+            </li>
+            <li>
+              <span className="client-feature-icon">&#128176;</span>
+              <div>
+                <strong>Payment &amp; Billing</strong>
+                <span>Check payment status, balances, and transaction history</span>
+              </div>
+            </li>
+            <li>
+              <span className="client-feature-icon">&#128172;</span>
+              <div>
+                <strong>Your Team</strong>
+                <span>Stay connected with your bartending team leading up to the event</span>
+              </div>
+            </li>
+          </ul>
+        </div>
         <div className="card client-login-card">
           <h2>Client Login</h2>
           <p className="client-login-subtitle">

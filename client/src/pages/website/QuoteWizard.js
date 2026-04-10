@@ -262,6 +262,8 @@ export default function QuoteWizard() {
 
     // Hide the 3-pack variant (single is the entry point, picker handles quantity)
     if (a.slug === 'handcrafted-syrups-3pack') return false;
+    // Parking fee is handled in the Potion Planning Lab, not here
+    if (a.slug === 'parking-fee') return false;
     return true;
   });
 
@@ -281,7 +283,7 @@ export default function QuoteWizard() {
     'mocktail-bar': 'We bring all the specialty ingredients',
     'pre-batched-mocktail': 'Simple, ready-to-pour NA option',
     'house-made-ginger-beer': 'Fresh-pressed, carbonated live at the bar',
-    'carbonated-cocktails': 'Up to 2 signature drinks with fresh carbonation',
+    'carbonated-cocktails': 'Up to 2 signature cocktails fully infused with CO2 for a sparkling, effervescent finish',
     // Staffing
     'barback': 'Keeps your bartender at the bar, not restocking',
     'banquet-server': 'Circulate drinks, bus glasses & more',
@@ -475,7 +477,7 @@ export default function QuoteWizard() {
       <section className="wz-section" id="quote">
         <div className="wz-success">
           <div className="wz-success-icon">&#10003;</div>
-          <h2>Your quote is ready!</h2>
+          <h2>Your proposal is ready!</h2>
           <p>
             Estimated total: <strong>{formatCurrency(success.total)}</strong>
           </p>
@@ -740,7 +742,7 @@ export default function QuoteWizard() {
           {currentStepKey === 'addons' && (
             <div className="wz-card">
               <h3>Customize your experience</h3>
-              <p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: '1.25rem' }}>
+              <p style={{ fontSize: '0.95rem', marginBottom: '1.25rem', color: 'var(--deep-brown)', opacity: 0.7 }}>
                 Add extras to make your event unforgettable. All selections are optional.
               </p>
               {groupedAddons.length > 0 ? (
@@ -861,7 +863,7 @@ export default function QuoteWizard() {
           {/* Step: Review */}
           {currentStepKey === 'review' && (
             <div className="wz-card">
-              <h3>Review your quote</h3>
+              <h3>Review your proposal</h3>
               <div className="wz-review-summary">
                 <div className="wz-review-section">
                   <div className="wz-review-heading">
@@ -980,7 +982,7 @@ export default function QuoteWizard() {
         ) : (
           <button className="btn btn-primary" type="button" disabled={submitting}
             onClick={handleSubmit}>
-            {submitting ? 'Submitting...' : 'Submit & See My Quote'}
+            {submitting ? 'Submitting...' : 'Submit & See My Proposal'}
           </button>
         )}
       </div>

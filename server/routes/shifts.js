@@ -38,12 +38,13 @@ router.get('/', auth, requireOnboarded, async (req, res) => {
         SELECT s.*,
           u.email AS created_by_email,
           p.total_price AS proposal_total,
-          p.guest_count AS proposal_guest_count,
+          p.amount_paid AS proposal_amount_paid,
+          COALESCE(p.guest_count, s.guest_count) AS proposal_guest_count,
           p.token AS proposal_token,
           p.status AS proposal_status,
-          c.name AS client_name,
-          c.phone AS client_phone,
-          c.email AS client_email,
+          COALESCE(c.name, s.client_name) AS client_name,
+          COALESCE(c.phone, s.client_phone) AS client_phone,
+          COALESCE(c.email, s.client_email) AS client_email,
           (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
           (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count
         FROM shifts s
@@ -67,6 +68,51 @@ router.get('/', auth, requireOnboarded, async (req, res) => {
       ORDER BY s.event_date ASC
     `, [req.user.id]);
     res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/** GET /shifts/user/:userId/events — event history for a user (staff or admin) */
+router.get('/user/:userId/events', auth, async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+  if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID.' });
+
+  // Staff can only view their own events; admin/manager can view anyone's
+  const isManager = req.user.role === 'admin' || req.user.role === 'manager';
+  if (!isManager && req.user.id !== userId) {
+    return res.status(403).json({ error: 'Access denied.' });
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT s.id, s.event_date, s.start_time, s.end_time, s.location, s.event_name,
+             sr.position, sr.status AS request_status,
+             p.event_name AS proposal_event_name,
+             COALESCE(c.name, s.client_name) AS client_name,
+             COALESCE(p.guest_count, s.guest_count) AS guest_count
+      FROM shift_requests sr
+      JOIN shifts s ON s.id = sr.shift_id
+      LEFT JOIN proposals p ON p.id = s.proposal_id
+      LEFT JOIN clients c ON c.id = p.client_id
+      WHERE sr.user_id = $1 AND sr.status = 'approved'
+      ORDER BY s.event_date DESC
+    `, [userId]);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const getDateStr = (d) => {
+      if (!d) return null;
+      if (typeof d === 'string') return d.slice(0, 10);
+      return d.toISOString().slice(0, 10);
+    };
+    const upcoming = result.rows
+      .filter(r => { const ds = getDateStr(r.event_date); return ds && ds >= today; })
+      .sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
+    const past = result.rows
+      .filter(r => { const ds = getDateStr(r.event_date); return !ds || ds < today; });
+
+    res.json({ upcoming, past });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -148,6 +194,45 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, async (req, res) =
   }
 });
 
+/** GET /shifts/detail/:id — single shift details (admin/manager only) */
+router.get('/detail/:id', auth, requireStaffing, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT s.*,
+        COALESCE(c.name, s.client_name) AS client_name,
+        COALESCE(c.phone, s.client_phone) AS client_phone,
+        COALESCE(c.email, s.client_email) AS client_email,
+        p.total_price AS proposal_total,
+        p.token AS proposal_token,
+        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
+        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count
+      FROM shifts s
+      LEFT JOIN proposals p ON p.id = s.proposal_id
+      LEFT JOIN clients c ON c.id = p.client_id
+      WHERE s.id = $1
+    `, [req.params.id]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'Shift not found.' });
+
+    // Also fetch shift requests
+    const reqResult = await pool.query(`
+      SELECT sr.*,
+        COALESCE(cp.preferred_name, u.email) AS staff_name,
+        u.email AS staff_email,
+        cp.city AS staff_city
+      FROM shift_requests sr
+      JOIN users u ON u.id = sr.user_id
+      LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
+      WHERE sr.shift_id = $1
+      ORDER BY sr.status ASC, sr.created_at ASC
+    `, [req.params.id]);
+
+    res.json({ shift: result.rows[0], requests: reqResult.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 /** POST /shifts/:id/request — staff requests to work a shift */
 router.post('/:id/request', auth, requireOnboarded, async (req, res) => {
   const { position, notes } = req.body;
@@ -215,15 +300,54 @@ router.delete('/requests/:requestId', auth, async (req, res) => {
 /** POST /shifts — create a new shift */
 router.post('/', auth, requireStaffing, async (req, res) => {
   const { event_name, event_date, start_time, end_time, location, positions_needed, notes,
-          equipment_required, auto_assign_days_before, lat, lng } = req.body;
+          equipment_required, auto_assign_days_before, lat, lng,
+          client_name, client_email, client_phone, guest_count, event_duration_hours } = req.body;
   if (!event_name || !event_date) {
     return res.status(400).json({ error: 'Event name and date are required.' });
   }
+
+  const pgClient = await pool.connect();
   try {
-    const result = await pool.query(`
+    await pgClient.query('BEGIN');
+
+    // 1. Create or find client record
+    let clientId = null;
+    if (client_name) {
+      const existing = client_email
+        ? await pgClient.query('SELECT id FROM clients WHERE email = $1 LIMIT 1', [client_email])
+        : { rows: [] };
+      if (existing.rows[0]) {
+        clientId = existing.rows[0].id;
+      } else {
+        const clientRes = await pgClient.query(
+          'INSERT INTO clients (name, email, phone, source) VALUES ($1, $2, $3, $4) RETURNING id',
+          [client_name, client_email || null, client_phone || null, 'direct']
+        );
+        clientId = clientRes.rows[0].id;
+      }
+    }
+
+    // 2. Create a proposal record so the full event detail page works
+    const guestCountInt = guest_count ? parseInt(guest_count, 10) : 50;
+    const durationFloat = event_duration_hours ? parseFloat(event_duration_hours) : 4;
+    const proposalRes = await pgClient.query(`
+      INSERT INTO proposals (client_id, event_name, event_date, event_start_time,
+                             event_duration_hours, event_location, guest_count,
+                             status, pricing_snapshot, total_price, created_by, admin_notes)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', '{}', 0, $8, $9) RETURNING *
+    `, [
+      clientId, event_name, event_date, start_time || null,
+      durationFloat, location || null, guestCountInt,
+      req.user.id, 'Manually created event — no contract or payment on file.'
+    ]);
+    const proposal = proposalRes.rows[0];
+
+    // 3. Create the shift linked to the proposal
+    const shiftRes = await pgClient.query(`
       INSERT INTO shifts (event_name, event_date, start_time, end_time, location, positions_needed, notes,
-                          equipment_required, auto_assign_days_before, lat, lng, created_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *
+                          equipment_required, auto_assign_days_before, lat, lng, created_by, proposal_id,
+                          client_name, client_email, client_phone, guest_count, event_duration_hours)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING *
     `, [
       event_name, event_date,
       start_time || null, end_time || null,
@@ -233,11 +357,15 @@ router.post('/', auth, requireStaffing, async (req, res) => {
       equipment_required ? JSON.stringify(equipment_required) : '[]',
       auto_assign_days_before !== null && auto_assign_days_before !== undefined ? auto_assign_days_before : null,
       lat || null, lng || null,
-      req.user.id
+      req.user.id, proposal.id,
+      client_name || null, client_email || null, client_phone || null,
+      guestCountInt, durationFloat
     ]);
 
-    // Geocode location in background if no lat/lng provided
-    const shift = result.rows[0];
+    await pgClient.query('COMMIT');
+    const shift = shiftRes.rows[0];
+
+    // Geocode location in background
     if (!lat && !lng && location) {
       geocodeAddress(location)
         .then(coords => {
@@ -250,15 +378,19 @@ router.post('/', auth, requireStaffing, async (req, res) => {
 
     res.status(201).json(shift);
   } catch (err) {
+    await pgClient.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    pgClient.release();
   }
 });
 
 /** PUT /shifts/:id — update a shift */
 router.put('/:id', auth, requireStaffing, async (req, res) => {
   const { event_name, event_date, start_time, end_time, location, positions_needed, notes, status,
-          equipment_required, auto_assign_days_before, setup_minutes_before, lat, lng } = req.body;
+          equipment_required, auto_assign_days_before, setup_minutes_before, lat, lng,
+          client_name, client_email, client_phone, guest_count, event_duration_hours } = req.body;
   try {
     const result = await pool.query(`
       UPDATE shifts SET
@@ -269,7 +401,12 @@ router.put('/:id', auth, requireStaffing, async (req, res) => {
         equipment_required = $9,
         auto_assign_days_before = $10,
         lat = COALESCE($11, lat), lng = COALESCE($12, lng),
-        setup_minutes_before = COALESCE($14, setup_minutes_before)
+        setup_minutes_before = COALESCE($14, setup_minutes_before),
+        client_name = COALESCE($15, client_name),
+        client_email = COALESCE($16, client_email),
+        client_phone = COALESCE($17, client_phone),
+        guest_count = COALESCE($18, guest_count),
+        event_duration_hours = COALESCE($19, event_duration_hours)
       WHERE id = $13 RETURNING *
     `, [
       event_name, event_date,
@@ -282,6 +419,9 @@ router.put('/:id', auth, requireStaffing, async (req, res) => {
       lat || null, lng || null,
       req.params.id,
       setup_minutes_before !== null && setup_minutes_before !== undefined ? parseInt(setup_minutes_before, 10) : null,
+      client_name || null, client_email || null, client_phone || null,
+      guest_count ? parseInt(guest_count, 10) : null,
+      event_duration_hours ? parseFloat(event_duration_hours) : null,
     ]);
     if (!result.rows[0]) return res.status(404).json({ error: 'Shift not found.' });
 

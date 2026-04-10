@@ -5,39 +5,110 @@ import {
   SYRUP_PRICE_SINGLE,
   SYRUP_PRICE_3PACK,
   calculateSyrupCost,
-  getRecommendedSyrups,
+  getBottlesPerSyrup,
+  getDrinksWithFlavors,
+  getAllUniqueSyrups,
+  getDrinkSyrupSelections,
 } from '../../../data/syrups';
 
 /**
- * SyrupUpsellStep — shown after signature drink selection in the Potion Planning Lab.
- * Recommends syrups based on selected drinks, and allows browsing the full menu.
+ * SyrupUpsellStep — "Refine Your Cocktails" step.
+ * Reframes syrups as flavor customization, not product purchase.
+ * Per-drink flavor chips + source toggle (Dr. Bartender vs self-supply).
+ *
+ * syrupSelections is a per-drink map: { drinkId: [syrupId, ...] }
+ * syrupSelfProvided is a flat array of syrup IDs the client will buy themselves.
  */
 export default function SyrupUpsellStep({
   selectedDrinkIds = [],
   cocktails = [],
-  syrupSelections = [],
-  onChange,
+  syrupSelections = {},
+  syrupSelfProvided = [],
+  onSyrupToggle,
+  onSelfProvidedChange,
+  proposalSyrups = [],
+  guestCount,
   onNext,
   onBack,
 }) {
   const [showFullMenu, setShowFullMenu] = useState(false);
   const [activeCategory, setActiveCategory] = useState('all');
 
-  const recommendations = getRecommendedSyrups(selectedDrinkIds);
-  const hasRecommendations = recommendations.length > 0;
+  const drinksWithFlavors = getDrinksWithFlavors(selectedDrinkIds, cocktails);
 
-  const toggleSyrup = (id) => {
-    if (syrupSelections.includes(id)) {
-      onChange(syrupSelections.filter(s => s !== id));
-    } else {
-      onChange([...syrupSelections, id]);
+  // All uniquely selected flavor syrup IDs (from per-drink map + self-provided)
+  const allUniqueSyrups = getAllUniqueSyrups(syrupSelections);
+  const allSelectedFlavors = [...new Set([...allUniqueSyrups, ...syrupSelfProvided])];
+
+  // Determine source for a syrup: 'drb' (Dr. Bartender) or 'self'
+  const getSource = (syrupId) => {
+    if (syrupSelfProvided.includes(syrupId)) return 'self';
+    return 'drb';
+  };
+
+  // Toggle a flavor chip for a specific drink
+  const toggleFlavor = (drinkId, syrupId) => {
+    const drinkSyrups = getDrinkSyrupSelections(syrupSelections, drinkId);
+    const isRemoving = drinkSyrups.includes(syrupId);
+
+    // Toggle in per-drink map
+    onSyrupToggle(drinkId, syrupId);
+
+    // If removing and no other drink uses this syrup, also remove from selfProvided
+    if (isRemoving) {
+      const otherDrinkHasIt = Object.entries(syrupSelections)
+        .some(([key, ids]) => key !== drinkId && Array.isArray(ids) && ids.includes(syrupId));
+      if (!otherDrinkHasIt) {
+        onSelfProvidedChange(syrupSelfProvided.filter(s => s !== syrupId));
+      }
     }
   };
 
-  const cost = calculateSyrupCost(syrupSelections.length);
+  // Switch supply source for a selected flavor (doesn't change per-drink assignments)
+  const setFlavorSource = (syrupId, source) => {
+    if (source === 'self') {
+      if (!syrupSelfProvided.includes(syrupId)) {
+        onSelfProvidedChange([...syrupSelfProvided, syrupId]);
+      }
+    } else {
+      onSelfProvidedChange(syrupSelfProvided.filter(s => s !== syrupId));
+    }
+  };
 
-  // Get drink name by ID
-  const drinkName = (id) => cocktails.find(c => c.id === id)?.name || id;
+  // Toggle from Browse All — uses '_browse' drink key
+  const toggleBrowseSyrup = (syrupId) => {
+    const isAnywhere = allSelectedFlavors.includes(syrupId);
+    if (isAnywhere) {
+      // Remove from all drinks + selfProvided
+      onSyrupToggle('_all', syrupId);
+      onSelfProvidedChange(syrupSelfProvided.filter(s => s !== syrupId));
+    } else {
+      onSyrupToggle('_browse', syrupId);
+    }
+  };
+
+  // Pricing — only for syrups NOT self-provided and NOT from proposal
+  const drbSyrups = allUniqueSyrups.filter(id => !syrupSelfProvided.includes(id));
+  const newDrbSyrups = drbSyrups.filter(id => !proposalSyrups.includes(id));
+  const bottlesPerFlavor = getBottlesPerSyrup(guestCount);
+  const drbCost = calculateSyrupCost(newDrbSyrups.length, bottlesPerFlavor);
+
+  // Drinks that have flavor options but nothing selected for them
+  const unflavoredDrinks = drinksWithFlavors
+    .filter(d => {
+      const drinkSyrups = getDrinkSyrupSelections(syrupSelections, d.drinkId);
+      return !d.flavors.some(f => drinkSyrups.includes(f.syrupId) || syrupSelfProvided.includes(f.syrupId));
+    })
+    .map(d => d.drinkName);
+
+  // Build "enhances" map: syrupId -> list of drink names that use it
+  const enhancesMap = {};
+  for (const drink of drinksWithFlavors) {
+    for (const flavor of drink.flavors) {
+      if (!enhancesMap[flavor.syrupId]) enhancesMap[flavor.syrupId] = [];
+      enhancesMap[flavor.syrupId].push(drink.drinkName);
+    }
+  }
 
   // Full menu filtering
   const categoryTabs = [{ key: 'all', label: 'All' }, ...SYRUP_CATEGORIES];
@@ -45,66 +116,116 @@ export default function SyrupUpsellStep({
     ? SYRUPS
     : SYRUPS.filter(s => s.category === activeCategory);
 
+  const hasAnySelection = allSelectedFlavors.length > 0;
+
   return (
     <div>
+      {/* Section 1: Header */}
       <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
         <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
-          Upgrade Your Cocktails
+          Refine Your Cocktails
         </h2>
         <p className="text-muted">
-          Our handcrafted syrups take your signature drinks to the next level.
-          Each 750ml bottle makes 30-40 cocktails.
+          Add a signature twist to your cocktails. Pick a flavor and we'll handle the rest.
         </p>
-        <div className="syrup-pricing-banner" style={{ marginTop: '0.75rem' }}>
-          <span>${SYRUP_PRICE_SINGLE}/bottle</span>
-          <span className="syrup-pricing-divider">|</span>
-          <span className="syrup-pricing-deal">3 for ${SYRUP_PRICE_3PACK}</span>
-        </div>
       </div>
 
-      {/* Recommendations based on selected drinks */}
-      {hasRecommendations && (
+      {/* Section 2: Per-Drink Flavor Selection */}
+      {drinksWithFlavors.length > 0 && (
         <div className="card mb-2">
-          <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
-            Recommended for Your Menu
-          </h3>
-          <div className="syrup-rec-list">
-            {recommendations.map(rec => {
-              const isSelected = syrupSelections.includes(rec.id);
-              return (
-                <div key={rec.id} className={`syrup-rec-card${isSelected ? ' selected' : ''}`}>
-                  <div className="syrup-rec-header">
-                    <button
-                      className={`syrup-rec-toggle${isSelected ? ' active' : ''}`}
-                      onClick={() => toggleSyrup(rec.id)}
-                    >
-                      {isSelected ? (
-                        <svg width="14" height="12" viewBox="0 0 14 12" fill="none" aria-hidden="true">
-                          <path d="M1.5 6L5 9.5L12.5 1.5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
-                      ) : '+'}
-                    </button>
-                    <div className="syrup-rec-info">
-                      <strong>{rec.name}</strong>
-                      {rec.seasonal && <span className="syrup-seasonal-tag">Seasonal</span>}
-                    </div>
-                  </div>
-                  <div className="syrup-rec-drinks">
-                    {rec.forDrinks.map(({ drinkId, note }) => (
-                      <div key={drinkId} className="syrup-rec-drink-note">
-                        <span className="syrup-rec-drink-name">{drinkName(drinkId)}</span>
-                        {note && <span className="syrup-rec-note"> — {note}</span>}
-                      </div>
-                    ))}
-                  </div>
+          {drinksWithFlavors.map(drink => {
+            const drinkSyrups = getDrinkSyrupSelections(syrupSelections, drink.drinkId);
+            return (
+              <div key={drink.drinkId} className="flavor-drink-group">
+                <div className="flavor-drink-header">
+                  <span>{drink.drinkEmoji} {drink.drinkName}</span>
+                  <span className="flavor-drink-subtitle">Customize this drink:</span>
                 </div>
-              );
-            })}
-          </div>
+                <div className="flavor-chip-grid">
+                  {drink.flavors.map(flavor => {
+                    const isSelected = drinkSyrups.includes(flavor.syrupId) || syrupSelfProvided.includes(flavor.syrupId);
+                    return (
+                      <button
+                        key={flavor.syrupId}
+                        className={`flavor-chip${isSelected ? ' selected' : ''}`}
+                        onClick={() => toggleFlavor(drink.drinkId, flavor.syrupId)}
+                        title={flavor.note || flavor.syrupName}
+                      >
+                        {flavor.note || flavor.syrupName}
+                        {isSelected && ' \u2713'}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {/* Browse full menu toggle */}
+      {/* Section 3: Selected Flavors — Source Toggle */}
+      {allSelectedFlavors.length > 0 && (
+        <div className="card mb-2">
+          <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+            How Should We Get Your Flavors?
+          </h3>
+          {allSelectedFlavors.map(syrupId => {
+            const syrup = SYRUPS.find(s => s.id === syrupId);
+            if (!syrup) return null;
+            const source = getSource(syrupId);
+            const enhances = enhancesMap[syrupId];
+            const isFromProposal = proposalSyrups.includes(syrupId);
+
+            return (
+              <div key={syrupId} className="flavor-source-card">
+                <div className="flavor-source-header">
+                  <strong>{syrup.name}</strong>
+                  {enhances && enhances.length > 0 && (
+                    <span className="text-muted text-small" style={{ display: 'block' }}>
+                      Enhances: {enhances.join(', ')}
+                    </span>
+                  )}
+                </div>
+                <div className="flavor-source-options">
+                  <label className="flavor-source-radio">
+                    <input
+                      type="radio"
+                      name={`source-${syrupId}`}
+                      checked={source === 'drb'}
+                      onChange={() => setFlavorSource(syrupId, 'drb')}
+                    />
+                    <span className="flavor-source-radio-content">
+                      <span className="flavor-source-radio-label">
+                        Supplied by Dr. Bartender
+                        {!isFromProposal && <span className="flavor-source-price"> (+${SYRUP_PRICE_SINGLE})</span>}
+                        {isFromProposal && <span className="flavor-source-included"> (included)</span>}
+                      </span>
+                      <span className="flavor-source-recommended">Recommended</span>
+                      <span className="text-muted text-small">We source, test, and bring the perfect syrup.</span>
+                    </span>
+                  </label>
+                  <label className="flavor-source-radio">
+                    <input
+                      type="radio"
+                      name={`source-${syrupId}`}
+                      checked={source === 'self'}
+                      onChange={() => setFlavorSource(syrupId, 'self')}
+                    />
+                    <span className="flavor-source-radio-content">
+                      <span className="flavor-source-radio-label">Add to my shopping list</span>
+                      {source === 'self' && (
+                        <span className="text-muted text-small">We'll include details on what to buy.</span>
+                      )}
+                    </span>
+                  </label>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Section 4: Browse All Syrups */}
       <div className="card mb-2">
         <button
           className="btn btn-secondary"
@@ -129,12 +250,12 @@ export default function SyrupUpsellStep({
             </div>
             <div className="syrup-grid syrup-grid-compact">
               {filteredSyrups.map(syrup => {
-                const isSelected = syrupSelections.includes(syrup.id);
+                const isSelected = allSelectedFlavors.includes(syrup.id);
                 return (
                   <button
                     key={syrup.id}
                     className={`syrup-chip${isSelected ? ' selected' : ''}`}
-                    onClick={() => toggleSyrup(syrup.id)}
+                    onClick={() => toggleBrowseSyrup(syrup.id)}
                   >
                     <span className="syrup-chip-name">{syrup.name}</span>
                     {syrup.seasonal && <span className="syrup-seasonal-tag">Seasonal</span>}
@@ -153,46 +274,61 @@ export default function SyrupUpsellStep({
         )}
       </div>
 
-      {/* Selection summary */}
-      {syrupSelections.length > 0 && (
+      {/* Section 5: Summary */}
+      {hasAnySelection && (
         <div className="card mb-2">
-          <div className="syrup-summary">
-            <div className="syrup-summary-count">
-              {syrupSelections.length} syrup{syrupSelections.length !== 1 ? 's' : ''} selected
-            </div>
-            <div className="syrup-summary-cost">
-              {cost.packs > 0 && <span>{cost.packs} three-pack{cost.packs !== 1 ? 's' : ''}</span>}
-              {cost.packs > 0 && cost.singles > 0 && <span> + </span>}
-              {cost.singles > 0 && <span>{cost.singles} single{cost.singles !== 1 ? 's' : ''}</span>}
-              <span className="syrup-summary-total"> = ${cost.total}</span>
-            </div>
-            {cost.singles > 0 && (
-              <div className="syrup-pack-nudge">
-                Add {3 - cost.singles} more for the 3-pack discount (save ${3 * SYRUP_PRICE_SINGLE - SYRUP_PRICE_3PACK})
+          {/* Dr. Bartender supplied */}
+          {drbSyrups.length > 0 && (
+            <div className="flavor-summary-section">
+              <strong>Supplied by Dr. Bartender:</strong>
+              <span> {drbSyrups.length} syrup{drbSyrups.length !== 1 ? 's' : ''}
+                {drbCost.total > 0 && <> &mdash; ${drbCost.total}</>}
+              </span>
+              <div className="text-muted text-small" style={{ marginTop: '0.25rem' }}>
+                {drbSyrups.map(id => SYRUPS.find(s => s.id === id)?.name).filter(Boolean).join(', ')}
               </div>
-            )}
-            <div className="syrup-selected-list">
-              {syrupSelections.map(id => {
-                const s = SYRUPS.find(sy => sy.id === id);
-                return s ? (
-                  <span key={id} className="syrup-selected-tag">
-                    {s.name}
-                    <button className="syrup-remove-btn" onClick={() => toggleSyrup(id)} aria-label={`Remove ${s.name}`}>&times;</button>
-                  </span>
-                ) : null;
-              })}
+              {drbCost.singles > 0 && drbCost.singles < 3 && newDrbSyrups.length > 0 && (
+                <div className="syrup-pack-nudge" style={{ marginTop: '0.5rem' }}>
+                  Add {3 - drbCost.singles} more for the 3-pack price &mdash; save ${3 * SYRUP_PRICE_SINGLE - SYRUP_PRICE_3PACK}
+                </div>
+              )}
             </div>
-          </div>
+          )}
+
+          {/* Self-provided shopping list */}
+          {syrupSelfProvided.length > 0 && (
+            <div className="flavor-shopping-list" style={{ marginTop: drbSyrups.length > 0 ? '1rem' : 0 }}>
+              <strong>Your Shopping List:</strong>
+              <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
+                {syrupSelfProvided.map(id => {
+                  const s = SYRUPS.find(sy => sy.id === id);
+                  return s ? (
+                    <li key={id}>{s.name} syrup (750ml bottle, bartender-ready)</li>
+                  ) : null;
+                })}
+              </ul>
+              <p className="text-muted text-small" style={{ fontStyle: 'italic' }}>
+                Tip: Look for pure flavored syrups &mdash; no pulp or puree.
+              </p>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Navigation */}
+      {/* Soft nudge for unselected drinks */}
+      {!hasAnySelection && unflavoredDrinks.length > 0 && (
+        <div className="flavor-nudge">
+          Your {unflavoredDrinks.join(', ')} can be customized with flavors &mdash; skip or pick above.
+        </div>
+      )}
+
+      {/* Section 6: Navigation */}
       <div className="step-nav mt-2">
         {onBack ? (
           <button className="btn btn-secondary" onClick={onBack}>Back</button>
         ) : <div />}
         <button className="btn btn-primary" onClick={onNext}>
-          {syrupSelections.length > 0 ? 'Continue' : 'Skip'}
+          {hasAnySelection ? 'Continue' : 'Skip'}
         </button>
       </div>
     </div>

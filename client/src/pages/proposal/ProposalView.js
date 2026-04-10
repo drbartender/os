@@ -493,6 +493,25 @@ export default function ProposalView() {
             </div>
           </div>
 
+          {/* Potion Planner Link */}
+          {proposal.drink_plan_token && (
+            <div style={{ background: 'linear-gradient(135deg, #f8f0e3, #f3e8d5)', border: '2px solid #c17d3c', borderRadius: '12px', padding: '1.5rem', textAlign: 'center', marginTop: '1.5rem' }}>
+              <h3 style={{ fontFamily: 'var(--font-display, Georgia, serif)', color: '#2C1F0E', margin: '0 0 0.5rem', fontSize: '1.25rem' }}>
+                Start Planning Your Bar
+              </h3>
+              <p style={{ color: '#6b4226', fontSize: '0.9rem', margin: '0 0 1rem', lineHeight: 1.5 }}>
+                Explore cocktails, discover flavors, and tell us what kind of bar experience
+                you're imagining. Nothing is final — just have fun with it.
+              </p>
+              <a
+                href={`/plan/${proposal.drink_plan_token}`}
+                style={{ display: 'inline-block', background: '#c17d3c', color: '#fff', padding: '0.65rem 1.75rem', borderRadius: '8px', textDecoration: 'none', fontWeight: 600, fontSize: '1rem' }}
+              >
+                Open the Potion Planner
+              </a>
+            </div>
+          )}
+
           {/* CTA button */}
           {(showSignAndPay || showPayOnly) && (
             <button

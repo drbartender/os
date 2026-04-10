@@ -84,7 +84,12 @@ router.post('/leads/import', auth, requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'No CSV file uploaded.' });
   }
 
-  const csvText = req.files.file.data.toString('utf-8');
+  const file = req.files.file;
+  if (!file.name.endsWith('.csv') && file.mimetype !== 'text/csv') {
+    return res.status(400).json({ error: 'File must be a CSV.' });
+  }
+
+  const csvText = file.data.toString('utf-8');
   const lines = csvText.split('\n').map(l => l.trim()).filter(Boolean);
 
   if (lines.length < 2) {

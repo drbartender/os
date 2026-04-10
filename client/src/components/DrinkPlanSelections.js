@@ -1,6 +1,7 @@
 import React from 'react';
 import { QUICK_PICKS } from '../pages/plan/data/servingTypes';
 import { formatPhoneInput } from '../utils/formatPhone';
+import { SYRUPS, getAllUniqueSyrups } from '../data/syrups';
 
 const LEGACY_SERVING_TYPES = {
   'full-bar-signature': 'Full Bar + Signature Drinks',
@@ -41,12 +42,15 @@ function NewSelections({ plan, sel, cocktails, mocktails }) {
       )}
 
       {/* Signature Drinks */}
-      {am.signatureDrinks && selectedDrinks.length > 0 && (
+      {am.signatureDrinks && (selectedDrinks.length > 0 || (sel.customCocktails || []).length > 0) && (
         <div className="mb-2">
           <strong>Signature Cocktails:</strong>
           <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
             {selectedDrinks.map(d => (
               <li key={d.id}>{d.emoji} {d.name}{d.base_spirit ? ` (${d.base_spirit})` : ''}</li>
+            ))}
+            {(sel.customCocktails || []).map((name, i) => (
+              <li key={`custom-${i}`}>✨ {name} <span className="text-muted text-small">(custom request)</span></li>
             ))}
           </ul>
           {sel.signatureDrinkSpirits?.length > 0 && (
@@ -160,6 +164,47 @@ function NewSelections({ plan, sel, cocktails, mocktails }) {
         {logistics.ice && <p className="text-muted">Ice machine: {logistics.ice}</p>}
         {logistics.other && !logistics.accessNotes && <p className="text-muted">Notes: {logistics.other}</p>}
       </div>
+
+      {/* Flavor Add-Ons (Dr. Bartender supplied) */}
+      {getAllUniqueSyrups(sel.syrupSelections).length > 0 && (
+        <div className="mb-1">
+          <strong>Flavor Add-Ons (Supplied):</strong>
+          <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
+            {getAllUniqueSyrups(sel.syrupSelections).map(id => {
+              const s = SYRUPS.find(sy => sy.id === id);
+              return s ? <li key={id}>{s.name}</li> : null;
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* Self-Provided Syrups */}
+      {(sel.syrupSelfProvided || []).length > 0 && (
+        <div className="mb-1">
+          <strong>Flavor Add-Ons (Client Providing):</strong>
+          <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
+            {(sel.syrupSelfProvided || []).map(id => {
+              const s = SYRUPS.find(sy => sy.id === id);
+              return s ? <li key={id}>{s.name}</li> : null;
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* Add-Ons */}
+      {sel.addOns && Object.keys(sel.addOns).length > 0 && (
+        <div className="mb-1">
+          <strong>Add-Ons:</strong>
+          <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
+            {Object.entries(sel.addOns).map(([slug, meta]) => (
+              <li key={slug}>
+                {slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                {meta.servingStyle && ` (${meta.servingStyle.replace(/-/g, ' ')})`}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </>
   );
 }

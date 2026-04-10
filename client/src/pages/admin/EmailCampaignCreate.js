@@ -48,10 +48,6 @@ export default function EmailCampaignCreate() {
 
   return (
     <div className="em-campaign-create">
-      <button className="btn btn-secondary btn-sm em-back-btn" onClick={() => navigate('/admin/email-marketing/campaigns')}>
-        &larr; Back to Campaigns
-      </button>
-
       <h2>Create Campaign</h2>
 
       <form onSubmit={handleCreate}>

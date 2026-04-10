@@ -18,18 +18,19 @@ export default function PublicLayout({ children }) {
   const isAuthed = clientAuth?.isClientAuthenticated;
   const homePath = isPublicSite() ? '/' : '/website';
 
-  // Handle hash-scroll when navigating from another page (e.g. /faq → /#services)
+  // Scroll to top on route change, or to hash target if present
   useEffect(() => {
     if (location.hash) {
       const id = location.hash.replace('#', '');
-      // Small delay to let the page render before scrolling
       const timer = setTimeout(() => {
         const el = document.getElementById(id);
         if (el) el.scrollIntoView({ behavior: 'smooth' });
       }, 100);
       return () => clearTimeout(timer);
+    } else {
+      window.scrollTo(0, 0);
     }
-  }, [location]);
+  }, [location.pathname, location.hash]);
 
   const handleHashLink = (e, hash) => {
     e.preventDefault();
@@ -48,9 +49,7 @@ export default function PublicLayout({ children }) {
       <a href="#main-content" className="skip-nav">Skip to main content</a>
       <header className="ws-header">
         <div className="ws-header-inner">
-          <Link to={homePath} className="ws-brand" onClick={() => setMobileNav(false)}>
-            <BrandLogo />
-          </Link>
+          <BrandLogo />
           <button className="ws-menu-toggle" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle menu">
             <span /><span /><span />
           </button>

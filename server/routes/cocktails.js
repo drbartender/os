@@ -1,8 +1,17 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 
 const router = express.Router();
+
+const publicLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { error: 'Too many requests. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 function requireAdmin(req, res, next) {
   if (req.user.role === 'admin' || req.user.role === 'manager') return next();
@@ -12,7 +21,7 @@ function requireAdmin(req, res, next) {
 // ─── Public routes ────────────────────────────────────────────────
 
 /** GET /api/cocktails — active cocktails with category info (for client questionnaire) */
-router.get('/', async (req, res) => {
+router.get('/', publicLimiter, async (req, res) => {
   try {
     const [catsResult, cocktailsResult] = await Promise.all([
       pool.query('SELECT * FROM cocktail_categories ORDER BY sort_order'),

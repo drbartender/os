@@ -89,15 +89,23 @@ function calculateAddonCost(addon, guestCount, durationHours, staffCount, addonQ
 const SYRUP_PRICE_SINGLE = 30;
 const SYRUP_PRICE_3PACK = 75;
 
-function calculateSyrupCost(syrupSelections) {
+function getBottlesPerSyrup(guestCount) {
+  if (!guestCount || guestCount <= 50) return 1;
+  return Math.ceil(guestCount / 50);
+}
+
+function calculateSyrupCost(syrupSelections, guestCount) {
   if (!syrupSelections || !Array.isArray(syrupSelections) || syrupSelections.length === 0) {
-    return { count: 0, packs: 0, singles: 0, total: 0 };
+    return { count: 0, bottlesPerFlavor: 1, totalBottles: 0, packs: 0, singles: 0, total: 0 };
   }
   const count = syrupSelections.length;
-  const packs = Math.floor(count / 3);
-  const singles = count % 3;
+  const bottlesPerFlavor = getBottlesPerSyrup(guestCount);
+  const totalBottles = count * bottlesPerFlavor;
+  // 3-pack discount applies to total bottles — every 3 bottles = $75
+  const packs = Math.floor(totalBottles / 3);
+  const singles = totalBottles % 3;
   const total = packs * SYRUP_PRICE_3PACK + singles * SYRUP_PRICE_SINGLE;
-  return { count, packs, singles, total };
+  return { count, bottlesPerFlavor, totalBottles, packs, singles, total };
 }
 
 function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartenders, addons, syrupSelections }) {
@@ -153,7 +161,7 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
   });
 
   const addonTotal = addonResults.reduce((sum, a) => sum + a.line_total, 0);
-  const syrupCost = calculateSyrupCost(syrupSelections);
+  const syrupCost = calculateSyrupCost(syrupSelections, guestCount);
   const subtotal = baseCost + barRental + staffing.cost + addonTotal + syrupCost.total;
   const total = Math.round(subtotal * 100) / 100;
 
@@ -170,20 +178,31 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
     });
   }
   if (staffing.extra > 0) {
-    const effectiveRate = staffing.hourlyRate + (staffing.gratuityPerHour || 0);
-    const gratNote = staffing.gratuityPerHour ? ' incl. gratuity' : '';
+    const baseCostStaffing = staffing.extra * durationHours * staffing.hourlyRate;
     breakdown.push({
-      label: `Additional Bartender${staffing.extra !== 1 ? 's' : ''} (${staffing.extra} × ${durationHours}hrs @ $${effectiveRate}/hr${gratNote})`,
-      amount: Math.round(staffing.cost * 100) / 100
+      label: `Additional Bartender${staffing.extra !== 1 ? 's' : ''} (${staffing.extra})`,
+      amount: Math.round(baseCostStaffing * 100) / 100
     });
+    if (staffing.gratuityPerHour > 0) {
+      const gratuityAmount = staffing.extra * durationHours * staffing.gratuityPerHour;
+      breakdown.push({
+        label: 'Shared Gratuity',
+        amount: Math.round(gratuityAmount * 100) / 100
+      });
+    }
   }
   for (const addon of addonResults) {
     let label = addon.name;
     if (addon.slug === 'additional-bartender') {
       const qty = addon.quantity / durationHours; // recover count from total hours
-      const effectiveRate = Number(addon.rate) + (addon.gratuity_per_hour || 0);
-      const gratNote = addon.gratuity_per_hour ? ' incl. gratuity' : '';
-      label += ` (${qty} × ${durationHours}hrs @ $${effectiveRate}/hr${gratNote})`;
+      const baseCostAddon = qty * durationHours * Number(addon.rate);
+      label = `Additional Bartender${qty !== 1 ? 's' : ''} (${qty})`;
+      breakdown.push({ label, amount: Math.round(baseCostAddon * 100) / 100 });
+      if (addon.gratuity_per_hour > 0) {
+        const gratuityAmount = qty * durationHours * addon.gratuity_per_hour;
+        breakdown.push({ label: 'Shared Gratuity', amount: Math.round(gratuityAmount * 100) / 100 });
+      }
+      continue;
     } else if (addon.billing_type === 'per_guest' || addon.billing_type === 'per_guest_timed') {
       label += ` (${guestCount} guests)`;
     } else if (addon.billing_type === 'per_hour') {
@@ -196,13 +215,11 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
     breakdown.push({ label, amount: addon.line_total });
   }
   if (syrupCost.total > 0) {
-    let syrupLabel = 'Handcrafted Syrups';
-    if (syrupCost.packs > 0 && syrupCost.singles > 0) {
-      syrupLabel += ` (${syrupCost.packs} three-pack${syrupCost.packs !== 1 ? 's' : ''} + ${syrupCost.singles} single${syrupCost.singles !== 1 ? 's' : ''})`;
-    } else if (syrupCost.packs > 0) {
-      syrupLabel += ` (${syrupCost.packs} three-pack${syrupCost.packs !== 1 ? 's' : ''})`;
+    let syrupLabel = `Hand-Crafted Syrups — ${syrupCost.count} flavor${syrupCost.count !== 1 ? 's' : ''}`;
+    if (syrupCost.bottlesPerFlavor > 1) {
+      syrupLabel += `, ${syrupCost.totalBottles} bottles (${syrupCost.bottlesPerFlavor} per flavor for ${guestCount} guests)`;
     } else {
-      syrupLabel += ` (${syrupCost.singles} bottle${syrupCost.singles !== 1 ? 's' : ''})`;
+      syrupLabel += `, ${syrupCost.totalBottles} bottle${syrupCost.totalBottles !== 1 ? 's' : ''}`;
     }
     breakdown.push({ label: syrupLabel, amount: syrupCost.total });
   }
@@ -236,6 +253,8 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
     syrups: {
       selections: syrupSelections || [],
       count: syrupCost.count,
+      bottles_per_flavor: syrupCost.bottlesPerFlavor,
+      total_bottles: syrupCost.totalBottles,
       packs: syrupCost.packs,
       singles: syrupCost.singles,
       total: syrupCost.total,

@@ -117,7 +117,7 @@ export default function ProposalsDashboard() {
             {proposals.map(p => (
               <tr key={p.id} onClick={() => navigate(`/admin/proposals/${p.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/proposals/${p.id}`)} tabIndex={0} role="link" style={{ cursor: 'pointer' }}>
                 <td>
-                  <strong>{p.client_name || '—'}</strong>
+                  <strong>{p.client_name && p.event_name ? `${p.client_name} - ${p.event_name}` : p.client_name || '—'}</strong>
                   {p.client_email && <div className="text-muted text-small">{p.client_email}</div>}
                 </td>
                 <td>{p.event_name || '—'}</td>

@@ -188,7 +188,7 @@ export default function DrinkPlansDashboard() {
                 </td>
                 <td>{plan.event_name || '—'}</td>
                 <td>{formatDate(plan.event_date)}</td>
-                <td>{plan.serving_type ? plan.serving_type.replace(/-/g, ' ') : '—'}</td>
+                <td>{plan.serving_type ? { full_bar: 'Full Bar', beer_wine: 'Beer & Wine', beer_wine_seltzer: 'Beer, Wine & Seltzer', non_alcoholic: 'Non-Alcoholic', mocktail: 'Mocktail' }[plan.serving_type] || plan.serving_type.replace(/_/g, ' ') : '—'}</td>
                 <td>
                   <span className={`badge ${STATUS_CLASSES[plan.status] || ''}`}>
                     {STATUS_LABELS[plan.status] || plan.status}

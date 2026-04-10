@@ -68,7 +68,7 @@ export default function HiringDashboard() {
   // Onboarding users state
   const [users, setUsers]                 = useState([]);
   const [usersLoading, setUsersLoading]   = useState(true);
-  const [userFilter, setUserFilter]       = useState('all');
+  const [userFilter, setUserFilter]       = useState('in_progress');
   const [userSearch, setUserSearch]       = useState('');
   const [userPage, setUserPage]           = useState(1);
   const [userTotalPages, setUserTotalPages] = useState(1);

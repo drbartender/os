@@ -121,8 +121,8 @@ System design reference for the Dr. Bartender platform.
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | PATCH | `/:id/status` | Admin | Update plan status |
 | DELETE | `/:id` | Admin | Delete a plan |
-| GET | `/t/:token` | Public | Fetch questionnaire by token |
-| PUT | `/t/:token` | Public | Save draft or submit selections |
+| GET | `/t/:token` | Public | Fetch questionnaire by token (JOINs proposal for guest_count, num_bartenders, pricing_snapshot) |
+| PUT | `/t/:token` | Public | Save draft or submit selections (on submit: processes addOns into proposal_addons, recalculates pricing, sends admin email) |
 
 ### Cocktails — `/api/cocktails`
 | Method | Path | Auth | Description |
@@ -339,8 +339,10 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 - `token` UUID (public access)
 - `client_name`, `client_email`, `event_name`, `event_date`
 - `proposal_id` — links to the source proposal/event
-- `serving_type`, `selections` (JSONB — chosen cocktails/mocktails)
+- `serving_type`, `selections` (JSONB — chosen cocktails/mocktails, syrupSelections, addOns)
+- `selections.addOns` — object keyed by addon slug with metadata (e.g., champagne-toast servingStyle)
 - `status`: pending | draft | submitted | reviewed
+- On submit: addOns flow into proposal_addons, pricing is recalculated, admin notified
 - Auto-emails the drink plan link to client on creation
 
 ### Proposals & Pricing
@@ -439,7 +441,7 @@ Located in `client/src/components/ShoppingList/`. Fully client-side PDF generati
 
 - **`shoppingListPars.js`** — 100-guest baseline quantities (single source of truth for standard bar pars)
 - **`generateShoppingList.js`** — Scales pars by `guestCount / 100`, merges signature cocktail ingredients, boosts shared ingredients
-- **`ShoppingListPDF.jsx`** — `@react-pdf/renderer` Document with IM Fell English fonts and Dr. Bartender brand colors
+- **`ShoppingListPDF.jsx`** — jsPDF implementation for branded shopping list PDF generation with Dr. Bartender brand colors
 - **`ShoppingListButton.jsx`** — Fetches `GET /api/drink-plans/:id/shopping-list-data`, handles missing guest count prompt, opens the modal
 - **`ShoppingListModal.jsx`** — Full-screen editable modal: add/remove/rename items, edit quantities, change guest count with recalculate prompt, then Download PDF
 - **`logoBase64.js`** — Logo embedded as base64 data URI for use in PDFs

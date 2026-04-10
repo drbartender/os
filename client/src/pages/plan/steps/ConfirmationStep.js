@@ -1,9 +1,9 @@
 import React from 'react';
 import { QUICK_PICKS } from '../data/servingTypes';
 import { formatPhoneInput } from '../../../utils/formatPhone';
-import { SYRUPS, calculateSyrupCost } from '../../../data/syrups';
+import { SYRUPS, calculateSyrupCost, getBottlesPerSyrup, getAllUniqueSyrups } from '../../../data/syrups';
 
-export default function ConfirmationStep({ plan, quickPickChoice, activeModules, selections, cocktails = [], mocktails = [], onSubmit, saving, error }) {
+export default function ConfirmationStep({ plan, quickPickChoice, activeModules, selections, cocktails = [], mocktails = [], addOns = {}, addonPricing = [], guestCount, proposalSyrups = [], onSubmit, saving, error }) {
   const pick = QUICK_PICKS.find(p => p.key === quickPickChoice);
   const selectedDrinks = cocktails.filter(d => (selections.signatureDrinks || []).includes(d.id));
   const selectedMocktails = mocktails.filter(d => (selections.mocktails || []).includes(d.id));
@@ -13,10 +13,10 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
     <div>
       <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
         <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
-          Review Your Selections
+          Here's Your Bar Plan
         </h2>
         <p className="text-muted">
-          Look everything over before submitting. Use the Back button to make changes.
+          Take a look — you can go back and adjust anything before submitting.
         </p>
       </div>
 
@@ -28,12 +28,15 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
         )}
 
         {/* Signature Drinks */}
-        {activeModules.signatureDrinks && selectedDrinks.length > 0 && (
+        {activeModules.signatureDrinks && (selectedDrinks.length > 0 || (selections.customCocktails || []).length > 0) && (
           <div className="mb-2">
             <strong>Signature Cocktails</strong>
             <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
               {selectedDrinks.map(d => (
                 <li key={d.id}>{d.emoji} {d.name}</li>
+              ))}
+              {(selections.customCocktails || []).map((name, i) => (
+                <li key={`custom-${i}`}>✨ {name} <span className="text-muted text-small">(custom request)</span></li>
               ))}
             </ul>
             {selections.signatureDrinkSpirits?.length > 0 && (
@@ -110,25 +113,54 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           </div>
         )}
 
-        {/* Syrups */}
-        {(selections.syrupSelections || []).length > 0 && (() => {
-          const syrupIds = selections.syrupSelections;
-          const cost = calculateSyrupCost(syrupIds.length);
+        {/* Flavor Add-Ons (Dr. Bartender supplied — excludes self-provided) */}
+        {(() => {
+          const allSyrupIds = getAllUniqueSyrups(selections.syrupSelections);
+          const selfProvided = selections.syrupSelfProvided || [];
+          const syrupIds = allSyrupIds.filter(id => !selfProvided.includes(id));
+          if (syrupIds.length === 0) return null;
+          const newIds = syrupIds.filter(id => !proposalSyrups.includes(id));
+          const bottlesPerFlavor = getBottlesPerSyrup(guestCount);
+          const cost = calculateSyrupCost(newIds.length, bottlesPerFlavor);
           return (
             <div className="mb-2">
-              <strong>Handcrafted Syrups</strong>
+              <strong>Flavor Add-Ons</strong>
+              <p className="text-muted text-small" style={{ color: 'var(--warm-brown)', marginBottom: '0.25rem' }}>
+                Hand-crafted by Dr. Bartender
+              </p>
               <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
                 {syrupIds.map(id => {
                   const s = SYRUPS.find(sy => sy.id === id);
-                  return s ? <li key={id}>{s.name}</li> : null;
+                  const included = proposalSyrups.includes(id);
+                  return s ? (
+                    <li key={id}>
+                      {s.name}{included ? ' (included)' : ''}
+                      {!included && bottlesPerFlavor > 1 && ` (${bottlesPerFlavor} bottles)`}
+                    </li>
+                  ) : null;
                 })}
               </ul>
-              <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
-                {cost.count} bottle{cost.count !== 1 ? 's' : ''} — ${cost.total}
-              </p>
+              {cost.total > 0 && (
+                <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
+                  {cost.totalBottles} bottle{cost.totalBottles !== 1 ? 's' : ''} total &mdash; ${cost.total}
+                </p>
+              )}
             </div>
           );
         })()}
+
+        {/* Your Shopping List (self-provided syrups) */}
+        {(selections.syrupSelfProvided || []).length > 0 && (
+          <div className="mb-2">
+            <strong>Your Shopping List</strong>
+            <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
+              {(selections.syrupSelfProvided || []).map(id => {
+                const s = SYRUPS.find(sy => sy.id === id);
+                return s ? <li key={id}>{s.name} syrup</li> : null;
+              })}
+            </ul>
+          </div>
+        )}
 
         {/* Menu Design */}
         {selections.customMenuDesign === true && (
@@ -165,10 +197,15 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
               Parking: {logistics.parking.replace(/_/g, ' ')}
             </p>
           )}
-          {logistics.equipment?.length > 0 && (
+          {logistics.equipment?.length > 0 && !logistics.equipment.includes('none') && (
             <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
               Equipment: {logistics.equipment.map(e => e.replace(/_/g, ' ')).join(', ')}
               {logistics.equipmentOther && ` (${logistics.equipmentOther})`}
+            </p>
+          )}
+          {logistics.equipment?.includes('none') && (
+            <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
+              Equipment: None needed
             </p>
           )}
           {logistics.accessNotes && (
@@ -190,11 +227,69 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
         </div>
       </div>
 
+      {/* Estimated Extras */}
+      {(() => {
+        const addonSlugs = Object.keys(addOns);
+        // Calculate addon line items
+        const addonItems = addonSlugs
+          .map(slug => {
+            const pricing = addonPricing.find(a => a.slug === slug);
+            if (!pricing) return null;
+            const rate = Number(pricing.rate);
+            let lineTotal = rate;
+            let desc = pricing.name;
+            if (pricing.billing_type === 'per_guest' && guestCount) {
+              lineTotal = rate * guestCount;
+              desc = `${pricing.name} (${guestCount} guests)`;
+            }
+            return { slug, name: desc, total: lineTotal };
+          })
+          .filter(Boolean);
+        // Syrup cost (only for syrups NOT from proposal, excluding self-provided)
+        const syrupIds = getAllUniqueSyrups(selections.syrupSelections)
+          .filter(id => !(selections.syrupSelfProvided || []).includes(id));
+        const newSyrupIds = syrupIds.filter(id => !proposalSyrups.includes(id));
+        const syrupCost = calculateSyrupCost(newSyrupIds.length, getBottlesPerSyrup(guestCount));
+        const extrasTotal = addonItems.reduce((sum, item) => sum + item.total, 0) + syrupCost.total;
+
+        if (addonItems.length === 0 && syrupCost.total === 0) return null;
+
+        return (
+          <div className="card mb-2">
+            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+              Estimated Extras
+            </h3>
+            {addonItems.map(item => (
+              <div key={item.slug} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                <span>{item.name}</span>
+                <span style={{ fontWeight: 600 }}>${item.total.toFixed(2)}</span>
+              </div>
+            ))}
+            {syrupCost.total > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                <span>Hand-Crafted Syrups ({syrupCost.totalBottles} bottle{syrupCost.totalBottles !== 1 ? 's' : ''})</span>
+                <span style={{ fontWeight: 600 }}>${syrupCost.total.toFixed(2)}</span>
+              </div>
+            )}
+            <div style={{ borderTop: '2px solid var(--deep-brown)', marginTop: '0.5rem', paddingTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+              <span>Estimated Total Extras</span>
+              <span>${extrasTotal.toFixed(2)}</span>
+            </div>
+            <p className="text-muted text-small mt-1" style={{ color: 'var(--warm-brown)', fontStyle: 'italic' }}>
+              Final pricing will be confirmed by your bartender.
+            </p>
+          </div>
+        );
+      })()}
+
       {error && (
         <div className="alert alert-error mb-2">{error}</div>
       )}
 
       <div style={{ textAlign: 'center' }}>
+        <p className="text-muted text-small" style={{ color: 'var(--parchment)', marginBottom: '0.75rem', fontStyle: 'italic' }}>
+          After you submit, we'll review your selections and reach out within 2 business days.
+        </p>
         <button
           className="btn btn-success"
           onClick={onSubmit}

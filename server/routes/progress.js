@@ -23,6 +23,13 @@ router.put('/step', auth, async (req, res) => {
 
   try {
     if (step === 'onboarding_completed') {
+      // Verify user is in a valid onboarding state before allowing completion
+      const userRes = await pool.query('SELECT onboarding_status FROM users WHERE id = $1', [req.user.id]);
+      const currentStatus = userRes.rows[0]?.onboarding_status;
+      if (!['hired', 'in_progress'].includes(currentStatus)) {
+        return res.status(400).json({ error: 'Invalid onboarding state.' });
+      }
+
       const prog = await pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]);
       const p = prog.rows[0];
       if (!p || !p.welcome_viewed || !p.field_guide_completed || !p.agreement_completed ||

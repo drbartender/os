@@ -122,15 +122,13 @@ export default function Website() {
       {/* Header */}
       <header className="ws-header">
         <div className="ws-header-inner">
-          <a href="#top" className="ws-brand" onClick={e => { e.preventDefault(); scrollTo('top'); }}>
-            <BrandLogo />
-          </a>
+          <BrandLogo />
           <button className="ws-menu-toggle" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle menu">
             <span /><span /><span />
           </button>
           <nav className={`ws-nav ${mobileNav ? 'open' : ''}`} aria-label="Primary">
             <button onClick={() => scrollTo('services')}>The Bar</button>
-            <button onClick={() => scrollTo('process')}>The Protocol</button>
+            <button onClick={() => scrollTo('process')}>How It Works</button>
             <button onClick={() => scrollTo('testimonials')}>Our Story</button>
             <button onClick={() => scrollTo('faq')}>FAQ</button>
             <a href="/labnotes">Blog</a>
@@ -204,8 +202,7 @@ export default function Website() {
         {/* The Protocol (How It Works) */}
         <section className="ws-section ws-protocol-section" id="process">
           <FadeUp className="ws-section-heading">
-            <p className="ws-kicker">How It Works</p>
-            <h2>The Protocol</h2>
+            <h2>How It Works</h2>
             <div className="ws-divider ws-divider-center" />
           </FadeUp>
           <div className="ws-protocol-steps">
@@ -336,7 +333,7 @@ export default function Website() {
             </div>
             <div className="ws-footer-links">
               <button onClick={() => scrollTo('services')}>The Bar</button>
-              <button onClick={() => scrollTo('process')}>The Protocol</button>
+              <button onClick={() => scrollTo('process')}>How It Works</button>
               <button onClick={() => scrollTo('faq')}>FAQ</button>
               <a href="/labnotes">Blog</a>
               <button onClick={() => scrollTo('quote')}>Get a Quote</button>

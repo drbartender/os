@@ -9,6 +9,11 @@ const { sendEmail } = require('../utils/email');
 
 const router = express.Router();
 
+// Per-account login lockout
+const loginAttempts = new Map(); // email -> { count, firstAttempt }
+const MAX_ATTEMPTS = 10;
+const LOCKOUT_WINDOW = 15 * 60 * 1000; // 15 minutes
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -59,15 +64,37 @@ router.post('/login', authLimiter, async (req, res) => {
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
   try {
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
+    const normalizedEmail = email.toLowerCase();
+
+    // Check per-account lockout
+    const attempts = loginAttempts.get(normalizedEmail);
+    if (attempts) {
+      if (Date.now() - attempts.firstAttempt > LOCKOUT_WINDOW) {
+        loginAttempts.delete(normalizedEmail);
+      } else if (attempts.count >= MAX_ATTEMPTS) {
+        return res.status(429).json({ error: 'Too many login attempts. Please try again later.' });
+      }
+    }
+
+    const result = await pool.query('SELECT id, email, role, onboarding_status, can_hire, can_staff, password_hash FROM users WHERE email = $1', [normalizedEmail]);
     const user = result.rows[0];
     if (!user) return res.status(401).json({ error: 'Invalid email or password' });
 
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
+      // Track failed attempt
+      const existing = loginAttempts.get(normalizedEmail);
+      if (existing && Date.now() - existing.firstAttempt <= LOCKOUT_WINDOW) {
+        existing.count += 1;
+      } else {
+        loginAttempts.set(normalizedEmail, { count: 1, firstAttempt: Date.now() });
+      }
       console.warn('Failed login attempt for', email, 'from IP', req.ip);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
+
+    // Clear lockout on successful login
+    loginAttempts.delete(normalizedEmail);
 
     if (user.onboarding_status === 'deactivated') {
       return res.status(403).json({ error: 'This account has been deactivated. Contact admin.' });

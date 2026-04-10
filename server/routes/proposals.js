@@ -74,7 +74,14 @@ router.get('/t/:token', async (req, res) => {
       [proposal.id, JSON.stringify({ ip: ip || null, location })]
     );
 
-    res.json({ ...proposal, addons: addons.rows, status: proposal.status === 'sent' ? 'viewed' : proposal.status });
+    // Fetch linked drink plan token (if one exists)
+    const dpRes = await pool.query(
+      'SELECT token AS drink_plan_token FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
+      [proposal.id]
+    );
+    const drinkPlanToken = dpRes.rows[0]?.drink_plan_token || null;
+
+    res.json({ ...proposal, addons: addons.rows, drink_plan_token: drinkPlanToken, status: proposal.status === 'sent' ? 'viewed' : proposal.status });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -158,7 +165,7 @@ router.post('/t/:token/sign', publicLimiter, async (req, res) => {
 // ─── Public website endpoints (no auth) ─────────────────────────
 
 /** GET /api/proposals/public/packages — list active packages (public, limited fields) */
-router.get('/public/packages', async (req, res) => {
+router.get('/public/packages', publicLimiter, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, name, slug, category, bar_type, description, pricing_type, includes,
@@ -190,7 +197,7 @@ router.get('/public/addons', async (req, res) => {
 });
 
 /** POST /api/proposals/public/calculate — preview pricing (public, no save) */
-router.post('/public/calculate', async (req, res) => {
+router.post('/public/calculate', publicLimiter, async (req, res) => {
   const { package_id, guest_count, duration_hours, num_bars, addon_ids, addon_quantities, syrup_selections } = req.body;
   try {
     const pkgResult = await pool.query('SELECT * FROM service_packages WHERE id = $1 AND is_active = true', [package_id]);
@@ -464,6 +471,54 @@ router.post('/calculate', auth, requireAdmin, async (req, res) => {
     res.json(snapshot);
   } catch (err) {
     console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ─── Financials ─────────────────────────────────────────────────
+
+/** GET /api/proposals/financials — aggregate financial data */
+router.get('/financials', auth, requireAdmin, async (req, res) => {
+  try {
+    const [summaryResult, proposalsResult, paymentsResult] = await Promise.all([
+      pool.query(`
+        SELECT
+          COALESCE(SUM(total_price), 0) AS total_revenue,
+          COALESCE(SUM(amount_paid), 0) AS total_collected,
+          COALESCE(SUM(total_price - COALESCE(amount_paid, 0)), 0) AS total_outstanding
+        FROM proposals
+        WHERE status IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed')
+      `),
+      pool.query(`
+        SELECT p.id, p.event_name, p.event_date, p.total_price, p.amount_paid,
+               p.deposit_amount, p.status, p.created_at,
+               c.name AS client_name, c.email AS client_email,
+               sp.name AS package_name
+        FROM proposals p
+        LEFT JOIN clients c ON c.id = p.client_id
+        LEFT JOIN service_packages sp ON sp.id = p.package_id
+        WHERE p.status NOT IN ('draft')
+        ORDER BY p.event_date DESC NULLS LAST
+      `),
+      pool.query(`
+        SELECT pp.id, pp.proposal_id, pp.payment_type, pp.amount, pp.status AS payment_status,
+               pp.created_at, p.event_name, c.name AS client_name
+        FROM proposal_payments pp
+        JOIN proposals p ON p.id = pp.proposal_id
+        LEFT JOIN clients c ON c.id = p.client_id
+        WHERE pp.status = 'succeeded'
+        ORDER BY pp.created_at DESC
+        LIMIT 20
+      `)
+    ]);
+
+    res.json({
+      summary: summaryResult.rows[0],
+      proposals: proposalsResult.rows,
+      recentPayments: paymentsResult.rows
+    });
+  } catch (err) {
+    console.error('Financials error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

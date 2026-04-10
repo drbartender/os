@@ -142,15 +142,63 @@ export const DRINK_SYRUP_MAP = {
     notes: { honey: 'Smoother finish' },
   },
   'mai-tai': {
-    syrups: ['passion-fruit'],
-    notes: { 'passion-fruit': 'Tropical boost (orgeat still required)' },
+    syrups: ['orgeat', 'passion-fruit'],
+    featured: ['orgeat'],
+    notes: {
+      orgeat: 'The classic Mai Tai foundation — rich almond and floral',
+      'passion-fruit': 'Tropical boost alongside orgeat',
+    },
   },
   'vodka-berry-lemonade': {
-    syrups: ['mixed-berry'],
-    notes: { 'mixed-berry': 'Included in base build' },
-    required: true,
+    syrups: ['strawberry', 'blackberry', 'mango', 'peach', 'watermelon', 'grenadine', 'lavender', 'hibiscus'],
+    notes: {
+      strawberry: 'Strawberry Lemonade',
+      blackberry: 'Blackberry Lemonade',
+      mango: 'Mango Lemonade',
+      peach: 'Peach Lemonade',
+      watermelon: 'Watermelon Lemonade (seasonal)',
+      grenadine: 'Pink Grenadine Lemonade',
+      lavender: 'Lavender Lemonade',
+      hibiscus: 'Hibiscus Lemonade',
+    },
   },
 };
+
+/**
+ * Get drink-grouped flavor data for the per-drink "Make It Yours" section.
+ * Returns only drinks that have optional syrup mappings (excludes required-syrup drinks).
+ * @param {string[]} selectedDrinkIds - IDs of drinks the client selected
+ * @param {Array} cocktails - Full cocktail menu array (with id, name, emoji)
+ * @returns {Array<{ drinkId, drinkName, drinkEmoji, flavors: Array<{ syrupId, syrupName, note }> }>}
+ */
+export function getDrinksWithFlavors(selectedDrinkIds, cocktails = []) {
+  const results = [];
+  for (const drinkId of selectedDrinkIds) {
+    const mapping = DRINK_SYRUP_MAP[drinkId];
+    if (!mapping || mapping.required) continue;
+
+    const cocktail = cocktails.find(c => c.id === drinkId);
+    const flavors = mapping.syrups.map(syrupId => {
+      const syrup = SYRUPS.find(s => s.id === syrupId);
+      if (!syrup) return null;
+      return {
+        syrupId,
+        syrupName: syrup.name,
+        note: mapping.notes?.[syrupId] || null,
+      };
+    }).filter(Boolean);
+
+    if (flavors.length > 0) {
+      results.push({
+        drinkId,
+        drinkName: cocktail?.name || drinkId,
+        drinkEmoji: cocktail?.emoji || '',
+        flavors,
+      });
+    }
+  }
+  return results;
+}
 
 /** Drinks that should never show syrup recommendations */
 export const NO_SYRUP_DRINKS = [
@@ -159,16 +207,55 @@ export const NO_SYRUP_DRINKS = [
 ];
 
 /**
- * Calculate syrup cost with 3-pack discount.
- * @param {number} count - Number of syrups selected
- * @returns {{ packs: number, singles: number, total: number }}
+ * Calculate how many bottles of a single syrup are needed based on guest count.
+ * Each 750ml bottle makes ~35 cocktails; not every guest orders the flavored
+ * variant, so we estimate 1 bottle per 50 guests (minimum 1).
+ * @param {number|null} guestCount
+ * @returns {number}
  */
-export function calculateSyrupCost(count) {
-  if (count <= 0) return { packs: 0, singles: 0, total: 0 };
-  const packs = Math.floor(count / 3);
-  const singles = count % 3;
+export function getBottlesPerSyrup(guestCount) {
+  if (!guestCount || guestCount <= 50) return 1;
+  return Math.ceil(guestCount / 50);
+}
+
+/**
+ * Calculate syrup cost with 3-pack discount applied to total bottles.
+ * Every 3 bottles = $75 (regardless of flavor), remainder at $30 each.
+ * @param {number} uniqueFlavors - Number of unique syrups selected
+ * @param {number} [bottlesPerFlavor=1] - Bottles needed per flavor (from getBottlesPerSyrup)
+ * @returns {{ packs: number, singles: number, bottlesPerFlavor: number, totalBottles: number, total: number }}
+ */
+export function calculateSyrupCost(uniqueFlavors, bottlesPerFlavor = 1) {
+  if (uniqueFlavors <= 0) return { packs: 0, singles: 0, bottlesPerFlavor: 1, totalBottles: 0, total: 0 };
+  const totalBottles = uniqueFlavors * bottlesPerFlavor;
+  const packs = Math.floor(totalBottles / 3);
+  const singles = totalBottles % 3;
   const total = packs * SYRUP_PRICE_3PACK + singles * SYRUP_PRICE_SINGLE;
-  return { packs, singles, total };
+  return { packs, singles, bottlesPerFlavor, totalBottles, total };
+}
+
+/**
+ * Flatten a per-drink syrup selections map to a deduplicated array of syrup IDs.
+ * Handles backward compatibility with legacy flat arrays.
+ * @param {Object|Array} syrupSelections - { drinkId: [syrupId, ...] } or legacy [syrupId, ...]
+ * @returns {string[]} Unique syrup IDs
+ */
+export function getAllUniqueSyrups(syrupSelections) {
+  if (!syrupSelections) return [];
+  if (Array.isArray(syrupSelections)) return syrupSelections; // legacy flat array
+  return [...new Set(Object.values(syrupSelections).flat())];
+}
+
+/**
+ * Get syrup IDs selected for a specific drink.
+ * @param {Object|Array} syrupSelections - per-drink map or legacy flat array
+ * @param {string} drinkId
+ * @returns {string[]}
+ */
+export function getDrinkSyrupSelections(syrupSelections, drinkId) {
+  if (!syrupSelections) return [];
+  if (Array.isArray(syrupSelections)) return syrupSelections; // legacy: all syrups shared
+  return syrupSelections[drinkId] || [];
 }
 
 /**

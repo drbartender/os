@@ -1,5 +1,6 @@
 // generateShoppingList.js — scales pars to guest count and merges signature cocktail ingredients
 import { PARS_100 } from './shoppingListPars';
+import { SYRUPS, getBottlesPerSyrup } from '../../data/syrups';
 
 /**
  * Ingredient → standard list item mapping.
@@ -41,24 +42,29 @@ function needsBottles(guestCount) {
  * @param {string} eventData.clientName
  * @param {number} eventData.guestCount
  * @param {Array}  eventData.signatureCocktails - [{ name, ingredients: [string] }]
+ * @param {string[]} [eventData.syrupSelfProvided] - Syrup IDs the client will source themselves
  * @param {string} eventData.eventDate
  * @param {string} eventData.notes
  * @returns {{ clientName, guestCount, eventDate, signatureCocktailNames, liquorBeerWine, everythingElse }}
  */
 export function generateShoppingList(eventData) {
-  const { clientName, guestCount, signatureCocktails = [], eventDate, notes } = eventData;
+  const { clientName, guestCount, signatureCocktails = [], syrupSelfProvided = [], eventDate, notes } = eventData;
   const scale = (qty) => scaleQty(qty, guestCount);
   const bottles = needsBottles(guestCount);
+
+  const uid = () => typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
 
   // Build base lists from pars, scaling qty and swapping sizes for small events
   let liquorBeerWine = PARS_100.liquorBeerWine.map(item => ({
     ...item,
+    _id: uid(),
     size: (bottles && item.size === '1.75L') ? '750mL' : item.size,
     qty: scale(item.qty),
   }));
 
   let everythingElse = PARS_100.everythingElse.map(item => ({
     ...item,
+    _id: uid(),
     qty: scale(item.qty),
   }));
 
@@ -78,6 +84,7 @@ export function generateShoppingList(eventData) {
 
     if (!exists) {
       targetList.push({
+        _id: uid(),
         item: mapped.item,
         size: mapped.size,
         qty: Math.max(1, Math.ceil(guestCount / 25)),
@@ -99,6 +106,21 @@ export function generateShoppingList(eventData) {
     const item = targetList.find(i => i.item.toLowerCase() === mapped.item.toLowerCase());
     if (item) item.qty += count - 1;
   });
+
+  // Add self-provided syrups to the shopping list
+  if (syrupSelfProvided.length > 0) {
+    const bottlesPerFlavor = getBottlesPerSyrup(guestCount);
+    for (const syrupId of syrupSelfProvided) {
+      const syrup = SYRUPS.find(s => s.id === syrupId);
+      if (!syrup) continue;
+      everythingElse.push({
+        _id: uid(),
+        item: `${syrup.name} Syrup`,
+        size: '750mL',
+        qty: bottlesPerFlavor,
+      });
+    }
+  }
 
   return {
     clientName,

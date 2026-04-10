@@ -85,7 +85,7 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
               <p><strong>Wine:</strong> None</p>
             )}
             {selections.beerWineBalanceFullBar && (
-              <p><strong>Guest preference:</strong> {selections.beerWineBalanceFullBar.replace(/_/g, ' ')}</p>
+              <p><strong>Guest preference:</strong> {selections.beerWineBalanceFullBar.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</p>
             )}
           </div>
         )}
@@ -142,6 +142,15 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
                 onChange={() => onChange('customMenuDesign', false)}
               />
               <span>No thanks</span>
+            </label>
+            <label className="checkbox-label">
+              <input
+                type="radio"
+                name="customMenuDesign"
+                checked={selections.customMenuDesign === 'undecided'}
+                onChange={() => onChange('customMenuDesign', 'undecided')}
+              />
+              <span>I'd like to see options before deciding</span>
             </label>
           </div>
         </div>

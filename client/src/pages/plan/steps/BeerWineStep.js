@@ -6,6 +6,7 @@ const BALANCE_OPTIONS = [
   { value: 'mostly_beer', label: 'Mostly Beer' },
   { value: 'balanced', label: 'Balanced' },
   { value: 'mostly_wine', label: 'Mostly Wine' },
+  { value: 'help_me_decide', label: 'Help me decide' },
 ];
 
 export default function BeerWineStep({ selections, onChange }) {

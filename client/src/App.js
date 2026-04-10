@@ -20,11 +20,19 @@ import ContractorProfile from './pages/ContractorProfile';
 import PaydayProtocols from './pages/PaydayProtocols';
 import Completion from './pages/Completion';
 import StaffPortal from './pages/StaffPortal';
+import StaffLayout from './components/StaffLayout';
+import StaffDashboard from './pages/staff/StaffDashboard';
+import StaffShifts from './pages/staff/StaffShifts';
+import StaffSchedule from './pages/staff/StaffSchedule';
+import StaffEvents from './pages/staff/StaffEvents';
+import StaffResources from './pages/staff/StaffResources';
+import StaffProfile from './pages/staff/StaffProfile';
 import AdminLayout from './components/AdminLayout';
 import AdminDashboard from './pages/AdminDashboard';
 import AdminUserDetail from './pages/AdminUserDetail';
 import AdminApplicationDetail from './pages/AdminApplicationDetail';
 import EventsDashboard from './pages/admin/EventsDashboard';
+import ShiftDetail from './pages/admin/ShiftDetail';
 import ClientsDashboard from './pages/admin/ClientsDashboard';
 import FinancialsDashboard from './pages/admin/FinancialsDashboard';
 import HiringDashboard from './pages/admin/HiringDashboard';
@@ -39,6 +47,7 @@ import ProposalDetail from './pages/admin/ProposalDetail';
 import ClientDetail from './pages/admin/ClientDetail';
 import Dashboard from './pages/admin/Dashboard';
 import ProposalView from './pages/proposal/ProposalView';
+import ClientShoppingList from './pages/public/ClientShoppingList';
 import BlogDashboard from './pages/admin/BlogDashboard';
 import EmailMarketingDashboard from './pages/admin/EmailMarketingDashboard';
 import EmailLeadsDashboard from './pages/admin/EmailLeadsDashboard';
@@ -53,17 +62,28 @@ import BlogPost from './pages/public/BlogPost';
 import ClientLogin from './pages/public/ClientLogin';
 import ClientDashboard from './pages/public/ClientDashboard';
 import ClassWizard from './pages/website/ClassWizard';
+import HiringLanding from './pages/HiringLanding';
 import { ClientAuthProvider } from './context/ClientAuthContext';
 
-/** Check if we're on the public marketing site (drbartender.com) vs admin subdomain */
-function isPublicSite() {
+/**
+ * Detect which domain context we're on:
+ * - 'public'  → drbartender.com / www.drbartender.com (marketing site)
+ * - 'hiring'  → hiring.drbartender.com (applicant portal)
+ * - 'staff'   → staff.drbartender.com (staff portal)
+ * - 'app'     → admin.drbartender.com / localhost (full admin/staff app)
+ */
+function getSiteContext() {
   const host = window.location.hostname;
-  // admin.drbartender.com → admin/staff app
-  if (host.startsWith('admin.')) return false;
-  // localhost → show app routes (website accessible at /website)
-  if (host === 'localhost' || host === '127.0.0.1') return false;
-  // drbartender.com, www.drbartender.com → public website
-  return true;
+  if (host.startsWith('hiring.')) return 'hiring';
+  if (host.startsWith('staff.')) return 'staff';
+  if (host.startsWith('admin.')) return 'app';
+  if (host === 'localhost' || host === '127.0.0.1') return 'app';
+  return 'public';
+}
+
+/** Legacy helper — true when on the public marketing domain */
+function isPublicSite() {
+  return getSiteContext() === 'public';
 }
 
 /** Determine where a logged-in user should go based on their role and status */
@@ -151,6 +171,7 @@ function PublicWebsiteRoutes() {
         {/* These public token-based routes work on both domains */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
+        <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
         <Route path="/labnotes" element={<Blog />} />
         <Route path="/labnotes/:slug" element={<BlogPost />} />
         <Route path="/login" element={<ClientLogin />} />
@@ -161,11 +182,68 @@ function PublicWebsiteRoutes() {
   );
 }
 
-function AppRoutes() {
-  const publicSite = isPublicSite();
+/** hiring.drbartender.com — applicant-focused routes only */
+function HiringRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<RedirectIfLoggedIn><HiringLanding /></RedirectIfLoggedIn>} />
+      <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
+      <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
+      <Route path="/forgot-password" element={<RedirectIfLoggedIn><ForgotPassword /></RedirectIfLoggedIn>} />
+      <Route path="/reset-password/:token" element={<RedirectIfLoggedIn><ResetPassword /></RedirectIfLoggedIn>} />
+      <Route path="/apply" element={<ProtectedRoute><Application /></ProtectedRoute>} />
+      <Route path="/application-status" element={<ProtectedRoute><ApplicationStatus /></ProtectedRoute>} />
+      {/* Public token routes still work */}
+      <Route path="/plan/:token" element={<PotionPlanningLab />} />
+      <Route path="/proposal/:token" element={<ProposalView />} />
+      <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
 
-  // On the public domain (drbartender.com), only show the marketing site + public routes
-  if (publicSite) return <PublicWebsiteRoutes />;
+/** staff.drbartender.com — staff portal + onboarding routes only */
+function StaffSiteRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
+      <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
+      <Route path="/forgot-password" element={<RedirectIfLoggedIn><ForgotPassword /></RedirectIfLoggedIn>} />
+      <Route path="/reset-password/:token" element={<RedirectIfLoggedIn><ResetPassword /></RedirectIfLoggedIn>} />
+      {/* Onboarding flow */}
+      <Route element={<RequireHired><Layout /></RequireHired>}>
+        <Route path="/welcome" element={<Welcome />} />
+        <Route path="/field-guide" element={<FieldGuide />} />
+        <Route path="/agreement" element={<Agreement />} />
+        <Route path="/contractor-profile" element={<ContractorProfile />} />
+        <Route path="/payday-protocols" element={<PaydayProtocols />} />
+        <Route path="/complete" element={<Completion />} />
+      </Route>
+      {/* Staff portal */}
+      <Route path="/portal" element={<RequirePortal><StaffLayout /></RequirePortal>}>
+        <Route index element={<Navigate to="dashboard" replace />} />
+        <Route path="dashboard" element={<StaffDashboard />} />
+        <Route path="shifts" element={<StaffShifts />} />
+        <Route path="schedule" element={<StaffSchedule />} />
+        <Route path="events" element={<StaffEvents />} />
+        <Route path="resources" element={<StaffResources />} />
+        <Route path="profile" element={<StaffProfile />} />
+      </Route>
+      {/* Public token routes */}
+      <Route path="/plan/:token" element={<PotionPlanningLab />} />
+      <Route path="/proposal/:token" element={<ProposalView />} />
+      <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+function AppRoutes() {
+  const context = getSiteContext();
+
+  if (context === 'public') return <PublicWebsiteRoutes />;
+  if (context === 'hiring') return <HiringRoutes />;
+  if (context === 'staff') return <StaffSiteRoutes />;
 
   return (
     <ClientAuthProvider>
@@ -174,6 +252,7 @@ function AppRoutes() {
       {/* Public pages (no auth) */}
       <Route path="/plan/:token" element={<PotionPlanningLab />} />
       <Route path="/proposal/:token" element={<ProposalView />} />
+      <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
       {/* Website accessible on admin domain for preview */}
       <Route path="/website" element={<HomePage />} />
       <Route path="/quote" element={<QuotePage />} />
@@ -204,8 +283,18 @@ function AppRoutes() {
         <Route path="/complete" element={<Completion />} />
       </Route>
 
-      {/* Portal (onboarding completed) */}
-      <Route path="/portal" element={<RequirePortal><StaffPortal /></RequirePortal>} />
+      {/* Portal (onboarding completed) — sidebar layout with child routes */}
+      <Route path="/portal" element={<RequirePortal><StaffLayout /></RequirePortal>}>
+        <Route index element={<Navigate to="dashboard" replace />} />
+        <Route path="dashboard" element={<StaffDashboard />} />
+        <Route path="shifts" element={<StaffShifts />} />
+        <Route path="schedule" element={<StaffSchedule />} />
+        <Route path="events" element={<StaffEvents />} />
+        <Route path="resources" element={<StaffResources />} />
+        <Route path="profile" element={<StaffProfile />} />
+      </Route>
+      {/* Legacy route for backwards compat */}
+      <Route path="/portal-legacy" element={<RequirePortal><StaffPortal /></RequirePortal>} />
 
       {/* Admin + Manager shell */}
       <Route path="/admin" element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}>
@@ -224,6 +313,7 @@ function AppRoutes() {
         <Route path="proposals/:id" element={<ProposalDetail />} />
         <Route path="events" element={<EventsDashboard />} />
         <Route path="events/:id" element={<ProposalDetail />} />
+        <Route path="events/shift/:id" element={<ShiftDetail />} />
         <Route path="clients" element={<ClientsDashboard />} />
         <Route path="clients/:id" element={<ClientDetail />} />
         <Route path="financials" element={<FinancialsDashboard />} />

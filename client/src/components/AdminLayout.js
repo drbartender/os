@@ -1,18 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import BrandLogo from './BrandLogo';
+import AdminBreadcrumbs from './AdminBreadcrumbs';
+import api from '../utils/api';
 
 const NAV_ITEMS = [
   { label: 'Dashboard',   path: '/admin/dashboard',   icon: '📊' },
-  { label: 'Events',      path: '/admin/events',      icon: '📅' },
-  { label: 'Proposals',   path: '/admin/proposals',   icon: '📋' },
+  { label: 'Events',      path: '/admin/events',      icon: '📅', badgeKey: 'unstaffed_events' },
+  { label: 'Proposals',   path: '/admin/proposals',   icon: '📋', badgeKey: 'pending_proposals' },
   { label: 'Clients',     path: '/admin/clients',     icon: '🤝' },
   { label: 'Staff',       path: '/admin/staffing',    icon: '👥' },
-  { label: 'Hiring',      path: '/admin/hiring',      icon: '📝' },
+  { label: 'Hiring',      path: '/admin/hiring',      icon: '📝', badgeKey: 'new_applications' },
   { label: 'Financials',  path: '/admin/financials',  icon: '📒' },
   { label: 'Blog',        path: '/admin/blog',        icon: '✏' },
-  { label: 'Email',       path: '/admin/email-marketing', icon: '✉' },
+  { label: 'Marketing',   path: '/admin/email-marketing', icon: '✉' },
   'divider',
   { label: 'Settings',    path: '/admin/settings',    icon: '⚙' },
 ];
@@ -21,6 +23,16 @@ export default function AdminLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [badges, setBadges] = useState({});
+
+  useEffect(() => {
+    const fetchBadges = () => {
+      api.get('/admin/badge-counts').then(r => setBadges(r.data)).catch(() => {});
+    };
+    fetchBadges();
+    const interval = setInterval(fetchBadges, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleLogout = () => { logout(); navigate('/login'); };
 
@@ -63,6 +75,9 @@ export default function AdminLayout() {
                 >
                   <span className="admin-nav-icon">{item.icon}</span>
                   {item.label}
+                  {item.badgeKey && badges[item.badgeKey] > 0 && (
+                    <span className="nav-badge">{badges[item.badgeKey]}</span>
+                  )}
                 </NavLink>
               )
             )}
@@ -70,6 +85,7 @@ export default function AdminLayout() {
         </aside>
 
         <main className="admin-content">
+          <AdminBreadcrumbs />
           <Outlet />
         </main>
       </div>

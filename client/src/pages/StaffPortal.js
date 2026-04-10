@@ -137,6 +137,19 @@ export default function StaffPortal() {
     setTimeout(() => setCalCopied(false), 2000);
   }
 
+  // My Events state
+  const [myEvents, setMyEvents] = useState(null);
+  const [myEventsLoading, setMyEventsLoading] = useState(false);
+
+  useEffect(() => {
+    if (tab !== 'my-events' || !isApproved || !user?.id) return;
+    setMyEventsLoading(true);
+    api.get(`/shifts/user/${user.id}/events`)
+      .then(r => setMyEvents(r.data))
+      .catch(console.error)
+      .finally(() => setMyEventsLoading(false));
+  }, [tab, isApproved, user?.id]);
+
   const displayName = user?.preferred_name || user?.email?.split('@')[0] || 'there';
 
   return (
@@ -217,6 +230,9 @@ export default function StaffPortal() {
                   </span>
                 )}
               </button>
+              <button className={`tab-btn ${tab === 'my-events' ? 'active' : ''}`} onClick={() => setTab('my-events')}>
+                My Events
+              </button>
               <button className={`tab-btn ${tab === 'resources' ? 'active' : ''}`} onClick={() => setTab('resources')}>
                 Resources & Profile
               </button>
@@ -242,7 +258,7 @@ export default function StaffPortal() {
                       const alreadyRequested = !!shift.my_request_id;
                       const reqStatus = shift.my_request_status;
                       let positions = [];
-                      try { positions = JSON.parse(shift.positions_needed || '[]'); } catch (e) {}
+                      try { positions = JSON.parse(shift.positions_needed || '[]').map(p => typeof p === 'string' ? p : p.position || 'Bartender'); } catch (e) {}
 
                       return (
                         <div key={shift.id} className="card" style={{ padding: '1.25rem 1.5rem' }}>
@@ -388,6 +404,84 @@ export default function StaffPortal() {
                         )}
                       </div>
                     ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* ── My Events ── */}
+            {tab === 'my-events' && (
+              <>
+                {myEventsLoading ? (
+                  <div className="loading"><div className="spinner" />Loading your events...</div>
+                ) : !myEvents ? (
+                  <div className="card text-center" style={{ padding: '2.5rem', marginTop: '0.5rem' }}>
+                    <p style={{ color: 'var(--text-muted)' }}>Could not load event history.</p>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    {/* Upcoming */}
+                    <h3 style={{ fontSize: '1rem', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
+                      Upcoming Events ({myEvents.upcoming.length})
+                    </h3>
+                    {myEvents.upcoming.length === 0 ? (
+                      <div className="card" style={{ padding: '1.5rem', textAlign: 'center', marginBottom: '1.25rem' }}>
+                        <p style={{ color: 'var(--text-muted)', margin: 0 }}>No upcoming events. Check Available Shifts to find your next gig!</p>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1.25rem' }}>
+                        {myEvents.upcoming.map(ev => (
+                          <div key={ev.id + '-up'} className="card" style={{ padding: '1rem 1.25rem', borderLeft: '3px solid var(--success)' }}>
+                            <div style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.2rem' }}>
+                              {ev.event_name || ev.proposal_event_name || 'Event'}
+                            </div>
+                            <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
+                              {fmtDate(ev.event_date)}
+                              {ev.start_time && <> &middot; {ev.start_time}{ev.end_time && ` - ${ev.end_time}`}</>}
+                            </div>
+                            {ev.location && (
+                              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                                {ev.location}
+                              </div>
+                            )}
+                            {ev.position && (
+                              <div style={{ marginTop: '0.35rem' }}>
+                                <span className="badge badge-inprogress">{ev.position}</span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Past */}
+                    <h3 style={{ fontSize: '1rem', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
+                      Past Events ({myEvents.past.length})
+                    </h3>
+                    {myEvents.past.length === 0 ? (
+                      <div className="card" style={{ padding: '1.5rem', textAlign: 'center' }}>
+                        <p style={{ color: 'var(--text-muted)', margin: 0 }}>No past events yet.</p>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        {myEvents.past.map(ev => (
+                          <div key={ev.id + '-past'} className="card" style={{ padding: '0.85rem 1.25rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
+                              <div>
+                                <div style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.15rem' }}>
+                                  {ev.event_name || ev.proposal_event_name || 'Event'}
+                                </div>
+                                <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
+                                  {fmtDate(ev.event_date)}
+                                  {ev.location && <> &middot; {ev.location}</>}
+                                </div>
+                              </div>
+                              {ev.position && <span className="badge badge-inprogress">{ev.position}</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </>

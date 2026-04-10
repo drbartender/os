@@ -208,6 +208,23 @@ npm run dev           # Express on :5000, React on :3000
 - **Database**: Neon PostgreSQL (connection string in Render env vars)
 - Push to `main` triggers automatic deployment. No manual deploy step needed.
 
+## Reasoning Effort
+
+**Use maximum reasoning effort when:**
+- A change crosses system boundaries (schema → routes → components, backend ↔ frontend)
+- Pricing, payment, or Stripe logic is involved (real money at stake)
+- Auth, security, or role-guard logic is involved (data exposure risk)
+- Schema migrations (hard to reverse in production)
+- Any change that triggers the Cross-Cutting Consistency rules below
+
+**Normal effort is fine for:**
+- Single-file, single-layer edits (one component, one route, one style block)
+- Copy, text, or documentation-only changes
+- CSS-only styling tweaks
+- Isolated bug fixes with an obvious cause and fix
+
+**Quick test:** *"If I get this subtly wrong, will it cause a bug that's hard to catch?"* If yes — max effort. If the mistake would be immediately obvious — normal effort.
+
 ## Coding Patterns & Conventions
 
 - **No ORM** — use raw SQL via `pool.query()` with parameterized queries (`$1`, `$2`, etc.). Never concatenate user input into SQL.
