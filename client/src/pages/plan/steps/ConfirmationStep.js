@@ -1,13 +1,191 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { loadStripe } from '@stripe/stripe-js';
+import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
+import axios from 'axios';
 import { QUICK_PICKS } from '../data/servingTypes';
 import { formatPhoneInput } from '../../../utils/formatPhone';
 import { SYRUPS, calculateSyrupCost, getBottlesPerSyrup, getAllUniqueSyrups } from '../../../data/syrups';
+import { API_BASE_URL as BASE_URL } from '../../../utils/api';
 
-export default function ConfirmationStep({ plan, quickPickChoice, activeModules, selections, cocktails = [], mocktails = [], addOns = {}, addonPricing = [], guestCount, proposalSyrups = [], onSubmit, saving, error }) {
+const stripePromise = process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY
+  ? loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY)
+  : null;
+
+const fmt = (n) =>
+  `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+function formatDateShort(d) {
+  if (!d) return '';
+  return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+// ─── Stripe payment form (must be inside <Elements>) ─────────────
+
+function DrinkPlanPaymentForm({ onSubmit, payLabel, disabled }) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [paying, setPaying] = useState(false);
+  const [payError, setPayError] = useState('');
+
+  const handlePay = async (e) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+    setPaying(true);
+    setPayError('');
+
+    // Submit drink plan first
+    try {
+      await onSubmit();
+    } catch (err) {
+      setPayError(err.message || 'Failed to submit. Please try again.');
+      setPaying(false);
+      return;
+    }
+
+    const { error } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: `${window.location.origin}${window.location.pathname}?paid=true`,
+      },
+    });
+
+    if (error) {
+      setPayError(error.message || 'Payment failed. Please try again.');
+      setPaying(false);
+    }
+    // On success, Stripe redirects to return_url
+  };
+
+  return (
+    <form onSubmit={handlePay}>
+      <PaymentElement />
+      {payError && (
+        <p style={{ color: '#c0392b', fontSize: '0.875rem', marginTop: '0.75rem' }}>{payError}</p>
+      )}
+      <button
+        type="submit"
+        disabled={!stripe || paying || disabled}
+        className="btn btn-success"
+        style={{ width: '100%', padding: '0.75rem', fontSize: '1.05rem', marginTop: '1rem', opacity: (!stripe || paying || disabled) ? 0.6 : 1 }}
+      >
+        {paying ? 'Processing...' : payLabel}
+      </button>
+    </form>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────
+
+export default function ConfirmationStep({ plan, quickPickChoice, activeModules, selections, cocktails = [], mocktails = [], addOns = {}, addonPricing = [], guestCount, numBars = 0, pricingSnapshot = null, proposalSyrups = [], onSubmit, onSubmitForPayment, proposalPaymentInfo, token, saving, error }) {
   const pick = QUICK_PICKS.find(p => p.key === quickPickChoice);
   const selectedDrinks = cocktails.filter(d => (selections.signatureDrinks || []).includes(d.id));
   const selectedMocktails = mocktails.filter(d => (selections.mocktails || []).includes(d.id));
   const logistics = selections.logistics || {};
+
+  // Payment state
+  const [paymentChoice, setPaymentChoice] = useState('pay_now');
+  const [clientSecret, setClientSecret] = useState('');
+  const [paymentScenario, setPaymentScenario] = useState(null);
+  const [paymentAmounts, setPaymentAmounts] = useState({ extrasAmount: 0, pastDueAmount: 0, totalCharge: 0 });
+  const [loadingPayment, setLoadingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState('');
+
+  // Calculate extras total (same logic as before, for display)
+  const addonSlugs = Object.keys(addOns);
+  const addonItems = addonSlugs
+    .map(slug => {
+      const pricing = addonPricing.find(a => a.slug === slug);
+      if (!pricing) return null;
+      const rate = Number(pricing.rate);
+      let lineTotal = rate;
+      let desc = pricing.name;
+      if (pricing.billing_type === 'per_guest' && guestCount) {
+        lineTotal = rate * guestCount;
+        desc = `${pricing.name} (${guestCount} guests)`;
+      }
+      return { slug, name: desc, total: lineTotal };
+    })
+    .filter(Boolean);
+
+  const barRentalSnapshot = pricingSnapshot?.bar_rental || {};
+  const hasAddBarRental = logistics.addBarRental;
+  let barRentalCost = 0;
+  let barRentalLabel = '';
+  if (hasAddBarRental) {
+    if (numBars >= 1) {
+      barRentalCost = barRentalSnapshot.additional_bar_fee || 100;
+      barRentalLabel = 'Additional Portable Bar';
+    } else {
+      barRentalCost = barRentalSnapshot.first_bar_fee || 50;
+      barRentalLabel = 'Portable Bar Rental';
+    }
+  }
+
+  const syrupIds = getAllUniqueSyrups(selections.syrupSelections)
+    .filter(id => !(selections.syrupSelfProvided || []).includes(id));
+  const newSyrupIds = syrupIds.filter(id => !proposalSyrups.includes(id));
+  const syrupCost = calculateSyrupCost(newSyrupIds.length, getBottlesPerSyrup(guestCount));
+  const extrasTotal = addonItems.reduce((sum, item) => sum + item.total, 0) + syrupCost.total + barRentalCost;
+
+  // Determine if payment section should show
+  const hasExtras = extrasTotal > 0;
+  const hasProposal = !!proposalPaymentInfo;
+  const showPayment = hasExtras && hasProposal && stripePromise;
+
+  // Calculate balance due date for display
+  let displayBalanceDueDate = proposalPaymentInfo?.balanceDueDate;
+  if (!displayBalanceDueDate && proposalPaymentInfo?.eventDate) {
+    const d = new Date(proposalPaymentInfo.eventDate);
+    d.setDate(d.getDate() - 14);
+    displayBalanceDueDate = d.toISOString();
+  }
+
+  // Load payment intent when extras > 0 and proposal is linked
+  useEffect(() => {
+    if (!showPayment || !token) return;
+
+    let cancelled = false;
+    async function loadPaymentInfo() {
+      setLoadingPayment(true);
+      setPaymentError('');
+      try {
+        const res = await axios.post(`${BASE_URL}/stripe/create-drink-plan-intent/${token}`, {
+          selections,
+        });
+        if (cancelled) return;
+
+        if (res.data.noPaymentNeeded) {
+          setPaymentScenario(null);
+          return;
+        }
+
+        setClientSecret(res.data.clientSecret);
+        setPaymentScenario(res.data.paymentScenario);
+        setPaymentAmounts({
+          extrasAmount: res.data.extrasAmount,
+          pastDueAmount: res.data.pastDueAmount,
+          totalCharge: res.data.totalCharge,
+        });
+
+        // Default to pay_now if payment is required
+        if (res.data.paymentScenario !== 'extras_optional') {
+          setPaymentChoice('pay_now');
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error('Failed to load payment info:', err);
+          setPaymentError('Unable to load payment form. You can still submit and pay later.');
+        }
+      } finally {
+        if (!cancelled) setLoadingPayment(false);
+      }
+    }
+
+    loadPaymentInfo();
+    return () => { cancelled = true; };
+  }, [showPayment, token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const paymentRequired = paymentScenario === 'extras_required' || paymentScenario === 'extras_plus_balance';
 
   return (
     <div>
@@ -46,7 +224,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
             )}
             {selections.mixersForSignatureDrinks === true && (
               <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
-                Basic mixers included for signature drink spirits
+                Basic mixers included for simple mixed drinks
               </p>
             )}
           </div>
@@ -117,9 +295,9 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
         {(() => {
           const allSyrupIds = getAllUniqueSyrups(selections.syrupSelections);
           const selfProvided = selections.syrupSelfProvided || [];
-          const syrupIds = allSyrupIds.filter(id => !selfProvided.includes(id));
-          if (syrupIds.length === 0) return null;
-          const newIds = syrupIds.filter(id => !proposalSyrups.includes(id));
+          const drbSyrupIds = allSyrupIds.filter(id => !selfProvided.includes(id));
+          if (drbSyrupIds.length === 0) return null;
+          const newIds = drbSyrupIds.filter(id => !proposalSyrups.includes(id));
           const bottlesPerFlavor = getBottlesPerSyrup(guestCount);
           const cost = calculateSyrupCost(newIds.length, bottlesPerFlavor);
           return (
@@ -129,7 +307,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
                 Hand-crafted by Dr. Bartender
               </p>
               <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
-                {syrupIds.map(id => {
+                {drbSyrupIds.map(id => {
                   const s = SYRUPS.find(sy => sy.id === id);
                   const included = proposalSyrups.includes(id);
                   return s ? (
@@ -208,6 +386,11 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
               Equipment: None needed
             </p>
           )}
+          {logistics.addBarRental && (
+            <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
+              {numBars >= 1 ? 'Additional portable bar rental' : 'Portable bar rental'}
+            </p>
+          )}
           {logistics.accessNotes && (
             <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
               Notes: {logistics.accessNotes}
@@ -228,77 +411,183 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
       </div>
 
       {/* Estimated Extras */}
-      {(() => {
-        const addonSlugs = Object.keys(addOns);
-        // Calculate addon line items
-        const addonItems = addonSlugs
-          .map(slug => {
-            const pricing = addonPricing.find(a => a.slug === slug);
-            if (!pricing) return null;
-            const rate = Number(pricing.rate);
-            let lineTotal = rate;
-            let desc = pricing.name;
-            if (pricing.billing_type === 'per_guest' && guestCount) {
-              lineTotal = rate * guestCount;
-              desc = `${pricing.name} (${guestCount} guests)`;
-            }
-            return { slug, name: desc, total: lineTotal };
-          })
-          .filter(Boolean);
-        // Syrup cost (only for syrups NOT from proposal, excluding self-provided)
-        const syrupIds = getAllUniqueSyrups(selections.syrupSelections)
-          .filter(id => !(selections.syrupSelfProvided || []).includes(id));
-        const newSyrupIds = syrupIds.filter(id => !proposalSyrups.includes(id));
-        const syrupCost = calculateSyrupCost(newSyrupIds.length, getBottlesPerSyrup(guestCount));
-        const extrasTotal = addonItems.reduce((sum, item) => sum + item.total, 0) + syrupCost.total;
-
-        if (addonItems.length === 0 && syrupCost.total === 0) return null;
-
-        return (
-          <div className="card mb-2">
-            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
-              Estimated Extras
-            </h3>
-            {addonItems.map(item => (
-              <div key={item.slug} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-                <span>{item.name}</span>
-                <span style={{ fontWeight: 600 }}>${item.total.toFixed(2)}</span>
-              </div>
-            ))}
-            {syrupCost.total > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-                <span>Hand-Crafted Syrups ({syrupCost.totalBottles} bottle{syrupCost.totalBottles !== 1 ? 's' : ''})</span>
-                <span style={{ fontWeight: 600 }}>${syrupCost.total.toFixed(2)}</span>
-              </div>
-            )}
-            <div style={{ borderTop: '2px solid var(--deep-brown)', marginTop: '0.5rem', paddingTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
-              <span>Estimated Total Extras</span>
-              <span>${extrasTotal.toFixed(2)}</span>
+      {hasExtras && (
+        <div className="card mb-2">
+          <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+            Estimated Extras
+          </h3>
+          {barRentalCost > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+              <span>{barRentalLabel}</span>
+              <span style={{ fontWeight: 600 }}>{fmt(barRentalCost)}</span>
             </div>
+          )}
+          {addonItems.map(item => (
+            <div key={item.slug} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+              <span>{item.name}</span>
+              <span style={{ fontWeight: 600 }}>{fmt(item.total)}</span>
+            </div>
+          ))}
+          {syrupCost.total > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+              <span>Hand-Crafted Syrups ({syrupCost.totalBottles} bottle{syrupCost.totalBottles !== 1 ? 's' : ''})</span>
+              <span style={{ fontWeight: 600 }}>{fmt(syrupCost.total)}</span>
+            </div>
+          )}
+          <div style={{ borderTop: '2px solid var(--deep-brown)', marginTop: '0.5rem', paddingTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+            <span>Estimated Total Extras</span>
+            <span>{fmt(extrasTotal)}</span>
+          </div>
+          {!showPayment && (
             <p className="text-muted text-small mt-1" style={{ color: 'var(--warm-brown)', fontStyle: 'italic' }}>
               Final pricing will be confirmed by your bartender.
             </p>
-          </div>
-        );
-      })()}
+          )}
+        </div>
+      )}
+
+      {/* Payment Section */}
+      {showPayment && paymentScenario && (
+        <div className="card mb-2">
+          <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+            Payment
+          </h3>
+
+          {/* Scenario: extras + outstanding balance (must pay both) */}
+          {paymentScenario === 'extras_plus_balance' && (
+            <div>
+              <p className="text-muted" style={{ color: 'var(--warm-brown)', marginBottom: '1rem' }}>
+                Your balance is past due. Please pay your extras and outstanding balance to finalize your event.
+              </p>
+              <div style={{ background: 'rgba(193, 125, 60, 0.06)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                  <span>Drink Plan Extras</span>
+                  <span style={{ fontWeight: 600 }}>{fmt(paymentAmounts.extrasAmount)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                  <span>Outstanding Balance</span>
+                  <span style={{ fontWeight: 600 }}>{fmt(paymentAmounts.pastDueAmount)}</span>
+                </div>
+                <div style={{ borderTop: '2px solid var(--deep-brown)', marginTop: '0.5rem', paddingTop: '0.5rem', display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                  <span>Total Due Now</span>
+                  <span>{fmt(paymentAmounts.totalCharge)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Scenario: extras required (balance already paid) */}
+          {paymentScenario === 'extras_required' && (
+            <p className="text-muted" style={{ color: 'var(--warm-brown)', marginBottom: '1rem' }}>
+              Payment of {fmt(paymentAmounts.totalCharge)} is required for your extras before submitting.
+            </p>
+          )}
+
+          {/* Scenario: extras optional (not past due) */}
+          {paymentScenario === 'extras_optional' && (
+            <div style={{ marginBottom: '1rem' }}>
+              <p className="text-muted" style={{ color: 'var(--warm-brown)', marginBottom: '0.75rem' }}>
+                How would you like to handle payment for your extras?
+              </p>
+
+              <label style={{
+                display: 'block', padding: '0.85rem 1rem', borderRadius: '8px', cursor: 'pointer', marginBottom: '0.5rem',
+                border: paymentChoice === 'pay_now' ? '2px solid var(--deep-brown)' : '1px solid #d4c4b0',
+                background: paymentChoice === 'pay_now' ? 'rgba(193, 125, 60, 0.06)' : 'transparent',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="radio"
+                    name="paymentChoice"
+                    value="pay_now"
+                    checked={paymentChoice === 'pay_now'}
+                    onChange={() => setPaymentChoice('pay_now')}
+                    style={{ accentColor: 'var(--deep-brown)' }}
+                  />
+                  <div>
+                    <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>Pay {fmt(paymentAmounts.totalCharge)} Now</div>
+                    <div className="text-muted text-small">Take care of it now and you're all set.</div>
+                  </div>
+                </div>
+              </label>
+
+              <label style={{
+                display: 'block', padding: '0.85rem 1rem', borderRadius: '8px', cursor: 'pointer',
+                border: paymentChoice === 'add_to_balance' ? '2px solid var(--deep-brown)' : '1px solid #d4c4b0',
+                background: paymentChoice === 'add_to_balance' ? 'rgba(193, 125, 60, 0.06)' : 'transparent',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="radio"
+                    name="paymentChoice"
+                    value="add_to_balance"
+                    checked={paymentChoice === 'add_to_balance'}
+                    onChange={() => setPaymentChoice('add_to_balance')}
+                    style={{ accentColor: 'var(--deep-brown)' }}
+                  />
+                  <div>
+                    <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>Add to My Balance</div>
+                    <div className="text-muted text-small">
+                      {fmt(paymentAmounts.totalCharge)} will be added to your balance
+                      {displayBalanceDueDate && ` (due ${formatDateShort(displayBalanceDueDate)})`}
+                    </div>
+                  </div>
+                </div>
+              </label>
+            </div>
+          )}
+
+          {/* Stripe Payment Form */}
+          {(paymentRequired || paymentChoice === 'pay_now') && (
+            <div style={{ marginTop: paymentScenario === 'extras_optional' ? '0.5rem' : 0 }}>
+              {loadingPayment && (
+                <div style={{ textAlign: 'center', padding: '2rem' }}>
+                  <div className="spinner" />
+                </div>
+              )}
+
+              {clientSecret && !loadingPayment && stripePromise && (
+                <Elements
+                  key={clientSecret}
+                  stripe={stripePromise}
+                  options={{ clientSecret, appearance: { theme: 'stripe' } }}
+                >
+                  <DrinkPlanPaymentForm
+                    onSubmit={onSubmitForPayment}
+                    payLabel={`Pay ${fmt(paymentAmounts.totalCharge)} & Submit`}
+                    disabled={saving}
+                  />
+                </Elements>
+              )}
+
+              {!clientSecret && !loadingPayment && paymentError && (
+                <p style={{ color: '#c0392b', fontSize: '0.875rem' }}>{paymentError}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="alert alert-error mb-2">{error}</div>
       )}
 
-      <div style={{ textAlign: 'center' }}>
-        <p className="text-muted text-small" style={{ color: 'var(--parchment)', marginBottom: '0.75rem', fontStyle: 'italic' }}>
-          After you submit, we'll review your selections and reach out within 2 business days.
-        </p>
-        <button
-          className="btn btn-success"
-          onClick={onSubmit}
-          disabled={saving}
-          style={{ padding: '0.75rem 2.5rem', fontSize: '1.1rem' }}
-        >
-          {saving ? 'Submitting...' : 'Submit My Drink Plan'}
-        </button>
-      </div>
+      {/* Submit button — only shown when NOT paying via Stripe */}
+      {(!showPayment || !paymentScenario || (paymentScenario === 'extras_optional' && paymentChoice === 'add_to_balance') || paymentError) && (
+        <div style={{ textAlign: 'center' }}>
+          <p className="text-muted text-small" style={{ color: 'var(--parchment)', marginBottom: '0.75rem', fontStyle: 'italic' }}>
+            After you submit, we'll review your selections and reach out within 2 business days.
+          </p>
+          <button
+            className="btn btn-success"
+            onClick={onSubmit}
+            disabled={saving}
+            style={{ padding: '0.75rem 2.5rem', fontSize: '1.1rem' }}
+          >
+            {saving ? 'Submitting...' : 'Submit My Drink Plan'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

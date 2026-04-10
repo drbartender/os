@@ -363,7 +363,7 @@ INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order) VA
   ('boulevardier','Boulevardier','bold','🥃','Bourbon, Campari, and sweet vermouth — a whiskey Negroni.',3),
   ('black-manhattan','Black Manhattan','bold','🖤','Bourbon and amaro — dark, rich, and herbal.',4),
   ('sazerac','Sazerac','bold','⚜️','Rye, absinthe rinse, and Peychaud''s bitters — a New Orleans legend.',5),
-  ('whiskey-sour','Whiskey Sour','bartenders-picks','🍋','Bourbon, lemon, and simple — classic with optional egg white.',1),
+  ('whiskey-sour','Whiskey Sour','bartenders-picks','🍋','Bourbon, lemon, and simple — classic with optional egg white or blackberry.',1),
   ('mai-tai','Mai Tai','bartenders-picks','🌺','Rum, orgeat, and citrus — tropical and layered.',2),
   ('paper-plane','Paper Plane','bartenders-picks','✈️','Bourbon, Aperol, Amaro, and lemon — equal parts perfection.',3),
   ('corpse-reviver','Corpse Reviver No. 2','bartenders-picks','💀','Gin, Lillet, Cointreau, lemon, and absinthe — hauntingly good.',4),
@@ -1005,6 +1005,30 @@ DROP TRIGGER IF EXISTS update_email_leads_updated_at ON email_leads;
 CREATE TRIGGER update_email_leads_updated_at BEFORE UPDATE ON email_leads
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+-- ─── Quote Wizard Drafts ──────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS quote_drafts (
+  id SERIAL PRIMARY KEY,
+  token UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
+  lead_id INTEGER REFERENCES email_leads(id) ON DELETE SET NULL,
+  email VARCHAR(255) NOT NULL,
+  form_state JSONB NOT NULL DEFAULT '{}',
+  current_step INTEGER NOT NULL DEFAULT 0,
+  status VARCHAR(20) DEFAULT 'draft'
+    CHECK (status IN ('draft', 'completed', 'expired')),
+  completed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_quote_drafts_active_email
+  ON quote_drafts(email) WHERE status = 'draft';
+CREATE INDEX IF NOT EXISTS idx_quote_drafts_token ON quote_drafts(token);
+
+DROP TRIGGER IF EXISTS update_quote_drafts_updated_at ON quote_drafts;
+CREATE TRIGGER update_quote_drafts_updated_at BEFORE UPDATE ON quote_drafts
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 -- ─── Email Marketing: Campaigns ────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS email_campaigns (
@@ -1148,3 +1172,71 @@ ALTER TABLE shifts ADD COLUMN IF NOT EXISTS client_email VARCHAR(255);
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS client_phone VARCHAR(50);
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS guest_count INTEGER;
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS event_duration_hours NUMERIC(4,1);
+
+-- ─── FK ON DELETE Behavior Fixes ─────────────────────────────────
+DO $$ BEGIN
+  -- created_by columns → SET NULL (user deletion shouldn't fail)
+  ALTER TABLE shifts DROP CONSTRAINT IF EXISTS shifts_created_by_fkey;
+  ALTER TABLE shifts ADD CONSTRAINT shifts_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+
+  ALTER TABLE drink_plans DROP CONSTRAINT IF EXISTS drink_plans_created_by_fkey;
+  ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+
+  ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_created_by_fkey;
+  ALTER TABLE proposals ADD CONSTRAINT proposals_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+
+  -- package_id and addon_id → SET NULL (pricing_snapshot has the data)
+  ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_package_id_fkey;
+  ALTER TABLE proposals ADD CONSTRAINT proposals_package_id_fkey FOREIGN KEY (package_id) REFERENCES service_packages(id) ON DELETE SET NULL;
+
+  ALTER TABLE proposal_addons DROP CONSTRAINT IF EXISTS proposal_addons_addon_id_fkey;
+  ALTER TABLE proposal_addons ADD CONSTRAINT proposal_addons_addon_id_fkey FOREIGN KEY (addon_id) REFERENCES service_addons(id) ON DELETE SET NULL;
+
+  -- drink_plans.proposal_id → CASCADE (deleting proposal cleans up drink plans)
+  ALTER TABLE drink_plans DROP CONSTRAINT IF EXISTS drink_plans_proposal_id_fkey;
+  ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_proposal_id_fkey FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE;
+
+  -- email marketing FKs → SET NULL
+  ALTER TABLE email_campaigns DROP CONSTRAINT IF EXISTS email_campaigns_created_by_fkey;
+  ALTER TABLE email_campaigns ADD CONSTRAINT email_campaigns_created_by_fkey FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
+
+  ALTER TABLE email_conversations DROP CONSTRAINT IF EXISTS email_conversations_admin_id_fkey;
+  ALTER TABLE email_conversations ADD CONSTRAINT email_conversations_admin_id_fkey FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE SET NULL;
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'FK migration: %', SQLERRM;
+END $$;
+
+-- ─── CHECK Constraints on Status Columns ─────────────────────────
+DO $$ BEGIN
+  ALTER TABLE shifts DROP CONSTRAINT IF EXISTS shifts_status_check;
+  ALTER TABLE shifts ADD CONSTRAINT shifts_status_check CHECK (status IN ('open', 'filled', 'completed', 'cancelled'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE shift_requests DROP CONSTRAINT IF EXISTS shift_requests_status_check;
+  ALTER TABLE shift_requests ADD CONSTRAINT shift_requests_status_check CHECK (status IN ('pending', 'approved', 'denied'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE stripe_sessions DROP CONSTRAINT IF EXISTS stripe_sessions_status_check;
+  ALTER TABLE stripe_sessions ADD CONSTRAINT stripe_sessions_status_check CHECK (status IN ('pending', 'succeeded', 'failed'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE proposal_payments DROP CONSTRAINT IF EXISTS proposal_payments_status_check;
+  ALTER TABLE proposal_payments ADD CONSTRAINT proposal_payments_status_check CHECK (status IN ('pending', 'succeeded', 'failed'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- ─── Performance Indexes ─────────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_proposals_status_financial ON proposals(status) WHERE status IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed');
+CREATE INDEX IF NOT EXISTS idx_proposals_autopay_balance ON proposals(balance_due_date) WHERE status = 'deposit_paid' AND autopay_enrolled = true;
+CREATE INDEX IF NOT EXISTS idx_email_webhook_events_resend_type ON email_webhook_events(resend_id, event_type);
+CREATE INDEX IF NOT EXISTS idx_email_conversations_unread ON email_conversations(read_at) WHERE read_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_shifts_open_upcoming ON shifts(event_date) WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS idx_clients_email_lower ON clients(LOWER(email));
+CREATE INDEX IF NOT EXISTS idx_shift_requests_shift_status ON shift_requests(shift_id, status);
+CREATE INDEX IF NOT EXISTS idx_email_sends_campaign_status ON email_sends(campaign_id, status);
+
+-- ─── Drop Redundant Index ────────────────────────────────────────
+-- UNIQUE constraint on blog_posts.slug already creates an implicit index
+DROP INDEX IF EXISTS idx_blog_posts_slug;

@@ -38,6 +38,7 @@ export default function AdminLayout() {
 
   return (
     <div className="admin-page" style={{ minHeight: '100vh' }}>
+      <a href="#main-content" className="skip-nav">Skip to main content</a>
       {/* ── Shared Header ── */}
       <header className="site-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -84,7 +85,7 @@ export default function AdminLayout() {
           </nav>
         </aside>
 
-        <main className="admin-content">
+        <main className="admin-content" id="main-content">
           <AdminBreadcrumbs />
           <Outlet />
         </main>
@@ -92,7 +93,7 @@ export default function AdminLayout() {
 
       {/* Mobile overlay */}
       {sidebarOpen && (
-        <div className="admin-sidebar-overlay" onClick={() => setSidebarOpen(false)} />
+        <div className="admin-sidebar-overlay" aria-label="Close sidebar" onClick={() => setSidebarOpen(false)} />
       )}
     </div>
   );

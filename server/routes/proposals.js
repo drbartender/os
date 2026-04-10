@@ -1,8 +1,7 @@
 const express = require('express');
-const net = require('net');
-const rateLimit = require('express-rate-limit');
 const { pool } = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireAdminOrManager } = require('../middleware/auth');
+const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters');
 const { calculateProposal } = require('../utils/pricingEngine');
 const { createEventShifts, createDrinkPlan } = require('../utils/eventCreation');
 const { sendEmail } = require('../utils/email');
@@ -10,27 +9,14 @@ const emailTemplates = require('../utils/emailTemplates');
 
 const router = express.Router();
 
-const publicLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
-  message: { error: 'Too many requests. Please try again later.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-function requireAdmin(req, res, next) {
-  if (req.user.role === 'admin' || req.user.role === 'manager') return next();
-  return res.status(403).json({ error: 'Admin access required.' });
-}
-
 // ─── Public routes (token-based) ─────────────────────────────────
 
 /** GET /api/proposals/t/:token — fetch proposal by token (public) */
-router.get('/t/:token', async (req, res) => {
+router.get('/t/:token', publicLimiter, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT p.*, sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
-             sp.includes AS package_includes, c.name AS client_name, c.email AS client_email, c.phone AS client_phone
+             sp.includes AS package_includes, c.name AS client_name, c.email AS client_email
       FROM proposals p
       LEFT JOIN service_packages sp ON sp.id = p.package_id
       LEFT JOIN clients c ON c.id = p.client_id
@@ -54,24 +40,14 @@ router.get('/t/:token', async (req, res) => {
       [proposal.id]
     );
 
-    // Capture IP and attempt geo lookup
+    // Capture IP for view logging (no third-party geo lookup for privacy)
     const rawIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || '';
     const ip = rawIp.replace(/^::ffff:/, ''); // strip IPv4-mapped prefix
-    let location = null;
-    if (ip && net.isIP(ip) && ip !== '::1' && ip !== '127.0.0.1') {
-      try {
-        const geoRes = await fetch(`https://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,city,regionName`);
-        const geo = await geoRes.json();
-        if (geo.status === 'success' && geo.city) {
-          location = `${geo.city}, ${geo.regionName}`;
-        }
-      } catch { /* geo lookup is best-effort */ }
-    }
 
     // Log view
     await pool.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'viewed', 'client', $2)`,
-      [proposal.id, JSON.stringify({ ip: ip || null, location })]
+      [proposal.id, JSON.stringify({ ip: ip || null })]
     );
 
     // Fetch linked drink plan token (if one exists)
@@ -345,10 +321,9 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
       syrupSelections: syrup_selections || [],
     });
 
-    // Derive event_name: "{Client Name} - {Event Type}" or fallback
+    // Derive event_name from event type (client name is prepended at display time)
     const eventTypeLabel = event_type_custom || event_type || null;
-    const derivedEventName = event_name
-      || (eventTypeLabel ? `${client_name.trim()} - ${eventTypeLabel}` : `${client_name.trim()}'s Event`);
+    const derivedEventName = event_name || eventTypeLabel || `${client_name.trim()}'s Event`;
 
     // Insert proposal
     const proposalResult = await dbClient.query(`
@@ -417,7 +392,7 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
 // ─── Package & add-on listing (auth required) ────────────────────
 
 /** GET /api/proposals/packages — list active packages */
-router.get('/packages', auth, requireAdmin, async (req, res) => {
+router.get('/packages', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM service_packages WHERE is_active = true ORDER BY sort_order'
@@ -430,7 +405,7 @@ router.get('/packages', auth, requireAdmin, async (req, res) => {
 });
 
 /** GET /api/proposals/addons — list active add-ons */
-router.get('/addons', auth, requireAdmin, async (req, res) => {
+router.get('/addons', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM service_addons WHERE is_active = true ORDER BY sort_order'
@@ -443,7 +418,7 @@ router.get('/addons', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /api/proposals/calculate — preview pricing without saving */
-router.post('/calculate', auth, requireAdmin, async (req, res) => {
+router.post('/calculate', auth, requireAdminOrManager, async (req, res) => {
   const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, syrup_selections } = req.body;
   try {
     const pkgResult = await pool.query('SELECT * FROM service_packages WHERE id = $1', [package_id]);
@@ -478,7 +453,7 @@ router.post('/calculate', auth, requireAdmin, async (req, res) => {
 // ─── Financials ─────────────────────────────────────────────────
 
 /** GET /api/proposals/financials — aggregate financial data */
-router.get('/financials', auth, requireAdmin, async (req, res) => {
+router.get('/financials', auth, requireAdminOrManager, async (req, res) => {
   try {
     const [summaryResult, proposalsResult, paymentsResult] = await Promise.all([
       pool.query(`
@@ -526,7 +501,7 @@ router.get('/financials', auth, requireAdmin, async (req, res) => {
 // ─── Admin CRUD ──────────────────────────────────────────────────
 
 /** GET /api/proposals — list all proposals */
-router.get('/', auth, requireAdmin, async (req, res) => {
+router.get('/', auth, requireAdminOrManager, async (req, res) => {
   const { status, search, page = 1, limit = 50 } = req.query;
   try {
     let query = `
@@ -566,7 +541,7 @@ router.get('/', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /api/proposals — create a new proposal */
-router.post('/', auth, requireAdmin, async (req, res) => {
+router.post('/', auth, requireAdminOrManager, async (req, res) => {
   const {
     client_id, client_name, client_email, client_phone, client_source,
     event_name, event_date, event_start_time, event_duration_hours,
@@ -663,7 +638,7 @@ router.post('/', auth, requireAdmin, async (req, res) => {
 });
 
 /** GET /api/proposals/:id — get single proposal */
-router.get('/:id', auth, requireAdmin, async (req, res) => {
+router.get('/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone, c.source AS client_source,
@@ -695,7 +670,7 @@ router.get('/:id', auth, requireAdmin, async (req, res) => {
 });
 
 /** PATCH /api/proposals/:id — update event details and recalculate */
-router.patch('/:id', auth, requireAdmin, async (req, res) => {
+router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
   const {
     event_name, event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
@@ -788,7 +763,7 @@ router.patch('/:id', auth, requireAdmin, async (req, res) => {
 });
 
 /** PATCH /api/proposals/:id/status — update status */
-router.patch('/:id/status', auth, requireAdmin, async (req, res) => {
+router.patch('/:id/status', auth, requireAdminOrManager, async (req, res) => {
   const { status } = req.body;
   const validStatuses = ['draft', 'sent', 'viewed', 'modified', 'accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed'];
   if (!validStatuses.includes(status)) {
@@ -863,7 +838,7 @@ router.patch('/:id/status', auth, requireAdmin, async (req, res) => {
 });
 
 /** PATCH /api/proposals/:id/notes — update admin notes */
-router.patch('/:id/notes', auth, requireAdmin, async (req, res) => {
+router.patch('/:id/notes', auth, requireAdminOrManager, async (req, res) => {
   const { admin_notes } = req.body;
   try {
     const result = await pool.query(
@@ -879,7 +854,7 @@ router.patch('/:id/notes', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /api/proposals/:id/create-shift — manually create event shift from a proposal */
-router.post('/:id/create-shift', auth, requireAdmin, async (req, res) => {
+router.post('/:id/create-shift', auth, requireAdminOrManager, async (req, res) => {
   try {
     const proposal = await pool.query('SELECT id, status FROM proposals WHERE id = $1', [req.params.id]);
     if (!proposal.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
@@ -896,7 +871,7 @@ router.post('/:id/create-shift', auth, requireAdmin, async (req, res) => {
 });
 
 /** PATCH /api/proposals/:id/balance-due-date — override balance due date */
-router.patch('/:id/balance-due-date', auth, requireAdmin, async (req, res) => {
+router.patch('/:id/balance-due-date', auth, requireAdminOrManager, async (req, res) => {
   const { balance_due_date } = req.body;
   if (!balance_due_date) {
     return res.status(400).json({ error: 'balance_due_date is required.' });
@@ -921,7 +896,7 @@ router.patch('/:id/balance-due-date', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /api/proposals/:id/record-payment — manually record an outside payment (cash, Venmo, etc.) */
-router.post('/:id/record-payment', auth, requireAdmin, async (req, res) => {
+router.post('/:id/record-payment', auth, requireAdminOrManager, async (req, res) => {
   const { amount, paid_in_full, method } = req.body;
 
   try {
@@ -948,28 +923,36 @@ router.post('/:id/record-payment', auth, requireAdmin, async (req, res) => {
     const isFullyPaid = newAmountPaid >= totalPrice;
     const newStatus = isFullyPaid ? 'balance_paid' : 'deposit_paid';
 
-    await pool.query('BEGIN');
+    const dbClient = await pool.connect();
+    try {
+      await dbClient.query('BEGIN');
 
-    await pool.query(
-      'UPDATE proposals SET amount_paid = $1, status = $2 WHERE id = $3',
-      [newAmountPaid, newStatus, proposal.id]
-    );
+      await dbClient.query(
+        'UPDATE proposals SET amount_paid = $1, status = $2 WHERE id = $3',
+        [newAmountPaid, newStatus, proposal.id]
+      );
 
-    // Record in proposal_payments
-    await pool.query(
-      `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status)
-       VALUES ($1, $2, $3, 'succeeded')`,
-      [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round(paymentAmount * 100)]
-    );
+      // Record in proposal_payments
+      await dbClient.query(
+        `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status)
+         VALUES ($1, $2, $3, 'succeeded')`,
+        [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round(paymentAmount * 100)]
+      );
 
-    // Log activity
-    await pool.query(
-      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, $2, 'admin', $3, $4)`,
-      [proposal.id, isFullyPaid ? 'paid_in_full' : 'deposit_paid', req.user.id,
-        JSON.stringify({ amount: paymentAmount, method: method || 'manual', new_total_paid: newAmountPaid })]
-    );
+      // Log activity
+      await dbClient.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, $2, 'admin', $3, $4)`,
+        [proposal.id, isFullyPaid ? 'paid_in_full' : 'deposit_paid', req.user.id,
+          JSON.stringify({ amount: paymentAmount, method: method || 'manual', new_total_paid: newAmountPaid })]
+      );
 
-    await pool.query('COMMIT');
+      await dbClient.query('COMMIT');
+    } catch (txErr) {
+      await dbClient.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      dbClient.release();
+    }
 
     // Email notifications for payment (non-blocking)
     try {
@@ -1007,14 +990,13 @@ router.post('/:id/record-payment', auth, requireAdmin, async (req, res) => {
 
     res.json({ success: true, status: newStatus, amount_paid: newAmountPaid });
   } catch (err) {
-    await pool.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
 /** DELETE /api/proposals/:id — delete a proposal */
-router.delete('/:id', auth, requireAdmin, async (req, res) => {
+router.delete('/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query('DELETE FROM proposals WHERE id = $1 RETURNING id', [req.params.id]);
     if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });

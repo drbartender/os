@@ -5,14 +5,14 @@ export const QUICK_PICKS = [
     label: 'Full Bar Experience',
     description: 'Complete open bar with signature cocktails, spirits, beer & wine.',
     emoji: '\uD83C\uDF78',
-    activeModules: { signatureDrinks: true, mocktails: false, fullBar: true, beerWineOnly: false },
+    activeModules: { signatureDrinks: true, mocktails: true, fullBar: true, beerWineOnly: false },
   },
   {
     key: 'sig_beer_wine',
     label: 'Signature Drinks + Beer & Wine',
     description: 'Custom cocktails plus beer and wine. No other mixed drinks.',
     emoji: '\uD83C\uDF77',
-    activeModules: { signatureDrinks: true, mocktails: false, fullBar: false, beerWineOnly: true },
+    activeModules: { signatureDrinks: true, mocktails: true, fullBar: false, beerWineOnly: true },
   },
   {
     key: 'beer_wine',

@@ -23,7 +23,7 @@ export default class ErrorBoundary extends React.Component {
             <p className="text-muted" style={{ marginBottom: '1.5rem' }}>
               We hit an unexpected error. You can try reloading the page.
             </p>
-            {this.state.error && (
+            {process.env.NODE_ENV === 'development' && this.state.error && (
               <pre style={{ textAlign: 'left', fontSize: '0.75rem', background: '#f5f5f5', padding: '1rem', borderRadius: 8, overflow: 'auto', maxHeight: 200, marginBottom: '1rem' }}>
                 {this.state.error.toString()}
                 {'\n'}

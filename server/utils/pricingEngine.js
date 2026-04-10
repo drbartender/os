@@ -265,4 +265,4 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
   };
 }
 
-module.exports = { calculateProposal, calculateBaseCost, calculateBarRental, calculateStaffing, calculateAddonCost, calculateSyrupCost };
+module.exports = { calculateProposal, calculateBaseCost, calculateBarRental, calculateStaffing, calculateAddonCost, calculateSyrupCost, getBottlesPerSyrup };

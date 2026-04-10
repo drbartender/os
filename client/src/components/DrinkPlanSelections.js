@@ -57,10 +57,10 @@ function NewSelections({ plan, sel, cocktails, mocktails }) {
             <p className="text-muted text-small">Extracted spirits: {sel.signatureDrinkSpirits.join(', ')}</p>
           )}
           {sel.mixersForSignatureDrinks === true && (
-            <p className="text-muted text-small">Basic mixers requested for signature drink spirits</p>
+            <p className="text-muted text-small">Basic mixers included for simple mixed drinks</p>
           )}
           {sel.mixersForSignatureDrinks === false && (
-            <p className="text-muted text-small">No mixers for signature drink spirits</p>
+            <p className="text-muted text-small">No additional mixers requested</p>
           )}
         </div>
       )}

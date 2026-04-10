@@ -1,28 +1,16 @@
 const express = require('express');
-const rateLimit = require('express-rate-limit');
 const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
 const { pool } = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireAdminOrManager } = require('../middleware/auth');
+const { publicLimiter } = require('../middleware/rateLimiters');
 const { createEventShifts } = require('../utils/eventCreation');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
+const { calculateSyrupCost } = require('../utils/pricingEngine');
 
 const router = express.Router();
 
-const publicLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
-  message: { error: 'Too many requests. Please try again later.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
 const DEPOSIT_AMOUNT = parseInt(process.env.STRIPE_DEPOSIT_AMOUNT) || 10000; // $100.00
-
-function requireAdmin(req, res, next) {
-  if (req.user.role === 'admin' || req.user.role === 'manager') return next();
-  return res.status(403).json({ error: 'Admin access required.' });
-}
 
 // ─── Helper: get or create Stripe Customer for a proposal ────────
 
@@ -35,10 +23,14 @@ async function getOrCreateCustomer(proposal) {
     name: proposal.client_name || undefined,
     metadata: { proposal_id: String(proposal.id) },
   });
-  await pool.query(
-    'UPDATE proposals SET stripe_customer_id = $1 WHERE id = $2',
-    [customer.id, proposal.id]
-  );
+  try {
+    await pool.query(
+      'UPDATE proposals SET stripe_customer_id = $1 WHERE id = $2',
+      [customer.id, proposal.id]
+    );
+  } catch (dbErr) {
+    console.error(`Failed to save Stripe customer ${customer.id} to proposal ${proposal.id} (non-fatal):`, dbErr);
+  }
   return customer.id;
 }
 
@@ -137,10 +129,163 @@ router.post('/create-intent/:token', publicLimiter, async (req, res) => {
   }
 });
 
+// ─── Public: create a Payment Intent for drink plan extras ──────
+
+/** POST /api/stripe/create-drink-plan-intent/:token — public, token-gated (drink plan token) */
+router.post('/create-drink-plan-intent/:token', publicLimiter, async (req, res) => {
+  try {
+    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
+
+    const { selections } = req.body;
+    if (!selections) return res.status(400).json({ error: 'Selections required.' });
+
+    // Look up drink plan + proposal
+    const planRes = await pool.query(`
+      SELECT dp.id AS plan_id, dp.token AS plan_token, dp.status AS plan_status,
+             p.id AS proposal_id, p.total_price, p.amount_paid, p.event_date,
+             p.balance_due_date, p.guest_count, p.num_bars, p.stripe_customer_id,
+             p.event_name, p.pricing_snapshot,
+             c.email AS client_email, c.name AS client_name
+      FROM drink_plans dp
+      JOIN proposals p ON p.id = dp.proposal_id
+      LEFT JOIN clients c ON c.id = p.client_id
+      WHERE dp.token = $1
+    `, [req.params.token]);
+
+    if (!planRes.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
+    const data = planRes.rows[0];
+
+    if (!data.proposal_id) return res.status(400).json({ error: 'No linked proposal.' });
+
+    // Calculate extras server-side
+    const addOns = selections.addOns || {};
+    const addonSlugs = Object.keys(addOns).filter(slug => addOns[slug]?.enabled);
+    const addBarRental = selections.logistics?.addBarRental === true;
+
+    // Look up addon pricing
+    let addonTotal = 0;
+    if (addonSlugs.length > 0) {
+      const addonRes = await pool.query(
+        'SELECT slug, rate, billing_type FROM service_addons WHERE slug = ANY($1) AND is_active = true',
+        [addonSlugs]
+      );
+      for (const addon of addonRes.rows) {
+        const rate = Number(addon.rate);
+        if (addon.billing_type === 'per_guest') {
+          addonTotal += rate * (data.guest_count || 1);
+        } else {
+          addonTotal += rate;
+        }
+      }
+    }
+
+    // Bar rental cost
+    let barRentalCost = 0;
+    if (addBarRental) {
+      const snapshot = data.pricing_snapshot || {};
+      const barRental = snapshot.bar_rental || {};
+      if ((data.num_bars || 0) >= 1) {
+        barRentalCost = barRental.additional_bar_fee || 100;
+      } else {
+        barRentalCost = barRental.first_bar_fee || 50;
+      }
+    }
+
+    // Syrup cost (new syrups only, excluding self-provided and proposal syrups)
+    const rawSyrups = selections.syrupSelections || {};
+    const allSyrupIds = Array.isArray(rawSyrups)
+      ? rawSyrups
+      : [...new Set(Object.values(rawSyrups).flat())];
+    const selfProvided = selections.syrupSelfProvided || [];
+    const proposalSyrups = data.pricing_snapshot?.syrups?.selections || [];
+    const newSyrupIds = allSyrupIds
+      .filter(id => !selfProvided.includes(id))
+      .filter(id => !proposalSyrups.includes(id));
+    const syrupCost = calculateSyrupCost(newSyrupIds, data.guest_count);
+
+    const extrasAmount = addonTotal + barRentalCost + syrupCost.total;
+
+    if (extrasAmount <= 0) {
+      return res.json({ noPaymentNeeded: true, extrasAmount: 0 });
+    }
+
+    // Determine payment scenario based on balance_due_date
+    const now = new Date();
+    let balanceDueDate = data.balance_due_date;
+    if (!balanceDueDate && data.event_date) {
+      const d = new Date(data.event_date);
+      d.setDate(d.getDate() - 14);
+      balanceDueDate = d;
+    }
+    const isPastDue = balanceDueDate ? now > new Date(balanceDueDate) : false;
+    const currentBalance = Number(data.total_price || 0) - Number(data.amount_paid || 0);
+
+    let paymentScenario, totalCharge, pastDueAmount = 0;
+    if (isPastDue && currentBalance > 0) {
+      // Past due with outstanding balance — charge extras + balance
+      paymentScenario = 'extras_plus_balance';
+      pastDueAmount = currentBalance;
+      totalCharge = extrasAmount + currentBalance;
+    } else if (isPastDue) {
+      // Past due but balance already paid — charge extras only, required
+      paymentScenario = 'extras_required';
+      totalCharge = extrasAmount;
+    } else {
+      // Not past due — client can choose
+      paymentScenario = 'extras_optional';
+      totalCharge = extrasAmount;
+    }
+
+    // Get or create Stripe customer
+    const customerId = await getOrCreateCustomer({
+      id: data.proposal_id,
+      stripe_customer_id: data.stripe_customer_id,
+      client_email: data.client_email,
+      client_name: data.client_name,
+    });
+
+    const amountCents = Math.round(totalCharge * 100);
+    const paymentType = paymentScenario === 'extras_plus_balance'
+      ? 'drink_plan_with_balance'
+      : 'drink_plan_extras';
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: amountCents,
+      currency: 'usd',
+      customer: customerId,
+      description: `Drink Plan Extras — ${data.event_name || 'Dr. Bartender Event'}`,
+      receipt_email: data.client_email || undefined,
+      metadata: {
+        proposal_id: String(data.proposal_id),
+        drink_plan_id: String(data.plan_id),
+        payment_type: paymentType,
+      },
+    });
+
+    await pool.query(
+      `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
+       VALUES ($1, $2, $3, 'pending')
+       ON CONFLICT (stripe_payment_intent_id) DO NOTHING`,
+      [data.proposal_id, paymentIntent.id, amountCents]
+    );
+
+    res.json({
+      clientSecret: paymentIntent.client_secret,
+      extrasAmount,
+      pastDueAmount,
+      totalCharge,
+      paymentScenario,
+    });
+  } catch (err) {
+    console.error('Drink plan payment intent error:', err);
+    res.status(500).json({ error: 'Failed to prepare payment.' });
+  }
+});
+
 // ─── Admin: generate a reusable Stripe Payment Link ──────────────
 
 /** POST /api/stripe/payment-link/:id — admin only */
-router.post('/payment-link/:id', auth, requireAdmin, async (req, res) => {
+router.post('/payment-link/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT id, event_name FROM proposals WHERE id = $1',
@@ -181,7 +326,7 @@ router.post('/payment-link/:id', auth, requireAdmin, async (req, res) => {
 // ─── Admin: manually charge autopay balance ──────────────────────
 
 /** POST /api/stripe/charge-balance/:id — admin only */
-router.post('/charge-balance/:id', auth, requireAdmin, async (req, res) => {
+router.post('/charge-balance/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
@@ -244,33 +389,82 @@ router.post('/webhook', async (req, res) => {
     return res.status(400).send('Webhook signature verification failed');
   }
 
+  // ── Helper: send payment notification emails (non-blocking) ────
+  async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
+    try {
+      const payInfo = await pool.query(`
+        SELECT p.event_name, c.name AS client_name, c.email AS client_email
+        FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+        WHERE p.id = $1
+      `, [proposalId]);
+      const pi = payInfo.rows[0];
+      const amountFormatted = (amountCents / 100).toFixed(2);
+      const payLabel = paymentType === 'full' ? 'full payment' : paymentType === 'balance' ? 'balance payment' : 'deposit';
+
+      if (pi?.client_email) {
+        const tpl = emailTemplates.paymentReceivedClient({ clientName: pi.client_name, eventName: pi.event_name, amount: amountFormatted, paymentType: payLabel });
+        await sendEmail({ to: pi.client_email, ...tpl });
+      }
+      const adminEmail = process.env.ADMIN_EMAIL;
+      if (adminEmail) {
+        const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
+        const adminUrl = `${clientUrl}/admin/proposals/${proposalId}`;
+        const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventName: pi?.event_name, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
+        await sendEmail({ to: adminEmail, ...tpl });
+      }
+    } catch (emailErr) {
+      console.error('Payment notification email failed (non-blocking):', emailErr);
+    }
+  }
+
   if (event.type === 'payment_intent.succeeded') {
     const intent = event.data.object;
     const proposalId = intent.metadata?.proposal_id;
     const paymentType = intent.metadata?.payment_type || 'deposit';
 
     if (proposalId) {
+      const dbClient = await pool.connect();
       try {
-        await pool.query('BEGIN');
+        await dbClient.query('BEGIN');
 
         // Determine new status and amount_paid based on payment type
         if (paymentType === 'full') {
-          await pool.query(`
+          await dbClient.query(`
             UPDATE proposals
             SET status = 'balance_paid',
                 amount_paid = total_price
             WHERE id = $1 AND status NOT IN ('balance_paid', 'confirmed')
           `, [proposalId]);
         } else if (paymentType === 'balance') {
-          await pool.query(`
+          await dbClient.query(`
             UPDATE proposals
             SET status = 'balance_paid',
                 amount_paid = total_price
             WHERE id = $1 AND status = 'deposit_paid'
           `, [proposalId]);
+        } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
+          // Drink plan extras payment — increment amount_paid
+          const paidDollars = intent.amount / 100;
+          const updateRes = await dbClient.query(`
+            UPDATE proposals
+            SET amount_paid = COALESCE(amount_paid, 0) + $1
+            WHERE id = $2
+            RETURNING amount_paid, total_price
+          `, [paidDollars, proposalId]);
+
+          if (updateRes.rows[0]) {
+            const newAmountPaid = Number(updateRes.rows[0].amount_paid);
+            const totalPrice = Number(updateRes.rows[0].total_price);
+            if (newAmountPaid >= totalPrice) {
+              await dbClient.query(
+                "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed')",
+                [proposalId]
+              );
+            }
+          }
         } else {
           // deposit
-          await pool.query(`
+          await dbClient.query(`
             UPDATE proposals
             SET status = 'deposit_paid',
                 amount_paid = deposit_amount
@@ -280,20 +474,20 @@ router.post('/webhook', async (req, res) => {
 
         // Save payment method ID if autopay was enrolled (card saved via setup_future_usage)
         if (intent.payment_method && paymentType === 'deposit') {
-          await pool.query(`
+          await dbClient.query(`
             UPDATE proposals
             SET stripe_payment_method_id = $1
             WHERE id = $2 AND autopay_enrolled = true AND stripe_payment_method_id IS NULL
           `, [intent.payment_method, proposalId]);
         }
 
-        await pool.query(
+        await dbClient.query(
           "UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_intent_id = $1",
           [intent.id]
         );
 
         // Record in proposal_payments
-        await pool.query(
+        await dbClient.query(
           `INSERT INTO proposal_payments (proposal_id, stripe_payment_intent_id, payment_type, amount, status)
            VALUES ($1, $2, $3, $4, 'succeeded')`,
           [proposalId, intent.id, paymentType, intent.amount]
@@ -301,51 +495,76 @@ router.post('/webhook', async (req, res) => {
 
         const action = paymentType === 'balance' ? 'balance_paid'
           : paymentType === 'full' ? 'paid_in_full'
+          : paymentType === 'drink_plan_extras' ? 'drink_plan_extras_paid'
+          : paymentType === 'drink_plan_with_balance' ? 'drink_plan_balance_paid'
           : 'deposit_paid';
-        await pool.query(
+        await dbClient.query(
           `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, $2, 'system', $3)`,
           [proposalId, action, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType })]
         );
 
-        await pool.query('COMMIT');
+        await dbClient.query('COMMIT');
         console.log(`Payment (${paymentType}) received for proposal ${proposalId}: $${(intent.amount / 100).toFixed(2)}`);
+      } catch (dbErr) {
+        await dbClient.query('ROLLBACK');
+        console.error('Webhook DB error:', dbErr);
+      } finally {
+        dbClient.release();
+      }
 
-        // Email notifications (non-blocking)
-        try {
+      // Non-blocking post-commit work
+      sendPaymentNotifications(proposalId, intent.amount, paymentType);
+      try {
+        const shift = await createEventShifts(proposalId);
+        if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
+      } catch (shiftErr) {
+        console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+      }
+    }
+  }
+
+  if (event.type === 'payment_intent.payment_failed') {
+    const intent = event.data.object;
+    const proposalId = intent.metadata?.proposal_id;
+    const paymentType = intent.metadata?.payment_type || 'deposit';
+
+    if (proposalId) {
+      try {
+        await pool.query(
+          "UPDATE stripe_sessions SET status = 'failed' WHERE stripe_payment_intent_id = $1",
+          [intent.id]
+        );
+        await pool.query(
+          `INSERT INTO proposal_payments (proposal_id, stripe_payment_intent_id, payment_type, amount, status)
+           VALUES ($1, $2, $3, $4, 'failed')`,
+          [proposalId, intent.id, paymentType, intent.amount]
+        );
+        await pool.query(
+          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'payment_failed', 'system', $2)`,
+          [proposalId, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType, failure_message: intent.last_payment_error?.message || null })]
+        );
+        console.warn(`Payment FAILED (${paymentType}) for proposal ${proposalId}: ${intent.last_payment_error?.message || 'unknown'}`);
+
+        // Notify admin of failed payment
+        const adminEmail = process.env.ADMIN_EMAIL;
+        if (adminEmail) {
           const payInfo = await pool.query(`
-            SELECT p.event_name, c.name AS client_name, c.email AS client_email
+            SELECT p.event_name, c.name AS client_name
             FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
             WHERE p.id = $1
           `, [proposalId]);
           const pi = payInfo.rows[0];
-          const amountFormatted = (intent.amount / 100).toFixed(2);
-          const payLabel = paymentType === 'full' ? 'full payment' : paymentType === 'balance' ? 'balance payment' : 'deposit';
-
-          if (pi?.client_email) {
-            const tpl = emailTemplates.paymentReceivedClient({ clientName: pi.client_name, eventName: pi.event_name, amount: amountFormatted, paymentType: payLabel });
-            await sendEmail({ to: pi.client_email, ...tpl });
-          }
-          const adminEmail = process.env.ADMIN_EMAIL;
-          if (adminEmail) {
-            const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-            const adminUrl = `${clientUrl}/admin/proposals/${proposalId}`;
-            const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventName: pi?.event_name, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
-            await sendEmail({ to: adminEmail, ...tpl });
-          }
-        } catch (emailErr) {
-          console.error('Stripe payment email failed (non-blocking):', emailErr);
+          const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
+          await sendEmail({
+            to: adminEmail,
+            subject: `Payment Failed — ${pi?.client_name || 'Unknown'} (${pi?.event_name || 'Event'})`,
+            html: `<p>A ${paymentType} payment of $${(intent.amount / 100).toFixed(2)} failed for <strong>${pi?.client_name || 'Unknown'}</strong>.</p>
+                   <p><strong>Reason:</strong> ${intent.last_payment_error?.message || 'Unknown error'}</p>
+                   <p><a href="${clientUrl}/admin/proposals/${proposalId}">View Proposal</a></p>`,
+          }).catch(e => console.error('Failed payment notification email error:', e));
         }
-
-        // Auto-create event shift from the proposal
-        try {
-          const shift = await createEventShifts(proposalId);
-          if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
-        } catch (shiftErr) {
-          console.error('Shift auto-creation failed (non-blocking):', shiftErr);
-        }
-      } catch (dbErr) {
-        await pool.query('ROLLBACK');
-        console.error('Webhook DB error:', dbErr);
+      } catch (err) {
+        console.error('payment_intent.payment_failed handler error:', err);
       }
     }
   }
@@ -354,65 +573,44 @@ router.post('/webhook', async (req, res) => {
     const session = event.data.object;
     const proposalId = session.metadata?.proposal_id;
     if (proposalId) {
+      const dbClient = await pool.connect();
       try {
-        await pool.query('BEGIN');
+        await dbClient.query('BEGIN');
 
-        await pool.query(
+        await dbClient.query(
           "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')",
           [proposalId]
         );
-        await pool.query(
+        await dbClient.query(
           "UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1",
           [session.payment_link]
         );
-        await pool.query(
+        await dbClient.query(
           `INSERT INTO proposal_payments (proposal_id, stripe_payment_intent_id, payment_type, amount, status)
            VALUES ($1, $2, 'deposit', $3, 'succeeded')`,
           [proposalId, session.payment_intent, session.amount_total]
         );
-        await pool.query(
+        await dbClient.query(
           `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'deposit_paid', 'system', $2)`,
           [proposalId, JSON.stringify({ amount: session.amount_total, payment_link: session.payment_link })]
         );
 
-        await pool.query('COMMIT');
+        await dbClient.query('COMMIT');
         console.log(`Deposit paid (payment link) for proposal ${proposalId}`);
-
-        // Email notifications (non-blocking)
-        try {
-          const payInfo = await pool.query(`
-            SELECT p.event_name, c.name AS client_name, c.email AS client_email
-            FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
-            WHERE p.id = $1
-          `, [proposalId]);
-          const pi = payInfo.rows[0];
-          const amountFormatted = ((session.amount_total || 0) / 100).toFixed(2);
-
-          if (pi?.client_email) {
-            const tpl = emailTemplates.paymentReceivedClient({ clientName: pi.client_name, eventName: pi.event_name, amount: amountFormatted, paymentType: 'deposit' });
-            await sendEmail({ to: pi.client_email, ...tpl });
-          }
-          const adminEmail = process.env.ADMIN_EMAIL;
-          if (adminEmail) {
-            const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-            const adminUrl = `${clientUrl}/admin/proposals/${proposalId}`;
-            const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventName: pi?.event_name, amount: amountFormatted, paymentType: 'deposit', proposalId, adminUrl });
-            await sendEmail({ to: adminEmail, ...tpl });
-          }
-        } catch (emailErr) {
-          console.error('Checkout payment email failed (non-blocking):', emailErr);
-        }
-
-        // Auto-create event shift from the proposal
-        try {
-          const shift = await createEventShifts(proposalId);
-          if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
-        } catch (shiftErr) {
-          console.error('Shift auto-creation failed (non-blocking):', shiftErr);
-        }
       } catch (dbErr) {
-        await pool.query('ROLLBACK');
+        await dbClient.query('ROLLBACK');
         console.error('Webhook DB error:', dbErr);
+      } finally {
+        dbClient.release();
+      }
+
+      // Non-blocking post-commit work
+      sendPaymentNotifications(proposalId, session.amount_total || 0, 'deposit');
+      try {
+        const shift = await createEventShifts(proposalId);
+        if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
+      } catch (shiftErr) {
+        console.error('Shift auto-creation failed (non-blocking):', shiftErr);
       }
     }
   }

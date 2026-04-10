@@ -72,9 +72,14 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
     const fresh = generateShoppingList({
       clientName: listData.clientName,
       guestCount: count,
-      signatureCocktails: (listData.signatureCocktailNames || []).map(name => ({ name, ingredients: [] })),
+      signatureCocktails: listData._signatureCocktails || (listData.signatureCocktailNames || []).map(name => ({ name, ingredients: [] })),
+      syrupSelfProvided: listData._syrupSelfProvided || [],
       eventDate: listData.eventDate,
       notes: listData.notes,
+      serviceStyle: listData.serviceStyle || 'full_bar',
+      beerSelections: listData.beerSelections || [],
+      wineSelections: listData.wineSelections || [],
+      mixersForSignatureDrinks: listData.mixersForSignatureDrinks,
     });
     setEdited(deepClone(fresh));
     setUndoStack([]);

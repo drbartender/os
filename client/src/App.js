@@ -19,7 +19,6 @@ import Agreement from './pages/Agreement';
 import ContractorProfile from './pages/ContractorProfile';
 import PaydayProtocols from './pages/PaydayProtocols';
 import Completion from './pages/Completion';
-import StaffPortal from './pages/StaffPortal';
 import StaffLayout from './components/StaffLayout';
 import StaffDashboard from './pages/staff/StaffDashboard';
 import StaffShifts from './pages/staff/StaffShifts';
@@ -288,9 +287,6 @@ function AppRoutes() {
         <Route path="resources" element={<StaffResources />} />
         <Route path="profile" element={<StaffProfile />} />
       </Route>
-      {/* Legacy route for backwards compat */}
-      <Route path="/portal-legacy" element={<RequirePortal><StaffPortal /></RequirePortal>} />
-
       {/* Admin + Manager shell */}
       <Route path="/admin" element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}>
         <Route index element={<Navigate to="dashboard" replace />} />

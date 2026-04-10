@@ -10,7 +10,6 @@ const PARKING_OPTIONS = [
 ];
 
 const EQUIPMENT_OPTIONS = [
-  { value: 'portable_bar', label: 'Portable bar' },
   { value: 'coolers', label: 'Cooler(s) for beer, wine, or mixers' },
   { value: 'other', label: 'Other' },
   { value: 'none', label: 'None — I have everything we need' },
@@ -26,6 +25,7 @@ export default function LogisticsStep({
   guestCount,
   numBartenders,
   numBars = 0,
+  pricingSnapshot = null,
 }) {
   const dayOfContact = logistics?.dayOfContact || { name: '', phone: '' };
   const parking = logistics?.parking || '';
@@ -75,11 +75,14 @@ export default function LogisticsStep({
     }
   };
 
-  // Filter equipment options based on proposal bar rental
-  const hasBarRental = numBars >= 1;
-  const visibleEquipment = hasBarRental
-    ? EQUIPMENT_OPTIONS.filter(opt => opt.value !== 'portable_bar')
-    : EQUIPMENT_OPTIONS;
+  // Bar rental pricing from proposal snapshot
+  const barRentalInfo = pricingSnapshot?.bar_rental || {};
+  const firstBarFee = barRentalInfo.first_bar_fee || 50;
+  const additionalBarFee = barRentalInfo.additional_bar_fee || 100;
+  const addBarRental = logistics?.addBarRental || false;
+
+  const hasExistingBar = numBars >= 1;
+  const canOfferAdditionalBar = hasExistingBar && (numBartenders || 1) >= 2;
 
   return (
     <div>
@@ -164,15 +167,10 @@ export default function LogisticsStep({
         <p className="text-muted text-small mb-1" style={{ color: 'var(--warm-brown)' }}>
           Every bartender arrives with their own bar kit — shakers, jiggers, strainers, and everything they need to pour.
         </p>
-        {hasBarRental && (
-          <p className="text-muted text-small mb-1" style={{ color: 'var(--warm-brown)' }}>
-            Your package includes a portable bar setup — you're all set there.
-          </p>
-        )}
         <div className="form-group">
           <label className="form-label">Do you need any additional equipment?</label>
           <div className="checkbox-grid">
-            {visibleEquipment.map(opt => (
+            {EQUIPMENT_OPTIONS.map(opt => (
               <label key={opt.value} className="checkbox-label">
                 <input
                   type="checkbox"
@@ -195,6 +193,53 @@ export default function LogisticsStep({
             </div>
           )}
         </div>
+      </div>
+
+      {/* Portable Bar Rental */}
+      <div className="card mb-2">
+        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
+          Portable Bar Rental
+        </h3>
+        {hasExistingBar && !canOfferAdditionalBar && (
+          <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
+            Your package includes a portable bar setup &mdash; you're all set.
+          </p>
+        )}
+        {hasExistingBar && canOfferAdditionalBar && (
+          <>
+            <p className="text-muted text-small mb-1" style={{ color: 'var(--warm-brown)' }}>
+              Your package includes a portable bar setup. Two bartenders can work behind the same bar,
+              but a second bar gives you a second service location for your guests.
+            </p>
+            <label className="checkbox-label" style={{ fontSize: '1rem' }}>
+              <input
+                type="checkbox"
+                checked={addBarRental}
+                onChange={() => update('addBarRental', !addBarRental)}
+              />
+              <span>
+                Add a second bar location &mdash; ${additionalBarFee.toFixed(2)}
+              </span>
+            </label>
+          </>
+        )}
+        {!hasExistingBar && (
+          <>
+            <p className="text-muted text-small mb-1" style={{ color: 'var(--warm-brown)' }}>
+              Need a bar for your event? We'll bring a portable bar setup for your bartender to work behind.
+            </p>
+            <label className="checkbox-label" style={{ fontSize: '1rem' }}>
+              <input
+                type="checkbox"
+                checked={addBarRental}
+                onChange={() => update('addBarRental', !addBarRental)}
+              />
+              <span>
+                Add a portable bar &mdash; ${firstBarFee.toFixed(2)}
+              </span>
+            </label>
+          </>
+        )}
       </div>
 
       {/* Champagne Toast */}
@@ -256,22 +301,30 @@ export default function LogisticsStep({
                   ))}
                 </div>
 
-                {/* Coupe upgrade */}
-                <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={coupeEnabled}
-                      onChange={() => toggleAddOn(CHAMPAGNE_TOAST.coupeUpgradeSlug)}
-                    />
-                    <span>
-                      Upgrade to real coupe glasses
-                      {coupeTotal
-                        ? ` (+$${coupeTotal.toFixed(2)} \u2014 $${coupeRate.toFixed(2)}/guest)`
-                        : ` (+$${coupeRate.toFixed(2)}/guest)`}
+                {/* Coupe upgrade — max 100 guests */}
+                {guestCount && guestCount > 100 ? (
+                  <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
+                    <span className="text-muted" style={{ fontSize: '0.85rem' }}>
+                      Real coupe glasses are available for events up to 100 guests.
                     </span>
-                  </label>
-                </div>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
+                    <label className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={coupeEnabled}
+                        onChange={() => toggleAddOn(CHAMPAGNE_TOAST.coupeUpgradeSlug)}
+                      />
+                      <span>
+                        Upgrade to real coupe glasses
+                        {coupeTotal
+                          ? ` (+$${coupeTotal.toFixed(2)} \u2014 $${coupeRate.toFixed(2)}/guest)`
+                          : ` (+$${coupeRate.toFixed(2)}/guest)`}
+                      </span>
+                    </label>
+                  </div>
+                )}
               </>
             )}
           </div>

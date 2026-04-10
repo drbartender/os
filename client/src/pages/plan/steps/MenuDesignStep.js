@@ -36,7 +36,7 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
             )}
             {selections.mixersForSignatureDrinks && (
               <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
-                Basic mixers requested for signature drink spirits
+                Basic mixers included for simple mixed drinks
               </p>
             )}
           </div>

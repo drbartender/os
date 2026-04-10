@@ -4,8 +4,9 @@ const BEER_STYLES = ['Light / Easy Drinking', 'Craft / Local', 'IPA', 'Seltzer',
 const WINE_STYLES = ['Red', 'White', 'Sparkling', 'Other'];
 const BALANCE_OPTIONS = [
   { value: 'mostly_beer', label: 'Mostly Beer' },
-  { value: 'balanced', label: 'Balanced' },
+  { value: 'mostly_cocktails', label: 'Mostly Cocktails' },
   { value: 'mostly_wine', label: 'Mostly Wine' },
+  { value: 'balanced', label: 'Balanced' },
   { value: 'help_me_decide', label: 'Help me decide' },
 ];
 

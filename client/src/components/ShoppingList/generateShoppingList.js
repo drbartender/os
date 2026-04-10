@@ -1,5 +1,5 @@
-// generateShoppingList.js — scales pars to guest count and merges signature cocktail ingredients
-import { PARS_100 } from './shoppingListPars';
+// generateShoppingList.js — scales pars to guest count, filters by service style and selections
+import { PARS_100, BEER_STYLE_MAP, WINE_STYLE_MAP, BASIC_MIXERS, GARNISHES, ALWAYS_INCLUDE } from './shoppingListPars';
 import { SYRUPS, getBottlesPerSyrup } from '../../data/syrups';
 
 /**
@@ -35,45 +35,57 @@ function needsBottles(guestCount) {
   return guestCount <= 50;
 }
 
-/**
- * Generate a shopping list from event data.
- *
- * @param {object} eventData
- * @param {string} eventData.clientName
- * @param {number} eventData.guestCount
- * @param {Array}  eventData.signatureCocktails - [{ name, ingredients: [string] }]
- * @param {string[]} [eventData.syrupSelfProvided] - Syrup IDs the client will source themselves
- * @param {string} eventData.eventDate
- * @param {string} eventData.notes
- * @returns {{ clientName, guestCount, eventDate, signatureCocktailNames, liquorBeerWine, everythingElse }}
- */
-export function generateShoppingList(eventData) {
-  const { clientName, guestCount, signatureCocktails = [], syrupSelfProvided = [], eventDate, notes } = eventData;
-  const scale = (qty) => scaleQty(qty, guestCount);
-  const bottles = needsBottles(guestCount);
+/** Generate a unique ID for list items. */
+function uid() {
+  return typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
 
-  const uid = () => typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
-
-  // Build base lists from pars, scaling qty and swapping sizes for small events
-  let liquorBeerWine = PARS_100.liquorBeerWine.map(item => ({
+/** Scale and stamp a list of par items with _id, scaled qty, and size swap for small events. */
+function scaleItems(items, guestCount, bottles) {
+  return items.map(item => ({
     ...item,
     _id: uid(),
     size: (bottles && item.size === '1.75L') ? '750mL' : item.size,
-    qty: scale(item.qty),
+    qty: scaleQty(item.qty, guestCount),
   }));
+}
 
-  let everythingElse = PARS_100.everythingElse.map(item => ({
-    ...item,
-    _id: uid(),
-    qty: scale(item.qty),
-  }));
+/** Build beer items from user selections via BEER_STYLE_MAP. */
+function buildBeerItems(beerSelections, guestCount, bottles) {
+  const items = [];
+  for (const style of beerSelections) {
+    if (style === 'None') continue;
+    const mapped = BEER_STYLE_MAP[style];
+    if (!mapped) continue;
+    items.push(...scaleItems(mapped, guestCount, bottles));
+  }
+  return items;
+}
 
-  // Collect all ingredient strings from all signature cocktails
+/** Build wine items from user selections via WINE_STYLE_MAP. */
+function buildWineItems(wineSelections, guestCount, bottles) {
+  const items = [];
+  for (const style of wineSelections) {
+    if (style === 'None' || style === 'Other') continue;
+    const mapped = WINE_STYLE_MAP[style];
+    if (!mapped) continue;
+    items.push(...scaleItems(mapped, guestCount, bottles));
+  }
+  return items;
+}
+
+/**
+ * Merge signature cocktail ingredients into the lists via INGREDIENT_MAP.
+ * Adds missing items and boosts quantities for multi-use ingredients.
+ */
+function mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythingElse, guestCount) {
   const allIngredients = signatureCocktails.flatMap(c =>
     (c.ingredients || []).map(i => i.toLowerCase().trim())
   );
 
-  // Add missing ingredients from signature cocktails
+  // Add missing ingredients
   allIngredients.forEach(ingredient => {
     const matchKey = Object.keys(INGREDIENT_MAP).find(k => ingredient.includes(k));
     if (!matchKey) return;
@@ -106,21 +118,106 @@ export function generateShoppingList(eventData) {
     const item = targetList.find(i => i.item.toLowerCase() === mapped.item.toLowerCase());
     if (item) item.qty += count - 1;
   });
+}
 
-  // Add self-provided syrups to the shopping list
-  if (syrupSelfProvided.length > 0) {
-    const bottlesPerFlavor = getBottlesPerSyrup(guestCount);
-    for (const syrupId of syrupSelfProvided) {
-      const syrup = SYRUPS.find(s => s.id === syrupId);
-      if (!syrup) continue;
-      everythingElse.push({
-        _id: uid(),
-        item: `${syrup.name} Syrup`,
-        size: '750mL',
-        qty: bottlesPerFlavor,
-      });
-    }
+/** Add self-provided syrups to the shopping list. */
+function addSelfProvidedSyrups(syrupSelfProvided, everythingElse, guestCount) {
+  if (syrupSelfProvided.length === 0) return;
+  const bottlesPerFlavor = getBottlesPerSyrup(guestCount);
+  for (const syrupId of syrupSelfProvided) {
+    const syrup = SYRUPS.find(s => s.id === syrupId);
+    if (!syrup) continue;
+    everythingElse.push({
+      _id: uid(),
+      item: `${syrup.name} Syrup`,
+      size: '750mL',
+      qty: bottlesPerFlavor,
+    });
   }
+}
+
+/**
+ * Generate a shopping list from event data.
+ *
+ * @param {object} eventData
+ * @param {string} eventData.clientName
+ * @param {number} eventData.guestCount
+ * @param {Array}  eventData.signatureCocktails - [{ name, ingredients: [string] }]
+ * @param {string[]} [eventData.syrupSelfProvided] - Syrup IDs the client will source themselves
+ * @param {string} eventData.eventDate
+ * @param {string} eventData.notes
+ * @param {string} [eventData.serviceStyle='full_bar'] - 'full_bar', 'sig_beer_wine', 'beer_wine', 'mocktails'
+ * @param {string[]} [eventData.beerSelections] - Beer styles selected in BeerWineStep
+ * @param {string[]} [eventData.wineSelections] - Wine styles selected in BeerWineStep
+ * @param {boolean|null} [eventData.mixersForSignatureDrinks] - true/false/null
+ * @returns {{ clientName, guestCount, eventDate, signatureCocktailNames, liquorBeerWine, everythingElse, ... }}
+ */
+export function generateShoppingList(eventData) {
+  const {
+    clientName,
+    guestCount,
+    signatureCocktails = [],
+    syrupSelfProvided = [],
+    eventDate,
+    notes,
+    serviceStyle = 'full_bar',
+    beerSelections = [],
+    wineSelections = [],
+    mixersForSignatureDrinks = null,
+  } = eventData;
+  const bottles = needsBottles(guestCount);
+
+  let liquorBeerWine = [];
+  let everythingElse = [];
+
+  if (serviceStyle === 'full_bar') {
+    // Full bar: use complete PARS_100 baseline (existing behavior)
+    liquorBeerWine = scaleItems(PARS_100.liquorBeerWine, guestCount, bottles);
+    everythingElse = scaleItems(PARS_100.everythingElse, guestCount, bottles);
+
+    // Add/boost signature cocktail ingredients
+    mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythingElse, guestCount);
+
+  } else if (serviceStyle === 'sig_beer_wine') {
+    // Signature drinks + beer & wine: build from selections, not full bar baseline
+
+    // 1. Signature cocktail ingredients (spirits + cocktail-specific mixers)
+    mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythingElse, guestCount);
+
+    // 2. Beer from selections
+    liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles));
+
+    // 3. Wine from selections
+    liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles));
+
+    // 4. Mixers — only if requested (true) or undecided (null/'undecided' — default to include)
+    if (mixersForSignatureDrinks !== false) {
+      everythingElse.push(...scaleItems(BASIC_MIXERS, guestCount, bottles));
+      everythingElse.push(...scaleItems(GARNISHES, guestCount, bottles));
+    }
+
+    // 5. Always-include supplies
+    everythingElse.push(...scaleItems(ALWAYS_INCLUDE, guestCount, bottles));
+
+  } else if (serviceStyle === 'beer_wine') {
+    // Beer & wine only: no spirits, no mixers
+
+    // Beer from selections
+    liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles));
+
+    // Wine from selections
+    liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles));
+
+    // Always-include supplies
+    everythingElse.push(...scaleItems(ALWAYS_INCLUDE, guestCount, bottles));
+
+  } else {
+    // Mocktails or unknown: just supplies
+    everythingElse.push(...scaleItems(ALWAYS_INCLUDE, guestCount, bottles));
+  }
+
+  // Add self-provided syrups (applies to all service styles with signatures)
+  addSelfProvidedSyrups(syrupSelfProvided, everythingElse, guestCount);
 
   return {
     clientName,
@@ -130,5 +227,12 @@ export function generateShoppingList(eventData) {
     signatureCocktailNames: signatureCocktails.map(c => c.name),
     liquorBeerWine,
     everythingElse,
+    // Echo params for modal reset
+    serviceStyle,
+    beerSelections,
+    wineSelections,
+    mixersForSignatureDrinks,
+    _signatureCocktails: signatureCocktails,
+    _syrupSelfProvided: syrupSelfProvided,
   };
 }

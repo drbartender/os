@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { loadStripe } from '@stripe/stripe-js';
@@ -106,6 +106,7 @@ export default function ProposalView() {
   const [sigData, setSigData] = useState('');
   const [sigMethod, setSigMethod] = useState(null);
   const [sigError, setSigError] = useState('');
+  const signedThisSession = useRef(false);
 
   // Payment option state
   const [paymentOption, setPaymentOption] = useState('deposit');
@@ -141,6 +142,7 @@ export default function ProposalView() {
       }
     } catch (err) {
       console.error('Failed to load payment intent:', err);
+      setSigError('Unable to load payment form. Please refresh the page.');
     } finally {
       setLoadingIntent(false);
     }
@@ -183,8 +185,8 @@ export default function ProposalView() {
     if (!sigData) throw new Error('Please add your signature.');
     setSigError('');
 
-    // If already signed (backward compat), skip signing
-    if (proposal.client_signed_at) return;
+    // If already signed (server state or this session), skip
+    if (proposal.client_signed_at || signedThisSession.current) return;
 
     try {
       await axios.post(`${BASE_URL}/proposals/t/${token}/sign`, {
@@ -192,7 +194,10 @@ export default function ProposalView() {
         client_signature_data: sigData,
         client_signature_method: sigMethod,
       });
-      setProposal(prev => ({ ...prev, status: 'accepted', client_signed_at: new Date().toISOString() }));
+      signedThisSession.current = true;
+      // Do NOT update proposal state here — changing status/client_signed_at
+      // would unmount the Elements provider while payment is in progress.
+      // Server state is already updated; UI refreshes on Stripe redirect.
     } catch (err) {
       throw new Error(err.response?.data?.error || 'Failed to save signature. Please try again.');
     }

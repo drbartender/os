@@ -1,23 +1,18 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
 const { wrapMarketingEmail } = require('../utils/emailTemplates');
 
 const router = express.Router();
-
-function requireAdmin(req, res, next) {
-  if (req.user.role === 'admin' || req.user.role === 'manager') return next();
-  return res.status(403).json({ error: 'Admin access required.' });
-}
 
 const VALID_LEAD_SOURCES = ['manual', 'csv_import', 'website', 'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other'];
 
 // ─── Lead Management ──────────────────────────────────────────────
 
 /** GET /leads — list leads with search/filter/pagination */
-router.get('/leads', auth, requireAdmin, async (req, res) => {
+router.get('/leads', auth, requireAdminOrManager, async (req, res) => {
   const { search, status, lead_source, page = 1, limit = 50 } = req.query;
   try {
     let query = 'SELECT * FROM email_leads WHERE 1=1';
@@ -55,7 +50,7 @@ router.get('/leads', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /leads — create a single lead */
-router.post('/leads', auth, requireAdmin, async (req, res) => {
+router.post('/leads', auth, requireAdminOrManager, async (req, res) => {
   const { name, email, company, event_type, location, lead_source, notes } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required.' });
   if (!email || !email.trim()) return res.status(400).json({ error: 'Email is required.' });
@@ -79,7 +74,7 @@ router.post('/leads', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /leads/import — CSV bulk import */
-router.post('/leads/import', auth, requireAdmin, async (req, res) => {
+router.post('/leads/import', auth, requireAdminOrManager, async (req, res) => {
   if (!req.files || !req.files.file) {
     return res.status(400).json({ error: 'No CSV file uploaded.' });
   }
@@ -94,6 +89,11 @@ router.post('/leads/import', auth, requireAdmin, async (req, res) => {
 
   if (lines.length < 2) {
     return res.status(400).json({ error: 'CSV must have a header row and at least one data row.' });
+  }
+
+  const MAX_IMPORT_ROWS = 10000;
+  if (lines.length - 1 > MAX_IMPORT_ROWS) {
+    return res.status(400).json({ error: `CSV cannot exceed ${MAX_IMPORT_ROWS} rows.` });
   }
 
   const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
@@ -186,7 +186,7 @@ function parseCSVLine(line) {
 }
 
 /** GET /leads/:id — lead detail with send history */
-router.get('/leads/:id', auth, requireAdmin, async (req, res) => {
+router.get('/leads/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const lead = await pool.query('SELECT * FROM email_leads WHERE id = $1', [req.params.id]);
     if (!lead.rows[0]) return res.status(404).json({ error: 'Lead not found.' });
@@ -212,7 +212,7 @@ router.get('/leads/:id', auth, requireAdmin, async (req, res) => {
 });
 
 /** PUT /leads/:id — update lead */
-router.put('/leads/:id', auth, requireAdmin, async (req, res) => {
+router.put('/leads/:id', auth, requireAdminOrManager, async (req, res) => {
   const { name, email, company, event_type, location, lead_source, notes, status } = req.body;
   try {
     const result = await pool.query(`
@@ -233,7 +233,7 @@ router.put('/leads/:id', auth, requireAdmin, async (req, res) => {
 });
 
 /** DELETE /leads/:id — soft-delete (unsubscribe) */
-router.delete('/leads/:id', auth, requireAdmin, async (req, res) => {
+router.delete('/leads/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE email_leads SET status = 'unsubscribed', unsubscribed_at = NOW() WHERE id = $1 RETURNING *`,
@@ -250,7 +250,7 @@ router.delete('/leads/:id', auth, requireAdmin, async (req, res) => {
 // ─── Campaign Management ──────────────────────────────────────────
 
 /** GET /campaigns — list campaigns */
-router.get('/campaigns', auth, requireAdmin, async (req, res) => {
+router.get('/campaigns', auth, requireAdminOrManager, async (req, res) => {
   const { type, status } = req.query;
   try {
     let query = `
@@ -280,7 +280,7 @@ router.get('/campaigns', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /campaigns — create campaign */
-router.post('/campaigns', auth, requireAdmin, async (req, res) => {
+router.post('/campaigns', auth, requireAdminOrManager, async (req, res) => {
   const { name, type, subject, html_body, text_body, from_email, reply_to, target_sources, target_event_types } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Campaign name is required.' });
   if (type && !['blast', 'sequence'].includes(type)) {
@@ -304,7 +304,7 @@ router.post('/campaigns', auth, requireAdmin, async (req, res) => {
 });
 
 /** GET /campaigns/:id — campaign detail with stats */
-router.get('/campaigns/:id', auth, requireAdmin, async (req, res) => {
+router.get('/campaigns/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const campaign = await pool.query('SELECT * FROM email_campaigns WHERE id = $1', [req.params.id]);
     if (!campaign.rows[0]) return res.status(404).json({ error: 'Campaign not found.' });
@@ -361,7 +361,7 @@ router.get('/campaigns/:id', auth, requireAdmin, async (req, res) => {
 });
 
 /** PUT /campaigns/:id — update campaign */
-router.put('/campaigns/:id', auth, requireAdmin, async (req, res) => {
+router.put('/campaigns/:id', auth, requireAdminOrManager, async (req, res) => {
   const { name, subject, html_body, text_body, from_email, reply_to, target_sources, target_event_types, status } = req.body;
   try {
     const result = await pool.query(`
@@ -387,7 +387,7 @@ router.put('/campaigns/:id', auth, requireAdmin, async (req, res) => {
 });
 
 /** DELETE /campaigns/:id — archive campaign */
-router.delete('/campaigns/:id', auth, requireAdmin, async (req, res) => {
+router.delete('/campaigns/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE email_campaigns SET status = 'archived' WHERE id = $1 RETURNING *`,
@@ -402,7 +402,7 @@ router.delete('/campaigns/:id', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /campaigns/:id/send — execute blast send */
-router.post('/campaigns/:id/send', auth, requireAdmin, async (req, res) => {
+router.post('/campaigns/:id/send', auth, requireAdminOrManager, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -525,7 +525,7 @@ async function sendBlastEmails(campaign, leads, unsubscribeBase) {
 }
 
 /** POST /campaigns/:id/schedule — schedule blast for future */
-router.post('/campaigns/:id/schedule', auth, requireAdmin, async (req, res) => {
+router.post('/campaigns/:id/schedule', auth, requireAdminOrManager, async (req, res) => {
   const { scheduled_at } = req.body;
   if (!scheduled_at) return res.status(400).json({ error: 'scheduled_at is required.' });
   try {
@@ -544,7 +544,7 @@ router.post('/campaigns/:id/schedule', auth, requireAdmin, async (req, res) => {
 // ─── Sequence Steps ───────────────────────────────────────────────
 
 /** GET /campaigns/:id/steps — list sequence steps */
-router.get('/campaigns/:id/steps', auth, requireAdmin, async (req, res) => {
+router.get('/campaigns/:id/steps', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM email_sequence_steps WHERE campaign_id = $1 ORDER BY step_order',
@@ -558,7 +558,7 @@ router.get('/campaigns/:id/steps', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /campaigns/:id/steps — add step */
-router.post('/campaigns/:id/steps', auth, requireAdmin, async (req, res) => {
+router.post('/campaigns/:id/steps', auth, requireAdminOrManager, async (req, res) => {
   const { subject, html_body, text_body, delay_days, delay_hours } = req.body;
   if (!subject || !html_body) return res.status(400).json({ error: 'Subject and body are required.' });
   try {
@@ -582,7 +582,7 @@ router.post('/campaigns/:id/steps', auth, requireAdmin, async (req, res) => {
 });
 
 /** PUT /campaigns/:id/steps/:stepId — update step */
-router.put('/campaigns/:id/steps/:stepId', auth, requireAdmin, async (req, res) => {
+router.put('/campaigns/:id/steps/:stepId', auth, requireAdminOrManager, async (req, res) => {
   const { subject, html_body, text_body, delay_days, delay_hours } = req.body;
   try {
     const result = await pool.query(`
@@ -602,7 +602,7 @@ router.put('/campaigns/:id/steps/:stepId', auth, requireAdmin, async (req, res) 
 });
 
 /** DELETE /campaigns/:id/steps/:stepId — remove step and reorder */
-router.delete('/campaigns/:id/steps/:stepId', auth, requireAdmin, async (req, res) => {
+router.delete('/campaigns/:id/steps/:stepId', auth, requireAdminOrManager, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -637,7 +637,7 @@ router.delete('/campaigns/:id/steps/:stepId', auth, requireAdmin, async (req, re
 });
 
 /** POST /campaigns/:id/activate — activate sequence */
-router.post('/campaigns/:id/activate', auth, requireAdmin, async (req, res) => {
+router.post('/campaigns/:id/activate', auth, requireAdminOrManager, async (req, res) => {
   try {
     const steps = await pool.query(
       'SELECT COUNT(*) FROM email_sequence_steps WHERE campaign_id = $1',
@@ -660,7 +660,7 @@ router.post('/campaigns/:id/activate', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /campaigns/:id/pause — pause sequence */
-router.post('/campaigns/:id/pause', auth, requireAdmin, async (req, res) => {
+router.post('/campaigns/:id/pause', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE email_campaigns SET status = 'paused' WHERE id = $1 AND type = 'sequence' RETURNING *`,
@@ -677,7 +677,7 @@ router.post('/campaigns/:id/pause', auth, requireAdmin, async (req, res) => {
 // ─── Enrollment ───────────────────────────────────────────────────
 
 /** POST /campaigns/:id/enroll — enroll leads in a sequence */
-router.post('/campaigns/:id/enroll', auth, requireAdmin, async (req, res) => {
+router.post('/campaigns/:id/enroll', auth, requireAdminOrManager, async (req, res) => {
   const { lead_ids } = req.body;
   if (!lead_ids || !lead_ids.length) {
     return res.status(400).json({ error: 'lead_ids array is required.' });
@@ -728,7 +728,7 @@ router.post('/campaigns/:id/enroll', auth, requireAdmin, async (req, res) => {
 });
 
 /** GET /campaigns/:id/enrollments — list enrollments */
-router.get('/campaigns/:id/enrollments', auth, requireAdmin, async (req, res) => {
+router.get('/campaigns/:id/enrollments', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT e.*, el.name AS lead_name, el.email AS lead_email
@@ -747,7 +747,7 @@ router.get('/campaigns/:id/enrollments', auth, requireAdmin, async (req, res) =>
 // ─── Analytics ────────────────────────────────────────────────────
 
 /** GET /analytics/overview — aggregate stats */
-router.get('/analytics/overview', auth, requireAdmin, async (req, res) => {
+router.get('/analytics/overview', auth, requireAdminOrManager, async (req, res) => {
   try {
     const [leadsResult, campaignsResult, sendsResult] = await Promise.all([
       pool.query(`SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE status = 'active') AS active FROM email_leads`),
@@ -786,7 +786,7 @@ router.get('/analytics/overview', auth, requireAdmin, async (req, res) => {
 // ─── Conversations ────────────────────────────────────────────────
 
 /** GET /conversations — list conversations grouped by lead */
-router.get('/conversations', auth, requireAdmin, async (req, res) => {
+router.get('/conversations', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT el.id AS lead_id, el.name, el.email,
@@ -804,7 +804,7 @@ router.get('/conversations', auth, requireAdmin, async (req, res) => {
 });
 
 /** GET /conversations/:leadId — conversation thread */
-router.get('/conversations/:leadId', auth, requireAdmin, async (req, res) => {
+router.get('/conversations/:leadId', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM email_conversations WHERE lead_id = $1 ORDER BY created_at ASC',
@@ -818,7 +818,7 @@ router.get('/conversations/:leadId', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /conversations/:leadId/reply — admin sends reply */
-router.post('/conversations/:leadId/reply', auth, requireAdmin, async (req, res) => {
+router.post('/conversations/:leadId/reply', auth, requireAdminOrManager, async (req, res) => {
   const { subject, body_html, body_text } = req.body;
   if (!body_html && !body_text) return res.status(400).json({ error: 'Message body is required.' });
 
@@ -847,7 +847,7 @@ router.post('/conversations/:leadId/reply', auth, requireAdmin, async (req, res)
 });
 
 /** PUT /conversations/:conversationId/read — mark as read */
-router.put('/conversations/:conversationId/read', auth, requireAdmin, async (req, res) => {
+router.put('/conversations/:conversationId/read', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       'UPDATE email_conversations SET read_at = NOW() WHERE id = $1 RETURNING *',
@@ -862,7 +862,7 @@ router.put('/conversations/:conversationId/read', auth, requireAdmin, async (req
 });
 
 /** POST /conversations/:leadId/mark-replied — manual mark as replied */
-router.post('/conversations/:leadId/mark-replied', auth, requireAdmin, async (req, res) => {
+router.post('/conversations/:leadId/mark-replied', auth, requireAdminOrManager, async (req, res) => {
   const { notes } = req.body;
   try {
     const convo = await pool.query(

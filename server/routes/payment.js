@@ -5,6 +5,7 @@ const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { isValidUpload } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
+const { encrypt, decrypt } = require('../utils/encryption');
 
 const router = express.Router();
 
@@ -14,10 +15,12 @@ router.get('/', auth, async (req, res) => {
     const result = await pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [req.user.id]);
     const profile = result.rows[0] || {};
     if (profile.routing_number) {
-      profile.routing_number = '****' + profile.routing_number.slice(-4);
+      const raw = decrypt(profile.routing_number);
+      profile.routing_number = '****' + raw.slice(-4);
     }
     if (profile.account_number) {
-      profile.account_number = '****' + profile.account_number.slice(-4);
+      const raw = decrypt(profile.account_number);
+      profile.account_number = '****' + raw.slice(-4);
     }
     res.json(profile);
   } catch (err) {
@@ -67,7 +70,7 @@ router.post('/', auth, async (req, res) => {
          SET preferred_payment_method=$1, payment_username=$2, routing_number=$3, account_number=$4,
              w9_file_url=$5, w9_filename=$6
          WHERE user_id=$7`,
-        [preferred_payment_method, payment_username || null, routing_number || null, account_number || null,
+        [preferred_payment_method, payment_username || null, routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null,
          w9_url, w9_name, req.user.id]
       );
     } else {
@@ -76,7 +79,7 @@ router.post('/', auth, async (req, res) => {
            (user_id, preferred_payment_method, payment_username, routing_number, account_number, w9_file_url, w9_filename)
          VALUES ($1,$2,$3,$4,$5,$6,$7)`,
         [req.user.id, preferred_payment_method, payment_username || null,
-         routing_number || null, account_number || null, w9_url, w9_name]
+         routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null, w9_url, w9_name]
       );
     }
 
@@ -94,10 +97,12 @@ router.post('/', auth, async (req, res) => {
     const result = await pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [req.user.id]);
     const profile = result.rows[0];
     if (profile.routing_number) {
-      profile.routing_number = '****' + profile.routing_number.slice(-4);
+      const raw = decrypt(profile.routing_number);
+      profile.routing_number = '****' + raw.slice(-4);
     }
     if (profile.account_number) {
-      profile.account_number = '****' + profile.account_number.slice(-4);
+      const raw = decrypt(profile.account_number);
+      profile.account_number = '****' + raw.slice(-4);
     }
     res.json(profile);
   } catch (err) {

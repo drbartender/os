@@ -18,6 +18,16 @@ export default function PublicLayout({ children }) {
   const isAuthed = clientAuth?.isClientAuthenticated;
   const homePath = isPublicSite() ? '/' : '/website';
 
+  // Lock body scroll when mobile nav is open
+  useEffect(() => {
+    if (mobileNav) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [mobileNav]);
+
   // Scroll to top on route change, or to hash target if present
   useEffect(() => {
     if (location.hash) {

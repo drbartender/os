@@ -24,6 +24,8 @@ const authLimiter = rateLimit({
 
 // Simple email format check — rejects obvious non-emails before hitting the DB
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Password must have uppercase, lowercase, and a digit
+const PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
 
 // Register
 router.post('/register', authLimiter, async (req, res) => {
@@ -31,7 +33,7 @@ router.post('/register', authLimiter, async (req, res) => {
 
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Invalid email address' });
-  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (!PASSWORD_RE.test(password)) return res.status(400).json({ error: 'Password must be at least 8 characters with uppercase, lowercase, and a number.' });
 
   try {
     const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
@@ -189,7 +191,7 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
 router.post('/reset-password', authLimiter, async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) return res.status(400).json({ error: 'Token and password are required' });
-  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (!PASSWORD_RE.test(password)) return res.status(400).json({ error: 'Password must be at least 8 characters with uppercase, lowercase, and a number.' });
 
   try {
     // Find valid token

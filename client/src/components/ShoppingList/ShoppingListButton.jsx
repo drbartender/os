@@ -23,6 +23,10 @@ export default function ShoppingListButton({ planId, planToken }) {
         syrupSelfProvided: apiData.syrup_self_provided || [],
         eventDate: apiData.event_date,
         notes: apiData.notes,
+        serviceStyle: apiData.service_style || 'full_bar',
+        beerSelections: apiData.beer_selections || [],
+        wineSelections: apiData.wine_selections || [],
+        mixersForSignatureDrinks: apiData.mixers_for_signature_drinks,
       });
       setModalData(listData);
     }

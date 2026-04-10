@@ -1,27 +1,14 @@
 const express = require('express');
-const rateLimit = require('express-rate-limit');
 const { pool } = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireAdminOrManager } = require('../middleware/auth');
+const { publicReadLimiter } = require('../middleware/rateLimiters');
 
 const router = express.Router();
-
-const publicLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: { error: 'Too many requests. Please try again later.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
-function requireAdmin(req, res, next) {
-  if (req.user.role === 'admin' || req.user.role === 'manager') return next();
-  return res.status(403).json({ error: 'Admin access required.' });
-}
 
 // ─── Public routes ────────────────────────────────────────────────
 
 /** GET /api/cocktails — active cocktails with category info (for client questionnaire) */
-router.get('/', publicLimiter, async (req, res) => {
+router.get('/', publicReadLimiter, async (req, res) => {
   try {
     const [catsResult, cocktailsResult] = await Promise.all([
       pool.query('SELECT * FROM cocktail_categories ORDER BY sort_order'),
@@ -41,7 +28,7 @@ router.get('/', publicLimiter, async (req, res) => {
 });
 
 /** GET /api/cocktails/admin — all cocktails including inactive (admin) */
-router.get('/admin', auth, requireAdmin, async (req, res) => {
+router.get('/admin', auth, requireAdminOrManager, async (req, res) => {
   try {
     const [catsResult, cocktailsResult] = await Promise.all([
       pool.query('SELECT * FROM cocktail_categories ORDER BY sort_order'),
@@ -73,7 +60,7 @@ router.get('/categories', async (req, res) => {
 // ─── Admin — bulk reorder ─────────────────────────────────────────
 
 /** POST /api/cocktails/reorder — bulk update sort_order for cocktails */
-router.post('/reorder', auth, requireAdmin, async (req, res) => {
+router.post('/reorder', auth, requireAdminOrManager, async (req, res) => {
   const { items } = req.body; // [{ id, sort_order }, ...]
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required.' });
   try {
@@ -93,7 +80,7 @@ router.post('/reorder', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /api/cocktails/categories/reorder — bulk update sort_order for categories */
-router.post('/categories/reorder', auth, requireAdmin, async (req, res) => {
+router.post('/categories/reorder', auth, requireAdminOrManager, async (req, res) => {
   const { items } = req.body;
   if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'items array required.' });
   try {
@@ -115,7 +102,7 @@ router.post('/categories/reorder', auth, requireAdmin, async (req, res) => {
 // ─── Admin — category management ─────────────────────────────────
 
 /** POST /api/cocktails/categories — create category */
-router.post('/categories', auth, requireAdmin, async (req, res) => {
+router.post('/categories', auth, requireAdminOrManager, async (req, res) => {
   const { id, label, sort_order } = req.body;
   if (!id || !label) return res.status(400).json({ error: 'id and label are required.' });
   try {
@@ -132,7 +119,7 @@ router.post('/categories', auth, requireAdmin, async (req, res) => {
 });
 
 /** PUT /api/cocktails/categories/:id — update category */
-router.put('/categories/:id', auth, requireAdmin, async (req, res) => {
+router.put('/categories/:id', auth, requireAdminOrManager, async (req, res) => {
   const { label, sort_order } = req.body;
   try {
     const result = await pool.query(
@@ -151,7 +138,7 @@ router.put('/categories/:id', auth, requireAdmin, async (req, res) => {
 });
 
 /** DELETE /api/cocktails/categories/:id — delete category (blocked if cocktails reference it) */
-router.delete('/categories/:id', auth, requireAdmin, async (req, res) => {
+router.delete('/categories/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const check = await pool.query(
       'SELECT COUNT(*) FROM cocktails WHERE category_id = $1',
@@ -177,7 +164,7 @@ router.delete('/categories/:id', auth, requireAdmin, async (req, res) => {
 // ─── Admin — cocktail management ─────────────────────────────────
 
 /** POST /api/cocktails — create cocktail */
-router.post('/', auth, requireAdmin, async (req, res) => {
+router.post('/', auth, requireAdminOrManager, async (req, res) => {
   const { id, name, category_id, emoji, description, sort_order, base_spirit, ingredients } = req.body;
   if (!id || !name) return res.status(400).json({ error: 'id and name are required.' });
   try {
@@ -195,7 +182,7 @@ router.post('/', auth, requireAdmin, async (req, res) => {
 });
 
 /** PUT /api/cocktails/:id — update cocktail */
-router.put('/:id', auth, requireAdmin, async (req, res) => {
+router.put('/:id', auth, requireAdminOrManager, async (req, res) => {
   const { name, category_id, emoji, description, sort_order, is_active, base_spirit, ingredients } = req.body;
   try {
     const result = await pool.query(
@@ -230,7 +217,7 @@ router.put('/:id', auth, requireAdmin, async (req, res) => {
 });
 
 /** DELETE /api/cocktails/:id — soft delete (sets is_active = false) */
-router.delete('/:id', auth, requireAdmin, async (req, res) => {
+router.delete('/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       'UPDATE cocktails SET is_active = false WHERE id = $1 RETURNING id',

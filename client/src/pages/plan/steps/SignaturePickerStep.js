@@ -437,10 +437,12 @@ export default function SignaturePickerStep({
                 <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1.25rem' }}>
                   <div className="form-group">
                     <label className="form-label">
-                      Would you like basic mixers for {extractedSpirits.join(', ')}?
+                      Your signature cocktails use {extractedSpirits.length > 1
+                        ? extractedSpirits.slice(0, -1).join(', ') + ' and ' + extractedSpirits[extractedSpirits.length - 1]
+                        : extractedSpirits[0]}.
                     </label>
                     <p className="text-muted text-small mb-1" style={{ color: 'var(--warm-brown)' }}>
-                      This includes things like tonic, soda, ginger beer, and juice for your signature drink spirits.
+                      Would you like us to also stock basic mixers (tonic, soda, ginger beer, juices) so guests can make simple mixed drinks with these spirits — in addition to your signature cocktails?
                     </p>
                     <div className="checkbox-grid">
                       <label className="checkbox-label">

@@ -22,6 +22,7 @@ export default function StaffLayout() {
 
   return (
     <div className="admin-page" style={{ minHeight: '100vh' }}>
+      <a href="#main-content" className="skip-nav">Skip to main content</a>
       <header className="site-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <button
@@ -63,7 +64,7 @@ export default function StaffLayout() {
           </nav>
         </aside>
 
-        <main className="admin-content">
+        <main id="main-content" className="admin-content">
           <Outlet />
         </main>
       </div>

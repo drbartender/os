@@ -44,6 +44,7 @@ export default function ProposalCreate() {
       setAddons(addonRes.data);
     }).catch(err => {
       console.error('Failed to load packages/addons:', err);
+      setError('Failed to load packages. Please refresh.');
     });
   }, []);
 
@@ -101,7 +102,7 @@ export default function ProposalCreate() {
       event_type_category: et.category,
       event_type_custom: et.id === 'other' ? f.event_type_custom : '',
       // Auto-generate event_name
-      event_name: f.client_name ? `${f.client_name.trim()} - ${label}` : label,
+      event_name: label,
     }));
     setEventTypeQuery(et.label === 'Other' ? '' : et.label);
     setEventTypeOpen(false);
@@ -242,7 +243,7 @@ export default function ProposalCreate() {
                         setForm(f => ({
                           ...f,
                           event_type_custom: e.target.value,
-                          event_name: f.client_name ? `${f.client_name.trim()} - ${e.target.value}` : e.target.value,
+                          event_name: e.target.value,
                         }));
                       }}
                       placeholder="Describe the event type"

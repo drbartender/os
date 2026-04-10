@@ -64,6 +64,7 @@ const DEFAULT_SELECTIONS = {
     equipment: [],
     equipmentOther: '',
     accessNotes: '',
+    addBarRental: false,
   },
 };
 
@@ -75,6 +76,7 @@ export default function PotionPlanningLab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
 
   // Phase (derived from proposal status)
   const [phase, setPhase] = useState('exploration');
@@ -97,7 +99,12 @@ export default function PotionPlanningLab() {
   const [guestCount, setGuestCount] = useState(null);
   const [numBartenders, setNumBartenders] = useState(null);
   const [numBars, setNumBars] = useState(0);
+  const [pricingSnapshot, setPricingSnapshot] = useState(null);
   const [proposalSyrups, setProposalSyrups] = useState([]);
+  const [proposalPaymentInfo, setProposalPaymentInfo] = useState(null);
+
+  // Check if returning from Stripe payment redirect
+  const paidFromRedirect = new URLSearchParams(window.location.search).get('paid') === 'true';
 
   // Flow state
   const [step, setStep] = useState('welcome');
@@ -140,8 +147,19 @@ export default function PotionPlanningLab() {
         if (planData.guest_count) setGuestCount(planData.guest_count);
         if (planData.num_bartenders) setNumBartenders(planData.num_bartenders);
         if (planData.num_bars) setNumBars(planData.num_bars);
+        if (planData.pricing_snapshot) setPricingSnapshot(planData.pricing_snapshot);
         const pSyrups = planData.pricing_snapshot?.syrups?.selections || [];
         setProposalSyrups(pSyrups);
+
+        // Extract proposal payment context
+        if (planData.proposal_id) {
+          setProposalPaymentInfo({
+            totalPrice: planData.proposal_total_price,
+            amountPaid: planData.proposal_amount_paid,
+            eventDate: planData.proposal_event_date || planData.event_date,
+            balanceDueDate: planData.proposal_balance_due_date,
+          });
+        }
 
         // Restore saved state if draft/submitted/exploration_saved
         const data = planRes.data;
@@ -248,6 +266,7 @@ export default function PotionPlanningLab() {
   const saveDraft = useCallback(async (currentQuickPick, currentActiveModules, currentSelections) => {
     if (!token || submittingRef.current) return;
     setSaving(true);
+    setSaveFailed(false);
     try {
       await axios.put(`${BASE_URL}/drink-plans/t/${token}`, {
         serving_type: currentQuickPick,
@@ -256,6 +275,7 @@ export default function PotionPlanningLab() {
       });
     } catch (err) {
       console.error('Auto-save failed:', err);
+      setSaveFailed(true);
     } finally {
       setSaving(false);
     }
@@ -310,8 +330,8 @@ export default function PotionPlanningLab() {
     }
   };
 
-  // Submit final (refinement)
-  const handleSubmit = async () => {
+  // Submit drink plan to server (without changing step — used by payment flow)
+  const submitDrinkPlan = async () => {
     submittingRef.current = true;
     setSaving(true);
     setError(null);
@@ -321,19 +341,27 @@ export default function PotionPlanningLab() {
         selections: { ...selections, activeModules },
         status: 'submitted',
       });
-      setStep('submitted');
     } catch (err) {
       const serverMsg = err.response?.data?.error;
       const statusCode = err.response?.status;
       console.error('Submit failed:', statusCode, serverMsg, err);
-      if (statusCode === 400) {
-        setError(serverMsg || 'This plan may have already been submitted.');
-      } else {
-        setError(serverMsg || 'Failed to submit. Please try again.');
-      }
+      const msg = statusCode === 400
+        ? (serverMsg || 'This plan may have already been submitted.')
+        : (serverMsg || 'Failed to submit. Please try again.');
+      throw new Error(msg);
     } finally {
       submittingRef.current = false;
       setSaving(false);
+    }
+  };
+
+  // Submit final (refinement) — submit + show celebration
+  const handleSubmit = async () => {
+    try {
+      await submitDrinkPlan();
+      setStep('submitted');
+    } catch (err) {
+      setError(err.message);
     }
   };
 
@@ -529,8 +557,10 @@ export default function PotionPlanningLab() {
     return (
       <div className="auth-page">
         <div className="page-container" style={{ textAlign: 'center', paddingTop: '4rem' }}>
-          <div className="spinner" />
-          <p className="text-muted mt-2">Loading your drink plan...</p>
+          <div role="status" aria-live="polite">
+            <div className="spinner" />
+            <p className="text-muted mt-2">Loading your drink plan...</p>
+          </div>
         </div>
       </div>
     );
@@ -569,13 +599,24 @@ export default function PotionPlanningLab() {
             <p className="text-muted" style={{ marginTop: '0.75rem' }}>
               Thank you, {plan?.client_name || 'friend'}! Your drink selections have been received.
             </p>
+            {paidFromRedirect && (
+              <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'rgba(46, 125, 50, 0.08)', borderRadius: '8px', border: '1px solid rgba(46, 125, 50, 0.2)' }}>
+                <p style={{ fontWeight: 600, color: '#2e7d32', marginBottom: '0.25rem' }}>
+                  Payment Received
+                </p>
+                <p className="text-muted text-small">
+                  Your payment has been processed successfully. You'll receive a confirmation email shortly.
+                </p>
+              </div>
+            )}
             <div style={{ marginTop: '1.25rem', padding: '0.75rem', background: 'rgba(193, 125, 60, 0.08)', borderRadius: '8px' }}>
               <p style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.25rem' }}>
                 What happens next?
               </p>
               <p className="text-muted text-small">
-                We'll review your selections and reach out within 2 business days to confirm
-                everything and finalize the details for your event.
+                {selections.customMenuDesign === true
+                  ? "We'll use your selections to create a shopping list, custom menu, and BEO (Banquet Event Order) for your event. Expect to hear from us within 2 business days!"
+                  : "We'll use your selections to create a shopping list and BEO (Banquet Event Order) for your event. Expect to hear from us within 2 business days!"}
               </p>
             </div>
           </div>
@@ -731,6 +772,7 @@ export default function PotionPlanningLab() {
             onSyrupToggle={toggleSyrup}
             proposalSyrups={proposalSyrups}
             phase={phase}
+            skipGate={quickPickChoice === 'mocktails'}
             onNext={() => handleNext()}
             onBack={() => handleBack()}
           />
@@ -778,6 +820,7 @@ export default function PotionPlanningLab() {
             guestCount={guestCount}
             numBartenders={numBartenders}
             numBars={numBars}
+            pricingSnapshot={pricingSnapshot}
           />
         );
       case 'confirmation':
@@ -792,8 +835,13 @@ export default function PotionPlanningLab() {
             addOns={selections.addOns || {}}
             addonPricing={addonPricing}
             guestCount={guestCount}
+            numBars={numBars}
+            pricingSnapshot={pricingSnapshot}
             proposalSyrups={proposalSyrups}
             onSubmit={handleSubmit}
+            onSubmitForPayment={submitDrinkPlan}
+            proposalPaymentInfo={proposalPaymentInfo}
+            token={token}
             saving={saving}
             error={error}
           />
@@ -813,8 +861,13 @@ export default function PotionPlanningLab() {
         )}
 
         {saving && (
-          <div style={{ textAlign: 'center', padding: '0.25rem', opacity: 0.6, fontSize: '0.85rem' }}>
+          <div role="status" aria-live="polite" style={{ textAlign: 'center', padding: '0.25rem', opacity: 0.6, fontSize: '0.85rem' }}>
             Saving...
+          </div>
+        )}
+        {saveFailed && !saving && (
+          <div role="alert" style={{ textAlign: 'center', padding: '0.25rem', fontSize: '0.85rem', color: '#c0392b' }}>
+            Draft may not be saved. Check your connection.
           </div>
         )}
 

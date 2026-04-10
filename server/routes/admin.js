@@ -6,6 +6,7 @@ const { geocodeAddress, buildAddressString, delay } = require('../utils/geocode'
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const { uploadFile } = require('../utils/storage');
+const { encrypt, decrypt } = require('../utils/encryption');
 const { isValidUpload } = require('../utils/fileValidation');
 const createDOMPurify = require('dompurify');
 const { JSDOM } = require('jsdom');
@@ -78,8 +79,8 @@ router.get('/users/:id', auth, adminOnly, async (req, res) => {
 
     const payment = paymentRes.rows[0] || {};
     if (payment) {
-      if (payment.routing_number) payment.routing_number = '****' + payment.routing_number.slice(-4);
-      if (payment.account_number) payment.account_number = '****' + payment.account_number.slice(-4);
+      if (payment.routing_number) { const raw = decrypt(payment.routing_number); payment.routing_number = '****' + raw.slice(-4); }
+      if (payment.account_number) { const raw = decrypt(payment.account_number); payment.account_number = '****' + raw.slice(-4); }
     }
 
     res.json({
@@ -214,7 +215,7 @@ router.put('/users/:id/profile', auth, adminOnly, async (req, res) => {
       VALUES ($1,$2,$3,$4,$5)
       ON CONFLICT (user_id) DO UPDATE SET
         preferred_payment_method=$2, payment_username=$3, routing_number=$4, account_number=$5
-    `, [userId, preferred_payment_method || null, payment_username || null, routing_number || null, account_number || null]);
+    `, [userId, preferred_payment_method || null, payment_username || null, routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null]);
 
     // Return updated data
     const [profileRes, paymentRes] = await Promise.all([
@@ -223,8 +224,8 @@ router.put('/users/:id/profile', auth, adminOnly, async (req, res) => {
     ]);
 
     const payment = paymentRes.rows[0] || {};
-    if (payment.routing_number) payment.routing_number = '****' + payment.routing_number.slice(-4);
-    if (payment.account_number) payment.account_number = '****' + payment.account_number.slice(-4);
+    if (payment.routing_number) { const raw = decrypt(payment.routing_number); payment.routing_number = '****' + raw.slice(-4); }
+    if (payment.account_number) { const raw = decrypt(payment.account_number); payment.account_number = '****' + raw.slice(-4); }
 
     res.json({ profile: profileRes.rows[0] || {}, payment });
   } catch (err) {

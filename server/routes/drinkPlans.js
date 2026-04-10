@@ -1,21 +1,17 @@
 const express = require('express');
 const { pool } = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireAdminOrManager } = require('../middleware/auth');
+const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters');
 const { calculateProposal } = require('../utils/pricingEngine');
 const { sendEmail } = require('../utils/email');
+const emailTemplates = require('../utils/emailTemplates');
 
 const router = express.Router();
-
-// ─── Permission helper ──────────────────────────────────────────
-function requireAdmin(req, res, next) {
-  if (req.user.role === 'admin' || req.user.role === 'manager') return next();
-  return res.status(403).json({ error: 'Admin access required.' });
-}
 
 // ─── Public routes (token-based) ─────────────────────────────────
 
 /** GET /api/drink-plans/t/:token/shopping-list — public shopping list for clients */
-router.get('/t/:token/shopping-list', async (req, res) => {
+router.get('/t/:token/shopping-list', publicReadLimiter, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT dp.shopping_list, dp.client_name, dp.event_name, dp.event_date, dp.status
@@ -46,14 +42,18 @@ router.get('/t/:token/shopping-list', async (req, res) => {
 });
 
 /** GET /api/drink-plans/t/:token — fetch plan by token (public) */
-router.get('/t/:token', async (req, res) => {
+router.get('/t/:token', publicReadLimiter, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT dp.id, dp.token, dp.client_name, dp.client_email, dp.event_name, dp.event_date,
               dp.status, dp.serving_type, dp.selections, dp.submitted_at, dp.created_at,
               dp.proposal_id, dp.exploration_submitted_at,
               p.guest_count, p.num_bartenders, p.num_bars, p.pricing_snapshot,
-              p.status AS proposal_status
+              p.status AS proposal_status,
+              p.total_price AS proposal_total_price,
+              p.amount_paid AS proposal_amount_paid,
+              p.event_date AS proposal_event_date,
+              p.balance_due_date AS proposal_balance_due_date
        FROM drink_plans dp
        LEFT JOIN proposals p ON p.id = dp.proposal_id
        WHERE dp.token = $1`,
@@ -68,12 +68,12 @@ router.get('/t/:token', async (req, res) => {
 });
 
 /** PUT /api/drink-plans/t/:token — save draft or submit (public) */
-router.put('/t/:token', async (req, res) => {
+router.put('/t/:token', publicLimiter, async (req, res) => {
   const { serving_type, selections, status } = req.body;
   try {
     // Check plan exists and is not already submitted
     const existing = await pool.query(
-      'SELECT id, status, proposal_id, client_name, event_name FROM drink_plans WHERE token = $1',
+      'SELECT id, status, proposal_id, client_name, client_email, event_name FROM drink_plans WHERE token = $1',
       [req.params.token]
     );
     if (!existing.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
@@ -123,10 +123,11 @@ router.put('/t/:token', async (req, res) => {
 
     const updatedPlan = result.rows[0];
 
-    // Process addons into proposal on submit
-    if (newStatus === 'submitted' && updatedPlan.proposal_id && selections?.addOns) {
-      const addonSlugs = Object.keys(selections.addOns).filter(slug => selections.addOns[slug]?.enabled);
-      if (addonSlugs.length > 0) {
+    // Process addons and bar rental into proposal on submit
+    if (newStatus === 'submitted' && updatedPlan.proposal_id) {
+      const addonSlugs = Object.keys(selections?.addOns || {}).filter(slug => selections.addOns[slug]?.enabled);
+      const addBarRental = selections?.logistics?.addBarRental === true;
+      if (addonSlugs.length > 0 || addBarRental) {
         const client = await pool.connect();
         try {
           await client.query('BEGIN');
@@ -139,6 +140,16 @@ router.put('/t/:token', async (req, res) => {
           const proposal = proposalRes.rows[0];
 
           if (proposal) {
+            // Update num_bars if client added a bar rental from the drink plan
+            if (addBarRental) {
+              const newNumBars = (proposal.num_bars || 0) + 1;
+              await client.query(
+                'UPDATE proposals SET num_bars = $1 WHERE id = $2',
+                [newNumBars, proposal.id]
+              );
+              proposal.num_bars = newNumBars;
+            }
+
             // Resolve addon slugs to service_addon rows
             const addonRes = await client.query(
               'SELECT * FROM service_addons WHERE slug = ANY($1) AND is_active = true',
@@ -192,7 +203,7 @@ router.put('/t/:token', async (req, res) => {
                 pkg,
                 guestCount: proposal.guest_count,
                 durationHours: Number(proposal.event_duration_hours),
-                numBars: proposal.num_bars || 1,
+                numBars: proposal.num_bars ?? 0,
                 numBartenders: proposal.num_bartenders,
                 addons: allAddonsRes.rows,
                 syrupSelections: syrupSels,
@@ -210,7 +221,8 @@ router.put('/t/:token', async (req, res) => {
                 [proposal.id, JSON.stringify({
                   addons: addonSlugs,
                   syrups: syrupSels,
-                  champagne_serving_style: selections.addOns['champagne-toast']?.servingStyle || null,
+                  champagne_serving_style: selections.addOns?.['champagne-toast']?.servingStyle || null,
+                  bar_rental_added: !!addBarRental,
                   new_total: snapshot.total,
                 })]
               );
@@ -227,17 +239,37 @@ router.put('/t/:token', async (req, res) => {
                   const clientUrl = process.env.CLIENT_URL || 'https://drbartender.com';
 
                   const planName = existing.rows[0]?.client_name || 'Client';
+                  const addonNames = resolvedAddons.map(a => a.name);
+                  if (addBarRental) addonNames.push('Portable Bar Rental');
                   await sendEmail({
                     to: adminEmail,
                     subject: `${isUrgent ? 'URGENT: ' : ''}Drink Plan Submitted with Add-Ons — ${planName}`,
                     html: `<p><strong>${planName}</strong> submitted their drink plan.</p>
-                           <p><strong>Add-ons selected:</strong> ${resolvedAddons.map(a => a.name).join(', ')}</p>
+                           <p><strong>Add-ons selected:</strong> ${addonNames.join(', ')}</p>
                            <p><strong>New total:</strong> $${snapshot.total.toFixed(2)}</p>
                            <p><strong>Amount paid:</strong> $${amountPaid.toFixed(2)}</p>
                            <p><strong>Balance due:</strong> $${(snapshot.total - amountPaid).toFixed(2)}</p>
                            ${isUrgent ? `<p style="color: red;"><strong>Event is in ${daysUntil} days!</strong></p>` : ''}
                            <p><a href="${clientUrl}/admin/proposals/${proposal.id}">View Proposal</a></p>`,
                   }).catch(emailErr => console.error('Admin notification email failed:', emailErr));
+                }
+
+                // Send client email with updated balance
+                const clientEmail = existing.rows[0]?.client_email || proposal.client_email;
+                if (clientEmail) {
+                  const extrasAmount = snapshot.total - (Number(proposal.total_price) || 0);
+                  const balanceDue = snapshot.total - amountPaid;
+                  const tpl = emailTemplates.drinkPlanBalanceUpdate({
+                    clientName: existing.rows[0]?.client_name || 'Client',
+                    eventName: existing.rows[0]?.event_name || proposal.event_name,
+                    extrasAmount,
+                    newTotal: snapshot.total,
+                    amountPaid,
+                    balanceDue,
+                    balanceDueDate: proposal.balance_due_date,
+                  });
+                  sendEmail({ to: clientEmail, ...tpl })
+                    .catch(emailErr => console.error('Client balance email failed:', emailErr));
                 }
               }
             }
@@ -264,7 +296,7 @@ router.put('/t/:token', async (req, res) => {
 // ─── Admin routes (auth required) ────────────────────────────────
 
 /** GET /api/drink-plans — list all plans */
-router.get('/', auth, requireAdmin, async (req, res) => {
+router.get('/', auth, requireAdminOrManager, async (req, res) => {
   const { status, search } = req.query;
   try {
     let query = `
@@ -295,7 +327,7 @@ router.get('/', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /api/drink-plans — create a new plan */
-router.post('/', auth, requireAdmin, async (req, res) => {
+router.post('/', auth, requireAdminOrManager, async (req, res) => {
   const { client_name, client_email, event_name, event_date } = req.body;
   if (!client_name) {
     return res.status(400).json({ error: 'Client name is required.' });
@@ -319,7 +351,7 @@ router.post('/', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /api/drink-plans/for-proposal/:proposalId — create a drink plan for a proposal (admin) */
-router.post('/for-proposal/:proposalId', auth, requireAdmin, async (req, res) => {
+router.post('/for-proposal/:proposalId', auth, requireAdminOrManager, async (req, res) => {
   const { createDrinkPlan } = require('../utils/eventCreation');
   try {
     // Fetch proposal data
@@ -356,7 +388,7 @@ router.post('/for-proposal/:proposalId', auth, requireAdmin, async (req, res) =>
 });
 
 /** GET /api/drink-plans/by-proposal/:proposalId — fetch plan by proposal id */
-router.get('/by-proposal/:proposalId', auth, requireAdmin, async (req, res) => {
+router.get('/by-proposal/:proposalId', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT dp.*, u.email AS created_by_email
@@ -374,7 +406,7 @@ router.get('/by-proposal/:proposalId', auth, requireAdmin, async (req, res) => {
 });
 
 /** GET /api/drink-plans/:id/shopping-list-data — fetch shaped data for shopping list generation */
-router.get('/:id/shopping-list-data', auth, requireAdmin, async (req, res) => {
+router.get('/:id/shopping-list-data', auth, requireAdminOrManager, async (req, res) => {
   try {
     // Fetch the drink plan, joining proposals for guest_count
     const planResult = await pool.query(
@@ -408,14 +440,28 @@ router.get('/:id/shopping-list-data', auth, requireAdmin, async (req, res) => {
     // Extract self-provided syrup IDs from selections
     const syrupSelfProvided = (plan.selections && plan.selections.syrupSelfProvided) || [];
 
+    // Extract beer/wine/mixer selections for shopping list filtering
+    const serviceStyle = plan.serving_type || 'full_bar';
+    const sel = plan.selections || {};
+    const isFullBar = serviceStyle === 'full_bar';
+    const beerSelections = isFullBar
+      ? (sel.beerFromFullBar || [])
+      : (sel.beerFromBeerWine || []);
+    const wineSelections = isFullBar
+      ? (sel.wineFromFullBar || [])
+      : (sel.wineFromBeerWine || []);
+
     res.json({
       client_name: plan.client_name,
       event_name: plan.event_name,
       event_date: plan.event_date,
       guest_count: plan.guest_count || null,
-      service_style: plan.serving_type || 'full_bar',
+      service_style: serviceStyle,
       signature_cocktails: signatureCocktails,
       syrup_self_provided: syrupSelfProvided,
+      beer_selections: beerSelections,
+      wine_selections: wineSelections,
+      mixers_for_signature_drinks: sel.mixersForSignatureDrinks ?? null,
       notes: plan.admin_notes || '',
     });
   } catch (err) {
@@ -425,7 +471,7 @@ router.get('/:id/shopping-list-data', auth, requireAdmin, async (req, res) => {
 });
 
 /** GET /api/drink-plans/:id — fetch single plan by id */
-router.get('/:id', auth, requireAdmin, async (req, res) => {
+router.get('/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT dp.*, u.email AS created_by_email
@@ -443,7 +489,7 @@ router.get('/:id', auth, requireAdmin, async (req, res) => {
 });
 
 /** PATCH /api/drink-plans/:id/notes — update admin notes */
-router.patch('/:id/notes', auth, requireAdmin, async (req, res) => {
+router.patch('/:id/notes', auth, requireAdminOrManager, async (req, res) => {
   const { admin_notes } = req.body;
   try {
     const result = await pool.query(
@@ -459,7 +505,7 @@ router.patch('/:id/notes', auth, requireAdmin, async (req, res) => {
 });
 
 /** PATCH /api/drink-plans/:id/status — update plan status */
-router.patch('/:id/status', auth, requireAdmin, async (req, res) => {
+router.patch('/:id/status', auth, requireAdminOrManager, async (req, res) => {
   const { status } = req.body;
   if (!['pending', 'draft', 'exploration_saved', 'submitted', 'reviewed'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status.' });
@@ -478,7 +524,7 @@ router.patch('/:id/status', auth, requireAdmin, async (req, res) => {
 });
 
 /** GET /api/drink-plans/:id/shopping-list — load saved shopping list */
-router.get('/:id/shopping-list', auth, requireAdmin, async (req, res) => {
+router.get('/:id/shopping-list', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT shopping_list FROM drink_plans WHERE id = $1',
@@ -493,7 +539,7 @@ router.get('/:id/shopping-list', auth, requireAdmin, async (req, res) => {
 });
 
 /** PUT /api/drink-plans/:id/shopping-list — save/update shopping list */
-router.put('/:id/shopping-list', auth, requireAdmin, async (req, res) => {
+router.put('/:id/shopping-list', auth, requireAdminOrManager, async (req, res) => {
   const { shopping_list } = req.body;
   if (!shopping_list || typeof shopping_list !== 'object') {
     return res.status(400).json({ error: 'Invalid shopping list data.' });
@@ -512,7 +558,7 @@ router.put('/:id/shopping-list', auth, requireAdmin, async (req, res) => {
 });
 
 /** DELETE /api/drink-plans/:id — delete a plan */
-router.delete('/:id', auth, requireAdmin, async (req, res) => {
+router.delete('/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const result = await pool.query('DELETE FROM drink_plans WHERE id = $1 RETURNING id', [req.params.id]);
     if (!result.rows[0]) return res.status(404).json({ error: 'Plan not found.' });

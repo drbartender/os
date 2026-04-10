@@ -1,18 +1,13 @@
 const express = require('express');
 const { pool } = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireAdminOrManager } = require('../middleware/auth');
 
 const router = express.Router();
-
-function requireAdmin(req, res, next) {
-  if (req.user.role === 'admin' || req.user.role === 'manager') return next();
-  return res.status(403).json({ error: 'Admin access required.' });
-}
 
 const VALID_SOURCES = ['direct', 'thumbtack', 'referral', 'website'];
 
 /** GET /api/clients — list all clients */
-router.get('/', auth, requireAdmin, async (req, res) => {
+router.get('/', auth, requireAdminOrManager, async (req, res) => {
   const { search, page = 1, limit = 50 } = req.query;
   try {
     let query = 'SELECT * FROM clients WHERE 1=1';
@@ -38,7 +33,7 @@ router.get('/', auth, requireAdmin, async (req, res) => {
 });
 
 /** POST /api/clients — create a new client */
-router.post('/', auth, requireAdmin, async (req, res) => {
+router.post('/', auth, requireAdminOrManager, async (req, res) => {
   const { name, email, phone, source, notes } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Client name is required.' });
   if (source && !VALID_SOURCES.includes(source)) {
@@ -57,7 +52,7 @@ router.post('/', auth, requireAdmin, async (req, res) => {
 });
 
 /** GET /api/clients/:id — get client detail with proposals */
-router.get('/:id', auth, requireAdmin, async (req, res) => {
+router.get('/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
     const client = await pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
     if (!client.rows[0]) return res.status(404).json({ error: 'Client not found.' });
@@ -78,7 +73,7 @@ router.get('/:id', auth, requireAdmin, async (req, res) => {
 });
 
 /** PUT /api/clients/:id — update client */
-router.put('/:id', auth, requireAdmin, async (req, res) => {
+router.put('/:id', auth, requireAdminOrManager, async (req, res) => {
   const { name, email, phone, source, notes } = req.body;
   if (name !== undefined && !name.trim()) {
     return res.status(400).json({ error: 'Client name cannot be empty.' });

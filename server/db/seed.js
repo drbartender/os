@@ -23,7 +23,6 @@ async function seed() {
     `, [adminEmail, hash]);
 
     console.log(`✓ Admin account seeded: ${adminEmail}`);
-    console.log(`  Password: ${adminPassword}`);
     console.log('  ⚠️  Change this password in production!');
     process.exit(0);
   } catch (err) {

@@ -137,6 +137,32 @@ function clientOtp({ name, otp }) {
   };
 }
 
+function drinkPlanBalanceUpdate({ clientName, eventName, extrasAmount, newTotal, amountPaid, balanceDue, balanceDueDate }) {
+  const name = clientName || 'there';
+  const event = eventName || 'your upcoming event';
+  const dueDate = balanceDueDate
+    ? new Date(balanceDueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    : 'before your event';
+  return {
+    subject: `Drink Plan Submitted — Updated Balance for ${event}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Your Drink Plan is In!</h2>
+      <p>Hi ${name},</p>
+      <p>Thank you for submitting your drink plan for <strong>${event}</strong>! Your selections have been added to your event.</p>
+      <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
+        <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Extras Added</td><td style="padding:8px 12px;text-align:right;font-weight:bold;">$${Number(extrasAmount).toFixed(2)}</td></tr>
+        <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Updated Event Total</td><td style="padding:8px 12px;text-align:right;font-weight:bold;">$${Number(newTotal).toFixed(2)}</td></tr>
+        <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Amount Paid</td><td style="padding:8px 12px;text-align:right;">$${Number(amountPaid).toFixed(2)}</td></tr>
+        <tr><td style="padding:8px 12px;color:${BRAND.primary};font-weight:bold;">Remaining Balance</td><td style="padding:8px 12px;text-align:right;font-weight:bold;color:${BRAND.primary};">$${Number(balanceDue).toFixed(2)}</td></tr>
+      </table>
+      <p>Your remaining balance of <strong>$${Number(balanceDue).toFixed(2)}</strong> is due by <strong>${dueDate}</strong>.</p>
+      <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions about your balance or drink plan, just reply to this email.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, your drink plan for ${event} has been submitted! Extras added: $${Number(extrasAmount).toFixed(2)}. Updated total: $${Number(newTotal).toFixed(2)}. Amount paid: $${Number(amountPaid).toFixed(2)}. Balance due: $${Number(balanceDue).toFixed(2)} by ${dueDate}. — The Dr. Bartender Team`,
+  };
+}
+
 // ─── Admin-Facing Templates ──────────────────────────────────────
 
 function clientSignedAdmin({ clientName, eventName, proposalId, adminUrl }) {
@@ -272,6 +298,7 @@ module.exports = {
   proposalSignedConfirmation,
   paymentReceivedClient,
   drinkPlanLink,
+  drinkPlanBalanceUpdate,
   clientSignedAdmin,
   paymentReceivedAdmin,
   newApplicationAdmin,

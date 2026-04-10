@@ -2,10 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import api from '../../utils/api';
 import PricingBreakdown from '../../components/PricingBreakdown';
-import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
+import { formatPhoneInput, stripPhone, formatPhone } from '../../utils/formatPhone';
 import LocationInput from '../../components/LocationInput';
 import ShoppingListButton from '../../components/ShoppingList/ShoppingListButton';
-import { formatPhone } from '../../utils/formatPhone';
 import { getPackageItems } from '../../data/packages';
 import SyrupPicker from '../../components/SyrupPicker';
 import { SYRUPS } from '../../data/syrups';
@@ -106,7 +105,13 @@ export default function ProposalDetail() {
       setProposal(res.data);
       setNotes(res.data.admin_notes || '');
       setBalanceDueDate(res.data.balance_due_date ? res.data.balance_due_date.slice(0, 10) : '');
-    }).catch(() => navigate(isEventContext ? '/admin/events' : '/admin/proposals')).finally(() => setLoading(false));
+    }).catch(err => {
+      if (err.response?.status === 404) {
+        navigate(isEventContext ? '/admin/events' : '/admin/proposals');
+      } else {
+        setEditError('Failed to load proposal. Please try again.');
+      }
+    }).finally(() => setLoading(false));
   };
 
   useEffect(() => { loadProposal(); }, [id]); // eslint-disable-line
@@ -255,6 +260,9 @@ export default function ProposalDetail() {
     ]).then(([pkgRes, addonRes]) => {
       setPackages(pkgRes.data);
       setAddons(addonRes.data);
+    }).catch(err => {
+      console.error('Failed to load packages/addons:', err);
+      setEditError('Failed to load packages/addons. Please try again.');
     });
     // Pre-populate edit form from current proposal
     if (proposal && !editForm) {
@@ -291,7 +299,7 @@ export default function ProposalDetail() {
       num_bars: editForm.needs_bar ? 1 : 0,
       addon_ids: (editForm.addon_ids || []).map(Number),
       syrup_selections: editForm.syrup_selections || [],
-    }).then(res => setEditPreview(res.data)).catch(() => setEditPreview(null));
+    }).then(res => { setEditPreview(res.data); setEditError(''); }).catch(() => { setEditPreview(null); setEditError('Pricing preview unavailable.'); });
   }, [editing, editForm?.package_id, editForm?.guest_count, editForm?.event_duration_hours, editForm?.needs_bar, editForm?.addon_ids, editForm?.syrup_selections]); // eslint-disable-line
 
   const updateEdit = (field, value) => setEditForm(f => ({ ...f, [field]: value }));
@@ -1196,9 +1204,6 @@ export default function ProposalDetail() {
                 || (proposal.client_name ? `${proposal.client_name}'s Event` : null)
                 || (isEventContext ? `Event #${proposal.id}` : `Proposal #${proposal.id}`)}
           </h1>
-          <span className={`badge ${STATUS_CLASSES[proposal.status] || ''}`} style={{ fontSize: '0.9rem' }}>
-            {STATUS_LABELS[proposal.status] || proposal.status}
-          </span>
         </div>
         <div className="flex gap-1">
           <button className="btn btn-secondary" onClick={() => navigate(isEventContext ? '/admin/events' : '/admin/proposals')}>Back</button>
@@ -1420,7 +1425,7 @@ export default function ProposalDetail() {
                 compact
               />
 
-              <div className="flex gap-1" style={{ marginTop: '1rem' }}>
+              <div className="sticky-save-bar">
                 <button className="btn" onClick={handleSaveEdit} disabled={saving}>
                   {saving ? 'Saving...' : 'Save Changes'}
                 </button>

@@ -78,8 +78,9 @@ export const DRINK_SYRUP_MAP = {
     },
   },
   'whiskey-sour': {
-    syrups: ['honey', 'cherry-habanero'],
+    syrups: ['blackberry', 'honey', 'cherry-habanero'],
     notes: {
+      blackberry: 'Blackberry Whiskey Sour',
       honey: 'Becomes a Gold Rush',
       'cherry-habanero': 'Sweet heat kick',
     },

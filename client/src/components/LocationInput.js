@@ -100,9 +100,14 @@ export default function LocationInput({ value, onChange, onSelect, placeholder =
         onFocus={() => { if (suggestions.length > 0) setOpen(true); }}
         placeholder={placeholder}
         autoComplete="off"
+        role="combobox"
+        aria-expanded={suggestions.length > 0 && open}
+        aria-autocomplete="list"
+        aria-controls="location-suggestions"
+        aria-activedescendant={activeIdx >= 0 ? `location-suggestion-${activeIdx}` : undefined}
       />
       {open && suggestions.length > 0 && (
-        <ul style={{
+        <ul id="location-suggestions" role="listbox" style={{
           position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 1000,
           background: '#fff', border: '1px solid #c8b99a', borderRadius: '6px',
           boxShadow: '0 4px 16px rgba(0,0,0,0.15)', margin: '2px 0 0', padding: 0,
@@ -111,6 +116,9 @@ export default function LocationInput({ value, onChange, onSelect, placeholder =
           {suggestions.map((s, i) => (
             <li
               key={i}
+              id={`location-suggestion-${i}`}
+              role="option"
+              aria-selected={i === activeIdx}
               onMouseDown={() => select(s)}
               style={{
                 padding: '0.55rem 0.85rem',

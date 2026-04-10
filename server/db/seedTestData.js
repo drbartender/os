@@ -4,6 +4,10 @@ const bcrypt = require('bcryptjs');
 const { pool } = require('./index');
 
 async function seedTestData() {
+  if (process.env.NODE_ENV === 'production') {
+    console.error('ERROR: Test data seeder cannot run in production.');
+    process.exit(1);
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

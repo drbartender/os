@@ -142,7 +142,7 @@ async function fetchTeamsByShiftIds(shiftIds) {
   if (!shiftIds.length) return new Map();
   const result = await pool.query(`
     SELECT sr.shift_id, sr.user_id, sr.position,
-      COALESCE(cp.preferred_name, u.first_name || ' ' || u.last_name, u.email) AS name
+      COALESCE(cp.preferred_name, u.email) AS name
     FROM shift_requests sr
     JOIN users u ON u.id = sr.user_id
     LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id

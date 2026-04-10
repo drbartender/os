@@ -36,7 +36,7 @@ export const COCKTAILS = [
   { id: 'sazerac', name: 'Sazerac', category: 'bold', emoji: '⚜️', description: 'Rye, absinthe rinse, and Peychaud\'s — a New Orleans legend.' },
 
   // Bartender's Picks
-  { id: 'whiskey-sour', name: 'Whiskey Sour', category: 'bartenders-picks', emoji: '🍋', description: 'Bourbon, lemon, and simple — classic with optional egg white.' },
+  { id: 'whiskey-sour', name: 'Whiskey Sour', category: 'bartenders-picks', emoji: '🍋', description: 'Bourbon, lemon, and simple — classic with optional egg white or blackberry.' },
   { id: 'mai-tai', name: 'Mai Tai', category: 'bartenders-picks', emoji: '🌺', description: 'Rum, orgeat, and citrus — tropical and layered.' },
   { id: 'paper-plane', name: 'Paper Plane', category: 'bartenders-picks', emoji: '✈️', description: 'Bourbon, Aperol, Amaro, and lemon — equal parts perfection.' },
   { id: 'corpse-reviver', name: 'Corpse Reviver No. 2', category: 'bartenders-picks', emoji: '💀', description: 'Gin, Lillet, Cointreau, lemon, and absinthe — hauntingly good.' },

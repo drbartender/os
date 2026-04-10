@@ -303,13 +303,19 @@ export default function MakeItYoursPanel({
                               <span className="option-title">{upgrade.label}</span>
                               <span className="option-desc">{upgrade.requiresAddonMessage}</span>
                               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
-                                <button
-                                  className="btn btn-sm btn-primary"
-                                  style={{ fontSize: '0.75rem' }}
-                                  onClick={(e) => { e.stopPropagation(); toggleAddOn(reqSlug); }}
-                                >
-                                  Add Real Glassware{reqPriceLabel && ` (${reqPriceLabel})`}
-                                </button>
+                                {guestCount && guestCount > 100 ? (
+                                  <span className="text-muted" style={{ fontSize: '0.8rem' }}>
+                                    Real glassware is available for events up to 100 guests.
+                                  </span>
+                                ) : (
+                                  <button
+                                    className="btn btn-sm btn-primary"
+                                    style={{ fontSize: '0.75rem' }}
+                                    onClick={(e) => { e.stopPropagation(); toggleAddOn(reqSlug); }}
+                                  >
+                                    Add Real Glassware{reqPriceLabel && ` (${reqPriceLabel})`}
+                                  </button>
+                                )}
                                 <button
                                   className="btn btn-sm btn-secondary"
                                   style={{ fontSize: '0.75rem' }}
