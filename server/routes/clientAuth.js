@@ -31,7 +31,7 @@ router.post('/request', otpLimiter, async (req, res) => {
     const client = result.rows[0];
 
     if (!client) {
-      // Generic success — don't reveal whether email exists
+      console.log('[client-auth] OTP requested for unknown email:', email, '— returning generic success');
       return res.json({ success: true });
     }
 
@@ -46,6 +46,7 @@ router.post('/request', otpLimiter, async (req, res) => {
     );
 
     // Send OTP email
+    console.log('[client-auth] OTP generated for client', client.id, '— attempting Resend send to', client.email);
     const template = clientOtp({ name: client.name, otp });
     await sendEmail({
       to: client.email,

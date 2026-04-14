@@ -4,7 +4,11 @@ const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
 
-if (!resend) console.warn('⚠️  RESEND_API_KEY not set — emails will be logged but not sent');
+if (process.env.RESEND_API_KEY) {
+  console.log('[email] Resend initialized — from address:', process.env.RESEND_FROM || '(default)');
+} else {
+  console.warn('[email] RESEND_API_KEY is NOT set — emails will be logged only, not sent');
+}
 
 const FROM_EMAIL = 'Dr. Bartender <no-reply@drbartender.com>';
 
@@ -25,6 +29,7 @@ async function sendEmail({ to, subject, html, text, from, replyTo }) {
     return { id: 'dev-skipped' };
   }
 
+  console.log('[email] sending to:', to, '| subject:', subject);
   const { data, error } = await resend.emails.send({
     from: from || FROM_EMAIL,
     to: Array.isArray(to) ? to : [to],
@@ -35,11 +40,11 @@ async function sendEmail({ to, subject, html, text, from, replyTo }) {
   });
 
   if (error) {
-    console.error('Resend email error:', error);
-    throw new Error(`Failed to send email: ${error.message}`);
+    console.error('[email] Resend send FAILED for', to, '—', error?.message || JSON.stringify(error));
+    throw new Error(error?.message || 'Resend send failed');
   }
 
-  console.log(`Email sent successfully: ${data.id} → ${to}`);
+  console.log('[email] Resend response id:', data?.id);
   return data;
 }
 
