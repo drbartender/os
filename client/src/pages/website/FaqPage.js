@@ -82,7 +82,7 @@ const FAQ_CATEGORIES = [
       },
       {
         q: 'Do you provide the bar setup and equipment?',
-        a: 'Every package includes one professional bartender(s) and essential bar tools. Cups, napkins, ice, and portable bars are available as add-on options to ensure your event has exactly what it needs.',
+        a: 'Every package includes one or more professional bartenders and essential bar tools. Cups, napkins, ice, and portable bars are available as add-on options to ensure your event has exactly what it needs.',
       },
     ],
   },
@@ -105,7 +105,7 @@ const FAQ_CATEGORIES = [
       },
       {
         q: 'What do bartenders bring with them?',
-        a: 'All bar tools (shakers, jiggers, strainers, etc.), cups, napkins, straws, ice, and any mixers/garnishes included in your package. For BYOB events, you provide the alcohol and we bring everything else.',
+        a: "Essential bar tools (shakers, jiggers, strainers, etc.) come with every package. Cups, napkins, straws, and ice are brought only if you've added them to your package as add-ons. For BYOB events, you provide the alcohol and we bring the tools plus any add-ons you've selected.",
       },
       {
         q: 'Do you handle setup and cleanup?',
