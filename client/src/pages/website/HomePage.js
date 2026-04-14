@@ -88,7 +88,7 @@ const testimonials = [
 const stats = [
   { value: '20+', label: 'Years Experience' },
   { value: '$2M', label: 'Liquor Liability' },
-  { value: 'IL, IN & MI', label: 'Service Area' },
+  { value: 'IL, IN, & MI', label: 'Service Area' },
 ];
 
 /* ── Component ── */
@@ -113,10 +113,10 @@ export default function HomePage() {
                 <Link to="/quote" className="btn btn-primary">Get an Instant Quote</Link>
                 <a href="#process" onClick={handleHashScroll}>See how it works &darr;</a>
               </div>
+              <img src="https://i.imgur.com/rl26NX2.png" alt="Dr. Bartender accent" className="ws-hero-accent" />
             </FadeUp>
           </div>
           <div className="ws-hero-image">
-            <img src="https://i.imgur.com/rl26NX2.png" alt="Dr. Bartender accent" className="ws-hero-accent" />
             <div className="ws-hero-image-stack">
               <img src="https://i.imgur.com/Plqd51Z.png" alt="Dr. Bartender mobile bar" />
               <img src="https://i.imgur.com/buVhsQH.png" alt="Dr. Bartender cocktails" />
@@ -128,15 +128,16 @@ export default function HomePage() {
       {/* ───── Services ───── */}
       <section id="services" className="ws-section">
         <FadeUp>
-          <h2>What's Included</h2>
-          <p className="ws-section-sub">Consultation, custom menus, and professional bar service — fully licensed and insured.</p>
+          <div className="ws-section-heading">
+            <h2>What's Included</h2>
+            <p className="ws-section-sub">Consultation, custom menus, and professional bar service — fully licensed and insured.</p>
+          </div>
         </FadeUp>
         <div className="ws-services-grid">
           {services.map((s, i) => (
             <FadeUp key={s.alt} delay={i * 0.15}>
               <div className="ws-service-image-card">
                 <img src={s.src} alt={s.alt} />
-                <span>{s.alt}</span>
               </div>
             </FadeUp>
           ))}
@@ -149,7 +150,9 @@ export default function HomePage() {
       {/* ───── How It Works ───── */}
       <section id="process" className="ws-section ws-protocol-section">
         <FadeUp>
-          <h2>How It Works</h2>
+          <div className="ws-section-heading">
+            <h2>How It Works</h2>
+          </div>
         </FadeUp>
         <div className="ws-protocol-steps">
           {steps.map((step, i) => (
@@ -175,12 +178,14 @@ export default function HomePage() {
       {/* ───── Social Proof ───── */}
       <section id="about" className="ws-section">
         <FadeUp>
-          <span className="ws-kicker">About Us</span>
-          <h2>Why Dr. Bartender?</h2>
-          <p>
-            Dr. Bartender was born from equal parts passion, precision, and a dash of rebellion
-            — bartending is as much a science as it is an art. We don't just mix drinks, we engineer experiences.
-          </p>
+          <div className="ws-about-intro">
+            <span className="ws-kicker">About Us</span>
+            <h2>Why Dr. Bartender?</h2>
+            <p>
+              Dr. Bartender was born from equal parts passion, precision, and a dash of rebellion
+              — bartending is as much a science as it is an art. We don't just mix drinks, we engineer experiences.
+            </p>
+          </div>
         </FadeUp>
 
         <FadeUp delay={0.1}>
