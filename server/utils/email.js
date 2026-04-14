@@ -4,13 +4,13 @@ const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
 
+const FROM_EMAIL = 'Dr. Bartender <no-reply@drbartender.com>';
+
 if (process.env.RESEND_API_KEY) {
-  console.log('[email] Resend initialized — from address:', process.env.RESEND_FROM || '(default)');
+  console.log('[email] Resend initialized — from:', FROM_EMAIL);
 } else {
   console.warn('[email] RESEND_API_KEY is NOT set — emails will be logged only, not sent');
 }
-
-const FROM_EMAIL = 'Dr. Bartender <no-reply@drbartender.com>';
 
 /**
  * Send an email via Resend
