@@ -2992,10 +2992,8 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   display: block;
 }
 .ws-about-intro h2 {
-  text-align: center;
-}
-.ws-about-intro p {
-  text-align: center;
+  font-size: clamp(1.6rem, 3.5vw, 2.2rem);
+  color: var(--cream-text);
 }
 .ws-section-sub {
   color: var(--parchment-dark);
