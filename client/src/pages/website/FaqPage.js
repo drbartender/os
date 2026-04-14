@@ -82,7 +82,7 @@ const FAQ_CATEGORIES = [
       },
       {
         q: 'Do you provide the bar setup and equipment?',
-        a: "Every package includes our professional bartender(s) with all bar tools, cups, napkins, and ice. Portable bar rentals are available as an add-on if your venue doesn't have one.",
+        a: 'Every package includes one professional bartender(s) and essential bar tools. Cups, napkins, ice, and portable bars are available as add-on options to ensure your event has exactly what it needs.',
       },
     ],
   },
@@ -97,7 +97,7 @@ const FAQ_CATEGORIES = [
         q: 'How many bartenders do I need?',
         a: (
           <>
-            As a general rule, one bartender per 50–75 guests. Our{' '}
+            As a general rule, one bartender per 100 guests. Our{' '}
             <Link to="/quote">quote tool</Link> automatically calculates the right
             staffing level based on your guest count and service style.
           </>
