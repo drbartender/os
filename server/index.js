@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const compression = require('compression');
 const cors = require('cors');
 const helmet = require('helmet');
 const fileUpload = require('express-fileupload');
@@ -37,6 +38,9 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
+
+// Gzip compression for all responses
+app.use(compression());
 
 // Middleware — allow requests from both public site and admin subdomain
 const allowedOrigins = [
