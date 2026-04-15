@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import PublicLayout from '../../components/PublicLayout';
+import PublicLayout, { clientLoginPath } from '../../components/PublicLayout';
 import { useClientAuth } from '../../context/ClientAuthContext';
-import { API_BASE_URL } from '../../utils/api';
+import api from '../../utils/api';
 
 const STATUS_LABELS = {
   draft: 'Draft',
@@ -29,9 +29,9 @@ function formatDate(dateStr) {
   });
 }
 
-function formatCurrency(cents) {
-  if (cents == null) return '$0.00';
-  return `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function formatCurrency(amount) {
+  const num = Number(amount ?? 0);
+  return num.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
 }
 
 export default function ClientDashboard() {
@@ -43,24 +43,33 @@ export default function ClientDashboard() {
 
   useEffect(() => {
     if (!clientLoading && !isClientAuthenticated) {
-      navigate('/login', { replace: true });
+      navigate(clientLoginPath(), { replace: true });
     }
   }, [clientLoading, isClientAuthenticated, navigate]);
 
   useEffect(() => {
-    if (!isClientAuthenticated) return;
-    const token = localStorage.getItem('db_client_token');
-    fetch(`${API_BASE_URL}/client-portal/proposals`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to load proposals');
-        return res.json();
-      })
-      .then(data => setProposals(data.proposals))
-      .catch(err => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [isClientAuthenticated]);
+    if (clientLoading) return;
+    if (!isClientAuthenticated) { setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const clientToken = localStorage.getItem('db_client_token');
+        const { data } = await api.get('/client-portal/proposals', {
+          headers: clientToken ? { Authorization: `Bearer ${clientToken}` } : {},
+        });
+        if (cancelled) return;
+        const list = Array.isArray(data) ? data : (data?.proposals ?? []);
+        setProposals(list);
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Failed to load client proposals:', err);
+        setError('Could not load your proposals. Please try again.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [clientLoading, isClientAuthenticated]);
 
   if (clientLoading) {
     return (
@@ -79,7 +88,7 @@ export default function ClientDashboard() {
       <section className="client-dashboard-section">
         <div className="client-dashboard-header">
           <h2>Welcome back, {clientUser?.name || 'Client'}</h2>
-          <button className="btn client-btn-outline" onClick={() => { clientLogout(); navigate('/login'); }}>
+          <button className="btn client-btn-outline" onClick={() => { clientLogout(); navigate(clientLoginPath()); }}>
             Log Out
           </button>
         </div>
