@@ -246,20 +246,7 @@ export default function HomePage() {
 
         {showRatingBadge && (
           <FadeUp delay={0.15}>
-            <div
-              className="ws-rating-badge"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                margin: '1.5rem auto 0.5rem',
-                padding: '0.5rem 1rem',
-                borderRadius: '999px',
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.12)',
-                fontSize: '0.95rem',
-              }}
-            >
+            <div className="ws-rating-badge">
               <span className="ws-review-stars" aria-hidden="true">{renderStars(reviewsState.averageRating)}</span>
               <span>
                 <strong>{reviewsState.averageRating.toFixed(1)}</strong>

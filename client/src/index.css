@@ -3263,6 +3263,17 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   color: var(--amber);
   letter-spacing: 0.1em;
 }
+.ws-rating-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1.5rem auto 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.95rem;
+}
 
 /* ── FAQ ───────────────────────────────────────────────── */
 .ws-faq-list {
@@ -3682,6 +3693,42 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 .wz-addon-option.selected {
   border-color: var(--amber);
   background: #FFF8F0;
+}
+.wz-addon-option.included {
+  background: var(--parchment);
+  border-color: var(--parchment-dark);
+  cursor: default;
+}
+.wz-addon-option.included:hover {
+  border-color: var(--parchment-dark);
+  background: var(--parchment);
+}
+.wz-addon-option.included .wz-addon-row { cursor: default; }
+.wz-addon-option.included .wz-addon-name,
+.wz-addon-option.included .wz-addon-tagline,
+.wz-addon-option.included .wz-addon-icon { opacity: 0.65; }
+.wz-addon-option.included input[type="checkbox"] { cursor: default; }
+.wz-addon-option.unavailable {
+  background: #F5F1E8;
+  border-color: var(--parchment-dark);
+  cursor: default;
+  opacity: 0.5;
+}
+.wz-addon-option.unavailable:hover {
+  border-color: var(--parchment-dark);
+  background: #F5F1E8;
+}
+.wz-addon-option.unavailable .wz-addon-row { cursor: default; }
+.wz-addon-option.unavailable input[type="checkbox"] { cursor: default; }
+.wz-addon-included-label {
+  color: var(--amber);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  background: #FFF0DB;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 .wz-addon-option.dependent {
   margin-left: 1.5rem;
