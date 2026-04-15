@@ -62,37 +62,45 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ error: 'A signed W-9 is required.' });
     }
 
-    await pool.query('BEGIN');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    if (existing.rows[0]) {
-      await pool.query(
-        `UPDATE payment_profiles
-         SET preferred_payment_method=$1, payment_username=$2, routing_number=$3, account_number=$4,
-             w9_file_url=$5, w9_filename=$6
-         WHERE user_id=$7`,
-        [preferred_payment_method, payment_username || null, routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null,
-         w9_url, w9_name, req.user.id]
+      if (existing.rows[0]) {
+        await client.query(
+          `UPDATE payment_profiles
+           SET preferred_payment_method=$1, payment_username=$2, routing_number=$3, account_number=$4,
+               w9_file_url=$5, w9_filename=$6
+           WHERE user_id=$7`,
+          [preferred_payment_method, payment_username || null, routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null,
+           w9_url, w9_name, req.user.id]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO payment_profiles
+             (user_id, preferred_payment_method, payment_username, routing_number, account_number, w9_file_url, w9_filename)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [req.user.id, preferred_payment_method, payment_username || null,
+           routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null, w9_url, w9_name]
+        );
+      }
+
+      // Mark payday protocols and full onboarding complete
+      await client.query(
+        `UPDATE onboarding_progress SET payday_protocols_completed=true, onboarding_completed=true, last_completed_step='onboarding_completed' WHERE user_id=$1`,
+        [req.user.id]
       );
-    } else {
-      await pool.query(
-        `INSERT INTO payment_profiles
-           (user_id, preferred_payment_method, payment_username, routing_number, account_number, w9_file_url, w9_filename)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [req.user.id, preferred_payment_method, payment_username || null,
-         routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null, w9_url, w9_name]
-      );
+
+      // Update user onboarding status
+      await client.query("UPDATE users SET onboarding_status='submitted' WHERE id=$1", [req.user.id]);
+
+      await client.query('COMMIT');
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+      throw err;
+    } finally {
+      client.release();
     }
-
-    // Mark payday protocols and full onboarding complete
-    await pool.query(
-      `UPDATE onboarding_progress SET payday_protocols_completed=true, onboarding_completed=true, last_completed_step='onboarding_completed' WHERE user_id=$1`,
-      [req.user.id]
-    );
-
-    // Update user onboarding status
-    await pool.query("UPDATE users SET onboarding_status='submitted' WHERE id=$1", [req.user.id]);
-
-    await pool.query('COMMIT');
 
     const result = await pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [req.user.id]);
     const profile = result.rows[0];
@@ -106,8 +114,7 @@ router.post('/', auth, async (req, res) => {
     }
     res.json(profile);
   } catch (err) {
-    await pool.query('ROLLBACK');
-    console.error(err);
+    console.error('payment profile save error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
