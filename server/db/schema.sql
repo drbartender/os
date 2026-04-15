@@ -1357,3 +1357,13 @@ CREATE TABLE IF NOT EXISTS thumbtack_reviews (
 
 CREATE INDEX IF NOT EXISTS idx_thumbtack_reviews_negotiation
   ON thumbtack_reviews(negotiation_id);
+
+-- Extend proposal_payments.payment_type CHECK to accept drink-plan payment kinds.
+-- The Stripe webhook inserts payment_type='drink_plan_extras' or 'drink_plan_with_balance'
+-- for Potion Planning Lab payments; the original constraint only allowed deposit/balance/full,
+-- which caused successful drink-plan payments to silently ROLLBACK after Stripe took the money.
+DO $$ BEGIN
+  ALTER TABLE proposal_payments DROP CONSTRAINT IF EXISTS proposal_payments_payment_type_check;
+  ALTER TABLE proposal_payments ADD CONSTRAINT proposal_payments_payment_type_check
+    CHECK (payment_type IN ('deposit', 'balance', 'full', 'drink_plan_extras', 'drink_plan_with_balance'));
+END $$;
