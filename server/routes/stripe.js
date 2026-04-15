@@ -1,5 +1,4 @@
 const express = require('express');
-const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicLimiter } = require('../middleware/rateLimiters');
@@ -12,12 +11,50 @@ const router = express.Router();
 
 const DEPOSIT_AMOUNT = parseInt(process.env.STRIPE_DEPOSIT_AMOUNT) || 10000; // $100.00
 
+// ─── Stripe mode toggle ─────────────────────────────────────────────
+// When STRIPE_TEST_MODE_UNTIL (ISO date) is in the future, every Stripe
+// call uses the *_TEST credentials. Once the cutoff passes, the next
+// request flips back to live — no redeploy required (isTestMode() is
+// evaluated per request, not cached at boot).
+
+const stripeLive = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
+const stripeTest = process.env.STRIPE_SECRET_KEY_TEST ? require('stripe')(process.env.STRIPE_SECRET_KEY_TEST) : null;
+
+function isTestMode() {
+  const until = process.env.STRIPE_TEST_MODE_UNTIL;
+  if (!until) return false;
+  const t = new Date(until).getTime();
+  return Number.isFinite(t) && Date.now() < t;
+}
+
+function getStripe() {
+  return isTestMode() && stripeTest ? stripeTest : stripeLive;
+}
+
+function getWebhookSecret() {
+  return isTestMode()
+    ? process.env.STRIPE_WEBHOOK_SECRET_TEST
+    : process.env.STRIPE_WEBHOOK_SECRET;
+}
+
+function getPublishableKey() {
+  return isTestMode()
+    ? process.env.STRIPE_PUBLISHABLE_KEY_TEST
+    : process.env.STRIPE_PUBLISHABLE_KEY;
+}
+
+/** GET /api/stripe/publishable-key — returns the active publishable key */
+router.get('/publishable-key', (_req, res) => {
+  res.json({ key: getPublishableKey() || null });
+});
+
 // ─── Helper: get or create Stripe Customer for a proposal ────────
 
 async function getOrCreateCustomer(proposal) {
   if (proposal.stripe_customer_id) {
     return proposal.stripe_customer_id;
   }
+  const stripe = getStripe();
   const customer = await stripe.customers.create({
     email: proposal.client_email || undefined,
     name: proposal.client_name || undefined,
@@ -39,6 +76,9 @@ async function getOrCreateCustomer(proposal) {
 /** POST /api/stripe/create-intent/:token — public, token-gated */
 router.post('/create-intent/:token', publicLimiter, async (req, res) => {
   try {
+    const stripe = getStripe();
+    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
+
     const { payment_option = 'deposit', autopay = false } = req.body;
 
     const result = await pool.query(`
@@ -134,6 +174,7 @@ router.post('/create-intent/:token', publicLimiter, async (req, res) => {
 /** POST /api/stripe/create-drink-plan-intent/:token — public, token-gated (drink plan token) */
 router.post('/create-drink-plan-intent/:token', publicLimiter, async (req, res) => {
   try {
+    const stripe = getStripe();
     if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
 
     const { selections } = req.body;
@@ -287,6 +328,9 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, async (req, res) 
 /** POST /api/stripe/payment-link/:id — admin only */
 router.post('/payment-link/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
+    const stripe = getStripe();
+    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
+
     const result = await pool.query(
       'SELECT id, event_name FROM proposals WHERE id = $1',
       [req.params.id]
@@ -328,6 +372,9 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, async (req, res) =
 /** POST /api/stripe/charge-balance/:id — admin only */
 router.post('/charge-balance/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
+    const stripe = getStripe();
+    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
+
     const result = await pool.query(`
       SELECT id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
              autopay_enrolled, status, event_name
@@ -379,15 +426,36 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, async (req, res)
 
 /** POST /api/stripe/webhook — raw body, Stripe signature verified */
 router.post('/webhook', async (req, res) => {
+  // Try BOTH live and test secrets so events that span a test/live cutoff
+  // (e.g., Stripe retrying a `payment_intent.succeeded` as the cutoff passes)
+  // are still verified and processed. Whichever client verified the event is
+  // the one whose API keypair matches the event's mode.
   const sig = req.headers['stripe-signature'];
-  let event;
+  const verifiers = [
+    { secret: process.env.STRIPE_WEBHOOK_SECRET, client: stripeLive },
+    { secret: process.env.STRIPE_WEBHOOK_SECRET_TEST, client: stripeTest },
+  ].filter(v => v.secret && v.client);
 
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.error('Stripe webhook signature error:', err.message);
+  if (verifiers.length === 0) {
+    return res.status(503).send('Payments not configured');
+  }
+
+  let event = null;
+  let stripeForEvent = null;
+  for (const { secret, client } of verifiers) {
+    try {
+      event = client.webhooks.constructEvent(req.body, sig, secret);
+      stripeForEvent = client;
+      break;
+    } catch (_) { /* try next secret */ }
+  }
+  if (!event) {
+    console.error('Webhook signature verification failed against all configured secrets');
     return res.status(400).send('Webhook signature verification failed');
   }
+  // `stripeForEvent` is intentionally available for any downstream Stripe API
+  // calls inside this handler so we use the keypair matching the event's mode.
+  void stripeForEvent;
 
   // ── Helper: send payment notification emails (non-blocking) ────
   async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
