@@ -458,6 +458,17 @@ ON CONFLICT (id) DO NOTHING;
 
 -- ─── Service Packages (proposal pricing) ────────────────────────────
 
+-- Pricing units convention:
+--   service_packages.*_rate/*_fee/min_total -> NUMERIC(10,2) DOLLARS
+--   service_addons.rate/extra_hour_rate    -> NUMERIC(10,2) DOLLARS
+--   proposals.total_price/amount_paid       -> NUMERIC(10,2) DOLLARS
+--   proposal_addons.rate/line_total         -> NUMERIC(10,2) DOLLARS
+--   stripe_sessions.amount                  -> INTEGER CENTS (Stripe native)
+--   proposal_payments.amount                -> INTEGER CENTS (Stripe native)
+-- Code that bridges the two must multiply/divide by 100 explicitly.
+-- See server/routes/stripe.js for conversion sites (paidCents vs paidDollars).
+-- A future migration to integer-cents everywhere is planned.
+
 CREATE TABLE IF NOT EXISTS service_packages (
   id SERIAL PRIMARY KEY,
   slug VARCHAR(100) UNIQUE NOT NULL,
@@ -530,11 +541,10 @@ INSERT INTO service_packages (slug, name, description, category, pricing_type, b
   ('the-cultivated-complex', 'The Cultivated Complex', 'Curated elegance. Lab-certified crowd-pleaser. Designed for hosts who want elevated beer and wine service with enough sparkle, variety, and quality to make it feel like the full experience — minus the liquor cabinet.', 'hosted', 'per_guest',
     NULL, 17, 6.25, 50, NULL, 22, 6.25, 1, 'beer_and_wine', 450,
     '["Miller Lite","Michelob Ultra","Yuengling Lager","Two Rotating Craft or Local Beers","Seasonal Seltzer","Two Premium Red Wines & Two Premium White Wines","Sparkling Wine","Bottled Water","Up to {hours} hours of bar service","{bartenders} professional bartender{bartenders_s}","Full setup and breakdown","Cooler","Custom menu graphic","$2 million liquor liability insurance"]', 12)
-ON CONFLICT (slug) DO UPDATE SET
-  description = EXCLUDED.description,
-  bar_type = EXCLUDED.bar_type,
-  min_total = EXCLUDED.min_total,
-  includes = EXCLUDED.includes;
+-- DO NOTHING: admin dashboard is the source of truth after initial seed, so
+-- admin-edited descriptions/prices/includes aren't clobbered on every boot.
+-- New packages still seed on a fresh DB via the INSERT above.
+ON CONFLICT (slug) DO NOTHING;
 
 -- ─── Service Add-ons ────────────────────────────────────────────────
 
@@ -607,24 +617,10 @@ UPDATE service_addons SET category = 'logistics' WHERE slug = 'parking-fee';
 UPDATE service_addons SET rate = 3.50 WHERE slug = 'soft-drink-addon';
 UPDATE service_addons SET rate = 2.00 WHERE slug = 'pre-batched-mocktail';
 
--- Update descriptions to match spec
-UPDATE service_addons SET description = 'Ice delivery, bottled water service, and premium cups and napkins. The essential bar setup for BYOB events. No mixers or garnishes included. Straws available upon request.' WHERE slug = 'the-foundation';
-UPDATE service_addons SET description = 'Everything in The Foundation, plus mixers and garnishes for your signature cocktails, along with simple syrup and bitters. Covers a standard signature menu.' WHERE slug = 'the-formula';
-UPDATE service_addons SET description = 'Everything in The Foundation, plus our complete mixer selection (all sodas, tonics, and juices) and premium garnish package (lemons, limes, oranges, cherries, olives). Gives your bartender the flexibility to craft any classic cocktail on request. Garnishes included for up to 75 guests; add $50 for 76+ guests.' WHERE slug = 'the-full-compound';
-UPDATE service_addons SET description = 'All the ice you need for drinks and chilling, delivered directly to your venue. Includes both cubed ice for drinks and ice for keeping bottles cold.' WHERE slug = 'ice-delivery-only';
-UPDATE service_addons SET description = 'Premium clear plastic cups, cocktail napkins. Everything your guests need for a polished bar experience without the hassle of glassware. Straws available upon request.' WHERE slug = 'cups-disposables-only';
-UPDATE service_addons SET description = 'Individual bottled water for your guests. Easier and more sanitary than a water station, and guests can take them on the go.' WHERE slug = 'bottled-water-only';
-UPDATE service_addons SET description = 'Add a celebratory champagne toast to your event with champagne and disposable flutes. Perfect for weddings, anniversaries, or any milestone moment. We coordinate the toast timing with your event flow.' WHERE slug = 'champagne-toast';
-UPDATE service_addons SET description = 'A simpler mocktail option — one pre-batched non-alcoholic cocktail that is ready to pour. Great for events where you want a sophisticated NA option without the complexity of a full mocktail bar.' WHERE slug = 'pre-batched-mocktail';
-UPDATE service_addons SET description = 'For designated drivers, kids, and anyone skipping the spirits but still sipping. Includes Coke, Diet Coke, Sprite, OJ, cranberry juice, pineapple juice, soda water, tonic water, and grenadine. Required for hosted parties expecting more than 10 non-drinkers.' WHERE slug = 'soft-drink-addon';
-UPDATE service_addons SET description = 'Add a dedicated mocktail menu to your bar service. We craft sophisticated non-alcoholic cocktails with the same care and presentation as our regular cocktails — premium juices, house-made syrups, fresh garnishes, unique sodas, and flavor infusions. Available with all hosted packages and BYOB packages with The Formula or The Full Compound.' WHERE slug = 'mocktail-bar';
-UPDATE service_addons SET description = 'Professional server to circulate drinks, bus glasses, assist with setup/breakdown, maintain buffet stations, handle drop-off catering, or provide additional hospitality support. Great for cocktail hours, tray-passed service, or events where you want white-glove attention to detail. 4-hour minimum per server. Gratuity included.' WHERE slug = 'banquet-server';
-UPDATE service_addons SET description = 'A showstopper. We top your cocktails with aromatic flavor bubbles that burst with fragrance right as your guests take their first sip. Includes all supplies and a trained bartender who knows how to put on a show. Works best paired with Real Glassware Upgrade.' WHERE slug = 'flavor-blaster-rental';
-UPDATE service_addons SET description = 'Housemade cocktail syrups crafted with real ingredients. Choose from over 25 flavors across fruit, heat, botanical, and specialty categories. Each 750ml bottle makes approximately 30-40 cocktails.' WHERE slug = 'handcrafted-syrups';
-UPDATE service_addons SET description = 'Three bottles at a savings. Mix and match any flavors from our full syrup menu.' WHERE slug = 'handcrafted-syrups-3pack';
-UPDATE service_addons SET description = 'Lemons, limes, oranges, cherries, and olives — everything your bartender needs to garnish properly.' WHERE slug = 'garnish-package-only';
-UPDATE service_addons SET description = 'Covers parking costs when your venue charges for staff parking or is in a metered/paid parking area. Applied per staff member working your event (bartenders, barbacks, servers).' WHERE slug = 'parking-fee';
-UPDATE service_addons SET description = 'A pre-batched non-alcoholic cocktail ready to pour. Great for events where you want a sophisticated NA option without the complexity of a full mocktail bar. Add more for variety.' WHERE slug = 'pre-batched-mocktail';
+-- Polished descriptions were previously applied unconditionally on every boot,
+-- clobbering any admin-dashboard edits. The INSERT above seeds reasonable
+-- defaults on a fresh DB; admin is the source of truth thereafter. Removed
+-- intentionally — do not re-add without gating (e.g., WHERE description IS NULL).
 
 -- Rename à la carte items (remove "Only") and fix mocktail name
 UPDATE service_addons SET name = 'Ice Delivery' WHERE slug = 'ice-delivery-only';
@@ -831,6 +827,14 @@ CREATE INDEX IF NOT EXISTS idx_proposal_activity_log_proposal_id ON proposal_act
 
 -- Proposal Payments
 CREATE INDEX IF NOT EXISTS idx_proposal_payments_proposal_id ON proposal_payments(proposal_id);
+-- Webhook idempotency guard: prevents double-inserting a succeeded payment row
+-- when Stripe retries `payment_intent.succeeded`. Partial so (a) legacy rows
+-- with NULL intent ids don't collide, and (b) a failed attempt on an intent
+-- followed by a later successful attempt on the SAME intent id can coexist
+-- (Stripe allows retries on a PaymentIntent after a failed attempt).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_payments_intent_unique
+  ON proposal_payments(stripe_payment_intent_id)
+  WHERE stripe_payment_intent_id IS NOT NULL AND status = 'succeeded';
 
 -- Shifts
 CREATE INDEX IF NOT EXISTS idx_shifts_event_date ON shifts(event_date);
@@ -964,6 +968,9 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 -- ─── Client Auth (OTP login) ────────────────────────────────────────
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token TEXT;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token_expires_at TIMESTAMPTZ;
+-- Per-account OTP attempt counter: defense-in-depth vs. distributed brute force
+-- that an IP-based rate limiter can't see. Invalidate the OTP after 5 failures.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token_attempts INTEGER NOT NULL DEFAULT 0;
 
 -- Missing indexes identified by database review
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_email_unique ON clients(email) WHERE email IS NOT NULL;

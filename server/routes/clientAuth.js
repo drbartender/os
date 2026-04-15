@@ -40,7 +40,7 @@ router.post('/request', otpLimiter, async (req, res) => {
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
 
     await pool.query(
-      'UPDATE clients SET auth_token = $1, auth_token_expires_at = $2 WHERE id = $3',
+      'UPDATE clients SET auth_token = $1, auth_token_expires_at = $2, auth_token_attempts = 0 WHERE id = $3',
       [hash, expiresAt, client.id]
     );
 
@@ -81,7 +81,7 @@ router.post('/verify', otpLimiter, async (req, res) => {
 
   try {
     const result = await pool.query(
-      'SELECT id, name, email, phone, auth_token, auth_token_expires_at FROM clients WHERE LOWER(email) = LOWER($1)',
+      'SELECT id, name, email, phone, auth_token, auth_token_expires_at, auth_token_attempts FROM clients WHERE LOWER(email) = LOWER($1)',
       [email]
     );
     const client = result.rows[0];
@@ -95,15 +95,31 @@ router.post('/verify', otpLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid or expired code' });
     }
 
+    // Per-account attempt ceiling. Defense-in-depth vs. distributed brute force
+    // that the IP-based rate limiter can't see (e.g., attacker rotating IPs).
+    // On the 6th attempt, invalidate the OTP entirely — the user must request
+    // a new code.
+    if ((client.auth_token_attempts ?? 0) >= 5) {
+      await pool.query(
+        'UPDATE clients SET auth_token = NULL, auth_token_expires_at = NULL, auth_token_attempts = 0 WHERE id = $1',
+        [client.id]
+      );
+      return res.status(429).json({ error: 'Too many attempts. Please request a new code.' });
+    }
+
     // Check OTP hash
     const valid = await bcrypt.compare(otp, client.auth_token);
     if (!valid) {
+      await pool.query(
+        'UPDATE clients SET auth_token_attempts = COALESCE(auth_token_attempts, 0) + 1 WHERE id = $1',
+        [client.id]
+      );
       return res.status(401).json({ error: 'Invalid or expired code' });
     }
 
-    // Clear token fields
+    // Clear token fields (and reset attempt counter) on success.
     await pool.query(
-      'UPDATE clients SET auth_token = NULL, auth_token_expires_at = NULL WHERE id = $1',
+      'UPDATE clients SET auth_token = NULL, auth_token_expires_at = NULL, auth_token_attempts = 0 WHERE id = $1',
       [client.id]
     );
 

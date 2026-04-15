@@ -492,87 +492,102 @@ router.post('/webhook', async (req, res) => {
 
     if (proposalId) {
       const dbClient = await pool.connect();
+      let isFirstDelivery = false;
       try {
         await dbClient.query('BEGIN');
 
-        // Determine new status and amount_paid based on payment type
-        if (paymentType === 'full') {
-          await dbClient.query(`
-            UPDATE proposals
-            SET status = 'balance_paid',
-                amount_paid = total_price
-            WHERE id = $1 AND status NOT IN ('balance_paid', 'confirmed')
-          `, [proposalId]);
-        } else if (paymentType === 'balance') {
-          await dbClient.query(`
-            UPDATE proposals
-            SET status = 'balance_paid',
-                amount_paid = total_price
-            WHERE id = $1 AND status = 'deposit_paid'
-          `, [proposalId]);
-        } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
-          // Drink plan extras payment — increment amount_paid
-          const paidDollars = intent.amount / 100;
-          const updateRes = await dbClient.query(`
-            UPDATE proposals
-            SET amount_paid = COALESCE(amount_paid, 0) + $1
-            WHERE id = $2
-            RETURNING amount_paid, total_price
-          `, [paidDollars, proposalId]);
-
-          if (updateRes.rows[0]) {
-            const newAmountPaid = Number(updateRes.rows[0].amount_paid);
-            const totalPrice = Number(updateRes.rows[0].total_price);
-            if (newAmountPaid >= totalPrice) {
-              await dbClient.query(
-                "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed')",
-                [proposalId]
-              );
-            }
-          }
-        } else {
-          // deposit
-          await dbClient.query(`
-            UPDATE proposals
-            SET status = 'deposit_paid',
-                amount_paid = deposit_amount
-            WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')
-          `, [proposalId]);
-        }
-
-        // Save payment method ID if autopay was enrolled (card saved via setup_future_usage)
-        if (intent.payment_method && paymentType === 'deposit') {
-          await dbClient.query(`
-            UPDATE proposals
-            SET stripe_payment_method_id = $1
-            WHERE id = $2 AND autopay_enrolled = true AND stripe_payment_method_id IS NULL
-          `, [intent.payment_method, proposalId]);
-        }
-
-        await dbClient.query(
-          "UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_intent_id = $1",
-          [intent.id]
-        );
-
-        // Record in proposal_payments
-        await dbClient.query(
+        // Idempotency guard: Stripe retries `payment_intent.succeeded` on
+        // transient delivery failures. Insert the payment row FIRST with an
+        // ON CONFLICT DO NOTHING; if rowCount === 0, this is a duplicate
+        // delivery — skip all state mutations and post-commit side effects
+        // (emails, shift creation) so we never double-charge amount_paid
+        // or spam notifications.
+        const inserted = await dbClient.query(
           `INSERT INTO proposal_payments (proposal_id, stripe_payment_intent_id, payment_type, amount, status)
-           VALUES ($1, $2, $3, $4, 'succeeded')`,
+           VALUES ($1, $2, $3, $4, 'succeeded')
+           ON CONFLICT (stripe_payment_intent_id) WHERE stripe_payment_intent_id IS NOT NULL AND status = 'succeeded' DO NOTHING
+           RETURNING id`,
           [proposalId, intent.id, paymentType, intent.amount]
         );
+        isFirstDelivery = inserted.rowCount === 1;
 
-        const action = paymentType === 'balance' ? 'balance_paid'
-          : paymentType === 'full' ? 'paid_in_full'
-          : paymentType === 'drink_plan_extras' ? 'drink_plan_extras_paid'
-          : paymentType === 'drink_plan_with_balance' ? 'drink_plan_balance_paid'
-          : 'deposit_paid';
-        await dbClient.query(
-          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, $2, 'system', $3)`,
-          [proposalId, action, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType })]
-        );
+        if (isFirstDelivery) {
+          // Determine new status and amount_paid based on payment type
+          if (paymentType === 'full') {
+            await dbClient.query(`
+              UPDATE proposals
+              SET status = 'balance_paid',
+                  amount_paid = total_price
+              WHERE id = $1 AND status NOT IN ('balance_paid', 'confirmed')
+            `, [proposalId]);
+          } else if (paymentType === 'balance') {
+            await dbClient.query(`
+              UPDATE proposals
+              SET status = 'balance_paid',
+                  amount_paid = total_price
+              WHERE id = $1 AND status = 'deposit_paid'
+            `, [proposalId]);
+          } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
+            // Drink plan extras payment — increment amount_paid
+            const paidDollars = intent.amount / 100;
+            const updateRes = await dbClient.query(`
+              UPDATE proposals
+              SET amount_paid = COALESCE(amount_paid, 0) + $1
+              WHERE id = $2
+              RETURNING amount_paid, total_price
+            `, [paidDollars, proposalId]);
+
+            if (updateRes.rows[0]) {
+              const newAmountPaid = Number(updateRes.rows[0].amount_paid);
+              const totalPrice = Number(updateRes.rows[0].total_price);
+              if (newAmountPaid >= totalPrice) {
+                await dbClient.query(
+                  "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed')",
+                  [proposalId]
+                );
+              }
+            }
+          } else {
+            // deposit
+            await dbClient.query(`
+              UPDATE proposals
+              SET status = 'deposit_paid',
+                  amount_paid = deposit_amount
+              WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')
+            `, [proposalId]);
+          }
+
+          // Save payment method ID if autopay was enrolled (card saved via setup_future_usage)
+          if (intent.payment_method && paymentType === 'deposit') {
+            await dbClient.query(`
+              UPDATE proposals
+              SET stripe_payment_method_id = $1
+              WHERE id = $2 AND autopay_enrolled = true AND stripe_payment_method_id IS NULL
+            `, [intent.payment_method, proposalId]);
+          }
+
+          await dbClient.query(
+            "UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_intent_id = $1",
+            [intent.id]
+          );
+
+          const action = paymentType === 'balance' ? 'balance_paid'
+            : paymentType === 'full' ? 'paid_in_full'
+            : paymentType === 'drink_plan_extras' ? 'drink_plan_extras_paid'
+            : paymentType === 'drink_plan_with_balance' ? 'drink_plan_balance_paid'
+            : 'deposit_paid';
+          await dbClient.query(
+            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, $2, 'system', $3)`,
+            [proposalId, action, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType })]
+          );
+        } else {
+          console.log(`Webhook: duplicate delivery for intent ${intent.id} — skipping (already processed)`);
+        }
 
         await dbClient.query('COMMIT');
-        console.log(`Payment (${paymentType}) received for proposal ${proposalId}: $${(intent.amount / 100).toFixed(2)}`);
+        if (isFirstDelivery) {
+          console.log(`Payment (${paymentType}) received for proposal ${proposalId}: $${(intent.amount / 100).toFixed(2)}`);
+        }
       } catch (dbErr) {
         await dbClient.query('ROLLBACK');
         console.error('Webhook DB error:', dbErr);
@@ -580,13 +595,16 @@ router.post('/webhook', async (req, res) => {
         dbClient.release();
       }
 
-      // Non-blocking post-commit work
-      sendPaymentNotifications(proposalId, intent.amount, paymentType);
-      try {
-        const shift = await createEventShifts(proposalId);
-        if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
-      } catch (shiftErr) {
-        console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+      // Non-blocking post-commit work — only on first delivery. Retries must
+      // not re-send receipts or re-create shifts.
+      if (isFirstDelivery) {
+        sendPaymentNotifications(proposalId, intent.amount, paymentType);
+        try {
+          const shift = await createEventShifts(proposalId);
+          if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
+        } catch (shiftErr) {
+          console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+        }
       }
     }
   }
@@ -642,29 +660,44 @@ router.post('/webhook', async (req, res) => {
     const proposalId = session.metadata?.proposal_id;
     if (proposalId) {
       const dbClient = await pool.connect();
+      let isFirstDelivery = false;
       try {
         await dbClient.query('BEGIN');
 
-        await dbClient.query(
-          "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')",
-          [proposalId]
-        );
-        await dbClient.query(
-          "UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1",
-          [session.payment_link]
-        );
-        await dbClient.query(
+        // Idempotency guard (see payment_intent.succeeded for rationale).
+        // Insert payment row first; if it collides with a prior delivery of
+        // the same session (same payment_intent), skip all state mutations
+        // and post-commit side effects.
+        const inserted = await dbClient.query(
           `INSERT INTO proposal_payments (proposal_id, stripe_payment_intent_id, payment_type, amount, status)
-           VALUES ($1, $2, 'deposit', $3, 'succeeded')`,
+           VALUES ($1, $2, 'deposit', $3, 'succeeded')
+           ON CONFLICT (stripe_payment_intent_id) WHERE stripe_payment_intent_id IS NOT NULL AND status = 'succeeded' DO NOTHING
+           RETURNING id`,
           [proposalId, session.payment_intent, session.amount_total]
         );
-        await dbClient.query(
-          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'deposit_paid', 'system', $2)`,
-          [proposalId, JSON.stringify({ amount: session.amount_total, payment_link: session.payment_link })]
-        );
+        isFirstDelivery = inserted.rowCount === 1;
+
+        if (isFirstDelivery) {
+          await dbClient.query(
+            "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')",
+            [proposalId]
+          );
+          await dbClient.query(
+            "UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1",
+            [session.payment_link]
+          );
+          await dbClient.query(
+            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'deposit_paid', 'system', $2)`,
+            [proposalId, JSON.stringify({ amount: session.amount_total, payment_link: session.payment_link })]
+          );
+        } else {
+          console.log(`Webhook: duplicate checkout.session.completed for intent ${session.payment_intent} — skipping`);
+        }
 
         await dbClient.query('COMMIT');
-        console.log(`Deposit paid (payment link) for proposal ${proposalId}`);
+        if (isFirstDelivery) {
+          console.log(`Deposit paid (payment link) for proposal ${proposalId}`);
+        }
       } catch (dbErr) {
         await dbClient.query('ROLLBACK');
         console.error('Webhook DB error:', dbErr);
@@ -672,13 +705,15 @@ router.post('/webhook', async (req, res) => {
         dbClient.release();
       }
 
-      // Non-blocking post-commit work
-      sendPaymentNotifications(proposalId, session.amount_total || 0, 'deposit');
-      try {
-        const shift = await createEventShifts(proposalId);
-        if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
-      } catch (shiftErr) {
-        console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+      // Non-blocking post-commit work — only on first delivery.
+      if (isFirstDelivery) {
+        sendPaymentNotifications(proposalId, session.amount_total || 0, 'deposit');
+        try {
+          const shift = await createEventShifts(proposalId);
+          if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
+        } catch (shiftErr) {
+          console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+        }
       }
     }
   }
