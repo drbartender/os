@@ -1074,11 +1074,12 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, async (req, res)
         [newAmountPaid, newStatus, proposal.id]
       );
 
-      // Record in proposal_payments
+      // Record in proposal_payments. Use the capped delta (newAmountPaid - currentPaid)
+      // so an over-payment request doesn't inflate the ledger beyond the proposal total.
       await dbClient.query(
         `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status)
          VALUES ($1, $2, $3, 'succeeded')`,
-        [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round(paymentAmount * 100)]
+        [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round((newAmountPaid - currentPaid) * 100)]
       );
 
       // Log activity
