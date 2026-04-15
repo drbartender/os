@@ -31,7 +31,6 @@ router.post('/request', otpLimiter, async (req, res) => {
     const client = result.rows[0];
 
     if (!client) {
-      console.log('[client-auth] OTP requested for unknown email:', email, '— returning generic success');
       return res.json({ success: true });
     }
 
@@ -45,17 +44,30 @@ router.post('/request', otpLimiter, async (req, res) => {
       [hash, expiresAt, client.id]
     );
 
-    // Send OTP email
-    console.log('[client-auth] OTP generated for client', client.id, '— attempting Resend send to', client.email);
+    // Send OTP email. Swallow send failures so we don't leak a user-enumeration
+    // signal (known vs unknown emails) and don't leave an orphaned OTP in the DB.
     const template = clientOtp({ name: client.name, otp });
-    await sendEmail({
-      to: client.email,
-      subject: template.subject,
-      html: template.html,
-      text: template.text,
-    });
+    try {
+      await sendEmail({
+        to: client.email,
+        subject: template.subject,
+        html: template.html,
+        text: template.text,
+      });
+    } catch (mailErr) {
+      console.error('OTP email send failed:', mailErr);
+      try {
+        await pool.query(
+          'UPDATE clients SET auth_token = NULL, auth_token_expires_at = NULL WHERE id = $1',
+          [client.id]
+        );
+      } catch (cleanupErr) {
+        console.error('OTP cleanup after mail failure failed:', cleanupErr);
+      }
+    }
 
-    res.json({ success: true });
+    // Always return the same neutral success response to avoid enumeration.
+    return res.json({ success: true });
   } catch (err) {
     console.error('Client auth request error:', err);
     res.status(500).json({ error: 'Server error' });

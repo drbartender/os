@@ -7,7 +7,7 @@ const resend = process.env.RESEND_API_KEY
 const FROM_EMAIL = 'Dr. Bartender <no-reply@drbartender.com>';
 
 if (process.env.RESEND_API_KEY) {
-  console.log('[email] Resend initialized — from:', FROM_EMAIL);
+  console.log('[email] Resend initialized');
 } else {
   console.warn('[email] RESEND_API_KEY is NOT set — emails will be logged only, not sent');
 }
@@ -29,7 +29,6 @@ async function sendEmail({ to, subject, html, text, from, replyTo }) {
     return { id: 'dev-skipped' };
   }
 
-  console.log('[email] sending to:', to, '| subject:', subject);
   const { data, error } = await resend.emails.send({
     from: from || FROM_EMAIL,
     to: Array.isArray(to) ? to : [to],
@@ -44,7 +43,6 @@ async function sendEmail({ to, subject, html, text, from, replyTo }) {
     throw new Error(error?.message || 'Resend send failed');
   }
 
-  console.log('[email] Resend response id:', data?.id);
   return data;
 }
 
@@ -75,8 +73,8 @@ async function sendBatchEmails(emails) {
     throw new Error(`Failed to send batch: ${error.message}`);
   }
 
-  console.log(`Batch sent: ${data.data.length} emails`);
-  return data.data;
+  const sent = data?.data ?? [];
+  return sent;
 }
 
 module.exports = { sendEmail, sendBatchEmails, FROM_EMAIL };
