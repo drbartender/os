@@ -117,6 +117,7 @@ dr-bartender/
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
 │   │   ├── emailMarketing.js   # Email marketing leads, campaigns, sequences, conversations
 │   │   ├── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
+│   │   ├── publicReviews.js    # Public cached endpoint for Thumbtack reviews on homepage
 │   │   └── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   ├── utils/
 │   │   ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)

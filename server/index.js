@@ -109,6 +109,7 @@ app.use('/api/client-auth', require('./routes/clientAuth'));
 app.use('/api/client-portal', require('./routes/clientPortal'));
 app.use('/api/email-marketing', require('./routes/emailMarketing'));
 app.use('/api/email-marketing/webhook', require('./routes/emailMarketingWebhook'));
+app.use('/api/public/reviews', require('./routes/publicReviews'));
 app.use('/api/thumbtack', require('./routes/thumbtack'));
 
 // Health check — must be registered BEFORE the React catch-all below
