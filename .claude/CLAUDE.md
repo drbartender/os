@@ -161,14 +161,16 @@ dr-bartender/
 │   ├── package.json          # proxy: localhost:5000
 │   └── vercel.json           # SPA rewrite for Vercel deployment
 ├── .claude/
-│   └── agents/               # Claude Code review agents
-│       ├── security-scan.md       # Tier 2: lightweight security scan (haiku)
-│       ├── consistency-check.md   # Tier 2: cross-file consistency (haiku)
-│       ├── error-handling-check.md # Tier 2: missing error handling (haiku)
-│       ├── full-security-audit.md # Tier 3: OWASP full audit (sonnet)
-│       ├── full-code-review.md    # Tier 3: code quality review (sonnet)
-│       ├── database-review.md     # Tier 3: schema + query review (sonnet)
-│       └── ui-ux-review.md        # Tier 3: Playwright UI/UX review (sonnet)
+│   └── agents/               # Claude Code review agents (all opus)
+│       ├── security-review.md     # OWASP security audit
+│       ├── code-review.md         # Code quality + error handling
+│       ├── consistency-check.md   # Cross-file synchronization
+│       ├── database-review.md     # Schema + query analysis
+│       ├── performance-review.md  # Frontend, API, and bundle performance
+│       └── ui-ux-review.md        # Playwright visual + accessibility review
+├── scripts/
+│   ├── build-testing-guide.js   # Builds client/public/testing-guide.html from TESTING.md
+│   └── testing-guide-template.html
 ├── .env / .env.example
 ├── .husky/pre-commit         # Pre-commit hook (runs lint-staged)
 ├── eslint.config.mjs         # ESLint flat config + security plugin
@@ -189,7 +191,9 @@ See `.env.example` for the full list. Key ones:
 | `RESEND_API_KEY` | Resend email |
 | `RESEND_WEBHOOK_SECRET` | Resend webhook signing secret (svix) |
 | `TWILIO_*` | Twilio SMS |
-| `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe payments |
+| `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe live payments |
+| `STRIPE_SECRET_KEY_TEST` / `STRIPE_PUBLISHABLE_KEY_TEST` / `STRIPE_WEBHOOK_SECRET_TEST` | Stripe test-mode credentials |
+| `STRIPE_TEST_MODE_UNTIL` | ISO date; while in the future, all Stripe calls use `*_TEST` creds (auto-reverts to live after cutoff) |
 | `STRIPE_DEPOSIT_AMOUNT` | Deposit in cents (default 10000 = $100) |
 | `THUMBTACK_WEBHOOK_SECRET` | Shared secret for Thumbtack webhook auth |
 | `REACT_APP_API_URL` | Client-side API base URL (set in client/.env.production) |
@@ -273,9 +277,9 @@ The rule: **if you change X, search the codebase for everything that depends on 
 
 ## Code Verification System
 
-This project is vibe-coded — the author relies on Claude to catch issues. Verification is split into three tiers to balance thoroughness with cost.
+This project is vibe-coded — the author relies on Claude to catch issues. Verification has two layers: an inline self-check on every change, and opus-powered review agents for thorough analysis.
 
-### Tier 1: Inline Self-Check (Every Change — Free)
+### Inline Self-Check (Every Change — Free)
 
 Before presenting ANY code change, silently verify:
 
@@ -305,42 +309,48 @@ Before presenting ANY code change, silently verify:
 - Date ranges and pagination boundaries correct
 - No race conditions on payment/mutation endpoints
 
-### Tier 2: Automatic Lightweight Agents (After Completing a Feature)
+### Review Agents (All Opus)
 
-After finishing a feature or significant change (new route, new page, schema change), automatically launch these **in parallel** using the haiku model to keep costs low. Agents are defined in `.claude/agents/`:
+After completing a feature, significant change, or before deploy, launch review agents. All agents are defined in `.claude/agents/` and run on the opus model for thorough analysis. Launch relevant agents **in parallel** after finishing work.
 
-**@security-scan** — Grep the changed files for:
-- String concatenation in SQL queries
-- Missing `auth` middleware on route files
-- `dangerouslySetInnerHTML` usage
-- Hardcoded strings that look like keys/tokens
-- Missing ownership checks (`req.user.id`) on data access
-Report only confirmed issues, not style nits.
+**@security-review** — Full OWASP Top 10 audit:
+- SQL injection (string concat in queries), XSS (`dangerouslySetInnerHTML`), SSRF
+- Missing `auth` middleware, IDOR (missing `req.user.id` ownership checks)
+- Hardcoded secrets, JWT implementation, Stripe/Resend/Thumbtack webhook verification
+- Rate limiting, CORS config, file upload validation, `npm audit`
 
-**@consistency-check** — For each changed file, verify:
-- If a DB column was added/changed: grep all routes that SELECT/INSERT/UPDATE that table — are they all updated?
-- If a route was added: is it mounted in `index.js`? Does `App.js` have a corresponding frontend route?
-- If pricing logic changed: do all consumers (`ProposalCreate`, `ProposalDetail`, `PricingBreakdown`) reflect it?
-- If an API response shape changed: do all frontend consumers handle the new shape?
-Report only actual mismatches found.
+**@code-review** — Code quality + error handling:
+- Missing try/catch on async handlers, missing ROLLBACK after BEGIN, unhandled promises
+- Missing loading/error/empty states in React components
+- Dead code, duplication, function complexity (>50 lines), naming conventions
+- React anti-patterns: useEffect deps, component size (>200 lines), props drilling
+- API consistency: response shapes, HTTP status codes, snake_case keys
 
-**@error-handling-check** — Scan changed code for:
-- `async` functions missing try/catch
-- `.query()` calls without error handling
-- API calls in React without `.catch()` or error state
-- Unhandled promise rejections
-Report only missing error handling, not style.
+**@consistency-check** — Cross-file synchronization:
+- Schema column changes reflected in all routes (SELECT, INSERT, UPDATE)
+- New routes mounted in `index.js` with matching `App.js` frontend routes
+- Pricing logic changes reflected in all consumers (ProposalCreate, ProposalDetail, PricingBreakdown)
+- API response shape changes handled by all frontend consumers
+- Doc updates: CLAUDE.md, README.md, ARCHITECTURE.md folder trees
 
-### Tier 3: Deep Review Agents (On-Demand Only — Expensive)
+**@database-review** — Schema + query analysis:
+- Missing indexes, foreign keys, NOT NULL constraints
+- N+1 query patterns, `SELECT *`, missing LIMIT on list queries
+- Transaction integrity (BEGIN/COMMIT/ROLLBACK)
+- Migration safety (idempotent DDL, nullable new columns)
 
-Only run when the user explicitly asks (e.g., "review security", "full review", "review before deploy"). Invoke with `@agent-name`:
+**@performance-review** — Frontend, API, and bundle performance:
+- Unnecessary React re-renders (missing memo/useMemo/useCallback)
+- Heavy imports, missing lazy loading, unused code shipped to client
+- Sequential DB queries that could use Promise.all, missing pagination
+- Oversized API responses, `SELECT *` instead of specific columns
+- Prioritizes public-facing pages (HomePage, ProposalView, PotionPlanningLab, Blog)
 
-**@full-security-audit** — Scan the ENTIRE codebase for OWASP Top 10 vulnerabilities, auth bypass paths, missing rate limiting, insecure token handling, CORS misconfig. (opus)
+**@ui-ux-review** — Playwright visual + accessibility review:
+- Screenshots at desktop, tablet, and mobile viewports
+- Color contrast, form labels, heading hierarchy, keyboard navigation
+- Loading states, error messages, empty states, form validation feedback
+- Responsive layout, touch targets, admin sidebar behavior
+- Requires app running locally (`npm run dev`)
 
-**@full-code-review** — Dead code, duplicated logic, functions over 50 lines, unused imports, console.logs left in production, naming inconsistencies. (opus)
-
-**@ui-ux-review** — Uses Playwright MCP to screenshot key pages, check mobile responsiveness, accessibility, visual consistency. Requires app running locally (`npm run dev`). (opus)
-
-**@database-review** — Analyze schema for missing indexes, N+1 query patterns, unprotected cascading deletes, missing foreign keys. (opus)
-
-**Full Pre-Deploy Review** — Run ALL four agents above in parallel. Reserve for deploy prep only.
+**Full Pre-Deploy Review** — Run ALL six agents in parallel before deploying.
