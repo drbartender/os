@@ -1,7 +1,10 @@
 import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ClientAuthProvider } from './context/ClientAuthContext';
+import { ToastProvider } from './context/ToastContext';
 import ErrorBoundary from './components/ErrorBoundary';
+import SessionExpiryHandler from './components/SessionExpiryHandler';
 import Layout from './components/Layout';
 import HomePage from './pages/website/HomePage';
 import QuotePage from './pages/website/QuotePage';
@@ -19,7 +22,6 @@ import BlogPost from './pages/public/BlogPost';
 import ClientLogin from './pages/public/ClientLogin';
 import ClientDashboard from './pages/public/ClientDashboard';
 import HiringLanding from './pages/HiringLanding';
-import { ClientAuthProvider } from './context/ClientAuthContext';
 
 // Lazy-loaded: public token-gated pages (Stripe SDK stays out of main bundle)
 const ProposalView = lazy(() => import('./pages/proposal/ProposalView'));
@@ -161,26 +163,24 @@ function RequirePortal({ children }) {
 
 function PublicWebsiteRoutes() {
   return (
-    <ClientAuthProvider>
-      <Suspense fallback={SuspenseFallback}>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/quote" element={<QuotePage />} />
-          <Route path="/faq" element={<FaqPage />} />
-          <Route path="/classes" element={<ClassWizard />} />
-          {/* These public token-based routes work on both domains */}
-          <Route path="/plan/:token" element={<PotionPlanningLab />} />
-          <Route path="/proposal/:token" element={<ProposalView />} />
-          <Route path="/invoice/:token" element={<InvoicePage />} />
-          <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
-          <Route path="/labnotes" element={<Blog />} />
-          <Route path="/labnotes/:slug" element={<BlogPost />} />
-          <Route path="/login" element={<ClientLogin />} />
-          <Route path="/my-proposals" element={<ClientDashboard />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Suspense>
-    </ClientAuthProvider>
+    <Suspense fallback={SuspenseFallback}>
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/quote" element={<QuotePage />} />
+        <Route path="/faq" element={<FaqPage />} />
+        <Route path="/classes" element={<ClassWizard />} />
+        {/* These public token-based routes work on both domains */}
+        <Route path="/plan/:token" element={<PotionPlanningLab />} />
+        <Route path="/proposal/:token" element={<ProposalView />} />
+        <Route path="/invoice/:token" element={<InvoicePage />} />
+        <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
+        <Route path="/labnotes" element={<Blog />} />
+        <Route path="/labnotes/:slug" element={<BlogPost />} />
+        <Route path="/login" element={<ClientLogin />} />
+        <Route path="/my-proposals" element={<ClientDashboard />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Suspense>
   );
 }
 
@@ -254,7 +254,6 @@ function AppRoutes() {
   if (context === 'staff') return <StaffSiteRoutes />;
 
   return (
-    <ClientAuthProvider>
     <Suspense fallback={SuspenseFallback}>
     <Routes>
       <Route path="/" element={<Navigate to="/register" replace />} />
@@ -341,18 +340,22 @@ function AppRoutes() {
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
     </Suspense>
-    </ClientAuthProvider>
   );
 }
 
 export default function App() {
   return (
     <ErrorBoundary>
-      <BrowserRouter>
+      <ToastProvider>
         <AuthProvider>
-          <AppRoutes />
+          <ClientAuthProvider>
+            <BrowserRouter>
+              <SessionExpiryHandler />
+              <AppRoutes />
+            </BrowserRouter>
+          </ClientAuthProvider>
         </AuthProvider>
-      </BrowserRouter>
+      </ToastProvider>
     </ErrorBoundary>
   );
 }
