@@ -105,7 +105,8 @@ export default function ProposalDetail() {
   const [pendingNavigation, setPendingNavigation] = useState(null);
   const editFormInitialRef = useRef(null);
 
-  // Invoice creation state
+  // Invoice state
+  const [invoiceRefreshKey, setInvoiceRefreshKey] = useState(0);
   const [showCreateInvoice, setShowCreateInvoice] = useState(false);
   const [newInvoiceLabel, setNewInvoiceLabel] = useState('');
   const [newInvoiceAmount, setNewInvoiceAmount] = useState('');
@@ -305,19 +306,22 @@ export default function ProposalDetail() {
     }
   }, [editing]); // eslint-disable-line
 
-  // Live pricing preview in edit mode
+  // Live pricing preview in edit mode (debounced to avoid per-keystroke API calls)
   useEffect(() => {
     if (!editing || !editForm || !editForm.package_id) { setEditPreview(null); return; }
-    api.post('/proposals/calculate', {
-      package_id: Number(editForm.package_id),
-      guest_count: Number(editForm.guest_count) || 50,
-      duration_hours: Number(editForm.event_duration_hours) || 4,
-      num_bars: Number(editForm.num_bars) || 0,
-      addon_ids: (editForm.addon_ids || []).map(Number),
-      syrup_selections: editForm.syrup_selections || [],
-      adjustments: editForm.adjustments || [],
-      total_price_override: editForm.total_price_override,
-    }).then(res => { setEditPreview(res.data); setEditError(''); }).catch(() => { setEditPreview(null); setEditError('Pricing preview unavailable.'); });
+    const timer = setTimeout(() => {
+      api.post('/proposals/calculate', {
+        package_id: Number(editForm.package_id),
+        guest_count: Number(editForm.guest_count) || 50,
+        duration_hours: Number(editForm.event_duration_hours) || 4,
+        num_bars: Number(editForm.num_bars) || 0,
+        addon_ids: (editForm.addon_ids || []).map(Number),
+        syrup_selections: editForm.syrup_selections || [],
+        adjustments: editForm.adjustments || [],
+        total_price_override: editForm.total_price_override,
+      }).then(res => { setEditPreview(res.data); setEditError(''); }).catch(() => { setEditPreview(null); setEditError('Pricing preview unavailable.'); });
+    }, 400);
+    return () => clearTimeout(timer);
   }, [editing, editForm?.package_id, editForm?.guest_count, editForm?.event_duration_hours, editForm?.num_bars, editForm?.addon_ids, editForm?.syrup_selections, editForm?.adjustments, editForm?.total_price_override]); // eslint-disable-line
 
   const updateEdit = (field, value) => setEditForm(f => ({ ...f, [field]: value }));
@@ -543,8 +547,7 @@ export default function ProposalDetail() {
       setNewInvoiceLabel('');
       setNewInvoiceAmount('');
       setNewInvoiceDueDate('');
-      // Force InvoiceDropdown to refetch by bumping proposal state
-      setProposal(prev => ({ ...prev }));
+      setInvoiceRefreshKey(k => k + 1);
     } catch (err) {
       console.error('Failed to create invoice:', err);
     } finally {
@@ -1057,7 +1060,7 @@ export default function ProposalDetail() {
                 </div>
 
                 {/* Invoice Dropdown */}
-                <InvoiceDropdown proposalId={id} />
+                <InvoiceDropdown proposalId={id} key={invoiceRefreshKey} />
 
                 {/* Create Invoice */}
                 {!showCreateInvoice ? (

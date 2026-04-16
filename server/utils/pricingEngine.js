@@ -15,7 +15,7 @@ function calculateBaseCost(pkg, guestCount, durationHours) {
   // Hosted: per-guest rate with small/standard tiers
   const isSmall = pkg.min_guests && guestCount < pkg.min_guests;
   const rate4hr = Number(isSmall ? pkg.base_rate_4hr_small : pkg.base_rate_4hr);
-  const rate3hr = pkg.base_rate_3hr_small || pkg.base_rate_3hr;
+  const rate3hr = isSmall ? (pkg.base_rate_3hr_small || pkg.base_rate_3hr) : pkg.base_rate_3hr;
   const extraRate = Number(isSmall ? (pkg.extra_hour_rate_small || pkg.extra_hour_rate) : pkg.extra_hour_rate);
 
   const floor = Number(pkg.min_total || 0);

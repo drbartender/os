@@ -68,8 +68,8 @@ async function generateLineItemsFromProposal(proposalId, dbClient) {
   const snap = proposal.pricing_snapshot || {};
 
   // Package base
-  if (snap.package && snap.package.base_total !== null && snap.package.base_total !== undefined) {
-    const unitPrice = toCents(snap.package.base_total);
+  if (snap.package && snap.package.base_cost !== null && snap.package.base_cost !== undefined) {
+    const unitPrice = toCents(snap.package.base_cost);
     items.push({
       description: snap.package.name || proposal.package_name || 'Service Package',
       quantity: 1,
@@ -81,10 +81,10 @@ async function generateLineItemsFromProposal(proposalId, dbClient) {
   }
 
   // Extra bartenders
-  if (snap.staffing && snap.staffing.extra_bartender_cost > 0) {
+  if (snap.staffing && snap.staffing.extra > 0 && snap.staffing.total > 0) {
     const extra = snap.staffing.actual - snap.staffing.included;
     const qty = extra > 0 ? extra : 1;
-    const lineTotal = toCents(snap.staffing.extra_bartender_cost);
+    const lineTotal = toCents(snap.staffing.total);
     const unitPrice = qty > 0 ? Math.round(lineTotal / qty) : lineTotal;
     items.push({
       description: 'Additional Bartender' + (qty > 1 ? 's' : ''),
@@ -179,20 +179,19 @@ async function writeLineItems(invoiceId, items, dbClient) {
 
   await client.query('DELETE FROM invoice_line_items WHERE invoice_id = $1', [invoiceId]);
 
-  for (const item of items) {
+  if (items.length > 0) {
+    const placeholders = [];
+    const values = [];
+    items.forEach((item, i) => {
+      const base = i * 7;
+      placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`);
+      values.push(invoiceId, item.description, item.quantity, item.unit_price, item.line_total, item.source_type, item.source_id);
+    });
     await client.query(
       `INSERT INTO invoice_line_items
          (invoice_id, description, quantity, unit_price, line_total, source_type, source_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [
-        invoiceId,
-        item.description,
-        item.quantity,
-        item.unit_price,
-        item.line_total,
-        item.source_type,
-        item.source_id,
-      ]
+       VALUES ${placeholders.join(', ')}`,
+      values
     );
   }
 }
@@ -267,33 +266,32 @@ async function lockInvoice(invoiceId, dbClient) {
 async function refreshUnlockedInvoices(proposalId, dbClient) {
   const client = db(dbClient);
 
-  // Fetch current proposal financials
-  const propResult = await client.query(
-    `SELECT total_price, deposit_amount FROM proposals WHERE id = $1`,
-    [proposalId]
-  );
+  // Fetch proposal financials, locked total, and unlocked invoices in parallel
+  const [propResult, lockedResult, unlockedResult] = await Promise.all([
+    client.query(
+      `SELECT total_price, deposit_amount FROM proposals WHERE id = $1`,
+      [proposalId]
+    ),
+    client.query(
+      `SELECT COALESCE(SUM(amount_due), 0) AS locked_total
+         FROM invoices
+        WHERE proposal_id = $1 AND locked = true AND status != 'void'`,
+      [proposalId]
+    ),
+    client.query(
+      `SELECT id, label FROM invoices
+        WHERE proposal_id = $1 AND locked = false AND status != 'void'
+        ORDER BY id`,
+      [proposalId]
+    ),
+  ]);
+
   if (propResult.rows.length === 0) return;
 
   const prop = propResult.rows[0];
   const totalCents = toCents(prop.total_price);
   const depositCents = toCents(prop.deposit_amount);
-
-  // Sum of all locked invoices for this proposal
-  const lockedResult = await client.query(
-    `SELECT COALESCE(SUM(amount_due), 0) AS locked_total
-       FROM invoices
-      WHERE proposal_id = $1 AND locked = true AND status != 'void'`,
-    [proposalId]
-  );
   const lockedTotal = Number(lockedResult.rows[0].locked_total);
-
-  // Fetch unlocked, non-void invoices
-  const unlockedResult = await client.query(
-    `SELECT id, label FROM invoices
-      WHERE proposal_id = $1 AND locked = false AND status != 'void'
-      ORDER BY id`,
-    [proposalId]
-  );
 
   // Fresh line items (shared across all unlocked invoices for this proposal)
   const lineItems = await generateLineItemsFromProposal(proposalId, client);
@@ -485,6 +483,34 @@ async function createAdditionalInvoiceIfNeeded(proposalId, oldTotalCents, dbClie
   return invoice;
 }
 
+// ─── 10. linkPaymentToInvoice ────────────────────────────────────────────────
+
+/**
+ * Link a proposal payment to an invoice, update the invoice's amount_paid
+ * and status, and lock it if fully paid.
+ *
+ * @param {number} invoiceId
+ * @param {number} paymentId    — proposal_payments.id
+ * @param {number} amountCents
+ * @param {object} dbClient     — must be a transaction client
+ */
+async function linkPaymentToInvoice(invoiceId, paymentId, amountCents, dbClient) {
+  await dbClient.query(
+    'INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, $3)',
+    [invoiceId, paymentId, amountCents]
+  );
+  const invUpdate = await dbClient.query(
+    'UPDATE invoices SET amount_paid = amount_paid + $1 WHERE id = $2 RETURNING amount_due, amount_paid',
+    [amountCents, invoiceId]
+  );
+  if (invUpdate.rows[0]) {
+    const inv = invUpdate.rows[0];
+    const newStatus = inv.amount_paid >= inv.amount_due ? 'paid' : 'partially_paid';
+    await dbClient.query('UPDATE invoices SET status = $1 WHERE id = $2', [newStatus, invoiceId]);
+  }
+  await lockInvoice(invoiceId, dbClient);
+}
+
 // ─── Exports ─────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -497,4 +523,5 @@ module.exports = {
   createInvoiceOnSend,
   createBalanceInvoice,
   createAdditionalInvoiceIfNeeded,
+  linkPaymentToInvoice,
 };

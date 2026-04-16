@@ -6,7 +6,7 @@ const { calculateProposal } = require('../utils/pricingEngine');
 const { createEventShifts, createDrinkPlan } = require('../utils/eventCreation');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
-const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, lockInvoice } = require('../utils/invoiceHelpers');
+const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, linkPaymentToInvoice } = require('../utils/invoiceHelpers');
 
 const router = express.Router();
 
@@ -907,13 +907,19 @@ router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
 
     await dbClient.query('COMMIT');
 
-    // Refresh unlocked invoices with new pricing
+    // Refresh unlocked invoices with new pricing (own transaction for isolation)
     const oldTotalCents = Math.round(Number(old.total_price || 0) * 100);
+    const invClient = await pool.connect();
     try {
-      await refreshUnlockedInvoices(parseInt(req.params.id, 10));
-      await createAdditionalInvoiceIfNeeded(parseInt(req.params.id, 10), oldTotalCents);
+      await invClient.query('BEGIN');
+      await refreshUnlockedInvoices(parseInt(req.params.id, 10), invClient);
+      await createAdditionalInvoiceIfNeeded(parseInt(req.params.id, 10), oldTotalCents, invClient);
+      await invClient.query('COMMIT');
     } catch (invErr) {
+      await invClient.query('ROLLBACK');
       console.error('Invoice refresh failed (non-blocking):', invErr);
+    } finally {
+      invClient.release();
     }
 
     // Return updated proposal
@@ -1134,20 +1140,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, async (req, res)
         );
         if (paymentRow.rows[0]) {
           const payAmountCents = Math.round(paymentAmount * 100);
-          await dbClient.query(
-            'INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, $3)',
-            [openInvoice.rows[0].id, paymentRow.rows[0].id, payAmountCents]
-          );
-          const invUpdate = await dbClient.query(
-            'UPDATE invoices SET amount_paid = amount_paid + $1 WHERE id = $2 RETURNING amount_due, amount_paid',
-            [payAmountCents, openInvoice.rows[0].id]
-          );
-          if (invUpdate.rows[0]) {
-            const inv = invUpdate.rows[0];
-            const invStatus = inv.amount_paid >= inv.amount_due ? 'paid' : 'partially_paid';
-            await dbClient.query('UPDATE invoices SET status = $1 WHERE id = $2', [invStatus, openInvoice.rows[0].id]);
-          }
-          await lockInvoice(openInvoice.rows[0].id, dbClient);
+          await linkPaymentToInvoice(openInvoice.rows[0].id, paymentRow.rows[0].id, payAmountCents, dbClient);
         }
       }
 

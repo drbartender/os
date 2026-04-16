@@ -1371,7 +1371,7 @@ CREATE INDEX IF NOT EXISTS idx_thumbtack_reviews_negotiation
 DO $$ BEGIN
   ALTER TABLE proposal_payments DROP CONSTRAINT IF EXISTS proposal_payments_payment_type_check;
   ALTER TABLE proposal_payments ADD CONSTRAINT proposal_payments_payment_type_check
-    CHECK (payment_type IN ('deposit', 'balance', 'full', 'drink_plan_extras', 'drink_plan_with_balance'));
+    CHECK (payment_type IN ('deposit', 'balance', 'full', 'drink_plan_extras', 'drink_plan_with_balance', 'invoice'));
 END $$;
 
 -- ─── Invoice System ─────────────────────────────────────────────
@@ -1380,7 +1380,7 @@ CREATE SEQUENCE IF NOT EXISTS invoice_number_seq START 1;
 
 CREATE TABLE IF NOT EXISTS invoices (
   id SERIAL PRIMARY KEY,
-  proposal_id INTEGER REFERENCES proposals(id) ON DELETE CASCADE,
+  proposal_id INTEGER NOT NULL REFERENCES proposals(id) ON DELETE RESTRICT,
   token UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
   invoice_number VARCHAR(20) NOT NULL,
   label VARCHAR(100) NOT NULL DEFAULT 'Invoice',
@@ -1398,7 +1398,7 @@ CREATE TABLE IF NOT EXISTS invoices (
 
 CREATE INDEX IF NOT EXISTS idx_invoices_proposal_id ON invoices(proposal_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_token ON invoices(token);
-CREATE INDEX IF NOT EXISTS idx_invoices_invoice_number ON invoices(invoice_number);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_invoice_number ON invoices(invoice_number);
 CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
 
 DROP TRIGGER IF EXISTS update_invoices_updated_at ON invoices;
@@ -1407,7 +1407,7 @@ CREATE TRIGGER update_invoices_updated_at BEFORE UPDATE ON invoices
 
 CREATE TABLE IF NOT EXISTS invoice_line_items (
   id SERIAL PRIMARY KEY,
-  invoice_id INTEGER REFERENCES invoices(id) ON DELETE CASCADE,
+  invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
   description VARCHAR(255) NOT NULL,
   quantity INTEGER NOT NULL DEFAULT 1,
   unit_price INTEGER NOT NULL DEFAULT 0,
@@ -1429,3 +1429,20 @@ CREATE TABLE IF NOT EXISTS invoice_payments (
 
 CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice_id ON invoice_payments(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_invoice_payments_payment_id ON invoice_payments(payment_id);
+
+-- Upgrade: invoices.proposal_id FK from CASCADE to RESTRICT (protect paid invoices)
+-- and invoice_line_items.invoice_id to NOT NULL (for existing tables)
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'invoices' AND constraint_name = 'invoices_proposal_id_fkey'
+  ) THEN
+    ALTER TABLE invoices DROP CONSTRAINT invoices_proposal_id_fkey;
+    ALTER TABLE invoices ADD CONSTRAINT invoices_proposal_id_fkey
+      FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE RESTRICT;
+  END IF;
+  -- Extend payment_type CHECK to include 'invoice'
+  ALTER TABLE proposal_payments DROP CONSTRAINT IF EXISTS proposal_payments_payment_type_check;
+  ALTER TABLE proposal_payments ADD CONSTRAINT proposal_payments_payment_type_check
+    CHECK (payment_type IN ('deposit', 'balance', 'full', 'drink_plan_extras', 'drink_plan_with_balance', 'invoice'));
+END $$;

@@ -78,10 +78,12 @@ export default function InvoicePage() {
   }, [token]);
 
   useEffect(() => {
+    if (!invoice || invoice.status === 'paid' || paymentSuccess) return;
+    if (stripePromise) return;
     api.get('/stripe/publishable-key').then(({ data }) => {
       if (data.key) setStripePromise(loadStripe(data.key));
-    });
-  }, []);
+    }).catch(() => {});
+  }, [invoice, paymentSuccess, stripePromise]);
 
   const handlePayClick = useCallback(async () => {
     try {
@@ -96,7 +98,7 @@ export default function InvoicePage() {
   const handlePaymentSuccess = useCallback(() => {
     setPaymentSuccess(true);
     setShowPayment(false);
-    api.get(`/invoices/t/${token}`).then(({ data }) => setInvoice(data.invoice));
+    api.get(`/invoices/t/${token}`).then(({ data }) => setInvoice(data.invoice)).catch(err => console.error('Invoice refetch after payment failed:', err));
   }, [token]);
 
   const handleSavePdf = useCallback(async () => {
