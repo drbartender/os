@@ -6255,3 +6255,12 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   from { transform: translateX(20px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }
+
+/* ─── Form banner (above submit button) ─────────────────────── */
+.form-banner {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  margin: 0.75rem 0;
+}
+.form-banner-error { background: #FFF0F0; border: 1px solid #E8AAAA; color: var(--error); }
