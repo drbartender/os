@@ -8,9 +8,6 @@ const api = axios.create({
   baseURL: API_BASE_URL
 });
 
-let onUnauthorized = null;
-api.setOnUnauthorized = (fn) => { onUnauthorized = fn; };
-
 api.interceptors.request.use(config => {
   const token = localStorage.getItem('token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
@@ -18,18 +15,35 @@ api.interceptors.request.use(config => {
 });
 
 api.interceptors.response.use(
-  res => res,
-  err => {
-    if (err.response?.status === 401) {
-      // Don't intercept 401s on auth endpoints — let the login page handle its own errors
-      const url = err.config?.url || '';
-      if (!url.startsWith('/auth/')) {
-        localStorage.removeItem('token');
-        if (onUnauthorized) onUnauthorized('/login');
-        else window.location.href = '/login';
-      }
+  (res) => res,
+  (err) => {
+    // Network failure — no response received
+    if (!err.response) {
+      return Promise.reject({
+        message: 'Network error — check your connection.',
+        code: 'NETWORK_ERROR',
+        fieldErrors: undefined,
+        status: 0,
+      });
     }
-    return Promise.reject(err);
+
+    const { status } = err.response;
+    const config = err.config;
+    const data = err.response.data || {};
+    const url = config?.url || '';
+
+    // Session expired (any 401 outside the auth/login endpoints)
+    if (status === 401 && !url.startsWith('/auth/') && !url.startsWith('/client-auth/')) {
+      // Tag the URL so SessionExpiryHandler picks the right login redirect
+      window.dispatchEvent(new CustomEvent('session-expired', { detail: { url } }));
+    }
+
+    return Promise.reject({
+      message: data.error || 'Something went wrong. Please try again.',
+      code: data.code,
+      fieldErrors: data.fieldErrors,
+      status,
+    });
   }
 );
 

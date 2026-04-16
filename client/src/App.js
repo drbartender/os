@@ -1,9 +1,8 @@
-import React, { useEffect, Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import React, { Suspense, lazy } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/Layout';
-import api from './utils/api';
 import HomePage from './pages/website/HomePage';
 import QuotePage from './pages/website/QuotePage';
 import FaqPage from './pages/website/FaqPage';
@@ -157,15 +156,6 @@ function RequirePortal({ children }) {
   if (!allowed.includes(user.onboarding_status)) {
     return <Navigate to={getHomePath(user)} replace />;
   }
-  return children;
-}
-
-function ApiAuthSetup({ children }) {
-  const navigate = useNavigate();
-  useEffect(() => {
-    api.setOnUnauthorized((path) => navigate(path, { replace: true }));
-    return () => api.setOnUnauthorized(null);
-  }, [navigate]);
   return children;
 }
 
@@ -360,9 +350,7 @@ export default function App() {
     <ErrorBoundary>
       <BrowserRouter>
         <AuthProvider>
-          <ApiAuthSetup>
-            <AppRoutes />
-          </ApiAuthSetup>
+          <AppRoutes />
         </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>
