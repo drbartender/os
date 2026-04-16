@@ -3486,6 +3486,14 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   padding: 0.35rem 0.75rem;
   font-size: 0.85rem;
 }
+.wz-resume-actions .btn-secondary {
+  color: var(--deep-brown);
+  border-color: var(--deep-brown);
+}
+.wz-resume-actions .btn-secondary:hover:not(:disabled) {
+  background: rgba(107, 66, 38, 0.12);
+  color: var(--deep-brown);
+}
 
 /* Step indicators */
 .wz-steps {

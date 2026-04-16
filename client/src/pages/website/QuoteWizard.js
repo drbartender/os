@@ -266,14 +266,9 @@ export default function QuoteWizard() {
 
   // Dismiss the "welcome back" banner
   const dismissResume = () => setResumed(false);
-  const startOver = () => {
-    setForm(defaultForm);
+  const editAnswers = () => {
     setStep(0);
     setResumed(false);
-    setHasDraftToken(false);
-    draftTokenRef.current = null;
-    localStorage.removeItem(DRAFT_KEY);
-    setEventTypeQuery('');
   };
 
   // Auto-select package for BYOB and mocktail paths
@@ -712,7 +707,7 @@ export default function QuoteWizard() {
           <span>Welcome back! We saved your progress.</span>
           <div className="wz-resume-actions">
             <button type="button" className="btn btn-sm btn-primary" onClick={dismissResume}>Continue</button>
-            <button type="button" className="btn btn-sm btn-secondary" onClick={startOver}>Start Over</button>
+            <button type="button" className="btn btn-sm btn-secondary" onClick={editAnswers}>Edit Answers</button>
           </div>
         </div>
       )}
@@ -1178,7 +1173,16 @@ export default function QuoteWizard() {
       {/* Navigation */}
       <div className="wz-nav">
         {step > 0 && (
-          <button className="btn btn-secondary" type="button" onClick={() => { setError(''); clearAll(); setStep(s => s - 1); }}>
+          <button className="btn btn-secondary" type="button" onClick={() => {
+            setError('');
+            clearAll();
+            // On the package step with a bar type selected, clear bar type instead of going back
+            if (currentStepKey === 'package' && form.bar_type) {
+              handleBarTypeChange('');
+            } else {
+              setStep(s => s - 1);
+            }
+          }}>
             Back
           </button>
         )}
