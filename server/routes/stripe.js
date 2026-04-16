@@ -422,6 +422,66 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, async (req, res)
   }
 });
 
+// ─── Public: create a Payment Intent for an invoice ─────────────
+
+/** POST /api/stripe/create-intent-for-invoice/:token — public, token-gated */
+router.post('/create-intent-for-invoice/:token', publicLimiter, async (req, res) => {
+  try {
+    const stripe = getStripe();
+    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
+
+    const invRes = await pool.query(`
+      SELECT i.id AS invoice_id, i.amount_due, i.amount_paid, i.status AS invoice_status,
+             p.id AS proposal_id, p.event_name, p.stripe_customer_id,
+             c.email AS client_email, c.name AS client_name
+      FROM invoices i
+      JOIN proposals p ON p.id = i.proposal_id
+      LEFT JOIN clients c ON c.id = p.client_id
+      WHERE i.token = $1 AND i.status IN ('sent', 'partially_paid')
+    `, [req.params.token]);
+
+    if (!invRes.rows[0]) return res.status(404).json({ error: 'Invoice not found or already paid.' });
+
+    const inv = invRes.rows[0];
+    const balanceCents = inv.amount_due - inv.amount_paid;
+    if (balanceCents <= 0) {
+      return res.status(400).json({ error: 'Invoice is already fully paid.' });
+    }
+
+    const customerId = await getOrCreateCustomer({
+      id: inv.proposal_id,
+      stripe_customer_id: inv.stripe_customer_id,
+      client_email: inv.client_email,
+      client_name: inv.client_name,
+    });
+
+    const paymentIntent = await stripe.paymentIntents.create({
+      amount: balanceCents,
+      currency: 'usd',
+      customer: customerId,
+      description: `Invoice ${inv.invoice_id} — ${inv.client_name || 'Dr. Bartender'}`,
+      receipt_email: inv.client_email || undefined,
+      metadata: {
+        proposal_id: String(inv.proposal_id),
+        invoice_id: String(inv.invoice_id),
+        payment_type: 'invoice',
+      },
+    });
+
+    await pool.query(
+      `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
+       VALUES ($1, $2, $3, 'pending')
+       ON CONFLICT (stripe_payment_intent_id) DO NOTHING`,
+      [inv.proposal_id, paymentIntent.id, balanceCents]
+    );
+
+    res.json({ clientSecret: paymentIntent.client_secret });
+  } catch (err) {
+    console.error('Stripe invoice payment intent error:', err);
+    res.status(500).json({ error: 'Failed to create payment intent.' });
+  }
+});
+
 // ─── Stripe Webhook ───────────────────────────────────────────────
 
 /** POST /api/stripe/webhook — raw body, Stripe signature verified */
