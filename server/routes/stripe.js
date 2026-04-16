@@ -33,15 +33,17 @@ function getStripe() {
 }
 
 function getWebhookSecret() {
-  return isTestMode()
-    ? process.env.STRIPE_WEBHOOK_SECRET_TEST
-    : process.env.STRIPE_WEBHOOK_SECRET;
+  if (isTestMode() && process.env.STRIPE_WEBHOOK_SECRET_TEST) {
+    return process.env.STRIPE_WEBHOOK_SECRET_TEST;
+  }
+  return process.env.STRIPE_WEBHOOK_SECRET;
 }
 
 function getPublishableKey() {
-  return isTestMode()
-    ? process.env.STRIPE_PUBLISHABLE_KEY_TEST
-    : process.env.STRIPE_PUBLISHABLE_KEY;
+  if (isTestMode() && process.env.STRIPE_PUBLISHABLE_KEY_TEST) {
+    return process.env.STRIPE_PUBLISHABLE_KEY_TEST;
+  }
+  return process.env.STRIPE_PUBLISHABLE_KEY;
 }
 
 /** GET /api/stripe/publishable-key — returns the active publishable key */
