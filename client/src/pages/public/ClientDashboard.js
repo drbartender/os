@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import PublicLayout, { clientLoginPath } from '../../components/PublicLayout';
 import { useClientAuth } from '../../context/ClientAuthContext';
 import api from '../../utils/api';
+import InvoiceDropdown from '../../components/InvoiceDropdown';
 
 const STATUS_LABELS = {
   draft: 'Draft',
@@ -126,6 +127,11 @@ export default function ClientDashboard() {
                     <span>{formatCurrency(p.amount_paid)}</span>
                   </div>
                 </div>
+                <InvoiceDropdown
+                  proposalToken={p.token}
+                  isClient={true}
+                  clientToken={localStorage.getItem('db_client_token')}
+                />
                 <Link to={`/proposal/${p.token}`} className="btn client-btn-primary client-btn-view">
                   View Proposal
                 </Link>
