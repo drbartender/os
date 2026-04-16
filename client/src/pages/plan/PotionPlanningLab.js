@@ -218,6 +218,13 @@ export default function PotionPlanningLab() {
             // If already has a serving type and modules, stay at current state
             // Otherwise start at refinement welcome
             if (!data.serving_type) {
+              // Mocktail-only package — auto-select mocktails quick pick
+              if (planData.package_bar_type === 'mocktail') {
+                const mocktailPick = QUICK_PICKS.find(p => p.key === 'mocktails');
+                setQuickPickChoice('mocktails');
+                setActiveModules(mocktailPick.activeModules);
+                setModuleQueue(buildStepQueue(mocktailPick.activeModules));
+              }
               setStep('refinementWelcome');
             }
           }
@@ -487,7 +494,11 @@ export default function PotionPlanningLab() {
     }
 
     // Refinement navigation
-    if (step === 'welcome' || step === 'refinementWelcome') return goToStep('quickPick');
+    if (step === 'welcome' || step === 'refinementWelcome') {
+      // Mocktail-only packages skip the quick pick
+      if (plan?.package_bar_type === 'mocktail') return goToStep(moduleQueue[0]);
+      return goToStep('quickPick');
+    }
 
     const currentIdx = moduleQueue.indexOf(step);
     if (currentIdx !== -1) {
@@ -533,6 +544,10 @@ export default function PotionPlanningLab() {
     if (currentIdx !== -1) {
       if (currentIdx > 0) {
         return goToStep(moduleQueue[currentIdx - 1]);
+      }
+      // Mocktail-only packages skip back to quickPick
+      if (plan?.package_bar_type === 'mocktail') {
+        return goToStep(plan?.exploration_submitted_at ? 'refinementWelcome' : 'welcome');
       }
       return goToStep(quickPickChoice === 'custom' ? 'customSetup' : 'quickPick');
     }

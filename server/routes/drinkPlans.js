@@ -53,9 +53,11 @@ router.get('/t/:token', publicReadLimiter, async (req, res) => {
               p.total_price AS proposal_total_price,
               p.amount_paid AS proposal_amount_paid,
               p.event_date AS proposal_event_date,
-              p.balance_due_date AS proposal_balance_due_date
+              p.balance_due_date AS proposal_balance_due_date,
+              sp.bar_type AS package_bar_type
        FROM drink_plans dp
        LEFT JOIN proposals p ON p.id = dp.proposal_id
+       LEFT JOIN service_packages sp ON sp.id = p.package_id
        WHERE dp.token = $1`,
       [req.params.token]
     );
