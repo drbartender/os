@@ -130,7 +130,15 @@ export default function FinancialsDashboard() {
               </thead>
               <tbody>
                 {recentPayments.map(pp => (
-                  <tr key={pp.id}>
+                  <tr
+                    key={pp.id}
+                    style={{ cursor: pp.invoice_token ? 'pointer' : 'default' }}
+                    onClick={() => pp.invoice_token && window.open(`/invoice/${pp.invoice_token}`, '_blank')}
+                    onKeyDown={(e) => e.key === 'Enter' && pp.invoice_token && window.open(`/invoice/${pp.invoice_token}`, '_blank')}
+                    tabIndex={pp.invoice_token ? 0 : undefined}
+                    role={pp.invoice_token ? 'link' : undefined}
+                    title={pp.invoice_token ? 'View invoice' : 'No invoice linked'}
+                  >
                     <td>{pp.client_name || '—'}</td>
                     <td>{pp.event_name || '—'}</td>
                     <td style={{ textTransform: 'capitalize' }}>{pp.payment_type}</td>

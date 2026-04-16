@@ -623,10 +623,13 @@ router.get('/financials', auth, requireAdminOrManager, async (req, res) => {
       `, [limit, offset]),
       pool.query(`
         SELECT pp.id, pp.proposal_id, pp.payment_type, pp.amount, pp.status AS payment_status,
-               pp.created_at, p.event_name, c.name AS client_name
+               pp.created_at, p.event_name, c.name AS client_name,
+               ip.invoice_id, i.token AS invoice_token
         FROM proposal_payments pp
         JOIN proposals p ON p.id = pp.proposal_id
         LEFT JOIN clients c ON c.id = p.client_id
+        LEFT JOIN invoice_payments ip ON ip.payment_id = pp.id
+        LEFT JOIN invoices i ON i.id = ip.invoice_id
         WHERE pp.status = 'succeeded'
         ORDER BY pp.created_at DESC
         LIMIT 20
