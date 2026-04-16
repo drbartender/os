@@ -28,9 +28,11 @@ const EVENT_TYPES = [
   { id: 'other', label: 'Other', category: 'other' },
 ];
 
-function getEventTypeLabel({ event_type, event_type_custom } = {}) {
-  if (event_type === 'other') return event_type_custom || 'event';
-  const found = EVENT_TYPES.find(t => t.id === event_type);
+function getEventTypeLabel(arg) {
+  const { event_type, event_type_custom } = arg || {};
+  if (event_type_custom) return event_type_custom;
+  if (event_type === 'other' || event_type === 'Other') return 'event';
+  const found = EVENT_TYPES.find(t => t.id === event_type || t.label === event_type);
   return found ? found.label : 'event';
 }
 
