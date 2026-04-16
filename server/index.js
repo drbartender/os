@@ -1,4 +1,19 @@
 require('dotenv').config();
+const Sentry = require('@sentry/node');
+
+if (process.env.SENTRY_DSN_SERVER) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN_SERVER,
+    environment: process.env.NODE_ENV || 'development',
+    tracesSampleRate: 0.1,
+    beforeSend(event) {
+      if (event.request?.data) event.request.data = '[redacted]';
+      return event;
+    },
+  });
+  console.log('Sentry server SDK initialized');
+}
+
 const express = require('express');
 const compression = require('compression');
 const cors = require('cors');
