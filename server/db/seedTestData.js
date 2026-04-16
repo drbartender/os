@@ -249,10 +249,10 @@ async function seedTestData() {
     // Proposal 1: Draft (wedding)
     if (client1) {
       await client.query(`
-        INSERT INTO proposals (client_id, event_name, event_date, event_start_time, event_duration_hours,
+        INSERT INTO proposals (client_id, event_type, event_type_category, event_type_custom, event_date, event_start_time, event_duration_hours,
           event_location, guest_count, package_id, num_bars, num_bartenders, total_price, status,
           pricing_snapshot, created_by)
-        VALUES ($1, 'Thompson Wedding Reception', '2026-06-20', '5:00 PM', 5,
+        VALUES ($1, 'wedding-reception', 'wedding_related', NULL, '2026-06-20', '5:00 PM', 5,
           '1234 Lakeview Blvd, Chicago, IL 60614', 150, $2, 2, 2, 4950.00, 'draft',
           '{"package_total":3300,"bartender_total":600,"bar_fee_total":150,"addon_total":900}',
           $3)
@@ -263,10 +263,10 @@ async function seedTestData() {
     // Proposal 2: Sent (corporate)
     if (client2) {
       const { rows: [p2] } = await client.query(`
-        INSERT INTO proposals (client_id, event_name, event_date, event_start_time, event_duration_hours,
+        INSERT INTO proposals (client_id, event_type, event_type_category, event_type_custom, event_date, event_start_time, event_duration_hours,
           event_location, guest_count, package_id, num_bars, num_bartenders, total_price, status,
           pricing_snapshot, created_by)
-        VALUES ($1, 'Acme Corp Holiday Party', '2026-12-12', '7:00 PM', 4,
+        VALUES ($1, 'holiday-party', 'corporate', NULL, '2026-12-12', '7:00 PM', 4,
           '500 N Michigan Ave, Chicago, IL 60611', 100, $2, 1, 1, 2800.00, 'sent',
           '{"package_total":2200,"bartender_total":0,"bar_fee_total":50,"addon_total":550}',
           $3)
@@ -281,12 +281,12 @@ async function seedTestData() {
     // Proposal 3: Accepted + deposit paid (birthday)
     if (client3) {
       const { rows: [p3] } = await client.query(`
-        INSERT INTO proposals (client_id, event_name, event_date, event_start_time, event_duration_hours,
+        INSERT INTO proposals (client_id, event_type, event_type_category, event_type_custom, event_date, event_start_time, event_duration_hours,
           event_location, guest_count, package_id, num_bars, num_bartenders, total_price, status,
           amount_paid, deposit_amount, payment_type, view_count,
           client_signed_name, client_signed_at, client_signature_method,
           pricing_snapshot, created_by)
-        VALUES ($1, 'Diego''s 40th Birthday Bash', '2026-07-18', '8:00 PM', 4,
+        VALUES ($1, 'milestone-birthday', 'celebrations', NULL, '2026-07-18', '8:00 PM', 4,
           '2200 W Fullerton Ave, Chicago, IL 60647', 60, $2, 1, 1, 1380.00, 'deposit_paid',
           100.00, 100.00, 'deposit', 5,
           'Diego Ramirez', NOW() - INTERVAL '3 days', 'type',
@@ -307,9 +307,9 @@ async function seedTestData() {
       `, [p3.id]);
       // Create a shift linked to this proposal
       await client.query(`
-        INSERT INTO shifts (event_name, event_date, start_time, end_time, location,
+        INSERT INTO shifts (event_type, event_type_custom, client_name, event_date, start_time, end_time, location,
           positions_needed, status, proposal_id, created_by)
-        VALUES ('Diego''s 40th Birthday Bash', '2026-07-18', '8:00 PM', '12:00 AM',
+        VALUES ('milestone-birthday', NULL, 'Diego Ramirez', '2026-07-18', '8:00 PM', '12:00 AM',
           '2200 W Fullerton Ave, Chicago, IL 60647',
           $1, 'open', $2, $3)
       `, [JSON.stringify([{ position: 'bartender', count: 1 }]), p3.id, adminId]);
@@ -318,12 +318,12 @@ async function seedTestData() {
     // Proposal 4: Confirmed / balance paid (mocktail bar)
     if (client4) {
       const { rows: [p4] } = await client.query(`
-        INSERT INTO proposals (client_id, event_name, event_date, event_start_time, event_duration_hours,
+        INSERT INTO proposals (client_id, event_type, event_type_category, event_type_custom, event_date, event_start_time, event_duration_hours,
           event_location, guest_count, package_id, num_bars, num_bartenders, total_price, status,
           amount_paid, deposit_amount, payment_type, view_count,
           client_signed_name, client_signed_at, client_signature_method,
           pricing_snapshot, created_by)
-        VALUES ($1, 'Priya''s Baby Shower', '2026-05-10', '2:00 PM', 3,
+        VALUES ($1, 'baby-shower', 'celebrations', NULL, '2026-05-10', '2:00 PM', 3,
           '890 Elm St, Winnetka, IL 60093', 40, $2, 1, 1, 720.00, 'confirmed',
           720.00, 100.00, 'deposit', 8,
           'Priya Sharma', NOW() - INTERVAL '14 days', 'draw',
@@ -338,9 +338,9 @@ async function seedTestData() {
       `, [p4.id]);
       // Create a shift with an assigned bartender
       const { rows: [shift4] } = await client.query(`
-        INSERT INTO shifts (event_name, event_date, start_time, end_time, location,
+        INSERT INTO shifts (event_type, event_type_custom, client_name, event_date, start_time, end_time, location,
           positions_needed, status, proposal_id, created_by)
-        VALUES ('Priya''s Baby Shower', '2026-05-10', '2:00 PM', '5:00 PM',
+        VALUES ('baby-shower', NULL, 'Priya Sharma', '2026-05-10', '2:00 PM', '5:00 PM',
           '890 Elm St, Winnetka, IL 60093',
           $1, 'confirmed', $2, $3)
         RETURNING id
@@ -354,11 +354,11 @@ async function seedTestData() {
     // Proposal 5: Viewed but not accepted (fundraiser gala)
     if (client5) {
       const { rows: [p5] } = await client.query(`
-        INSERT INTO proposals (client_id, event_name, event_date, event_start_time, event_duration_hours,
+        INSERT INTO proposals (client_id, event_type, event_type_category, event_type_custom, event_date, event_start_time, event_duration_hours,
           event_location, guest_count, package_id, num_bars, num_bartenders, total_price, status,
           view_count, last_viewed_at,
           pricing_snapshot, created_by)
-        VALUES ($1, 'Lincoln Park Fundraiser Gala', '2026-09-05', '6:00 PM', 5,
+        VALUES ($1, 'fundraiser-gala', 'corporate', NULL, '2026-09-05', '6:00 PM', 5,
           '2045 N Lincoln Park West, Chicago, IL 60614', 200, $2, 2, 3, 10800.00, 'viewed',
           3, NOW() - INTERVAL '1 day',
           '{"package_total":8000,"bartender_total":1200,"bar_fee_total":250,"addon_total":1350}',
@@ -379,9 +379,9 @@ async function seedTestData() {
     // ─── EXTRA SHIFTS (standalone, not linked to proposals) ──────────
 
     const { rows: [shift1] } = await client.query(`
-      INSERT INTO shifts (event_name, event_date, start_time, end_time, location,
+      INSERT INTO shifts (event_type, event_type_custom, client_name, event_date, start_time, end_time, location,
         positions_needed, status, created_by)
-      VALUES ('Smith Anniversary Party', '2026-05-24', '6:00 PM', '10:00 PM',
+      VALUES ('anniversary', NULL, 'Smith', '2026-05-24', '6:00 PM', '10:00 PM',
         '1500 W Division St, Chicago, IL 60642',
         $1, 'open', $2)
       RETURNING id
@@ -398,9 +398,9 @@ async function seedTestData() {
     `, [shift1.id, staff4.id]);
 
     await client.query(`
-      INSERT INTO shifts (event_name, event_date, start_time, end_time, location,
+      INSERT INTO shifts (event_type, event_type_custom, client_name, event_date, start_time, end_time, location,
         positions_needed, status, created_by)
-      VALUES ('Completed: Johnson Graduation', '2026-03-15', '3:00 PM', '7:00 PM',
+      VALUES ('graduation-party', NULL, 'Johnson', '2026-03-15', '3:00 PM', '7:00 PM',
         '500 S State St, Chicago, IL 60605',
         $1, 'confirmed', $2)
     `, [JSON.stringify([{ position: 'bartender', count: 1 }]), adminId]);
@@ -410,17 +410,17 @@ async function seedTestData() {
     // ─── DRINK PLANS ─────────────────────────────────────────────────
 
     await client.query(`
-      INSERT INTO drink_plans (client_name, client_email, event_name, event_date, status,
+      INSERT INTO drink_plans (client_name, client_email, event_type, event_type_custom, event_date, status,
         serving_type, selections, submitted_at)
-      VALUES ('Diego Ramirez', 'diego.r@test.com', 'Diego''s 40th Birthday Bash', '2026-07-18',
+      VALUES ('Diego Ramirez', 'diego.r@test.com', 'milestone-birthday', NULL, '2026-07-18',
         'submitted', 'full_bar',
         '{"cocktails":["margarita","old-fashioned","moscow-mule"],"mocktails":["virgin-mojito"]}',
         NOW() - INTERVAL '2 days')
     `);
     await client.query(`
-      INSERT INTO drink_plans (client_name, client_email, event_name, event_date, status,
+      INSERT INTO drink_plans (client_name, client_email, event_type, event_type_custom, event_date, status,
         serving_type, selections)
-      VALUES ('Sarah Thompson', 'sarah.thompson@test.com', 'Thompson Wedding Reception', '2026-06-20',
+      VALUES ('Sarah Thompson', 'sarah.thompson@test.com', 'wedding-reception', NULL, '2026-06-20',
         'pending', 'full_bar', '{}')
     `);
 
