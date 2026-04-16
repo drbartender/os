@@ -148,9 +148,9 @@ dr-bartender/
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── constants.js    # App-wide constants
 │   │   │   └── formatPhone.js  # Phone number formatting
-│   │   ├── components/         # Layout, InvoiceDropdown, SignaturePad, FileUpload, PricingBreakdown, RichTextEditor,
-│   │   │                       # LeadImportModal, AudienceSelector, SequenceStepEditor, CampaignMetricsBar,
-│   │   │                       # SyrupPicker
+│   │   ├── components/         # Layout, InvoiceDropdown, SignaturePad, ClickableRow, FileUpload,
+│   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, AudienceSelector,
+│   │   │                       # SequenceStepEditor, CampaignMetricsBar, SyrupPicker
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
 │   │   ├── data/               # Shared data (addonCategories, eventTypes, packages, syrups)
 │   │   ├── hooks/              # Custom hooks (useFormValidation)
