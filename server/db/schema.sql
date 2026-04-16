@@ -936,6 +936,10 @@ ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_type VARCHAR(100);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_type_category VARCHAR(50);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_type_custom VARCHAR(255);
 
+-- ─── Proposal Price Adjustments ───────────────────────────────────
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS adjustments JSONB DEFAULT '[]';
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS total_price_override NUMERIC(10,2);
+
 -- ─── Blog Posts ─────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS blog_posts (
@@ -1367,3 +1371,59 @@ DO $$ BEGIN
   ALTER TABLE proposal_payments ADD CONSTRAINT proposal_payments_payment_type_check
     CHECK (payment_type IN ('deposit', 'balance', 'full', 'drink_plan_extras', 'drink_plan_with_balance'));
 END $$;
+
+-- ─── Invoice System ─────────────────────────────────────────────
+
+CREATE SEQUENCE IF NOT EXISTS invoice_number_seq START 1;
+
+CREATE TABLE IF NOT EXISTS invoices (
+  id SERIAL PRIMARY KEY,
+  proposal_id INTEGER REFERENCES proposals(id) ON DELETE CASCADE,
+  token UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
+  invoice_number VARCHAR(20) NOT NULL,
+  label VARCHAR(100) NOT NULL DEFAULT 'Invoice',
+  amount_due INTEGER NOT NULL DEFAULT 0,
+  amount_paid INTEGER NOT NULL DEFAULT 0,
+  status VARCHAR(20) NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft', 'sent', 'paid', 'partially_paid', 'void')),
+  locked BOOLEAN NOT NULL DEFAULT false,
+  locked_at TIMESTAMPTZ,
+  due_date DATE,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_proposal_id ON invoices(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_token ON invoices(token);
+CREATE INDEX IF NOT EXISTS idx_invoices_invoice_number ON invoices(invoice_number);
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+
+DROP TRIGGER IF EXISTS update_invoices_updated_at ON invoices;
+CREATE TRIGGER update_invoices_updated_at BEFORE UPDATE ON invoices
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TABLE IF NOT EXISTS invoice_line_items (
+  id SERIAL PRIMARY KEY,
+  invoice_id INTEGER REFERENCES invoices(id) ON DELETE CASCADE,
+  description VARCHAR(255) NOT NULL,
+  quantity INTEGER NOT NULL DEFAULT 1,
+  unit_price INTEGER NOT NULL DEFAULT 0,
+  line_total INTEGER NOT NULL DEFAULT 0,
+  source_type VARCHAR(20) DEFAULT 'manual'
+    CHECK (source_type IN ('package', 'addon', 'fee', 'manual')),
+  source_id INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_line_items_invoice_id ON invoice_line_items(invoice_id);
+
+CREATE TABLE IF NOT EXISTS invoice_payments (
+  id SERIAL PRIMARY KEY,
+  invoice_id INTEGER REFERENCES invoices(id) ON DELETE CASCADE,
+  payment_id INTEGER REFERENCES proposal_payments(id) ON DELETE CASCADE,
+  amount INTEGER NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoice_payments_invoice_id ON invoice_payments(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_invoice_payments_payment_id ON invoice_payments(payment_id);
