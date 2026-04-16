@@ -205,7 +205,6 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_token_created_at TIMESTAMPTZ
 -- ─── Shifts ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS shifts (
   id SERIAL PRIMARY KEY,
-  event_name VARCHAR(255) NOT NULL,
   event_date DATE NOT NULL,
   start_time VARCHAR(50),
   end_time VARCHAR(50),
@@ -271,7 +270,6 @@ CREATE TABLE IF NOT EXISTS drink_plans (
   token UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
   client_name VARCHAR(255),
   client_email VARCHAR(255),
-  event_name VARCHAR(255),
   event_date DATE,
   status VARCHAR(20) DEFAULT 'pending'
     CHECK (status IN ('pending','draft','exploration_saved','submitted','reviewed')),
@@ -297,6 +295,10 @@ ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_status_check
 DROP TRIGGER IF EXISTS update_drink_plans_updated_at ON drink_plans;
 CREATE TRIGGER update_drink_plans_updated_at BEFORE UPDATE ON drink_plans
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ─── Event type denormalization on drink_plans (replaces event_name) ──
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS event_type VARCHAR(100);
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS event_type_custom VARCHAR(255);
 
 -- ─── Cocktail Menu ────────────────────────────────────────────────
 
@@ -670,7 +672,6 @@ CREATE TABLE IF NOT EXISTS proposals (
   id SERIAL PRIMARY KEY,
   token UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
   client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
-  event_name VARCHAR(255),
   event_date DATE,
   event_start_time VARCHAR(20),
   event_duration_hours NUMERIC(4,1) NOT NULL DEFAULT 4,
@@ -699,6 +700,11 @@ CREATE TRIGGER update_proposals_updated_at BEFORE UPDATE ON proposals
 -- These were deferred because shifts and drink_plans are created before proposals.
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_shifts_proposal_id ON shifts(proposal_id);
+
+-- ─── Event type denormalization on shifts (replaces event_name) ──
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS event_type VARCHAR(100);
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS event_type_custom VARCHAR(255);
+ALTER TABLE shifts ADD COLUMN IF NOT EXISTS client_name VARCHAR(255);
 
 DO $$ BEGIN
   IF NOT EXISTS (
@@ -937,6 +943,28 @@ ALTER TABLE proposals ADD COLUMN IF NOT EXISTS feedback_status VARCHAR(20) DEFAU
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_type VARCHAR(100);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_type_category VARCHAR(50);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_type_custom VARCHAR(255);
+
+-- ─── Backfill denormalized columns from linked proposals ──
+UPDATE shifts s
+   SET event_type        = p.event_type,
+       event_type_custom = p.event_type_custom,
+       client_name       = c.name
+  FROM proposals p
+  LEFT JOIN clients c ON c.id = p.client_id
+ WHERE s.proposal_id = p.id
+   AND s.event_type IS NULL;
+
+UPDATE drink_plans d
+   SET event_type        = p.event_type,
+       event_type_custom = p.event_type_custom
+  FROM proposals p
+ WHERE d.proposal_id = p.id
+   AND d.event_type IS NULL;
+
+-- ─── Drop event_name now that type denormalization is in place ──
+ALTER TABLE proposals   DROP COLUMN IF EXISTS event_name;
+ALTER TABLE shifts      DROP COLUMN IF EXISTS event_name;
+ALTER TABLE drink_plans DROP COLUMN IF EXISTS event_name;
 
 -- ─── Proposal Price Adjustments ───────────────────────────────────
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS adjustments JSONB DEFAULT '[]';
