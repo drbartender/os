@@ -38,3 +38,8 @@ export const ADDON_ICONS = {
   'non-alcoholic-beer': '\ud83c\udf7a',
   'zero-proof-spirits': '\ud83e\udeb6',
 };
+
+// Add-ons to hide when a specific package is selected (redundant offerings)
+export const PACKAGE_EXCLUDED_ADDONS = {
+  'the-clear-reaction': ['mocktail-bar', 'pre-batched-mocktail'],
+};

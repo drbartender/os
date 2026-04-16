@@ -155,13 +155,16 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
       };
     }
     const { quantity, total } = calculateAddonCost(addon, guestCount, durationHours, totalStaff, addon.quantity);
+    const displayName = (addon.slug === 'champagne-toast' && addon.variant === 'non-alcoholic-bubbles')
+      ? 'Non-Alcoholic Bubbles Toast' : addon.name;
     return {
       id: addon.id,
       slug: addon.slug,
-      name: addon.name,
+      name: displayName,
       billing_type: addon.billing_type,
       rate: Number(addon.rate),
       extra_hour_rate: addon.extra_hour_rate ? Number(addon.extra_hour_rate) : null,
+      variant: addon.variant || null,
       quantity,
       line_total: Math.round(total * 100) / 100
     };

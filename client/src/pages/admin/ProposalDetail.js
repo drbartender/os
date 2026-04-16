@@ -10,6 +10,7 @@ import SyrupPicker from '../../components/SyrupPicker';
 import ConfirmModal from '../../components/ConfirmModal';
 import { SYRUPS } from '../../data/syrups';
 import InvoiceDropdown from '../../components/InvoiceDropdown';
+import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
@@ -280,6 +281,10 @@ export default function ProposalDetail() {
     // Pre-populate edit form from current proposal
     if (proposal && !editForm) {
       const currentAddonIds = (proposal.addons || []).map(a => a.addon_id);
+      const currentAddonVariants = {};
+      (proposal.addons || []).forEach(a => {
+        if (a.variant) currentAddonVariants[String(a.addon_id)] = a.variant;
+      });
       const snapshot = proposal.pricing_snapshot || {};
       const initial = {
         // Client fields
@@ -297,6 +302,7 @@ export default function ProposalDetail() {
         package_id: proposal.package_id || '',
         num_bars: proposal.num_bars || 0,
         addon_ids: currentAddonIds,
+        addon_variants: currentAddonVariants,
         syrup_selections: snapshot.syrups?.selections || [],
         adjustments: proposal.adjustments || [],
         total_price_override: proposal.total_price_override ?? null,
@@ -316,21 +322,28 @@ export default function ProposalDetail() {
         duration_hours: Number(editForm.event_duration_hours) || 4,
         num_bars: Number(editForm.num_bars) || 0,
         addon_ids: (editForm.addon_ids || []).map(Number),
+        addon_variants: editForm.addon_variants || {},
         syrup_selections: editForm.syrup_selections || [],
         adjustments: editForm.adjustments || [],
         total_price_override: editForm.total_price_override,
       }).then(res => { setEditPreview(res.data); setEditError(''); }).catch(() => { setEditPreview(null); setEditError('Pricing preview unavailable.'); });
     }, 400);
     return () => clearTimeout(timer);
-  }, [editing, editForm?.package_id, editForm?.guest_count, editForm?.event_duration_hours, editForm?.num_bars, editForm?.addon_ids, editForm?.syrup_selections, editForm?.adjustments, editForm?.total_price_override]); // eslint-disable-line
+  }, [editing, editForm?.package_id, editForm?.guest_count, editForm?.event_duration_hours, editForm?.num_bars, editForm?.addon_ids, editForm?.addon_variants, editForm?.syrup_selections, editForm?.adjustments, editForm?.total_price_override]); // eslint-disable-line
 
   const updateEdit = (field, value) => setEditForm(f => ({ ...f, [field]: value }));
 
   const toggleEditAddon = (id) => {
-    setEditForm(f => ({
-      ...f,
-      addon_ids: f.addon_ids.includes(id) ? f.addon_ids.filter(a => a !== id) : [...f.addon_ids, id]
-    }));
+    setEditForm(f => {
+      const removing = f.addon_ids.includes(id);
+      const newVariants = { ...f.addon_variants };
+      if (removing) delete newVariants[String(id)];
+      return {
+        ...f,
+        addon_ids: removing ? f.addon_ids.filter(a => a !== id) : [...f.addon_ids, id],
+        addon_variants: newVariants
+      };
+    });
   };
 
   const isEditDirty = useCallback(() => {
@@ -427,6 +440,7 @@ export default function ProposalDetail() {
         package_id: Number(editForm.package_id),
         num_bars: Number(editForm.num_bars) || 0,
         addon_ids: (editForm.addon_ids || []).map(Number),
+        addon_variants: editForm.addon_variants || {},
         syrup_selections: editForm.syrup_selections || [],
         adjustments: editForm.adjustments || [],
         total_price_override: editForm.total_price_override,
@@ -610,6 +624,8 @@ export default function ProposalDetail() {
   const editFilteredAddons = addons.filter(a => {
     if (a.applies_to !== 'all' && (!editSelectedPkg || a.applies_to !== editSelectedPkg.category)) return false;
     if (isHostedPkg && /bartender/i.test((a.name || '') + (a.slug || ''))) return false;
+    const excluded = editSelectedPkg && PACKAGE_EXCLUDED_ADDONS[editSelectedPkg.slug];
+    if (excluded && excluded.includes(a.slug)) return false;
     return true;
   });
 
@@ -1498,7 +1514,7 @@ export default function ProposalDetail() {
                     background: Number(editForm.package_id) === pkg.id ? 'var(--cream-light, #faf5ef)' : 'transparent'
                   }}>
                     <input type="radio" name="edit-package" value={pkg.id} checked={Number(editForm.package_id) === pkg.id}
-                      onChange={e => { updateEdit('package_id', e.target.value); updateEdit('addon_ids', []); }}
+                      onChange={e => { updateEdit('package_id', e.target.value); updateEdit('addon_ids', []); updateEdit('addon_variants', {}); }}
                       style={{ marginTop: '0.2rem' }}
                     />
                     <div style={{ flex: 1 }}>
@@ -1530,29 +1546,50 @@ export default function ProposalDetail() {
                   <div style={{ display: 'grid', gap: '0.5rem', marginBottom: '1rem' }}>
                     {editFilteredAddons.map(addon => {
                       const isBanquetServer = /banquet/i.test(addon.name || '');
+                      const isChecked = editForm.addon_ids.includes(addon.id);
                       return (
-                        <label key={addon.id} style={{
-                          display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.5rem 0.75rem',
-                          borderRadius: '6px', cursor: 'pointer',
-                          border: editForm.addon_ids.includes(addon.id) ? '1px solid var(--deep-brown)' : '1px solid transparent',
-                          background: editForm.addon_ids.includes(addon.id) ? 'var(--cream-light, #faf5ef)' : 'transparent'
-                        }}>
-                          <input type="checkbox" checked={editForm.addon_ids.includes(addon.id)} onChange={() => toggleEditAddon(addon.id)}
-                            style={{ marginTop: '0.2rem' }}
-                          />
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: 500, color: 'var(--deep-brown)' }}>
-                              {addon.name}
-                              {isBanquetServer && <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>(4hr minimum)</span>}
+                        <React.Fragment key={addon.id}>
+                          <label style={{
+                            display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.5rem 0.75rem',
+                            borderRadius: '6px', cursor: 'pointer',
+                            border: isChecked ? '1px solid var(--deep-brown)' : '1px solid transparent',
+                            background: isChecked ? 'var(--cream-light, #faf5ef)' : 'transparent'
+                          }}>
+                            <input type="checkbox" checked={isChecked} onChange={() => toggleEditAddon(addon.id)}
+                              style={{ marginTop: '0.2rem' }}
+                            />
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 500, color: 'var(--deep-brown)' }}>
+                                {addon.name}
+                                {isBanquetServer && <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>(4hr minimum)</span>}
+                              </div>
+                              <div className="text-muted text-small">
+                                {addon.billing_type === 'per_guest' && `$${Number(addon.rate)}/guest`}
+                                {addon.billing_type === 'per_guest_timed' && `$${Number(addon.rate)}/guest (4hr) + $${Number(addon.extra_hour_rate)}/guest/hr after`}
+                                {addon.billing_type === 'per_hour' && `$${Number(addon.rate)}/hr${isBanquetServer ? ' · 4hr min' : ''}`}
+                                {addon.billing_type === 'flat' && `$${Number(addon.rate)} flat`}
+                              </div>
                             </div>
-                            <div className="text-muted text-small">
-                              {addon.billing_type === 'per_guest' && `$${Number(addon.rate)}/guest`}
-                              {addon.billing_type === 'per_guest_timed' && `$${Number(addon.rate)}/guest (4hr) + $${Number(addon.extra_hour_rate)}/guest/hr after`}
-                              {addon.billing_type === 'per_hour' && `$${Number(addon.rate)}/hr${isBanquetServer ? ' · 4hr min' : ''}`}
-                              {addon.billing_type === 'flat' && `$${Number(addon.rate)} flat`}
-                            </div>
-                          </div>
-                        </label>
+                          </label>
+                          {addon.slug === 'champagne-toast' && isChecked && (
+                            <label style={{
+                              display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: '2.5rem',
+                              padding: '0.25rem 0.5rem', cursor: 'pointer'
+                            }}>
+                              <input type="checkbox"
+                                checked={(editForm.addon_variants || {})[String(addon.id)] === 'non-alcoholic-bubbles'}
+                                onChange={e => setEditForm(f => ({
+                                  ...f,
+                                  addon_variants: {
+                                    ...f.addon_variants,
+                                    [String(addon.id)]: e.target.checked ? 'non-alcoholic-bubbles' : undefined
+                                  }
+                                }))}
+                              />
+                              <span style={{ fontSize: '0.9rem', color: 'var(--warm-brown)' }}>Non-Alcoholic Bubbles</span>
+                            </label>
+                          )}
+                        </React.Fragment>
                       );
                     })}
                   </div>

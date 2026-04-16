@@ -61,7 +61,7 @@ router.get('/t/:token', publicLimiter, async (req, res) => {
         [proposal.id]
       ),
       pool.query(
-        'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
+        'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
         [proposal.id]
       ),
       pool.query(
@@ -467,9 +467,9 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
     // Insert proposal add-ons
     for (const addon of snapshot.addons) {
       await dbClient.query(`
-        INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
-      `, [proposal.id, addon.id, addon.name, addon.billing_type, addon.rate, addon.quantity, addon.line_total]);
+        INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      `, [proposal.id, addon.id, addon.name, addon.billing_type, addon.rate, addon.quantity, addon.line_total, addon.variant || null]);
     }
 
     // Log creation
@@ -558,7 +558,7 @@ router.get('/addons', auth, requireAdminOrManager, async (req, res) => {
 
 /** POST /api/proposals/calculate — preview pricing without saving */
 router.post('/calculate', auth, requireAdminOrManager, async (req, res) => {
-  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, syrup_selections, adjustments, total_price_override } = req.body;
+  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, addon_variants, syrup_selections, adjustments, total_price_override } = req.body;
   try {
     const pkgResult = await pool.query('SELECT * FROM service_packages WHERE id = $1', [package_id]);
     if (!pkgResult.rows[0]) return res.status(400).json({ error: 'Package not found.' });
@@ -569,7 +569,10 @@ router.post('/calculate', auth, requireAdminOrManager, async (req, res) => {
         'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
         [addon_ids]
       );
-      addons = addonResult.rows;
+      addons = addonResult.rows.map(a => ({
+        ...a,
+        variant: addon_variants?.[String(a.id)] || null,
+      }));
     }
 
     const snapshot = calculateProposal({
@@ -695,7 +698,7 @@ router.post('/', auth, requireAdminOrManager, async (req, res) => {
     client_id, client_name, client_email, client_phone, client_source,
     event_name, event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
-    syrup_selections, event_type, event_type_category, event_type_custom
+    addon_variants, syrup_selections, event_type, event_type_category, event_type_custom
   } = req.body;
 
   if (!package_id) return res.status(400).json({ error: 'Package is required.' });
@@ -728,7 +731,10 @@ router.post('/', auth, requireAdminOrManager, async (req, res) => {
         'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
         [addon_ids]
       );
-      addons = addonResult.rows;
+      addons = addonResult.rows.map(a => ({
+        ...a,
+        variant: addon_variants?.[String(a.id)] || null,
+      }));
     }
 
     // Calculate pricing
@@ -764,9 +770,9 @@ router.post('/', auth, requireAdminOrManager, async (req, res) => {
     // Insert proposal add-ons
     for (const addon of snapshot.addons) {
       await dbClient.query(`
-        INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
-      `, [proposal.id, addon.id, addon.name, addon.billing_type, addon.rate, addon.quantity, addon.line_total]);
+        INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      `, [proposal.id, addon.id, addon.name, addon.billing_type, addon.rate, addon.quantity, addon.line_total, addon.variant || null]);
     }
 
     // Log creation
@@ -825,7 +831,7 @@ router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
   const {
     event_name, event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
-    syrup_selections, event_type, event_type_category, event_type_custom,
+    addon_variants, syrup_selections, event_type, event_type_category, event_type_custom,
     adjustments, total_price_override
   } = req.body;
 
@@ -853,7 +859,10 @@ router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
       const addonResult = await dbClient.query(
         'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true', [ids]
       );
-      addons = addonResult.rows;
+      addons = addonResult.rows.map(a => ({
+        ...a,
+        variant: addon_variants?.[String(a.id)] || null,
+      }));
     }
 
     // Use provided syrup selections, or fall back to existing snapshot syrups
@@ -895,9 +904,9 @@ router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
     await dbClient.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [req.params.id]);
     for (const addon of snapshot.addons) {
       await dbClient.query(`
-        INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
-      `, [req.params.id, addon.id, addon.name, addon.billing_type, addon.rate, addon.quantity, addon.line_total]);
+        INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      `, [req.params.id, addon.id, addon.name, addon.billing_type, addon.rate, addon.quantity, addon.line_total, addon.variant || null]);
     }
 
     await dbClient.query(

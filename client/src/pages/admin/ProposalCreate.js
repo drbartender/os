@@ -6,6 +6,7 @@ import PricingBreakdown from '../../components/PricingBreakdown';
 import LocationInput from '../../components/LocationInput';
 import useFormValidation from '../../hooks/useFormValidation';
 import EVENT_TYPES from '../../data/eventTypes';
+import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 
 // Generate 30-minute time slots from 6:00 AM to 11:30 PM
 const TIME_OPTIONS = [];
@@ -32,7 +33,7 @@ export default function ProposalCreate() {
     event_name: '', event_type: '', event_type_category: '', event_type_custom: '',
     event_date: '', event_start_time: '17:00', event_duration_hours: 4,
     event_location: '', guest_count: 50, package_id: '', num_bars: 0,
-    num_bartenders: null, addon_ids: []
+    num_bartenders: null, addon_ids: [], addon_variants: {}
   });
 
   useEffect(() => {
@@ -57,21 +58,28 @@ export default function ProposalCreate() {
         duration_hours: Number(form.event_duration_hours) || 4,
         num_bars: Number(form.num_bars) || 0,
         num_bartenders: form.num_bartenders != null ? Number(form.num_bartenders) : undefined,
-        addon_ids: form.addon_ids.map(Number)
+        addon_ids: form.addon_ids.map(Number),
+        addon_variants: form.addon_variants
       });
       setPreview(res.data);
     } catch { setPreview(null); }
-  }, [form.package_id, form.guest_count, form.event_duration_hours, form.num_bars, form.num_bartenders, form.addon_ids]);
+  }, [form.package_id, form.guest_count, form.event_duration_hours, form.num_bars, form.num_bartenders, form.addon_ids, form.addon_variants]);
 
   useEffect(() => { fetchPreview(); }, [fetchPreview]);
 
   const update = (field, value) => { setForm(f => ({ ...f, [field]: value })); clearField(field); };
 
   const toggleAddon = (id) => {
-    setForm(f => ({
-      ...f,
-      addon_ids: f.addon_ids.includes(id) ? f.addon_ids.filter(a => a !== id) : [...f.addon_ids, id]
-    }));
+    setForm(f => {
+      const removing = f.addon_ids.includes(id);
+      const newVariants = { ...f.addon_variants };
+      if (removing) delete newVariants[String(id)];
+      return {
+        ...f,
+        addon_ids: removing ? f.addon_ids.filter(a => a !== id) : [...f.addon_ids, id],
+        addon_variants: newVariants
+      };
+    });
   };
 
   // Event type autocomplete
@@ -124,6 +132,9 @@ export default function ProposalCreate() {
     if (a.applies_to !== 'all' && (!selectedPkg || a.applies_to !== selectedPkg.category)) return false;
     // Additional bartenders only make sense for BYOB — hosts include bartenders
     if (isHostedPackage && /bartender/i.test((a.name || '') + (a.slug || ''))) return false;
+    // Hide redundant add-ons for specific packages (e.g., mocktail add-ons for Clear Reaction)
+    const excluded = selectedPkg && PACKAGE_EXCLUDED_ADDONS[selectedPkg.slug];
+    if (excluded && excluded.includes(a.slug)) return false;
     return true;
   });
 
@@ -145,7 +156,8 @@ export default function ProposalCreate() {
         event_duration_hours: Number(form.event_duration_hours),
         num_bars: Number(form.num_bars) || 0,
         num_bartenders: form.num_bartenders != null ? Number(form.num_bartenders) : undefined,
-        addon_ids: form.addon_ids.map(Number)
+        addon_ids: form.addon_ids.map(Number),
+        addon_variants: form.addon_variants
       };
       const res = await api.post('/proposals', payload);
       navigate(`/admin/proposals/${res.data.id}`);
@@ -301,7 +313,7 @@ export default function ProposalCreate() {
                     background: Number(form.package_id) === pkg.id ? 'var(--cream-light, #faf5ef)' : 'transparent'
                   }}>
                     <input type="radio" name="package" value={pkg.id} checked={Number(form.package_id) === pkg.id}
-                      onChange={e => { update('package_id', e.target.value); update('addon_ids', []); }}
+                      onChange={e => { update('package_id', e.target.value); update('addon_ids', []); update('addon_variants', {}); }}
                       style={{ marginTop: '0.2rem' }}
                     />
                     <div style={{ flex: 1 }}>
@@ -335,29 +347,50 @@ export default function ProposalCreate() {
                 <div style={{ display: 'grid', gap: '0.5rem' }}>
                   {filteredAddons.map(addon => {
                     const isBanquetServer = /banquet/i.test(addon.name || '');
+                    const isChecked = form.addon_ids.includes(addon.id);
                     return (
-                      <label key={addon.id} style={{
-                        display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.5rem 0.75rem',
-                        borderRadius: '6px', cursor: 'pointer',
-                        border: form.addon_ids.includes(addon.id) ? '1px solid var(--deep-brown)' : '1px solid transparent',
-                        background: form.addon_ids.includes(addon.id) ? 'var(--cream-light, #faf5ef)' : 'transparent'
-                      }}>
-                        <input type="checkbox" checked={form.addon_ids.includes(addon.id)} onChange={() => toggleAddon(addon.id)}
-                          style={{ marginTop: '0.2rem' }}
-                        />
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: 500, color: 'var(--deep-brown)' }}>
-                            {addon.name}
-                            {isBanquetServer && <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>(4hr minimum)</span>}
+                      <React.Fragment key={addon.id}>
+                        <label style={{
+                          display: 'flex', alignItems: 'flex-start', gap: '0.75rem', padding: '0.5rem 0.75rem',
+                          borderRadius: '6px', cursor: 'pointer',
+                          border: isChecked ? '1px solid var(--deep-brown)' : '1px solid transparent',
+                          background: isChecked ? 'var(--cream-light, #faf5ef)' : 'transparent'
+                        }}>
+                          <input type="checkbox" checked={isChecked} onChange={() => toggleAddon(addon.id)}
+                            style={{ marginTop: '0.2rem' }}
+                          />
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 500, color: 'var(--deep-brown)' }}>
+                              {addon.name}
+                              {isBanquetServer && <span className="text-muted text-small" style={{ marginLeft: '0.5rem' }}>(4hr minimum)</span>}
+                            </div>
+                            <div className="text-muted text-small">
+                              {addon.billing_type === 'per_guest' && `$${Number(addon.rate)}/guest`}
+                              {addon.billing_type === 'per_guest_timed' && `$${Number(addon.rate)}/guest (4hr) + $${Number(addon.extra_hour_rate)}/guest/hr after`}
+                              {addon.billing_type === 'per_hour' && `$${Number(addon.rate)}/hr${isBanquetServer ? ' · 4hr min' : ''}`}
+                              {addon.billing_type === 'flat' && `$${Number(addon.rate)} flat`}
+                            </div>
                           </div>
-                          <div className="text-muted text-small">
-                            {addon.billing_type === 'per_guest' && `$${Number(addon.rate)}/guest`}
-                            {addon.billing_type === 'per_guest_timed' && `$${Number(addon.rate)}/guest (4hr) + $${Number(addon.extra_hour_rate)}/guest/hr after`}
-                            {addon.billing_type === 'per_hour' && `$${Number(addon.rate)}/hr${isBanquetServer ? ' · 4hr min' : ''}`}
-                            {addon.billing_type === 'flat' && `$${Number(addon.rate)} flat`}
-                          </div>
-                        </div>
-                      </label>
+                        </label>
+                        {addon.slug === 'champagne-toast' && isChecked && (
+                          <label style={{
+                            display: 'flex', alignItems: 'center', gap: '0.5rem', marginLeft: '2.5rem',
+                            padding: '0.25rem 0.5rem', cursor: 'pointer'
+                          }}>
+                            <input type="checkbox"
+                              checked={form.addon_variants[String(addon.id)] === 'non-alcoholic-bubbles'}
+                              onChange={e => setForm(f => ({
+                                ...f,
+                                addon_variants: {
+                                  ...f.addon_variants,
+                                  [String(addon.id)]: e.target.checked ? 'non-alcoholic-bubbles' : undefined
+                                }
+                              }))}
+                            />
+                            <span style={{ fontSize: '0.9rem', color: 'var(--warm-brown)' }}>Non-Alcoholic Bubbles</span>
+                          </label>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 </div>

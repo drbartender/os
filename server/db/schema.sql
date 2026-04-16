@@ -1206,6 +1206,8 @@ DO $$ BEGIN
   ALTER TABLE proposal_addons DROP CONSTRAINT IF EXISTS proposal_addons_addon_id_fkey;
   ALTER TABLE proposal_addons ADD CONSTRAINT proposal_addons_addon_id_fkey FOREIGN KEY (addon_id) REFERENCES service_addons(id) ON DELETE SET NULL;
 
+ALTER TABLE proposal_addons ADD COLUMN IF NOT EXISTS variant VARCHAR(50) DEFAULT NULL;
+
   -- drink_plans.proposal_id → CASCADE (deleting proposal cleans up drink plans)
   ALTER TABLE drink_plans DROP CONSTRAINT IF EXISTS drink_plans_proposal_id_fkey;
   ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_proposal_id_fkey FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE;
