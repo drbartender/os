@@ -6264,3 +6264,11 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   margin: 0.75rem 0;
 }
 .form-banner-error { background: #FFF0F0; border: 1px solid #E8AAAA; color: var(--error); }
+
+/* ─── Inline field error ────────────────────────────────────── */
+.field-error {
+  color: var(--error);
+  font-size: 0.8rem;
+  margin: 0.25rem 0 0.5rem;
+  line-height: 1.3;
+}
