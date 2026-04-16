@@ -90,6 +90,7 @@ export default function QuoteWizard() {
     client_name: '',
     client_email: '',
     client_phone: '',
+    client_provides_glassware: false,
   };
 
   const [form, setForm] = useState(defaultForm);
@@ -286,6 +287,19 @@ export default function QuoteWizard() {
     }
   }, [form.alcohol_provider, form.package_id, packages]);
 
+  // Auto-deselect Flavor Blaster when glassware requirement is no longer met
+  useEffect(() => {
+    const flavorBlaster = addons.find(a => a.slug === 'flavor-blaster-rental');
+    const realGlassware = addons.find(a => a.slug === 'real-glassware');
+    if (!flavorBlaster) return;
+    const hasFB = form.addon_ids.includes(flavorBlaster.id);
+    if (!hasFB) return;
+    const hasGlassware = (realGlassware && form.addon_ids.includes(realGlassware.id)) || form.client_provides_glassware;
+    if (!hasGlassware) {
+      setForm(f => ({ ...f, addon_ids: f.addon_ids.filter(id => id !== flavorBlaster.id) }));
+    }
+  }, [form.addon_ids, form.client_provides_glassware, addons]);
+
   const numBars = form.needs_bar ? 1 : 0;
 
   const fetchPreview = useCallback(async () => {
@@ -404,6 +418,11 @@ export default function QuoteWizard() {
   const isUnavailableByBundle = (slug) =>
     !!selectedBundle && (BUNDLE_UNAVAILABLE[selectedBundle] || []).includes(slug);
   const guestCount = Number(form.guest_count) || 50;
+
+  // Flavor Blaster glassware guardrail
+  const realGlasswareAddon = addons.find(a => a.slug === 'real-glassware');
+  const hasRealGlassware = realGlasswareAddon && form.addon_ids.includes(realGlasswareAddon.id);
+  const glasswareRequirementMet = hasRealGlassware || form.client_provides_glassware;
 
   const filteredAddons = addons.filter(a => {
     // Basic applies_to check
@@ -642,6 +661,7 @@ export default function QuoteWizard() {
           addon_ids: stripIncludedAddons(form.addon_ids).map(Number),
           addon_quantities: form.addon_quantities,
           syrup_selections: form.syrup_selections,
+          client_provides_glassware: form.client_provides_glassware || false,
         }),
       });
       const data = await res.json();
@@ -783,9 +803,9 @@ export default function QuoteWizard() {
                   <select id="wz-alcohol_provider" className={`form-select${inputClass('alcohol_provider')}`} value={form.alcohol_provider}
                     onChange={e => handleAlcoholChange(e.target.value)}>
                     <option value="">-- Select --</option>
+                    <option value="mocktail">No alcohol (mocktails only)</option>
                     <option value="byob">I'll provide the alcohol</option>
                     <option value="hosted">Dr. Bartender provides the alcohol</option>
-                    <option value="mocktail">No alcohol (mocktails only)</option>
                   </select>
                 </div>
 
@@ -981,6 +1001,37 @@ export default function QuoteWizard() {
                             }
                           })();
 
+                          // Flavor Blaster: locked tile when glassware requirement not met
+                          if (addon.slug === 'flavor-blaster-rental' && !glasswareRequirementMet) {
+                            return (
+                              <div key={addon.id} className="wz-addon-option locked">
+                                <div className="wz-addon-row">
+                                  <span className="wz-addon-icon">{ADDON_ICONS[addon.slug] || group.icon}</span>
+                                  <div className="wz-addon-content">
+                                    <div className="wz-addon-name">{addon.name}</div>
+                                    <div className="wz-addon-locked-message">
+                                      Aromatic finishing bubbles require proper glassware to form and present correctly. This enhancement is available with our real glassware upgrade.
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="wz-addon-unlock-actions">
+                                  {guestCount <= 100 && realGlasswareAddon && (
+                                    <button type="button" className="btn btn-primary btn-sm" onClick={() => toggleAddon(realGlasswareAddon.id)}>
+                                      Add Real Glassware
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className={guestCount <= 100 && realGlasswareAddon ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'}
+                                    onClick={() => setForm(f => ({ ...f, client_provides_glassware: true }))}
+                                  >
+                                    I'll provide my own
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }
+
                           return (
                             <div
                               key={addon.id}
@@ -1099,7 +1150,7 @@ export default function QuoteWizard() {
                     <p>{selectedPkg.name}</p>
                   </div>
                 )}
-                {stripIncludedAddons(form.addon_ids).length > 0 && (
+                {(stripIncludedAddons(form.addon_ids).length > 0 || form.client_provides_glassware) && (
                   <div className="wz-review-section">
                     <h4>Add-ons</h4>
                     <ul className="wz-review-addons">
@@ -1107,6 +1158,7 @@ export default function QuoteWizard() {
                         const addon = addons.find(a => a.id === id);
                         return addon ? <li key={id}>{addon.name}</li> : null;
                       })}
+                      {form.client_provides_glassware && <li>Client providing own glassware</li>}
                     </ul>
                   </div>
                 )}
