@@ -3,11 +3,15 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import BrandLogo from './BrandLogo';
 import { useClientAuth } from '../context/ClientAuthContext';
 
-function isPublicSite() {
+export function isPublicSite() {
   const host = window.location.hostname;
   if (host.startsWith('admin.')) return false;
   if (host === 'localhost' || host === '127.0.0.1') return false;
   return true;
+}
+
+export function clientLoginPath() {
+  return isPublicSite() ? '/login' : '/client-login';
 }
 
 export default function PublicLayout({ children }) {
@@ -17,6 +21,7 @@ export default function PublicLayout({ children }) {
   const clientAuth = useClientAuth();
   const isAuthed = clientAuth?.isClientAuthenticated;
   const homePath = isPublicSite() ? '/' : '/website';
+  const loginPath = clientLoginPath();
 
   // Lock body scroll when mobile nav is open
   useEffect(() => {
@@ -70,7 +75,7 @@ export default function PublicLayout({ children }) {
             <Link to="/faq" onClick={() => setMobileNav(false)}>FAQ</Link>
             <Link to="/labnotes" onClick={() => setMobileNav(false)}>Blog</Link>
             <Link
-              to={isAuthed ? '/my-proposals' : '/login'}
+              to={isAuthed ? '/my-proposals' : loginPath}
               onClick={() => setMobileNav(false)}
             >
               {isAuthed ? 'My Proposals' : 'Sign In'}

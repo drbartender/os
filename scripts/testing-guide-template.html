@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dr. Bartender — Testing Guide</title>
+<style>
+  :root {
+    --fg: #1f2328;
+    --fg-muted: #656d76;
+    --bg: #ffffff;
+    --bg-alt: #f6f8fa;
+    --border: #d0d7de;
+    --accent: #0969da;
+    --accent-fg: #ffffff;
+    --success: #1a7f37;
+    --success-bg: #dafbe1;
+    --warn-bg: #fff8c5;
+    --bug-bg: #fff1f0;
+    --bug-border: #ffcdd2;
+    --radius: 6px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--fg);
+    background: var(--bg);
+    padding-bottom: 4rem;
+  }
+
+  /* ---- Sticky header ---- */
+  .app-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .app-header h1 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .progress-wrap {
+    flex: 1;
+    min-width: 180px;
+    height: 14px;
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #2ea44f, #1a7f37);
+    transition: width 0.25s ease;
+  }
+  .progress-text {
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--fg-muted);
+    white-space: nowrap;
+  }
+  .actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .actions button {
+    font: inherit;
+    padding: 0.3rem 0.75rem;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    border-radius: var(--radius);
+    cursor: pointer;
+    color: var(--fg);
+  }
+  .actions button:hover { background: var(--bg-alt); }
+  .actions .md-link {
+    font: inherit;
+    font-size: 0.9rem;
+    padding: 0.3rem 0.75rem;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    border-radius: var(--radius);
+    color: var(--fg-muted);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+  }
+  .actions .md-link:hover {
+    background: var(--bg-alt);
+    color: var(--fg);
+    text-decoration: none;
+  }
+  .actions button.primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+  .actions button.primary:hover { filter: brightness(1.05); }
+
+  /* ---- Main content ---- */
+  main {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 1.5rem 1rem;
+  }
+
+  main h1 { font-size: 2rem; margin: 0.5em 0 0.75em; line-height: 1.25; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
+  main h2 { font-size: 1.5rem; margin: 2em 0 0.5em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  main h3 { font-size: 1.2rem; margin: 1.5em 0 0.5em; }
+  main h4 { font-size: 1rem; margin: 1.2em 0 0.4em; color: var(--fg-muted); }
+  main hr { border: none; border-top: 1px solid var(--border); margin: 2em 0; }
+  main p { margin: 0.75em 0; }
+
+  main a { color: var(--accent); text-decoration: none; }
+  main a:hover { text-decoration: underline; }
+
+  main code {
+    background: var(--bg-alt);
+    padding: 0.15em 0.35em;
+    border-radius: 4px;
+    font-size: 0.9em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  main pre {
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    overflow-x: auto;
+    font-size: 0.9em;
+  }
+  main pre code { background: transparent; padding: 0; }
+
+  main blockquote {
+    border-left: 3px solid var(--border);
+    margin: 1em 0;
+    padding: 0.1em 1em;
+    color: var(--fg-muted);
+  }
+
+  main table { border-collapse: collapse; margin: 1em 0; }
+  main th, main td { border: 1px solid var(--border); padding: 0.4em 0.75em; text-align: left; }
+  main th { background: var(--bg-alt); }
+
+  main ul, main ol { padding-left: 1.5em; }
+
+  /* Task list items (the checkboxes) */
+  main li.task-list-item {
+    list-style: none;
+    margin-left: -1.5em;
+    padding-left: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5em;
+  }
+  main li.task-list-item > input[type="checkbox"] {
+    margin-top: 0.3em;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    cursor: pointer;
+    accent-color: var(--success);
+  }
+  main li.task-list-item > .task-body {
+    flex: 1;
+    min-width: 0;
+  }
+  main li.task-list-item.done > .task-body {
+    text-decoration: line-through;
+    color: var(--fg-muted);
+  }
+  main li.task-list-item .bug-btn {
+    font: inherit;
+    font-size: 0.8rem;
+    margin-left: 0.5em;
+    padding: 0.1em 0.5em;
+    border: 1px solid var(--bug-border);
+    background: var(--bug-bg);
+    border-radius: var(--radius);
+    cursor: pointer;
+    color: #86181d;
+    vertical-align: middle;
+    white-space: nowrap;
+    opacity: 0.5;
+    transition: opacity 0.15s;
+  }
+  main li.task-list-item:hover .bug-btn,
+  main li.task-list-item .bug-btn:focus { opacity: 1; }
+
+  /* Per-section progress badge */
+  .section-progress {
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: var(--fg-muted);
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.15em 0.65em;
+    white-space: nowrap;
+  }
+  .section-progress.complete {
+    color: var(--success);
+    background: var(--success-bg);
+    border-color: var(--success);
+  }
+
+  /* ---- Bug report dialog ---- */
+  dialog.bug-dialog {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0;
+    max-width: 560px;
+    width: calc(100% - 2rem);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  }
+  dialog.bug-dialog::backdrop {
+    background: rgba(0,0,0,0.35);
+  }
+  dialog.bug-dialog form {
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  dialog.bug-dialog h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1.1rem;
+    border: none;
+    padding: 0;
+    display: block;
+  }
+  dialog.bug-dialog label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+  dialog.bug-dialog input[type="text"],
+  dialog.bug-dialog textarea {
+    font: inherit;
+    padding: 0.45em 0.6em;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--fg);
+    width: 100%;
+  }
+  dialog.bug-dialog textarea {
+    min-height: 70px;
+    resize: vertical;
+  }
+  dialog.bug-dialog .dialog-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    margin-top: 0.5rem;
+  }
+  dialog.bug-dialog button {
+    font: inherit;
+    padding: 0.4rem 1rem;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    border-radius: var(--radius);
+    cursor: pointer;
+    color: var(--fg);
+  }
+  dialog.bug-dialog button.primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+
+  /* ---- Bug list ---- */
+  #bug-list {
+    max-width: 820px;
+    margin: 2rem auto 0;
+    padding: 0 1rem;
+  }
+  #bug-list h2 {
+    font-size: 1.3rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.3em;
+    margin-bottom: 1em;
+  }
+  #bug-list .bug-empty {
+    color: var(--fg-muted);
+    font-style: italic;
+  }
+  #bug-list .bug-card {
+    border: 1px solid var(--bug-border);
+    background: var(--bug-bg);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+  }
+  #bug-list .bug-card header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 0.25rem;
+  }
+  #bug-list .bug-card .bug-id {
+    font-weight: 600;
+  }
+  #bug-list .bug-card .bug-delete {
+    font: inherit;
+    font-size: 0.85rem;
+    border: none;
+    background: none;
+    color: #86181d;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 0;
+  }
+  #bug-list .bug-card dl {
+    margin: 0.25rem 0 0;
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.15rem 0.75rem;
+    font-size: 0.9rem;
+  }
+  #bug-list .bug-card dt {
+    font-weight: 600;
+    color: var(--fg-muted);
+  }
+  #bug-list .bug-card dd {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* ---- Mobile ---- */
+  @media (max-width: 640px) {
+    .app-header { padding: 0.5rem; gap: 0.5rem; }
+    .app-header h1 { font-size: 0.9rem; width: 100%; }
+    .progress-wrap { order: 2; }
+    .progress-text { order: 3; }
+    .actions { order: 4; width: 100%; justify-content: flex-end; }
+    main { padding: 1rem 0.75rem; }
+    main h1 { font-size: 1.5rem; }
+    main h2 { font-size: 1.2rem; }
+  }
+
+  /* ---- Print ---- */
+  @media print {
+    .app-header, .actions, .bug-btn, .section-progress { display: none !important; }
+    main { max-width: 100%; padding: 0; }
+    body { padding: 0; }
+  }
+</style>
+</head>
+<body>
+<header class="app-header">
+  <h1>Dr. Bartender — Testing Guide</h1>
+  <div class="progress-wrap" aria-label="Overall progress"><div class="progress-fill" id="progress-fill"></div></div>
+  <span class="progress-text" id="progress-text">0 / 0 (0%)</span>
+  <div class="actions">
+    <a class="md-link" href="/TESTING.md" download title="Download the plain Markdown version">Plain .md</a>
+    <button type="button" id="export-btn" title="Download progress and bugs as a .txt file">Export</button>
+    <button type="button" id="reset-btn" title="Clear all checkboxes and bug reports">Reset</button>
+  </div>
+</header>
+
+<main id="guide">
+<!-- CONTENT -->
+</main>
+
+<dialog class="bug-dialog" id="bug-dialog">
+  <form method="dialog" id="bug-form">
+    <h2>Report a bug</h2>
+    <label>Where
+      <input type="text" name="where" required>
+    </label>
+    <label>What I did
+      <textarea name="didWhat" required></textarea>
+    </label>
+    <label>What happened
+      <textarea name="happened" required></textarea>
+    </label>
+    <label>What I expected
+      <textarea name="expected"></textarea>
+    </label>
+    <label>Browser
+      <input type="text" name="browser">
+    </label>
+    <label>Screenshot URL or note (optional)
+      <input type="text" name="screenshot">
+    </label>
+    <div class="dialog-actions">
+      <button type="button" value="cancel" id="bug-cancel">Cancel</button>
+      <button type="submit" class="primary" id="bug-submit">Save bug</button>
+    </div>
+  </form>
+</dialog>
+
+<aside id="bug-list">
+  <h2>Reported bugs <span class="progress-text" id="bug-count"></span></h2>
+  <div id="bug-list-body"></div>
+</aside>
+
+<script>
+(function () {
+  'use strict';
+
+  const STORAGE_KEY = 'drb-qa-v1';
+
+  // ---------- State ----------
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return { checks: {}, bugs: [] };
+      const parsed = JSON.parse(raw);
+      return {
+        checks: parsed.checks || {},
+        bugs: Array.isArray(parsed.bugs) ? parsed.bugs : [],
+      };
+    } catch (e) {
+      return { checks: {}, bugs: [] };
+    }
+  }
+  function saveState(state) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {
+      console.warn('Could not save state:', e);
+    }
+  }
+  const state = loadState();
+
+  // ---------- Helpers ----------
+  function simpleHash(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) {
+      h = ((h << 5) + h) + s.charCodeAt(i);
+      h |= 0;
+    }
+    return (h >>> 0).toString(36);
+  }
+
+  function getOwnText(li) {
+    return Array.from(li.childNodes)
+      .filter(function (n) {
+        if (n.nodeType === Node.TEXT_NODE) return true;
+        if (n.nodeType === Node.ELEMENT_NODE) {
+          return !['UL', 'OL'].includes(n.tagName);
+        }
+        return false;
+      })
+      .map(function (n) { return n.textContent; })
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  // ---------- Indexing ----------
+  // Single DOM walk assigning each checkbox a stable id derived from breadcrumb + own text.
+  function indexCheckboxes() {
+    const entries = [];
+    const partMap = new Map(); // h2 text -> { total, done, node }
+    let h1 = '', h2 = '', h3 = '', h4 = '';
+    let currentH2Node = null;
+    const walker = document.createTreeWalker(
+      document.getElementById('guide'),
+      NodeFilter.SHOW_ELEMENT,
+      null,
+      false
+    );
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node.tagName === 'H1') { h1 = node.textContent.trim(); h2 = h3 = h4 = ''; currentH2Node = null; }
+      else if (node.tagName === 'H2') {
+        h2 = node.textContent.trim(); h3 = h4 = '';
+        currentH2Node = node;
+        if (!partMap.has(h2)) partMap.set(h2, { total: 0, done: 0, node: node });
+      }
+      else if (node.tagName === 'H3') { h3 = node.textContent.trim(); h4 = ''; }
+      else if (node.tagName === 'H4') { h4 = node.textContent.trim(); }
+      else if (node.tagName === 'INPUT' && node.type === 'checkbox') {
+        const li = node.closest('li');
+        if (!li) continue;
+        li.classList.add('task-list-item');
+        const ownText = getOwnText(li);
+        const breadcrumb = [h1, h2, h3, h4].filter(Boolean).join(' > ');
+        const id = 'c-' + simpleHash(breadcrumb + '|' + ownText) + '-' + entries.length.toString(36);
+        entries.push({
+          input: node,
+          li: li,
+          id: id,
+          text: ownText,
+          breadcrumb: breadcrumb,
+          partKey: h2 || '(unsectioned)',
+        });
+        if (h2 && partMap.has(h2)) partMap.get(h2).total++;
+      }
+    }
+    return { entries: entries, partMap: partMap };
+  }
+
+  // ---------- Wrap task body so we can strike-through reliably ----------
+  function wrapTaskBody(li) {
+    if (li.querySelector(':scope > .task-body')) return;
+    const fragment = document.createDocumentFragment();
+    const body = document.createElement('span');
+    body.className = 'task-body';
+    const toMove = [];
+    li.childNodes.forEach(function (n) {
+      if (n.nodeType === Node.ELEMENT_NODE && n.tagName === 'INPUT' && n.type === 'checkbox') return;
+      toMove.push(n);
+    });
+    toMove.forEach(function (n) { body.appendChild(n); });
+    li.appendChild(body);
+  }
+
+  // ---------- Progress rendering ----------
+  const progressFill = document.getElementById('progress-fill');
+  const progressText = document.getElementById('progress-text');
+
+  function updateProgress(index) {
+    let total = 0;
+    let done = 0;
+    for (const key of index.partMap.keys()) {
+      index.partMap.get(key).done = 0;
+    }
+    for (const entry of index.entries) {
+      total++;
+      if (entry.input.checked) {
+        done++;
+        if (index.partMap.has(entry.partKey)) index.partMap.get(entry.partKey).done++;
+      }
+      entry.li.classList.toggle('done', entry.input.checked);
+    }
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    progressFill.style.width = pct + '%';
+    progressText.textContent = done + ' / ' + total + ' (' + pct + '%)';
+
+    // Update per-section badges
+    for (const [key, info] of index.partMap.entries()) {
+      let badge = info.node.querySelector(':scope > .section-progress');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'section-progress';
+        info.node.appendChild(badge);
+      }
+      if (info.total === 0) {
+        badge.style.display = 'none';
+        continue;
+      }
+      badge.style.display = '';
+      badge.textContent = info.done + '/' + info.total;
+      badge.classList.toggle('complete', info.done === info.total);
+    }
+  }
+
+  // ---------- Bug list rendering ----------
+  const bugListBody = document.getElementById('bug-list-body');
+  const bugCountEl = document.getElementById('bug-count');
+
+  function renderBugs() {
+    bugCountEl.textContent = state.bugs.length ? '(' + state.bugs.length + ')' : '';
+    if (state.bugs.length === 0) {
+      bugListBody.innerHTML = '<p class="bug-empty">No bugs reported yet. Click the bug button next to any step to log one.</p>';
+      return;
+    }
+    bugListBody.innerHTML = '';
+    state.bugs.forEach(function (bug, i) {
+      const card = document.createElement('div');
+      card.className = 'bug-card';
+      const hdr = document.createElement('header');
+      const idSpan = document.createElement('span');
+      idSpan.className = 'bug-id';
+      idSpan.textContent = 'BUG #' + (i + 1);
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'bug-delete';
+      delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', function () {
+        if (confirm('Delete this bug report?')) {
+          state.bugs.splice(i, 1);
+          saveState(state);
+          renderBugs();
+        }
+      });
+      hdr.appendChild(idSpan);
+      hdr.appendChild(delBtn);
+      card.appendChild(hdr);
+
+      const dl = document.createElement('dl');
+      const rows = [
+        ['Where', bug.where],
+        ['What I did', bug.didWhat],
+        ['What happened', bug.happened],
+        ['What I expected', bug.expected],
+        ['Browser', bug.browser],
+        ['Screenshot', bug.screenshot],
+      ];
+      rows.forEach(function (r) {
+        if (!r[1]) return;
+        const dt = document.createElement('dt');
+        dt.textContent = r[0] + ':';
+        const dd = document.createElement('dd');
+        dd.textContent = r[1];
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+      });
+      card.appendChild(dl);
+      bugListBody.appendChild(card);
+    });
+  }
+
+  // ---------- Bug dialog ----------
+  const bugDialog = document.getElementById('bug-dialog');
+  const bugForm = document.getElementById('bug-form');
+  const bugCancel = document.getElementById('bug-cancel');
+
+  function openBugDialogFor(entry) {
+    bugForm.reset();
+    bugForm.elements.where.value = entry.breadcrumb || '';
+    bugForm.elements.didWhat.value = entry.text || '';
+    bugForm.elements.browser.value = navigator.userAgent;
+    if (typeof bugDialog.showModal === 'function') {
+      bugDialog.showModal();
+    } else {
+      bugDialog.setAttribute('open', '');
+    }
+    setTimeout(function () {
+      bugForm.elements.happened.focus();
+    }, 10);
+  }
+
+  bugCancel.addEventListener('click', function () {
+    if (typeof bugDialog.close === 'function') bugDialog.close(); else bugDialog.removeAttribute('open');
+  });
+
+  bugForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    const data = new FormData(bugForm);
+    const bug = {
+      where: (data.get('where') || '').trim(),
+      didWhat: (data.get('didWhat') || '').trim(),
+      happened: (data.get('happened') || '').trim(),
+      expected: (data.get('expected') || '').trim(),
+      browser: (data.get('browser') || '').trim(),
+      screenshot: (data.get('screenshot') || '').trim(),
+      reportedAt: new Date().toISOString(),
+    };
+    state.bugs.push(bug);
+    saveState(state);
+    renderBugs();
+    if (typeof bugDialog.close === 'function') bugDialog.close(); else bugDialog.removeAttribute('open');
+  });
+
+  // ---------- Export ----------
+  function formatExport(index) {
+    const lines = [];
+    const now = new Date();
+    const total = index.entries.length;
+    const done = index.entries.filter(function (e) { return e.input.checked; }).length;
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    lines.push('Dr. Bartender — Testing Progress Export');
+    lines.push('Generated: ' + now.toLocaleString());
+    lines.push('Progress: ' + done + ' / ' + total + ' (' + pct + '%)');
+    lines.push('');
+
+    lines.push('=== Per-Section Progress ===');
+    for (const [key, info] of index.partMap.entries()) {
+      if (info.total === 0) continue;
+      lines.push('  [' + info.done + '/' + info.total + '] ' + key);
+    }
+    lines.push('');
+
+    lines.push('=== Checklist ===');
+    let currentPart = '';
+    let currentSub = '';
+    for (const entry of index.entries) {
+      if (entry.partKey !== currentPart) {
+        currentPart = entry.partKey;
+        currentSub = '';
+        lines.push('');
+        lines.push('## ' + currentPart);
+      }
+      const sub = entry.breadcrumb.split(' > ').slice(2).join(' > ');
+      if (sub && sub !== currentSub) {
+        currentSub = sub;
+        lines.push('  ### ' + sub);
+      }
+      const box = entry.input.checked ? '[x]' : '[ ]';
+      lines.push('  ' + box + ' ' + entry.text);
+    }
+    lines.push('');
+
+    lines.push('=== Bug Reports (' + state.bugs.length + ') ===');
+    if (state.bugs.length === 0) {
+      lines.push('(none)');
+    } else {
+      state.bugs.forEach(function (bug, i) {
+        lines.push('');
+        lines.push('BUG #' + (i + 1));
+        lines.push('Reported:       ' + bug.reportedAt);
+        lines.push('Where:          ' + bug.where);
+        lines.push('What I did:     ' + bug.didWhat);
+        lines.push('What happened:  ' + bug.happened);
+        lines.push('What I expected:' + bug.expected);
+        lines.push('Browser:        ' + bug.browser);
+        lines.push('Screenshot:     ' + bug.screenshot);
+      });
+    }
+    return lines.join('\n');
+  }
+
+  function triggerDownload(text) {
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = 'drb-qa-' + dateStr + '.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 500);
+  }
+
+  // ---------- Initialization ----------
+  document.addEventListener('DOMContentLoaded', function () {
+    const index = indexCheckboxes();
+
+    // Enable, assign ids, wrap body, rehydrate, attach bug button + change listener
+    for (const entry of index.entries) {
+      entry.input.disabled = false;
+      entry.input.removeAttribute('disabled');
+      entry.input.id = entry.id;
+      if (state.checks[entry.id]) entry.input.checked = true;
+
+      wrapTaskBody(entry.li);
+
+      // Bug button — inside the task-body so it doesn't disrupt layout
+      const bugBtn = document.createElement('button');
+      bugBtn.type = 'button';
+      bugBtn.className = 'bug-btn';
+      bugBtn.textContent = 'Report bug';
+      bugBtn.setAttribute('aria-label', 'Report a bug for this step');
+      bugBtn.addEventListener('click', function () { openBugDialogFor(entry); });
+      entry.li.querySelector(':scope > .task-body').appendChild(bugBtn);
+
+      entry.input.addEventListener('change', function () {
+        state.checks[entry.id] = entry.input.checked;
+        saveState(state);
+        updateProgress(index);
+      });
+    }
+
+    updateProgress(index);
+    renderBugs();
+
+    // Export + reset
+    document.getElementById('export-btn').addEventListener('click', function () {
+      triggerDownload(formatExport(index));
+    });
+    document.getElementById('reset-btn').addEventListener('click', function () {
+      if (!confirm('Clear all checkboxes and bug reports? This cannot be undone.')) return;
+      localStorage.removeItem(STORAGE_KEY);
+      location.reload();
+    });
+  });
+})();
+</script>
+</body>
+</html>

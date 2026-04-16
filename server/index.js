@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const compression = require('compression');
 const cors = require('cors');
 const helmet = require('helmet');
 const fileUpload = require('express-fileupload');
@@ -37,6 +38,9 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
+
+// Gzip compression for all responses
+app.use(compression());
 
 // Middleware — allow requests from both public site and admin subdomain
 const allowedOrigins = [
@@ -105,6 +109,7 @@ app.use('/api/client-auth', require('./routes/clientAuth'));
 app.use('/api/client-portal', require('./routes/clientPortal'));
 app.use('/api/email-marketing', require('./routes/emailMarketing'));
 app.use('/api/email-marketing/webhook', require('./routes/emailMarketingWebhook'));
+app.use('/api/public/reviews', require('./routes/publicReviews'));
 app.use('/api/thumbtack', require('./routes/thumbtack'));
 
 // Health check — must be registered BEFORE the React catch-all below

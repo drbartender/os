@@ -199,8 +199,9 @@ router.get('/leads/:id', auth, requireAdminOrManager, async (req, res) => {
       [req.params.id]
     );
 
+    // Cap at 100 conversations to prevent unbounded load on lead profile
     const conversations = await pool.query(
-      'SELECT * FROM email_conversations WHERE lead_id = $1 ORDER BY created_at ASC',
+      'SELECT * FROM email_conversations WHERE lead_id = $1 ORDER BY created_at ASC LIMIT 100',
       [req.params.id]
     );
 
@@ -788,6 +789,9 @@ router.get('/analytics/overview', auth, requireAdminOrManager, async (req, res) 
 /** GET /conversations — list conversations grouped by lead */
 router.get('/conversations', auth, requireAdminOrManager, async (req, res) => {
   try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const offset = (page - 1) * limit;
     const result = await pool.query(`
       SELECT el.id AS lead_id, el.name, el.email,
         (SELECT COUNT(*) FROM email_conversations ec WHERE ec.lead_id = el.id AND ec.read_at IS NULL AND ec.direction = 'inbound') AS unread_count,
@@ -795,7 +799,8 @@ router.get('/conversations', auth, requireAdminOrManager, async (req, res) => {
       FROM email_leads el
       WHERE EXISTS (SELECT 1 FROM email_conversations ec WHERE ec.lead_id = el.id)
       ORDER BY last_message_at DESC
-    `);
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
     res.json(result.rows);
   } catch (err) {
     console.error('Error fetching conversations:', err);
@@ -806,9 +811,12 @@ router.get('/conversations', auth, requireAdminOrManager, async (req, res) => {
 /** GET /conversations/:leadId — conversation thread */
 router.get('/conversations/:leadId', auth, requireAdminOrManager, async (req, res) => {
   try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 100));
+    const offset = (page - 1) * limit;
     const result = await pool.query(
-      'SELECT * FROM email_conversations WHERE lead_id = $1 ORDER BY created_at ASC',
-      [req.params.leadId]
+      'SELECT * FROM email_conversations WHERE lead_id = $1 ORDER BY created_at ASC LIMIT $2 OFFSET $3',
+      [req.params.leadId, limit, offset]
     );
     res.json(result.rows);
   } catch (err) {

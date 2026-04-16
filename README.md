@@ -67,10 +67,14 @@ Copy `.env.example` and fill in values. All variables:
 | `TWILIO_ACCOUNT_SID` | For SMS | Twilio account SID |
 | `TWILIO_AUTH_TOKEN` | For SMS | Twilio auth token |
 | `TWILIO_PHONE_NUMBER` | For SMS | Twilio sender number |
-| `STRIPE_SECRET_KEY` | For payments | Stripe secret key |
-| `STRIPE_PUBLISHABLE_KEY` | For payments | Stripe publishable key |
-| `STRIPE_WEBHOOK_SECRET` | For payments | Stripe webhook signing secret |
+| `STRIPE_SECRET_KEY` | For payments | Stripe live secret key |
+| `STRIPE_PUBLISHABLE_KEY` | For payments | Stripe live publishable key (served to the client via `/api/stripe/publishable-key`) |
+| `STRIPE_WEBHOOK_SECRET` | For payments | Stripe live webhook signing secret |
 | `STRIPE_DEPOSIT_AMOUNT` | No | Deposit in cents (default: 10000 = $100) |
+| `STRIPE_SECRET_KEY_TEST` | For test mode | Stripe test secret key (used while `STRIPE_TEST_MODE_UNTIL` is in the future) |
+| `STRIPE_PUBLISHABLE_KEY_TEST` | For test mode | Stripe test publishable key |
+| `STRIPE_WEBHOOK_SECRET_TEST` | For test mode | Stripe test webhook signing secret |
+| `STRIPE_TEST_MODE_UNTIL` | Optional | ISO 8601 cutoff date. While set and in the future, every Stripe call uses the `*_TEST` credentials; after the cutoff, the next request automatically reverts to the live credentials with no redeploy. Example: `2026-04-21T23:59:59-07:00` |
 | `THUMBTACK_WEBHOOK_SECRET` | For Thumbtack | Shared secret for Thumbtack webhook auth |
 | `ADMIN_EMAIL` | For seed | Admin account email |
 | `ADMIN_PASSWORD` | For seed | Admin account password |
@@ -113,6 +117,7 @@ dr-bartender/
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
 │   │   ├── emailMarketing.js   # Email marketing leads, campaigns, sequences, conversations
 │   │   ├── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
+│   │   ├── publicReviews.js    # Public cached endpoint for Thumbtack reviews on homepage
 │   │   └── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   ├── utils/
 │   │   ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)
@@ -161,6 +166,7 @@ dr-bartender/
 │   │   └── index.css           # Global styles
 │   ├── vercel.json             # SPA rewrite rule for Vercel
 │   └── package.json            # React deps, proxy: localhost:5000
+├── scripts/                    # Build scripts (build-testing-guide.js, testing-guide-template.html)
 ├── .claude/agents/             # Claude Code review agents (7 agents)
 ├── .husky/pre-commit           # Pre-commit hook (lint-staged)
 ├── .env.example                # Environment variable template
@@ -181,6 +187,7 @@ dr-bartender/
 | `npm run lint` | Run ESLint on all server code |
 | `npm run lint:fix` | Run ESLint with auto-fix on server code |
 | `npm run audit:check` | Check for known dependency vulnerabilities |
+| `npm run build:testing-guide` | Build `client/public/testing-guide.html` from `TESTING.md` via `scripts/build-testing-guide.js` |
 
 ## Key Features
 

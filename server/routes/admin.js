@@ -730,11 +730,18 @@ function slugify(title) {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-// List all posts (drafts + published)
+// List all posts (drafts + published) — excludes body (large HTML blob)
 router.get('/blog', auth, adminOnly, async (req, res) => {
   try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const offset = (page - 1) * limit;
     const result = await pool.query(
-      'SELECT * FROM blog_posts ORDER BY created_at DESC'
+      `SELECT id, slug, title, excerpt, cover_image_url, published, published_at, created_at, updated_at
+       FROM blog_posts
+       ORDER BY created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
     res.json(result.rows);
   } catch (err) {

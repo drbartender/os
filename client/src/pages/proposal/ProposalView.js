@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { loadStripe } from '@stripe/stripe-js';
@@ -7,8 +7,6 @@ import SignaturePad from '../../components/SignaturePad';
 import { API_BASE_URL as BASE_URL } from '../../utils/api';
 import { COMPANY_PHONE } from '../../utils/constants';
 import { getPackageBySlug } from '../../data/packages';
-
-const stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY);
 
 const DEPOSIT_CENTS = parseInt(process.env.REACT_APP_DEPOSIT_AMOUNT) || 10000;
 const DEPOSIT_DOLLARS = DEPOSIT_CENTS / 100;
@@ -116,9 +114,25 @@ export default function ProposalView() {
   const [depositSecret, setDepositSecret] = useState('');
   const [fullSecret, setFullSecret] = useState('');
   const [loadingIntent, setLoadingIntent] = useState(false);
+  // Track which autopay value the cached depositSecret was created with, so
+  // we know when to refetch after the user toggles the autopay checkbox.
+  const depositIntentAutopayRef = useRef(null);
+
+  // Stripe.js loader — publishable key is fetched from the server so the
+  // mode (live vs test) always matches what the server uses for intents.
+  const [stripePromise, setStripePromise] = useState(null);
 
   // Check if returning from Stripe redirect
   const paid = new URLSearchParams(window.location.search).get('paid') === 'true';
+
+  // Derived flag: is this proposal in a state where payment is still possible?
+  // Mirrors the business logic used below (showSignAndPay / showPayOnly) so
+  // we don't load Stripe.js or create intents for paid/confirmed proposals.
+  const isPayableStatus =
+    !!proposal &&
+    !paid &&
+    !['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status) &&
+    ['sent', 'viewed', 'accepted'].includes(proposal.status);
 
   useEffect(() => {
     axios.get(`${BASE_URL}/proposals/t/${token}`)
@@ -127,52 +141,66 @@ export default function ProposalView() {
       .finally(() => setLoading(false));
   }, [token]);
 
-  // Create or retrieve a payment intent for the given option
-  const loadIntent = useCallback(async (option, autopay = false) => {
+  // Only load Stripe.js (~200KB gzipped) when the proposal actually needs a
+  // payment form. Skip for already-paid, confirmed, or non-payable proposals.
+  useEffect(() => {
+    if (!isPayableStatus) return;
+    if (stripePromise) return;
+    axios.get(`${BASE_URL}/stripe/publishable-key`)
+      .then(r => { if (r.data?.key) setStripePromise(loadStripe(r.data.key)); })
+      .catch(() => setStripePromise(null));
+  }, [isPayableStatus, stripePromise]);
+
+  // Consolidated payment-intent effect. Previously three cascading effects
+  // raced each other on autopay toggles; now a single effect decides what
+  // (if anything) needs to be fetched for the current
+  // (proposal.id, paymentOption, autopayChecked) tuple, with cancellation
+  // to guard against rapid toggles.
+  useEffect(() => {
+    if (!isPayableStatus) return;
+    if (!paymentOption) return;
+
+    // Decide whether the currently cached secret for this option is still
+    // valid. Full intents don't care about autopay; deposit intents do.
+    const needsDeposit =
+      paymentOption === 'deposit' &&
+      (!depositSecret || depositIntentAutopayRef.current !== autopayChecked);
+    const needsFull = paymentOption === 'full' && !fullSecret;
+    if (!needsDeposit && !needsFull) return;
+
+    let cancelled = false;
+    const option = paymentOption;
+    const autopay = option === 'deposit' ? autopayChecked : false;
+
+    // Mark loading so the payment form is hidden while we refetch. We do NOT
+    // clear depositSecret/fullSecret here — doing so would re-trigger this
+    // effect mid-fetch. The <Elements key={activeSecret}> prop handles remount
+    // once the new clientSecret arrives.
     setLoadingIntent(true);
-    try {
-      const res = await axios.post(`${BASE_URL}/stripe/create-intent/${token}`, {
-        payment_option: option,
-        autopay,
-      });
-      if (option === 'full') {
-        setFullSecret(res.data.clientSecret);
-      } else {
-        setDepositSecret(res.data.clientSecret);
+    (async () => {
+      try {
+        const res = await axios.post(`${BASE_URL}/stripe/create-intent/${token}`, {
+          payment_option: option,
+          autopay,
+        });
+        if (cancelled) return;
+        if (option === 'full') {
+          setFullSecret(res.data.clientSecret);
+        } else {
+          setDepositSecret(res.data.clientSecret);
+          depositIntentAutopayRef.current = autopay;
+        }
+      } catch (err) {
+        if (cancelled) return;
+        console.error('Failed to load payment intent:', err);
+        setSigError('Unable to load payment form. Please refresh the page.');
+      } finally {
+        if (!cancelled) setLoadingIntent(false);
       }
-    } catch (err) {
-      console.error('Failed to load payment intent:', err);
-      setSigError('Unable to load payment form. Please refresh the page.');
-    } finally {
-      setLoadingIntent(false);
-    }
-  }, [token]);
+    })();
 
-  // Load initial deposit intent when proposal is ready for signing+payment
-  useEffect(() => {
-    if (!proposal || paid) return;
-    const canPay = ['sent', 'viewed', 'accepted'].includes(proposal.status);
-    if (canPay && !depositSecret) {
-      loadIntent('deposit', false);
-    }
-  }, [proposal, paid, depositSecret, loadIntent]);
-
-  // When user switches to full payment, load a full intent
-  useEffect(() => {
-    if (paymentOption === 'full' && !fullSecret && proposal && !paid) {
-      loadIntent('full', false);
-    }
-  }, [paymentOption, fullSecret, proposal, paid, loadIntent]);
-
-  // When autopay is toggled, re-create the deposit intent with setup_future_usage
-  useEffect(() => {
-    if (paymentOption === 'deposit' && proposal && !paid) {
-      // Reset deposit secret so a new intent is created with correct autopay flag
-      setDepositSecret('');
-      loadIntent('deposit', autopayChecked);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autopayChecked]);
+    return () => { cancelled = true; };
+  }, [isPayableStatus, paymentOption, autopayChecked, token, depositSecret, fullSecret]);
 
   const formatDate = (d) => {
     if (!d) return '';
@@ -628,7 +656,7 @@ export default function ProposalView() {
                 </div>
               )}
 
-              {activeSecret && !loadingIntent && (
+              {activeSecret && stripePromise && !loadingIntent && (
                 <Elements
                   key={activeSecret}
                   stripe={stripePromise}
@@ -640,6 +668,12 @@ export default function ProposalView() {
                     disabled={!sigName.trim() || !sigData}
                   />
                 </Elements>
+              )}
+
+              {activeSecret && !stripePromise && !loadingIntent && (
+                <div style={{ textAlign: 'center', padding: '1rem' }}>
+                  <div className="spinner" />
+                </div>
               )}
 
               {!activeSecret && !loadingIntent && (
@@ -722,7 +756,7 @@ export default function ProposalView() {
               </div>
             )}
 
-            {activeSecret && !loadingIntent && (
+            {activeSecret && stripePromise && !loadingIntent && (
               <Elements
                 key={activeSecret}
                 stripe={stripePromise}
@@ -734,6 +768,12 @@ export default function ProposalView() {
                   disabled={false}
                 />
               </Elements>
+            )}
+
+            {activeSecret && !stripePromise && !loadingIntent && (
+              <div style={{ textAlign: 'center', padding: '1rem' }}>
+                <div className="spinner" />
+              </div>
             )}
 
             {!activeSecret && !loadingIntent && (

@@ -9,13 +9,17 @@ const router = express.Router();
 
 router.get('/', async (req, res) => {
   try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const offset = (page - 1) * limit;
     const result = await pool.query(`
       SELECT id, slug, title, excerpt, cover_image_url, published_at,
              ROW_NUMBER() OVER (ORDER BY published_at ASC) as chapter_number
       FROM blog_posts
       WHERE published = true
       ORDER BY published_at DESC
-    `);
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
     res.json(result.rows);
   } catch (err) {
     console.error('Blog list error:', err);

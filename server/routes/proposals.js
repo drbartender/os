@@ -17,9 +17,24 @@ const MAX_FORM_STATE_SIZE = 50 * 1024; // 50 KB
 /** GET /api/proposals/t/:token — fetch proposal by token (public) */
 router.get('/t/:token', publicLimiter, async (req, res) => {
   try {
+    // Public-safe column allowlist — do NOT expose admin_notes, stripe_customer_id,
+    // stripe_payment_method_id, client_signature_ip, client_signature_user_agent,
+    // created_by, or other internal fields.
     const result = await pool.query(`
-      SELECT p.*, sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
-             sp.includes AS package_includes, c.name AS client_name, c.email AS client_email
+      SELECT
+        p.id, p.token, p.client_id,
+        p.event_name, p.event_date, p.event_start_time, p.event_duration_hours,
+        p.event_location, p.event_type, p.event_type_category, p.event_type_custom,
+        p.guest_count, p.package_id, p.num_bars, p.num_bartenders,
+        p.pricing_snapshot, p.total_price, p.status,
+        p.amount_paid, p.deposit_amount, p.payment_type, p.autopay_enrolled,
+        p.balance_due_date,
+        p.client_signed_name, p.client_signed_at, p.client_signature_method,
+        p.client_signature_document_version, p.client_signature_data,
+        p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
+        sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
+        sp.includes AS package_includes,
+        c.name AS client_name, c.email AS client_email
       FROM proposals p
       LEFT JOIN service_packages sp ON sp.id = p.package_id
       LEFT JOIN clients c ON c.id = p.client_id
@@ -30,37 +45,44 @@ router.get('/t/:token', publicLimiter, async (req, res) => {
 
     const proposal = result.rows[0];
 
-    // Track views and flip status
-    const newStatus = proposal.status === 'sent' ? 'viewed' : proposal.status;
-    await pool.query(
-      `UPDATE proposals SET view_count = view_count + 1, last_viewed_at = NOW(), status = $1 WHERE id = $2`,
-      [newStatus, proposal.id]
-    );
-
-    // Fetch add-ons
-    const addons = await pool.query(
-      'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
-      [proposal.id]
-    );
-
     // Capture IP for view logging (no third-party geo lookup for privacy)
     const rawIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || '';
     const ip = rawIp.replace(/^::ffff:/, ''); // strip IPv4-mapped prefix
 
-    // Log view
-    await pool.query(
+    // Parallelize non-dependent queries: bump view counters + fetch addons + fetch drink plan
+    const [, addonsRes, dpRes] = await Promise.all([
+      pool.query(
+        `UPDATE proposals
+           SET view_count = COALESCE(view_count, 0) + 1,
+               last_viewed_at = NOW(),
+               status = CASE WHEN status = 'sent' THEN 'viewed' ELSE status END
+         WHERE id = $1`,
+        [proposal.id]
+      ),
+      pool.query(
+        'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
+        [proposal.id]
+      ),
+      pool.query(
+        'SELECT token AS drink_plan_token FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
+        [proposal.id]
+      ),
+    ]);
+
+    // Fire-and-forget activity log so a logging failure doesn't block the response
+    pool.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'viewed', 'client', $2)`,
       [proposal.id, JSON.stringify({ ip: ip || null })]
-    );
+    ).catch(err => console.error('Proposal view activity log failed:', err));
 
-    // Fetch linked drink plan token (if one exists)
-    const dpRes = await pool.query(
-      'SELECT token AS drink_plan_token FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
-      [proposal.id]
-    );
     const drinkPlanToken = dpRes.rows[0]?.drink_plan_token || null;
 
-    res.json({ ...proposal, addons: addons.rows, drink_plan_token: drinkPlanToken, status: proposal.status === 'sent' ? 'viewed' : proposal.status });
+    res.json({
+      ...proposal,
+      addons: addonsRes.rows,
+      drink_plan_token: drinkPlanToken,
+      status: proposal.status === 'sent' ? 'viewed' : proposal.status,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -568,6 +590,10 @@ router.post('/calculate', auth, requireAdminOrManager, async (req, res) => {
 /** GET /api/proposals/financials — aggregate financial data */
 router.get('/financials', auth, requireAdminOrManager, async (req, res) => {
   try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const offset = (page - 1) * limit;
+
     const [summaryResult, proposalsResult, paymentsResult] = await Promise.all([
       pool.query(`
         SELECT
@@ -587,7 +613,8 @@ router.get('/financials', auth, requireAdminOrManager, async (req, res) => {
         LEFT JOIN service_packages sp ON sp.id = p.package_id
         WHERE p.status NOT IN ('draft')
         ORDER BY p.event_date DESC NULLS LAST
-      `),
+        LIMIT $1 OFFSET $2
+      `, [limit, offset]),
       pool.query(`
         SELECT pp.id, pp.proposal_id, pp.payment_type, pp.amount, pp.status AS payment_status,
                pp.created_at, p.event_name, c.name AS client_name
@@ -770,8 +797,10 @@ router.get('/:id', auth, requireAdminOrManager, async (req, res) => {
       'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [req.params.id]
     );
+    // Cap activity log fetch at 100 entries (most recent) — an old proposal can
+    // accumulate hundreds of view/update entries otherwise.
     const activity = await pool.query(
-      'SELECT * FROM proposal_activity_log WHERE proposal_id = $1 ORDER BY created_at DESC',
+      'SELECT * FROM proposal_activity_log WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 100',
       [req.params.id]
     );
 
@@ -1045,11 +1074,12 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, async (req, res)
         [newAmountPaid, newStatus, proposal.id]
       );
 
-      // Record in proposal_payments
+      // Record in proposal_payments. Use the capped delta (newAmountPaid - currentPaid)
+      // so an over-payment request doesn't inflate the ledger beyond the proposal total.
       await dbClient.query(
         `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status)
          VALUES ($1, $2, $3, 'succeeded')`,
-        [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round(paymentAmount * 100)]
+        [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round((newAmountPaid - currentPaid) * 100)]
       );
 
       // Log activity

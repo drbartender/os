@@ -4,9 +4,13 @@ const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
 
-if (!resend) console.warn('⚠️  RESEND_API_KEY not set — emails will be logged but not sent');
-
 const FROM_EMAIL = 'Dr. Bartender <no-reply@drbartender.com>';
+
+if (process.env.RESEND_API_KEY) {
+  console.log('[email] Resend initialized');
+} else {
+  console.warn('[email] RESEND_API_KEY is NOT set — emails will be logged only, not sent');
+}
 
 /**
  * Send an email via Resend
@@ -35,11 +39,10 @@ async function sendEmail({ to, subject, html, text, from, replyTo }) {
   });
 
   if (error) {
-    console.error('Resend email error:', error);
-    throw new Error(`Failed to send email: ${error.message}`);
+    console.error('[email] Resend send FAILED for', to, '—', error?.message || JSON.stringify(error));
+    throw new Error(error?.message || 'Resend send failed');
   }
 
-  console.log(`Email sent successfully: ${data.id} → ${to}`);
   return data;
 }
 
@@ -70,8 +73,8 @@ async function sendBatchEmails(emails) {
     throw new Error(`Failed to send batch: ${error.message}`);
   }
 
-  console.log(`Batch sent: ${data.data.length} emails`);
-  return data.data;
+  const sent = data?.data ?? [];
+  return sent;
 }
 
 module.exports = { sendEmail, sendBatchEmails, FROM_EMAIL };

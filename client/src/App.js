@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -13,56 +13,68 @@ import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
 import Application from './pages/Application';
 import ApplicationStatus from './pages/ApplicationStatus';
-import Welcome from './pages/Welcome';
-import FieldGuide from './pages/FieldGuide';
-import Agreement from './pages/Agreement';
-import ContractorProfile from './pages/ContractorProfile';
-import PaydayProtocols from './pages/PaydayProtocols';
-import Completion from './pages/Completion';
-import StaffLayout from './components/StaffLayout';
-import StaffDashboard from './pages/staff/StaffDashboard';
-import StaffShifts from './pages/staff/StaffShifts';
-import StaffSchedule from './pages/staff/StaffSchedule';
-import StaffEvents from './pages/staff/StaffEvents';
-import StaffResources from './pages/staff/StaffResources';
-import StaffProfile from './pages/staff/StaffProfile';
-import AdminLayout from './components/AdminLayout';
-import AdminDashboard from './pages/AdminDashboard';
-import AdminUserDetail from './pages/AdminUserDetail';
-import AdminApplicationDetail from './pages/AdminApplicationDetail';
-import EventsDashboard from './pages/admin/EventsDashboard';
-import ShiftDetail from './pages/admin/ShiftDetail';
-import ClientsDashboard from './pages/admin/ClientsDashboard';
-import FinancialsDashboard from './pages/admin/FinancialsDashboard';
-import HiringDashboard from './pages/admin/HiringDashboard';
-import SettingsDashboard from './pages/admin/SettingsDashboard';
-import DrinkPlansDashboard from './pages/admin/DrinkPlansDashboard';
-import DrinkPlanDetail from './pages/admin/DrinkPlanDetail';
-
 import PotionPlanningLab from './pages/plan/PotionPlanningLab';
-import ProposalsDashboard from './pages/admin/ProposalsDashboard';
-import ProposalCreate from './pages/admin/ProposalCreate';
-import ProposalDetail from './pages/admin/ProposalDetail';
-import ClientDetail from './pages/admin/ClientDetail';
-import Dashboard from './pages/admin/Dashboard';
 import ProposalView from './pages/proposal/ProposalView';
 import ClientShoppingList from './pages/public/ClientShoppingList';
-import BlogDashboard from './pages/admin/BlogDashboard';
-import EmailMarketingDashboard from './pages/admin/EmailMarketingDashboard';
-import EmailLeadsDashboard from './pages/admin/EmailLeadsDashboard';
-import EmailLeadDetail from './pages/admin/EmailLeadDetail';
-import EmailCampaignsDashboard from './pages/admin/EmailCampaignsDashboard';
-import EmailCampaignCreate from './pages/admin/EmailCampaignCreate';
-import EmailCampaignDetail from './pages/admin/EmailCampaignDetail';
-import EmailAnalyticsDashboard from './pages/admin/EmailAnalyticsDashboard';
-import EmailConversations from './pages/admin/EmailConversations';
 import Blog from './pages/public/Blog';
 import BlogPost from './pages/public/BlogPost';
 import ClientLogin from './pages/public/ClientLogin';
 import ClientDashboard from './pages/public/ClientDashboard';
-import ClassWizard from './pages/website/ClassWizard';
 import HiringLanding from './pages/HiringLanding';
 import { ClientAuthProvider } from './context/ClientAuthContext';
+
+// Lazy-loaded: onboarding, staff portal, admin shell — not needed on public marketing site
+const Welcome = lazy(() => import('./pages/Welcome'));
+const FieldGuide = lazy(() => import('./pages/FieldGuide'));
+const Agreement = lazy(() => import('./pages/Agreement'));
+const ContractorProfile = lazy(() => import('./pages/ContractorProfile'));
+const PaydayProtocols = lazy(() => import('./pages/PaydayProtocols'));
+const Completion = lazy(() => import('./pages/Completion'));
+const StaffLayout = lazy(() => import('./components/StaffLayout'));
+const StaffDashboard = lazy(() => import('./pages/staff/StaffDashboard'));
+const StaffShifts = lazy(() => import('./pages/staff/StaffShifts'));
+const StaffSchedule = lazy(() => import('./pages/staff/StaffSchedule'));
+const StaffEvents = lazy(() => import('./pages/staff/StaffEvents'));
+const StaffResources = lazy(() => import('./pages/staff/StaffResources'));
+const StaffProfile = lazy(() => import('./pages/staff/StaffProfile'));
+const AdminLayout = lazy(() => import('./components/AdminLayout'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const AdminUserDetail = lazy(() => import('./pages/AdminUserDetail'));
+const AdminApplicationDetail = lazy(() => import('./pages/AdminApplicationDetail'));
+const EventsDashboard = lazy(() => import('./pages/admin/EventsDashboard'));
+const ShiftDetail = lazy(() => import('./pages/admin/ShiftDetail'));
+const ClientsDashboard = lazy(() => import('./pages/admin/ClientsDashboard'));
+const FinancialsDashboard = lazy(() => import('./pages/admin/FinancialsDashboard'));
+const HiringDashboard = lazy(() => import('./pages/admin/HiringDashboard'));
+const SettingsDashboard = lazy(() => import('./pages/admin/SettingsDashboard'));
+const DrinkPlansDashboard = lazy(() => import('./pages/admin/DrinkPlansDashboard'));
+const DrinkPlanDetail = lazy(() => import('./pages/admin/DrinkPlanDetail'));
+const ProposalsDashboard = lazy(() => import('./pages/admin/ProposalsDashboard'));
+const ProposalCreate = lazy(() => import('./pages/admin/ProposalCreate'));
+const ProposalDetail = lazy(() => import('./pages/admin/ProposalDetail'));
+const ClientDetail = lazy(() => import('./pages/admin/ClientDetail'));
+const Dashboard = lazy(() => import('./pages/admin/Dashboard'));
+const BlogDashboard = lazy(() => import('./pages/admin/BlogDashboard'));
+const EmailMarketingDashboard = lazy(() => import('./pages/admin/EmailMarketingDashboard'));
+const EmailLeadsDashboard = lazy(() => import('./pages/admin/EmailLeadsDashboard'));
+const EmailLeadDetail = lazy(() => import('./pages/admin/EmailLeadDetail'));
+const EmailCampaignsDashboard = lazy(() => import('./pages/admin/EmailCampaignsDashboard'));
+const EmailCampaignCreate = lazy(() => import('./pages/admin/EmailCampaignCreate'));
+const EmailCampaignDetail = lazy(() => import('./pages/admin/EmailCampaignDetail'));
+const EmailAnalyticsDashboard = lazy(() => import('./pages/admin/EmailAnalyticsDashboard'));
+const EmailConversations = lazy(() => import('./pages/admin/EmailConversations'));
+const ClassWizard = lazy(() => import('./pages/website/ClassWizard'));
+
+const SuspenseFallback = (
+  <div
+    className="loading"
+    style={{ minHeight: '50vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    role="status"
+    aria-live="polite"
+  >
+    <div className="spinner" aria-hidden="true" />
+  </div>
+);
 
 /**
  * Detect which domain context we're on:
@@ -157,21 +169,23 @@ function ApiAuthSetup({ children }) {
 function PublicWebsiteRoutes() {
   return (
     <ClientAuthProvider>
-      <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/quote" element={<QuotePage />} />
-        <Route path="/faq" element={<FaqPage />} />
-        <Route path="/classes" element={<ClassWizard />} />
-        {/* These public token-based routes work on both domains */}
-        <Route path="/plan/:token" element={<PotionPlanningLab />} />
-        <Route path="/proposal/:token" element={<ProposalView />} />
-        <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
-        <Route path="/labnotes" element={<Blog />} />
-        <Route path="/labnotes/:slug" element={<BlogPost />} />
-        <Route path="/login" element={<ClientLogin />} />
-        <Route path="/my-proposals" element={<ClientDashboard />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <Suspense fallback={SuspenseFallback}>
+        <Routes>
+          <Route path="/" element={<HomePage />} />
+          <Route path="/quote" element={<QuotePage />} />
+          <Route path="/faq" element={<FaqPage />} />
+          <Route path="/classes" element={<ClassWizard />} />
+          {/* These public token-based routes work on both domains */}
+          <Route path="/plan/:token" element={<PotionPlanningLab />} />
+          <Route path="/proposal/:token" element={<ProposalView />} />
+          <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
+          <Route path="/labnotes" element={<Blog />} />
+          <Route path="/labnotes/:slug" element={<BlogPost />} />
+          <Route path="/login" element={<ClientLogin />} />
+          <Route path="/my-proposals" element={<ClientDashboard />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </ClientAuthProvider>
   );
 }
@@ -179,56 +193,60 @@ function PublicWebsiteRoutes() {
 /** hiring.drbartender.com — applicant-focused routes only */
 function HiringRoutes() {
   return (
-    <Routes>
-      <Route path="/" element={<RedirectIfLoggedIn><HiringLanding /></RedirectIfLoggedIn>} />
-      <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
-      <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
-      <Route path="/forgot-password" element={<RedirectIfLoggedIn><ForgotPassword /></RedirectIfLoggedIn>} />
-      <Route path="/reset-password/:token" element={<RedirectIfLoggedIn><ResetPassword /></RedirectIfLoggedIn>} />
-      <Route path="/apply" element={<ProtectedRoute><Application /></ProtectedRoute>} />
-      <Route path="/application-status" element={<ProtectedRoute><ApplicationStatus /></ProtectedRoute>} />
-      {/* Public token routes still work */}
-      <Route path="/plan/:token" element={<PotionPlanningLab />} />
-      <Route path="/proposal/:token" element={<ProposalView />} />
-      <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <Suspense fallback={SuspenseFallback}>
+      <Routes>
+        <Route path="/" element={<RedirectIfLoggedIn><HiringLanding /></RedirectIfLoggedIn>} />
+        <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
+        <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
+        <Route path="/forgot-password" element={<RedirectIfLoggedIn><ForgotPassword /></RedirectIfLoggedIn>} />
+        <Route path="/reset-password/:token" element={<RedirectIfLoggedIn><ResetPassword /></RedirectIfLoggedIn>} />
+        <Route path="/apply" element={<ProtectedRoute><Application /></ProtectedRoute>} />
+        <Route path="/application-status" element={<ProtectedRoute><ApplicationStatus /></ProtectedRoute>} />
+        {/* Public token routes still work */}
+        <Route path="/plan/:token" element={<PotionPlanningLab />} />
+        <Route path="/proposal/:token" element={<ProposalView />} />
+        <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Suspense>
   );
 }
 
 /** staff.drbartender.com — staff portal + onboarding routes only */
 function StaffSiteRoutes() {
   return (
-    <Routes>
-      <Route path="/" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
-      <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
-      <Route path="/forgot-password" element={<RedirectIfLoggedIn><ForgotPassword /></RedirectIfLoggedIn>} />
-      <Route path="/reset-password/:token" element={<RedirectIfLoggedIn><ResetPassword /></RedirectIfLoggedIn>} />
-      {/* Onboarding flow */}
-      <Route element={<RequireHired><Layout /></RequireHired>}>
-        <Route path="/welcome" element={<Welcome />} />
-        <Route path="/field-guide" element={<FieldGuide />} />
-        <Route path="/agreement" element={<Agreement />} />
-        <Route path="/contractor-profile" element={<ContractorProfile />} />
-        <Route path="/payday-protocols" element={<PaydayProtocols />} />
-        <Route path="/complete" element={<Completion />} />
-      </Route>
-      {/* Staff portal */}
-      <Route path="/portal" element={<RequirePortal><StaffLayout /></RequirePortal>}>
-        <Route index element={<Navigate to="dashboard" replace />} />
-        <Route path="dashboard" element={<StaffDashboard />} />
-        <Route path="shifts" element={<StaffShifts />} />
-        <Route path="schedule" element={<StaffSchedule />} />
-        <Route path="events" element={<StaffEvents />} />
-        <Route path="resources" element={<StaffResources />} />
-        <Route path="profile" element={<StaffProfile />} />
-      </Route>
-      {/* Public token routes */}
-      <Route path="/plan/:token" element={<PotionPlanningLab />} />
-      <Route path="/proposal/:token" element={<ProposalView />} />
-      <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <Suspense fallback={SuspenseFallback}>
+      <Routes>
+        <Route path="/" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
+        <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
+        <Route path="/forgot-password" element={<RedirectIfLoggedIn><ForgotPassword /></RedirectIfLoggedIn>} />
+        <Route path="/reset-password/:token" element={<RedirectIfLoggedIn><ResetPassword /></RedirectIfLoggedIn>} />
+        {/* Onboarding flow */}
+        <Route element={<RequireHired><Layout /></RequireHired>}>
+          <Route path="/welcome" element={<Welcome />} />
+          <Route path="/field-guide" element={<FieldGuide />} />
+          <Route path="/agreement" element={<Agreement />} />
+          <Route path="/contractor-profile" element={<ContractorProfile />} />
+          <Route path="/payday-protocols" element={<PaydayProtocols />} />
+          <Route path="/complete" element={<Completion />} />
+        </Route>
+        {/* Staff portal */}
+        <Route path="/portal" element={<RequirePortal><StaffLayout /></RequirePortal>}>
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<StaffDashboard />} />
+          <Route path="shifts" element={<StaffShifts />} />
+          <Route path="schedule" element={<StaffSchedule />} />
+          <Route path="events" element={<StaffEvents />} />
+          <Route path="resources" element={<StaffResources />} />
+          <Route path="profile" element={<StaffProfile />} />
+        </Route>
+        {/* Public token routes */}
+        <Route path="/plan/:token" element={<PotionPlanningLab />} />
+        <Route path="/proposal/:token" element={<ProposalView />} />
+        <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Suspense>
   );
 }
 
@@ -241,6 +259,7 @@ function AppRoutes() {
 
   return (
     <ClientAuthProvider>
+    <Suspense fallback={SuspenseFallback}>
     <Routes>
       <Route path="/" element={<Navigate to="/register" replace />} />
       {/* Public pages (no auth) */}
@@ -324,6 +343,7 @@ function AppRoutes() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </Suspense>
     </ClientAuthProvider>
   );
 }

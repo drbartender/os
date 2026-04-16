@@ -33,43 +33,50 @@ router.post('/', auth, async (req, res) => {
   const userAgent = req.headers['user-agent'] || null;
 
   try {
-    await pool.query('BEGIN');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    const existing = await pool.query('SELECT id FROM agreements WHERE user_id = $1', [req.user.id]);
+      const existing = await client.query('SELECT id FROM agreements WHERE user_id = $1', [req.user.id]);
 
-    if (existing.rows[0]) {
-      await pool.query(
-        `UPDATE agreements SET full_name=$1, email=$2, phone=$3, sms_consent=$4,
-         acknowledged_field_guide=$5, agreed_non_solicitation=$6, signature_data=$7,
-         signature_method=$8, signature_ip=$9, signature_user_agent=$10, signature_document_version=$11,
-         signed_at=NOW()
-         WHERE user_id=$12`,
-        [full_name, email, phone, sms_consent, acknowledged_field_guide, agreed_non_solicitation, signature_data,
-         signature_method, ip, userAgent, AGREEMENT_DOCUMENT_VERSION, req.user.id]
+      if (existing.rows[0]) {
+        await client.query(
+          `UPDATE agreements SET full_name=$1, email=$2, phone=$3, sms_consent=$4,
+           acknowledged_field_guide=$5, agreed_non_solicitation=$6, signature_data=$7,
+           signature_method=$8, signature_ip=$9, signature_user_agent=$10, signature_document_version=$11,
+           signed_at=NOW()
+           WHERE user_id=$12`,
+          [full_name, email, phone, sms_consent, acknowledged_field_guide, agreed_non_solicitation, signature_data,
+           signature_method, ip, userAgent, AGREEMENT_DOCUMENT_VERSION, req.user.id]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO agreements (user_id, full_name, email, phone, sms_consent, acknowledged_field_guide, agreed_non_solicitation,
+           signature_data, signature_method, signature_ip, signature_user_agent, signature_document_version, signed_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())`,
+          [req.user.id, full_name, email, phone, sms_consent, acknowledged_field_guide, agreed_non_solicitation,
+           signature_data, signature_method, ip, userAgent, AGREEMENT_DOCUMENT_VERSION]
+        );
+      }
+
+      // Mark step complete
+      await client.query(
+        `UPDATE onboarding_progress SET agreement_completed=true, last_completed_step='agreement_completed' WHERE user_id=$1`,
+        [req.user.id]
       );
-    } else {
-      await pool.query(
-        `INSERT INTO agreements (user_id, full_name, email, phone, sms_consent, acknowledged_field_guide, agreed_non_solicitation,
-         signature_data, signature_method, signature_ip, signature_user_agent, signature_document_version, signed_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())`,
-        [req.user.id, full_name, email, phone, sms_consent, acknowledged_field_guide, agreed_non_solicitation,
-         signature_data, signature_method, ip, userAgent, AGREEMENT_DOCUMENT_VERSION]
-      );
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+      throw txErr;
+    } finally {
+      client.release();
     }
-
-    // Mark step complete
-    await pool.query(
-      `UPDATE onboarding_progress SET agreement_completed=true, last_completed_step='agreement_completed' WHERE user_id=$1`,
-      [req.user.id]
-    );
-
-    await pool.query('COMMIT');
 
     const result = await pool.query('SELECT * FROM agreements WHERE user_id = $1', [req.user.id]);
     res.json(result.rows[0]);
   } catch (err) {
-    await pool.query('ROLLBACK');
-    console.error(err);
+    console.error('agreement save error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

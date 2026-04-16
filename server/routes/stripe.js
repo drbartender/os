@@ -1,5 +1,4 @@
 const express = require('express');
-const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicLimiter } = require('../middleware/rateLimiters');
@@ -12,12 +11,50 @@ const router = express.Router();
 
 const DEPOSIT_AMOUNT = parseInt(process.env.STRIPE_DEPOSIT_AMOUNT) || 10000; // $100.00
 
+// ─── Stripe mode toggle ─────────────────────────────────────────────
+// When STRIPE_TEST_MODE_UNTIL (ISO date) is in the future, every Stripe
+// call uses the *_TEST credentials. Once the cutoff passes, the next
+// request flips back to live — no redeploy required (isTestMode() is
+// evaluated per request, not cached at boot).
+
+const stripeLive = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
+const stripeTest = process.env.STRIPE_SECRET_KEY_TEST ? require('stripe')(process.env.STRIPE_SECRET_KEY_TEST) : null;
+
+function isTestMode() {
+  const until = process.env.STRIPE_TEST_MODE_UNTIL;
+  if (!until) return false;
+  const t = new Date(until).getTime();
+  return Number.isFinite(t) && Date.now() < t;
+}
+
+function getStripe() {
+  return isTestMode() && stripeTest ? stripeTest : stripeLive;
+}
+
+function getWebhookSecret() {
+  return isTestMode()
+    ? process.env.STRIPE_WEBHOOK_SECRET_TEST
+    : process.env.STRIPE_WEBHOOK_SECRET;
+}
+
+function getPublishableKey() {
+  return isTestMode()
+    ? process.env.STRIPE_PUBLISHABLE_KEY_TEST
+    : process.env.STRIPE_PUBLISHABLE_KEY;
+}
+
+/** GET /api/stripe/publishable-key — returns the active publishable key */
+router.get('/publishable-key', (_req, res) => {
+  res.json({ key: getPublishableKey() || null });
+});
+
 // ─── Helper: get or create Stripe Customer for a proposal ────────
 
 async function getOrCreateCustomer(proposal) {
   if (proposal.stripe_customer_id) {
     return proposal.stripe_customer_id;
   }
+  const stripe = getStripe();
   const customer = await stripe.customers.create({
     email: proposal.client_email || undefined,
     name: proposal.client_name || undefined,
@@ -39,6 +76,9 @@ async function getOrCreateCustomer(proposal) {
 /** POST /api/stripe/create-intent/:token — public, token-gated */
 router.post('/create-intent/:token', publicLimiter, async (req, res) => {
   try {
+    const stripe = getStripe();
+    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
+
     const { payment_option = 'deposit', autopay = false } = req.body;
 
     const result = await pool.query(`
@@ -134,6 +174,7 @@ router.post('/create-intent/:token', publicLimiter, async (req, res) => {
 /** POST /api/stripe/create-drink-plan-intent/:token — public, token-gated (drink plan token) */
 router.post('/create-drink-plan-intent/:token', publicLimiter, async (req, res) => {
   try {
+    const stripe = getStripe();
     if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
 
     const { selections } = req.body;
@@ -287,6 +328,9 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, async (req, res) 
 /** POST /api/stripe/payment-link/:id — admin only */
 router.post('/payment-link/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
+    const stripe = getStripe();
+    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
+
     const result = await pool.query(
       'SELECT id, event_name FROM proposals WHERE id = $1',
       [req.params.id]
@@ -328,6 +372,9 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, async (req, res) =
 /** POST /api/stripe/charge-balance/:id — admin only */
 router.post('/charge-balance/:id', auth, requireAdminOrManager, async (req, res) => {
   try {
+    const stripe = getStripe();
+    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
+
     const result = await pool.query(`
       SELECT id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
              autopay_enrolled, status, event_name
@@ -379,15 +426,36 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, async (req, res)
 
 /** POST /api/stripe/webhook — raw body, Stripe signature verified */
 router.post('/webhook', async (req, res) => {
+  // Try BOTH live and test secrets so events that span a test/live cutoff
+  // (e.g., Stripe retrying a `payment_intent.succeeded` as the cutoff passes)
+  // are still verified and processed. Whichever client verified the event is
+  // the one whose API keypair matches the event's mode.
   const sig = req.headers['stripe-signature'];
-  let event;
+  const verifiers = [
+    { secret: process.env.STRIPE_WEBHOOK_SECRET, client: stripeLive },
+    { secret: process.env.STRIPE_WEBHOOK_SECRET_TEST, client: stripeTest },
+  ].filter(v => v.secret && v.client);
 
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
-  } catch (err) {
-    console.error('Stripe webhook signature error:', err.message);
+  if (verifiers.length === 0) {
+    return res.status(503).send('Payments not configured');
+  }
+
+  let event = null;
+  let stripeForEvent = null;
+  for (const { secret, client } of verifiers) {
+    try {
+      event = client.webhooks.constructEvent(req.body, sig, secret);
+      stripeForEvent = client;
+      break;
+    } catch (_) { /* try next secret */ }
+  }
+  if (!event) {
+    console.error('Webhook signature verification failed against all configured secrets');
     return res.status(400).send('Webhook signature verification failed');
   }
+  // `stripeForEvent` is intentionally available for any downstream Stripe API
+  // calls inside this handler so we use the keypair matching the event's mode.
+  void stripeForEvent;
 
   // ── Helper: send payment notification emails (non-blocking) ────
   async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
@@ -424,87 +492,102 @@ router.post('/webhook', async (req, res) => {
 
     if (proposalId) {
       const dbClient = await pool.connect();
+      let isFirstDelivery = false;
       try {
         await dbClient.query('BEGIN');
 
-        // Determine new status and amount_paid based on payment type
-        if (paymentType === 'full') {
-          await dbClient.query(`
-            UPDATE proposals
-            SET status = 'balance_paid',
-                amount_paid = total_price
-            WHERE id = $1 AND status NOT IN ('balance_paid', 'confirmed')
-          `, [proposalId]);
-        } else if (paymentType === 'balance') {
-          await dbClient.query(`
-            UPDATE proposals
-            SET status = 'balance_paid',
-                amount_paid = total_price
-            WHERE id = $1 AND status = 'deposit_paid'
-          `, [proposalId]);
-        } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
-          // Drink plan extras payment — increment amount_paid
-          const paidDollars = intent.amount / 100;
-          const updateRes = await dbClient.query(`
-            UPDATE proposals
-            SET amount_paid = COALESCE(amount_paid, 0) + $1
-            WHERE id = $2
-            RETURNING amount_paid, total_price
-          `, [paidDollars, proposalId]);
-
-          if (updateRes.rows[0]) {
-            const newAmountPaid = Number(updateRes.rows[0].amount_paid);
-            const totalPrice = Number(updateRes.rows[0].total_price);
-            if (newAmountPaid >= totalPrice) {
-              await dbClient.query(
-                "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed')",
-                [proposalId]
-              );
-            }
-          }
-        } else {
-          // deposit
-          await dbClient.query(`
-            UPDATE proposals
-            SET status = 'deposit_paid',
-                amount_paid = deposit_amount
-            WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')
-          `, [proposalId]);
-        }
-
-        // Save payment method ID if autopay was enrolled (card saved via setup_future_usage)
-        if (intent.payment_method && paymentType === 'deposit') {
-          await dbClient.query(`
-            UPDATE proposals
-            SET stripe_payment_method_id = $1
-            WHERE id = $2 AND autopay_enrolled = true AND stripe_payment_method_id IS NULL
-          `, [intent.payment_method, proposalId]);
-        }
-
-        await dbClient.query(
-          "UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_intent_id = $1",
-          [intent.id]
-        );
-
-        // Record in proposal_payments
-        await dbClient.query(
+        // Idempotency guard: Stripe retries `payment_intent.succeeded` on
+        // transient delivery failures. Insert the payment row FIRST with an
+        // ON CONFLICT DO NOTHING; if rowCount === 0, this is a duplicate
+        // delivery — skip all state mutations and post-commit side effects
+        // (emails, shift creation) so we never double-charge amount_paid
+        // or spam notifications.
+        const inserted = await dbClient.query(
           `INSERT INTO proposal_payments (proposal_id, stripe_payment_intent_id, payment_type, amount, status)
-           VALUES ($1, $2, $3, $4, 'succeeded')`,
+           VALUES ($1, $2, $3, $4, 'succeeded')
+           ON CONFLICT (stripe_payment_intent_id) WHERE stripe_payment_intent_id IS NOT NULL AND status = 'succeeded' DO NOTHING
+           RETURNING id`,
           [proposalId, intent.id, paymentType, intent.amount]
         );
+        isFirstDelivery = inserted.rowCount === 1;
 
-        const action = paymentType === 'balance' ? 'balance_paid'
-          : paymentType === 'full' ? 'paid_in_full'
-          : paymentType === 'drink_plan_extras' ? 'drink_plan_extras_paid'
-          : paymentType === 'drink_plan_with_balance' ? 'drink_plan_balance_paid'
-          : 'deposit_paid';
-        await dbClient.query(
-          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, $2, 'system', $3)`,
-          [proposalId, action, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType })]
-        );
+        if (isFirstDelivery) {
+          // Determine new status and amount_paid based on payment type
+          if (paymentType === 'full') {
+            await dbClient.query(`
+              UPDATE proposals
+              SET status = 'balance_paid',
+                  amount_paid = total_price
+              WHERE id = $1 AND status NOT IN ('balance_paid', 'confirmed')
+            `, [proposalId]);
+          } else if (paymentType === 'balance') {
+            await dbClient.query(`
+              UPDATE proposals
+              SET status = 'balance_paid',
+                  amount_paid = total_price
+              WHERE id = $1 AND status = 'deposit_paid'
+            `, [proposalId]);
+          } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
+            // Drink plan extras payment — increment amount_paid
+            const paidDollars = intent.amount / 100;
+            const updateRes = await dbClient.query(`
+              UPDATE proposals
+              SET amount_paid = COALESCE(amount_paid, 0) + $1
+              WHERE id = $2
+              RETURNING amount_paid, total_price
+            `, [paidDollars, proposalId]);
+
+            if (updateRes.rows[0]) {
+              const newAmountPaid = Number(updateRes.rows[0].amount_paid);
+              const totalPrice = Number(updateRes.rows[0].total_price);
+              if (newAmountPaid >= totalPrice) {
+                await dbClient.query(
+                  "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed')",
+                  [proposalId]
+                );
+              }
+            }
+          } else {
+            // deposit
+            await dbClient.query(`
+              UPDATE proposals
+              SET status = 'deposit_paid',
+                  amount_paid = deposit_amount
+              WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')
+            `, [proposalId]);
+          }
+
+          // Save payment method ID if autopay was enrolled (card saved via setup_future_usage)
+          if (intent.payment_method && paymentType === 'deposit') {
+            await dbClient.query(`
+              UPDATE proposals
+              SET stripe_payment_method_id = $1
+              WHERE id = $2 AND autopay_enrolled = true AND stripe_payment_method_id IS NULL
+            `, [intent.payment_method, proposalId]);
+          }
+
+          await dbClient.query(
+            "UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_intent_id = $1",
+            [intent.id]
+          );
+
+          const action = paymentType === 'balance' ? 'balance_paid'
+            : paymentType === 'full' ? 'paid_in_full'
+            : paymentType === 'drink_plan_extras' ? 'drink_plan_extras_paid'
+            : paymentType === 'drink_plan_with_balance' ? 'drink_plan_balance_paid'
+            : 'deposit_paid';
+          await dbClient.query(
+            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, $2, 'system', $3)`,
+            [proposalId, action, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType })]
+          );
+        } else {
+          console.log(`Webhook: duplicate delivery for intent ${intent.id} — skipping (already processed)`);
+        }
 
         await dbClient.query('COMMIT');
-        console.log(`Payment (${paymentType}) received for proposal ${proposalId}: $${(intent.amount / 100).toFixed(2)}`);
+        if (isFirstDelivery) {
+          console.log(`Payment (${paymentType}) received for proposal ${proposalId}: $${(intent.amount / 100).toFixed(2)}`);
+        }
       } catch (dbErr) {
         await dbClient.query('ROLLBACK');
         console.error('Webhook DB error:', dbErr);
@@ -512,13 +595,16 @@ router.post('/webhook', async (req, res) => {
         dbClient.release();
       }
 
-      // Non-blocking post-commit work
-      sendPaymentNotifications(proposalId, intent.amount, paymentType);
-      try {
-        const shift = await createEventShifts(proposalId);
-        if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
-      } catch (shiftErr) {
-        console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+      // Non-blocking post-commit work — only on first delivery. Retries must
+      // not re-send receipts or re-create shifts.
+      if (isFirstDelivery) {
+        sendPaymentNotifications(proposalId, intent.amount, paymentType);
+        try {
+          const shift = await createEventShifts(proposalId);
+          if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
+        } catch (shiftErr) {
+          console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+        }
       }
     }
   }
@@ -574,29 +660,44 @@ router.post('/webhook', async (req, res) => {
     const proposalId = session.metadata?.proposal_id;
     if (proposalId) {
       const dbClient = await pool.connect();
+      let isFirstDelivery = false;
       try {
         await dbClient.query('BEGIN');
 
-        await dbClient.query(
-          "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')",
-          [proposalId]
-        );
-        await dbClient.query(
-          "UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1",
-          [session.payment_link]
-        );
-        await dbClient.query(
+        // Idempotency guard (see payment_intent.succeeded for rationale).
+        // Insert payment row first; if it collides with a prior delivery of
+        // the same session (same payment_intent), skip all state mutations
+        // and post-commit side effects.
+        const inserted = await dbClient.query(
           `INSERT INTO proposal_payments (proposal_id, stripe_payment_intent_id, payment_type, amount, status)
-           VALUES ($1, $2, 'deposit', $3, 'succeeded')`,
+           VALUES ($1, $2, 'deposit', $3, 'succeeded')
+           ON CONFLICT (stripe_payment_intent_id) WHERE stripe_payment_intent_id IS NOT NULL AND status = 'succeeded' DO NOTHING
+           RETURNING id`,
           [proposalId, session.payment_intent, session.amount_total]
         );
-        await dbClient.query(
-          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'deposit_paid', 'system', $2)`,
-          [proposalId, JSON.stringify({ amount: session.amount_total, payment_link: session.payment_link })]
-        );
+        isFirstDelivery = inserted.rowCount === 1;
+
+        if (isFirstDelivery) {
+          await dbClient.query(
+            "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')",
+            [proposalId]
+          );
+          await dbClient.query(
+            "UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1",
+            [session.payment_link]
+          );
+          await dbClient.query(
+            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'deposit_paid', 'system', $2)`,
+            [proposalId, JSON.stringify({ amount: session.amount_total, payment_link: session.payment_link })]
+          );
+        } else {
+          console.log(`Webhook: duplicate checkout.session.completed for intent ${session.payment_intent} — skipping`);
+        }
 
         await dbClient.query('COMMIT');
-        console.log(`Deposit paid (payment link) for proposal ${proposalId}`);
+        if (isFirstDelivery) {
+          console.log(`Deposit paid (payment link) for proposal ${proposalId}`);
+        }
       } catch (dbErr) {
         await dbClient.query('ROLLBACK');
         console.error('Webhook DB error:', dbErr);
@@ -604,13 +705,15 @@ router.post('/webhook', async (req, res) => {
         dbClient.release();
       }
 
-      // Non-blocking post-commit work
-      sendPaymentNotifications(proposalId, session.amount_total || 0, 'deposit');
-      try {
-        const shift = await createEventShifts(proposalId);
-        if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
-      } catch (shiftErr) {
-        console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+      // Non-blocking post-commit work — only on first delivery.
+      if (isFirstDelivery) {
+        sendPaymentNotifications(proposalId, session.amount_total || 0, 'deposit');
+        try {
+          const shift = await createEventShifts(proposalId);
+          if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
+        } catch (shiftErr) {
+          console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+        }
       }
     }
   }
