@@ -397,6 +397,7 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 **proposal_addons** — Line items linking proposals to add-ons
 - `proposal_id` FK, `addon_id` FK
 - `addon_name`, `billing_type`, `rate`, `quantity`, `line_total`
+- `variant` (nullable) — optional addon-specific variant tag (e.g., `'non-alcoholic-bubbles'` swaps the Champagne Toast label without changing price)
 
 **proposal_activity_log** — Audit trail
 - `proposal_id` FK, `action` (created, sent, viewed, signed, deposit_paid, etc.)
