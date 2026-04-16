@@ -6,6 +6,7 @@ const { createEventShifts } = require('../utils/eventCreation');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { calculateSyrupCost } = require('../utils/pricingEngine');
+const { lockInvoice, createBalanceInvoice } = require('../utils/invoiceHelpers');
 
 const router = express.Router();
 
@@ -640,6 +641,65 @@ router.post('/webhook', async (req, res) => {
             `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, $2, 'system', $3)`,
             [proposalId, action, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType })]
           );
+
+          // ── Invoice integration ──────────────────────────────────
+          const invoiceId = intent.metadata?.invoice_id;
+          if (invoiceId) {
+            // Payment was made through an invoice — link and lock
+            const paymentRow = await dbClient.query(
+              'SELECT id FROM proposal_payments WHERE stripe_payment_intent_id = $1 AND status = $2 LIMIT 1',
+              [intent.id, 'succeeded']
+            );
+            if (paymentRow.rows[0]) {
+              await dbClient.query(
+                'INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, $3)',
+                [invoiceId, paymentRow.rows[0].id, intent.amount]
+              );
+              const invUpdate = await dbClient.query(
+                'UPDATE invoices SET amount_paid = amount_paid + $1 WHERE id = $2 RETURNING amount_due, amount_paid',
+                [intent.amount, invoiceId]
+              );
+              if (invUpdate.rows[0]) {
+                const inv = invUpdate.rows[0];
+                const newStatus = inv.amount_paid >= inv.amount_due ? 'paid' : 'partially_paid';
+                await dbClient.query('UPDATE invoices SET status = $1 WHERE id = $2', [newStatus, invoiceId]);
+              }
+              await lockInvoice(invoiceId, dbClient);
+            }
+          } else {
+            // Legacy payment (not through invoice) — try to find and link the right invoice
+            const openInvoice = await dbClient.query(
+              "SELECT id FROM invoices WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid') ORDER BY created_at ASC LIMIT 1",
+              [proposalId]
+            );
+            if (openInvoice.rows[0]) {
+              const paymentRow = await dbClient.query(
+                'SELECT id FROM proposal_payments WHERE stripe_payment_intent_id = $1 AND status = $2 LIMIT 1',
+                [intent.id, 'succeeded']
+              );
+              if (paymentRow.rows[0]) {
+                await dbClient.query(
+                  'INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, $3)',
+                  [openInvoice.rows[0].id, paymentRow.rows[0].id, intent.amount]
+                );
+                const invUpdate = await dbClient.query(
+                  'UPDATE invoices SET amount_paid = amount_paid + $1 WHERE id = $2 RETURNING amount_due, amount_paid',
+                  [intent.amount, openInvoice.rows[0].id]
+                );
+                if (invUpdate.rows[0]) {
+                  const inv = invUpdate.rows[0];
+                  const newStatus = inv.amount_paid >= inv.amount_due ? 'paid' : 'partially_paid';
+                  await dbClient.query('UPDATE invoices SET status = $1 WHERE id = $2', [newStatus, openInvoice.rows[0].id]);
+                }
+                await lockInvoice(openInvoice.rows[0].id, dbClient);
+              }
+            }
+          }
+
+          // If a deposit was just paid, create the balance invoice
+          if (paymentType === 'deposit') {
+            await createBalanceInvoice(proposalId, dbClient);
+          }
         } else {
           console.log(`Webhook: duplicate delivery for intent ${intent.id} — skipping (already processed)`);
         }

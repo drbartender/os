@@ -6,6 +6,7 @@ const { calculateProposal } = require('../utils/pricingEngine');
 const { createEventShifts, createDrinkPlan } = require('../utils/eventCreation');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
+const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, lockInvoice } = require('../utils/invoiceHelpers');
 
 const router = express.Router();
 
@@ -374,7 +375,8 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
     event_name, event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, addon_ids,
     addon_quantities, syrup_selections,
-    event_type, event_type_category, event_type_custom
+    event_type, event_type_category, event_type_custom,
+    client_provides_glassware
   } = req.body;
 
   if (!client_name || !client_name.trim()) return res.status(400).json({ error: 'Name is required.' });
@@ -445,17 +447,19 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
     const derivedEventName = event_name || eventTypeLabel || `${client_name.trim()}'s Event`;
 
     // Insert proposal
+    const glasswareNote = client_provides_glassware ? 'Client will provide their own glassware (for Flavor Blaster)' : null;
     const proposalResult = await dbClient.query(`
       INSERT INTO proposals (client_id, event_name, event_date, event_start_time, event_duration_hours,
         event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, status,
-        event_type, event_type_category, event_type_custom)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'sent',$13,$14,$15)
+        event_type, event_type_category, event_type_custom, admin_notes)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'sent',$13,$14,$15,$16)
       RETURNING *
     `, [
       finalClientId, derivedEventName, event_date || null,
       event_start_time || null, dh, event_location || null, gc, package_id, nb,
       snapshot.staffing.actual, JSON.stringify(snapshot), snapshot.total,
-      eventTypeLabel || null, event_type_category || null, event_type_custom || null
+      eventTypeLabel || null, event_type_category || null, event_type_custom || null,
+      glasswareNote
     ]);
 
     const proposal = proposalResult.rows[0];
@@ -554,7 +558,7 @@ router.get('/addons', auth, requireAdminOrManager, async (req, res) => {
 
 /** POST /api/proposals/calculate — preview pricing without saving */
 router.post('/calculate', auth, requireAdminOrManager, async (req, res) => {
-  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, syrup_selections } = req.body;
+  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, syrup_selections, adjustments, total_price_override } = req.body;
   try {
     const pkgResult = await pool.query('SELECT * FROM service_packages WHERE id = $1', [package_id]);
     if (!pkgResult.rows[0]) return res.status(400).json({ error: 'Package not found.' });
@@ -576,6 +580,8 @@ router.post('/calculate', auth, requireAdminOrManager, async (req, res) => {
       numBartenders: num_bartenders,
       addons,
       syrupSelections: syrup_selections || [],
+      adjustments: adjustments || [],
+      totalPriceOverride: total_price_override ?? null,
     });
 
     res.json(snapshot);
@@ -816,7 +822,8 @@ router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
   const {
     event_name, event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
-    syrup_selections, event_type, event_type_category, event_type_custom
+    syrup_selections, event_type, event_type_category, event_type_custom,
+    adjustments, total_price_override
   } = req.body;
 
   const dbClient = await pool.connect();
@@ -853,9 +860,12 @@ router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
     const gc = guest_count ?? old.guest_count;
     const dh = event_duration_hours ?? Number(old.event_duration_hours);
     const nb = num_bars ?? old.num_bars;
+    const adj = adjustments ?? (old.adjustments || []);
+    const tpo = total_price_override !== undefined ? total_price_override : old.total_price_override;
     const snapshot = calculateProposal({
       pkg: pkgResult.rows[0], guestCount: gc, durationHours: dh, numBars: nb,
       numBartenders: num_bartenders, addons, syrupSelections: syrups,
+      adjustments: adj, totalPriceOverride: tpo,
     });
 
     await dbClient.query(`
@@ -867,13 +877,15 @@ router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
         pricing_snapshot = $10, total_price = $11,
         event_type = COALESCE($13, event_type),
         event_type_category = COALESCE($14, event_type_category),
-        event_type_custom = COALESCE($15, event_type_custom)
+        event_type_custom = COALESCE($15, event_type_custom),
+        adjustments = $16, total_price_override = $17
       WHERE id = $12
     `, [
       event_name, event_date, event_start_time, dh, event_location, gc,
       pkgId, nb, snapshot.staffing.actual,
       JSON.stringify(snapshot), snapshot.total, req.params.id,
-      event_type || null, event_type_category || null, event_type_custom || null
+      event_type || null, event_type_category || null, event_type_custom || null,
+      JSON.stringify(adj), tpo ?? null
     ]);
 
     // Replace proposal add-ons
@@ -891,6 +903,15 @@ router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
     );
 
     await dbClient.query('COMMIT');
+
+    // Refresh unlocked invoices with new pricing
+    const oldTotalCents = Math.round(Number(old.total_price || 0) * 100);
+    try {
+      await refreshUnlockedInvoices(parseInt(req.params.id, 10));
+      await createAdditionalInvoiceIfNeeded(parseInt(req.params.id, 10), oldTotalCents);
+    } catch (invErr) {
+      console.error('Invoice refresh failed (non-blocking):', invErr);
+    }
 
     // Return updated proposal
     const updated = await pool.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
@@ -969,6 +990,15 @@ router.patch('/:id/status', auth, requireAdminOrManager, async (req, res) => {
         }
       } catch (emailErr) {
         console.error('Proposal sent email failed (non-blocking):', emailErr);
+      }
+    }
+
+    // Auto-create first invoice when proposal is sent
+    if (status === 'sent') {
+      try {
+        await createInvoiceOnSend(parseInt(req.params.id, 10));
+      } catch (invErr) {
+        console.error('Invoice auto-creation failed (non-blocking):', invErr);
       }
     }
 
@@ -1088,6 +1118,35 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, async (req, res)
         [proposal.id, isFullyPaid ? 'paid_in_full' : 'deposit_paid', req.user.id,
           JSON.stringify({ amount: paymentAmount, method: method || 'manual', new_total_paid: newAmountPaid })]
       );
+
+      // Link payment to the oldest open invoice
+      const openInvoice = await dbClient.query(
+        "SELECT id FROM invoices WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid') ORDER BY created_at ASC LIMIT 1",
+        [proposal.id]
+      );
+      if (openInvoice.rows[0]) {
+        const paymentRow = await dbClient.query(
+          'SELECT id FROM proposal_payments WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 1',
+          [proposal.id]
+        );
+        if (paymentRow.rows[0]) {
+          const payAmountCents = Math.round(paymentAmount * 100);
+          await dbClient.query(
+            'INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1, $2, $3)',
+            [openInvoice.rows[0].id, paymentRow.rows[0].id, payAmountCents]
+          );
+          const invUpdate = await dbClient.query(
+            'UPDATE invoices SET amount_paid = amount_paid + $1 WHERE id = $2 RETURNING amount_due, amount_paid',
+            [payAmountCents, openInvoice.rows[0].id]
+          );
+          if (invUpdate.rows[0]) {
+            const inv = invUpdate.rows[0];
+            const invStatus = inv.amount_paid >= inv.amount_due ? 'paid' : 'partially_paid';
+            await dbClient.query('UPDATE invoices SET status = $1 WHERE id = $2', [invStatus, openInvoice.rows[0].id]);
+          }
+          await lockInvoice(openInvoice.rows[0].id, dbClient);
+        }
+      }
 
       await dbClient.query('COMMIT');
     } catch (txErr) {
