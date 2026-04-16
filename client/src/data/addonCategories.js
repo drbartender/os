@@ -34,5 +34,5 @@ export const ADDON_ICONS = {
   'house-made-ginger-beer': '\ud83e\udeb5',
   'carbonated-cocktails': '\ud83e\uddeb',
   'smoked-cocktail-kit': '\ud83d\udd25',
-  'additional-bartender': '\ud83e\uddd1\u200d\ud83c\udf73',
+  'additional-bartender': '\ud83c\udf78',
 };

@@ -4080,8 +4080,8 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   margin: 0 auto 1.5rem;
   box-shadow: 0 0 20px rgba(193, 125, 60, 0.2);
 }
-.wz-success h2 { margin-bottom: 0.75rem; color: var(--cream-text); }
-.wz-success p { color: var(--parchment); font-size: 1.05rem; }
+.wz-success h2 { margin-bottom: 0.75rem; color: var(--deep-brown); }
+.wz-success p { color: var(--deep-brown); font-size: 1.05rem; }
 
 /* ── Class Wizard ───────────────────────────────────────── */
 .wz-class-page {
