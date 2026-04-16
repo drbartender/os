@@ -119,7 +119,9 @@
       "mcp__plugin_vercel_vercel__list_projects",
       "mcp__plugin_vercel_vercel__list_deployments",
       "mcp__plugin_github_github__merge_pull_request",
-      "Bash(git switch *)"
+      "Bash(git switch *)",
+      "Bash(rm -rf C:/Users/dalla/DRB_OS/os/.playwright-mcp C:/Users/dalla/DRB_OS/os/client/.claude)",
+      "Bash(rm -f C:/Users/dalla/DRB_OS/os/.claude/scheduled_tasks.lock C:/Users/dalla/DRB_OS/os/addons-initial.png C:/Users/dalla/DRB_OS/os/bundle-foundation-selected.png C:/Users/dalla/DRB_OS/os/bundle-full-compound.png C:/Users/dalla/DRB_OS/os/drb-qa-header-with-md-link.png C:/Users/dalla/DRB_OS/os/drb-qa-mobile.png C:/Users/dalla/DRB_OS/os/drb-qa-part1.png C:/Users/dalla/DRB_OS/os/drb-qa-top.png)"
     ]
   }
 }

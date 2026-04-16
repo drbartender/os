@@ -6,3 +6,11 @@ server/uploads/*
 !server/uploads/.gitkeep
 *.log
 .DS_Store
+
+# Claude Code / agent runtime artifacts
+.playwright-mcp/
+.claude/scheduled_tasks.lock
+client/.claude/
+
+# Loose screenshots at repo root (intentional assets live under client/public/ or client/src/)
+/*.png
