@@ -434,7 +434,7 @@ router.post('/create-intent-for-invoice/:token', publicLimiter, async (req, res)
     if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
 
     const invRes = await pool.query(`
-      SELECT i.id AS invoice_id, i.amount_due, i.amount_paid, i.status AS invoice_status,
+      SELECT i.id AS invoice_id, i.invoice_number, i.amount_due, i.amount_paid, i.status AS invoice_status,
              p.id AS proposal_id, p.event_name, p.stripe_customer_id,
              c.email AS client_email, c.name AS client_name
       FROM invoices i
@@ -462,7 +462,7 @@ router.post('/create-intent-for-invoice/:token', publicLimiter, async (req, res)
       amount: balanceCents,
       currency: 'usd',
       customer: customerId,
-      description: `Invoice ${inv.invoice_id} — ${inv.client_name || 'Dr. Bartender'}`,
+      description: `${inv.invoice_number} — ${inv.client_name || 'Dr. Bartender'}`,
       receipt_email: inv.client_email || undefined,
       metadata: {
         proposal_id: String(inv.proposal_id),

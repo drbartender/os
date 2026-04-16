@@ -1445,4 +1445,6 @@ DO $$ BEGIN
   ALTER TABLE proposal_payments DROP CONSTRAINT IF EXISTS proposal_payments_payment_type_check;
   ALTER TABLE proposal_payments ADD CONSTRAINT proposal_payments_payment_type_check
     CHECK (payment_type IN ('deposit', 'balance', 'full', 'drink_plan_extras', 'drink_plan_with_balance', 'invoice'));
+  -- Ensure invoice_line_items.invoice_id is NOT NULL on existing tables
+  ALTER TABLE invoice_line_items ALTER COLUMN invoice_id SET NOT NULL;
 END $$;
