@@ -5701,7 +5701,8 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 
 /* ─── Email Marketing ──────────────────────────────────────────── */
 
-.em-dashboard { width: 100%; }
+.em-dashboard { width: 100%; color: var(--deep-brown); }
+.em-dashboard .loading { color: var(--warm-brown); }
 .em-header { margin-bottom: 1rem; }
 .em-header h1 { margin: 0; font-family: var(--font-display); color: var(--deep-brown); }
 

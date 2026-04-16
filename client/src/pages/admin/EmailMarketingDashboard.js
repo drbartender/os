@@ -14,7 +14,7 @@ export default function EmailMarketingDashboard() {
   const isRoot = location.pathname === '/admin/email-marketing';
 
   return (
-    <div className="em-dashboard">
+    <div className="em-dashboard card">
       <div className="em-header">
         <h1>Email Marketing</h1>
       </div>
