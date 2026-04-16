@@ -15,6 +15,7 @@ import Application from './pages/Application';
 import ApplicationStatus from './pages/ApplicationStatus';
 import PotionPlanningLab from './pages/plan/PotionPlanningLab';
 import ProposalView from './pages/proposal/ProposalView';
+import InvoicePage from './pages/invoice/InvoicePage';
 import ClientShoppingList from './pages/public/ClientShoppingList';
 import Blog from './pages/public/Blog';
 import BlogPost from './pages/public/BlogPost';
@@ -178,6 +179,7 @@ function PublicWebsiteRoutes() {
           {/* These public token-based routes work on both domains */}
           <Route path="/plan/:token" element={<PotionPlanningLab />} />
           <Route path="/proposal/:token" element={<ProposalView />} />
+          <Route path="/invoice/:token" element={<InvoicePage />} />
           <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
           <Route path="/labnotes" element={<Blog />} />
           <Route path="/labnotes/:slug" element={<BlogPost />} />
@@ -205,6 +207,7 @@ function HiringRoutes() {
         {/* Public token routes still work */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
+        <Route path="/invoice/:token" element={<InvoicePage />} />
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
@@ -243,6 +246,7 @@ function StaffSiteRoutes() {
         {/* Public token routes */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
+        <Route path="/invoice/:token" element={<InvoicePage />} />
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
@@ -265,6 +269,7 @@ function AppRoutes() {
       {/* Public pages (no auth) */}
       <Route path="/plan/:token" element={<PotionPlanningLab />} />
       <Route path="/proposal/:token" element={<ProposalView />} />
+      <Route path="/invoice/:token" element={<InvoicePage />} />
       <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
       {/* Website accessible on admin domain for preview */}
       <Route path="/website" element={<HomePage />} />
