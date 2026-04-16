@@ -5,9 +5,32 @@ import { getPackageBySlug } from '../../data/packages';
 import { ADDON_CATEGORIES, ADDON_ICONS } from '../../data/addonCategories';
 import useFormValidation from '../../hooks/useFormValidation';
 import EVENT_TYPES from '../../data/eventTypes';
+import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 const DRAFT_KEY = 'drb_quote_draft';
+
+// BYOB bundle definitions
+const BYOB_BUNDLE_SLUGS = ['the-foundation', 'the-formula', 'the-full-compound'];
+const MIXER_SLUGS = ['signature-mixers-only', 'full-mixers-only'];
+
+// Items the bundle covers — shown auto-checked with "INCLUDED" pill
+const BUNDLE_INCLUDED = {
+  'the-foundation': ['ice-delivery-only', 'cups-disposables-only', 'bottled-water-only'],
+  'the-formula': ['ice-delivery-only', 'cups-disposables-only', 'bottled-water-only', 'signature-mixers-only'],
+  'the-full-compound': ['ice-delivery-only', 'cups-disposables-only', 'bottled-water-only', 'full-mixers-only', 'garnish-package-only'],
+};
+
+// Items disabled (but not "included") — the bundle supersedes or excludes them
+const BUNDLE_UNAVAILABLE = {
+  'the-formula': ['full-mixers-only'],            // Formula already has Signature Mixers
+  'the-full-compound': ['signature-mixers-only'], // Full Compound's Full Mixers encompasses Signature
+};
+
+// Union of both lists — used to strip covered items from pricing/submit
+const BUNDLE_COVERED = Object.fromEntries(
+  BYOB_BUNDLE_SLUGS.map(b => [b, [...(BUNDLE_INCLUDED[b] || []), ...(BUNDLE_UNAVAILABLE[b] || [])]])
+);
 
 // 30-minute time slots from 8 AM to 11 PM
 const TIME_OPTIONS = [];
@@ -79,6 +102,25 @@ export default function QuoteWizard() {
   stepRef.current = step;
 
   const steps = getSteps(form.alcohol_provider);
+
+  const getSelectedBundleSlug = useCallback((ids) => {
+    for (const id of ids) {
+      const a = addons.find(x => x.id === id);
+      if (a && BYOB_BUNDLE_SLUGS.includes(a.slug)) return a.slug;
+    }
+    return null;
+  }, [addons]);
+
+  // Drop addon_ids covered by the active bundle (used for pricing preview, submit, review)
+  const stripIncludedAddons = useCallback((ids) => {
+    const bundle = getSelectedBundleSlug(ids);
+    if (!bundle) return ids;
+    const covered = new Set(BUNDLE_COVERED[bundle]);
+    return ids.filter(id => {
+      const a = addons.find(x => x.id === id);
+      return !a || !covered.has(a.slug) || BYOB_BUNDLE_SLUGS.includes(a.slug);
+    });
+  }, [addons, getSelectedBundleSlug]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -262,7 +304,7 @@ export default function QuoteWizard() {
           guest_count: Number(form.guest_count) || 50,
           duration_hours: Number(form.event_duration_hours) || 4,
           num_bars: numBars,
-          addon_ids: form.addon_ids.map(Number),
+          addon_ids: stripIncludedAddons(form.addon_ids).map(Number),
           addon_quantities: form.addon_quantities,
           syrup_selections: form.syrup_selections,
         }),
@@ -272,15 +314,19 @@ export default function QuoteWizard() {
       if (data && data.total != null) setPreview(data);
       else setPreview(null);
     } catch { setPreview(null); }
-  }, [form.package_id, form.guest_count, form.event_duration_hours, numBars, form.addon_ids, form.addon_quantities, form.syrup_selections]);
+  }, [form.package_id, form.guest_count, form.event_duration_hours, numBars, form.addon_ids, form.addon_quantities, form.syrup_selections, stripIncludedAddons]);
 
   useEffect(() => { fetchPreview(); }, [fetchPreview]);
 
   const update = (field, value) => { setForm(f => ({ ...f, [field]: value })); clearField(field); };
 
-  const BYOB_BUNDLE_SLUGS = ['the-foundation', 'the-formula', 'the-full-compound'];
-
   const toggleAddon = (id) => {
+    // No-op if this addon is blocked by the selected bundle (either included or unavailable)
+    const clicked = addons.find(a => a.id === id);
+    const bundle = getSelectedBundleSlug(form.addon_ids);
+    if (clicked && bundle && !BYOB_BUNDLE_SLUGS.includes(clicked.slug) && BUNDLE_COVERED[bundle].includes(clicked.slug)) {
+      return;
+    }
     setForm(f => {
       const isRemoving = f.addon_ids.includes(id);
       let newIds;
@@ -304,6 +350,13 @@ export default function QuoteWizard() {
             .filter(a => BYOB_BUNDLE_SLUGS.includes(a.slug) && a.id !== id)
             .map(a => a.id);
           newIds = newIds.filter(a => !otherBundleIds.includes(a));
+        }
+        // Signature / Full Mixers are mutually exclusive — radio-swap
+        if (addedAddon && MIXER_SLUGS.includes(addedAddon.slug)) {
+          const otherMixerIds = addons
+            .filter(a => MIXER_SLUGS.includes(a.slug) && a.id !== id)
+            .map(a => a.id);
+          newIds = newIds.filter(a => !otherMixerIds.includes(a));
         }
       }
       return { ...f, ...updates, addon_ids: newIds };
@@ -350,26 +403,16 @@ export default function QuoteWizard() {
     return addon && addon.slug === slug;
   });
 
-  // BYOB bundle slugs and à la carte items they include
-  const BYOB_BUNDLES = ['the-foundation', 'the-formula', 'the-full-compound'];
-  const FOUNDATION_ITEMS = ['ice-delivery-only', 'cups-disposables-only', 'bottled-water-only'];
-  const FORMULA_ITEMS = [...FOUNDATION_ITEMS, 'signature-mixers-only'];
-  const COMPOUND_ITEMS = [...FORMULA_ITEMS, 'full-mixers-only', 'garnish-package-only'];
-
-  const selectedBundle = BYOB_BUNDLES.find(slug => hasAddon(slug));
+  const selectedBundle = getSelectedBundleSlug(form.addon_ids);
+  const isIncludedByBundle = (slug) =>
+    !!selectedBundle && (BUNDLE_INCLUDED[selectedBundle] || []).includes(slug) && !BYOB_BUNDLE_SLUGS.includes(slug);
+  const isUnavailableByBundle = (slug) =>
+    !!selectedBundle && (BUNDLE_UNAVAILABLE[selectedBundle] || []).includes(slug);
   const guestCount = Number(form.guest_count) || 50;
 
   const filteredAddons = addons.filter(a => {
     // Basic applies_to check
     if (a.applies_to !== 'all' && (!selectedPkg || a.applies_to !== selectedPkg.category)) return false;
-
-    // BYOB bundles are mutually exclusive — hide others if one is selected
-    if (BYOB_BUNDLES.includes(a.slug) && selectedBundle && a.slug !== selectedBundle) return false;
-
-    // Hide à la carte items that are already covered by the selected bundle
-    if (selectedBundle === 'the-full-compound' && COMPOUND_ITEMS.includes(a.slug)) return false;
-    if (selectedBundle === 'the-formula' && FORMULA_ITEMS.includes(a.slug)) return false;
-    if (selectedBundle === 'the-foundation' && FOUNDATION_ITEMS.includes(a.slug)) return false;
 
     // Garnish Package: BYOB only (already included in hosted and Full Compound)
     if (a.slug === 'garnish-package-only') {
@@ -601,7 +644,7 @@ export default function QuoteWizard() {
           guest_count: Number(form.guest_count) || 50,
           package_id: Number(form.package_id),
           num_bars: numBars,
-          addon_ids: form.addon_ids.map(Number),
+          addon_ids: stripIncludedAddons(form.addon_ids).map(Number),
           addon_quantities: form.addon_quantities,
           syrup_selections: form.syrup_selections,
         }),
@@ -922,7 +965,11 @@ export default function QuoteWizard() {
                           const isSyrupAddon = addon.slug === 'handcrafted-syrups';
                           const hasQty = addon.slug === 'banquet-server' || addon.slug === 'barback' || addon.slug === 'pre-batched-mocktail' || addon.slug === 'additional-bartender';
                           const isSelected = form.addon_ids.includes(addon.id);
-                          const isExpanded = isSelected || expandedAddons.has(addon.id);
+                          const isIncluded = isIncludedByBundle(addon.slug);
+                          const isUnavailable = isUnavailableByBundle(addon.slug);
+                          const displayChecked = isIncluded || (isSelected && !isUnavailable);
+                          const isBlocked = isIncluded || isUnavailable;
+                          const isExpanded = (isSelected && !isUnavailable) || expandedAddons.has(addon.id);
                           const isDependent = !!addon.requires_addon_slug;
                           const addonQty = form.addon_quantities[addon.id] || 1;
 
@@ -942,22 +989,24 @@ export default function QuoteWizard() {
                           return (
                             <div
                               key={addon.id}
-                              className={`wz-addon-option${isSelected ? ' selected' : ''}${isExpanded ? ' expanded' : ''}${isDependent ? ' dependent' : ''}`}
+                              className={`wz-addon-option${isSelected && !isUnavailable ? ' selected' : ''}${isIncluded ? ' included' : ''}${isUnavailable ? ' unavailable' : ''}${isExpanded ? ' expanded' : ''}${isDependent ? ' dependent' : ''}`}
                             >
                               <div className="wz-addon-row" onClick={() => toggleAddon(addon.id)}>
                                 <input
                                   type="checkbox"
-                                  checked={isSelected}
+                                  checked={displayChecked}
+                                  disabled={isBlocked}
                                   onChange={() => toggleAddon(addon.id)}
                                   onClick={e => e.stopPropagation()}
                                 />
                                 <span className="wz-addon-icon">{ADDON_ICONS[addon.slug] || group.icon}</span>
                                 <div className="wz-addon-content">
                                   <div className="wz-addon-name">{addon.name}</div>
-                                  {ADDON_TAGLINES[addon.slug] && (
+                                  {ADDON_TAGLINES[addon.slug] && !isUnavailable && (
                                     <div className="wz-addon-tagline">{ADDON_TAGLINES[addon.slug]}</div>
                                   )}
-                                  <div className="wz-addon-price">{priceLabel}</div>
+                                  {isIncluded && <div className="wz-addon-included-label">INCLUDED</div>}
+                                  {!isIncluded && !isUnavailable && <div className="wz-addon-price">{priceLabel}</div>}
                                 </div>
                                 {(addon.description || isSyrupAddon) && (
                                   <button
@@ -1046,7 +1095,7 @@ export default function QuoteWizard() {
                   <div className="wz-review-grid">
                     <div><span className="wz-review-label">Name</span><span>{form.client_name}</span></div>
                     <div><span className="wz-review-label">Email</span><span>{form.client_email}</span></div>
-                    {form.client_phone && <div><span className="wz-review-label">Phone</span><span>{form.client_phone}</span></div>}
+                    {form.client_phone && <div><span className="wz-review-label">Phone</span><span>{formatPhoneInput(form.client_phone)}</span></div>}
                   </div>
                 </div>
                 {selectedPkg && (
@@ -1055,11 +1104,11 @@ export default function QuoteWizard() {
                     <p>{selectedPkg.name}</p>
                   </div>
                 )}
-                {form.addon_ids.length > 0 && (
+                {stripIncludedAddons(form.addon_ids).length > 0 && (
                   <div className="wz-review-section">
                     <h4>Add-ons</h4>
                     <ul className="wz-review-addons">
-                      {form.addon_ids.map(id => {
+                      {stripIncludedAddons(form.addon_ids).map(id => {
                         const addon = addons.find(a => a.id === id);
                         return addon ? <li key={id}>{addon.name}</li> : null;
                       })}
@@ -1087,8 +1136,8 @@ export default function QuoteWizard() {
                 </div>
                 <div className="form-group">
                   <label htmlFor="wz-client_phone" className="form-label">Phone</label>
-                  <input id="wz-client_phone" className="form-input" type="tel" value={form.client_phone}
-                    onChange={e => update('client_phone', e.target.value)} placeholder="(312) 555-1234" />
+                  <input id="wz-client_phone" className="form-input" type="tel" value={formatPhoneInput(form.client_phone)}
+                    onChange={e => update('client_phone', stripPhone(e.target.value))} placeholder="(312) 555-1234" />
                 </div>
               </div>
             </div>

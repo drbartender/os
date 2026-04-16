@@ -7,10 +7,6 @@ import { formatPhoneInput } from '../../../utils/formatPhone';
 import { SYRUPS, calculateSyrupCost, getBottlesPerSyrup, getAllUniqueSyrups } from '../../../data/syrups';
 import { API_BASE_URL as BASE_URL } from '../../../utils/api';
 
-const stripePromise = process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY
-  ? loadStripe(process.env.REACT_APP_STRIPE_PUBLISHABLE_KEY)
-  : null;
-
 const fmt = (n) =>
   `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -89,6 +85,15 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
   const [paymentAmounts, setPaymentAmounts] = useState({ extrasAmount: 0, pastDueAmount: 0, totalCharge: 0 });
   const [loadingPayment, setLoadingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState('');
+
+  // Stripe.js loader — publishable key fetched from server so it matches
+  // whichever mode (live or test) the server is currently using.
+  const [stripePromise, setStripePromise] = useState(null);
+  useEffect(() => {
+    axios.get(`${BASE_URL}/stripe/publishable-key`)
+      .then(r => { if (r.data?.key) setStripePromise(loadStripe(r.data.key)); })
+      .catch(() => setStripePromise(null));
+  }, []);
 
   // Calculate extras total (same logic as before, for display)
   const addonSlugs = Object.keys(addOns);

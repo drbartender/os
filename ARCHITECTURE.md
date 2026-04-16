@@ -275,6 +275,11 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | POST | `/messages` | Webhook secret | Receive customer message from Thumbtack thread |
 | POST | `/reviews` | Webhook secret | Receive new Thumbtack review |
 
+### Public Reviews — `/api/public/reviews`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/` | No | Returns curated 4–5 star Thumbtack reviews + count + average rating for the public HomePage. 5-minute in-memory cache, 120 req/min rate limit. Query: `?limit=1..20` (default 9). |
+
 ### Other
 | Method | Path | Auth | Description |
 |---|---|---|---|

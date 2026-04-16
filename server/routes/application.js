@@ -113,9 +113,11 @@ router.post('/', auth, async (req, res) => {
 
     const toBool = v => v === 'true' || v === true || v === 'Yes';
 
-    await pool.query('BEGIN');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    await pool.query(
+      await client.query(
       `INSERT INTO applications (
         user_id, full_name, phone, favorite_color,
         street_address, city, state, zip_code,
@@ -162,10 +164,16 @@ router.post('/', auth, async (req, res) => {
       ]
     );
 
-    // Update user status to 'applied'
-    await pool.query("UPDATE users SET onboarding_status = 'applied' WHERE id = $1", [req.user.id]);
+      // Update user status to 'applied'
+      await client.query("UPDATE users SET onboarding_status = 'applied' WHERE id = $1", [req.user.id]);
 
-    await pool.query('COMMIT');
+      await client.query('COMMIT');
+    } catch (txErr) {
+      try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+      throw txErr;
+    } finally {
+      client.release();
+    }
 
     // Email notifications (non-blocking)
     try {
@@ -186,7 +194,6 @@ router.post('/', auth, async (req, res) => {
     const result = await pool.query('SELECT * FROM applications WHERE user_id = $1', [req.user.id]);
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    await pool.query('ROLLBACK');
     console.error('Application submit error:', err);
     res.status(500).json({ error: 'Server error' });
   }

@@ -17,7 +17,8 @@ router.use(webhookLimiter);
 
 /** Timing-safe string comparison */
 function safeEqual(a, b) {
-  if (!a || !b || a.length !== b.length) return false;
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
 
