@@ -1,6 +1,7 @@
 import React from 'react';
+import * as Sentry from '@sentry/react';
 
-export default class ErrorBoundary extends React.Component {
+class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = { hasError: false, error: null };
@@ -10,37 +11,36 @@ export default class ErrorBoundary extends React.Component {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error, info) {
-    console.error('ErrorBoundary caught:', error, info);
+  componentDidCatch(error, errorInfo) {
+    console.error('ErrorBoundary caught:', error, errorInfo);
+    if (process.env.REACT_APP_SENTRY_DSN_CLIENT) {
+      Sentry.captureException(error, { extra: errorInfo });
+    }
   }
+
+  handleRefresh = () => {
+    window.location.reload();
+  };
 
   render() {
     if (this.state.hasError) {
       return (
-        <div className="page-container" style={{ padding: '3rem 1rem', textAlign: 'center' }}>
-          <div className="card" style={{ maxWidth: 480, margin: '0 auto' }}>
-            <h2 style={{ marginBottom: '0.75rem' }}>Something went wrong</h2>
-            <p className="text-muted" style={{ marginBottom: '1.5rem' }}>
-              We hit an unexpected error. You can try reloading the page.
-            </p>
-            {process.env.NODE_ENV === 'development' && this.state.error && (
-              <pre style={{ textAlign: 'left', fontSize: '0.75rem', background: '#f5f5f5', padding: '1rem', borderRadius: 8, overflow: 'auto', maxHeight: 200, marginBottom: '1rem' }}>
-                {this.state.error.toString()}
-                {'\n'}
-                {this.state.error.stack}
-              </pre>
-            )}
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => window.location.reload()}
-            >
-              Reload page
-            </button>
-          </div>
+        <div className="error-boundary-fallback">
+          <h2>Something went wrong</h2>
+          <p>An unexpected error occurred. Please refresh the page to try again.</p>
+          <button type="button" onClick={this.handleRefresh}>Refresh page</button>
+          {process.env.NODE_ENV === 'development' && this.state.error && (
+            <pre className="error-boundary-stack">
+              {this.state.error.toString()}
+              {'\n'}
+              {this.state.error.stack}
+            </pre>
+          )}
         </div>
       );
     }
     return this.props.children;
   }
 }
+
+export default ErrorBoundary;

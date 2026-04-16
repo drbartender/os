@@ -6272,3 +6272,32 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   margin: 0.25rem 0 0.5rem;
   line-height: 1.3;
 }
+
+/* ─── ErrorBoundary fallback ───────────────────────────────── */
+.error-boundary-fallback {
+  max-width: 520px;
+  margin: 4rem auto;
+  padding: 2rem;
+  text-align: center;
+}
+.error-boundary-fallback button {
+  margin-top: 1rem;
+  padding: 0.6rem 1.4rem;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.error-boundary-stack {
+  margin-top: 1.5rem;
+  text-align: left;
+  background: #FAFAFA;
+  border: 1px solid var(--border);
+  padding: 1rem;
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
