@@ -23,6 +23,7 @@ const path = require('path');
 const { initDb } = require('./db');
 const { auth } = require('./middleware/auth');
 const { getSignedUrl } = require('./utils/storage');
+const { AppError } = require('./utils/errors');
 const { processAutopayCharges, processEventCompletions } = require('./utils/balanceScheduler');
 const { processScheduledAutoAssigns } = require('./utils/autoAssignScheduler');
 const { processSequenceSteps, expireStaleQuoteDrafts } = require('./utils/emailSequenceScheduler');
@@ -132,6 +133,32 @@ app.use('/api/invoices', require('./routes/invoices'));
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
 // Frontend is served separately on Vercel
+
+// Global error handler — must be the last middleware
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+
+  if (err instanceof AppError) {
+    const body = { error: err.message, code: err.code };
+    if (err.fieldErrors) body.fieldErrors = err.fieldErrors;
+    return res.status(err.statusCode).json(body);
+  }
+
+  // Unknown error — Sentry + log + generic 500
+  if (process.env.SENTRY_DSN_SERVER) {
+    Sentry.captureException(err, {
+      user: req.user ? { id: req.user.id, role: req.user.role } : undefined,
+      tags: { route: req.originalUrl, method: req.method },
+    });
+  }
+  console.error('Unhandled error:', err);
+
+  res.status(500).json({
+    error: 'An unexpected error occurred. Please try again.',
+    code: 'INTERNAL_ERROR',
+  });
+});
 
 async function start() {
   try {
