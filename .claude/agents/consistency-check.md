@@ -1,8 +1,8 @@
 ---
 name: consistency-check
-description: Consistency checker. Use proactively after completing a feature or significant code change. Verifies that all related parts of the codebase are in sync.
+description: Cross-file consistency checker. Auto-runs in parallel before every code-touching push to main. Verifies that schema, route, and frontend changes stay synchronized — no drift between layers.
 tools: Read, Grep, Glob, Bash
-model: haiku
+model: opus
 color: yellow
 maxTurns: 15
 ---

@@ -1,6 +1,6 @@
 ---
 name: database-review
-description: Database schema and query review. Only use when explicitly asked or before a major deploy. Analyzes schema design, query patterns, and migration safety.
+description: PostgreSQL schema, query, and migration review. Auto-runs before any push that modifies server/db/schema.sql. Also invoked by /review-before-deploy. Analyzes index coverage, transaction safety, and migration idempotency.
 tools: Read, Grep, Glob, Bash
 model: opus
 color: purple

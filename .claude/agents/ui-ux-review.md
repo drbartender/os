@@ -1,6 +1,6 @@
 ---
 name: ui-ux-review
-description: UI/UX reviewer using Playwright. Use when explicitly asked to review UI, check a page visually, or before a major deploy. Navigates to pages, takes screenshots, and provides design and accessibility feedback.
+description: Playwright-driven UI and accessibility review. Explicit-only — requires `npm run dev` running. Never auto-runs on push. Invoked by /review-before-deploy or on direct user request. Navigates pages, takes screenshots at desktop/tablet/mobile, checks contrast, labels, keyboard nav, and responsive behavior.
 tools: Read, Glob, Grep, Bash
 model: opus
 color: pink

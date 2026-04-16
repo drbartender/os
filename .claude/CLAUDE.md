@@ -215,6 +215,43 @@ npm run dev           # Express on :5000, React on :3000
 - **Database**: Neon PostgreSQL (connection string in Render env vars)
 - Push to `main` triggers automatic deployment. No manual deploy step needed.
 
+## Git Workflow
+
+Solo developer, trunk-based, vibe-coded. Code preservation is the #1 priority. Push to `main` = deploy to production via Render + Vercel.
+
+### Twelve Core Rules
+
+1. **Trunk-only by default.** All work on `main`. Claude confirms branch at session start; if not on `main`, stops and asks — never auto-switches.
+2. **Code preservation beats shipping speed.** When a git op could destroy uncommitted or unpushed work, stop and ask.
+3. **Commits are finished, tested work only.** "Finished" means either (a) user verified it works in the app, or (b) it's a behavior-inert change (copy, CSS, docs) the user approved. No WIP commits, no checkpoint commits.
+4. **Separate cues for commit vs. push.**
+   - **Commit cue:** "looks good", "commit", "next task", or any affirmative after Claude reports what to test → commit without re-approval.
+   - **Push cue:** explicit only — "push", "deploy", "ship it", "send it". Claude never auto-pushes on commit cues. At natural break points Claude may ask *"ready to push these N commits?"*
+5. **Push = deploy.** Every push to `main` ships to Render + Vercel. Treat with gravity.
+6. **Review agents run automatically before every code-touching push.** Claude launches all 5 non-UI agents in parallel (`consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`). Skip agents only when the push contains exclusively `*.md` or `.gitignore` changes. Clean results → push proceeds silently. Any flag → stop, report findings, wait.
+7. **Explicit staging only.** `git add <specific-path>` always. Never `git add .`, `-A`, or `-u`. Prevents sweeping in screenshots, `.playwright-mcp/`, `.env`, etc.
+8. **Branches and stashes require approval with a one-line reason.** Claude may propose but never creates silently.
+9. **Undo rules (safe recipes).**
+   - Unpushed commit: `git reset --soft HEAD~N`
+   - Pushed commit: `git revert <sha>` + push (new undo commit — never rewrite pushed history)
+   - Unstage without losing work: `git restore --staged <path>`
+10. **Amend rules.** Never `--amend` a pushed commit. On unpushed commits, prefer new commits over amend; only amend if the user explicitly asks.
+11. **Destructive ops always require explicit approval.** `push --force`, `reset --hard`, `clean -f`, `branch -D`, `checkout .`, `restore .`, `rm` on tracked files — per-action yes every time. No "obviously safe" bypass.
+12. **Push failures stop and report — never auto-resolve.** If `git push` is rejected (non-fast-forward, auth, network), Claude stops and asks. Never auto-pulls, auto-rebases, or force-pushes.
+
+### Pre-Push Procedure
+
+When the user gives a push cue, Claude runs this checklist exactly. No steps skipped, no silent deviations.
+
+1. **Verify branch.** Confirm current branch = `main`. If not, stop and ask.
+2. **Sanity-check working tree.** If there are uncommitted modifications or untracked files other than known-ignored artifacts, pause and ask: *"There are uncommitted changes in X, Y, Z — meant to go in this push or leave them out?"* Not a hard block; user may just say "leave them."
+3. **Inventory the batch.** Run `git log origin/main..HEAD --name-only` to see every file in the pending push.
+4. **Classify code vs. non-code.** If any changed file is not `*.md` or `.gitignore`, agents run. Otherwise skip to step 7.
+5. **Launch 5 agents in parallel** (single message, 5 concurrent Agent tool calls): `consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`.
+6. **Wait for all agents. Consolidate.** All clean → proceed silently to push. Any flagged issue → stop, present a consolidated report grouped by severity (blockers, warnings, suggestions), ask for direction (fix now, push anyway, abandon).
+7. **Push.** `git push origin main`. If rejected, stop and report (per Rule 12).
+8. **Report result.** Confirm push succeeded. Note Render + Vercel are now deploying. List commits that shipped.
+
 ## Reasoning Effort
 
 **Use maximum reasoning effort when:**
@@ -312,46 +349,53 @@ Before presenting ANY code change, silently verify:
 
 ### Review Agents (All Opus)
 
-After completing a feature, significant change, or before deploy, launch review agents. All agents are defined in `.claude/agents/` and run on the opus model for thorough analysis. Launch relevant agents **in parallel** after finishing work.
+Six review agents live in `.claude/agents/`, all running on opus. Triggered automatically per the Git Workflow rules above (see Rule 6 + Pre-Push Procedure) or explicitly via the `/review-before-deploy` slash command.
 
-**@security-review** — Full OWASP Top 10 audit:
-- SQL injection (string concat in queries), XSS (`dangerouslySetInnerHTML`), SSRF
-- Missing `auth` middleware, IDOR (missing `req.user.id` ownership checks)
-- Hardcoded secrets, JWT implementation, Stripe/Resend/Thumbtack webhook verification
-- Rate limiting, CORS config, file upload validation, `npm audit`
+**Auto-run in parallel before every code-touching push to `main`:**
 
-**@code-review** — Code quality + error handling:
-- Missing try/catch on async handlers, missing ROLLBACK after BEGIN, unhandled promises
-- Missing loading/error/empty states in React components
-- Dead code, duplication, function complexity (>50 lines), naming conventions
-- React anti-patterns: useEffect deps, component size (>200 lines), props drilling
-- API consistency: response shapes, HTTP status codes, snake_case keys
+- **@security-review** — Full OWASP Top 10 audit:
+  - SQL injection (string concat in queries), XSS (`dangerouslySetInnerHTML`), SSRF
+  - Missing `auth` middleware, IDOR (missing `req.user.id` ownership checks)
+  - Hardcoded secrets, JWT implementation, Stripe/Resend/Thumbtack webhook verification
+  - Rate limiting, CORS config, file upload validation, `npm audit`
 
-**@consistency-check** — Cross-file synchronization:
-- Schema column changes reflected in all routes (SELECT, INSERT, UPDATE)
-- New routes mounted in `index.js` with matching `App.js` frontend routes
-- Pricing logic changes reflected in all consumers (ProposalCreate, ProposalDetail, PricingBreakdown)
-- API response shape changes handled by all frontend consumers
-- Doc updates: CLAUDE.md, README.md, ARCHITECTURE.md folder trees
+- **@code-review** — Code quality + error handling:
+  - Missing try/catch on async handlers, missing ROLLBACK after BEGIN, unhandled promises
+  - Missing loading/error/empty states in React components
+  - Dead code, duplication, function complexity (>50 lines), naming conventions
+  - React anti-patterns: useEffect deps, component size (>200 lines), props drilling
+  - API consistency: response shapes, HTTP status codes, snake_case keys
 
-**@database-review** — Schema + query analysis:
-- Missing indexes, foreign keys, NOT NULL constraints
-- N+1 query patterns, `SELECT *`, missing LIMIT on list queries
-- Transaction integrity (BEGIN/COMMIT/ROLLBACK)
-- Migration safety (idempotent DDL, nullable new columns)
+- **@consistency-check** — Cross-file synchronization:
+  - Schema column changes reflected in all routes (SELECT, INSERT, UPDATE)
+  - New routes mounted in `index.js` with matching `App.js` frontend routes
+  - Pricing logic changes reflected in all consumers (ProposalCreate, ProposalDetail, PricingBreakdown)
+  - API response shape changes handled by all frontend consumers
+  - Doc updates: CLAUDE.md, README.md, ARCHITECTURE.md folder trees
 
-**@performance-review** — Frontend, API, and bundle performance:
-- Unnecessary React re-renders (missing memo/useMemo/useCallback)
-- Heavy imports, missing lazy loading, unused code shipped to client
-- Sequential DB queries that could use Promise.all, missing pagination
-- Oversized API responses, `SELECT *` instead of specific columns
-- Prioritizes public-facing pages (HomePage, ProposalView, PotionPlanningLab, Blog)
+- **@performance-review** — Frontend, API, and bundle performance:
+  - Unnecessary React re-renders (missing memo/useMemo/useCallback)
+  - Heavy imports, missing lazy loading, unused code shipped to client
+  - Sequential DB queries that could use Promise.all, missing pagination
+  - Oversized API responses, `SELECT *` instead of specific columns
+  - Prioritizes public-facing pages (HomePage, ProposalView, PotionPlanningLab, Blog)
 
-**@ui-ux-review** — Playwright visual + accessibility review:
-- Screenshots at desktop, tablet, and mobile viewports
-- Color contrast, form labels, heading hierarchy, keyboard navigation
-- Loading states, error messages, empty states, form validation feedback
-- Responsive layout, touch targets, admin sidebar behavior
-- Requires app running locally (`npm run dev`)
+**Auto-run additionally when `server/db/schema.sql` is modified:**
 
-**Full Pre-Deploy Review** — Run ALL six agents in parallel before deploying.
+- **@database-review** — Schema + query analysis:
+  - Missing indexes, foreign keys, NOT NULL constraints
+  - N+1 query patterns, `SELECT *`, missing LIMIT on list queries
+  - Transaction integrity (BEGIN/COMMIT/ROLLBACK)
+  - Migration safety (idempotent DDL, nullable new columns)
+
+**Explicit-only (requires `npm run dev` running):**
+
+- **@ui-ux-review** — Playwright visual + accessibility review:
+  - Screenshots at desktop, tablet, and mobile viewports
+  - Color contrast, form labels, heading hierarchy, keyboard navigation
+  - Loading states, error messages, empty states, form validation feedback
+  - Responsive layout, touch targets, admin sidebar behavior
+
+**Slash Command — `/review-before-deploy`:**
+
+Runs ALL six agents in parallel (the five auto-runners plus `ui-ux-review`). Reserved for heavier gates: end of a major feature, before quarterly deploy, after adding a new third-party integration. Will warn if `npm run dev` isn't running and ask whether to start it or skip the UI agent.
