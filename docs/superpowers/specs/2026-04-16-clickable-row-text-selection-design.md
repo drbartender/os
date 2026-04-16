@@ -25,18 +25,22 @@
 
 ## Design
 
-### Core mechanic — intent detection at mouseup
+### Core mechanic — intent detection at mouseup with click-delay
 
-Replace `onClick` with `onMouseDown` + `onMouseUp`. At mouseup, four gates decide whether to navigate, in order:
+Replace `onClick` with `onMouseDown` + `onMouseUp`. A plain left-click does not navigate immediately — it schedules navigation via `setTimeout` after a `250ms` delay. A subsequent click (the second or third of a double/triple-click) cancels the pending timer so the browser's word/line selection takes effect without the row ever navigating.
 
-1. **Drag threshold.** Record `(clientX, clientY)` at mousedown. If either axis moved more than `4px` by mouseup, treat as a drag — don't navigate. This handles both single-field highlight and multi-row range selection.
-2. **Active text selection.** If `window.getSelection().toString().length > 0` at mouseup, don't navigate. Covers double-click (word) and triple-click (line) without special casing.
-3. **Interactive child guard.** If the event target is inside a `button`, `a`, `input`, `select`, `textarea`, or `[role="button"]`, don't navigate. The child handles its own click. Replaces the per-button `stopPropagation` calls used today.
-4. **Modifier keys.** Cmd/Ctrl+click → `window.open(to, '_blank')` instead of in-tab navigation. Middle-click via `onAuxClick` → same. These are standard web behaviors the current `onClick` silently swallows.
+At mouseup, the gates run in order:
 
-If all gates pass, call `navigate(to)`.
+1. **Drag threshold.** Record `(clientX, clientY)` at mousedown. If either axis moved more than `4px` by mouseup, treat as a drag — don't navigate. Handles single-field highlight and multi-row range selection.
+2. **Interactive child guard.** If the event target is inside a `button`, `a`, `input`, `select`, `textarea`, or `[role="button"]`, don't navigate. The child handles its own click. Replaces the per-button `stopPropagation` calls.
+3. **Modifier keys.** Cmd/Ctrl+click → `window.open(to, '_blank', 'noopener,noreferrer')` immediately (no delay, cannot be cancelled). Middle-click via `onAuxClick` → same. Standard web behaviors the original `onClick` swallowed.
+4. **Multi-click cancel.** If `e.detail > 1` (the mouseup belongs to the second or third click of a multi-click), clear any pending navigation timer and bail. The browser's word/line selection takes effect naturally.
+5. **Active text selection.** If `window.getSelection().toString().length > 0` at mouseup, don't navigate. Covers the case where text is already selected elsewhere when the click happens.
+6. **Delayed navigation.** Otherwise, schedule `navigate(to)` in `250ms` via `setTimeout` and store the timer handle in a `useRef`. When the timer fires, re-check `getSelection` one more time before navigating — any selection that appeared during the delay (e.g., from an in-progress double-click) still cancels the nav.
 
 Only respond to left-button events (`e.button === 0`) for mousedown/up; right-clicks open the browser context menu naturally and are ignored.
+
+A `useEffect` cleanup clears any pending timer on unmount so navigation cannot fire after the component is gone.
 
 ### Keyboard and accessibility
 
@@ -97,10 +101,11 @@ Call site transformation in `ProposalsDashboard.js`:
 ## Edge cases and decisions
 
 - **4px threshold.** Chosen to tolerate incidental mouse jitter on click (common on trackpads and touch-mice) while catching even the shortest intentional drags. Not configurable — single constant in the component.
+- **250ms click delay.** Chosen to exceed a typical double-click cadence (most users complete a double-click within 150–200ms) while staying imperceptible enough that single-click nav still feels crisp. Shorter delays (e.g., 150ms) miss slower double-clickers; longer delays (e.g., 400ms) introduce noticeable nav lag. Not configurable — single constant.
 - **Cursor style.** Keep `cursor: pointer` on the row. Text still selects despite the pointer cursor; the inconsistency is less jarring than a text cursor on a clickable row.
-- **Existing selection before click.** If text is already selected elsewhere on the page and the user clicks a row, gate 2 will prevent navigation because `getSelection().toString()` is non-empty. This is acceptable — the first click clears the selection (via the browser's native behavior on mousedown), and the second click navigates. A rare case; not worth special handling.
-- **Touch devices.** Mobile taps register as mousedown+mouseup with no movement, so gate 1 passes and navigation works. Drag-select is not a meaningful mobile gesture, so no special handling is needed.
-- **Per-row closure.** `useRef` is scoped to each `ClickableRow` instance, so mousedown state from row A cannot leak into mouseup on row B.
+- **Existing selection before click.** If text is already selected elsewhere on the page and the user clicks a row, gate 5 will prevent navigation because `getSelection().toString()` is non-empty. This is acceptable — the first click clears the selection (via the browser's native behavior on mousedown), and the second click navigates. A rare case; not worth special handling.
+- **Touch devices.** Mobile taps register as mousedown+mouseup with no movement, so gate 1 passes and navigation works (after the 250ms delay). Drag-select is not a meaningful mobile gesture, so no special handling is needed.
+- **Per-row closure.** `useRef` is scoped to each `ClickableRow` instance, so mousedown state and pending click timers from row A cannot leak into row B.
 
 ---
 
