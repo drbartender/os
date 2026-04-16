@@ -14,7 +14,7 @@ export default function SessionExpiryHandler() {
     const onExpired = (e) => {
       const url = e.detail?.url || '';
       const isClientRequest = url.startsWith('/client-portal/') || url.startsWith('/client-auth/');
-      const target = isClientRequest ? '/client/login' : '/login';
+      const target = isClientRequest ? '/client-login' : '/login';
 
       toast.error('Your session expired — please log in again.');
 
