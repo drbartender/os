@@ -4,6 +4,13 @@
  */
 
 function calculateBaseCost(pkg, guestCount, durationHours) {
+  if (!durationHours || durationHours <= 0) {
+    throw new Error('Duration must be greater than zero.');
+  }
+  if (pkg.pricing_type !== 'flat' && (!guestCount || guestCount <= 0)) {
+    throw new Error('Guest count must be greater than zero for per-guest packages.');
+  }
+
   if (pkg.pricing_type === 'flat') {
     // BYOB: flat rate based on duration
     if (pkg.base_rate_3hr && durationHours <= 3) return Number(pkg.base_rate_3hr);
@@ -36,7 +43,7 @@ function calculateStaffing(pkg, guestCount, durationHours, numBartendersOverride
   const included = Number(pkg.bartenders_included || 1);
   const hourlyRate = Number(pkg.extra_bartender_hourly || 40);
 
-  const required = Math.ceil(guestCount / perBartender);
+  const required = guestCount > 0 ? Math.max(1, Math.ceil(guestCount / perBartender)) : 1;
   const actual = numBartendersOverride !== null && numBartendersOverride !== undefined ? numBartendersOverride : required;
   const extra = Math.max(0, actual - included);
   // Hosted (per_guest) packages include additional bartenders in the per-guest rate

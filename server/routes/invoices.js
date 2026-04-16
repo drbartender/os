@@ -187,14 +187,18 @@ router.post('/proposal/:proposalId', auth, requireAdminOrManager, async (req, re
     // Build line items: use provided array or fall back to a single line from label+amount
     let items;
     if (Array.isArray(line_items) && line_items.length > 0) {
-      items = line_items.map((li) => ({
-        description: String(li.description || '').trim() || label.trim(),
-        quantity: Number(li.quantity) > 0 ? Math.round(Number(li.quantity)) : 1,
-        unit_price: Math.round(Number(li.amount || 0) * 100),
-        line_total: Math.round(Number(li.amount || 0) * 100) * (Number(li.quantity) > 0 ? Math.round(Number(li.quantity)) : 1),
-        source_type: 'manual',
-        source_id: null,
-      }));
+      items = line_items.map((li) => {
+        const qty = Number(li.quantity) > 0 ? Math.round(Number(li.quantity)) : 1;
+        const unitPrice = Math.round(Number(li.amount || 0) * 100);
+        return {
+          description: String(li.description || '').trim() || label.trim(),
+          quantity: qty,
+          unit_price: unitPrice,
+          line_total: unitPrice * qty,
+          source_type: 'manual',
+          source_id: null,
+        };
+      });
     } else {
       items = [
         {
@@ -268,6 +272,17 @@ router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
   const idParam = `$${values.length}`;
 
   try {
+    // Prevent voiding an invoice that has payments applied
+    if (status === 'void') {
+      const paidCheck = await pool.query(
+        'SELECT amount_paid FROM invoices WHERE id = $1',
+        [id]
+      );
+      if (paidCheck.rows[0] && Number(paidCheck.rows[0].amount_paid) > 0) {
+        return res.status(400).json({ error: 'Cannot void an invoice with payments applied. Refund payments first.' });
+      }
+    }
+
     const result = await pool.query(
       `UPDATE invoices
           SET ${setClauses.join(', ')}, updated_at = NOW()

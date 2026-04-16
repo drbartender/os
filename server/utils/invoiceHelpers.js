@@ -303,9 +303,12 @@ async function refreshUnlockedInvoices(proposalId, dbClient) {
       amountDue = depositCents;
     } else if (invoice.label === 'Full Payment') {
       amountDue = totalCents;
-    } else {
-      // "Balance" or any other label → remainder after locked invoices
+    } else if (invoice.label === 'Balance') {
       amountDue = Math.max(0, totalCents - lockedTotal);
+    } else {
+      // Non-standard labels (e.g., 'Additional Services', manual invoices)
+      // have bespoke amounts and line items — skip refresh entirely
+      continue;
     }
 
     // Update amount_due
