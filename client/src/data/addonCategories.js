@@ -35,4 +35,6 @@ export const ADDON_ICONS = {
   'carbonated-cocktails': '\ud83e\uddeb',
   'smoked-cocktail-kit': '\ud83d\udd25',
   'additional-bartender': '\ud83c\udf78',
+  'non-alcoholic-beer': '\ud83c\udf7a',
+  'zero-proof-spirits': '\ud83e\udeb6',
 };

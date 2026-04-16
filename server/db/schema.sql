@@ -586,6 +586,8 @@ INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_h
   ('soft-drink-addon', 'Soft Drink Add-On', 'Soft drinks for all guests.', 'per_guest', 3.00, NULL, 'all', 20),
   ('pre-batched-mocktail', 'Pre-Batched Mocktail', 'A pre-batched non-alcoholic cocktail ready to pour. Great for events where you want a sophisticated NA option without the complexity of a full mocktail bar. Add more for variety.', 'per_guest', 1.50, NULL, 'all', 21),
   ('mocktail-bar', 'Mocktail Bar', 'Full mocktail bar with signature recipes.', 'per_guest_timed', 7.50, 2.00, 'all', 22),
+  ('non-alcoholic-beer', 'Non-Alcoholic Beer', 'NA beer selection for guests (Athletic Brewing, Heineken 0.0, etc.).', 'per_guest', 4.00, NULL, 'hosted', 23),
+  ('zero-proof-spirits', 'Zero-Proof Spirits', 'Premium zero-proof spirit alternatives for crafted NA cocktails (Seedlip, Lyre''s, etc.).', 'per_guest', 5.00, NULL, 'hosted', 24),
   ('banquet-server', 'Banquet Server', 'Professional banquet server.', 'per_hour', 75.00, NULL, 'all', 41),
   ('flavor-blaster-rental', 'Flavor Blaster Rental', 'Flavor blaster equipment rental.', 'flat', 150.00, NULL, 'all', 35),
   ('handcrafted-syrups', 'Handcrafted Syrups', 'Single 750ml bottle of handcrafted syrup.', 'flat', 30.00, NULL, 'all', 30),
@@ -607,7 +609,7 @@ ON CONFLICT (slug) DO NOTHING;
 -- Set categories on existing add-ons
 UPDATE service_addons SET category = 'byob_support' WHERE slug IN ('the-foundation','the-formula','the-full-compound','ice-delivery-only','cups-disposables-only','bottled-water-only','signature-mixers-only','full-mixers-only');
 UPDATE service_addons SET category = 'premium' WHERE slug IN ('champagne-toast');
-UPDATE service_addons SET category = 'beverage' WHERE slug IN ('soft-drink-addon','pre-batched-mocktail','mocktail-bar');
+UPDATE service_addons SET category = 'beverage' WHERE slug IN ('soft-drink-addon','pre-batched-mocktail','mocktail-bar','non-alcoholic-beer','zero-proof-spirits');
 UPDATE service_addons SET category = 'craft_ingredients' WHERE slug IN ('handcrafted-syrups','handcrafted-syrups-3pack','house-made-ginger-beer','carbonated-cocktails','smoked-cocktail-kit','flavor-blaster-rental');
 UPDATE service_addons SET category = 'staffing' WHERE slug IN ('banquet-server','barback');
 UPDATE service_addons SET category = 'byob_support' WHERE slug = 'garnish-package-only';
