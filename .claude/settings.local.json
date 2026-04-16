@@ -103,7 +103,23 @@
       "Read(//tmp/**)",
       "Bash(wc -c client/src/components/ShoppingList/fonts/*.ttf)",
       "Bash(npm list:*)",
-      "Bash(git diff:*)"
+      "Bash(git diff:*)",
+      "Bash(git checkout *)",
+      "Bash(git pull *)",
+      "Bash(PORT=5055 node server/index.js)",
+      "Bash(tee /tmp/server.log)",
+      "Bash(python3 -m json.tool)",
+      "mcp__Neon__describe_project",
+      "Bash(git reset *)",
+      "Bash(git stash *)",
+      "Bash(gh pr create --base main --head feat/homepage-thumbtack-reviews --title 'Pre-live-testing: hardening, Thumbtack reviews, Stripe test-mode, testing guide, quote-wizard polish' --body ' *)",
+      "mcp__plugin_github_github__create_pull_request",
+      "Bash(git fetch *)",
+      "mcp__plugin_vercel_vercel__list_teams",
+      "mcp__plugin_vercel_vercel__list_projects",
+      "mcp__plugin_vercel_vercel__list_deployments",
+      "mcp__plugin_github_github__merge_pull_request",
+      "Bash(git switch *)"
     ]
   }
 }
