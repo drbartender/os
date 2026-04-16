@@ -29,7 +29,7 @@ const EVENT_TYPES = [
 ];
 
 function getEventTypeLabel({ event_type, event_type_custom } = {}) {
-  if (event_type === 'other' && event_type_custom) return event_type_custom;
+  if (event_type === 'other') return event_type_custom || 'event';
   const found = EVENT_TYPES.find(t => t.id === event_type);
   return found ? found.label : 'event';
 }
