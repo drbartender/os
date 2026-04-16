@@ -14,8 +14,6 @@ import ResetPassword from './pages/ResetPassword';
 import Application from './pages/Application';
 import ApplicationStatus from './pages/ApplicationStatus';
 import PotionPlanningLab from './pages/plan/PotionPlanningLab';
-const ProposalView = lazy(() => import('./pages/proposal/ProposalView'));
-const InvoicePage = lazy(() => import('./pages/invoice/InvoicePage'));
 import ClientShoppingList from './pages/public/ClientShoppingList';
 import Blog from './pages/public/Blog';
 import BlogPost from './pages/public/BlogPost';
@@ -23,6 +21,10 @@ import ClientLogin from './pages/public/ClientLogin';
 import ClientDashboard from './pages/public/ClientDashboard';
 import HiringLanding from './pages/HiringLanding';
 import { ClientAuthProvider } from './context/ClientAuthContext';
+
+// Lazy-loaded: public token-gated pages (Stripe SDK stays out of main bundle)
+const ProposalView = lazy(() => import('./pages/proposal/ProposalView'));
+const InvoicePage = lazy(() => import('./pages/invoice/InvoicePage'));
 
 // Lazy-loaded: onboarding, staff portal, admin shell — not needed on public marketing site
 const Welcome = lazy(() => import('./pages/Welcome'));
