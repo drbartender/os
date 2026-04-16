@@ -31,7 +31,7 @@ export default function ProposalCreate() {
     client_name: '', client_email: '', client_phone: '', client_source: 'thumbtack',
     event_name: '', event_type: '', event_type_category: '', event_type_custom: '',
     event_date: '', event_start_time: '17:00', event_duration_hours: 4,
-    event_location: '', guest_count: 50, package_id: '', needs_bar: false,
+    event_location: '', guest_count: 50, package_id: '', num_bars: 0,
     num_bartenders: null, addon_ids: []
   });
 
@@ -48,8 +48,6 @@ export default function ProposalCreate() {
     });
   }, []);
 
-  const numBarsForCalc = form.needs_bar ? 1 : 0;
-
   const fetchPreview = useCallback(async () => {
     if (!form.package_id) { setPreview(null); return; }
     try {
@@ -57,13 +55,13 @@ export default function ProposalCreate() {
         package_id: Number(form.package_id),
         guest_count: Number(form.guest_count) || 50,
         duration_hours: Number(form.event_duration_hours) || 4,
-        num_bars: form.needs_bar ? 1 : 0,
+        num_bars: Number(form.num_bars) || 0,
         num_bartenders: form.num_bartenders != null ? Number(form.num_bartenders) : undefined,
         addon_ids: form.addon_ids.map(Number)
       });
       setPreview(res.data);
     } catch { setPreview(null); }
-  }, [form.package_id, form.guest_count, form.event_duration_hours, form.needs_bar, form.num_bartenders, form.addon_ids]);
+  }, [form.package_id, form.guest_count, form.event_duration_hours, form.num_bars, form.num_bartenders, form.addon_ids]);
 
   useEffect(() => { fetchPreview(); }, [fetchPreview]);
 
@@ -145,7 +143,7 @@ export default function ProposalCreate() {
         package_id: Number(form.package_id),
         guest_count: Number(form.guest_count),
         event_duration_hours: Number(form.event_duration_hours),
-        num_bars: form.needs_bar ? 1 : 0,
+        num_bars: Number(form.num_bars) || 0,
         num_bartenders: form.num_bartenders != null ? Number(form.num_bartenders) : undefined,
         addon_ids: form.addon_ids.map(Number)
       };
@@ -285,11 +283,8 @@ export default function ProposalCreate() {
                   <input className="form-input" type="number" min="1" max="1000" value={form.guest_count} onChange={e => update('guest_count', e.target.value)} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Portable Bar Needed?</label>
-                  <select className="form-select" value={form.needs_bar ? 'yes' : 'no'} onChange={e => update('needs_bar', e.target.value === 'yes')}>
-                    <option value="no">No — venue has a bar</option>
-                    <option value="yes">Yes</option>
-                  </select>
+                  <label className="form-label">Portable Bars</label>
+                  <input className="form-input" type="number" min="0" max="5" value={form.num_bars} onChange={e => update('num_bars', e.target.value)} />
                 </div>
               </div>
             </div>
@@ -380,7 +375,7 @@ export default function ProposalCreate() {
                   <div style={{ marginTop: '1rem', padding: '0.75rem', background: 'var(--cream-light, #faf5ef)', borderRadius: '6px' }}>
                     <div className="text-small text-muted">
                       {preview.staffing.actual} bartender{preview.staffing.actual !== 1 ? 's' : ''}
-                      {numBarsForCalc > 0 && ` · ${numBarsForCalc} bar${numBarsForCalc !== 1 ? 's' : ''}`}
+                      {Number(form.num_bars) > 0 && ` · ${form.num_bars} bar${Number(form.num_bars) !== 1 ? 's' : ''}`}
                       {preview.staffing.extra > 0 && ` (${preview.staffing.extra} extra)`}
                     </div>
                   </div>

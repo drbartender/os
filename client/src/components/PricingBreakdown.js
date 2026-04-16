@@ -3,8 +3,12 @@ import React from 'react';
 export default function PricingBreakdown({ snapshot, compact = false }) {
   if (!snapshot || !snapshot.breakdown) return null;
 
-  const formatCurrency = (amount) =>
-    `$${Number(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatCurrency = (amount) => {
+    const num = Number(amount);
+    const abs = Math.abs(num);
+    const formatted = `$${abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return num < 0 ? `-${formatted}` : formatted;
+  };
 
   return (
     <div style={{ width: '100%' }}>
@@ -20,7 +24,7 @@ export default function PricingBreakdown({ snapshot, compact = false }) {
                 textAlign: 'right',
                 fontWeight: 500,
                 whiteSpace: 'nowrap',
-                color: 'var(--deep-brown, #3a2218)'
+                color: Number(item.amount) < 0 ? '#2d6a4f' : 'var(--deep-brown, #3a2218)'
               }}>
                 {formatCurrency(item.amount)}
               </td>

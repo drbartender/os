@@ -304,6 +304,14 @@ export default function ProposalView() {
       }
       lineItems.push({ label: syrupLabel, amount: sc.total });
     }
+    (snapshot.adjustments || []).forEach(adj => {
+      if (!adj.visible) return;
+      const amt = Math.abs(Number(adj.amount) || 0);
+      lineItems.push({
+        label: adj.label || (adj.type === 'discount' ? 'Discount' : 'Surcharge'),
+        amount: adj.type === 'discount' ? -amt : amt,
+      });
+    });
   }
 
   const isAlreadySigned = !!proposal.client_signed_at;
@@ -418,8 +426,8 @@ export default function ProposalView() {
                   <td style={{ padding: '0.55rem 0', color: '#3a2218', fontSize: '0.95rem' }}>
                     {item.label}
                   </td>
-                  <td style={{ padding: '0.55rem 0', textAlign: 'right', color: '#3a2218', fontSize: '0.95rem', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                    {fmt(item.amount)}
+                  <td style={{ padding: '0.55rem 0', textAlign: 'right', color: Number(item.amount) < 0 ? '#2d6a4f' : '#3a2218', fontSize: '0.95rem', fontWeight: 500, whiteSpace: 'nowrap' }}>
+                    {Number(item.amount) < 0 ? `-${fmt(Math.abs(item.amount))}` : fmt(item.amount)}
                   </td>
                 </tr>
               ))}

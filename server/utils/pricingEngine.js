@@ -108,7 +108,7 @@ function calculateSyrupCost(syrupSelections, guestCount) {
   return { count, bottlesPerFlavor, totalBottles, packs, singles, total };
 }
 
-function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartenders, addons, syrupSelections }) {
+function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartenders, addons, syrupSelections, adjustments, totalPriceOverride }) {
   const baseCost = calculateBaseCost(pkg, guestCount, durationHours);
   const floorApplied = pkg.pricing_type === 'per_guest' && pkg.min_total && baseCost <= Number(pkg.min_total);
   const barRental = calculateBarRental(pkg, numBars);
@@ -163,7 +163,15 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
   const addonTotal = addonResults.reduce((sum, a) => sum + a.line_total, 0);
   const syrupCost = calculateSyrupCost(syrupSelections, guestCount);
   const subtotal = baseCost + barRental + staffing.cost + addonTotal + syrupCost.total;
-  const total = Math.round(subtotal * 100) / 100;
+
+  // Apply price adjustments (discounts/surcharges)
+  const safeAdjustments = Array.isArray(adjustments) ? adjustments : [];
+  const adjustmentNet = safeAdjustments.reduce((sum, adj) => {
+    const amt = Math.abs(Number(adj.amount) || 0);
+    return sum + (adj.type === 'discount' ? -amt : amt);
+  }, 0);
+  const calculatedTotal = Math.max(0, Math.round((subtotal + adjustmentNet) * 100) / 100);
+  const total = totalPriceOverride !== null && totalPriceOverride !== undefined ? Math.round(Number(totalPriceOverride) * 100) / 100 : calculatedTotal;
 
   // Build human-readable breakdown
   const breakdown = [];
@@ -223,6 +231,13 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
     }
     breakdown.push({ label: syrupLabel, amount: syrupCost.total });
   }
+  for (const adj of safeAdjustments) {
+    const amt = Math.abs(Number(adj.amount) || 0);
+    breakdown.push({
+      label: adj.label || (adj.type === 'discount' ? 'Discount' : 'Surcharge'),
+      amount: adj.type === 'discount' ? -amt : amt
+    });
+  }
 
   return {
     calculated_at: new Date().toISOString(),
@@ -261,6 +276,9 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
     },
     breakdown,
     floor_applied: !!floorApplied,
+    adjustments: safeAdjustments,
+    total_price_override: totalPriceOverride ?? null,
+    subtotal: Math.round(subtotal * 100) / 100,
     total
   };
 }
