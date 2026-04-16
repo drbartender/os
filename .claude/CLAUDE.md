@@ -51,6 +51,7 @@ dr-bartender/
 │   │   ├── emailMarketing.js  # Email marketing (leads, campaigns, sequences, conversations)
 │   │   ├── emailMarketingWebhook.js # Resend webhook receiver (tracking events)
 │   │   ├── publicReviews.js   # Public cached endpoint for Thumbtack reviews (homepage)
+│   │   ├── invoices.js        # Invoice CRUD, public token view, client portal
 │   │   └── thumbtack.js       # Thumbtack webhook endpoints (leads, messages, reviews)
 │   ├── utils/
 │   │   ├── autoAssign.js      # Auto-assign algorithm (seniority + geo + equipment)
@@ -62,6 +63,7 @@ dr-bartender/
 │   │   ├── eventCreation.js   # Event creation helpers
 │   │   ├── fileValidation.js  # Magic-byte validation
 │   │   ├── geocode.js         # Nominatim geocoding (address → lat/lng)
+│   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
 │   │   ├── pricingEngine.js   # Pure pricing calculation functions
 │   │   ├── sms.js             # Twilio wrapper
 │   │   └── storage.js         # R2 upload/signed-URL helpers
@@ -91,6 +93,7 @@ dr-bartender/
 │   │   │   ├── PricingBreakdown.js # Proposal pricing display
 │   │   │   ├── PublicLayout.js    # Public-facing layout wrapper
 │   │   │   ├── RichTextEditor.js  # TipTap WYSIWYG editor (blog + email marketing)
+│   │   │   ├── InvoiceDropdown.js # Invoice list dropdown (admin + client)
 │   │   │   ├── SignaturePad.js    # E-signature canvas
 │   │   │   ├── W9Form.js         # W-9 tax form component
 │   │   │   ├── LeadImportModal.js # CSV lead import modal
@@ -146,6 +149,8 @@ dr-bartender/
 │   │   │   │   ├── PotionPlanningLab.js
 │   │   │   │   ├── data/         # cocktailMenu.js, servingTypes.js, drinkUpgrades.js
 │   │   │   │   └── steps/        # WelcomeStep, LogisticsStep, FullBarStep, SyrupUpsellStep, etc.
+│   │   │   ├── invoice/
+│   │   │   │   └── InvoicePage.js     # Public token-gated invoice view + payment
 │   │   │   ├── proposal/         # ProposalView (public client-facing)
 │   │   │   ├── public/           # Client portal pages
 │   │   │   │   ├── Blog.js, BlogPost.js

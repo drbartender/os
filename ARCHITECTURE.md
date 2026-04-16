@@ -275,6 +275,16 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | POST | `/messages` | Webhook secret | Receive customer message from Thumbtack thread |
 | POST | `/reviews` | Webhook secret | Receive new Thumbtack review |
 
+### Invoices — `/api/invoices`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/t/:token` | No (token-gated) | Fetch invoice by shareable token — line items, payments, client/event info |
+| GET | `/proposal/:proposalId` | Admin | List all invoices for a proposal |
+| GET | `/recent` | Admin | Latest 20 invoices for financials dashboard |
+| POST | `/proposal/:proposalId` | Admin | Manually create invoice against a proposal |
+| PATCH | `/:id` | Admin | Update label, due date, or void an invoice |
+| GET | `/client/:proposalToken` | Client | List invoices for a proposal (sent + paid only) |
+
 ### Public Reviews — `/api/public/reviews`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -401,6 +411,25 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 - `proposal_id` FK, `stripe_payment_intent_id`
 - `payment_type`: deposit | balance | full
 - `amount` (cents), `status`
+
+### Invoices
+
+**invoices** — Invoice records (sit on top of proposals)
+- `proposal_id` FK, `token` (UUID for shareable links)
+- `invoice_number` (INV-0001), `label` (Deposit, Balance, etc.)
+- `amount_due` (cents), `amount_paid` (cents)
+- `status`: draft | sent | paid | partially_paid | void
+- `locked` (boolean), `locked_at` — freezes line items on payment
+- `due_date`, `notes`
+
+**invoice_line_items** — Line items per invoice
+- `invoice_id` FK, `description`, `quantity`, `unit_price` (cents), `line_total` (cents)
+- `source_type`: package | addon | fee | manual
+- `source_id` — FK to proposal_addons.id or null
+
+**invoice_payments** — Junction linking invoices to proposal_payments
+- `invoice_id` FK, `payment_id` FK → proposal_payments
+- `amount` (cents)
 
 ### Clients
 

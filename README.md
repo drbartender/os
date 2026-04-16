@@ -117,6 +117,7 @@ dr-bartender/
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
 │   │   ├── emailMarketing.js   # Email marketing leads, campaigns, sequences, conversations
 │   │   ├── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
+│   │   ├── invoices.js         # Invoice CRUD, public token view, client portal
 │   │   ├── publicReviews.js    # Public cached endpoint for Thumbtack reviews on homepage
 │   │   └── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   ├── utils/
@@ -129,6 +130,7 @@ dr-bartender/
 │   │   ├── eventCreation.js    # Auto-create shifts from paid proposals
 │   │   ├── fileValidation.js   # Magic-byte file type validation
 │   │   ├── geocode.js          # Nominatim geocoding (address → lat/lng)
+│   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
 │   │   ├── pricingEngine.js    # Pure pricing calculation engine
 │   │   ├── sms.js              # Twilio SMS wrapper
 │   │   └── storage.js          # Cloudflare R2 upload + signed URL helpers
@@ -146,7 +148,7 @@ dr-bartender/
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── constants.js    # App-wide constants
 │   │   │   └── formatPhone.js  # Phone number formatting
-│   │   ├── components/         # Layout, SignaturePad, FileUpload, PricingBreakdown, RichTextEditor,
+│   │   ├── components/         # Layout, InvoiceDropdown, SignaturePad, FileUpload, PricingBreakdown, RichTextEditor,
 │   │   │                       # LeadImportModal, AudienceSelector, SequenceStepEditor, CampaignMetricsBar,
 │   │   │                       # SyrupPicker
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
@@ -159,6 +161,7 @@ dr-bartender/
 │   │   │   ├── (admin)         # AdminDashboard, AdminApplicationDetail, AdminUserDetail
 │   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, menus, hiring, blog, email marketing)
 │   │   │   ├── plan/           # PotionPlanningLab — public event questionnaire (with steps/ and data/)
+│   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment
 │   │   │   ├── proposal/       # ProposalView — public client-facing proposal
 │   │   │   ├── public/         # Client portal (ClientLogin, ClientDashboard, Blog, BlogPost)
 │   │   │   └── website/        # Public website (Website, HomePage, QuoteWizard, QuotePage, FaqPage, ClassWizard)
