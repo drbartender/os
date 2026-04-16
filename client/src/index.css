@@ -1141,12 +1141,26 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   position: sticky;
   bottom: 0;
   background: var(--cream, #fdf8f0);
-  padding: 1rem 0;
-  margin-top: 1rem;
-  border-top: 1px solid var(--cream-dark, #e8e0d4);
+  padding: 1rem 1.5rem;
+  margin: 1.5rem -1.5rem -1.5rem;
+  border-top: 2px solid var(--deep-brown, #3a2218);
   z-index: 10;
   display: flex;
-  gap: 0.5rem;
+  gap: 0.75rem;
+  box-shadow: 0 -4px 12px rgba(0,0,0,0.1);
+}
+
+.sticky-save-bar .btn:first-child {
+  background: var(--amber, #d4a24e);
+  color: var(--deep-brown, #3a2218);
+  font-size: 1rem;
+  padding: 0.6rem 2rem;
+  font-weight: 700;
+  border: none;
+}
+
+.sticky-save-bar .btn:first-child:hover {
+  background: #c4922e;
 }
 
 /* Confidence range slider */
@@ -3728,6 +3742,42 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 }
 .wz-addon-option.unavailable .wz-addon-row { cursor: default; }
 .wz-addon-option.unavailable input[type="checkbox"] { cursor: default; }
+.wz-addon-option.locked {
+  border-style: dashed;
+  border-color: var(--parchment-dark);
+  background: #FAF7F2;
+}
+.wz-addon-option.locked:hover {
+  border-color: var(--parchment-dark);
+  background: #FAF7F2;
+}
+.wz-addon-option.locked .wz-addon-row { cursor: default; }
+.wz-addon-option.locked .wz-addon-name,
+.wz-addon-option.locked .wz-addon-icon { opacity: 0.65; }
+.wz-addon-locked-message {
+  width: 100%;
+  font-size: 0.84rem;
+  color: var(--warm-brown);
+  line-height: 1.4;
+  margin-top: 0.15rem;
+}
+.wz-addon-unlock-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0 1rem 0.85rem 3.25rem;
+}
+.wz-addon-unlock-actions .btn-sm {
+  font-size: 0.82rem;
+  padding: 0.4rem 0.9rem;
+}
+.wz-addon-unlock-actions .btn-secondary {
+  color: var(--deep-brown);
+  border-color: var(--deep-brown);
+}
+.wz-addon-unlock-actions .btn-secondary:hover:not(:disabled) {
+  background: rgba(107, 66, 38, 0.12);
+  color: var(--deep-brown);
+}
 .wz-addon-included-label {
   color: var(--amber);
   font-size: 0.72rem;
@@ -5998,4 +6048,35 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   .proposal-view-container .proposal-section {
     padding: 1rem;
   }
+}
+
+/* ─── Invoice Dropdown ─────────────────────────────────────────── */
+.invoice-dropdown-wrapper {
+  margin-top: 0.5rem;
+}
+.invoice-dropdown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.invoice-dropdown-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  background: var(--cream);
+  font-size: 0.85rem;
+  transition: background 0.15s;
+  cursor: pointer;
+}
+.invoice-dropdown-item:hover {
+  background: var(--cream-dark);
+}
+.invoice-dropdown-number {
+  font-weight: 600;
+}
+.invoice-dropdown-amount {
+  font-weight: 500;
+  white-space: nowrap;
 }
