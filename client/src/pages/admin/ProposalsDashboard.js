@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import ClickableRow from '../../components/ClickableRow';
 
 const STATUS_LABELS = {
   draft: 'Draft',
@@ -115,7 +116,7 @@ export default function ProposalsDashboard() {
           </thead>
           <tbody>
             {proposals.map(p => (
-              <tr key={p.id} onClick={() => navigate(`/admin/proposals/${p.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/proposals/${p.id}`)} tabIndex={0} role="link" style={{ cursor: 'pointer' }}>
+              <ClickableRow key={p.id} to={`/admin/proposals/${p.id}`}>
                 <td>
                   <strong>{p.client_name && p.event_name ? `${p.client_name} - ${p.event_name}` : p.client_name || '—'}</strong>
                   {p.client_email && <div className="text-muted text-small">{p.client_email}</div>}
@@ -132,12 +133,12 @@ export default function ProposalsDashboard() {
                 <td>
                   <button
                     className="btn btn-sm btn-secondary"
-                    onClick={(e) => { e.stopPropagation(); copyLink(p.token); }}
+                    onClick={() => copyLink(p.token)}
                   >
                     {copyMessage === p.token ? 'Copied!' : 'Copy Link'}
                   </button>
                 </td>
-              </tr>
+              </ClickableRow>
             ))}
           </tbody>
         </table>
