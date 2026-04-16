@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import api from '../../utils/api';
 import PricingBreakdown from '../../components/PricingBreakdown';
@@ -7,7 +7,9 @@ import LocationInput from '../../components/LocationInput';
 import ShoppingListButton from '../../components/ShoppingList/ShoppingListButton';
 import { getPackageItems } from '../../data/packages';
 import SyrupPicker from '../../components/SyrupPicker';
+import ConfirmModal from '../../components/ConfirmModal';
 import { SYRUPS } from '../../data/syrups';
+import InvoiceDropdown from '../../components/InvoiceDropdown';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
@@ -99,6 +101,16 @@ export default function ProposalDetail() {
   const [staffError, setStaffError] = useState('');
   const [editError, setEditError] = useState('');
   const [showActivityPopup, setShowActivityPopup] = useState(false);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState(null);
+  const editFormInitialRef = useRef(null);
+
+  // Invoice creation state
+  const [showCreateInvoice, setShowCreateInvoice] = useState(false);
+  const [newInvoiceLabel, setNewInvoiceLabel] = useState('');
+  const [newInvoiceAmount, setNewInvoiceAmount] = useState('');
+  const [newInvoiceDueDate, setNewInvoiceDueDate] = useState('');
+  const [creatingInvoice, setCreatingInvoice] = useState(false);
 
   const loadProposal = () => {
     return api.get(`/proposals/${id}`).then(res => {
@@ -268,7 +280,7 @@ export default function ProposalDetail() {
     if (proposal && !editForm) {
       const currentAddonIds = (proposal.addons || []).map(a => a.addon_id);
       const snapshot = proposal.pricing_snapshot || {};
-      setEditForm({
+      const initial = {
         // Client fields
         client_name: proposal.client_name || '',
         client_email: proposal.client_email || '',
@@ -282,10 +294,14 @@ export default function ProposalDetail() {
         event_location: proposal.event_location || '',
         guest_count: proposal.guest_count || 50,
         package_id: proposal.package_id || '',
-        needs_bar: proposal.num_bars > 0,
+        num_bars: proposal.num_bars || 0,
         addon_ids: currentAddonIds,
         syrup_selections: snapshot.syrups?.selections || [],
-      });
+        adjustments: proposal.adjustments || [],
+        total_price_override: proposal.total_price_override ?? null,
+      };
+      setEditForm(initial);
+      editFormInitialRef.current = JSON.stringify(initial);
     }
   }, [editing]); // eslint-disable-line
 
@@ -296,11 +312,13 @@ export default function ProposalDetail() {
       package_id: Number(editForm.package_id),
       guest_count: Number(editForm.guest_count) || 50,
       duration_hours: Number(editForm.event_duration_hours) || 4,
-      num_bars: editForm.needs_bar ? 1 : 0,
+      num_bars: Number(editForm.num_bars) || 0,
       addon_ids: (editForm.addon_ids || []).map(Number),
       syrup_selections: editForm.syrup_selections || [],
+      adjustments: editForm.adjustments || [],
+      total_price_override: editForm.total_price_override,
     }).then(res => { setEditPreview(res.data); setEditError(''); }).catch(() => { setEditPreview(null); setEditError('Pricing preview unavailable.'); });
-  }, [editing, editForm?.package_id, editForm?.guest_count, editForm?.event_duration_hours, editForm?.needs_bar, editForm?.addon_ids, editForm?.syrup_selections]); // eslint-disable-line
+  }, [editing, editForm?.package_id, editForm?.guest_count, editForm?.event_duration_hours, editForm?.num_bars, editForm?.addon_ids, editForm?.syrup_selections, editForm?.adjustments, editForm?.total_price_override]); // eslint-disable-line
 
   const updateEdit = (field, value) => setEditForm(f => ({ ...f, [field]: value }));
 
@@ -308,6 +326,75 @@ export default function ProposalDetail() {
     setEditForm(f => ({
       ...f,
       addon_ids: f.addon_ids.includes(id) ? f.addon_ids.filter(a => a !== id) : [...f.addon_ids, id]
+    }));
+  };
+
+  const isEditDirty = useCallback(() => {
+    if (!editing || !editForm || !editFormInitialRef.current) return false;
+    return JSON.stringify(editForm) !== editFormInitialRef.current;
+  }, [editing, editForm]);
+
+  // Warn on browser refresh/close with unsaved changes
+  useEffect(() => {
+    const handler = (e) => { if (isEditDirty()) { e.preventDefault(); e.returnValue = ''; } };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isEditDirty]);
+
+  const handleNavigateAway = (destination) => {
+    if (isEditDirty()) {
+      setPendingNavigation(destination);
+      setShowLeaveConfirm(true);
+    } else {
+      navigate(destination);
+    }
+  };
+
+  const confirmLeave = () => {
+    setShowLeaveConfirm(false);
+    setEditing(false);
+    setEditForm(null);
+    setEditError('');
+    if (pendingNavigation) navigate(pendingNavigation);
+    setPendingNavigation(null);
+  };
+
+  const cancelLeave = () => {
+    setShowLeaveConfirm(false);
+    setPendingNavigation(null);
+  };
+
+  const handleCancelEdit = () => {
+    if (isEditDirty()) {
+      setPendingNavigation(null);
+      setShowLeaveConfirm(true);
+    } else {
+      setEditing(false);
+      setEditForm(null);
+      setEditError('');
+    }
+  };
+
+  // Adjustment helpers
+  const addAdjustment = (type) => {
+    setEditForm(f => ({
+      ...f,
+      adjustments: [...(f.adjustments || []), { type, label: '', amount: '', visible: true }]
+    }));
+  };
+
+  const updateAdjustment = (index, field, value) => {
+    setEditForm(f => {
+      const updated = [...f.adjustments];
+      updated[index] = { ...updated[index], [field]: value };
+      return { ...f, adjustments: updated };
+    });
+  };
+
+  const removeAdjustment = (index) => {
+    setEditForm(f => ({
+      ...f,
+      adjustments: f.adjustments.filter((_, i) => i !== index)
     }));
   };
 
@@ -334,9 +421,11 @@ export default function ProposalDetail() {
         event_location: editForm.event_location,
         guest_count: Number(editForm.guest_count),
         package_id: Number(editForm.package_id),
-        num_bars: editForm.needs_bar ? 1 : 0,
+        num_bars: Number(editForm.num_bars) || 0,
         addon_ids: (editForm.addon_ids || []).map(Number),
         syrup_selections: editForm.syrup_selections || [],
+        adjustments: editForm.adjustments || [],
+        total_price_override: editForm.total_price_override,
       });
       setLoading(true);
       await loadProposal();
@@ -439,6 +528,28 @@ export default function ProposalDetail() {
     } catch (err) {
       setPaymentResult(err.response?.data?.error || 'Failed to record payment.');
     } finally { setRecordingPayment(false); }
+  };
+
+  const handleCreateInvoice = async () => {
+    if (!newInvoiceLabel || !newInvoiceAmount || Number(newInvoiceAmount) <= 0) return;
+    setCreatingInvoice(true);
+    try {
+      await api.post(`/invoices/proposal/${id}`, {
+        label: newInvoiceLabel,
+        amount: Number(newInvoiceAmount),
+        due_date: newInvoiceDueDate || null,
+      });
+      setShowCreateInvoice(false);
+      setNewInvoiceLabel('');
+      setNewInvoiceAmount('');
+      setNewInvoiceDueDate('');
+      // Force InvoiceDropdown to refetch by bumping proposal state
+      setProposal(prev => ({ ...prev }));
+    } catch (err) {
+      console.error('Failed to create invoice:', err);
+    } finally {
+      setCreatingInvoice(false);
+    }
   };
 
   const formatDate = (d, options) => {
@@ -945,6 +1056,36 @@ export default function ProposalDetail() {
                   )}
                 </div>
 
+                {/* Invoice Dropdown */}
+                <InvoiceDropdown proposalId={id} />
+
+                {/* Create Invoice */}
+                {!showCreateInvoice ? (
+                  <button className="btn btn-sm btn-secondary" onClick={() => setShowCreateInvoice(true)}
+                    style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>
+                    + Create Invoice
+                  </button>
+                ) : (
+                  <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: 'var(--cream)', borderRadius: '6px' }}>
+                    <label className="text-muted text-small" style={{ display: 'block', marginBottom: '0.3rem' }}>New Invoice</label>
+                    <input className="form-input" placeholder="Label (e.g. Rush Fee)" value={newInvoiceLabel}
+                      onChange={e => setNewInvoiceLabel(e.target.value)}
+                      style={{ marginBottom: '0.4rem', fontSize: '0.85rem' }} />
+                    <input className="form-input" type="number" step="0.01" min="0.01" placeholder="Amount ($)"
+                      value={newInvoiceAmount} onChange={e => setNewInvoiceAmount(e.target.value)}
+                      style={{ marginBottom: '0.4rem', fontSize: '0.85rem' }} />
+                    <input className="form-input" type="date" value={newInvoiceDueDate}
+                      onChange={e => setNewInvoiceDueDate(e.target.value)}
+                      style={{ marginBottom: '0.5rem', fontSize: '0.85rem' }} />
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button className="btn btn-sm" onClick={handleCreateInvoice} disabled={creatingInvoice}>
+                        {creatingInvoice ? 'Creating...' : 'Create'}
+                      </button>
+                      <button className="btn btn-sm btn-secondary" onClick={() => setShowCreateInvoice(false)}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Collapsible payment actions */}
                 {totalPrice > 0 && (
                   <div style={{ marginTop: '0.75rem' }}>
@@ -1206,7 +1347,7 @@ export default function ProposalDetail() {
           </h1>
         </div>
         <div className="flex gap-1">
-          <button className="btn btn-secondary" onClick={() => navigate(isEventContext ? '/admin/events' : '/admin/proposals')}>Back</button>
+          <button className="btn btn-secondary" onClick={() => editing ? handleNavigateAway(isEventContext ? '/admin/events' : '/admin/proposals') : navigate(isEventContext ? '/admin/events' : '/admin/proposals')}>Back</button>
           {!editing && <button className="btn btn-secondary" onClick={() => setEditing(true)}>Edit</button>}
           <button className="btn" onClick={copyLink}>{copyMessage || 'Copy Link'}</button>
         </div>
@@ -1339,11 +1480,8 @@ export default function ProposalDetail() {
                   <input className="form-input" type="number" min="1" max="1000" value={editForm.guest_count} onChange={e => updateEdit('guest_count', e.target.value)} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Portable Bar Needed?</label>
-                  <select className="form-select" value={editForm.needs_bar ? 'yes' : 'no'} onChange={e => updateEdit('needs_bar', e.target.value === 'yes')}>
-                    <option value="yes">Yes</option>
-                    <option value="no">No — venue has a bar</option>
-                  </select>
+                  <label className="form-label">Portable Bars</label>
+                  <input className="form-input" type="number" min="0" max="5" value={editForm.num_bars} onChange={e => updateEdit('num_bars', e.target.value)} />
                 </div>
               </div>
 
@@ -1429,7 +1567,7 @@ export default function ProposalDetail() {
                 <button className="btn" onClick={handleSaveEdit} disabled={saving}>
                   {saving ? 'Saving...' : 'Save Changes'}
                 </button>
-                <button className="btn btn-secondary" onClick={() => { setEditing(false); setEditForm(null); setEditError(''); }}>
+                <button className="btn btn-secondary" onClick={handleCancelEdit}>
                   Cancel
                 </button>
               </div>
@@ -1616,6 +1754,88 @@ export default function ProposalDetail() {
               </ul>
             ))}
             <PricingBreakdown snapshot={editing ? editPreview : snapshot} />
+            {editing && editForm && (
+              <div style={{ marginTop: '1rem', borderTop: '1px solid var(--cream-dark, #e8e0d4)', paddingTop: '1rem' }}>
+                <h4 style={{ color: 'var(--warm-brown)', marginBottom: '0.5rem', fontSize: '0.95rem' }}>Price Adjustments</h4>
+                {(editForm.adjustments || []).map((adj, i) => (
+                  <div key={i} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <span style={{
+                      fontSize: '0.75rem', fontWeight: 600, padding: '0.15rem 0.5rem', borderRadius: '4px',
+                      background: adj.type === 'discount' ? '#d4edda' : '#fde8e8',
+                      color: adj.type === 'discount' ? '#155724' : '#721c24',
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {adj.type === 'discount' ? 'Discount' : 'Surcharge'}
+                    </span>
+                    <input
+                      className="form-input"
+                      placeholder="Label (e.g., Returning client)"
+                      value={adj.label}
+                      onChange={e => updateAdjustment(i, 'label', e.target.value)}
+                      style={{ flex: 1, fontSize: '0.85rem', padding: '0.3rem 0.5rem' }}
+                    />
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <span style={{ position: 'absolute', left: '0.5rem', color: 'var(--warm-brown)', fontSize: '0.85rem', pointerEvents: 'none' }}>$</span>
+                      <input
+                        className="form-input"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={adj.amount}
+                        onChange={e => updateAdjustment(i, 'amount', e.target.value)}
+                        style={{ width: '100px', fontSize: '0.85rem', padding: '0.3rem 0.5rem 0.3rem 1.2rem' }}
+                      />
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', color: 'var(--warm-brown)', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={adj.visible} onChange={e => updateAdjustment(i, 'visible', e.target.checked)} />
+                      Client sees
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => removeAdjustment(i)}
+                      style={{ background: 'none', border: 'none', color: '#c0392b', cursor: 'pointer', fontSize: '1.1rem', padding: '0 0.25rem', lineHeight: 1 }}
+                      title="Remove"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => addAdjustment('discount')}>+ Discount</button>
+                  <button type="button" className="btn btn-sm btn-secondary" onClick={() => addAdjustment('surcharge')}>+ Surcharge</button>
+                </div>
+
+                {/* Total Override */}
+                <div style={{ marginTop: '1rem', borderTop: '1px solid var(--cream-dark, #e8e0d4)', paddingTop: '0.75rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: 'var(--warm-brown)', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={editForm.total_price_override != null}
+                      onChange={e => updateEdit('total_price_override', e.target.checked ? (editPreview?.subtotal || editPreview?.total || 0) : null)}
+                    />
+                    Override Total
+                  </label>
+                  {editForm.total_price_override != null && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.4rem' }}>
+                      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                        <span style={{ position: 'absolute', left: '0.5rem', color: 'var(--warm-brown)', fontSize: '0.9rem', pointerEvents: 'none' }}>$</span>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={editForm.total_price_override}
+                          onChange={e => updateEdit('total_price_override', e.target.value !== '' ? Number(e.target.value) : null)}
+                          style={{ width: '140px', fontSize: '0.9rem', padding: '0.35rem 0.5rem 0.35rem 1.2rem' }}
+                        />
+                      </div>
+                      <span className="text-muted text-small">Overrides calculated total</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Payment Status */}
@@ -1927,6 +2147,13 @@ export default function ProposalDetail() {
           </div>
         </div>
       )}
+      <ConfirmModal
+        isOpen={showLeaveConfirm}
+        title="Unsaved Changes"
+        message="You have unsaved changes. Leave without saving?"
+        onConfirm={confirmLeave}
+        onCancel={cancelLeave}
+      />
     </div>
   );
 }
