@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 import BrandLogo from '../components/BrandLogo';
+import FormBanner from '../components/FormBanner';
 import useFormValidation from '../hooks/useFormValidation';
 
 export default function Login() {
@@ -10,6 +11,7 @@ export default function Login() {
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
@@ -25,9 +27,10 @@ export default function Login() {
 
   async function submit(e) {
     e.preventDefault();
+    setError('');
+    setFieldErrors({});
     const result = validate(rules, form);
     if (!result.valid) { setError(result.message); return; }
-    setError('');
     setLoading(true);
     try {
       const res = await api.post('/auth/login', form);
@@ -38,7 +41,10 @@ export default function Login() {
       else if (u.onboarding_status === 'in_progress' && !u.has_application) navigate('/apply');
       else navigate('/welcome');
     } catch (err) {
-      setError(err.response?.data?.error || 'Login failed.');
+      // Login intentionally surfaces a generic message (no field-level errors)
+      // for security: never reveal whether email exists vs. password wrong.
+      setError(err.message || 'Login failed.');
+      if (err.fieldErrors) setFieldErrors(err.fieldErrors);
     } finally {
       setLoading(false);
     }
@@ -59,8 +65,6 @@ export default function Login() {
           </div>
 
           <div className="card">
-            {error && <div className="alert alert-error">{error}</div>}
-
             <form onSubmit={submit}>
               <div className={"form-group" + fieldClass('email')}>
                 <label htmlFor="email" className="form-label">Email Address</label>
@@ -79,6 +83,8 @@ export default function Login() {
                   value={form.password} onChange={handle}
                 />
               </div>
+
+              <FormBanner error={error} fieldErrors={fieldErrors} />
 
               <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
                 {loading ? 'Signing In...' : 'Sign In →'}

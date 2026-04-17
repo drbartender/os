@@ -1,15 +1,22 @@
 import React, { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../utils/api';
+import { useToast } from '../context/ToastContext';
 import BrandLogo from '../components/BrandLogo';
+import FormBanner from '../components/FormBanner';
+import FieldError from '../components/FieldError';
 import useFormValidation from '../hooks/useFormValidation';
 
 export default function ResetPassword() {
   const { token } = useParams();
+  const navigate = useNavigate();
+  const toast = useToast();
   const [form, setForm] = useState({ password: '', confirmPassword: '' });
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [tokenExpired, setTokenExpired] = useState(false);
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
   const rules = [
@@ -20,14 +27,24 @@ export default function ResetPassword() {
   function handle(e) {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
     clearField(e.target.name);
+    if (fieldErrors[e.target.name]) {
+      setFieldErrors(fe => {
+        const next = { ...fe };
+        delete next[e.target.name];
+        return next;
+      });
+    }
   }
 
   async function submit(e) {
     e.preventDefault();
+    setError('');
+    setFieldErrors({});
+    setTokenExpired(false);
     const result = validate(rules, form);
     if (!result.valid) { setError(result.message); return; }
     if (form.password !== form.confirmPassword) {
-      setError('Passwords do not match.');
+      setFieldErrors({ confirmPassword: 'Passwords do not match.' });
       return;
     }
 
@@ -35,8 +52,22 @@ export default function ResetPassword() {
     try {
       await api.post('/auth/reset-password', { token, password: form.password });
       setSuccess(true);
+      toast.success('Password reset!');
+      // Brief delay before redirect so the success card / toast register
+      setTimeout(() => navigate('/login'), 1500);
     } catch (err) {
-      setError(err.response?.data?.error || 'Reset failed. The link may have expired.');
+      const fe = err.fieldErrors || {};
+      // Token-level errors are presented as a banner with a "request a new link" CTA,
+      // not under any specific input.
+      if (fe.token) {
+        setTokenExpired(true);
+        setError(fe.token);
+      } else if (fe.password) {
+        setFieldErrors({ password: fe.password });
+        setError(err.message || 'Reset failed.');
+      } else {
+        setError(err.message || 'Reset failed. The link may have expired.');
+      }
     } finally {
       setLoading(false);
     }
@@ -65,38 +96,47 @@ export default function ResetPassword() {
                 <Link to="/login" className="btn btn-primary">Sign In</Link>
               </div>
             ) : (
-              <>
-                {error && <div className="alert alert-error">{error}</div>}
-                <form onSubmit={submit}>
-                  <div className={"form-group" + fieldClass('password')}>
-                    <label htmlFor="reset-password" className="form-label">New Password</label>
-                    <input
-                      id="reset-password"
-                      name="password"
-                      type="password"
-                      className={"form-input" + inputClass('password')}
-                      placeholder="At least 8 characters"
-                      value={form.password}
-                      onChange={handle}
-                    />
-                  </div>
-                  <div className={"form-group" + fieldClass('confirmPassword')} style={{ marginBottom: '1.5rem' }}>
-                    <label htmlFor="reset-confirmPassword" className="form-label">Confirm Password</label>
-                    <input
-                      id="reset-confirmPassword"
-                      name="confirmPassword"
-                      type="password"
-                      className={"form-input" + inputClass('confirmPassword')}
-                      placeholder="Re-enter your password"
-                      value={form.confirmPassword}
-                      onChange={handle}
-                    />
-                  </div>
-                  <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
-                    {loading ? 'Resetting...' : 'Reset Password'}
-                  </button>
-                </form>
-              </>
+              <form onSubmit={submit}>
+                <div className={"form-group" + fieldClass('password')}>
+                  <label htmlFor="reset-password" className="form-label">New Password</label>
+                  <input
+                    id="reset-password"
+                    name="password"
+                    type="password"
+                    className={"form-input" + inputClass('password')}
+                    placeholder="At least 8 characters"
+                    value={form.password}
+                    onChange={handle}
+                    aria-invalid={!!fieldErrors?.password}
+                  />
+                  <FieldError error={fieldErrors?.password} />
+                </div>
+                <div className={"form-group" + fieldClass('confirmPassword')} style={{ marginBottom: '1.5rem' }}>
+                  <label htmlFor="reset-confirmPassword" className="form-label">Confirm Password</label>
+                  <input
+                    id="reset-confirmPassword"
+                    name="confirmPassword"
+                    type="password"
+                    className={"form-input" + inputClass('confirmPassword')}
+                    placeholder="Re-enter your password"
+                    value={form.confirmPassword}
+                    onChange={handle}
+                    aria-invalid={!!fieldErrors?.confirmPassword}
+                  />
+                  <FieldError error={fieldErrors?.confirmPassword} />
+                </div>
+
+                <FormBanner error={error} fieldErrors={fieldErrors} />
+                {tokenExpired && (
+                  <p className="text-small" style={{ marginTop: '-0.5rem', marginBottom: '0.75rem' }}>
+                    <Link to="/forgot-password">Request a new reset link →</Link>
+                  </p>
+                )}
+
+                <button type="submit" className="btn btn-primary btn-full" disabled={loading || tokenExpired}>
+                  {loading ? 'Resetting...' : 'Reset Password'}
+                </button>
+              </form>
             )}
 
             <div className="divider" />

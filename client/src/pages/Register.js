@@ -1,15 +1,20 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import BrandLogo from '../components/BrandLogo';
+import FormBanner from '../components/FormBanner';
+import FieldError from '../components/FieldError';
 import useFormValidation from '../hooks/useFormValidation';
 
 export default function Register() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const toast = useToast();
   const [form, setForm] = useState({ email: '', password: '', confirmPassword: '' });
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
@@ -23,20 +28,35 @@ export default function Register() {
     const { name, value, type, checked } = e.target;
     setForm(f => ({ ...f, [name]: type === 'checkbox' ? checked : value }));
     clearField(name);
+    // Clear server-side field error when user edits that field
+    if (fieldErrors[name]) {
+      setFieldErrors(fe => {
+        const next = { ...fe };
+        delete next[name];
+        return next;
+      });
+    }
   }
 
   async function submit(e) {
     e.preventDefault();
+    setError('');
+    setFieldErrors({});
     const result = validate(rules, form);
     if (!result.valid) { setError(result.message); return; }
-    if (form.password !== form.confirmPassword) return setError('Passwords do not match.');
+    if (form.password !== form.confirmPassword) {
+      setFieldErrors({ confirmPassword: 'Passwords do not match.' });
+      return;
+    }
     setLoading(true);
     try {
       const res = await api.post('/auth/register', form);
       login(res.data.token, res.data.user);
+      toast.success('Account created!');
       navigate('/apply');
     } catch (err) {
-      setError(err.response?.data?.error || 'Registration failed. Please try again.');
+      setError(err.message || 'Registration failed. Please try again.');
+      setFieldErrors(err.fieldErrors || {});
     } finally {
       setLoading(false);
     }
@@ -64,8 +84,6 @@ export default function Register() {
               </p>
             </div>
 
-            {error && <div className="alert alert-error">{error}</div>}
-
             <form onSubmit={submit}>
               <div className={"form-group" + fieldClass('email')}>
                 <label htmlFor="register-email" className="form-label">Email Address</label>
@@ -73,7 +91,9 @@ export default function Register() {
                   id="register-email" name="email" type="email" className={"form-input" + inputClass('email')}
                   placeholder="your@email.com"
                   value={form.email} onChange={handle}
+                  aria-invalid={!!fieldErrors?.email}
                 />
+                <FieldError error={fieldErrors?.email} />
               </div>
 
               <div className={"form-group" + fieldClass('password')}>
@@ -82,7 +102,9 @@ export default function Register() {
                   id="register-password" name="password" type="password" className={"form-input" + inputClass('password')}
                   placeholder="Minimum 8 characters"
                   value={form.password} onChange={handle}
+                  aria-invalid={!!fieldErrors?.password}
                 />
+                <FieldError error={fieldErrors?.password} />
               </div>
 
               <div className={"form-group" + fieldClass('confirmPassword')}>
@@ -91,8 +113,12 @@ export default function Register() {
                   id="register-confirmPassword" name="confirmPassword" type="password" className={"form-input" + inputClass('confirmPassword')}
                   placeholder="Confirm your password"
                   value={form.confirmPassword} onChange={handle}
+                  aria-invalid={!!fieldErrors?.confirmPassword}
                 />
+                <FieldError error={fieldErrors?.confirmPassword} />
               </div>
+
+              <FormBanner error={error} fieldErrors={fieldErrors} />
 
               <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
                 {loading ? 'Creating Account...' : 'Create Account →'}

@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../utils/api';
+import { useToast } from '../context/ToastContext';
 import BrandLogo from '../components/BrandLogo';
+import FormBanner from '../components/FormBanner';
 
 export default function ForgotPassword() {
+  const toast = useToast();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
@@ -16,8 +19,12 @@ export default function ForgotPassword() {
     try {
       await api.post('/auth/forgot-password', { email });
       setSent(true);
+      toast.success('Check your email for a reset link.');
     } catch (err) {
-      setError(err.response?.data?.error || 'Something went wrong. Please try again.');
+      // No field-level errors here — enumeration safety; backend returns
+      // generic success even when account doesn't exist. We only land here
+      // on rate-limit or hard server errors.
+      setError(err.message || 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -46,25 +53,23 @@ export default function ForgotPassword() {
                 <Link to="/login" className="btn btn-primary">Back to Sign In</Link>
               </div>
             ) : (
-              <>
-                {error && <div className="alert alert-error">{error}</div>}
-                <form onSubmit={submit}>
-                  <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-                    <label className="form-label">Email Address</label>
-                    <input
-                      type="email"
-                      className="form-input"
-                      placeholder="your@email.com"
-                      value={email}
-                      onChange={e => setEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
-                    {loading ? 'Sending...' : 'Send Reset Link'}
-                  </button>
-                </form>
-              </>
+              <form onSubmit={submit}>
+                <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                  <label className="form-label">Email Address</label>
+                  <input
+                    type="email"
+                    className="form-input"
+                    placeholder="your@email.com"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
+                <FormBanner error={error} />
+                <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
+                  {loading ? 'Sending...' : 'Send Reset Link'}
+                </button>
+              </form>
             )}
 
             <div className="divider" />
