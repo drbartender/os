@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../utils/api';
+import { useToast } from '../../context/ToastContext';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
 
 const SPIRIT_OPTIONS = ['Vodka', 'Gin', 'Rum', 'Tequila', 'Whiskey', 'Scotch', 'Bourbon', 'Mezcal', 'Cognac', 'Amaretto', 'Aperol', 'Other'];
 
@@ -9,7 +12,7 @@ function slugify(str) {
 
 // ─── DrinkTable ───────────────────────────────────────────────────────────────
 
-function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCancelEdit, onSaveEdit, onToggleActive, onEditFormChange, withSpirit = false, onReorder }) {
+function DrinkTable({ drinks, categories, editingId, editForm, editFieldErrors, onStartEdit, onCancelEdit, onSaveEdit, onToggleActive, onEditFormChange, withSpirit = false, onReorder }) {
   const dragItem = useRef(null);
   const dragOverItem = useRef(null);
   const [dragIndex, setDragIndex] = useState(null);
@@ -75,8 +78,11 @@ function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCa
                   <td></td>
                   <td><input className="form-input" style={{ width: '52px' }} value={editForm.emoji}
                     onChange={e => onEditFormChange({ emoji: e.target.value })} /></td>
-                  <td><input className="form-input" value={editForm.name}
-                    onChange={e => onEditFormChange({ name: e.target.value })} /></td>
+                  <td>
+                    <input className="form-input" value={editForm.name}
+                      onChange={e => onEditFormChange({ name: e.target.value })} />
+                    <FieldError error={editFieldErrors?.name} />
+                  </td>
                   <td className="col-desc"><input className="form-input" value={editForm.description}
                     onChange={e => onEditFormChange({ description: e.target.value })} /></td>
                   {withSpirit && (
@@ -144,7 +150,7 @@ function DrinkTable({ drinks, categories, editingId, editForm, onStartEdit, onCa
 
 // ─── CategoryTable ────────────────────────────────────────────────────────────
 
-function CategoryTable({ categories, drinkCounts, editingId, editForm, onStartEdit, onCancelEdit, onSaveEdit, onDelete, onEditFormChange, onReorder }) {
+function CategoryTable({ categories, drinkCounts, editingId, editForm, editFieldErrors, onStartEdit, onCancelEdit, onSaveEdit, onDelete, onEditFormChange, onReorder }) {
   const dragItem = useRef(null);
   const dragOverItem = useRef(null);
   const [dragIndex, setDragIndex] = useState(null);
@@ -205,8 +211,11 @@ function CategoryTable({ categories, drinkCounts, editingId, editForm, onStartEd
                 {editingId === cat.id ? (
                   <>
                     <td></td>
-                    <td><input className="form-input" value={editForm.label}
-                      onChange={e => onEditFormChange({ label: e.target.value })} /></td>
+                    <td>
+                      <input className="form-input" value={editForm.label}
+                        onChange={e => onEditFormChange({ label: e.target.value })} />
+                      <FieldError error={editFieldErrors?.label} />
+                    </td>
                     <td>{count}</td>
                     <td>
                       <div className="flex gap-1">
@@ -242,6 +251,8 @@ function CategoryTable({ categories, drinkCounts, editingId, editForm, onStartEd
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function CocktailMenuDashboard({ embedded = false }) {
+  const toast = useToast();
+
   // ── Navigation ─────────────────────────────────────────────────
   const [drinkType, setDrinkType] = useState('cocktails');
   const [subTab, setSubTab] = useState('drinks');
@@ -253,15 +264,21 @@ export default function CocktailMenuDashboard({ embedded = false }) {
 
   const [editingCocktail, setEditingCocktail] = useState(null);
   const [editCocktailForm, setEditCocktailForm] = useState({});
+  const [editCocktailError, setEditCocktailError] = useState('');
+  const [editCocktailFieldErrors, setEditCocktailFieldErrors] = useState({});
   const [addCocktailCategory, setAddCocktailCategory] = useState(null);
   const [newCocktailForm, setNewCocktailForm] = useState({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '' });
-  const [cocktailError, setCocktailError] = useState('');
+  const [addCocktailError, setAddCocktailError] = useState('');
+  const [addCocktailFieldErrors, setAddCocktailFieldErrors] = useState({});
 
   const [editingCocktailCat, setEditingCocktailCat] = useState(null);
   const [editCocktailCatForm, setEditCocktailCatForm] = useState({});
+  const [editCocktailCatError, setEditCocktailCatError] = useState('');
+  const [editCocktailCatFieldErrors, setEditCocktailCatFieldErrors] = useState({});
   const [showAddCocktailCat, setShowAddCocktailCat] = useState(false);
   const [newCocktailCatForm, setNewCocktailCatForm] = useState({ id: '', label: '', sort_order: '' });
-  const [cocktailCatError, setCocktailCatError] = useState('');
+  const [addCocktailCatError, setAddCocktailCatError] = useState('');
+  const [addCocktailCatFieldErrors, setAddCocktailCatFieldErrors] = useState({});
 
   // ── Mocktail data ────────────────────────────────────────────────
   const [mocktailCategories, setMocktailCategories] = useState([]);
@@ -270,15 +287,21 @@ export default function CocktailMenuDashboard({ embedded = false }) {
 
   const [editingMocktail, setEditingMocktail] = useState(null);
   const [editMocktailForm, setEditMocktailForm] = useState({});
+  const [editMocktailError, setEditMocktailError] = useState('');
+  const [editMocktailFieldErrors, setEditMocktailFieldErrors] = useState({});
   const [addMocktailCategory, setAddMocktailCategory] = useState(null);
   const [newMocktailForm, setNewMocktailForm] = useState({ name: '', emoji: '', description: '', sort_order: '' });
-  const [mocktailError, setMocktailError] = useState('');
+  const [addMocktailError, setAddMocktailError] = useState('');
+  const [addMocktailFieldErrors, setAddMocktailFieldErrors] = useState({});
 
   const [editingMocktailCat, setEditingMocktailCat] = useState(null);
   const [editMocktailCatForm, setEditMocktailCatForm] = useState({});
+  const [editMocktailCatError, setEditMocktailCatError] = useState('');
+  const [editMocktailCatFieldErrors, setEditMocktailCatFieldErrors] = useState({});
   const [showAddMocktailCat, setShowAddMocktailCat] = useState(false);
   const [newMocktailCatForm, setNewMocktailCatForm] = useState({ id: '', label: '', sort_order: '' });
-  const [mocktailCatError, setMocktailCatError] = useState('');
+  const [addMocktailCatError, setAddMocktailCatError] = useState('');
+  const [addMocktailCatFieldErrors, setAddMocktailCatFieldErrors] = useState({});
 
   // ── Fetch ─────────────────────────────────────────────────────────
   const fetchCocktails = useCallback(async () => {
@@ -287,11 +310,11 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setCocktailCategories(res.data.categories || []);
       setCocktails(res.data.cocktails || []);
     } catch (err) {
-      console.error('Failed to fetch cocktails:', err);
+      toast.error('Failed to load cocktails. Try refreshing.');
     } finally {
       setCocktailsLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   const fetchMocktails = useCallback(async () => {
     try {
@@ -299,16 +322,18 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setMocktailCategories(res.data.categories || []);
       setMocktails(res.data.mocktails || []);
     } catch (err) {
-      console.error('Failed to fetch mocktails:', err);
+      toast.error('Failed to load mocktails. Try refreshing.');
     } finally {
       setMocktailsLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => { fetchCocktails(); fetchMocktails(); }, [fetchCocktails, fetchMocktails]);
 
   // ── Cocktail CRUD ─────────────────────────────────────────────────
   const saveEditCocktail = async (id) => {
+    setEditCocktailError('');
+    setEditCocktailFieldErrors({});
     try {
       const body = { ...editCocktailForm };
       if (typeof body.ingredients === 'string') {
@@ -317,8 +342,11 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       const res = await api.put(`/cocktails/${id}`, body);
       setCocktails(prev => prev.map(c => c.id === id ? { ...c, ...res.data } : c));
       setEditingCocktail(null);
+      toast.success('Saved.');
     } catch (err) {
-      setCocktailError(err.response?.data?.error || 'Failed to save cocktail.');
+      const data = err.response?.data;
+      setEditCocktailError(data?.error || 'Failed to save cocktail.');
+      setEditCocktailFieldErrors(data?.fieldErrors || {});
     }
   };
 
@@ -327,11 +355,18 @@ export default function CocktailMenuDashboard({ embedded = false }) {
     try {
       const res = await api.put(`/cocktails/${c.id}`, { is_active: !c.is_active });
       setCocktails(prev => prev.map(x => x.id === c.id ? { ...x, ...res.data } : x));
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update cocktail.');
+    }
   };
 
   const addCocktail = async (categoryId) => {
-    if (!newCocktailForm.name.trim()) { setCocktailError('Name is required.'); return; }
+    setAddCocktailError('');
+    setAddCocktailFieldErrors({});
+    if (!newCocktailForm.name.trim()) {
+      setAddCocktailFieldErrors({ name: 'Name is required.' });
+      return;
+    }
     const id = slugify(newCocktailForm.name);
     try {
       const res = await api.post('/cocktails', {
@@ -347,9 +382,11 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setCocktails(prev => [...prev, res.data]);
       setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '' });
       setAddCocktailCategory(null);
-      setCocktailError('');
+      toast.success('Cocktail created.');
     } catch (err) {
-      setCocktailError(err.response?.data?.error || 'Failed to add cocktail.');
+      const data = err.response?.data;
+      setAddCocktailError(data?.error || 'Failed to add cocktail.');
+      setAddCocktailFieldErrors(data?.fieldErrors || {});
     }
   };
 
@@ -361,17 +398,24 @@ export default function CocktailMenuDashboard({ embedded = false }) {
     });
     try {
       await api.post('/cocktails/reorder', { items });
-    } catch (err) { console.error('Reorder failed:', err); }
+    } catch (err) {
+      toast.error('Reorder failed.');
+    }
   };
 
   // Cocktail category CRUD
   const saveEditCocktailCat = async (id) => {
+    setEditCocktailCatError('');
+    setEditCocktailCatFieldErrors({});
     try {
       const res = await api.put(`/cocktails/categories/${id}`, editCocktailCatForm);
       setCocktailCategories(prev => prev.map(c => c.id === id ? { ...c, ...res.data } : c));
       setEditingCocktailCat(null);
+      toast.success('Saved.');
     } catch (err) {
-      setCocktailCatError(err.response?.data?.error || 'Failed to save category.');
+      const data = err.response?.data;
+      setEditCocktailCatError(data?.error || 'Failed to save category.');
+      setEditCocktailCatFieldErrors(data?.fieldErrors || {});
     }
   };
 
@@ -380,13 +424,19 @@ export default function CocktailMenuDashboard({ embedded = false }) {
     try {
       await api.delete(`/cocktails/categories/${id}`);
       setCocktailCategories(prev => prev.filter(c => c.id !== id));
+      toast.success('Deleted.');
     } catch (err) {
-      setCocktailCatError(err.response?.data?.error || 'Failed to delete category.');
+      toast.error(err.response?.data?.error || 'Failed to delete category.');
     }
   };
 
   const addCocktailCat = async () => {
-    if (!newCocktailCatForm.label.trim()) { setCocktailCatError('Label is required.'); return; }
+    setAddCocktailCatError('');
+    setAddCocktailCatFieldErrors({});
+    if (!newCocktailCatForm.label.trim()) {
+      setAddCocktailCatFieldErrors({ label: 'Label is required.' });
+      return;
+    }
     const id = newCocktailCatForm.id.trim() || slugify(newCocktailCatForm.label);
     try {
       const res = await api.post('/cocktails/categories', {
@@ -396,9 +446,11 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setCocktailCategories(prev => [...prev, res.data].sort((a, b) => a.sort_order - b.sort_order));
       setNewCocktailCatForm({ id: '', label: '', sort_order: '' });
       setShowAddCocktailCat(false);
-      setCocktailCatError('');
+      toast.success('Category created.');
     } catch (err) {
-      setCocktailCatError(err.response?.data?.error || 'Failed to add category.');
+      const data = err.response?.data;
+      setAddCocktailCatError(data?.error || 'Failed to add category.');
+      setAddCocktailCatFieldErrors(data?.fieldErrors || {});
     }
   };
 
@@ -410,17 +462,24 @@ export default function CocktailMenuDashboard({ embedded = false }) {
     );
     try {
       await api.post('/cocktails/categories/reorder', { items });
-    } catch (err) { console.error('Category reorder failed:', err); }
+    } catch (err) {
+      toast.error('Category reorder failed.');
+    }
   };
 
   // ── Mocktail CRUD ─────────────────────────────────────────────────
   const saveEditMocktail = async (id) => {
+    setEditMocktailError('');
+    setEditMocktailFieldErrors({});
     try {
       const res = await api.put(`/mocktails/${id}`, editMocktailForm);
       setMocktails(prev => prev.map(m => m.id === id ? { ...m, ...res.data } : m));
       setEditingMocktail(null);
+      toast.success('Saved.');
     } catch (err) {
-      setMocktailError(err.response?.data?.error || 'Failed to save mocktail.');
+      const data = err.response?.data;
+      setEditMocktailError(data?.error || 'Failed to save mocktail.');
+      setEditMocktailFieldErrors(data?.fieldErrors || {});
     }
   };
 
@@ -429,11 +488,18 @@ export default function CocktailMenuDashboard({ embedded = false }) {
     try {
       const res = await api.put(`/mocktails/${m.id}`, { is_active: !m.is_active });
       setMocktails(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x));
-    } catch (err) { console.error(err); }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update mocktail.');
+    }
   };
 
   const addMocktail = async (categoryId) => {
-    if (!newMocktailForm.name.trim()) { setMocktailError('Name is required.'); return; }
+    setAddMocktailError('');
+    setAddMocktailFieldErrors({});
+    if (!newMocktailForm.name.trim()) {
+      setAddMocktailFieldErrors({ name: 'Name is required.' });
+      return;
+    }
     const id = slugify(newMocktailForm.name);
     try {
       const res = await api.post('/mocktails', {
@@ -447,9 +513,11 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setMocktails(prev => [...prev, res.data]);
       setNewMocktailForm({ name: '', emoji: '', description: '', sort_order: '' });
       setAddMocktailCategory(null);
-      setMocktailError('');
+      toast.success('Mocktail created.');
     } catch (err) {
-      setMocktailError(err.response?.data?.error || 'Failed to add mocktail.');
+      const data = err.response?.data;
+      setAddMocktailError(data?.error || 'Failed to add mocktail.');
+      setAddMocktailFieldErrors(data?.fieldErrors || {});
     }
   };
 
@@ -460,17 +528,24 @@ export default function CocktailMenuDashboard({ embedded = false }) {
     });
     try {
       await api.post('/mocktails/reorder', { items });
-    } catch (err) { console.error('Reorder failed:', err); }
+    } catch (err) {
+      toast.error('Reorder failed.');
+    }
   };
 
   // Mocktail category CRUD
   const saveEditMocktailCat = async (id) => {
+    setEditMocktailCatError('');
+    setEditMocktailCatFieldErrors({});
     try {
       const res = await api.put(`/mocktails/categories/${id}`, editMocktailCatForm);
       setMocktailCategories(prev => prev.map(c => c.id === id ? { ...c, ...res.data } : c));
       setEditingMocktailCat(null);
+      toast.success('Saved.');
     } catch (err) {
-      setMocktailCatError(err.response?.data?.error || 'Failed to save category.');
+      const data = err.response?.data;
+      setEditMocktailCatError(data?.error || 'Failed to save category.');
+      setEditMocktailCatFieldErrors(data?.fieldErrors || {});
     }
   };
 
@@ -479,13 +554,19 @@ export default function CocktailMenuDashboard({ embedded = false }) {
     try {
       await api.delete(`/mocktails/categories/${id}`);
       setMocktailCategories(prev => prev.filter(c => c.id !== id));
+      toast.success('Deleted.');
     } catch (err) {
-      setMocktailCatError(err.response?.data?.error || 'Failed to delete category.');
+      toast.error(err.response?.data?.error || 'Failed to delete category.');
     }
   };
 
   const addMocktailCat = async () => {
-    if (!newMocktailCatForm.label.trim()) { setMocktailCatError('Label is required.'); return; }
+    setAddMocktailCatError('');
+    setAddMocktailCatFieldErrors({});
+    if (!newMocktailCatForm.label.trim()) {
+      setAddMocktailCatFieldErrors({ label: 'Label is required.' });
+      return;
+    }
     const id = newMocktailCatForm.id.trim() || slugify(newMocktailCatForm.label);
     try {
       const res = await api.post('/mocktails/categories', {
@@ -495,9 +576,11 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setMocktailCategories(prev => [...prev, res.data].sort((a, b) => a.sort_order - b.sort_order));
       setNewMocktailCatForm({ id: '', label: '', sort_order: '' });
       setShowAddMocktailCat(false);
-      setMocktailCatError('');
+      toast.success('Category created.');
     } catch (err) {
-      setMocktailCatError(err.response?.data?.error || 'Failed to add category.');
+      const data = err.response?.data;
+      setAddMocktailCatError(data?.error || 'Failed to add category.');
+      setAddMocktailCatFieldErrors(data?.fieldErrors || {});
     }
   };
 
@@ -509,7 +592,9 @@ export default function CocktailMenuDashboard({ embedded = false }) {
     );
     try {
       await api.post('/mocktails/categories/reorder', { items });
-    } catch (err) { console.error('Category reorder failed:', err); }
+    } catch (err) {
+      toast.error('Category reorder failed.');
+    }
   };
 
   // ── Helpers ───────────────────────────────────────────────────────
@@ -568,7 +653,8 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       {/* ══ COCKTAILS ══ */}
       {isCocktails && subTab === 'drinks' && (
         <div>
-          {cocktailError && <div className="alert alert-error mb-2">{cocktailError}</div>}
+          {/* Section-level banner for inline edit errors */}
+          <FormBanner error={editCocktailError} fieldErrors={editCocktailFieldErrors} />
           {cocktailCategories.map(cat => {
             const catDrinks = sortedCocktailsInCat(cat.id);
             return (
@@ -576,7 +662,9 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                 <div className="flex-between mb-1">
                   <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>{cat.label}</h3>
                   <button className="btn btn-sm btn-secondary" onClick={() => {
-                    setAddCocktailCategory(cat.id); setCocktailError('');
+                    setAddCocktailCategory(cat.id);
+                    setAddCocktailError('');
+                    setAddCocktailFieldErrors({});
                     setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '' });
                   }}>+ Add Cocktail</button>
                 </div>
@@ -584,8 +672,11 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                 {addCocktailCategory === cat.id && (
                   <div className="card mb-1" style={{ background: 'var(--cream)' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                      <input className="form-input" placeholder="Name *" value={newCocktailForm.name}
-                        onChange={e => setNewCocktailForm(p => ({ ...p, name: e.target.value }))} />
+                      <div>
+                        <input className="form-input" placeholder="Name *" value={newCocktailForm.name}
+                          onChange={e => setNewCocktailForm(p => ({ ...p, name: e.target.value }))} />
+                        <FieldError error={addCocktailFieldErrors?.name} />
+                      </div>
                       <input className="form-input" placeholder="Emoji" value={newCocktailForm.emoji}
                         onChange={e => setNewCocktailForm(p => ({ ...p, emoji: e.target.value }))} />
                     </div>
@@ -599,6 +690,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                     <input className="form-input mb-1" placeholder="Ingredients (comma-separated, e.g. Vodka, Lime Juice, Sprite)"
                       value={newCocktailForm.ingredients}
                       onChange={e => setNewCocktailForm(p => ({ ...p, ingredients: e.target.value }))} />
+                    <FormBanner error={addCocktailError} fieldErrors={addCocktailFieldErrors} />
                     <div className="flex gap-1">
                       <button className="btn btn-sm" onClick={() => addCocktail(cat.id)}>Save</button>
                       <button className="btn btn-sm btn-secondary" onClick={() => setAddCocktailCategory(null)}>Cancel</button>
@@ -614,9 +706,15 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                     categories={cocktailCategories}
                     editingId={editingCocktail}
                     editForm={editCocktailForm}
+                    editFieldErrors={editCocktailFieldErrors}
                     withSpirit
-                    onStartEdit={(c) => { setEditingCocktail(c.id); setEditCocktailForm({ name: c.name, emoji: c.emoji || '', description: c.description || '', sort_order: c.sort_order, category_id: c.category_id || '', is_active: c.is_active, base_spirit: c.base_spirit || '', ingredients: (c.ingredients || []).join(', ') }); setCocktailError(''); }}
-                    onCancelEdit={() => { setEditingCocktail(null); setEditCocktailForm({}); }}
+                    onStartEdit={(c) => {
+                      setEditingCocktail(c.id);
+                      setEditCocktailForm({ name: c.name, emoji: c.emoji || '', description: c.description || '', sort_order: c.sort_order, category_id: c.category_id || '', is_active: c.is_active, base_spirit: c.base_spirit || '', ingredients: (c.ingredients || []).join(', ') });
+                      setEditCocktailError('');
+                      setEditCocktailFieldErrors({});
+                    }}
+                    onCancelEdit={() => { setEditingCocktail(null); setEditCocktailForm({}); setEditCocktailError(''); setEditCocktailFieldErrors({}); }}
                     onSaveEdit={saveEditCocktail}
                     onToggleActive={toggleCocktailActive}
                     onEditFormChange={(patch) => setEditCocktailForm(p => ({ ...p, ...patch }))}
@@ -633,17 +731,25 @@ export default function CocktailMenuDashboard({ embedded = false }) {
         <div className="card">
           <div className="flex-between mb-2">
             <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>Cocktail Categories</h3>
-            <button className="btn btn-sm" onClick={() => { setShowAddCocktailCat(true); setCocktailCatError(''); }}>+ Add Category</button>
+            <button className="btn btn-sm" onClick={() => {
+              setShowAddCocktailCat(true);
+              setAddCocktailCatError('');
+              setAddCocktailCatFieldErrors({});
+            }}>+ Add Category</button>
           </div>
-          {cocktailCatError && <div className="alert alert-error mb-2">{cocktailCatError}</div>}
+          <FormBanner error={editCocktailCatError} fieldErrors={editCocktailCatFieldErrors} />
           {showAddCocktailCat && (
             <div className="card mb-2" style={{ background: 'var(--cream)' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                <input className="form-input" placeholder="Label *" value={newCocktailCatForm.label}
-                  onChange={e => setNewCocktailCatForm(p => ({ ...p, label: e.target.value }))} />
+                <div>
+                  <input className="form-input" placeholder="Label *" value={newCocktailCatForm.label}
+                    onChange={e => setNewCocktailCatForm(p => ({ ...p, label: e.target.value }))} />
+                  <FieldError error={addCocktailCatFieldErrors?.label} />
+                </div>
                 <input className="form-input" placeholder="ID (auto if blank)" value={newCocktailCatForm.id}
                   onChange={e => setNewCocktailCatForm(p => ({ ...p, id: e.target.value }))} />
               </div>
+              <FormBanner error={addCocktailCatError} fieldErrors={addCocktailCatFieldErrors} />
               <div className="flex gap-1">
                 <button className="btn btn-sm" onClick={addCocktailCat}>Save</button>
                 <button className="btn btn-sm btn-secondary" onClick={() => setShowAddCocktailCat(false)}>Cancel</button>
@@ -655,8 +761,14 @@ export default function CocktailMenuDashboard({ embedded = false }) {
             drinkCounts={Object.fromEntries(cocktailCategories.map(c => [c.id, cocktails.filter(x => x.category_id === c.id).length]))}
             editingId={editingCocktailCat}
             editForm={editCocktailCatForm}
-            onStartEdit={(cat) => { setEditingCocktailCat(cat.id); setEditCocktailCatForm({ label: cat.label, sort_order: cat.sort_order }); setCocktailCatError(''); }}
-            onCancelEdit={() => { setEditingCocktailCat(null); setEditCocktailCatForm({}); }}
+            editFieldErrors={editCocktailCatFieldErrors}
+            onStartEdit={(cat) => {
+              setEditingCocktailCat(cat.id);
+              setEditCocktailCatForm({ label: cat.label, sort_order: cat.sort_order });
+              setEditCocktailCatError('');
+              setEditCocktailCatFieldErrors({});
+            }}
+            onCancelEdit={() => { setEditingCocktailCat(null); setEditCocktailCatForm({}); setEditCocktailCatError(''); setEditCocktailCatFieldErrors({}); }}
             onSaveEdit={saveEditCocktailCat}
             onDelete={deleteCocktailCat}
             onEditFormChange={(patch) => setEditCocktailCatForm(p => ({ ...p, ...patch }))}
@@ -668,7 +780,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       {/* ══ MOCKTAILS ══ */}
       {!isCocktails && subTab === 'drinks' && (
         <div>
-          {mocktailError && <div className="alert alert-error mb-2">{mocktailError}</div>}
+          <FormBanner error={editMocktailError} fieldErrors={editMocktailFieldErrors} />
           {mocktailCategories.map(cat => {
             const catDrinks = sortedMocktailsInCat(cat.id);
             return (
@@ -676,7 +788,9 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                 <div className="flex-between mb-1">
                   <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>{cat.label}</h3>
                   <button className="btn btn-sm btn-secondary" onClick={() => {
-                    setAddMocktailCategory(cat.id); setMocktailError('');
+                    setAddMocktailCategory(cat.id);
+                    setAddMocktailError('');
+                    setAddMocktailFieldErrors({});
                     setNewMocktailForm({ name: '', emoji: '', description: '', sort_order: '' });
                   }}>+ Add Mocktail</button>
                 </div>
@@ -684,13 +798,17 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                 {addMocktailCategory === cat.id && (
                   <div className="card mb-1" style={{ background: 'var(--cream)' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                      <input className="form-input" placeholder="Name *" value={newMocktailForm.name}
-                        onChange={e => setNewMocktailForm(p => ({ ...p, name: e.target.value }))} />
+                      <div>
+                        <input className="form-input" placeholder="Name *" value={newMocktailForm.name}
+                          onChange={e => setNewMocktailForm(p => ({ ...p, name: e.target.value }))} />
+                        <FieldError error={addMocktailFieldErrors?.name} />
+                      </div>
                       <input className="form-input" placeholder="Emoji" value={newMocktailForm.emoji}
                         onChange={e => setNewMocktailForm(p => ({ ...p, emoji: e.target.value }))} />
                     </div>
                     <input className="form-input mb-1" placeholder="Description" value={newMocktailForm.description}
                       onChange={e => setNewMocktailForm(p => ({ ...p, description: e.target.value }))} />
+                    <FormBanner error={addMocktailError} fieldErrors={addMocktailFieldErrors} />
                     <div className="flex gap-1">
                       <button className="btn btn-sm" onClick={() => addMocktail(cat.id)}>Save</button>
                       <button className="btn btn-sm btn-secondary" onClick={() => setAddMocktailCategory(null)}>Cancel</button>
@@ -706,9 +824,15 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                     categories={mocktailCategories}
                     editingId={editingMocktail}
                     editForm={editMocktailForm}
+                    editFieldErrors={editMocktailFieldErrors}
                     withSpirit={false}
-                    onStartEdit={(m) => { setEditingMocktail(m.id); setEditMocktailForm({ name: m.name, emoji: m.emoji || '', description: m.description || '', sort_order: m.sort_order, category_id: m.category_id || '', is_active: m.is_active }); setMocktailError(''); }}
-                    onCancelEdit={() => { setEditingMocktail(null); setEditMocktailForm({}); }}
+                    onStartEdit={(m) => {
+                      setEditingMocktail(m.id);
+                      setEditMocktailForm({ name: m.name, emoji: m.emoji || '', description: m.description || '', sort_order: m.sort_order, category_id: m.category_id || '', is_active: m.is_active });
+                      setEditMocktailError('');
+                      setEditMocktailFieldErrors({});
+                    }}
+                    onCancelEdit={() => { setEditingMocktail(null); setEditMocktailForm({}); setEditMocktailError(''); setEditMocktailFieldErrors({}); }}
                     onSaveEdit={saveEditMocktail}
                     onToggleActive={toggleMocktailActive}
                     onEditFormChange={(patch) => setEditMocktailForm(p => ({ ...p, ...patch }))}
@@ -730,17 +854,25 @@ export default function CocktailMenuDashboard({ embedded = false }) {
         <div className="card">
           <div className="flex-between mb-2">
             <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>Mocktail Categories</h3>
-            <button className="btn btn-sm" onClick={() => { setShowAddMocktailCat(true); setMocktailCatError(''); }}>+ Add Category</button>
+            <button className="btn btn-sm" onClick={() => {
+              setShowAddMocktailCat(true);
+              setAddMocktailCatError('');
+              setAddMocktailCatFieldErrors({});
+            }}>+ Add Category</button>
           </div>
-          {mocktailCatError && <div className="alert alert-error mb-2">{mocktailCatError}</div>}
+          <FormBanner error={editMocktailCatError} fieldErrors={editMocktailCatFieldErrors} />
           {showAddMocktailCat && (
             <div className="card mb-2" style={{ background: 'var(--cream)' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                <input className="form-input" placeholder="Label *" value={newMocktailCatForm.label}
-                  onChange={e => setNewMocktailCatForm(p => ({ ...p, label: e.target.value }))} />
+                <div>
+                  <input className="form-input" placeholder="Label *" value={newMocktailCatForm.label}
+                    onChange={e => setNewMocktailCatForm(p => ({ ...p, label: e.target.value }))} />
+                  <FieldError error={addMocktailCatFieldErrors?.label} />
+                </div>
                 <input className="form-input" placeholder="ID (auto if blank)" value={newMocktailCatForm.id}
                   onChange={e => setNewMocktailCatForm(p => ({ ...p, id: e.target.value }))} />
               </div>
+              <FormBanner error={addMocktailCatError} fieldErrors={addMocktailCatFieldErrors} />
               <div className="flex gap-1">
                 <button className="btn btn-sm" onClick={addMocktailCat}>Save</button>
                 <button className="btn btn-sm btn-secondary" onClick={() => setShowAddMocktailCat(false)}>Cancel</button>
@@ -752,8 +884,14 @@ export default function CocktailMenuDashboard({ embedded = false }) {
             drinkCounts={Object.fromEntries(mocktailCategories.map(c => [c.id, mocktails.filter(x => x.category_id === c.id).length]))}
             editingId={editingMocktailCat}
             editForm={editMocktailCatForm}
-            onStartEdit={(cat) => { setEditingMocktailCat(cat.id); setEditMocktailCatForm({ label: cat.label, sort_order: cat.sort_order }); setMocktailCatError(''); }}
-            onCancelEdit={() => { setEditingMocktailCat(null); setEditMocktailCatForm({}); }}
+            editFieldErrors={editMocktailCatFieldErrors}
+            onStartEdit={(cat) => {
+              setEditingMocktailCat(cat.id);
+              setEditMocktailCatForm({ label: cat.label, sort_order: cat.sort_order });
+              setEditMocktailCatError('');
+              setEditMocktailCatFieldErrors({});
+            }}
+            onCancelEdit={() => { setEditingMocktailCat(null); setEditMocktailCatForm({}); setEditMocktailCatError(''); setEditMocktailCatFieldErrors({}); }}
             onSaveEdit={saveEditMocktailCat}
             onDelete={deleteMocktailCat}
             onEditFormChange={(patch) => setEditMocktailCatForm(p => ({ ...p, ...patch }))}
