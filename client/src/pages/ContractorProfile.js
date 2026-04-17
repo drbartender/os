@@ -2,7 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import FileUpload from '../components/FileUpload';
+import FormBanner from '../components/FormBanner';
+import FieldError from '../components/FieldError';
 import api from '../utils/api';
+import { useToast } from '../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 import useFormValidation from '../hooks/useFormValidation';
 
@@ -12,10 +15,12 @@ const TRAVEL_OPTIONS = ['Up to 25 miles', 'Up to 50 miles', 'Up to 100 miles', '
 
 export default function ContractorProfile() {
   const navigate = useNavigate();
+  const toast = useToast();
   const { user } = useAuth();
   const { setProgress } = useOutletContext();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [loadError, setLoadError] = useState('');
   const [fromApplication, setFromApplication] = useState(false);
   const [files, setFiles] = useState({ alcohol_certification: null, resume: null, headshot: null });
@@ -66,7 +71,10 @@ export default function ContractorProfile() {
           headshot: d.headshot_filename,
         });
       }
-    }).catch(() => setLoadError("We couldn't load your saved profile. You can still fill out the form below."));
+    }).catch(() => {
+      setLoadError("We couldn't load your saved profile. You can still fill out the form below.");
+      toast.error("We couldn't load your saved profile.");
+    });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
@@ -90,6 +98,8 @@ export default function ContractorProfile() {
 
   async function submit(e) {
     e.preventDefault();
+    setError('');
+    setFieldErrors({});
     const result = validate(rules, form);
     if (!result.valid) { setError(result.message); return; }
 
@@ -104,9 +114,11 @@ export default function ContractorProfile() {
       await api.post('/contractor', data);
       const r = await api.put('/progress/step', { step: 'contractor_profile_completed' });
       setProgress(r.data);
+      toast.success('Profile saved.');
       navigate('/payday-protocols');
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to save profile.');
+      setError(err.message || 'Failed to save profile.');
+      if (err.fieldErrors) setFieldErrors(err.fieldErrors);
     } finally {
       setLoading(false);
     }
@@ -129,7 +141,6 @@ export default function ContractorProfile() {
       )}
 
       {loadError && <div className="alert alert-info">{loadError}</div>}
-      {error && <div className="alert alert-error" role="alert">{error}</div>}
 
       <form onSubmit={submit}>
         <div className="card">
@@ -137,11 +148,13 @@ export default function ContractorProfile() {
           <div className="two-col">
             <div className={"form-group" + fieldClass('preferred_name')}>
               <label htmlFor="cp-preferred_name" className="form-label">Preferred Name *</label>
-              <input id="cp-preferred_name" name="preferred_name" className={"form-input" + inputClass('preferred_name')} value={form.preferred_name} onChange={handle} />
+              <input id="cp-preferred_name" name="preferred_name" className={"form-input" + inputClass('preferred_name')} value={form.preferred_name} onChange={handle} aria-invalid={!!fieldErrors?.preferred_name} />
+              <FieldError error={fieldErrors?.preferred_name} />
             </div>
             <div className={"form-group" + fieldClass('phone')}>
               <label htmlFor="cp-phone" className="form-label">Phone *</label>
-              <input id="cp-phone" name="phone" type="tel" className={"form-input" + inputClass('phone')} value={formatPhoneInput(form.phone)} onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearField('phone'); }} placeholder="(555) 000-0000" />
+              <input id="cp-phone" name="phone" type="tel" className={"form-input" + inputClass('phone')} value={formatPhoneInput(form.phone)} onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearField('phone'); }} placeholder="(555) 000-0000" aria-invalid={!!fieldErrors?.phone} />
+              <FieldError error={fieldErrors?.phone} />
             </div>
           </div>
           <div className="form-group">
@@ -178,14 +191,16 @@ export default function ContractorProfile() {
           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr', gap: '0.75rem' }}>
             <div className={"form-group" + fieldClass('city')}>
               <label htmlFor="cp-city" className="form-label">City *</label>
-              <input id="cp-city" name="city" className={"form-input" + inputClass('city')} value={form.city} onChange={handle} />
+              <input id="cp-city" name="city" className={"form-input" + inputClass('city')} value={form.city} onChange={handle} aria-invalid={!!fieldErrors?.city} />
+              <FieldError error={fieldErrors?.city} />
             </div>
             <div className={"form-group" + fieldClass('state')}>
               <label htmlFor="cp-state" className="form-label">State *</label>
-              <select id="cp-state" name="state" className={"form-select" + inputClass('state')} value={form.state} onChange={handle}>
+              <select id="cp-state" name="state" className={"form-select" + inputClass('state')} value={form.state} onChange={handle} aria-invalid={!!fieldErrors?.state}>
                 <option value="">Select state</option>
                 {[...new Set(STATES)].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+              <FieldError error={fieldErrors?.state} />
             </div>
             <div className="form-group">
               <label htmlFor="cp-zip_code" className="form-label">Zip Code</label>
@@ -292,6 +307,8 @@ export default function ContractorProfile() {
             camera={true}
           />
         </div>
+
+        <FormBanner error={error} fieldErrors={fieldErrors} />
 
         <div className="flex gap-2" style={{ justifyContent: 'space-between' }}>
           <button type="button" className="btn btn-secondary" onClick={() => navigate('/agreement')}>

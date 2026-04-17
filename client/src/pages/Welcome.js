@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import api from '../utils/api';
+import { useToast } from '../context/ToastContext';
 
 export default function Welcome() {
   const navigate = useNavigate();
+  const toast = useToast();
   const { setProgress } = useOutletContext();
   const [loading, setLoading] = useState(false);
 
@@ -14,6 +16,7 @@ export default function Welcome() {
       setProgress(r.data);
       navigate('/field-guide');
     } catch (err) {
+      toast.error(err.message || "Couldn't save your progress. Please try again.");
       setLoading(false);
     }
   }

@@ -2,7 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import FileUpload from '../components/FileUpload';
 import W9Form from '../components/W9Form';
+import FormBanner from '../components/FormBanner';
+import FieldError from '../components/FieldError';
 import api from '../utils/api';
+import { useToast } from '../context/ToastContext';
 import { COMPANY_PHONE } from '../utils/constants';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 import useFormValidation from '../hooks/useFormValidation';
@@ -11,9 +14,11 @@ const PAYMENT_METHODS = ['Venmo', 'Zelle', 'Cash App', 'PayPal', 'Direct Deposit
 
 export default function PaydayProtocols() {
   const navigate = useNavigate();
+  const toast = useToast();
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [loadError, setLoadError] = useState('');
   const [w9File, setW9File] = useState(null);
   const [existingW9, setExistingW9] = useState('');
@@ -58,8 +63,11 @@ export default function PaydayProtocols() {
           setW9Done(true);
         }
       }
-    }).catch(() => setLoadError("We couldn't load your saved payment info. You can still complete the form below."));
-  }, []);
+    }).catch(() => {
+      setLoadError("We couldn't load your saved payment info. You can still complete the form below.");
+      toast.error("We couldn't load your saved payment info.");
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handle(e) {
     setForm(f => ({ ...f, [e.target.name]: e.target.value }));
@@ -69,6 +77,7 @@ export default function PaydayProtocols() {
   async function submit(e) {
     e.preventDefault();
     setError('');
+    setFieldErrors({});
 
     const method = form.preferred_payment_method;
 
@@ -97,7 +106,11 @@ export default function PaydayProtocols() {
     const result = validate(rules, form);
     if (!result.valid) { setError(result.message); return; }
 
-    if (!w9File && !existingW9) return setError('Please complete or upload your W-9.');
+    if (!w9File && !existingW9) {
+      setFieldErrors({ w9: 'Please complete or upload your W-9.' });
+      setError('Please complete or upload your W-9.');
+      return;
+    }
 
     setLoading(true);
     try {
@@ -120,9 +133,11 @@ export default function PaydayProtocols() {
       if (w9File) data.append('w9', w9File);
 
       await api.post('/payment', data);
+      toast.success('Payment info saved.');
       navigate('/complete');
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to save payment info.');
+      setError(err.message || 'Failed to save payment info.');
+      if (err.fieldErrors) setFieldErrors(err.fieldErrors);
     } finally {
       setLoading(false);
     }
@@ -191,7 +206,6 @@ export default function PaydayProtocols() {
         </p>
 
         {loadError && <div className="alert alert-info">{loadError}</div>}
-        {error && <div className="alert alert-error" role="alert">{error}</div>}
 
         <form onSubmit={submit}>
           {/* ── Payment Method ── */}
@@ -306,6 +320,7 @@ export default function PaydayProtocols() {
             <div style={{ fontWeight: 700, fontSize: '0.85rem', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--warm-brown)', marginBottom: '0.75rem' }}>
               W-9 Form *
             </div>
+            <FieldError error={fieldErrors?.w9} />
 
             {/* Mode toggle */}
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
@@ -351,6 +366,8 @@ export default function PaydayProtocols() {
               />
             )}
           </div>
+
+          <FormBanner error={error} fieldErrors={fieldErrors} />
 
           <div className="flex gap-2" style={{ justifyContent: 'space-between', marginTop: '1.5rem' }}>
             <button type="button" className="btn btn-secondary" onClick={() => navigate('/contractor-profile')}>

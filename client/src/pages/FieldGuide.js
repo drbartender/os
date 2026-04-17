@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import api from '../utils/api';
+import { useToast } from '../context/ToastContext';
 import { COMPANY_PHONE } from '../utils/constants';
 
 const SECTIONS = [
@@ -270,6 +271,7 @@ const SECTIONS = [
 
 export default function FieldGuide() {
   const navigate = useNavigate();
+  const toast = useToast();
   const { setProgress } = useOutletContext();
   const [open, setOpen] = useState({});
   const [acknowledged, setAcknowledged] = useState(false);
@@ -287,7 +289,7 @@ export default function FieldGuide() {
       setProgress(r.data);
       navigate('/agreement');
     } catch (err) {
-      console.error(err);
+      toast.error(err.message || "Couldn't save your progress. Please try again.");
     } finally {
       setLoading(false);
     }

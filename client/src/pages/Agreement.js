@@ -2,16 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import SignaturePad from '../components/SignaturePad';
+import FormBanner from '../components/FormBanner';
+import FieldError from '../components/FieldError';
 import api from '../utils/api';
+import { useToast } from '../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 import useFormValidation from '../hooks/useFormValidation';
 
 export default function Agreement() {
   const navigate = useNavigate();
+  const toast = useToast();
   const { user } = useAuth();
   const { setProgress } = useOutletContext();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [loadError, setLoadError] = useState('');
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
   const [form, setForm] = useState({
@@ -38,7 +43,10 @@ export default function Agreement() {
           agreed_non_solicitation: r.data.agreed_non_solicitation || false,
         }));
       }
-    }).catch(() => setLoadError("We couldn't load your saved agreement. You can still continue and sign below."));
+    }).catch(() => {
+      setLoadError("We couldn't load your saved agreement. You can still continue and sign below.");
+      toast.error("We couldn't load your saved agreement.");
+    });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handle(e) {
@@ -50,6 +58,7 @@ export default function Agreement() {
   async function submit(e) {
     e.preventDefault();
     setError('');
+    setFieldErrors({});
 
     const rules = [
       { field: 'full_name', label: 'Full Name' },
@@ -67,9 +76,11 @@ export default function Agreement() {
       await api.post('/agreement', form);
       const r = await api.put('/progress/step', { step: 'agreement_completed' });
       setProgress(r.data);
+      toast.success('Agreement signed.');
       navigate('/contractor-profile');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save agreement.');
+      setError(err.message || 'Failed to save agreement.');
+      if (err.fieldErrors) setFieldErrors(err.fieldErrors);
     } finally {
       setLoading(false);
     }
@@ -126,17 +137,18 @@ export default function Agreement() {
           </p>
 
           {loadError && <div className="alert alert-info">{loadError}</div>}
-          {error && <div className="alert alert-error" role="alert">{error}</div>}
 
           <form onSubmit={submit}>
             <div className="two-col">
               <div className={"form-group" + fieldClass('full_name')}>
                 <label htmlFor="agreement-full_name" className="form-label">Full Name</label>
-                <input id="agreement-full_name" name="full_name" className={"form-input" + inputClass('full_name')} value={form.full_name} onChange={handle} placeholder="Your legal name" />
+                <input id="agreement-full_name" name="full_name" className={"form-input" + inputClass('full_name')} value={form.full_name} onChange={handle} placeholder="Your legal name" aria-invalid={!!fieldErrors?.full_name} />
+                <FieldError error={fieldErrors?.full_name} />
               </div>
               <div className={"form-group" + fieldClass('email')}>
                 <label htmlFor="agreement-email" className="form-label">Email</label>
-                <input id="agreement-email" name="email" type="email" className={"form-input" + inputClass('email')} value={form.email} onChange={handle} />
+                <input id="agreement-email" name="email" type="email" className={"form-input" + inputClass('email')} value={form.email} onChange={handle} aria-invalid={!!fieldErrors?.email} />
+                <FieldError error={fieldErrors?.email} />
               </div>
             </div>
 
@@ -177,7 +189,10 @@ export default function Agreement() {
                 value={form.signature_data}
                 onChange={(data, method) => { clearField('signature_data'); setForm(f => ({ ...f, signature_data: data, signature_method: method })); }}
               />
+              <FieldError error={fieldErrors?.signature} />
             </div>
+
+            <FormBanner error={error} fieldErrors={fieldErrors} />
 
             <button type="submit" className="btn btn-primary btn-full mt-2" disabled={loading}>
               {loading ? 'Submitting...' : 'Sign & Continue →'}

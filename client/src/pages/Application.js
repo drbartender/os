@@ -3,7 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import FileUpload from '../components/FileUpload';
 import BrandLogo from '../components/BrandLogo';
+import FormBanner from '../components/FormBanner';
+import FieldError from '../components/FieldError';
 import api from '../utils/api';
+import { useToast } from '../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 import useFormValidation from '../hooks/useFormValidation';
 
@@ -85,9 +88,11 @@ const EQUIPMENT = [
 
 export default function Application() {
   const navigate = useNavigate();
+  const toast = useToast();
   const { user, login, logout } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [files, setFiles] = useState({ resume: null, headshot: null, basset: null });
   const [colorHex, setColorHex] = useState('#7c3aed');
 
@@ -125,6 +130,7 @@ export default function Application() {
   async function submit(e) {
     e.preventDefault();
     setError('');
+    setFieldErrors({});
 
     const rules = [
       { field: 'full_name', label: 'Full Name' },
@@ -151,7 +157,11 @@ export default function Application() {
     let age = today.getFullYear() - birthDate.getFullYear();
     const monthDiff = today.getMonth() - birthDate.getMonth();
     if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) age--;
-    if (age < 21) return setError('You must be at least 21 years old to apply.');
+    if (age < 21) {
+      setFieldErrors({ birth_year: 'You must be at least 21 years old to apply.' });
+      setError('You must be at least 21 years old to apply.');
+      return;
+    }
 
     const selectedPositions = Object.keys(positions).filter(k => positions[k]);
 
@@ -189,9 +199,11 @@ export default function Application() {
       const meRes = await api.get('/auth/me');
       login(localStorage.getItem('token'), meRes.data.user);
 
+      toast.success('Application submitted!');
       navigate('/application-status');
     } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Failed to submit application.');
+      setError(err.message || 'Failed to submit application.');
+      if (err.fieldErrors) setFieldErrors(err.fieldErrors);
     } finally {
       setLoading(false);
     }
@@ -217,8 +229,6 @@ export default function Application() {
           </p>
         </div>
 
-        {error && <div className="alert alert-error" role="alert">{error}</div>}
-
         <form onSubmit={submit}>
           {/* ── Section 1: Basic Information ── */}
           <div className="card">
@@ -230,11 +240,13 @@ export default function Application() {
             <div className="two-col">
               <div className={"form-group" + fieldClass('full_name')}>
                 <label htmlFor="app-full_name" className="form-label">Full Name *</label>
-                <input id="app-full_name" name="full_name" className={"form-input" + inputClass('full_name')} value={form.full_name} onChange={handle} placeholder="First and last name" />
+                <input id="app-full_name" name="full_name" className={"form-input" + inputClass('full_name')} value={form.full_name} onChange={handle} placeholder="First and last name" aria-invalid={!!fieldErrors?.full_name} />
+                <FieldError error={fieldErrors?.full_name} />
               </div>
               <div className={"form-group" + fieldClass('phone')}>
                 <label htmlFor="app-phone" className="form-label">Phone Number *</label>
-                <input id="app-phone" name="phone" type="tel" className={"form-input" + inputClass('phone')} value={formatPhoneInput(form.phone)} onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearField('phone'); }} placeholder="(555) 000-0000" />
+                <input id="app-phone" name="phone" type="tel" className={"form-input" + inputClass('phone')} value={formatPhoneInput(form.phone)} onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearField('phone'); }} placeholder="(555) 000-0000" aria-invalid={!!fieldErrors?.phone} />
+                <FieldError error={fieldErrors?.phone} />
               </div>
             </div>
 
@@ -273,9 +285,10 @@ export default function Application() {
               </div>
               <div className={"form-group" + fieldClass('birth_year')}>
                 <label htmlFor="app-birth_year" className="form-label">Year</label>
-                <input id="app-birth_year" name="birth_year" type="number" className={"form-input" + inputClass('birth_year')} value={form.birth_year} onChange={handle} placeholder="YYYY" min="1940" max="2010" />
+                <input id="app-birth_year" name="birth_year" type="number" className={"form-input" + inputClass('birth_year')} value={form.birth_year} onChange={handle} placeholder="YYYY" min="1940" max="2010" aria-invalid={!!fieldErrors?.birth_year} />
               </div>
             </div>
+            <FieldError error={fieldErrors?.birth_year} />
           </div>
 
           {/* ── Section 2: Location & Travel ── */}
@@ -293,14 +306,16 @@ export default function Application() {
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.5fr 1fr', gap: '0.75rem' }}>
               <div className={"form-group" + fieldClass('city')}>
                 <label htmlFor="app-city" className="form-label">City *</label>
-                <input id="app-city" name="city" className={"form-input" + inputClass('city')} value={form.city} onChange={handle} />
+                <input id="app-city" name="city" className={"form-input" + inputClass('city')} value={form.city} onChange={handle} aria-invalid={!!fieldErrors?.city} />
+                <FieldError error={fieldErrors?.city} />
               </div>
               <div className={"form-group" + fieldClass('state')}>
                 <label htmlFor="app-state" className="form-label">State *</label>
-                <select id="app-state" name="state" className={"form-select" + inputClass('state')} value={form.state} onChange={handle}>
+                <select id="app-state" name="state" className={"form-select" + inputClass('state')} value={form.state} onChange={handle} aria-invalid={!!fieldErrors?.state}>
                   <option value="">Select state</option>
                   {STATES.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
+                <FieldError error={fieldErrors?.state} />
               </div>
               <div className="form-group">
                 <label htmlFor="app-zip_code" className="form-label">Zip Code</label>
@@ -548,7 +563,8 @@ export default function Application() {
               <label htmlFor="app-why_dr_bartender" className="form-label">Why do you want to work with Dr. Bartender? *</label>
               <textarea id="app-why_dr_bartender" name="why_dr_bartender" className={"form-input" + inputClass('why_dr_bartender')} rows={3}
                 value={form.why_dr_bartender} onChange={handle}
-                placeholder="Tell us what drew you to apply..." />
+                placeholder="Tell us what drew you to apply..." aria-invalid={!!fieldErrors?.why_dr_bartender} />
+              <FieldError error={fieldErrors?.why_dr_bartender} />
             </div>
 
             <div className="form-group">
@@ -566,6 +582,7 @@ export default function Application() {
                 onChange={handleFile}
                 currentFile={files.resume}
               />
+              <FieldError error={fieldErrors?.resume} />
             </div>
 
             <FileUpload
@@ -586,6 +603,7 @@ export default function Application() {
                 onChange={handleFile}
                 currentFile={files.basset}
               />
+              <FieldError error={fieldErrors?.basset} />
             </div>
           </div>
 
@@ -617,6 +635,7 @@ export default function Application() {
             <p className="text-muted italic" style={{ marginBottom: '1rem' }}>
               By submitting this application, you confirm that all information provided is accurate.
             </p>
+            <FormBanner error={error} fieldErrors={fieldErrors} />
             <button type="submit" className="btn btn-primary btn-full" disabled={loading}>
               {loading ? 'Submitting Application...' : 'Submit Application'}
             </button>
