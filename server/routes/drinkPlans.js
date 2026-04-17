@@ -5,6 +5,7 @@ const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters
 const { calculateProposal } = require('../utils/pricingEngine');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
+const { getEventTypeLabel } = require('../utils/eventTypes');
 
 const router = express.Router();
 
@@ -14,7 +15,7 @@ const router = express.Router();
 router.get('/t/:token/shopping-list', publicReadLimiter, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT dp.shopping_list, dp.client_name, dp.event_name, dp.event_date, dp.status
+      `SELECT dp.shopping_list, dp.client_name, dp.event_type, dp.event_type_custom, dp.event_date, dp.status
        FROM drink_plans dp WHERE dp.token = $1`,
       [req.params.token]
     );
@@ -24,7 +25,8 @@ router.get('/t/:token/shopping-list', publicReadLimiter, async (req, res) => {
       return res.json({
         ready: false,
         client_name: plan.client_name,
-        event_name: plan.event_name,
+        event_type: plan.event_type,
+        event_type_custom: plan.event_type_custom,
         event_date: plan.event_date,
       });
     }
@@ -32,7 +34,8 @@ router.get('/t/:token/shopping-list', publicReadLimiter, async (req, res) => {
       ready: true,
       shopping_list: plan.shopping_list,
       client_name: plan.client_name,
-      event_name: plan.event_name,
+      event_type: plan.event_type,
+      event_type_custom: plan.event_type_custom,
       event_date: plan.event_date,
     });
   } catch (err) {
@@ -45,7 +48,7 @@ router.get('/t/:token/shopping-list', publicReadLimiter, async (req, res) => {
 router.get('/t/:token', publicReadLimiter, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT dp.id, dp.token, dp.client_name, dp.client_email, dp.event_name, dp.event_date,
+      `SELECT dp.id, dp.token, dp.client_name, dp.client_email, dp.event_type, dp.event_type_custom, dp.event_date,
               dp.status, dp.serving_type, dp.selections, dp.submitted_at, dp.created_at,
               dp.proposal_id, dp.exploration_submitted_at,
               p.guest_count, p.num_bartenders, p.num_bars, p.pricing_snapshot,
@@ -75,7 +78,7 @@ router.put('/t/:token', publicLimiter, async (req, res) => {
   try {
     // Check plan exists and is not already submitted
     const existing = await pool.query(
-      'SELECT id, status, proposal_id, client_name, client_email, event_name FROM drink_plans WHERE token = $1',
+      'SELECT id, status, proposal_id, client_name, client_email, event_type, event_type_custom FROM drink_plans WHERE token = $1',
       [req.params.token]
     );
     if (!existing.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
@@ -263,7 +266,10 @@ router.put('/t/:token', publicLimiter, async (req, res) => {
                   const balanceDue = snapshot.total - amountPaid;
                   const tpl = emailTemplates.drinkPlanBalanceUpdate({
                     clientName: existing.rows[0]?.client_name || 'Client',
-                    eventName: existing.rows[0]?.event_name || proposal.event_name,
+                    eventTypeLabel: getEventTypeLabel({
+                      event_type: existing.rows[0]?.event_type || proposal.event_type,
+                      event_type_custom: existing.rows[0]?.event_type_custom || proposal.event_type_custom
+                    }),
                     extrasAmount,
                     newTotal: snapshot.total,
                     amountPaid,
@@ -315,7 +321,7 @@ router.get('/', auth, requireAdminOrManager, async (req, res) => {
     }
     if (search) {
       params.push(`%${search}%`);
-      query += ` AND (dp.client_name ILIKE $${params.length} OR dp.event_name ILIKE $${params.length} OR dp.client_email ILIKE $${params.length})`;
+      query += ` AND (dp.client_name ILIKE $${params.length} OR dp.client_email ILIKE $${params.length})`;
     }
 
     query += ' ORDER BY dp.created_at DESC';
@@ -330,18 +336,19 @@ router.get('/', auth, requireAdminOrManager, async (req, res) => {
 
 /** POST /api/drink-plans — create a new plan */
 router.post('/', auth, requireAdminOrManager, async (req, res) => {
-  const { client_name, client_email, event_name, event_date } = req.body;
+  const { client_name, client_email, event_type, event_type_custom, event_date } = req.body;
   if (!client_name) {
     return res.status(400).json({ error: 'Client name is required.' });
   }
   try {
     const result = await pool.query(`
-      INSERT INTO drink_plans (client_name, client_email, event_name, event_date, created_by)
-      VALUES ($1, $2, $3, $4, $5) RETURNING *
+      INSERT INTO drink_plans (client_name, client_email, event_type, event_type_custom, event_date, created_by)
+      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
     `, [
       client_name,
       client_email || null,
-      event_name || null,
+      event_type || null,
+      event_type_custom || null,
       event_date || null,
       req.user.id
     ]);
@@ -368,7 +375,8 @@ router.post('/for-proposal/:proposalId', auth, requireAdminOrManager, async (req
     const drinkPlan = await createDrinkPlan(proposal.id, {
       client_name: proposal.client_name,
       client_email: proposal.client_email,
-      event_name: proposal.event_name,
+      event_type: proposal.event_type,
+      event_type_custom: proposal.event_type_custom,
       event_date: proposal.event_date,
       created_by: req.user.id,
     }, { skipEmail: true });
@@ -455,7 +463,8 @@ router.get('/:id/shopping-list-data', auth, requireAdminOrManager, async (req, r
 
     res.json({
       client_name: plan.client_name,
-      event_name: plan.event_name,
+      event_type: plan.event_type,
+      event_type_custom: plan.event_type_custom,
       event_date: plan.event_date,
       guest_count: plan.guest_count || null,
       service_style: serviceStyle,
