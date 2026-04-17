@@ -7,6 +7,7 @@ const { createEventShifts, createDrinkPlan } = require('../utils/eventCreation')
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, linkPaymentToInvoice } = require('../utils/invoiceHelpers');
+const { getEventTypeLabel } = require('../utils/eventTypes');
 
 const router = express.Router();
 
@@ -24,7 +25,7 @@ router.get('/t/:token', publicLimiter, async (req, res) => {
     const result = await pool.query(`
       SELECT
         p.id, p.token, p.client_id,
-        p.event_name, p.event_date, p.event_start_time, p.event_duration_hours,
+        p.event_date, p.event_start_time, p.event_duration_hours,
         p.event_location, p.event_type, p.event_type_category, p.event_type_custom,
         p.guest_count, p.package_id, p.num_bars, p.num_bartenders,
         p.pricing_snapshot, p.total_price, p.status,
@@ -137,20 +138,21 @@ router.post('/t/:token/sign', publicLimiter, async (req, res) => {
     // Email notifications (non-blocking)
     try {
       const fp = await pool.query(`
-        SELECT p.id, p.event_name, c.name AS client_name, c.email AS client_email
+        SELECT p.id, p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
         WHERE p.id = $1
       `, [proposal.id]);
       const pd = fp.rows[0];
+      const eventTypeLabel = getEventTypeLabel({ event_type: pd?.event_type, event_type_custom: pd?.event_type_custom });
       if (pd?.client_email) {
-        const tpl = emailTemplates.proposalSignedConfirmation({ clientName: pd.client_name, eventName: pd.event_name });
+        const tpl = emailTemplates.proposalSignedConfirmation({ clientName: pd.client_name, eventTypeLabel });
         await sendEmail({ to: pd.client_email, ...tpl });
       }
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail && pd) {
         const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
         const adminUrl = `${clientUrl}/admin/proposals/${pd.id}`;
-        const tpl = emailTemplates.clientSignedAdmin({ clientName: pd.client_name, eventName: pd.event_name, proposalId: pd.id, adminUrl });
+        const tpl = emailTemplates.clientSignedAdmin({ clientName: pd.client_name, eventTypeLabel, proposalId: pd.id, adminUrl });
         await sendEmail({ to: adminEmail, ...tpl });
       }
     } catch (emailErr) {
@@ -372,7 +374,7 @@ router.put('/public/quote-draft/:token', publicReadLimiter, async (req, res) => 
 router.post('/public/submit', publicLimiter, async (req, res) => {
   const {
     client_name, client_email, client_phone,
-    event_name, event_date, event_start_time, event_duration_hours,
+    event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, addon_ids,
     addon_quantities, syrup_selections,
     event_type, event_type_category, event_type_custom,
@@ -442,23 +444,19 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
       syrupSelections: syrup_selections || [],
     });
 
-    // Derive event_name from event type (client name is prepended at display time)
-    const eventTypeLabel = event_type_custom || event_type || null;
-    const derivedEventName = event_name || eventTypeLabel || `${client_name.trim()}'s Event`;
-
     // Insert proposal
     const glasswareNote = client_provides_glassware ? 'Client will provide their own glassware (for Flavor Blaster)' : null;
     const proposalResult = await dbClient.query(`
-      INSERT INTO proposals (client_id, event_name, event_date, event_start_time, event_duration_hours,
+      INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours,
         event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, status,
         event_type, event_type_category, event_type_custom, admin_notes)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'sent',$13,$14,$15,$16)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'sent',$12,$13,$14,$15)
       RETURNING *
     `, [
-      finalClientId, derivedEventName, event_date || null,
+      finalClientId, event_date || null,
       event_start_time || null, dh, event_location || null, gc, package_id, nb,
       snapshot.staffing.actual, JSON.stringify(snapshot), snapshot.total,
-      eventTypeLabel || null, event_type_category || null, event_type_custom || null,
+      event_type || null, event_type_category || null, event_type_custom || null,
       glasswareNote
     ]);
 
@@ -500,7 +498,8 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
     try {
       const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
       const proposalUrl = `${clientUrl}/proposal/${proposal.token}`;
-      const tpl = emailTemplates.proposalSent({ clientName: client_name.trim(), eventName: proposal.event_name, proposalUrl });
+      const eventTypeLabel = getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom });
+      const tpl = emailTemplates.proposalSent({ clientName: client_name.trim(), eventTypeLabel, proposalUrl });
       await sendEmail({ to: client_email.trim().toLowerCase(), ...tpl });
 
       const adminEmail = process.env.ADMIN_EMAIL;
@@ -508,11 +507,11 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
         const adminUrl = `${clientUrl}/admin/proposals/${proposal.id}`;
         const tpl2 = emailTemplates.clientSignedAdmin({
           clientName: client_name.trim(),
-          eventName: proposal.event_name,
+          eventTypeLabel,
           proposalId: proposal.id,
           adminUrl
         });
-        await sendEmail({ to: adminEmail, subject: `New Website Quote: ${proposal.event_name}`, html: tpl2.html });
+        await sendEmail({ to: adminEmail, subject: `New Website Quote: ${eventTypeLabel}`, html: tpl2.html });
       }
     } catch (emailErr) {
       console.error('Public proposal emails failed (non-blocking):', emailErr);
@@ -613,7 +612,7 @@ router.get('/financials', auth, requireAdminOrManager, async (req, res) => {
         WHERE status IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed')
       `),
       pool.query(`
-        SELECT p.id, p.event_name, p.event_date, p.total_price, p.amount_paid,
+        SELECT p.id, p.event_type, p.event_type_custom, p.event_date, p.total_price, p.amount_paid,
                p.deposit_amount, p.status, p.created_at,
                c.name AS client_name, c.email AS client_email,
                sp.name AS package_name
@@ -626,7 +625,7 @@ router.get('/financials', auth, requireAdminOrManager, async (req, res) => {
       `, [limit, offset]),
       pool.query(`
         SELECT pp.id, pp.proposal_id, pp.payment_type, pp.amount, pp.status AS payment_status,
-               pp.created_at, p.event_name, c.name AS client_name,
+               pp.created_at, p.event_type, p.event_type_custom, c.name AS client_name,
                ip.invoice_id, i.token AS invoice_token
         FROM proposal_payments pp
         JOIN proposals p ON p.id = pp.proposal_id
@@ -675,7 +674,7 @@ router.get('/', auth, requireAdminOrManager, async (req, res) => {
     }
     if (search) {
       params.push(`%${search}%`);
-      query += ` AND (c.name ILIKE $${params.length} OR p.event_name ILIKE $${params.length} OR c.email ILIKE $${params.length})`;
+      query += ` AND (c.name ILIKE $${params.length} OR c.email ILIKE $${params.length})`;
     }
 
     query += ' ORDER BY p.created_at DESC';
@@ -696,7 +695,7 @@ router.get('/', auth, requireAdminOrManager, async (req, res) => {
 router.post('/', auth, requireAdminOrManager, async (req, res) => {
   const {
     client_id, client_name, client_email, client_phone, client_source,
-    event_name, event_date, event_start_time, event_duration_hours,
+    event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
     addon_variants, syrup_selections, event_type, event_type_category, event_type_custom
   } = req.body;
@@ -753,13 +752,13 @@ router.post('/', auth, requireAdminOrManager, async (req, res) => {
 
     // Insert proposal
     const proposalResult = await dbClient.query(`
-      INSERT INTO proposals (client_id, event_name, event_date, event_start_time, event_duration_hours,
+      INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours,
         event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, created_by,
         event_type, event_type_category, event_type_custom)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
       RETURNING *
     `, [
-      finalClientId, event_name || null, event_date || null, event_start_time || null, dh,
+      finalClientId, event_date || null, event_start_time || null, dh,
       event_location || null, gc, package_id, nb,
       snapshot.staffing.actual, JSON.stringify(snapshot), snapshot.total, req.user.id,
       event_type || null, event_type_category || null, event_type_custom || null
@@ -829,7 +828,7 @@ router.get('/:id', auth, requireAdminOrManager, async (req, res) => {
 /** PATCH /api/proposals/:id — update event details and recalculate */
 router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
   const {
-    event_name, event_date, event_start_time, event_duration_hours,
+    event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
     addon_variants, syrup_selections, event_type, event_type_category, event_type_custom,
     adjustments, total_price_override
@@ -882,18 +881,18 @@ router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
 
     await dbClient.query(`
       UPDATE proposals SET
-        event_name = COALESCE($1, event_name), event_date = COALESCE($2, event_date),
-        event_start_time = COALESCE($3, event_start_time), event_duration_hours = $4,
-        event_location = COALESCE($5, event_location), guest_count = $6,
-        package_id = $7, num_bars = $8, num_bartenders = $9,
-        pricing_snapshot = $10, total_price = $11,
-        event_type = COALESCE($13, event_type),
-        event_type_category = COALESCE($14, event_type_category),
-        event_type_custom = COALESCE($15, event_type_custom),
-        adjustments = $16, total_price_override = $17
-      WHERE id = $12
+        event_date = COALESCE($1, event_date),
+        event_start_time = COALESCE($2, event_start_time), event_duration_hours = $3,
+        event_location = COALESCE($4, event_location), guest_count = $5,
+        package_id = $6, num_bars = $7, num_bartenders = $8,
+        pricing_snapshot = $9, total_price = $10,
+        event_type = COALESCE($12, event_type),
+        event_type_category = COALESCE($13, event_type_category),
+        event_type_custom = COALESCE($14, event_type_custom),
+        adjustments = $15, total_price_override = $16
+      WHERE id = $11
     `, [
-      event_name, event_date, event_start_time, dh, event_location, gc,
+      event_date, event_start_time, dh, event_location, gc,
       pkgId, nb, snapshot.staffing.actual,
       JSON.stringify(snapshot), snapshot.total, req.params.id,
       event_type || null, event_type_category || null, event_type_custom || null,
@@ -966,7 +965,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, async (req, res) => {
     if (status === 'sent') {
       try {
         const pd = await pool.query(`
-          SELECT p.token, p.event_name, p.event_date, p.created_by,
+          SELECT p.token, p.event_type, p.event_type_custom, p.event_date, p.created_by,
                  c.name AS client_name, c.email AS client_email
           FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
           WHERE p.id = $1
@@ -975,6 +974,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, async (req, res) => {
         if (p?.client_email && p?.token) {
           const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
           const proposalUrl = `${clientUrl}/proposal/${p.token}`;
+          const eventTypeLabel = getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom });
 
           // Create drink plan and include link in email
           let planUrl = null;
@@ -982,7 +982,8 @@ router.patch('/:id/status', auth, requireAdminOrManager, async (req, res) => {
             const drinkPlan = await createDrinkPlan(req.params.id, {
               client_name: p.client_name,
               client_email: p.client_email,
-              event_name: p.event_name,
+              event_type: p.event_type,
+              event_type_custom: p.event_type_custom,
               event_date: p.event_date,
               created_by: p.created_by,
             }, { skipEmail: true });
@@ -1003,7 +1004,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, async (req, res) => {
             console.error('Drink plan creation failed (non-blocking):', planErr);
           }
 
-          const tpl = emailTemplates.proposalSent({ clientName: p.client_name, eventName: p.event_name, proposalUrl, planUrl });
+          const tpl = emailTemplates.proposalSent({ clientName: p.client_name, eventTypeLabel, proposalUrl, planUrl });
           await sendEmail({ to: p.client_email, ...tpl });
         }
       } catch (emailErr) {
@@ -1164,23 +1165,24 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, async (req, res)
     // Email notifications for payment (non-blocking)
     try {
       const payData = await pool.query(`
-        SELECT p.event_name, c.name AS client_name, c.email AS client_email
+        SELECT p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
         WHERE p.id = $1
       `, [proposal.id]);
       const pd = payData.rows[0];
       const amountFormatted = paymentAmount.toFixed(2);
       const payType = isFullyPaid ? 'full payment' : 'deposit';
+      const eventTypeLabel = getEventTypeLabel({ event_type: pd?.event_type, event_type_custom: pd?.event_type_custom });
 
       if (pd?.client_email) {
-        const tpl = emailTemplates.paymentReceivedClient({ clientName: pd.client_name, eventName: pd.event_name, amount: amountFormatted, paymentType: payType });
+        const tpl = emailTemplates.paymentReceivedClient({ clientName: pd.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType });
         await sendEmail({ to: pd.client_email, ...tpl });
       }
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
         const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
         const adminUrl = `${clientUrl}/admin/proposals/${proposal.id}`;
-        const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pd?.client_name, eventName: pd?.event_name, amount: amountFormatted, paymentType: payType, proposalId: proposal.id, adminUrl });
+        const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pd?.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType, proposalId: proposal.id, adminUrl });
         await sendEmail({ to: adminEmail, ...tpl });
       }
     } catch (emailErr) {
