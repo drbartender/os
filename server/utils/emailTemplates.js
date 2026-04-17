@@ -206,14 +206,15 @@ function newApplicationAdmin({ applicantName, applicantEmail, adminUrl }) {
 }
 
 function shiftRequestAdmin({ staffName, eventTypeLabel = 'event', eventDate, position, adminUrl }) {
+  const eventPhrase = eventTypeLabel === 'event' ? 'an upcoming event' : `an upcoming ${eventTypeLabel} event`;
   return {
     subject: `Shift Request: ${staffName} — ${eventTypeLabel}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Shift Request</h2>
-      <p><strong>${staffName}</strong> has requested to work ${position} at a <strong>${eventTypeLabel}</strong> on ${eventDate}.</p>
+      <p><strong>${staffName}</strong> has requested to work as <strong>${position}</strong> at ${eventPhrase} on ${eventDate}.</p>
       ${ctaButton(adminUrl, 'View Shift Requests')}
     `),
-    text: `${staffName} requested to work ${position} at a ${eventTypeLabel} on ${eventDate}. Review at: ${adminUrl}`,
+    text: `${staffName} requested to work ${position} at ${eventPhrase} on ${eventDate}. Review at: ${adminUrl}`,
   };
 }
 
@@ -221,12 +222,13 @@ function shiftRequestAdmin({ staffName, eventTypeLabel = 'event', eventDate, pos
 
 function shiftRequestApproved({ staffName, eventTypeLabel = 'event', eventDate, startTime, endTime, location }) {
   const name = staffName || 'there';
+  const eventPhrase = eventTypeLabel === 'event' ? 'an upcoming event' : `an upcoming ${eventTypeLabel} event`;
   return {
     subject: `You're Confirmed: ${eventTypeLabel} on ${eventDate} — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">You're Confirmed!</h2>
       <p>Hi ${name},</p>
-      <p>Great news — you've been confirmed to work at an upcoming <strong>${eventTypeLabel}</strong>.</p>
+      <p>Great news — you've been confirmed to work ${eventPhrase}.</p>
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:100px;">Date</td><td style="padding:8px 12px;">${eventDate}</td></tr>
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Time</td><td style="padding:8px 12px;">${startTime} – ${endTime}</td></tr>
@@ -235,7 +237,7 @@ function shiftRequestApproved({ staffName, eventTypeLabel = 'event', eventDate, 
       <p>Please arrive on time and in proper uniform. See you there!</p>
       <p>— The Dr. Bartender Team</p>
     `),
-    text: `Hi ${name}, you're confirmed for an upcoming ${eventTypeLabel} on ${eventDate}, ${startTime} – ${endTime} at ${location}. Please arrive on time and in proper uniform. — The Dr. Bartender Team`,
+    text: `Hi ${name}, you're confirmed to work ${eventPhrase} on ${eventDate}, ${startTime} – ${endTime} at ${location}. Please arrive on time and in proper uniform. — The Dr. Bartender Team`,
   };
 }
 

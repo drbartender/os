@@ -39,7 +39,7 @@ async function processAutopayCharges() {
           payment_method: proposal.stripe_payment_method_id,
           off_session: true,
           confirm: true,
-          description: `Balance Payment — ${getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom })} event`,
+          description: `Balance Payment — ${getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom })}`,
           metadata: {
             proposal_id: String(proposal.id),
             payment_type: 'balance',
