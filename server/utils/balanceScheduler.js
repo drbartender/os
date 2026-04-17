@@ -4,6 +4,7 @@ const stripe = process.env.STRIPE_SECRET_KEY
 
 if (!stripe) console.warn('⚠️  STRIPE_SECRET_KEY not set — autopay scheduler disabled');
 const { pool } = require('../db');
+const { getEventTypeLabel } = require('./eventTypes');
 
 /**
  * Process autopay charges for proposals with balance due today or earlier.
@@ -13,7 +14,7 @@ async function processAutopayCharges() {
   if (!stripe) return;
   try {
     const result = await pool.query(`
-      SELECT id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id, event_name
+      SELECT id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id, event_type, event_type_custom
       FROM proposals
       WHERE status = 'deposit_paid'
         AND autopay_enrolled = true
@@ -38,7 +39,7 @@ async function processAutopayCharges() {
           payment_method: proposal.stripe_payment_method_id,
           off_session: true,
           confirm: true,
-          description: `Balance Payment — ${proposal.event_name || 'Dr. Bartender Event'}`,
+          description: `Balance Payment — ${getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom })} event`,
           metadata: {
             proposal_id: String(proposal.id),
             payment_type: 'balance',
@@ -76,7 +77,7 @@ async function processEventCompletions() {
         AND event_date IS NOT NULL
         AND (event_date + (event_duration_hours || ' hours')::interval + (event_start_time || ':00')::interval) < NOW()
         AND (COALESCE(total_price, 0) - COALESCE(amount_paid, 0)) <= 0
-      RETURNING id, event_name
+      RETURNING id, event_type, event_type_custom
     `);
 
     if (result.rows.length > 0) {

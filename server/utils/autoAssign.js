@@ -5,6 +5,7 @@
 
 const { pool } = require('../db');
 const { sendSMS, normalizePhone } = require('./sms');
+const { getEventTypeLabel } = require('./eventTypes');
 
 // ─── Haversine distance (miles) ──────────────────────────────────
 
@@ -56,7 +57,12 @@ function computeSeniorityScore(eventsWorked, hireDateISO, seniorityAdjustment, w
 
 function computeGeoScore(staffLat, staffLng, shiftLat, shiftLng, staffTravelDistance, maxDistance) {
   // If either side has no coordinates, return neutral score
-  if (staffLat == null || staffLng == null || shiftLat == null || shiftLng == null) {
+  if (
+    staffLat === null || staffLat === undefined ||
+    staffLng === null || staffLng === undefined ||
+    shiftLat === null || shiftLat === undefined ||
+    shiftLng === null || shiftLng === undefined
+  ) {
     return { score: 50, distance: null };
   }
 
@@ -226,7 +232,7 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
         seniority: Math.round(seniorityNorm * 100) / 100,
         geography: Math.round(geo.score * 100) / 100,
         equipment: Math.round(equipment.score * 100) / 100,
-        distance_miles: geo.distance != null ? Math.round(geo.distance * 10) / 10 : null,
+        distance_miles: geo.distance !== null && geo.distance !== undefined ? Math.round(geo.distance * 10) / 10 : null,
         events_worked: eventsMap[candidate.user_id] || 0,
         tenure_months: seniority.tenureMonths,
       },
@@ -300,7 +306,9 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
         const phone = normalizePhone(candidate.phone);
         if (phone) {
           const name = candidate.preferred_name || 'Team member';
-          const msg = `Hey ${name}! You've been approved for ${shift.event_name} on ${shift.event_date}.` +
+          const eventTypeLabel = getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom });
+          const eventCtx = shift.client_name ? `${eventTypeLabel} at ${shift.client_name}` : `${eventTypeLabel}`;
+          const msg = `Hey ${name}! You've been approved for the ${eventCtx} on ${shift.event_date}.` +
             (shift.start_time ? ` Time: ${shift.start_time}${shift.end_time ? ' - ' + shift.end_time : ''}.` : '') +
             (shift.location ? ` Location: ${shift.location}.` : '') +
             ` — Dr. Bartender`;

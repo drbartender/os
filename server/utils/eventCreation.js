@@ -1,6 +1,7 @@
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { drinkPlanLink } = require('./emailTemplates');
+const { getEventTypeLabel } = require('./eventTypes');
 
 /**
  * Convert a 24-hour time string (e.g. "17:00") and add hours to produce a new time string.
@@ -30,7 +31,7 @@ function formatTime12(timeStr) {
  * Auto-create a drink plan linked to a proposal. Idempotent — skips if one already exists.
  * Sends the drink plan link to the client via email.
  * @param {number} proposalId
- * @param {object} proposal - Proposal row (must include client_name, client_email, event_name, event_date, created_by)
+ * @param {object} proposal - Proposal row (must include client_name, client_email, event_type, event_type_custom, event_date, created_by)
  * @returns {object|null} The created drink_plan row, or null if skipped
  */
 async function createDrinkPlan(proposalId, proposal, { skipEmail = false } = {}) {
@@ -45,13 +46,14 @@ async function createDrinkPlan(proposalId, proposal, { skipEmail = false } = {})
 
   // Insert the drink plan
   const result = await pool.query(`
-    INSERT INTO drink_plans (client_name, client_email, event_name, event_date, proposal_id, created_by)
-    VALUES ($1, $2, $3, $4, $5, $6)
+    INSERT INTO drink_plans (client_name, client_email, event_type, event_type_custom, event_date, proposal_id, created_by)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
     RETURNING *
   `, [
     proposal.client_name || null,
     clientEmail || null,
-    proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : null),
+    proposal.event_type || null,
+    proposal.event_type_custom || null,
     proposal.event_date || null,
     proposalId,
     proposal.created_by
@@ -63,10 +65,10 @@ async function createDrinkPlan(proposalId, proposal, { skipEmail = false } = {})
   if (!skipEmail && clientEmail && drinkPlan.token) {
     const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
     const planUrl = `${clientUrl}/plan/${drinkPlan.token}`;
-    const eventName = drinkPlan.event_name || 'your upcoming event';
+    const eventTypeLabel = getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom });
 
     try {
-      const template = drinkPlanLink({ clientName: proposal.client_name, eventName, planUrl });
+      const template = drinkPlanLink({ clientName: proposal.client_name, eventTypeLabel, planUrl });
       await sendEmail({ to: clientEmail, ...template });
       console.log(`Drink plan email sent to ${clientEmail} for proposal ${proposalId}`);
     } catch (emailErr) {
@@ -118,11 +120,13 @@ async function createEventShifts(proposalId) {
 
   // Insert the shift
   const shiftResult = await pool.query(`
-    INSERT INTO shifts (event_name, event_date, start_time, end_time, location, positions_needed, notes, status, proposal_id, created_by)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8, $9)
+    INSERT INTO shifts (event_type, event_type_custom, client_name, event_date, start_time, end_time, location, positions_needed, notes, status, proposal_id, created_by)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'open', $10, $11)
     RETURNING *
   `, [
-    proposal.event_name || `Event #${proposal.id}`,
+    proposal.event_type || null,
+    proposal.event_type_custom || null,
+    proposal.client_name || null,
     proposal.event_date,
     startDisplay,
     endDisplay,

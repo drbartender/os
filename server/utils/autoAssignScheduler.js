@@ -1,5 +1,6 @@
 const { pool } = require('../db');
 const { autoAssignShift } = require('./autoAssign');
+const { getEventTypeLabel } = require('./eventTypes');
 
 /**
  * Process scheduled auto-assign for shifts approaching their event date.
@@ -11,7 +12,7 @@ const { autoAssignShift } = require('./autoAssign');
 async function processScheduledAutoAssigns() {
   try {
     const result = await pool.query(`
-      SELECT id, event_name, event_date, auto_assign_days_before
+      SELECT id, event_type, event_type_custom, client_name, event_date, auto_assign_days_before
       FROM shifts
       WHERE status = 'open'
         AND auto_assign_days_before IS NOT NULL
@@ -27,7 +28,7 @@ async function processScheduledAutoAssigns() {
       try {
         const outcome = await autoAssignShift(shift.id);
         console.log(
-          `[AutoAssignScheduler] Shift ${shift.id} (${shift.event_name}): approved ${outcome.approved.length} of ${outcome.slots_remaining} slots`
+          `[AutoAssignScheduler] Shift ${shift.id} (${getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom })}): approved ${outcome.approved.length} of ${outcome.slots_remaining} slots`
         );
       } catch (err) {
         console.error(`[AutoAssignScheduler] Shift ${shift.id} failed:`, err.message);
