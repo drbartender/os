@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import BrandLogo from '../components/BrandLogo';
 import api from '../utils/api';
 import { WHATSAPP_GROUP_URL, COMPANY_PHONE, COMPANY_PHONE_TEL } from '../utils/constants';
@@ -30,6 +31,7 @@ function fmtDate(iso) {
 export default function StaffPortal() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const toast = useToast();
   const [shifts, setShifts] = useState([]);
   const [myRequests, setMyRequests] = useState([]);
   const [loadingShifts, setLoadingShifts] = useState(true);
@@ -51,9 +53,9 @@ export default function StaffPortal() {
         setShifts(shiftsRes.data);
         setMyRequests(reqRes.data);
       })
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load shifts. Try refreshing.'))
       .finally(() => setLoadingShifts(false));
-  }, [isApproved]);
+  }, [isApproved, toast]);
 
   async function requestShift(shiftId) {
     const position = selectedPositions[shiftId] || '';
@@ -67,8 +69,9 @@ export default function StaffPortal() {
       ]);
       setShifts(shiftsRes.data);
       setMyRequests(reqRes.data);
+      toast.success('Shift requested!');
     } catch (e) {
-      console.error(e);
+      toast.error(e.message || 'Failed to request shift.');
     } finally {
       setRequestingId(null);
     }
@@ -83,8 +86,9 @@ export default function StaffPortal() {
       ]);
       setShifts(shiftsRes.data);
       setMyRequests(reqRes.data);
+      toast.success('Request cancelled.');
     } catch (e) {
-      console.error(e);
+      toast.error(e.message || 'Failed to cancel request.');
     }
   }
 
@@ -100,11 +104,11 @@ export default function StaffPortal() {
       const res = await api.get('/calendar/token');
       setCalFeedUrl(res.data.feed_url);
     } catch (err) {
-      console.error('Failed to fetch calendar URL:', err);
+      toast.error('Failed to load calendar URL. Try again.');
     } finally {
       setCalLoading(false);
     }
-  }, [calFeedUrl]);
+  }, [calFeedUrl, toast]);
 
   async function downloadShiftIcs(shiftId) {
     try {
@@ -118,7 +122,7 @@ export default function StaffPortal() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      console.error('Failed to download calendar event:', err);
+      toast.error('Failed to download calendar event.');
     }
   }
 
@@ -146,9 +150,9 @@ export default function StaffPortal() {
     setMyEventsLoading(true);
     api.get(`/shifts/user/${user.id}/events`)
       .then(r => setMyEvents(r.data))
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load your events. Try refreshing.'))
       .finally(() => setMyEventsLoading(false));
-  }, [tab, isApproved, user?.id]);
+  }, [tab, isApproved, user?.id, toast]);
 
   const displayName = user?.preferred_name || user?.email?.split('@')[0] || 'there';
 

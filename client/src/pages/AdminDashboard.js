@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatPhone } from '../utils/formatPhone';
 
 export default function AdminDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const toast = useToast();
 
   const [tab, setTab] = useState('active-staff');
 
@@ -46,9 +48,9 @@ export default function AdminDashboard() {
     setStaffLoading(true);
     api.get('/admin/active-staff')
       .then(r => { setActiveStaff(r.data.staff); setStaffTotal(r.data.total); })
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load staff. Try refreshing.'))
       .finally(() => setStaffLoading(false));
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     if (tab === 'active-staff') fetchActiveStaff();
@@ -59,9 +61,9 @@ export default function AdminDashboard() {
     setShiftsLoading(true);
     api.get('/shifts')
       .then(r => setShifts(r.data))
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load shifts. Try refreshing.'))
       .finally(() => setShiftsLoading(false));
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     if (tab !== 'shifts') return;
@@ -73,17 +75,17 @@ export default function AdminDashboard() {
     setMsgRecipientsLoading(true);
     api.get('/messages/recipients')
       .then(r => setMsgRecipients(r.data.recipients))
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load recipients.'))
       .finally(() => setMsgRecipientsLoading(false));
-  }, []);
+  }, [toast]);
 
   const fetchMsgHistory = useCallback(() => {
     setMsgHistoryLoading(true);
     api.get('/messages/history')
       .then(r => setMsgHistory(r.data.groups))
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load message history.'))
       .finally(() => setMsgHistoryLoading(false));
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     if (tab !== 'messages') return;
@@ -91,8 +93,8 @@ export default function AdminDashboard() {
     fetchMsgHistory();
     api.get('/messages/shifts')
       .then(r => setMsgShifts(r.data.shifts))
-      .catch(console.error);
-  }, [tab, fetchMsgRecipients, fetchMsgHistory]);
+      .catch(() => toast.error('Failed to load shifts list.'));
+  }, [tab, fetchMsgRecipients, fetchMsgHistory, toast]);
 
   async function sendMessage(e) {
     e.preventDefault();
@@ -125,7 +127,9 @@ export default function AdminDashboard() {
     try {
       const r = await api.get(`/messages/history/${groupId}`);
       setMsgGroupDetails(prev => ({ ...prev, [groupId]: r.data.messages }));
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      toast.error(e.message || 'Failed to load message details.');
+    }
   }
 
   async function loadShiftRequests(shiftId) {
@@ -133,7 +137,9 @@ export default function AdminDashboard() {
     try {
       const r = await api.get(`/shifts/${shiftId}/requests`);
       setShiftRequests(prev => ({ ...prev, [shiftId]: r.data }));
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      toast.error(e.message || 'Failed to load shift requests.');
+    }
   }
 
   async function updateRequestStatus(requestId, status, shiftId) {
@@ -141,7 +147,10 @@ export default function AdminDashboard() {
       await api.put(`/shifts/requests/${requestId}`, { status });
       const r = await api.get(`/shifts/${shiftId}/requests`);
       setShiftRequests(prev => ({ ...prev, [shiftId]: r.data }));
-    } catch (e) { console.error(e); }
+      toast.success('Request updated.');
+    } catch (e) {
+      toast.error(e.message || 'Failed to update request.');
+    }
   }
 
   async function deleteShift(shiftId) {
@@ -150,7 +159,10 @@ export default function AdminDashboard() {
       await api.delete(`/shifts/${shiftId}`);
       fetchShifts();
       setExpandedShift(null);
-    } catch (e) { console.error(e); }
+      toast.success('Shift deleted.');
+    } catch (e) {
+      toast.error(e.message || 'Failed to delete shift.');
+    }
   }
 
   async function createShift(e) {
@@ -161,7 +173,10 @@ export default function AdminDashboard() {
       setShiftPosInput('');
       setShowShiftForm(false);
       fetchShifts();
-    } catch (e) { console.error(e); }
+      toast.success('Shift created!');
+    } catch (e) {
+      toast.error(e.message || 'Failed to create shift.');
+    }
   }
 
   const fmtDate = (iso) => {

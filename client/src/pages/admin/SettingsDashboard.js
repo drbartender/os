@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import CocktailMenuDashboard from './CocktailMenuDashboard';
 import ConfirmModal from '../../components/ConfirmModal';
 import api from '../../utils/api';
+import { useToast } from '../../context/ToastContext';
 
 const TABS = [
   { key: 'drink-menu', label: 'Drink Menu' },
@@ -10,6 +11,7 @@ const TABS = [
 ];
 
 function CalendarSyncSection() {
+  const toast = useToast();
   const [feedUrl, setFeedUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -21,11 +23,11 @@ function CalendarSyncSection() {
       const res = await api.get('/calendar/token');
       setFeedUrl(res.data.feed_url);
     } catch (err) {
-      console.error('Failed to fetch calendar token:', err);
+      toast.error('Failed to load calendar token. Try refreshing.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => { fetchToken(); }, [fetchToken]);
 
@@ -52,8 +54,9 @@ function CalendarSyncSection() {
     try {
       const res = await api.post('/calendar/token/regenerate');
       setFeedUrl(res.data.feed_url);
+      toast.success('Calendar URL regenerated.');
     } catch (err) {
-      console.error('Failed to regenerate token:', err);
+      toast.error(err.message || 'Failed to regenerate calendar URL.');
     } finally {
       setRegenerating(false);
       setShowRegenConfirm(false);
@@ -152,6 +155,7 @@ function CalendarSyncSection() {
 }
 
 function AutoAssignSettings() {
+  const toast = useToast();
   const [, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -171,17 +175,18 @@ function AutoAssignSettings() {
         setSettings(r.data);
         setForm(f => ({ ...f, ...r.data }));
       })
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load settings. Try refreshing.'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [toast]);
 
   const handleSave = async () => {
     setSaving(true);
     try {
       const r = await api.put('/admin/settings', form);
       setSettings(r.data);
+      toast.success('Settings saved!');
     } catch (e) {
-      console.error(e);
+      toast.error(e.message || 'Failed to save settings.');
     } finally {
       setSaving(false);
     }

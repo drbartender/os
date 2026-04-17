@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import { useToast } from '../../context/ToastContext';
 
 const fmtDate = (iso) => {
   if (!iso) return '—';
@@ -15,23 +16,27 @@ const formatCurrency = (amount) => {
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [events, setEvents] = useState([]);
   const [proposals, setProposals] = useState([]);
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let anyFailed = false;
+    const trackFail = () => { anyFailed = true; };
     Promise.all([
-      api.get('/shifts').then(r => r.data).catch(() => []),
-      api.get('/proposals').then(r => r.data).catch(() => []),
-      api.get('/admin/applications').then(r => r.data).catch(() => ({ applications: [] })),
+      api.get('/shifts').then(r => r.data).catch(() => { trackFail(); return []; }),
+      api.get('/proposals').then(r => r.data).catch(() => { trackFail(); return []; }),
+      api.get('/admin/applications').then(r => r.data).catch(() => { trackFail(); return { applications: [] }; }),
     ]).then(([shiftsData, proposalsData, appsData]) => {
       setEvents(shiftsData.filter(s => s.proposal_id));
       setProposals(proposalsData);
       setApplications(appsData.applications || appsData || []);
       setLoading(false);
+      if (anyFailed) toast.error('Some dashboard data failed to load. Try refreshing.');
     });
-  }, []);
+  }, [toast]);
 
   const today = new Date().toISOString().slice(0, 10);
 
