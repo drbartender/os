@@ -6,6 +6,7 @@ const { geocodeAddress } = require('../utils/geocode');
 const { autoAssignShift } = require('../utils/autoAssign');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
+const { getEventTypeLabel } = require('../utils/eventTypes');
 
 const router = express.Router();
 
@@ -87,9 +88,11 @@ router.get('/user/:userId/events', auth, async (req, res) => {
 
   try {
     const result = await pool.query(`
-      SELECT s.id, s.event_date, s.start_time, s.end_time, s.location, s.event_name,
+      SELECT s.id, s.event_date, s.start_time, s.end_time, s.location,
+             s.event_type, s.event_type_custom,
              sr.position, sr.status AS request_status,
-             p.event_name AS proposal_event_name,
+             p.event_type AS proposal_event_type,
+             p.event_type_custom AS proposal_event_type_custom,
              COALESCE(c.name, s.client_name) AS client_name,
              COALESCE(p.guest_count, s.guest_count) AS guest_count
       FROM shift_requests sr
@@ -123,7 +126,8 @@ router.get('/user/:userId/events', auth, async (req, res) => {
 router.get('/my-requests', auth, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT sr.*, s.event_name, s.event_date, s.start_time, s.end_time, s.location, s.status AS shift_status
+      SELECT sr.*, s.event_type, s.event_type_custom, s.client_name,
+             s.event_date, s.start_time, s.end_time, s.location, s.status AS shift_status
       FROM shift_requests sr
       JOIN shifts s ON s.id = sr.shift_id
       WHERE sr.user_id = $1
@@ -256,7 +260,7 @@ router.post('/:id/request', auth, requireOnboarded, async (req, res) => {
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
         const shiftInfo = await pool.query(`
-          SELECT s.event_name, s.event_date, cp.preferred_name
+          SELECT s.event_type, s.event_type_custom, s.event_date, cp.preferred_name
           FROM shifts s LEFT JOIN contractor_profiles cp ON cp.user_id = $2
           WHERE s.id = $1
         `, [req.params.id, req.user.id]);
@@ -266,7 +270,13 @@ router.post('/:id/request', auth, requireOnboarded, async (req, res) => {
           ? new Date(si.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
           : 'TBD';
         const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-        const tpl = emailTemplates.shiftRequestAdmin({ staffName, eventName: si?.event_name, eventDate, position: position || 'Bartender', adminUrl: `${clientUrl}/admin/shifts` });
+        const tpl = emailTemplates.shiftRequestAdmin({
+          staffName,
+          eventTypeLabel: getEventTypeLabel({ event_type: si?.event_type, event_type_custom: si?.event_type_custom }),
+          eventDate,
+          position: position || 'Bartender',
+          adminUrl: `${clientUrl}/admin/shifts`,
+        });
         await sendEmail({ to: adminEmail, ...tpl });
       }
     } catch (emailErr) {
@@ -299,11 +309,11 @@ router.delete('/requests/:requestId', auth, async (req, res) => {
 
 /** POST /shifts — create a new shift */
 router.post('/', auth, requireStaffing, async (req, res) => {
-  const { event_name, event_date, start_time, end_time, location, positions_needed, notes,
+  const { event_type, event_type_custom, event_date, start_time, end_time, location, positions_needed, notes,
           equipment_required, auto_assign_days_before, lat, lng,
           client_name, client_email, client_phone, guest_count, event_duration_hours } = req.body;
-  if (!event_name || !event_date) {
-    return res.status(400).json({ error: 'Event name and date are required.' });
+  if (!event_date) {
+    return res.status(400).json({ error: 'Event date is required.' });
   }
 
   const pgClient = await pool.connect();
@@ -331,12 +341,13 @@ router.post('/', auth, requireStaffing, async (req, res) => {
     const guestCountInt = guest_count ? parseInt(guest_count, 10) : 50;
     const durationFloat = event_duration_hours ? parseFloat(event_duration_hours) : 4;
     const proposalRes = await pgClient.query(`
-      INSERT INTO proposals (client_id, event_name, event_date, event_start_time,
+      INSERT INTO proposals (client_id, event_type, event_type_custom, event_date, event_start_time,
                              event_duration_hours, event_location, guest_count,
                              status, pricing_snapshot, total_price, created_by, admin_notes)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', '{}', 0, $8, $9) RETURNING *
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', '{}', 0, $9, $10) RETURNING *
     `, [
-      clientId, event_name, event_date, start_time || null,
+      clientId, event_type || null, event_type_custom || null,
+      event_date, start_time || null,
       durationFloat, location || null, guestCountInt,
       req.user.id, 'Manually created event — no contract or payment on file.'
     ]);
@@ -344,12 +355,13 @@ router.post('/', auth, requireStaffing, async (req, res) => {
 
     // 3. Create the shift linked to the proposal
     const shiftRes = await pgClient.query(`
-      INSERT INTO shifts (event_name, event_date, start_time, end_time, location, positions_needed, notes,
+      INSERT INTO shifts (event_type, event_type_custom, event_date, start_time, end_time, location, positions_needed, notes,
                           equipment_required, auto_assign_days_before, lat, lng, created_by, proposal_id,
                           client_name, client_email, client_phone, guest_count, event_duration_hours)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING *
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING *
     `, [
-      event_name, event_date,
+      event_type || null, event_type_custom || null,
+      event_date,
       start_time || null, end_time || null,
       location || null,
       positions_needed ? JSON.stringify(positions_needed) : '[]',
@@ -388,28 +400,28 @@ router.post('/', auth, requireStaffing, async (req, res) => {
 
 /** PUT /shifts/:id — update a shift */
 router.put('/:id', auth, requireStaffing, async (req, res) => {
-  const { event_name, event_date, start_time, end_time, location, positions_needed, notes, status,
+  const { event_type, event_type_custom, event_date, start_time, end_time, location, positions_needed, notes, status,
           equipment_required, auto_assign_days_before, setup_minutes_before, lat, lng,
           client_name, client_email, client_phone, guest_count, event_duration_hours } = req.body;
   try {
     const result = await pool.query(`
       UPDATE shifts SET
-        event_name = $1, event_date = $2,
-        start_time = $3, end_time = $4, location = $5,
-        positions_needed = $6, notes = $7,
-        status = COALESCE($8, status),
-        equipment_required = $9,
-        auto_assign_days_before = $10,
-        lat = COALESCE($11, lat), lng = COALESCE($12, lng),
-        setup_minutes_before = COALESCE($14, setup_minutes_before),
-        client_name = COALESCE($15, client_name),
-        client_email = COALESCE($16, client_email),
-        client_phone = COALESCE($17, client_phone),
-        guest_count = COALESCE($18, guest_count),
-        event_duration_hours = COALESCE($19, event_duration_hours)
-      WHERE id = $13 RETURNING *
+        event_type = $1, event_type_custom = $2, event_date = $3,
+        start_time = $4, end_time = $5, location = $6,
+        positions_needed = $7, notes = $8,
+        status = COALESCE($9, status),
+        equipment_required = $10,
+        auto_assign_days_before = $11,
+        lat = COALESCE($12, lat), lng = COALESCE($13, lng),
+        setup_minutes_before = COALESCE($15, setup_minutes_before),
+        client_name = COALESCE($16, client_name),
+        client_email = COALESCE($17, client_email),
+        client_phone = COALESCE($18, client_phone),
+        guest_count = COALESCE($19, guest_count),
+        event_duration_hours = COALESCE($20, event_duration_hours)
+      WHERE id = $14 RETURNING *
     `, [
-      event_name, event_date,
+      event_type || null, event_type_custom || null, event_date,
       start_time || null, end_time || null,
       location || null,
       positions_needed ? JSON.stringify(positions_needed) : '[]',
@@ -493,10 +505,12 @@ router.post('/:id/assign', auth, requireStaffing, async (req, res) => {
           : shift.start_time || 'TBD';
         const location = shift.location || 'TBD';
         const name = cp.preferred_name ? `, ${cp.preferred_name}` : '';
+        const label = getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom });
+        const ctx = shift.client_name ? `${label} at ${shift.client_name}` : label;
 
         await sendSMS({
           to: normalizePhone(cp.phone) || cp.phone,
-          body: `Hey${name}! You've been assigned to ${shift.event_name} on ${date} at ${time} — ${location}. See you there! - Dr. Bartender`,
+          body: `Hey${name}! You've been assigned to the ${ctx} on ${date} at ${time} — ${location}. See you there! - Dr. Bartender`,
         });
       }
     } catch (smsErr) {
@@ -517,7 +531,7 @@ router.post('/:id/assign', auth, requireStaffing, async (req, res) => {
           : 'TBD';
         const tpl = emailTemplates.shiftRequestApproved({
           staffName: cpRes2.rows[0]?.preferred_name || 'there',
-          eventName: shift.event_name,
+          eventTypeLabel: getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom }),
           eventDate: date,
           startTime: shift.start_time || 'TBD',
           endTime: shift.end_time || 'TBD',
@@ -571,7 +585,8 @@ router.put('/requests/:requestId', auth, requireStaffing, async (req, res) => {
     if (status === 'approved') {
       try {
         const infoRes = await pool.query(`
-          SELECT s.event_name, s.event_date, s.start_time, s.end_time, s.location,
+          SELECT s.event_type, s.event_type_custom, s.client_name,
+                 s.event_date, s.start_time, s.end_time, s.location,
                  cp.phone, cp.preferred_name
           FROM shift_requests sr
           JOIN shifts s ON s.id = sr.shift_id
@@ -589,10 +604,12 @@ router.put('/requests/:requestId', auth, requireStaffing, async (req, res) => {
             : info.start_time || 'TBD';
           const location = info.location || 'TBD';
           const name = info.preferred_name ? `, ${info.preferred_name}` : '';
+          const label = getEventTypeLabel({ event_type: info.event_type, event_type_custom: info.event_type_custom });
+          const ctx = info.client_name ? `${label} at ${info.client_name}` : label;
 
           await sendSMS({
             to: normalizePhone(info.phone) || info.phone,
-            body: `Hey${name}! You've been confirmed for ${info.event_name} on ${date} at ${time} — ${location}. See you there! - Dr. Bartender`,
+            body: `Hey${name}! You've been confirmed for the ${ctx} on ${date} at ${time} — ${location}. See you there! - Dr. Bartender`,
           });
         }
       } catch (smsErr) {
@@ -604,7 +621,8 @@ router.put('/requests/:requestId', auth, requireStaffing, async (req, res) => {
         const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [result.rows[0].user_id]);
         const staffEmail = userRes.rows[0]?.email;
         const infoForEmail = (await pool.query(`
-          SELECT s.event_name, s.event_date, s.start_time, s.end_time, s.location,
+          SELECT s.event_type, s.event_type_custom,
+                 s.event_date, s.start_time, s.end_time, s.location,
                  cp.preferred_name
           FROM shift_requests sr
           JOIN shifts s ON s.id = sr.shift_id
@@ -617,7 +635,7 @@ router.put('/requests/:requestId', auth, requireStaffing, async (req, res) => {
             : 'TBD';
           const tpl = emailTemplates.shiftRequestApproved({
             staffName: infoForEmail.preferred_name || 'there',
-            eventName: infoForEmail.event_name,
+            eventTypeLabel: getEventTypeLabel({ event_type: infoForEmail.event_type, event_type_custom: infoForEmail.event_type_custom }),
             eventDate: date,
             startTime: infoForEmail.start_time || 'TBD',
             endTime: infoForEmail.end_time || 'TBD',
