@@ -11,7 +11,7 @@ router.use(clientAuth);
 router.get('/proposals', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT id, token, event_name, event_date, status, total_price, amount_paid, created_at
+      SELECT id, token, event_type, event_type_custom, event_date, status, total_price, amount_paid, created_at
       FROM proposals
       WHERE client_id = $1
       ORDER BY created_at DESC
@@ -32,7 +32,7 @@ router.get('/proposals/:token', async (req, res) => {
     const result = await pool.query(`
       SELECT
         p.id, p.token, p.client_id,
-        p.event_name, p.event_date, p.event_start_time, p.event_duration_hours,
+        p.event_date, p.event_start_time, p.event_duration_hours,
         p.event_location, p.event_type, p.event_type_category, p.event_type_custom,
         p.guest_count, p.package_id, p.num_bars, p.num_bartenders,
         p.pricing_snapshot, p.total_price, p.status,

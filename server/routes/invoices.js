@@ -22,8 +22,8 @@ router.get('/t/:token', publicLimiter, async (req, res) => {
          i.id, i.token, i.proposal_id, i.invoice_number, i.label,
          i.amount_due, i.amount_paid, i.status, i.due_date,
          i.locked, i.locked_at, i.created_at, i.updated_at,
-         p.event_name, p.event_date, p.event_start_time, p.event_location,
-         p.event_type, p.guest_count,
+         p.event_date, p.event_start_time, p.event_location,
+         p.event_type, p.event_type_custom, p.guest_count,
          c.name AS client_name, c.email AS client_email
        FROM invoices i
        JOIN proposals p ON p.id = i.proposal_id
@@ -86,7 +86,7 @@ router.get('/recent', auth, requireAdminOrManager, async (req, res) => {
          i.id, i.token, i.proposal_id, i.invoice_number, i.label,
          i.amount_due, i.amount_paid, i.status, i.due_date,
          i.locked, i.created_at,
-         p.event_name,
+         p.event_type, p.event_type_custom,
          c.name AS client_name
        FROM invoices i
        JOIN proposals p ON p.id = i.proposal_id

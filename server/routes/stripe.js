@@ -7,8 +7,13 @@ const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { calculateSyrupCost } = require('../utils/pricingEngine');
 const { createBalanceInvoice, linkPaymentToInvoice } = require('../utils/invoiceHelpers');
+const { getEventTypeLabel } = require('../utils/eventTypes');
 
 const router = express.Router();
+
+function eventLabelFor(row) {
+  return getEventTypeLabel({ event_type: row?.event_type, event_type_custom: row?.event_type_custom });
+}
 
 const DEPOSIT_AMOUNT = parseInt(process.env.STRIPE_DEPOSIT_AMOUNT) || 10000; // $100.00
 
@@ -85,7 +90,7 @@ router.post('/create-intent/:token', publicLimiter, async (req, res) => {
     const { payment_option = 'deposit', autopay = false } = req.body;
 
     const result = await pool.query(`
-      SELECT p.id, p.status, p.event_name, p.total_price, p.event_date,
+      SELECT p.id, p.status, p.event_type, p.event_type_custom, p.total_price, p.event_date,
              p.stripe_customer_id, p.deposit_amount,
              c.email AS client_email, c.name AS client_name
       FROM proposals p
@@ -133,8 +138,8 @@ router.post('/create-intent/:token', publicLimiter, async (req, res) => {
       currency: 'usd',
       customer: customerId,
       description: isFullPay
-        ? `Full Payment — ${proposal.event_name || 'Dr. Bartender Event'}`
-        : `Event Deposit — ${proposal.event_name || 'Dr. Bartender Event'}`,
+        ? `Full Payment — ${eventLabelFor(proposal)}`
+        : `Event Deposit — ${eventLabelFor(proposal)}`,
       receipt_email: proposal.client_email || undefined,
       metadata: {
         proposal_id: String(proposal.id),
@@ -188,7 +193,7 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, async (req, res) 
       SELECT dp.id AS plan_id, dp.token AS plan_token, dp.status AS plan_status,
              p.id AS proposal_id, p.total_price, p.amount_paid, p.event_date,
              p.balance_due_date, p.guest_count, p.num_bars, p.stripe_customer_id,
-             p.event_name, p.pricing_snapshot,
+             p.event_type, p.event_type_custom, p.pricing_snapshot,
              c.email AS client_email, c.name AS client_name
       FROM drink_plans dp
       JOIN proposals p ON p.id = dp.proposal_id
@@ -297,7 +302,7 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, async (req, res) 
       amount: amountCents,
       currency: 'usd',
       customer: customerId,
-      description: `Drink Plan Extras — ${data.event_name || 'Dr. Bartender Event'}`,
+      description: `Drink Plan Extras — ${eventLabelFor(data)}`,
       receipt_email: data.client_email || undefined,
       metadata: {
         proposal_id: String(data.proposal_id),
@@ -335,19 +340,19 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, async (req, res) =
     if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
 
     const result = await pool.query(
-      'SELECT id, event_name FROM proposals WHERE id = $1',
+      'SELECT id, event_type, event_type_custom FROM proposals WHERE id = $1',
       [req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
 
     const proposal = result.rows[0];
-    const eventName = proposal.event_name || 'Dr. Bartender Event';
+    const eventLabel = eventLabelFor(proposal);
 
     // Create a one-time price
     const price = await stripe.prices.create({
       currency: 'usd',
       unit_amount: DEPOSIT_AMOUNT,
-      product_data: { name: `Event Deposit — ${eventName}` },
+      product_data: { name: `Event Deposit — ${eventLabel}` },
     });
 
     const paymentLink = await stripe.paymentLinks.create({
@@ -380,7 +385,7 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, async (req, res)
 
     const result = await pool.query(`
       SELECT id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
-             autopay_enrolled, status, event_name
+             autopay_enrolled, status, event_type, event_type_custom
       FROM proposals WHERE id = $1
     `, [req.params.id]);
 
@@ -407,7 +412,7 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, async (req, res)
       payment_method: proposal.stripe_payment_method_id,
       off_session: true,
       confirm: true,
-      description: `Balance Payment — ${proposal.event_name || 'Dr. Bartender Event'}`,
+      description: `Balance Payment — ${eventLabelFor(proposal)}`,
       metadata: {
         proposal_id: String(proposal.id),
         payment_type: 'balance',
@@ -435,7 +440,7 @@ router.post('/create-intent-for-invoice/:token', publicLimiter, async (req, res)
 
     const invRes = await pool.query(`
       SELECT i.id AS invoice_id, i.invoice_number, i.amount_due, i.amount_paid, i.status AS invoice_status,
-             p.id AS proposal_id, p.event_name, p.stripe_customer_id,
+             p.id AS proposal_id, p.event_type, p.event_type_custom, p.stripe_customer_id,
              c.email AS client_email, c.name AS client_name
       FROM invoices i
       JOIN proposals p ON p.id = i.proposal_id
@@ -524,7 +529,7 @@ router.post('/webhook', async (req, res) => {
   async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
     try {
       const payInfo = await pool.query(`
-        SELECT p.event_name, c.name AS client_name, c.email AS client_email
+        SELECT p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
         WHERE p.id = $1
       `, [proposalId]);
@@ -533,14 +538,14 @@ router.post('/webhook', async (req, res) => {
       const payLabel = paymentType === 'full' ? 'full payment' : paymentType === 'balance' ? 'balance payment' : 'deposit';
 
       if (pi?.client_email) {
-        const tpl = emailTemplates.paymentReceivedClient({ clientName: pi.client_name, eventName: pi.event_name, amount: amountFormatted, paymentType: payLabel });
+        const tpl = emailTemplates.paymentReceivedClient({ clientName: pi.client_name, eventTypeLabel: eventLabelFor(pi), amount: amountFormatted, paymentType: payLabel });
         await sendEmail({ to: pi.client_email, ...tpl });
       }
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
         const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
         const adminUrl = `${clientUrl}/admin/proposals/${proposalId}`;
-        const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventName: pi?.event_name, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
+        const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabelFor(pi), amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
         await sendEmail({ to: adminEmail, ...tpl });
       }
     } catch (emailErr) {
@@ -725,7 +730,7 @@ router.post('/webhook', async (req, res) => {
         const adminEmail = process.env.ADMIN_EMAIL;
         if (adminEmail) {
           const payInfo = await pool.query(`
-            SELECT p.event_name, c.name AS client_name
+            SELECT p.event_type, p.event_type_custom, c.name AS client_name
             FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
             WHERE p.id = $1
           `, [proposalId]);
@@ -733,7 +738,7 @@ router.post('/webhook', async (req, res) => {
           const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
           await sendEmail({
             to: adminEmail,
-            subject: `Payment Failed — ${pi?.client_name || 'Unknown'} (${pi?.event_name || 'Event'})`,
+            subject: `Payment Failed — ${pi?.client_name || 'Unknown'} (${eventLabelFor(pi)})`,
             html: `<p>A ${paymentType} payment of $${(intent.amount / 100).toFixed(2)} failed for <strong>${pi?.client_name || 'Unknown'}</strong>.</p>
                    <p><strong>Reason:</strong> ${intent.last_payment_error?.message || 'Unknown error'}</p>
                    <p><a href="${clientUrl}/admin/proposals/${proposalId}">View Proposal</a></p>`,

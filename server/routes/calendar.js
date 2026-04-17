@@ -2,6 +2,7 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
+const { getEventTypeLabel } = require('../utils/eventTypes');
 
 const router = express.Router();
 
@@ -307,11 +308,12 @@ router.get('/feed/:token', calendarLimiter, async (req, res) => {
       const teamStr = formatTeamList(team, isAdmin ? null : user.id);
 
       let summary, description;
+      const eventTypeLabel = getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom });
       if (isAdmin) {
-        summary = s.client_name ? `${s.event_name} — ${s.client_name}` : s.event_name;
+        summary = s.client_name ? `${s.client_name} — ${eventTypeLabel}` : eventTypeLabel;
         description = buildAdminDescription(s, teamStr);
       } else {
-        summary = `Bartending — ${s.event_name}`;
+        summary = `Bartending — ${eventTypeLabel}`;
         description = buildStaffDescription(s, teamStr);
       }
 
@@ -384,11 +386,12 @@ router.get('/event/:shiftId.ics', auth, async (req, res) => {
     const teamStr = formatTeamList(team, isAdmin ? null : req.user.id);
 
     let summary, description;
+    const eventTypeLabel = getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom });
     if (isAdmin) {
-      summary = s.client_name ? `${s.event_name} — ${s.client_name}` : s.event_name;
+      summary = s.client_name ? `${s.client_name} — ${eventTypeLabel}` : eventTypeLabel;
       description = buildAdminDescription(s, teamStr);
     } else {
-      summary = `Bartending — ${s.event_name}`;
+      summary = `Bartending — ${eventTypeLabel}`;
       description = buildStaffDescription(s, teamStr);
     }
 
@@ -405,7 +408,8 @@ router.get('/event/:shiftId.ics', auth, async (req, res) => {
     };
 
     const ical = buildICalFeed([event], 'Dr. Bartender');
-    const filename = s.event_name ? s.event_name.replace(/[^a-zA-Z0-9 -]/g, '').replace(/\s+/g, '-').toLowerCase() : 'event';
+    const eventTypeLabelFn = getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom });
+    const filename = eventTypeLabelFn.replace(/[^a-zA-Z0-9 -]/g, '').replace(/\s+/g, '-').toLowerCase();
 
     res.set('Content-Type', 'text/calendar; charset=utf-8');
     res.set('Content-Disposition', `attachment; filename="${filename}.ics"`);

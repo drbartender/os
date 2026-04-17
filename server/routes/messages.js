@@ -2,6 +2,7 @@ const express = require('express');
 const { pool } = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');
 const { sendSMS, normalizePhone } = require('../utils/sms');
+const { getEventTypeLabel } = require('../utils/eventTypes');
 const crypto = require('crypto');
 
 const router = express.Router();
@@ -146,7 +147,9 @@ router.get('/history', auth, adminOnly, async (req, res) => {
         MIN(sm.body) AS body,
         MIN(sm.message_type) AS message_type,
         MIN(sm.shift_id) AS shift_id,
-        MIN(s.event_name) AS shift_event_name,
+        MIN(s.event_type) AS shift_event_type,
+        MIN(s.event_type_custom) AS shift_event_type_custom,
+        MIN(s.client_name) AS shift_client_name,
         MIN(sender.email) AS sender_email,
         COUNT(*) AS total_recipients,
         COUNT(*) FILTER (WHERE sm.status = 'sent') AS sent_count,
@@ -182,8 +185,16 @@ router.get('/history', auth, adminOnly, async (req, res) => {
 
     const result = await pool.query(query, params);
 
+    // Derive human-readable event label for each group (frontend reads shift_event_type_label)
+    const groups = result.rows.map(row => ({
+      ...row,
+      shift_event_type_label: row.shift_event_type
+        ? getEventTypeLabel({ event_type: row.shift_event_type, event_type_custom: row.shift_event_type_custom })
+        : null,
+    }));
+
     res.json({
-      groups: result.rows,
+      groups,
       page,
       total_pages: Math.ceil(total / limit),
       total,
@@ -199,7 +210,10 @@ router.get('/history', auth, adminOnly, async (req, res) => {
 router.get('/history/:groupId', auth, adminOnly, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT sm.*, s.event_name AS shift_event_name
+      SELECT sm.*,
+        s.event_type AS shift_event_type,
+        s.event_type_custom AS shift_event_type_custom,
+        s.client_name AS shift_client_name
       FROM sms_messages sm
       LEFT JOIN shifts s ON s.id = sm.shift_id
       WHERE sm.group_id = $1
@@ -210,7 +224,14 @@ router.get('/history/:groupId', auth, adminOnly, async (req, res) => {
       return res.status(404).json({ error: 'Message group not found' });
     }
 
-    res.json({ messages: result.rows });
+    const messages = result.rows.map(row => ({
+      ...row,
+      shift_event_type_label: row.shift_event_type
+        ? getEventTypeLabel({ event_type: row.shift_event_type, event_type_custom: row.shift_event_type_custom })
+        : null,
+    }));
+
+    res.json({ messages });
   } catch (err) {
     console.error('Error fetching message group:', err);
     res.status(500).json({ error: 'Failed to fetch message details' });
@@ -222,7 +243,11 @@ router.get('/history/:groupId', auth, adminOnly, async (req, res) => {
 router.get('/user/:userId', auth, adminOnly, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT sm.*, s.event_name AS shift_event_name, sender.email AS sender_email
+      SELECT sm.*,
+        s.event_type AS shift_event_type,
+        s.event_type_custom AS shift_event_type_custom,
+        s.client_name AS shift_client_name,
+        sender.email AS sender_email
       FROM sms_messages sm
       LEFT JOIN shifts s ON s.id = sm.shift_id
       LEFT JOIN users sender ON sender.id = sm.sender_id
@@ -230,7 +255,14 @@ router.get('/user/:userId', auth, adminOnly, async (req, res) => {
       ORDER BY sm.created_at DESC
     `, [req.params.userId]);
 
-    res.json({ messages: result.rows });
+    const messages = result.rows.map(row => ({
+      ...row,
+      shift_event_type_label: row.shift_event_type
+        ? getEventTypeLabel({ event_type: row.shift_event_type, event_type_custom: row.shift_event_type_custom })
+        : null,
+    }));
+
+    res.json({ messages });
   } catch (err) {
     console.error('Error fetching user messages:', err);
     res.status(500).json({ error: 'Failed to fetch user messages' });
@@ -242,12 +274,16 @@ router.get('/user/:userId', auth, adminOnly, async (req, res) => {
 router.get('/shifts', auth, adminOnly, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT id, event_name, event_date, start_time, end_time, location, positions_needed
+      SELECT id, event_type, event_type_custom, client_name, event_date, start_time, end_time, location, positions_needed
       FROM shifts
       WHERE status = 'open' AND event_date >= CURRENT_DATE
       ORDER BY event_date ASC
     `);
-    res.json({ shifts: result.rows });
+    const shifts = result.rows.map(row => ({
+      ...row,
+      event_type_label: getEventTypeLabel({ event_type: row.event_type, event_type_custom: row.event_type_custom }),
+    }));
+    res.json({ shifts });
   } catch (err) {
     console.error('Error fetching shifts for messages:', err);
     res.status(500).json({ error: 'Failed to fetch shifts' });
