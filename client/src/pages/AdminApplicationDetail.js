@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import { formatPhone } from '../utils/formatPhone';
+import { useToast } from '../context/ToastContext';
 
 // ─── Shared Helpers ───────────────────────────────────────────────
 
@@ -140,6 +141,7 @@ function FileTile({ label, url, filename, onDownload }) {
 export default function AdminApplicationDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [statusLoading, setStatusLoading] = useState(false);
@@ -150,8 +152,9 @@ export default function AdminApplicationDetail() {
   useEffect(() => {
     api.get(`/admin/applications/${id}`)
       .then(r => setData(r.data))
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load application. Try refreshing.'))
       .finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   async function updateStatus(newStatus) {
@@ -162,8 +165,17 @@ export default function AdminApplicationDetail() {
       // Refetch to get fresh data + auto-logged status change note
       const fresh = await api.get(`/admin/applications/${id}`);
       setData(fresh.data);
-    } catch (e) { console.error(e); }
-    finally { setStatusLoading(false); }
+      const successMsg = newStatus === 'hired'
+        ? 'Application approved.'
+        : newStatus === 'rejected'
+          ? 'Application rejected.'
+          : `Status changed to ${(STATUS_MAP[newStatus] && STATUS_MAP[newStatus][1]) || newStatus}.`;
+      toast.success(successMsg);
+    } catch (e) {
+      toast.error(e.message || 'Failed to update status.');
+    } finally {
+      setStatusLoading(false);
+    }
   }
 
   async function addNote() {
@@ -173,15 +185,22 @@ export default function AdminApplicationDetail() {
       const r = await api.post(`/admin/applications/${id}/notes`, { note: noteText });
       setData(d => ({ ...d, notes: r.data }));
       setNoteText('');
-    } catch (e) { console.error(e); }
-    finally { setNoteLoading(false); }
+      toast.success('Note added.');
+    } catch (e) {
+      toast.error(e.message || 'Failed to add note.');
+    } finally {
+      setNoteLoading(false);
+    }
   }
 
   async function deleteNote(noteId) {
     try {
       await api.delete(`/admin/notes/${noteId}`);
       setData(d => ({ ...d, notes: d.notes.filter(n => n.id !== noteId) }));
-    } catch (e) { console.error(e); }
+      toast.success('Note deleted.');
+    } catch (e) {
+      toast.error(e.message || 'Failed to delete note.');
+    }
   }
 
   async function downloadFile(url, filename) {
@@ -193,7 +212,9 @@ export default function AdminApplicationDetail() {
       link.download = filename;
       link.click();
       URL.revokeObjectURL(blobUrl);
-    } catch (e) { console.error('Download failed', e); }
+    } catch (e) {
+      toast.error(e.message || 'Download failed.');
+    }
   }
 
   if (loading) return <div className="loading"><div className="spinner" />Loading application...</div>;

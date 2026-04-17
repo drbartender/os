@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import { useToast } from '../../context/ToastContext';
 
 const ONBOARDING_STEPS = ['account_created','welcome_viewed','field_guide_completed','agreement_completed','contractor_profile_completed','payday_protocols_completed','onboarding_completed'];
 
@@ -44,6 +45,7 @@ const USER_FILTER_KEYS = ['all', 'hired', 'in_progress', 'deactivated'];
 
 export default function HiringDashboard() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [tab, setTab] = useState('applications');
 
   // Applications state
@@ -99,7 +101,7 @@ export default function HiringDashboard() {
         if (r.data.statusCounts) setStatusCounts(r.data.statusCounts);
         if (r.data.archivedCount !== undefined) setArchivedCount(r.data.archivedCount);
       })
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load applications. Try refreshing.'))
       .finally(() => setAppsLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appPage, tab, isArchivedTab]);
@@ -114,8 +116,9 @@ export default function HiringDashboard() {
         setUserTotalPages(r.data.pages);
         setUserTotal(r.data.total);
       })
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load contractors. Try refreshing.'))
       .finally(() => setUsersLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userPage, tab]);
 
   async function handleInlineStatusChange(userId, newStatus) {
@@ -156,7 +159,12 @@ export default function HiringDashboard() {
           }));
         }
       }
-    } catch (e) { console.error(e); }
+
+      const label = STATUS_LABELS[newStatus] || newStatus;
+      toast.success(`Status changed to ${label}.`);
+    } catch (e) {
+      toast.error(e.message || 'Failed to update status.');
+    }
   }
 
   function toggleSort(field) {

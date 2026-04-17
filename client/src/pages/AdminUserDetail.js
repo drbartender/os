@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
+import { useToast } from '../context/ToastContext';
+import FormBanner from '../components/FormBanner';
 
 function Section({ title, children }) {
   return (
@@ -58,6 +60,7 @@ const STEP_LABELS = {
 export default function AdminUserDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('profile');
@@ -67,12 +70,16 @@ export default function AdminUserDetail() {
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [profileError, setProfileError] = useState('');
+  const [profileFieldErrors, setProfileFieldErrors] = useState({});
 
   // Seniority state
   const [seniority, setSeniority] = useState(null);
   const [seniorityLoading, setSeniorityLoading] = useState(false);
   const [seniorityForm, setSeniorityForm] = useState({ seniority_adjustment: 0, hire_date: '' });
   const [senioritySaving, setSenioritySaving] = useState(false);
+  const [seniorityError, setSeniorityError] = useState('');
+  const [seniorityFieldErrors, setSeniorityFieldErrors] = useState({});
 
   // Events state
   const [events, setEvents] = useState(null);
@@ -89,8 +96,9 @@ export default function AdminUserDetail() {
   useEffect(() => {
     api.get(`/admin/users/${id}`)
       .then(r => setData(r.data))
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load contractor record. Try refreshing.'))
       .finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // Fetch seniority data
@@ -105,12 +113,15 @@ export default function AdminUserDetail() {
           hire_date: r.data.hire_date ? r.data.hire_date.slice(0, 10) : '',
         });
       })
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load seniority data. Try refreshing.'))
       .finally(() => setSeniorityLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, id]);
 
   async function saveSeniority() {
     setSenioritySaving(true);
+    setSeniorityError('');
+    setSeniorityFieldErrors({});
     try {
       await api.put(`/admin/users/${id}/seniority`, {
         seniority_adjustment: parseInt(seniorityForm.seniority_adjustment, 10) || 0,
@@ -119,8 +130,10 @@ export default function AdminUserDetail() {
       // Refresh
       const r = await api.get(`/admin/users/${id}/seniority`);
       setSeniority(r.data);
+      toast.success('Seniority updated.');
     } catch (e) {
-      console.error(e);
+      setSeniorityError(e.message || 'Failed to save seniority.');
+      setSeniorityFieldErrors(e.fieldErrors || {});
     } finally {
       setSenioritySaving(false);
     }
@@ -132,8 +145,9 @@ export default function AdminUserDetail() {
     setEventsLoading(true);
     api.get(`/shifts/user/${id}/events`)
       .then(r => setEvents(r.data))
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load events. Try refreshing.'))
       .finally(() => setEventsLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, id]);
 
   // Fetch message history for this user
@@ -142,8 +156,9 @@ export default function AdminUserDetail() {
     setUserMsgLoading(true);
     api.get(`/messages/user/${id}`)
       .then(r => setUserMessages(r.data.messages))
-      .catch(console.error)
+      .catch(() => toast.error('Failed to load message history. Try refreshing.'))
       .finally(() => setUserMsgLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, id]);
 
   async function sendUserMessage(e) {
@@ -176,8 +191,14 @@ export default function AdminUserDetail() {
     try {
       await api.put(`/admin/users/${id}/status`, { status });
       setData(d => ({ ...d, user: { ...d.user, onboarding_status: status } }));
+      const successMsg = status === 'deactivated'
+        ? 'Account deactivated.'
+        : status === 'submitted'
+          ? 'Account reactivated.'
+          : `Status changed to ${status}.`;
+      toast.success(successMsg);
     } catch (e) {
-      console.error(e);
+      toast.error(e.message || 'Failed to update status.');
     } finally {
       setStatusLoading(false);
     }
@@ -193,7 +214,7 @@ export default function AdminUserDetail() {
       link.click();
       URL.revokeObjectURL(blobUrl);
     } catch (e) {
-      console.error('Download failed', e);
+      toast.error(e.message || 'Download failed.');
     }
   }
 
@@ -209,8 +230,9 @@ export default function AdminUserDetail() {
       };
       const r = await api.put(`/admin/users/${id}/permissions`, payload);
       setData(d => ({ ...d, user: { ...d.user, ...r.data } }));
+      toast.success('Permissions updated.');
     } catch (e) {
-      console.error(e);
+      toast.error(e.message || 'Failed to update permissions.');
     } finally {
       setPermsSaving(false);
     }
@@ -255,12 +277,16 @@ export default function AdminUserDetail() {
 
   async function saveProfile() {
     setSaving(true);
+    setProfileError('');
+    setProfileFieldErrors({});
     try {
       const r = await api.put(`/admin/users/${id}/profile`, editForm);
       setData(d => ({ ...d, profile: r.data.profile, payment: r.data.payment }));
       setEditing(false);
+      toast.success('User updated.');
     } catch (e) {
-      console.error(e);
+      setProfileError(e.message || 'Failed to save changes.');
+      setProfileFieldErrors(e.fieldErrors || {});
     } finally {
       setSaving(false);
     }
@@ -338,7 +364,7 @@ export default function AdminUserDetail() {
             ['permissions', 'Permissions'],
             ['messages', 'Messages'],
           ].map(([key, label]) => (
-            <button key={key} className={`tab-btn ${tab === key ? 'active' : ''}`} onClick={() => { setTab(key); setEditing(false); }}>
+            <button key={key} className={`tab-btn ${tab === key ? 'active' : ''}`} onClick={() => { setTab(key); setEditing(false); setProfileError(''); setProfileFieldErrors({}); }}>
               {label}
             </button>
           ))}
@@ -347,10 +373,11 @@ export default function AdminUserDetail() {
         {/* ── Profile Tab ── */}
         {tab === 'profile' && (
           <>
+            {editing && <FormBanner error={profileError} fieldErrors={profileFieldErrors} />}
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem', gap: '0.5rem' }}>
               {editing ? (
                 <>
-                  <button className="btn btn-secondary btn-sm" disabled={saving} onClick={() => setEditing(false)}>Cancel</button>
+                  <button className="btn btn-secondary btn-sm" disabled={saving} onClick={() => { setEditing(false); setProfileError(''); setProfileFieldErrors({}); }}>Cancel</button>
                   <button className="btn btn-primary btn-sm" disabled={saving} onClick={saveProfile}>
                     {saving ? 'Saving…' : 'Save Changes'}
                   </button>
@@ -565,10 +592,11 @@ export default function AdminUserDetail() {
         {/* ── Payment Tab ── */}
         {tab === 'payment' && (
           <>
+            {editing && <FormBanner error={profileError} fieldErrors={profileFieldErrors} />}
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.75rem', gap: '0.5rem' }}>
               {editing ? (
                 <>
-                  <button className="btn btn-secondary btn-sm" disabled={saving} onClick={() => setEditing(false)}>Cancel</button>
+                  <button className="btn btn-secondary btn-sm" disabled={saving} onClick={() => { setEditing(false); setProfileError(''); setProfileFieldErrors({}); }}>Cancel</button>
                   <button className="btn btn-primary btn-sm" disabled={saving} onClick={saveProfile}>
                     {saving ? 'Saving…' : 'Save Changes'}
                   </button>
@@ -627,6 +655,7 @@ export default function AdminUserDetail() {
                       Positive values boost this staff member's score; negative values reduce it.
                     </p>
                   </div>
+                  <FormBanner error={seniorityError} fieldErrors={seniorityFieldErrors} />
                   <button className="btn btn-primary btn-sm" disabled={senioritySaving} onClick={saveSeniority}>
                     {senioritySaving ? 'Saving…' : 'Save'}
                   </button>
