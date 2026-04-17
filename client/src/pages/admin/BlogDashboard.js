@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api, { API_BASE_URL } from '../../utils/api';
 import RichTextEditor from '../../components/RichTextEditor';
+import { useToast } from '../../context/ToastContext';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
 
 function resolveImageUrl(url) {
   if (!url) return url;
@@ -32,7 +35,7 @@ const EMPTY_FORM = {
 
 // ─── Post Form ───────────────────────────────────────────────────
 
-function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, onUploadImage }) {
+function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, onUploadImage, error, fieldErrors }) {
   const handleTitleChange = (e) => {
     const title = e.target.value;
     const updates = { title };
@@ -56,16 +59,19 @@ function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, o
         <div className="form-group">
           <label className="form-label">Title</label>
           <input className="form-input" value={form.title} onChange={handleTitleChange} required />
+          <FieldError error={fieldErrors?.title} />
         </div>
         <div className="form-group">
           <label className="form-label">Slug</label>
           <input className="form-input" value={form.slug} onChange={e => setForm(f => ({ ...f, slug: e.target.value }))} required />
+          <FieldError error={fieldErrors?.slug} />
         </div>
       </div>
 
       <div className="form-group">
         <label className="form-label">Excerpt</label>
         <textarea className="form-textarea" value={form.excerpt} onChange={e => setForm(f => ({ ...f, excerpt: e.target.value }))} rows={2} placeholder="Short summary for the blog index..." />
+        <FieldError error={fieldErrors?.excerpt} />
       </div>
 
       <div className="form-group">
@@ -81,6 +87,7 @@ function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, o
             <span className="blog-editor-upload-placeholder">Click to upload a cover image</span>
           </label>
         )}
+        <FieldError error={fieldErrors?.cover_image_url} />
       </div>
 
       <div className="form-group">
@@ -90,6 +97,7 @@ function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, o
           onChange={body => setForm(f => ({ ...f, body }))}
           onUploadImage={onUploadImage}
         />
+        <FieldError error={fieldErrors?.body} />
       </div>
 
       <div className="two-col">
@@ -107,8 +115,11 @@ function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, o
             placeholder="Leave blank for current date"
           />
           <small style={{ color: 'var(--text-muted)', marginTop: '0.25rem', display: 'block' }}>Leave blank to use today's date when published</small>
+          <FieldError error={fieldErrors?.published_at} />
         </div>
       </div>
+
+      <FormBanner error={error} fieldErrors={fieldErrors} />
 
       <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
         <button type="submit" className="btn btn-primary" disabled={uploading}>{uploading ? 'Uploading...' : submitLabel}</button>
@@ -121,6 +132,7 @@ function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, o
 // ─── Dashboard ───────────────────────────────────────────────────
 
 export default function BlogDashboard() {
+  const toast = useToast();
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -128,31 +140,33 @@ export default function BlogDashboard() {
   const [createForm, setCreateForm] = useState({ ...EMPTY_FORM });
   const [editForm, setEditForm] = useState({ ...EMPTY_FORM });
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState('');
+  const [createError, setCreateError] = useState('');
+  const [createFieldErrors, setCreateFieldErrors] = useState({});
+  const [editError, setEditError] = useState('');
+  const [editFieldErrors, setEditFieldErrors] = useState({});
 
   const fetchPosts = useCallback(async () => {
     try {
       const { data } = await api.get('/admin/blog');
       setPosts(data);
     } catch (err) {
-      console.error(err);
+      toast.error('Failed to load posts. Try refreshing.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => { fetchPosts(); }, [fetchPosts]);
 
   const uploadImage = async (file) => {
     setUploading(true);
-    setError('');
     try {
       const formData = new FormData();
       formData.append('image', file);
       const { data } = await api.post('/admin/blog/upload-image', formData);
       return resolveImageUrl(data.url);
     } catch (err) {
-      setError(err.response?.data?.error || 'Image upload failed');
+      toast.error(err.response?.data?.error || 'Image upload failed.');
       return null;
     } finally {
       setUploading(false);
@@ -161,22 +175,29 @@ export default function BlogDashboard() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    setError('');
+    setCreateError('');
+    setCreateFieldErrors({});
     try {
       const { _prevTitle, ...rest } = createForm;
       if (!rest.published_at) delete rest.published_at;
+      const wasPublished = !!rest.published;
       await api.post('/admin/blog', rest);
       setCreateForm({ ...EMPTY_FORM });
       setShowCreateForm(false);
+      toast.success(wasPublished ? 'Post published.' : 'Post saved.');
       fetchPosts();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create post');
+      const data = err.response?.data;
+      setCreateError(data?.error || 'Failed to create post.');
+      setCreateFieldErrors(data?.fieldErrors || {});
     }
   };
 
   const startEdit = (post) => {
     setEditingId(post.id);
     setShowCreateForm(false);
+    setEditError('');
+    setEditFieldErrors({});
     setEditForm({
       title: post.title,
       slug: post.slug,
@@ -191,15 +212,21 @@ export default function BlogDashboard() {
 
   const handleUpdate = async (e) => {
     e.preventDefault();
-    setError('');
+    setEditError('');
+    setEditFieldErrors({});
     try {
       const { _prevTitle, ...rest } = editForm;
       if (!rest.published_at) delete rest.published_at;
+      const previousPost = posts.find(p => p.id === editingId);
+      const isFirstPublish = !!rest.published && previousPost && !previousPost.published;
       await api.put(`/admin/blog/${editingId}`, rest);
       setEditingId(null);
+      toast.success(isFirstPublish ? 'Post published.' : 'Post saved.');
       fetchPosts();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to update post');
+      const data = err.response?.data;
+      setEditError(data?.error || 'Failed to update post.');
+      setEditFieldErrors(data?.fieldErrors || {});
     }
   };
 
@@ -207,9 +234,10 @@ export default function BlogDashboard() {
     if (!window.confirm(`Delete "${title}"? This cannot be undone.`)) return;
     try {
       await api.delete(`/admin/blog/${id}`);
+      toast.success('Post deleted.');
       fetchPosts();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to delete post');
+      toast.error(err.response?.data?.error || 'Failed to delete post.');
     }
   };
 
@@ -220,11 +248,9 @@ export default function BlogDashboard() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <h1>Blog Posts</h1>
         {!showCreateForm && !editingId && (
-          <button className="btn btn-primary" onClick={() => { setShowCreateForm(true); setEditingId(null); }}>New Post</button>
+          <button className="btn btn-primary" onClick={() => { setShowCreateForm(true); setEditingId(null); setCreateError(''); setCreateFieldErrors({}); }}>New Post</button>
         )}
       </div>
-
-      {error && <div className="alert alert-error" style={{ marginBottom: '1rem' }}>{error}</div>}
 
       {showCreateForm && (
         <div className="card" style={{ marginBottom: '2rem' }}>
@@ -233,10 +259,12 @@ export default function BlogDashboard() {
             form={createForm}
             setForm={setCreateForm}
             onSubmit={handleCreate}
-            onCancel={() => { setShowCreateForm(false); setCreateForm({ ...EMPTY_FORM }); }}
+            onCancel={() => { setShowCreateForm(false); setCreateForm({ ...EMPTY_FORM }); setCreateError(''); setCreateFieldErrors({}); }}
             submitLabel="Create Post"
             uploading={uploading}
             onUploadImage={uploadImage}
+            error={createError}
+            fieldErrors={createFieldErrors}
           />
         </div>
       )}
@@ -248,10 +276,12 @@ export default function BlogDashboard() {
             form={editForm}
             setForm={setEditForm}
             onSubmit={handleUpdate}
-            onCancel={() => setEditingId(null)}
+            onCancel={() => { setEditingId(null); setEditError(''); setEditFieldErrors({}); }}
             submitLabel="Save Changes"
             uploading={uploading}
             onUploadImage={uploadImage}
+            error={editError}
+            fieldErrors={editFieldErrors}
           />
         </div>
       )}

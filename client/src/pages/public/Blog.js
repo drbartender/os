@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import PublicLayout from '../../components/PublicLayout';
+import { useToast } from '../../context/ToastContext';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
@@ -16,16 +17,20 @@ function formatDate(d) {
 }
 
 export default function Blog() {
+  const toast = useToast();
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/blog`)
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error('Failed to load');
+        return r.json();
+      })
       .then(data => setPosts(data))
-      .catch(err => console.error(err))
+      .catch(() => toast.error('Failed to load. Try refreshing.'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [toast]);
 
   return (
     <PublicLayout>
