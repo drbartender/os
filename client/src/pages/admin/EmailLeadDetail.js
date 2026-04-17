@@ -1,17 +1,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../utils/api';
+import { useToast } from '../../context/ToastContext';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
 
 const LEAD_SOURCES = ['manual', 'csv_import', 'website', 'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other'];
 
 export default function EmailLeadDetail() {
   const { id } = useParams();
+  const toast = useToast();
   const [lead, setLead] = useState(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const fetchLead = useCallback(async () => {
     try {
@@ -27,23 +32,26 @@ export default function EmailLeadDetail() {
         notes: res.data.notes || '',
       });
     } catch (err) {
-      console.error('Error fetching lead:', err);
+      toast.error('Failed to load lead. Try refreshing.');
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, toast]);
 
   useEffect(() => { fetchLead(); }, [fetchLead]);
 
   const handleSave = async () => {
     setSaving(true);
     setError('');
+    setFieldErrors({});
     try {
       await api.put(`/email-marketing/leads/${id}`, form);
       setEditing(false);
+      toast.success('Lead updated.');
       fetchLead();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to update lead.');
+      setError(err.message || 'Failed to update lead.');
+      setFieldErrors(err.fieldErrors || {});
     } finally {
       setSaving(false);
     }
@@ -53,9 +61,10 @@ export default function EmailLeadDetail() {
     if (!window.confirm('Unsubscribe this lead? They will no longer receive marketing emails.')) return;
     try {
       await api.delete(`/email-marketing/leads/${id}`);
+      toast.success('Lead unsubscribed.');
       fetchLead();
     } catch (err) {
-      console.error('Error unsubscribing lead:', err);
+      toast.error(err.message || 'Failed to unsubscribe.');
     }
   };
 
@@ -86,10 +95,12 @@ export default function EmailLeadDetail() {
             <div className="form-group">
               <label className="form-label">Name</label>
               <input className="form-input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+              <FieldError error={fieldErrors?.name} />
             </div>
             <div className="form-group">
               <label className="form-label">Email</label>
               <input className="form-input" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
+              <FieldError error={fieldErrors?.email} />
             </div>
             <div className="form-group">
               <label className="form-label">Company</label>
@@ -108,13 +119,14 @@ export default function EmailLeadDetail() {
               <select className="form-input" value={form.lead_source} onChange={e => setForm({ ...form, lead_source: e.target.value })}>
                 {LEAD_SOURCES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
               </select>
+              <FieldError error={fieldErrors?.lead_source} />
             </div>
           </div>
           <div className="form-group">
             <label className="form-label">Notes</label>
             <textarea className="form-input" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={3} />
           </div>
-          {error && <p className="form-error">{error}</p>}
+          <FormBanner error={error} fieldErrors={fieldErrors} />
           <button className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save Changes'}</button>
         </div>
       ) : (

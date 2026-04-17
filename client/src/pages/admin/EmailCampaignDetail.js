@@ -5,9 +5,11 @@ import api from '../../utils/api';
 import CampaignMetricsBar from '../../components/CampaignMetricsBar';
 import SequenceStepEditor from '../../components/SequenceStepEditor';
 import AudienceSelector from '../../components/AudienceSelector';
+import { useToast } from '../../context/ToastContext';
 
 export default function EmailCampaignDetail() {
   const { id } = useParams();
+  const toast = useToast();
   const [campaign, setCampaign] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -22,11 +24,11 @@ export default function EmailCampaignDetail() {
       const res = await api.get(`/email-marketing/campaigns/${id}`);
       setCampaign(res.data);
     } catch (err) {
-      console.error('Error fetching campaign:', err);
+      toast.error('Failed to load campaign. Try refreshing.');
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, toast]);
 
   useEffect(() => { fetchCampaign(); }, [fetchCampaign]);
 
@@ -34,11 +36,11 @@ export default function EmailCampaignDetail() {
     if (!window.confirm(`Send this campaign to all matching leads? This cannot be undone.`)) return;
     setSending(true);
     try {
-      const res = await api.post(`/email-marketing/campaigns/${id}/send`);
-      alert(res.data.message);
+      await api.post(`/email-marketing/campaigns/${id}/send`);
+      toast.success('Campaign queued for sending.');
       fetchCampaign();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to send.');
+      toast.error(err.message || 'Failed to send.');
     } finally {
       setSending(false);
     }
@@ -48,9 +50,10 @@ export default function EmailCampaignDetail() {
     try {
       await api.post(`/email-marketing/campaigns/${id}/steps`, stepData);
       setShowAddStep(false);
+      toast.success('Step added.');
       fetchCampaign();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to add step.');
+      toast.error(err.message || 'Failed to add step.');
     }
   };
 
@@ -58,9 +61,10 @@ export default function EmailCampaignDetail() {
     try {
       await api.put(`/email-marketing/campaigns/${id}/steps/${editingStep.id}`, stepData);
       setEditingStep(null);
+      toast.success('Step updated.');
       fetchCampaign();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to update step.');
+      toast.error(err.message || 'Failed to update step.');
     }
   };
 
@@ -68,27 +72,30 @@ export default function EmailCampaignDetail() {
     if (!window.confirm('Delete this step?')) return;
     try {
       await api.delete(`/email-marketing/campaigns/${id}/steps/${stepId}`);
+      toast.success('Step deleted.');
       fetchCampaign();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to delete step.');
+      toast.error(err.message || 'Failed to delete step.');
     }
   };
 
   const handleActivate = async () => {
     try {
       await api.post(`/email-marketing/campaigns/${id}/activate`);
+      toast.success('Sequence activated.');
       fetchCampaign();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to activate.');
+      toast.error(err.message || 'Failed to activate.');
     }
   };
 
   const handlePause = async () => {
     try {
       await api.post(`/email-marketing/campaigns/${id}/pause`);
+      toast.success('Sequence paused.');
       fetchCampaign();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to pause.');
+      toast.error(err.message || 'Failed to pause.');
     }
   };
 
@@ -97,12 +104,12 @@ export default function EmailCampaignDetail() {
     setEnrolling(true);
     try {
       const res = await api.post(`/email-marketing/campaigns/${id}/enroll`, { lead_ids: selectedLeadIds });
-      alert(`${res.data.enrolled} leads enrolled.`);
+      toast.success(`${res.data.enrolled} leads enrolled.`);
       setShowEnroll(false);
       setSelectedLeadIds([]);
       fetchCampaign();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to enroll.');
+      toast.error(err.message || 'Failed to enroll.');
     } finally {
       setEnrolling(false);
     }

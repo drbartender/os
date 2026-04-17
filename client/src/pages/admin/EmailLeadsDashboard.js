@@ -3,11 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import LeadImportModal from '../../components/LeadImportModal';
 import useFormValidation from '../../hooks/useFormValidation';
+import { useToast } from '../../context/ToastContext';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
 
 const LEAD_SOURCES = ['manual', 'csv_import', 'website', 'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other'];
 
 export default function EmailLeadsDashboard() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
@@ -20,6 +24,7 @@ export default function EmailLeadsDashboard() {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', company: '', event_type: '', location: '', lead_source: 'manual', notes: '' });
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const { validate, inputClass, clearField } = useFormValidation();
 
   const fetchLeads = useCallback(async () => {
@@ -33,33 +38,42 @@ export default function EmailLeadsDashboard() {
       setLeads(res.data.leads);
       setTotal(res.data.total);
     } catch (err) {
-      console.error('Error fetching leads:', err);
+      toast.error('Failed to load leads. Try refreshing.');
     } finally {
       setLoading(false);
     }
-  }, [search, statusFilter, sourceFilter, page]);
+  }, [search, statusFilter, sourceFilter, page, toast]);
 
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    setError('');
+    setFieldErrors({});
     const result = validate([
       { field: 'name', label: 'Name' },
       { field: 'email', label: 'Email' },
     ], form);
     if (!result.valid) { setError(result.message); return; }
     setCreating(true);
-    setError('');
     try {
       await api.post('/email-marketing/leads', form);
       setForm({ name: '', email: '', company: '', event_type: '', location: '', lead_source: 'manual', notes: '' });
       setShowCreate(false);
+      toast.success('Lead added.');
       fetchLeads();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create lead.');
+      setError(err.message || 'Failed to create lead.');
+      setFieldErrors(err.fieldErrors || {});
     } finally {
       setCreating(false);
     }
+  };
+
+  const handleImported = (result) => {
+    const count = result?.imported || 0;
+    if (count > 0) toast.success(`${count} leads imported.`);
+    fetchLeads();
   };
 
   const totalPages = Math.ceil(total / 50);
@@ -76,17 +90,26 @@ export default function EmailLeadsDashboard() {
       {showCreate && (
         <form className="em-create-form" onSubmit={handleCreate}>
           <div className="em-form-grid">
-            <input className={"form-input" + inputClass('name')} placeholder="Name *" value={form.name} onChange={e => { setForm({ ...form, name: e.target.value }); clearField('name'); }} />
-            <input className={"form-input" + inputClass('email')} placeholder="Email *" type="email" value={form.email} onChange={e => { setForm({ ...form, email: e.target.value }); clearField('email'); }} />
+            <div>
+              <input className={"form-input" + inputClass('name')} placeholder="Name *" value={form.name} onChange={e => { setForm({ ...form, name: e.target.value }); clearField('name'); }} />
+              <FieldError error={fieldErrors?.name} />
+            </div>
+            <div>
+              <input className={"form-input" + inputClass('email')} placeholder="Email *" type="email" value={form.email} onChange={e => { setForm({ ...form, email: e.target.value }); clearField('email'); }} />
+              <FieldError error={fieldErrors?.email} />
+            </div>
             <input className="form-input" placeholder="Company" value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} />
             <input className="form-input" placeholder="Event Type" value={form.event_type} onChange={e => setForm({ ...form, event_type: e.target.value })} />
             <input className="form-input" placeholder="Location" value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} />
-            <select className="form-input" value={form.lead_source} onChange={e => setForm({ ...form, lead_source: e.target.value })}>
-              {LEAD_SOURCES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-            </select>
+            <div>
+              <select className="form-input" value={form.lead_source} onChange={e => setForm({ ...form, lead_source: e.target.value })}>
+                {LEAD_SOURCES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+              </select>
+              <FieldError error={fieldErrors?.lead_source} />
+            </div>
           </div>
           <textarea className="form-input" placeholder="Notes" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} />
-          {error && <p className="form-error">{error}</p>}
+          <FormBanner error={error} fieldErrors={fieldErrors} />
           <div className="em-form-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
             <button type="submit" className="btn btn-primary" disabled={creating}>{creating ? 'Creating...' : 'Create Lead'}</button>
@@ -150,7 +173,7 @@ export default function EmailLeadsDashboard() {
         </>
       )}
 
-      {showImport && <LeadImportModal onClose={() => setShowImport(false)} onImported={fetchLeads} />}
+      {showImport && <LeadImportModal onClose={() => setShowImport(false)} onImported={handleImported} />}
     </div>
   );
 }

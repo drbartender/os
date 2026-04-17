@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import { useToast } from '../../context/ToastContext';
 
 export default function EmailCampaignsDashboard() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [campaigns, setCampaigns] = useState([]);
   const [typeFilter, setTypeFilter] = useState('');
   const [loading, setLoading] = useState(true);
@@ -16,11 +18,11 @@ export default function EmailCampaignsDashboard() {
       const res = await api.get('/email-marketing/campaigns', { params });
       setCampaigns(res.data);
     } catch (err) {
-      console.error('Error fetching campaigns:', err);
+      toast.error('Failed to load campaigns. Try refreshing.');
     } finally {
       setLoading(false);
     }
-  }, [typeFilter]);
+  }, [typeFilter, toast]);
 
   useEffect(() => { fetchCampaigns(); }, [fetchCampaigns]);
 

@@ -1,7 +1,9 @@
 import React, { useState, useRef } from 'react';
 import api from '../utils/api';
+import { useToast } from '../context/ToastContext';
 
 export default function LeadImportModal({ onClose, onImported }) {
+  const toast = useToast();
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -41,9 +43,16 @@ export default function LeadImportModal({ onClose, onImported }) {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       setResult(res.data);
-      if (onImported) onImported();
+      if (onImported) onImported(res.data);
     } catch (err) {
-      setError(err.response?.data?.error || 'Import failed.');
+      // Show inline error if we have a human-readable message; fall back to toast
+      // for hard failures (network, 500, etc.) where the inline display is
+      // the only signal the user gets.
+      const msg = err.message || 'Import failed.';
+      setError(msg);
+      if (!err.fieldErrors && err.status >= 500) {
+        toast.error('Import failed. Try again in a moment.');
+      }
     } finally {
       setImporting(false);
     }

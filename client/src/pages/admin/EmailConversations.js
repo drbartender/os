@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../../utils/api';
+import { useToast } from '../../context/ToastContext';
 
 export default function EmailConversations() {
+  const toast = useToast();
   const [threads, setThreads] = useState([]);
   const [selectedLeadId, setSelectedLeadId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -15,11 +17,11 @@ export default function EmailConversations() {
       const res = await api.get('/email-marketing/conversations');
       setThreads(res.data);
     } catch (err) {
-      console.error('Error fetching conversations:', err);
+      toast.error('Failed to load conversations. Try refreshing.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => { fetchThreads(); }, [fetchThreads]);
 
@@ -29,7 +31,7 @@ export default function EmailConversations() {
       const res = await api.get(`/email-marketing/conversations/${leadId}`);
       setMessages(res.data);
     } catch (err) {
-      console.error('Error fetching thread:', err);
+      toast.error('Failed to load conversation. Try again.');
     }
   };
 
@@ -42,9 +44,10 @@ export default function EmailConversations() {
         body_html: `<p>${replyText.replace(/\n/g, '<br/>')}</p>`,
       });
       setReplyText('');
+      toast.success('Reply sent.');
       selectThread(selectedLeadId);
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to send reply.');
+      toast.error(err.message || 'Failed to send reply.');
     } finally {
       setReplying(false);
     }
@@ -54,10 +57,11 @@ export default function EmailConversations() {
     const notes = window.prompt('Add a note about the reply (optional):');
     try {
       await api.post(`/email-marketing/conversations/${leadId}/mark-replied`, { notes });
+      toast.success('Marked as replied.');
       fetchThreads();
       if (selectedLeadId === leadId) selectThread(leadId);
     } catch (err) {
-      console.error('Error marking replied:', err);
+      toast.error(err.message || 'Failed to mark replied.');
     }
   };
 

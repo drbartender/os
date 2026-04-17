@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../utils/api';
+import { useToast } from '../../context/ToastContext';
 
 export default function EmailAnalyticsDashboard() {
+  const toast = useToast();
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -11,12 +13,12 @@ export default function EmailAnalyticsDashboard() {
         const res = await api.get('/email-marketing/analytics/overview');
         setAnalytics(res.data);
       } catch (err) {
-        console.error('Error fetching analytics:', err);
+        toast.error('Failed to load analytics. Try refreshing.');
       } finally {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [toast]);
 
   if (loading) return <div className="loading"><div className="spinner" />Loading...</div>;
   if (!analytics) return <div className="em-empty">Unable to load analytics.</div>;

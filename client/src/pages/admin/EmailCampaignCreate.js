@@ -4,9 +4,13 @@ import api from '../../utils/api';
 import RichTextEditor from '../../components/RichTextEditor';
 import AudienceSelector from '../../components/AudienceSelector';
 import useFormValidation from '../../hooks/useFormValidation';
+import { useToast } from '../../context/ToastContext';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
 
 export default function EmailCampaignCreate() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [form, setForm] = useState({
     name: '',
     type: 'blast',
@@ -19,14 +23,16 @@ export default function EmailCampaignCreate() {
   const [selectedLeadIds, setSelectedLeadIds] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    setError('');
+    setFieldErrors({});
     const result = validate([{ field: 'name', label: 'Campaign Name' }], form);
     if (!result.valid) { setError(result.message); return; }
     setSaving(true);
-    setError('');
     try {
       const payload = {
         name: form.name.trim(),
@@ -38,9 +44,11 @@ export default function EmailCampaignCreate() {
         target_event_types: form.target_event_types.length > 0 ? form.target_event_types : null,
       };
       const res = await api.post('/email-marketing/campaigns', payload);
+      toast.success('Draft saved.');
       navigate(`/admin/email-marketing/campaigns/${res.data.id}`);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create campaign.');
+      setError(err.message || 'Failed to create campaign.');
+      setFieldErrors(err.fieldErrors || {});
     } finally {
       setSaving(false);
     }
@@ -55,6 +63,7 @@ export default function EmailCampaignCreate() {
           <div className={"form-group" + fieldClass('name')}>
             <label className="form-label">Campaign Name *</label>
             <input className={"form-input" + inputClass('name')} value={form.name} onChange={e => { setForm({ ...form, name: e.target.value }); clearField('name'); }} placeholder="Summer Wedding Promo" />
+            <FieldError error={fieldErrors?.name} />
           </div>
           <div className="form-group">
             <label className="form-label">Type</label>
@@ -62,6 +71,7 @@ export default function EmailCampaignCreate() {
               <option value="blast">One-off Blast</option>
               <option value="sequence">Drip Sequence</option>
             </select>
+            <FieldError error={fieldErrors?.type} />
           </div>
         </div>
 
@@ -70,6 +80,7 @@ export default function EmailCampaignCreate() {
             <div className="form-group">
               <label className="form-label">Subject Line</label>
               <input className="form-input" value={form.subject} onChange={e => setForm({ ...form, subject: e.target.value })} placeholder="Your perfect event awaits..." />
+              <FieldError error={fieldErrors?.subject} />
             </div>
 
             <div className="form-group">
@@ -80,6 +91,7 @@ export default function EmailCampaignCreate() {
                 onUploadImage={() => Promise.resolve(null)}
                 placeholder="Write your email content here..."
               />
+              <FieldError error={fieldErrors?.html_body} />
             </div>
           </>
         )}
@@ -87,6 +99,7 @@ export default function EmailCampaignCreate() {
         <div className="form-group">
           <label className="form-label">Reply-To Email (optional)</label>
           <input className="form-input" type="email" value={form.reply_to} onChange={e => setForm({ ...form, reply_to: e.target.value })} placeholder="hello@drbartender.com" />
+          <FieldError error={fieldErrors?.reply_to} />
         </div>
 
         <div className="form-group">
@@ -98,9 +111,10 @@ export default function EmailCampaignCreate() {
             selectedLeadIds={selectedLeadIds}
             onLeadIdsChange={setSelectedLeadIds}
           />
+          <FieldError error={fieldErrors?.audience} />
         </div>
 
-        {error && <p className="form-error">{error}</p>}
+        <FormBanner error={error} fieldErrors={fieldErrors} />
 
         <div className="em-form-actions">
           <button type="button" className="btn btn-secondary" onClick={() => navigate('/admin/email-marketing/campaigns')}>Cancel</button>
