@@ -786,16 +786,19 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
 
   if (!result.rows[0]) throw new NotFoundError('Proposal not found');
 
-  const addons = await pool.query(
-    'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
-    [req.params.id]
-  );
+  // Fetch addons + activity log in parallel — both depend only on proposal id.
   // Cap activity log fetch at 100 entries (most recent) — an old proposal can
   // accumulate hundreds of view/update entries otherwise.
-  const activity = await pool.query(
-    'SELECT * FROM proposal_activity_log WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 100',
-    [req.params.id]
-  );
+  const [addons, activity] = await Promise.all([
+    pool.query(
+      'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
+      [req.params.id]
+    ),
+    pool.query(
+      'SELECT * FROM proposal_activity_log WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 100',
+      [req.params.id]
+    ),
+  ]);
 
   res.json({ ...result.rows[0], addons: addons.rows, activity: activity.rows });
 }));

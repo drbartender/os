@@ -51,20 +51,21 @@ router.get('/proposals/:token', asyncHandler(async (req, res) => {
 
   const proposal = result.rows[0];
 
-  // Fetch add-ons (explicit columns — no SELECT *)
-  const addons = await pool.query(
-    'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
-    [proposal.id]
-  );
-
-  // Fetch payments (explicit columns — no SELECT *)
-  const payments = await pool.query(
-    `SELECT id, proposal_id, payment_type, amount, status, created_at
-     FROM proposal_payments
-     WHERE proposal_id = $1
-     ORDER BY created_at DESC`,
-    [proposal.id]
-  );
+  // Fetch add-ons + payments in parallel — both depend only on proposal.id
+  // (explicit columns — no SELECT *)
+  const [addons, payments] = await Promise.all([
+    pool.query(
+      'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
+      [proposal.id]
+    ),
+    pool.query(
+      `SELECT id, proposal_id, payment_type, amount, status, created_at
+       FROM proposal_payments
+       WHERE proposal_id = $1
+       ORDER BY created_at DESC`,
+      [proposal.id]
+    ),
+  ]);
 
   res.json({
     proposal: { ...proposal, addons: addons.rows, payments: payments.rows },
