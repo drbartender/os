@@ -4,6 +4,8 @@ import axios from 'axios';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import SignaturePad from '../../components/SignaturePad';
+import FormBanner from '../../components/FormBanner';
+import { useToast } from '../../context/ToastContext';
 import { API_BASE_URL as BASE_URL } from '../../utils/api';
 import { COMPANY_PHONE } from '../../utils/constants';
 import { getPackageBySlug } from '../../data/packages';
@@ -96,15 +98,20 @@ function PaymentForm({ onSubmit, payLabel, disabled }) {
 
 export default function ProposalView() {
   const { token } = useParams();
+  const toast = useToast();
   const [proposal, setProposal] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Form-level error banner (sign-and-pay section). Stripe card errors are
+  // handled by Stripe Elements' own messaging inside <PaymentForm/>.
+  const [formError, setFormError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
 
   // Signing state
   const [sigName, setSigName] = useState('');
   const [sigData, setSigData] = useState('');
   const [sigMethod, setSigMethod] = useState(null);
-  const [sigError, setSigError] = useState('');
   const signedThisSession = useRef(false);
 
   // Payment option state
@@ -141,6 +148,12 @@ export default function ProposalView() {
       .catch(() => setError('Proposal not found or has expired.'))
       .finally(() => setLoading(false));
   }, [token]);
+
+  // Show a success toast when returning from Stripe redirect (?paid=true)
+  useEffect(() => {
+    if (paid) toast.success('Payment received!');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paid]);
 
   // Only load Stripe.js (~200KB gzipped) when the proposal actually needs a
   // payment form. Skip for already-paid, confirmed, or non-payable proposals.
@@ -194,7 +207,7 @@ export default function ProposalView() {
       } catch (err) {
         if (cancelled) return;
         console.error('Failed to load payment intent:', err);
-        setSigError('Unable to load payment form. Please refresh the page.');
+        setFormError(err.response?.data?.error || 'Unable to load payment form. Please refresh the page.');
       } finally {
         if (!cancelled) setLoadingIntent(false);
       }
@@ -210,9 +223,18 @@ export default function ProposalView() {
 
   // Sign the proposal — called by PaymentForm before confirming payment
   const handleSign = async () => {
-    if (!sigName.trim()) throw new Error('Please enter your full name.');
-    if (!sigData) throw new Error('Please add your signature.');
-    setSigError('');
+    setFormError('');
+    setFieldErrors({});
+    if (!sigName.trim()) {
+      const msg = 'Please enter your full name.';
+      setFormError(msg);
+      throw new Error(msg);
+    }
+    if (!sigData) {
+      const msg = 'Please add your signature.';
+      setFormError(msg);
+      throw new Error(msg);
+    }
 
     // If already signed (server state or this session), skip
     if (proposal.client_signed_at || signedThisSession.current) return;
@@ -224,11 +246,15 @@ export default function ProposalView() {
         client_signature_method: sigMethod,
       });
       signedThisSession.current = true;
+      toast.success('Proposal accepted!');
       // Do NOT update proposal state here — changing status/client_signed_at
       // would unmount the Elements provider while payment is in progress.
       // Server state is already updated; UI refreshes on Stripe redirect.
     } catch (err) {
-      throw new Error(err.response?.data?.error || 'Failed to save signature. Please try again.');
+      const message = err.response?.data?.error || 'Failed to save signature. Please try again.';
+      setFormError(message);
+      setFieldErrors(err.response?.data?.fieldErrors || {});
+      throw new Error(message);
     }
   };
 
@@ -590,10 +616,6 @@ export default function ProposalView() {
               <SignaturePad value={sigData} onChange={(data, method) => { setSigData(data); setSigMethod(method); }} />
             </div>
 
-            {sigError && (
-              <p style={{ color: '#c0392b', fontSize: '0.875rem', marginTop: '0.75rem' }}>{sigError}</p>
-            )}
-
             {/* Payment Options */}
             <div style={{ marginTop: '1.75rem' }}>
               <label style={styles.label}>Payment Option</label>
@@ -665,6 +687,8 @@ export default function ProposalView() {
                 </div>
               )}
 
+              <FormBanner error={formError} fieldErrors={fieldErrors} />
+
               {activeSecret && stripePromise && !loadingIntent && (
                 <Elements
                   key={activeSecret}
@@ -685,7 +709,7 @@ export default function ProposalView() {
                 </div>
               )}
 
-              {!activeSecret && !loadingIntent && (
+              {!activeSecret && !loadingIntent && !formError && (
                 <p style={{ color: '#c0392b', fontSize: '0.875rem' }}>
                   Unable to load payment form. Please refresh the page or contact us at contact@drbartender.com.
                 </p>
@@ -765,6 +789,8 @@ export default function ProposalView() {
               </div>
             )}
 
+            <FormBanner error={formError} fieldErrors={fieldErrors} />
+
             {activeSecret && stripePromise && !loadingIntent && (
               <Elements
                 key={activeSecret}
@@ -785,7 +811,7 @@ export default function ProposalView() {
               </div>
             )}
 
-            {!activeSecret && !loadingIntent && (
+            {!activeSecret && !loadingIntent && !formError && (
               <p style={{ color: '#c0392b', fontSize: '0.875rem' }}>
                 Unable to load payment form. Please refresh the page or contact us at contact@drbartender.com.
               </p>

@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import api from '../../utils/api';
+import FormBanner from '../../components/FormBanner';
+import { useToast } from '../../context/ToastContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 
 function formatCurrency(cents) {
@@ -54,9 +56,14 @@ function PaymentForm({ onSuccess }) {
 
 export default function InvoicePage() {
   const { token } = useParams();
+  const toast = useToast();
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Form-level error banner (payment section). Stripe Elements handles its
+  // own card-validation messaging inside <PaymentForm/>.
+  const [formError, setFormError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [clientSecret, setClientSecret] = useState(null);
   const [stripePromise, setStripePromise] = useState(null);
   const [showPayment, setShowPayment] = useState(false);
@@ -70,7 +77,7 @@ export default function InvoicePage() {
         const { data } = await api.get(`/invoices/t/${token}`);
         if (!cancelled) setInvoice(data.invoice);
       } catch (err) {
-        if (!cancelled) setError('Invoice not found or no longer available.');
+        if (!cancelled) setError(err.response?.data?.error || 'Invoice not found or no longer available.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -87,20 +94,24 @@ export default function InvoicePage() {
   }, [invoice, paymentSuccess, stripePromise]);
 
   const handlePayClick = useCallback(async () => {
+    setFormError('');
+    setFieldErrors({});
     try {
       const { data } = await api.post(`/stripe/create-intent-for-invoice/${token}`);
       setClientSecret(data.clientSecret);
       setShowPayment(true);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to initiate payment.');
+      setFormError(err.response?.data?.error || 'Failed to initiate payment.');
+      setFieldErrors(err.response?.data?.fieldErrors || {});
     }
   }, [token]);
 
   const handlePaymentSuccess = useCallback(() => {
     setPaymentSuccess(true);
     setShowPayment(false);
+    toast.success('Payment received!');
     api.get(`/invoices/t/${token}`).then(({ data }) => setInvoice(data.invoice)).catch(err => console.error('Invoice refetch after payment failed:', err));
-  }, [token]);
+  }, [token, toast]);
 
   const handleSavePdf = useCallback(async () => {
     const html2pdf = (await import('html2pdf.js')).default;
@@ -220,6 +231,8 @@ export default function InvoicePage() {
       </div>
 
       <div className="invoice-actions">
+        <FormBanner error={formError} fieldErrors={fieldErrors} />
+
         {!isPaid && balanceDue > 0 && !showPayment && (
           <button className="btn" onClick={handlePayClick} style={{ width: '100%' }}>
             Pay {formatCurrency(balanceDue)}
