@@ -17,6 +17,8 @@ A full-stack platform for Dr. Bartender's bartending service business. Handles c
 | Rich Text Editor | TipTap (ProseMirror-based WYSIWYG, blog admin) |
 | HTML Sanitization | DOMPurify + jsdom (server-side) |
 | Styling | Vanilla CSS |
+| Error Tracking (server) | `@sentry/node` |
+| Error Tracking (client) | `@sentry/react` |
 
 ## Prerequisites
 
@@ -76,6 +78,8 @@ Copy `.env.example` and fill in values. All variables:
 | `STRIPE_WEBHOOK_SECRET_TEST` | For test mode | Stripe test webhook signing secret |
 | `STRIPE_TEST_MODE_UNTIL` | Optional | ISO 8601 cutoff date. While set and in the future, every Stripe call uses the `*_TEST` credentials; after the cutoff, the next request automatically reverts to the live credentials with no redeploy. Example: `2026-04-21T23:59:59-07:00` |
 | `THUMBTACK_WEBHOOK_SECRET` | For Thumbtack | Shared secret for Thumbtack webhook auth |
+| `SENTRY_DSN_SERVER` | For error tracking | Server-side Sentry DSN (optional in dev; required in prod) |
+| `REACT_APP_SENTRY_DSN_CLIENT` | For error tracking | Client-side Sentry DSN (optional in dev; required in prod) |
 | `ADMIN_EMAIL` | For seed | Admin account email |
 | `ADMIN_PASSWORD` | For seed | Admin account password |
 
@@ -94,6 +98,7 @@ dr-bartender/
 │   │   ├── seed.js             # Admin account seeder script
 │   │   └── seedTestData.js     # Test data seeder (staff, clients, proposals)
 │   ├── middleware/
+│   │   ├── asyncHandler.js     # 3-line wrapper that funnels async-handler rejections to the global error middleware
 │   │   └── auth.js             # JWT verification + role guards (auth, adminOnly)
 │   ├── routes/
 │   │   ├── admin.js            # Admin user management, status changes
@@ -127,6 +132,7 @@ dr-bartender/
 │   │   ├── email.js            # Resend email wrapper (send + batch)
 │   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
 │   │   ├── emailTemplates.js   # Email template helpers (transactional + marketing)
+│   │   ├── errors.js           # AppError class hierarchy (ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError)
 │   │   ├── eventCreation.js    # Auto-create shifts from paid proposals
 │   │   ├── eventTypes.js       # Event type id→label resolver (mirrors client)
 │   │   ├── fileValidation.js   # Magic-byte file type validation
@@ -144,7 +150,8 @@ dr-bartender/
 │   │   ├── App.js              # All routes, auth guards (ProtectedRoute, RequireHired, etc.)
 │   │   ├── context/
 │   │   │   ├── AuthContext.js       # Staff/admin auth state (login, logout, user)
-│   │   │   └── ClientAuthContext.js # Client auth state
+│   │   │   ├── ClientAuthContext.js # Client auth state
+│   │   │   └── ToastContext.js      # ToastProvider + useToast() hook
 │   │   ├── utils/
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── constants.js    # App-wide constants
@@ -152,7 +159,8 @@ dr-bartender/
 │   │   │   └── formatPhone.js  # Phone number formatting
 │   │   ├── components/         # Layout, InvoiceDropdown, SignaturePad, ClickableRow, FileUpload,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, AudienceSelector,
-│   │   │                       # SequenceStepEditor, CampaignMetricsBar, SyrupPicker
+│   │   │                       # SequenceStepEditor, CampaignMetricsBar, SyrupPicker, Toast,
+│   │   │                       # FormBanner, FieldError, SessionExpiryHandler
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
 │   │   ├── data/               # Shared data (addonCategories, eventTypes, packages, syrups)
 │   │   ├── hooks/              # Custom hooks (useFormValidation)

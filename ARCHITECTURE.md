@@ -52,6 +52,56 @@ System design reference for the Dr. Bartender platform.
 
 **Public routes** (no auth): Drink plans and proposals use UUID tokens in the URL (`/plan/:token`, `/proposal/:token`) instead of authentication.
 
+## Error Handling
+
+The app uses a layered error display system across all surfaces.
+
+| Surface | Component | When to use |
+|---|---|---|
+| Field-level inline | `<FieldError>` | Server attributes failure to a specific field (`fieldErrors: { email: '...' }`) |
+| Form-level banner | `<FormBanner>` | Operation failure not tied to one field; placed immediately above the submit button, auto-scrolls into view |
+| Toast | `useToast()` | System events not tied to a form: success confirmations, session expiry, network drops |
+| Modal fallback | `<ErrorBoundary>` | Unhandled React error — page can't render |
+
+### Server error envelope
+
+All error responses (4xx and 5xx) use this shape:
+
+```json
+{
+  "error": "Human-readable message",
+  "code": "OPTIONAL_MACHINE_CODE",
+  "fieldErrors": { "fieldName": "field-specific message" }
+}
+```
+
+`error` is required and backward compatible with the original `{ error: "..." }` shape. `code` is optional, machine-readable, used for Sentry tagging and frontend special handling. `fieldErrors` is optional, drives field-level inline display.
+
+### AppError class hierarchy (`server/utils/errors.js`)
+
+| Class | Status | Code | Use |
+|---|---|---|---|
+| `ValidationError(fieldErrors, message?)` | 400 | `VALIDATION_ERROR` | Field-attributable input failure |
+| `ConflictError(message, code?)` | 409 | `CONFLICT` (or custom) | State conflict (duplicate, locked, already-paid) |
+| `NotFoundError(message?)` | 404 | `NOT_FOUND` | Resource doesn't exist |
+| `PermissionError(message?)` | 403 | `PERMISSION_DENIED` | Authenticated but not allowed |
+| `ExternalServiceError(service, originalError, message?)` | 502 | `EXTERNAL_SERVICE_ERROR` | Stripe/R2/Twilio/Resend/Nominatim failure |
+
+Routes throw via `asyncHandler`-wrapped handlers; the global error middleware in `server/index.js` formats the response envelope and reports unknown errors to Sentry.
+
+### Observability
+
+- **Server:** `@sentry/node` initialized at the top of `server/index.js`. Gated on `SENTRY_DSN_SERVER` env var (silent in dev). PII-scrubbed by default (`event.request.data` redacted).
+- **Client:** `@sentry/react` initialized in `client/src/index.js`. Gated on `REACT_APP_SENTRY_DSN_CLIENT`. `<ErrorBoundary>` captures unhandled React errors and forwards to Sentry.
+- **Webhook handlers** (Stripe, Resend, Thumbtack) wrap their `catch` blocks with explicit `Sentry.captureException` so processing errors land in Sentry while preserving the response codes those services expect.
+
+### Special-case error routing
+
+- **401 (session expired)** — toast (`'Your session expired — please log in again.'`) → 1.5s delay → context-aware redirect (staff `/login`, client `/client-login` on admin subdomain or `/login` on public site).
+- **Network failure** (no response) — toast (`'Network error — check your connection.'`).
+- **Stripe Elements card errors** — handled natively by the Stripe Element. Surrounding API failures (load invoice, create payment intent) use `<FormBanner>`.
+- **Enumeration-sensitive endpoints** (forgot-password, client-login passwordless request) — always return success on the public response; `<FormBanner>` surfaces only hard errors (rate limit, server error).
+
 ## API Routes
 
 ### Authentication — `/api/auth`

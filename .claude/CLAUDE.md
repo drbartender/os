@@ -13,6 +13,7 @@
 - **Rich Text Editor**: TipTap (ProseMirror-based WYSIWYG) for blog admin
 - **HTML Sanitization**: DOMPurify + jsdom (server-side, for blog post bodies)
 - **Styling**: Vanilla CSS (no Tailwind, no preprocessors)
+- **Error Tracking**: `@sentry/node` (server error tracking), `@sentry/react` (client error tracking)
 - **Dev tools**: nodemon, concurrently, ESLint + eslint-plugin-security, husky + lint-staged
 
 ## Folder Structure
@@ -27,6 +28,7 @@ dr-bartender/
 │   │   ├── seed.js           # Admin account seeder
 │   │   └── seedTestData.js   # Test data seeder (staff, clients, proposals)
 │   ├── middleware/
+│   │   ├── asyncHandler.js  # 3-line wrapper that funnels async-handler rejections to the global error middleware
 │   │   └── auth.js           # JWT verification, role guards
 │   ├── routes/
 │   │   ├── admin.js           # Admin management endpoints
@@ -60,6 +62,7 @@ dr-bartender/
 │   │   ├── email.js           # Resend wrapper (send + batch)
 │   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
 │   │   ├── emailTemplates.js  # Email template helpers (transactional + marketing)
+│   │   ├── errors.js   # AppError class hierarchy (ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError)
 │   │   ├── eventCreation.js   # Event creation helpers
 │   │   ├── eventTypes.js      # Event type id→label resolver (mirrors client)
 │   │   ├── fileValidation.js  # Magic-byte validation
@@ -77,7 +80,8 @@ dr-bartender/
 │   │   ├── App.js            # All routes + auth guards
 │   │   ├── context/
 │   │   │   ├── AuthContext.js      # Staff/admin auth state
-│   │   │   └── ClientAuthContext.js # Client auth state
+│   │   │   ├── ClientAuthContext.js # Client auth state
+│   │   │   └── ToastContext.js     # ToastProvider + useToast() hook
 │   │   ├── utils/
 │   │   │   ├── api.js             # Axios instance with JWT interceptor
 │   │   │   ├── constants.js       # App-wide constants
@@ -90,14 +94,18 @@ dr-bartender/
 │   │   │   ├── ConfirmModal.js    # Confirmation dialog component
 │   │   │   ├── DrinkPlanSelections.js # Drink plan selection display
 │   │   │   ├── ErrorBoundary.js   # React error boundary
+│   │   │   ├── FieldError.js  # Inline red text under an input
 │   │   │   ├── FileUpload.js      # Drag-and-drop file upload
+│   │   │   ├── FormBanner.js  # Error banner above submit button (auto-scrolls into view)
 │   │   │   ├── Layout.js          # Staff-facing layout wrapper
 │   │   │   ├── LocationInput.js   # Nominatim address autocomplete
 │   │   │   ├── PricingBreakdown.js # Proposal pricing display
 │   │   │   ├── PublicLayout.js    # Public-facing layout wrapper
 │   │   │   ├── RichTextEditor.js  # TipTap WYSIWYG editor (blog + email marketing)
 │   │   │   ├── InvoiceDropdown.js # Invoice list dropdown (admin + client)
+│   │   │   ├── SessionExpiryHandler.js  # Listens for session-expired event, shows toast, redirects
 │   │   │   ├── SignaturePad.js    # E-signature canvas
+│   │   │   ├── Toast.js  # Toast container (top-right, dismissible, auto-fade)
 │   │   │   ├── W9Form.js         # W-9 tax form component
 │   │   │   ├── LeadImportModal.js # CSV lead import modal
 │   │   │   ├── AudienceSelector.js # Campaign audience filter/selector
@@ -206,6 +214,8 @@ See `.env.example` for the full list. Key ones:
 | `STRIPE_DEPOSIT_AMOUNT` | Deposit in cents (default 10000 = $100) |
 | `THUMBTACK_WEBHOOK_SECRET` | Shared secret for Thumbtack webhook auth |
 | `REACT_APP_API_URL` | Client-side API base URL (set in client/.env.production) |
+| `SENTRY_DSN_SERVER` | Server-side Sentry DSN (optional in dev; required in prod) |
+| `REACT_APP_SENTRY_DSN_CLIENT` | Client-side Sentry DSN (optional in dev; required in prod) |
 
 ## Running Locally
 
