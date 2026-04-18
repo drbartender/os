@@ -1,6 +1,8 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const { pool } = require('../db');
+const asyncHandler = require('../middleware/asyncHandler');
+const { ExternalServiceError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -38,15 +40,17 @@ function truncateText(text, max = 400) {
   return s.length > max ? `${s.slice(0, max).trimEnd()}…` : s;
 }
 
-router.get('/', async (req, res) => {
+router.get('/', asyncHandler(async (req, res) => {
   const rawLimit = parseInt(req.query.limit, 10);
   const limit = Math.min(Math.max(Number.isNaN(rawLimit) ? 9 : rawLimit, 1), 20);
 
   const cached = getCached(limit);
   if (cached) return res.json(cached);
 
+  let reviewsResult;
+  let aggregateResult;
   try {
-    const [reviewsResult, aggregateResult] = await Promise.all([
+    [reviewsResult, aggregateResult] = await Promise.all([
       pool.query(
         `SELECT id, rating, review_text, reviewer_name, created_at
          FROM thumbtack_reviews
@@ -61,25 +65,27 @@ router.get('/', async (req, res) => {
          WHERE rating IS NOT NULL`
       ),
     ]);
-
-    const reviews = reviewsResult.rows.map((row) => ({
-      id: row.id,
-      rating: Number(row.rating),
-      text: truncateText(row.review_text),
-      reviewerName: shortenReviewer(row.reviewer_name),
-      createdAt: row.created_at,
-    }));
-
-    const { count, avg_rating } = aggregateResult.rows[0] || { count: 0, avg_rating: null };
-    const averageRating = avg_rating === null ? null : Math.round(avg_rating * 10) / 10;
-
-    const body = { count, averageRating, reviews };
-    setCached(limit, body);
-    res.json(body);
   } catch (err) {
-    console.error('Public reviews query failed:', err);
-    res.status(500).json({ count: 0, averageRating: null, reviews: [] });
+    // Reviews are sourced via Thumbtack ingestion — surface as an external
+    // service failure so the homepage can fall back gracefully without leaking
+    // internals.
+    throw new ExternalServiceError('Thumbtack', err, 'Reviews temporarily unavailable');
   }
-});
+
+  const reviews = reviewsResult.rows.map((row) => ({
+    id: row.id,
+    rating: Number(row.rating),
+    text: truncateText(row.review_text),
+    reviewerName: shortenReviewer(row.reviewer_name),
+    createdAt: row.created_at,
+  }));
+
+  const { count, avg_rating } = aggregateResult.rows[0] || { count: 0, avg_rating: null };
+  const averageRating = avg_rating === null ? null : Math.round(avg_rating * 10) / 10;
+
+  const body = { count, averageRating, reviews };
+  setCached(limit, body);
+  res.json(body);
+}));
 
 module.exports = router;
