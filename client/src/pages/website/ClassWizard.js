@@ -43,7 +43,6 @@ export default function ClassWizard() {
     event_duration_hours: 2,
     event_date: '',
     event_start_time: '18:00',
-    event_name: '',
     event_location: '',
     supply_addon_id: '',     // selected supply add-on (or '' for BYOB)
     addon_ids: [],           // equipment add-ons
@@ -189,7 +188,9 @@ export default function ClassWizard() {
           client_name: form.client_name.trim(),
           client_email: form.client_email.trim(),
           client_phone: form.client_phone || null,
-          event_name: form.event_name || null,
+          event_type: 'cocktail-class',
+          event_type_category: 'class',
+          event_type_custom: null,
           event_date: form.event_date || null,
           event_start_time: form.event_start_time || null,
           event_duration_hours: Number(form.event_duration_hours) || 2,
@@ -461,11 +462,6 @@ export default function ClassWizard() {
                     <label className="form-label">Phone</label>
                     <input className="form-input" type="tel" value={form.client_phone}
                       onChange={e => update('client_phone', e.target.value)} placeholder="(312) 555-1234" />
-                  </div>
-                  <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                    <label className="form-label">Event Name</label>
-                    <input className="form-input" value={form.event_name}
-                      onChange={e => update('event_name', e.target.value)} placeholder="Sarah's Birthday Class" />
                   </div>
                 </div>
               </div>
