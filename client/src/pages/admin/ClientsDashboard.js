@@ -3,11 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { formatPhone, formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import useFormValidation from '../../hooks/useFormValidation';
+import { useToast } from '../../context/ToastContext';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
 
 const SOURCE_LABELS = { direct: 'Direct', thumbtack: 'Thumbtack', referral: 'Referral', website: 'Website' };
 
 export default function ClientsDashboard() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -15,6 +19,7 @@ export default function ClientsDashboard() {
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', phone: '', source: 'direct' });
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
   const fetchClients = useCallback(async () => {
@@ -24,25 +29,38 @@ export default function ClientsDashboard() {
       const res = await api.get('/clients', { params });
       setClients(res.data);
     } catch (err) {
-      console.error('Failed to fetch clients:', err);
+      toast.error('Failed to load clients. Try refreshing.');
     } finally { setLoading(false); }
-  }, [search]);
+  }, [search, toast]);
 
   useEffect(() => { fetchClients(); }, [fetchClients]);
 
+  const clearServerFieldError = (name) => {
+    if (fieldErrors[name]) {
+      setFieldErrors(fe => {
+        const next = { ...fe };
+        delete next[name];
+        return next;
+      });
+    }
+  };
+
   const handleCreate = async (e) => {
     e.preventDefault();
+    setError('');
+    setFieldErrors({});
     const result = validate([{ field: 'name', label: 'Name' }], form);
     if (!result.valid) { setError(result.message); return; }
-    setError('');
     setCreating(true);
     try {
       const res = await api.post('/clients', form);
       setClients(prev => [res.data, ...prev]);
       setForm({ name: '', email: '', phone: '', source: 'direct' });
       setShowCreate(false);
+      toast.success('Client added.');
     } catch (err) {
-      console.error('Failed to create client:', err);
+      setError(err.message || 'Failed to add client. Please try again.');
+      setFieldErrors(err.fieldErrors || {});
     } finally { setCreating(false); }
   };
 
@@ -66,28 +84,54 @@ export default function ClientsDashboard() {
       {showCreate && (
         <div className="card mb-2">
           <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Add New Client</h3>
-          {error && <div className="alert alert-error mb-1">{error}</div>}
           <form onSubmit={handleCreate}>
             <div className="two-col" style={{ gap: '1rem' }}>
               <div className={"form-group" + fieldClass('name')}>
                 <label className="form-label">Name *</label>
-                <input className={"form-input" + inputClass('name')} value={form.name} onChange={e => { setForm(f => ({ ...f, name: e.target.value })); clearField('name'); }} />
+                <input
+                  className={"form-input" + inputClass('name')}
+                  value={form.name}
+                  onChange={e => { setForm(f => ({ ...f, name: e.target.value })); clearField('name'); clearServerFieldError('name'); }}
+                  aria-invalid={!!fieldErrors?.name}
+                />
+                <FieldError error={fieldErrors?.name} />
               </div>
               <div className="form-group">
                 <label className="form-label">Email</label>
-                <input className="form-input" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+                <input
+                  className="form-input"
+                  type="email"
+                  value={form.email}
+                  onChange={e => { setForm(f => ({ ...f, email: e.target.value })); clearServerFieldError('email'); }}
+                  aria-invalid={!!fieldErrors?.email}
+                />
+                <FieldError error={fieldErrors?.email} />
               </div>
               <div className="form-group">
                 <label className="form-label">Phone</label>
-                <input className="form-input" type="tel" value={formatPhoneInput(form.phone)} onChange={e => setForm(f => ({ ...f, phone: stripPhone(e.target.value) }))} />
+                <input
+                  className="form-input"
+                  type="tel"
+                  value={formatPhoneInput(form.phone)}
+                  onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearServerFieldError('phone'); }}
+                  aria-invalid={!!fieldErrors?.phone}
+                />
+                <FieldError error={fieldErrors?.phone} />
               </div>
               <div className="form-group">
                 <label className="form-label">Source</label>
-                <select className="form-select" value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))}>
+                <select
+                  className="form-select"
+                  value={form.source}
+                  onChange={e => { setForm(f => ({ ...f, source: e.target.value })); clearServerFieldError('source'); }}
+                  aria-invalid={!!fieldErrors?.source}
+                >
                   {Object.entries(SOURCE_LABELS).map(([val, label]) => <option key={val} value={val}>{label}</option>)}
                 </select>
+                <FieldError error={fieldErrors?.source} />
               </div>
             </div>
+            <FormBanner error={error} fieldErrors={fieldErrors} />
             <button className="btn mt-1" type="submit" disabled={creating}>
               {creating ? 'Adding...' : 'Add Client'}
             </button>

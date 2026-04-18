@@ -3,6 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { formatPhone, formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { useToast } from '../../context/ToastContext';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
@@ -17,28 +20,58 @@ const SOURCE_LABELS = { direct: 'Direct', thumbtack: 'Thumbtack', referral: 'Ref
 export default function ClientDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
   const [client, setClient] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
 
   useEffect(() => {
     api.get(`/clients/${id}`)
       .then(res => { setClient(res.data); setForm({ name: res.data.name, email: res.data.email || '', phone: res.data.phone || '', source: res.data.source || 'direct', notes: res.data.notes || '' }); })
-      .catch(() => navigate('/admin/clients'))
+      .catch(() => {
+        toast.error('Failed to load client. Try refreshing.');
+        navigate('/admin/clients');
+      })
       .finally(() => setLoading(false));
-  }, [id, navigate]);
+  }, [id, navigate, toast]);
+
+  const clearServerFieldError = (name) => {
+    if (fieldErrors[name]) {
+      setFieldErrors(fe => {
+        const next = { ...fe };
+        delete next[name];
+        return next;
+      });
+    }
+  };
 
   const handleSave = async () => {
+    setError('');
+    setFieldErrors({});
     setSaving(true);
     try {
       const res = await api.put(`/clients/${id}`, form);
       setClient(prev => ({ ...prev, ...res.data }));
       setEditing(false);
+      toast.success('Client saved.');
     } catch (err) {
-      console.error('Failed to update client:', err);
+      setError(err.message || 'Failed to save client. Please try again.');
+      setFieldErrors(err.fieldErrors || {});
     } finally { setSaving(false); }
+  };
+
+  const handleCancelEdit = () => {
+    setError('');
+    setFieldErrors({});
+    setEditing(false);
+    // Reset form to last-saved client values so a re-open doesn't keep stale edits
+    if (client) {
+      setForm({ name: client.name, email: client.email || '', phone: client.phone || '', source: client.source || 'direct', notes: client.notes || '' });
+    }
   };
 
   const formatDate = (d) => {
@@ -69,7 +102,7 @@ export default function ClientDetail() {
         <div className="card">
           <div className="flex-between" style={{ marginBottom: '1rem' }}>
             <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>Client Info</h3>
-            <button className="btn btn-sm btn-secondary" onClick={() => setEditing(!editing)}>
+            <button className="btn btn-sm btn-secondary" onClick={() => editing ? handleCancelEdit() : setEditing(true)}>
               {editing ? 'Cancel' : 'Edit'}
             </button>
           </div>
@@ -77,26 +110,53 @@ export default function ClientDetail() {
             <div style={{ display: 'grid', gap: '0.75rem' }}>
               <div className="form-group">
                 <label className="form-label">Name</label>
-                <input className="form-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+                <input
+                  className="form-input"
+                  value={form.name}
+                  onChange={e => { setForm(f => ({ ...f, name: e.target.value })); clearServerFieldError('name'); }}
+                  aria-invalid={!!fieldErrors?.name}
+                />
+                <FieldError error={fieldErrors?.name} />
               </div>
               <div className="form-group">
                 <label className="form-label">Email</label>
-                <input className="form-input" type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+                <input
+                  className="form-input"
+                  type="email"
+                  value={form.email}
+                  onChange={e => { setForm(f => ({ ...f, email: e.target.value })); clearServerFieldError('email'); }}
+                  aria-invalid={!!fieldErrors?.email}
+                />
+                <FieldError error={fieldErrors?.email} />
               </div>
               <div className="form-group">
                 <label className="form-label">Phone</label>
-                <input className="form-input" type="tel" value={formatPhoneInput(form.phone)} onChange={e => setForm(f => ({ ...f, phone: stripPhone(e.target.value) }))} />
+                <input
+                  className="form-input"
+                  type="tel"
+                  value={formatPhoneInput(form.phone)}
+                  onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearServerFieldError('phone'); }}
+                  aria-invalid={!!fieldErrors?.phone}
+                />
+                <FieldError error={fieldErrors?.phone} />
               </div>
               <div className="form-group">
                 <label className="form-label">Source</label>
-                <select className="form-select" value={form.source} onChange={e => setForm(f => ({ ...f, source: e.target.value }))}>
+                <select
+                  className="form-select"
+                  value={form.source}
+                  onChange={e => { setForm(f => ({ ...f, source: e.target.value })); clearServerFieldError('source'); }}
+                  aria-invalid={!!fieldErrors?.source}
+                >
                   {Object.entries(SOURCE_LABELS).map(([val, label]) => <option key={val} value={val}>{label}</option>)}
                 </select>
+                <FieldError error={fieldErrors?.source} />
               </div>
               <div className="form-group">
                 <label className="form-label">Notes</label>
                 <textarea className="form-input" rows={3} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
               </div>
+              <FormBanner error={error} fieldErrors={fieldErrors} />
               <button className="btn btn-sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
             </div>
           ) : (
