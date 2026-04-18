@@ -1,5 +1,14 @@
 import React from 'react';
-import * as Sentry from '@sentry/react';
+
+// Module-scoped lazy ref to the Sentry SDK. Kept in sync with the lazy init
+// in index.js so the class component below can call captureException without
+// a static import pulling the SDK into the main bundle. Errors during the
+// brief init window simply aren't reported — acceptable because this only
+// fires on unhandled render errors, which are rare.
+let sentryRef = null;
+if (process.env.REACT_APP_SENTRY_DSN_CLIENT) {
+  import('@sentry/react').then((m) => { sentryRef = m; });
+}
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -13,8 +22,8 @@ class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) {
     console.error('ErrorBoundary caught:', error, errorInfo);
-    if (process.env.REACT_APP_SENTRY_DSN_CLIENT) {
-      Sentry.captureException(error, { extra: errorInfo });
+    if (sentryRef) {
+      sentryRef.captureException(error, { extra: errorInfo });
     }
   }
 
