@@ -11,10 +11,11 @@ router.use(clientAuth);
 router.get('/proposals', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT id, token, event_type, event_type_custom, event_date, status, total_price, amount_paid, created_at
-      FROM proposals
-      WHERE client_id = $1
-      ORDER BY created_at DESC
+      SELECT p.id, p.token, p.event_type, p.event_type_custom, p.event_date, p.status, p.total_price, p.amount_paid, p.created_at, c.name AS client_name
+      FROM proposals p
+      LEFT JOIN clients c ON c.id = p.client_id
+      WHERE p.client_id = $1
+      ORDER BY p.created_at DESC
     `, [req.user.id]);
 
     res.json({ proposals: result.rows });

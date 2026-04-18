@@ -348,7 +348,7 @@ export default function ProposalView() {
             {proposal.event_type && (
               <div style={{ ...styles.detailItem, gridColumn: '1 / -1' }}>
                 <span style={styles.detailLabel}>Event Type</span>
-                <span style={styles.detailValue}>{proposal.event_type_custom || proposal.event_type}</span>
+                <span style={styles.detailValue}>{getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom })}</span>
               </div>
             )}
             {proposal.event_date && (
