@@ -1,4 +1,5 @@
 import React from 'react';
+import { getEventTypeLabel } from '../../../utils/eventTypes';
 
 export default function WelcomeStep({ plan, phase = 'refinement' }) {
   const isExploration = phase === 'exploration';
@@ -22,12 +23,11 @@ export default function WelcomeStep({ plan, phase = 'refinement' }) {
               Hello, {plan.client_name}!
             </p>
           )}
-          {plan?.event_name && (
-            <p style={{ marginBottom: '1rem', fontFamily: 'var(--font-display)' }}>
-              Event: {plan.event_name}
-              {plan.event_date && <> &mdash; {new Date(plan.event_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</>}
-            </p>
-          )}
+          <div className="event-subtitle">
+            {plan?.client_name
+              ? `${plan.client_name}'s ${getEventTypeLabel({ event_type: plan.event_type, event_type_custom: plan.event_type_custom })}`
+              : `Your ${getEventTypeLabel({ event_type: plan.event_type, event_type_custom: plan.event_type_custom })}`}
+          </div>
           {isExploration ? (
             <>
               <p>

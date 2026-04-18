@@ -4,6 +4,7 @@ import PublicLayout, { clientLoginPath } from '../../components/PublicLayout';
 import { useClientAuth } from '../../context/ClientAuthContext';
 import api from '../../utils/api';
 import InvoiceDropdown from '../../components/InvoiceDropdown';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const STATUS_LABELS = {
   draft: 'Draft',
@@ -108,7 +109,11 @@ export default function ClientDashboard() {
             {proposals.map(p => (
               <div key={p.id} className="card client-proposal-card">
                 <div className="client-proposal-card-header">
-                  <h3>{p.event_name || 'Untitled Event'}</h3>
+                  <h3>{p.client_name || 'Event'}</h3>
+                  <div style={{ fontSize: '0.9rem', color: 'var(--text-muted, #888)' }}>
+                    {getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}
+                    {p.event_date && ` · ${new Date(p.event_date.slice(0, 10) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`}
+                  </div>
                   <span className={`badge ${STATUS_CLASSES[p.status] || 'badge-inprogress'}`}>
                     {STATUS_LABELS[p.status] || p.status}
                   </span>

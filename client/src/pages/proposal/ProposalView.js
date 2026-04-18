@@ -7,6 +7,7 @@ import SignaturePad from '../../components/SignaturePad';
 import { API_BASE_URL as BASE_URL } from '../../utils/api';
 import { COMPANY_PHONE } from '../../utils/constants';
 import { getPackageBySlug } from '../../data/packages';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const DEPOSIT_CENTS = parseInt(process.env.REACT_APP_DEPOSIT_AMOUNT) || 10000;
 const DEPOSIT_DOLLARS = DEPOSIT_CENTS / 100;
@@ -342,7 +343,7 @@ export default function ProposalView() {
 
         {/* Event Details */}
         <div style={styles.section}>
-          <h2 style={styles.sectionTitle}>{proposal.event_name || 'Your Event'}</h2>
+          <h2 style={styles.sectionTitle}>Your {getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom })} proposal</h2>
           <div style={styles.detailGrid}>
             {proposal.event_type && (
               <div style={{ ...styles.detailItem, gridColumn: '1 / -1' }}>

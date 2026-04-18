@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import api from '../../utils/api';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 function formatCurrency(cents) {
   if (cents == null) return '$0.00';
@@ -162,7 +163,7 @@ export default function InvoicePage() {
 
         <div className="invoice-event-block">
           <p className="text-muted text-small">Event</p>
-          <p style={{ fontWeight: 600 }}>{invoice.event_name || 'Event'}</p>
+          <p style={{ fontWeight: 600 }}>{getEventTypeLabel({ event_type: invoice.event_type, event_type_custom: invoice.event_type_custom })}</p>
           <p className="text-small">{formatDate(invoice.event_date)}{invoice.event_location ? ` · ${invoice.event_location}` : ''}{invoice.guest_count ? ` · ${invoice.guest_count} guests` : ''}</p>
         </div>
 
