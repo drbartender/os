@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import PublicLayout from '../../components/PublicLayout';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
+import { useToast } from '../../context/ToastContext';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
@@ -27,12 +30,14 @@ const TOOL_KIT_SLUGS = ['class-tool-kit-purchase', 'class-tool-kit-rental'];
 
 export default function ClassWizard() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [step, setStep] = useState(0);
   const [packages, setPackages] = useState([]);
   const [addons, setAddons] = useState([]);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [success, setSuccess] = useState(null);
   const [topShelf, setTopShelf] = useState(false);
 
@@ -59,9 +64,10 @@ export default function ClassWizard() {
       if (Array.isArray(pkgs)) setPackages(pkgs.filter(p => p.bar_type === 'class'));
       if (Array.isArray(adds)) setAddons(adds.filter(a => a.applies_to === 'class'));
     }).catch(err => {
-      setError('Failed to load classes. Please refresh the page.');
       console.error('Failed to load class data:', err);
+      toast.error('Failed to load classes. Try refreshing the page.');
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const selectedPkg = packages.find(p => p.id === Number(form.package_id));
@@ -166,11 +172,16 @@ export default function ClassWizard() {
   };
 
   const handleSubmit = async () => {
-    if (!form.client_name.trim() || !form.client_email.trim()) {
-      setError('Name and email are required.');
+    setError('');
+    setFieldErrors({});
+    const fe = {};
+    if (!form.client_name.trim()) fe.client_name = 'Name is required.';
+    if (!form.client_email.trim()) fe.client_email = 'Email is required.';
+    if (Object.keys(fe).length > 0) {
+      setFieldErrors(fe);
+      setError('Please fix the errors below.');
       return;
     }
-    setError('');
     setSubmitting(true);
     try {
       const classOptions = {};
@@ -203,10 +214,16 @@ export default function ClassWizard() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to submit quote.');
+      if (!res.ok) {
+        const err = new Error(data.error || 'Failed to submit quote.');
+        err.fieldErrors = data.fieldErrors;
+        throw err;
+      }
+      toast.success('Class request submitted!');
       setSuccess(data);
     } catch (err) {
       setError(err.message || 'Something went wrong. Please try again.');
+      setFieldErrors(err.fieldErrors || {});
     } finally {
       setSubmitting(false);
     }
@@ -451,12 +468,18 @@ export default function ClassWizard() {
                   <div className="form-group" style={{ gridColumn: '1 / -1' }}>
                     <label className="form-label">Your Name *</label>
                     <input className="form-input" value={form.client_name}
-                      onChange={e => update('client_name', e.target.value)} placeholder="Jane Smith" />
+                      onChange={e => { update('client_name', e.target.value); if (fieldErrors.client_name) setFieldErrors(fe => ({ ...fe, client_name: undefined })); }}
+                      placeholder="Jane Smith"
+                      aria-invalid={!!fieldErrors?.client_name} />
+                    <FieldError error={fieldErrors?.client_name} />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Email *</label>
                     <input className="form-input" type="email" value={form.client_email}
-                      onChange={e => update('client_email', e.target.value)} placeholder="jane@example.com" />
+                      onChange={e => { update('client_email', e.target.value); if (fieldErrors.client_email) setFieldErrors(fe => ({ ...fe, client_email: undefined })); }}
+                      placeholder="jane@example.com"
+                      aria-invalid={!!fieldErrors?.client_email} />
+                    <FieldError error={fieldErrors?.client_email} />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Phone</label>
@@ -499,7 +522,7 @@ export default function ClassWizard() {
           </div>
         </div>
 
-        {error && <div className="wz-error">{error}</div>}
+        <FormBanner error={error} fieldErrors={fieldErrors} />
 
         {/* Navigation */}
         <div className="wz-nav">

@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import SyrupPicker from '../../components/SyrupPicker';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
+import { useToast } from '../../context/ToastContext';
 import { getPackageBySlug } from '../../data/packages';
 import { ADDON_CATEGORIES, ADDON_ICONS } from '../../data/addonCategories';
 import useFormValidation from '../../hooks/useFormValidation';
@@ -57,6 +60,7 @@ function getSteps(alcoholProvider) {
 
 export default function QuoteWizard() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [searchParams] = useSearchParams();
   const [step, setStep] = useState(0);
   const [packages, setPackages] = useState([]);
@@ -65,6 +69,7 @@ export default function QuoteWizard() {
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [success, setSuccess] = useState(null);
   const [resumed, setResumed] = useState(false); // true when state was restored
   const [hasDraftToken, setHasDraftToken] = useState(false); // triggers auto-save interval
@@ -592,6 +597,7 @@ export default function QuoteWizard() {
     const result = validate(getStepRules(), form);
     if (result.valid) {
       setError('');
+      setFieldErrors({});
       clearAll();
       setResumed(false);
       const nextStep = step + 1;
@@ -638,6 +644,7 @@ export default function QuoteWizard() {
       return;
     }
     setError('');
+    setFieldErrors({});
     clearAll();
     setSubmitting(true);
     try {
@@ -665,12 +672,18 @@ export default function QuoteWizard() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to submit quote.');
+      if (!res.ok) {
+        const err = new Error(data.error || 'Failed to submit quote.');
+        err.fieldErrors = data.fieldErrors;
+        throw err;
+      }
       localStorage.removeItem(DRAFT_KEY);
       draftTokenRef.current = null;
+      toast.success('Quote submitted!');
       setSuccess(data);
     } catch (err) {
       setError(err.message || 'Something went wrong. Please try again.');
+      setFieldErrors(err.fieldErrors || {});
     } finally {
       setSubmitting(false);
     }
@@ -757,19 +770,25 @@ export default function QuoteWizard() {
                 <div className={`form-group${fieldClass('guest_count')}`}>
                   <label htmlFor="wz-guest_count" className="form-label">Guest Count *</label>
                   <input id="wz-guest_count" className={`form-input${inputClass('guest_count')}`} type="number" min={form.alcohol_provider === 'hosted' ? 25 : 1} max="1000"
-                    value={form.guest_count} onChange={e => update('guest_count', e.target.value)} />
+                    value={form.guest_count} onChange={e => update('guest_count', e.target.value)}
+                    aria-invalid={!!fieldErrors?.guest_count} />
+                  <FieldError error={fieldErrors?.guest_count} />
                   {form.alcohol_provider === 'hosted' && <span className="form-hint">Minimum 25 guests for hosted packages</span>}
                 </div>
                 <div className={`form-group${fieldClass('event_duration_hours')}`}>
                   <label htmlFor="wz-event_duration_hours" className="form-label">Duration (hours) *</label>
                   <input id="wz-event_duration_hours" className={`form-input${inputClass('event_duration_hours')}`} type="number" min="1" max="12" step="0.5"
-                    value={form.event_duration_hours} onChange={e => update('event_duration_hours', e.target.value)} />
+                    value={form.event_duration_hours} onChange={e => update('event_duration_hours', e.target.value)}
+                    aria-invalid={!!fieldErrors?.event_duration_hours} />
+                  <FieldError error={fieldErrors?.event_duration_hours} />
                 </div>
                 <div className={`form-group${fieldClass('event_date')}`}>
                   <label htmlFor="wz-event_date" className="form-label">Event Date *</label>
                   <input id="wz-event_date" className={`form-input${inputClass('event_date')}`} type="date" value={form.event_date}
                     min={new Date().toISOString().split('T')[0]}
-                    onChange={e => update('event_date', e.target.value)} />
+                    onChange={e => update('event_date', e.target.value)}
+                    aria-invalid={!!fieldErrors?.event_date} />
+                  <FieldError error={fieldErrors?.event_date} />
                 </div>
                 <div className="form-group">
                   <label htmlFor="wz-event_start_time" className="form-label">Start Time</label>
@@ -782,12 +801,15 @@ export default function QuoteWizard() {
                 <div className={`form-group${fieldClass('event_city')}`}>
                   <label htmlFor="wz-event_city" className="form-label">City *</label>
                   <input id="wz-event_city" className={`form-input${inputClass('event_city')}`} value={form.event_city}
-                    onChange={e => update('event_city', e.target.value)} placeholder="e.g. Chicago" />
+                    onChange={e => update('event_city', e.target.value)} placeholder="e.g. Chicago"
+                    aria-invalid={!!fieldErrors?.event_city} />
+                  <FieldError error={fieldErrors?.event_city} />
                 </div>
                 <div className={`form-group${fieldClass('event_state')}`}>
                   <label htmlFor="wz-event_state" className="form-label">State *</label>
                   <select id="wz-event_state" className={`form-select${inputClass('event_state')}`} value={form.event_state}
-                    onChange={e => update('event_state', e.target.value)}>
+                    onChange={e => update('event_state', e.target.value)}
+                    aria-invalid={!!fieldErrors?.event_state}>
                     <option value="">-- Select --</option>
                     <option value="Illinois">Illinois</option>
                     <option value="Indiana">Indiana</option>
@@ -795,18 +817,21 @@ export default function QuoteWizard() {
                     <option value="Minnesota">Minnesota</option>
                     <option value="Wisconsin">Wisconsin</option>
                   </select>
+                  <FieldError error={fieldErrors?.event_state} />
                 </div>
 
                 {/* Alcohol provider */}
                 <div className={`form-group${fieldClass('alcohol_provider')}`}>
                   <label htmlFor="wz-alcohol_provider" className="form-label">Who provides the alcohol? *</label>
                   <select id="wz-alcohol_provider" className={`form-select${inputClass('alcohol_provider')}`} value={form.alcohol_provider}
-                    onChange={e => handleAlcoholChange(e.target.value)}>
+                    onChange={e => handleAlcoholChange(e.target.value)}
+                    aria-invalid={!!fieldErrors?.alcohol_provider}>
                     <option value="">-- Select --</option>
                     <option value="mocktail">No alcohol (mocktails only)</option>
                     <option value="byob">I'll provide the alcohol</option>
                     <option value="hosted">Dr. Bartender provides the alcohol</option>
                   </select>
+                  <FieldError error={fieldErrors?.alcohol_provider} />
                 </div>
 
                 <div className="form-group">
@@ -839,7 +864,9 @@ export default function QuoteWizard() {
                     onKeyDown={handleEventTypeKeyDown}
                     placeholder="Start typing... e.g. Wedding, Birthday, Corporate"
                     autoComplete="off"
+                    aria-invalid={!!fieldErrors?.event_type}
                   />
+                  <FieldError error={fieldErrors?.event_type || fieldErrors?.event_type_custom} />
                   {eventTypeOpen && eventTypeFiltered.length > 0 && (
                     <ul className="wz-event-type-dropdown">
                       {eventTypeFiltered.map((et, i) => (
@@ -1174,12 +1201,16 @@ export default function QuoteWizard() {
                 <div className={`form-group${fieldClass('client_name')}`} style={{ gridColumn: '1 / -1' }}>
                   <label htmlFor="wz-client_name" className="form-label">Your Name *</label>
                   <input id="wz-client_name" className={`form-input${inputClass('client_name')}`} value={form.client_name}
-                    onChange={e => update('client_name', e.target.value)} placeholder="Jane Smith" />
+                    onChange={e => update('client_name', e.target.value)} placeholder="Jane Smith"
+                    aria-invalid={!!fieldErrors?.client_name} />
+                  <FieldError error={fieldErrors?.client_name} />
                 </div>
                 <div className={`form-group${fieldClass('client_email')}`}>
                   <label htmlFor="wz-client_email" className="form-label">Email *</label>
                   <input id="wz-client_email" className={`form-input${inputClass('client_email')}`} type="email" value={form.client_email}
-                    onChange={e => update('client_email', e.target.value)} placeholder="jane@example.com" />
+                    onChange={e => update('client_email', e.target.value)} placeholder="jane@example.com"
+                    aria-invalid={!!fieldErrors?.client_email} />
+                  <FieldError error={fieldErrors?.client_email} />
                 </div>
                 <div className="form-group">
                   <label htmlFor="wz-client_phone" className="form-label">Phone</label>
@@ -1220,13 +1251,14 @@ export default function QuoteWizard() {
         </div>
       </div>
 
-      {error && <div className="wz-error">{error}</div>}
+      <FormBanner error={error} fieldErrors={fieldErrors} />
 
       {/* Navigation */}
       <div className="wz-nav">
         {step > 0 && (
           <button className="btn btn-secondary" type="button" onClick={() => {
             setError('');
+            setFieldErrors({});
             clearAll();
             // On the package step with a bar type selected, clear bar type instead of going back
             if (currentStepKey === 'package' && form.bar_type) {

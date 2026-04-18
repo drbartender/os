@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { API_BASE_URL as BASE_URL } from '../../utils/api';
+import FormBanner from '../../components/FormBanner';
+import { useToast } from '../../context/ToastContext';
 import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue, buildExplorationQueue, derivePhase } from './data/servingTypes';
 import WelcomeStep from './steps/WelcomeStep';
 import QuickPickStep from './steps/QuickPickStep';
@@ -70,11 +72,13 @@ const DEFAULT_SELECTIONS = {
 
 export default function PotionPlanningLab() {
   const { token } = useParams();
+  const toast = useToast();
 
   // Plan metadata
   const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [fieldErrors, setFieldErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
 
@@ -324,14 +328,19 @@ export default function PotionPlanningLab() {
   // Save exploration
   const handleExplorationSave = async () => {
     setSaving(true);
+    setError(null);
+    setFieldErrors({});
     try {
       await axios.put(`${BASE_URL}/drink-plans/t/${token}`, {
         selections: { ...selections, activeModules },
         status: 'exploration_saved',
       });
+      toast.success('Your exploration was saved!');
       setStep('explorationSaved');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save. Please try again.');
+      const data = err.response?.data;
+      setError(data?.error || 'Failed to save. Please try again.');
+      setFieldErrors(data?.fieldErrors || {});
     } finally {
       setSaving(false);
     }
@@ -364,11 +373,15 @@ export default function PotionPlanningLab() {
 
   // Submit final (refinement) — submit + show celebration
   const handleSubmit = async () => {
+    setError(null);
+    setFieldErrors({});
     try {
       await submitDrinkPlan();
+      toast.success('Plan submitted! Check your email.');
       setStep('submitted');
     } catch (err) {
       setError(err.message);
+      setFieldErrors(err.fieldErrors || {});
     }
   };
 
@@ -889,6 +902,11 @@ export default function PotionPlanningLab() {
         <div className="potion-step" key={step}>
           {renderStep()}
         </div>
+
+        {/* Surface submit/save errors near the navigation buttons */}
+        {plan && step !== 'submitted' && step !== 'explorationSaved' && (
+          <FormBanner error={error} fieldErrors={fieldErrors} />
+        )}
 
         {(showBack || showNext) && (
           <div className="step-nav">
