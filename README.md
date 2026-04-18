@@ -128,6 +128,7 @@ dr-bartender/
 │   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
 │   │   ├── emailTemplates.js   # Email template helpers (transactional + marketing)
 │   │   ├── eventCreation.js    # Auto-create shifts from paid proposals
+│   │   ├── eventTypes.js       # Event type id→label resolver (mirrors client)
 │   │   ├── fileValidation.js   # Magic-byte file type validation
 │   │   ├── geocode.js          # Nominatim geocoding (address → lat/lng)
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
@@ -147,6 +148,7 @@ dr-bartender/
 │   │   ├── utils/
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── constants.js    # App-wide constants
+│   │   │   ├── eventTypes.js   # Event type id→label resolver (mirrors server)
 │   │   │   └── formatPhone.js  # Phone number formatting
 │   │   ├── components/         # Layout, InvoiceDropdown, SignaturePad, ClickableRow, FileUpload,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, AudienceSelector,
@@ -219,7 +221,7 @@ dr-bartender/
 
 ### Proposal → Event Pipeline
 - When a client signs the contract and pays (deposit or full), a shift is automatically created
-- Shift is populated from proposal data (event name, date, time, duration, location, bartenders needed)
+- Shift is populated from proposal data (event type, date, time, duration, location, bartenders needed)
 - Staff can immediately see and request the shift
 - Admin can also manually trigger shift creation via `POST /api/proposals/:id/create-shift`
 - Once paid, proposals automatically transition out of the Proposals dashboard and into the Events dashboard

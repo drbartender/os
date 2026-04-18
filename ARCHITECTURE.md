@@ -359,7 +359,7 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 
 **drink_plans** — Client event questionnaire (auto-created when proposal becomes an event)
 - `token` UUID (public access)
-- `client_name`, `client_email`, `event_name`, `event_date`
+- `client_name`, `client_email`, `event_type`, `event_type_custom`, `event_date`
 - `proposal_id` — links to the source proposal/event
 - `serving_type`, `selections` (JSONB — chosen cocktails/mocktails, syrupSelections, addOns)
 - `selections.addOns` — object keyed by addon slug with metadata (e.g., champagne-toast servingStyle)
@@ -385,7 +385,7 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 
 **proposals** — Generated service proposals
 - `token` UUID (public access), `client_id` FK → clients
-- Event details: name, date, start time, duration, location, guest count
+- Event details: type, date, start time, duration, location, guest count
 - `package_id` FK → service_packages, `num_bars`, `num_bartenders`
 - `pricing_snapshot` (JSONB — full pricing breakdown at time of creation)
 - `total_price`, `status`: draft | sent | viewed | modified | accepted | deposit_paid | balance_paid | confirmed
@@ -393,6 +393,8 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 - Payment: `payment_type` (deposit | full), `autopay_enrolled`, `deposit_amount`, `amount_paid`, `balance_due_date`
 - Stripe: `stripe_customer_id`, `stripe_payment_method_id` (for autopay off-session charges)
 - Tracking: `view_count`, `last_viewed_at`
+
+Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional `event_type_custom` (for "Other"). No free-text title. Display via `getEventTypeLabel({ event_type, event_type_custom })` helper, mirrored in `client/src/utils/eventTypes.js` and `server/utils/eventTypes.js`. Falls back to the literal string `'event'` when type is unset.
 
 **proposal_addons** — Line items linking proposals to add-ons
 - `proposal_id` FK, `addon_id` FK
@@ -451,7 +453,7 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 ### Staffing
 
 **shifts** — Event shifts
-- `event_name`, `event_date`, `start_time`, `end_time`, `location`
+- `event_type`, `event_type_custom`, `client_name`, `event_date`, `start_time`, `end_time`, `location`
 - `positions_needed` (JSON text array, e.g. `["Bartender","Bartender"]`), `status`, `created_by`
 - `proposal_id` FK (nullable) — links to the proposal that created this shift (auto-created on deposit payment)
 - `lat`, `lng` — Geocoded event coordinates

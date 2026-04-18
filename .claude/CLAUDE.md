@@ -61,6 +61,7 @@ dr-bartender/
 │   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
 │   │   ├── emailTemplates.js  # Email template helpers (transactional + marketing)
 │   │   ├── eventCreation.js   # Event creation helpers
+│   │   ├── eventTypes.js      # Event type id→label resolver (mirrors client)
 │   │   ├── fileValidation.js  # Magic-byte validation
 │   │   ├── geocode.js         # Nominatim geocoding (address → lat/lng)
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
@@ -80,6 +81,7 @@ dr-bartender/
 │   │   ├── utils/
 │   │   │   ├── api.js             # Axios instance with JWT interceptor
 │   │   │   ├── constants.js       # App-wide constants
+│   │   │   ├── eventTypes.js      # Event type id→label resolver (mirrors server)
 │   │   │   └── formatPhone.js     # Phone number formatting
 │   │   ├── components/
 │   │   │   ├── AdminLayout.js     # Admin sidebar + header layout
@@ -229,9 +231,9 @@ Solo developer, trunk-based, vibe-coded. Code preservation is the #1 priority. P
 
 1. **Trunk-only by default.** All work on `main`. Claude confirms branch at session start; if not on `main`, stops and asks — never auto-switches.
 2. **Code preservation beats shipping speed.** When a git op could destroy uncommitted or unpushed work, stop and ask.
-3. **Commits are finished, tested work only.** "Finished" means either (a) user verified it works in the app, or (b) it's a behavior-inert change (copy, CSS, docs) the user approved. No WIP commits, no checkpoint commits.
+3. **Commits are finished, tested work only — and grouped by logical feature, not by step.** "Finished" means either (a) user verified it works in the app, or (b) it's a behavior-inert change (copy, CSS, docs) the user approved. No WIP commits, no checkpoint commits. **Default to one commit per logical feature, not one per file or step.** If a feature touches the AppError class, asyncHandler middleware, and the routes that use them, that's ONE commit, not three. Only split when the pieces are genuinely independent and could be reverted separately.
 4. **Separate cues for commit vs. push.**
-   - **Commit cue:** "looks good", "commit", "next task", or any affirmative after Claude reports what to test → commit without re-approval.
+   - **Commit cue:** "looks good", "commit", "next task", or any affirmative after Claude reports what to test → commit without re-approval. Use plain `git commit -m "single line"` (no heredoc, no co-author footer) unless the user asks otherwise — keeps permission prompts at zero.
    - **Push cue:** explicit only — "push", "deploy", "ship it", "send it". Claude never auto-pushes on commit cues. At natural break points Claude may ask *"ready to push these N commits?"*
 5. **Push = deploy.** Every push to `main` ships to Render + Vercel. Treat with gravity.
 6. **Review agents run automatically before every code-touching push.** Claude launches all 5 non-UI agents in parallel (`consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`). Skip agents only when the push contains exclusively `*.md` or `.gitignore` changes. Clean results → push proceeds silently. Any flag → stop, report findings, wait.
@@ -297,6 +299,7 @@ When modifying any entity, always check and update **all** related entities too.
 - **Phone number / formatting changes** → update every component, route, and display that touches that field.
 - **Schema column changes** → update every route (SELECT, INSERT, UPDATE), every component that reads/writes that field, and every place that displays it.
 - **New feature data shape** → ensure every consumer of that data (backend endpoints, frontend components, PDF templates) is updated in the same PR.
+- **Event identity** — client name and event type are separate, independent data points. Never concatenate them into a single "title" string or prompt for an `event_name`. Display uses `getEventTypeLabel({ event_type, event_type_custom })` with `'event'` as the graceful fallback. Available in `client/src/utils/eventTypes.js` (ESM) and `server/utils/eventTypes.js` (CJS — kept in sync manually).
 
 The rule: **if you change X, search the codebase for everything that depends on X and update it too.**
 
