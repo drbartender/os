@@ -526,169 +526,150 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
 // ─── Package & add-on listing (auth required) ────────────────────
 
 /** GET /api/proposals/packages — list active packages */
-router.get('/packages', auth, requireAdminOrManager, async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT * FROM service_packages WHERE is_active = true ORDER BY sort_order'
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+router.get('/packages', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    'SELECT * FROM service_packages WHERE is_active = true ORDER BY sort_order'
+  );
+  res.json(result.rows);
+}));
 
 /** GET /api/proposals/addons — list active add-ons */
-router.get('/addons', auth, requireAdminOrManager, async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT * FROM service_addons WHERE is_active = true ORDER BY sort_order'
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+router.get('/addons', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    'SELECT * FROM service_addons WHERE is_active = true ORDER BY sort_order'
+  );
+  res.json(result.rows);
+}));
 
 /** POST /api/proposals/calculate — preview pricing without saving */
-router.post('/calculate', auth, requireAdminOrManager, async (req, res) => {
+router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, addon_variants, syrup_selections, adjustments, total_price_override } = req.body;
-  try {
-    const pkgResult = await pool.query('SELECT * FROM service_packages WHERE id = $1', [package_id]);
-    if (!pkgResult.rows[0]) return res.status(400).json({ error: 'Package not found.' });
-
-    let addons = [];
-    if (addon_ids && addon_ids.length > 0) {
-      const addonResult = await pool.query(
-        'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
-        [addon_ids]
-      );
-      addons = addonResult.rows.map(a => ({
-        ...a,
-        variant: addon_variants?.[String(a.id)] || null,
-      }));
-    }
-
-    const snapshot = calculateProposal({
-      pkg: pkgResult.rows[0],
-      guestCount: guest_count || 50,
-      durationHours: duration_hours || 4,
-      numBars: num_bars ?? 1,
-      numBartenders: num_bartenders,
-      addons,
-      syrupSelections: syrup_selections || [],
-      adjustments: adjustments || [],
-      totalPriceOverride: total_price_override ?? null,
-    });
-
-    res.json(snapshot);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+  if (!package_id) {
+    throw new ValidationError({ package_id: 'Package is required' });
   }
-});
+
+  const pkgResult = await pool.query('SELECT * FROM service_packages WHERE id = $1', [package_id]);
+  if (!pkgResult.rows[0]) {
+    throw new ValidationError({ package_id: 'Package not found' });
+  }
+
+  let addons = [];
+  if (addon_ids && addon_ids.length > 0) {
+    const addonResult = await pool.query(
+      'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
+      [addon_ids]
+    );
+    addons = addonResult.rows.map(a => ({
+      ...a,
+      variant: addon_variants?.[String(a.id)] || null,
+    }));
+  }
+
+  const snapshot = calculateProposal({
+    pkg: pkgResult.rows[0],
+    guestCount: guest_count || 50,
+    durationHours: duration_hours || 4,
+    numBars: num_bars ?? 1,
+    numBartenders: num_bartenders,
+    addons,
+    syrupSelections: syrup_selections || [],
+    adjustments: adjustments || [],
+    totalPriceOverride: total_price_override ?? null,
+  });
+
+  res.json(snapshot);
+}));
 
 // ─── Financials ─────────────────────────────────────────────────
 
 /** GET /api/proposals/financials — aggregate financial data */
-router.get('/financials', auth, requireAdminOrManager, async (req, res) => {
-  try {
-    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
-    const offset = (page - 1) * limit;
+router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const offset = (page - 1) * limit;
 
-    const [summaryResult, proposalsResult, paymentsResult] = await Promise.all([
-      pool.query(`
-        SELECT
-          COALESCE(SUM(total_price), 0) AS total_revenue,
-          COALESCE(SUM(amount_paid), 0) AS total_collected,
-          COALESCE(SUM(total_price - COALESCE(amount_paid, 0)), 0) AS total_outstanding
-        FROM proposals
-        WHERE status IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed')
-      `),
-      pool.query(`
-        SELECT p.id, p.event_type, p.event_type_custom, p.event_date, p.total_price, p.amount_paid,
-               p.deposit_amount, p.status, p.created_at,
-               c.name AS client_name, c.email AS client_email,
-               sp.name AS package_name
-        FROM proposals p
-        LEFT JOIN clients c ON c.id = p.client_id
-        LEFT JOIN service_packages sp ON sp.id = p.package_id
-        WHERE p.status NOT IN ('draft')
-        ORDER BY p.event_date DESC NULLS LAST
-        LIMIT $1 OFFSET $2
-      `, [limit, offset]),
-      pool.query(`
-        SELECT pp.id, pp.proposal_id, pp.payment_type, pp.amount, pp.status AS payment_status,
-               pp.created_at, p.event_type, p.event_type_custom, c.name AS client_name,
-               ip.invoice_id, i.token AS invoice_token
-        FROM proposal_payments pp
-        JOIN proposals p ON p.id = pp.proposal_id
-        LEFT JOIN clients c ON c.id = p.client_id
-        LEFT JOIN invoice_payments ip ON ip.payment_id = pp.id
-        LEFT JOIN invoices i ON i.id = ip.invoice_id
-        WHERE pp.status = 'succeeded'
-        ORDER BY pp.created_at DESC
-        LIMIT 20
-      `)
-    ]);
+  const [summaryResult, proposalsResult, paymentsResult] = await Promise.all([
+    pool.query(`
+      SELECT
+        COALESCE(SUM(total_price), 0) AS total_revenue,
+        COALESCE(SUM(amount_paid), 0) AS total_collected,
+        COALESCE(SUM(total_price - COALESCE(amount_paid, 0)), 0) AS total_outstanding
+      FROM proposals
+      WHERE status IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed')
+    `),
+    pool.query(`
+      SELECT p.id, p.event_type, p.event_type_custom, p.event_date, p.total_price, p.amount_paid,
+             p.deposit_amount, p.status, p.created_at,
+             c.name AS client_name, c.email AS client_email,
+             sp.name AS package_name
+      FROM proposals p
+      LEFT JOIN clients c ON c.id = p.client_id
+      LEFT JOIN service_packages sp ON sp.id = p.package_id
+      WHERE p.status NOT IN ('draft')
+      ORDER BY p.event_date DESC NULLS LAST
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]),
+    pool.query(`
+      SELECT pp.id, pp.proposal_id, pp.payment_type, pp.amount, pp.status AS payment_status,
+             pp.created_at, p.event_type, p.event_type_custom, c.name AS client_name,
+             ip.invoice_id, i.token AS invoice_token
+      FROM proposal_payments pp
+      JOIN proposals p ON p.id = pp.proposal_id
+      LEFT JOIN clients c ON c.id = p.client_id
+      LEFT JOIN invoice_payments ip ON ip.payment_id = pp.id
+      LEFT JOIN invoices i ON i.id = ip.invoice_id
+      WHERE pp.status = 'succeeded'
+      ORDER BY pp.created_at DESC
+      LIMIT 20
+    `)
+  ]);
 
-    res.json({
-      summary: summaryResult.rows[0],
-      proposals: proposalsResult.rows,
-      recentPayments: paymentsResult.rows
-    });
-  } catch (err) {
-    console.error('Financials error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+  res.json({
+    summary: summaryResult.rows[0],
+    proposals: proposalsResult.rows,
+    recentPayments: paymentsResult.rows
+  });
+}));
 
 // ─── Admin CRUD ──────────────────────────────────────────────────
 
 /** GET /api/proposals — list all proposals */
-router.get('/', auth, requireAdminOrManager, async (req, res) => {
+router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { status, search, page = 1, limit = 50 } = req.query;
-  try {
-    let query = `
-      SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
-             sp.name AS package_name, sp.slug AS package_slug
-      FROM proposals p
-      LEFT JOIN clients c ON c.id = p.client_id
-      LEFT JOIN service_packages sp ON sp.id = p.package_id
-      WHERE 1=1
-    `;
-    const params = [];
+  let query = `
+    SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
+           sp.name AS package_name, sp.slug AS package_slug
+    FROM proposals p
+    LEFT JOIN clients c ON c.id = p.client_id
+    LEFT JOIN service_packages sp ON sp.id = p.package_id
+    WHERE 1=1
+  `;
+  const params = [];
 
-    if (status) {
-      params.push(status);
-      query += ` AND p.status = $${params.length}`;
-    } else {
-      // By default, exclude paid statuses — those appear in Events instead
-      query += ` AND p.status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')`;
-    }
-    if (search) {
-      params.push(`%${search}%`);
-      query += ` AND (c.name ILIKE $${params.length} OR c.email ILIKE $${params.length})`;
-    }
-
-    query += ' ORDER BY p.created_at DESC';
-    params.push(Number(limit));
-    query += ` LIMIT $${params.length}`;
-    params.push((Number(page) - 1) * Number(limit));
-    query += ` OFFSET $${params.length}`;
-
-    const result = await pool.query(query, params);
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+  if (status) {
+    params.push(status);
+    query += ` AND p.status = $${params.length}`;
+  } else {
+    // By default, exclude paid statuses — those appear in Events instead
+    query += ` AND p.status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')`;
   }
-});
+  if (search) {
+    params.push(`%${search}%`);
+    query += ` AND (c.name ILIKE $${params.length} OR c.email ILIKE $${params.length})`;
+  }
+
+  query += ' ORDER BY p.created_at DESC';
+  params.push(Number(limit));
+  query += ` LIMIT $${params.length}`;
+  params.push((Number(page) - 1) * Number(limit));
+  query += ` OFFSET $${params.length}`;
+
+  const result = await pool.query(query, params);
+  res.json(result.rows);
+}));
 
 /** POST /api/proposals — create a new proposal */
-router.post('/', auth, requireAdminOrManager, async (req, res) => {
+router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const {
     client_id, client_name, client_email, client_phone, client_source,
     event_date, event_start_time, event_duration_hours,
@@ -696,7 +677,12 @@ router.post('/', auth, requireAdminOrManager, async (req, res) => {
     addon_variants, syrup_selections, event_type, event_type_category, event_type_custom
   } = req.body;
 
-  if (!package_id) return res.status(400).json({ error: 'Package is required.' });
+  const fieldErrors = {};
+  if (!package_id) fieldErrors.package_id = 'Package is required';
+  if (!client_id && !client_name) fieldErrors.client_name = 'Client name is required';
+  if (Object.keys(fieldErrors).length > 0) {
+    throw new ValidationError(fieldErrors);
+  }
 
   const dbClient = await pool.connect();
   try {
@@ -715,8 +701,7 @@ router.post('/', auth, requireAdminOrManager, async (req, res) => {
     // Fetch package
     const pkgResult = await dbClient.query('SELECT * FROM service_packages WHERE id = $1', [package_id]);
     if (!pkgResult.rows[0]) {
-      await dbClient.query('ROLLBACK');
-      return res.status(400).json({ error: 'Package not found.' });
+      throw new ValidationError({ package_id: 'Package not found' });
     }
 
     // Fetch add-ons
@@ -780,49 +765,43 @@ router.post('/', auth, requireAdminOrManager, async (req, res) => {
     res.status(201).json(proposal);
   } catch (err) {
     await dbClient.query('ROLLBACK');
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    throw err;
   } finally {
     dbClient.release();
   }
-});
+}));
 
 /** GET /api/proposals/:id — get single proposal */
-router.get('/:id', auth, requireAdminOrManager, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone, c.source AS client_source,
-             sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category, sp.includes AS package_includes,
-             u.email AS created_by_email
-      FROM proposals p
-      LEFT JOIN clients c ON c.id = p.client_id
-      LEFT JOIN service_packages sp ON sp.id = p.package_id
-      LEFT JOIN users u ON u.id = p.created_by
-      WHERE p.id = $1
-    `, [req.params.id]);
+router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const result = await pool.query(`
+    SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone, c.source AS client_source,
+           sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category, sp.includes AS package_includes,
+           u.email AS created_by_email
+    FROM proposals p
+    LEFT JOIN clients c ON c.id = p.client_id
+    LEFT JOIN service_packages sp ON sp.id = p.package_id
+    LEFT JOIN users u ON u.id = p.created_by
+    WHERE p.id = $1
+  `, [req.params.id]);
 
-    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
+  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
 
-    const addons = await pool.query(
-      'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
-      [req.params.id]
-    );
-    // Cap activity log fetch at 100 entries (most recent) — an old proposal can
-    // accumulate hundreds of view/update entries otherwise.
-    const activity = await pool.query(
-      'SELECT * FROM proposal_activity_log WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 100',
-      [req.params.id]
-    );
+  const addons = await pool.query(
+    'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
+    [req.params.id]
+  );
+  // Cap activity log fetch at 100 entries (most recent) — an old proposal can
+  // accumulate hundreds of view/update entries otherwise.
+  const activity = await pool.query(
+    'SELECT * FROM proposal_activity_log WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 100',
+    [req.params.id]
+  );
 
-    res.json({ ...result.rows[0], addons: addons.rows, activity: activity.rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+  res.json({ ...result.rows[0], addons: addons.rows, activity: activity.rows });
+}));
 
 /** PATCH /api/proposals/:id — update event details and recalculate */
-router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
+router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const {
     event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
@@ -836,16 +815,14 @@ router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
 
     const existing = await dbClient.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
     if (!existing.rows[0]) {
-      await dbClient.query('ROLLBACK');
-      return res.status(404).json({ error: 'Proposal not found.' });
+      throw new NotFoundError('Proposal not found');
     }
     const old = existing.rows[0];
 
     const pkgId = package_id || old.package_id;
     const pkgResult = await dbClient.query('SELECT * FROM service_packages WHERE id = $1', [pkgId]);
     if (!pkgResult.rows[0]) {
-      await dbClient.query('ROLLBACK');
-      return res.status(400).json({ error: 'Package not found.' });
+      throw new ValidationError({ package_id: 'Package not found' });
     }
 
     let addons = [];
@@ -931,285 +908,254 @@ router.patch('/:id', auth, requireAdminOrManager, async (req, res) => {
     res.json(updated.rows[0]);
   } catch (err) {
     await dbClient.query('ROLLBACK');
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    throw err;
   } finally {
     dbClient.release();
   }
-});
+}));
 
 /** PATCH /api/proposals/:id/status — update status */
-router.patch('/:id/status', auth, requireAdminOrManager, async (req, res) => {
+router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { status } = req.body;
   const validStatuses = ['draft', 'sent', 'viewed', 'modified', 'accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed'];
   if (!validStatuses.includes(status)) {
-    return res.status(400).json({ error: 'Invalid status.' });
+    throw new ValidationError({ status: 'Invalid status' });
   }
-  try {
-    const result = await pool.query(
-      'UPDATE proposals SET status = $1 WHERE id = $2 RETURNING *',
-      [status, req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
+  const result = await pool.query(
+    'UPDATE proposals SET status = $1 WHERE id = $2 RETURNING *',
+    [status, req.params.id]
+  );
+  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
 
-    await pool.query(
-      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, 'status_changed', 'admin', $2, $3)`,
-      [req.params.id, req.user.id, JSON.stringify({ new_status: status })]
-    );
+  await pool.query(
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, 'status_changed', 'admin', $2, $3)`,
+    [req.params.id, req.user.id, JSON.stringify({ new_status: status })]
+  );
 
-    // Email client when proposal is sent (non-blocking)
-    if (status === 'sent') {
-      try {
-        const pd = await pool.query(`
-          SELECT p.token, p.event_type, p.event_type_custom, p.event_date, p.created_by,
-                 c.name AS client_name, c.email AS client_email
-          FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
-          WHERE p.id = $1
-        `, [req.params.id]);
-        const p = pd.rows[0];
-        if (p?.client_email && p?.token) {
-          const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-          const proposalUrl = `${clientUrl}/proposal/${p.token}`;
-          const eventTypeLabel = getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom });
-
-          // Create drink plan and include link in email
-          let planUrl = null;
-          try {
-            const drinkPlan = await createDrinkPlan(req.params.id, {
-              client_name: p.client_name,
-              client_email: p.client_email,
-              event_type: p.event_type,
-              event_type_custom: p.event_type_custom,
-              event_date: p.event_date,
-              created_by: p.created_by,
-            }, { skipEmail: true });
-
-            if (drinkPlan?.token) {
-              planUrl = `${clientUrl}/plan/${drinkPlan.token}`;
-            } else {
-              // Already exists — look up existing token
-              const existingPlan = await pool.query(
-                'SELECT token FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
-                [req.params.id]
-              );
-              if (existingPlan.rows[0]?.token) {
-                planUrl = `${clientUrl}/plan/${existingPlan.rows[0].token}`;
-              }
-            }
-          } catch (planErr) {
-            console.error('Drink plan creation failed (non-blocking):', planErr);
-          }
-
-          const tpl = emailTemplates.proposalSent({ clientName: p.client_name, eventTypeLabel, proposalUrl, planUrl });
-          await sendEmail({ to: p.client_email, ...tpl });
-        }
-      } catch (emailErr) {
-        console.error('Proposal sent email failed (non-blocking):', emailErr);
-      }
-    }
-
-    // Auto-create first invoice when proposal is sent
-    if (status === 'sent') {
-      try {
-        await createInvoiceOnSend(parseInt(req.params.id, 10));
-      } catch (invErr) {
-        console.error('Invoice auto-creation failed (non-blocking):', invErr);
-      }
-    }
-
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-/** PATCH /api/proposals/:id/notes — update admin notes */
-router.patch('/:id/notes', auth, requireAdminOrManager, async (req, res) => {
-  const { admin_notes } = req.body;
-  try {
-    const result = await pool.query(
-      'UPDATE proposals SET admin_notes = $1 WHERE id = $2 RETURNING id, admin_notes',
-      [admin_notes || '', req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-/** POST /api/proposals/:id/create-shift — manually create event shift from a proposal */
-router.post('/:id/create-shift', auth, requireAdminOrManager, async (req, res) => {
-  try {
-    const proposal = await pool.query('SELECT id, status FROM proposals WHERE id = $1', [req.params.id]);
-    if (!proposal.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
-    if (!['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.rows[0].status)) {
-      return res.status(400).json({ error: 'Proposal must have deposit paid before creating a shift.' });
-    }
-    const shift = await createEventShifts(req.params.id);
-    if (!shift) return res.status(409).json({ error: 'Shift already exists for this proposal.' });
-    res.status(201).json(shift);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-/** PATCH /api/proposals/:id/balance-due-date — override balance due date */
-router.patch('/:id/balance-due-date', auth, requireAdminOrManager, async (req, res) => {
-  const { balance_due_date } = req.body;
-  if (!balance_due_date) {
-    return res.status(400).json({ error: 'balance_due_date is required.' });
-  }
-  try {
-    const result = await pool.query(
-      'UPDATE proposals SET balance_due_date = $1 WHERE id = $2 RETURNING id, balance_due_date',
-      [balance_due_date, req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
-
-    await pool.query(
-      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, 'balance_due_date_changed', 'admin', $2, $3)`,
-      [req.params.id, req.user.id, JSON.stringify({ balance_due_date })]
-    );
-
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-/** POST /api/proposals/:id/record-payment — manually record an outside payment (cash, Venmo, etc.) */
-router.post('/:id/record-payment', auth, requireAdminOrManager, async (req, res) => {
-  const { amount, paid_in_full, method } = req.body;
-
-  try {
-    const result = await pool.query(
-      'SELECT id, total_price, amount_paid, deposit_amount, status FROM proposals WHERE id = $1',
-      [req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
-
-    const proposal = result.rows[0];
-    if (['balance_paid', 'confirmed'].includes(proposal.status)) {
-      return res.status(400).json({ error: 'Proposal is already fully paid.' });
-    }
-
-    const totalPrice = Number(proposal.total_price);
-    const currentPaid = Number(proposal.amount_paid || 0);
-    const paymentAmount = paid_in_full ? totalPrice - currentPaid : Number(amount);
-
-    if (!paymentAmount || paymentAmount <= 0) {
-      return res.status(400).json({ error: 'Invalid payment amount.' });
-    }
-
-    const newAmountPaid = Math.min(currentPaid + paymentAmount, totalPrice);
-    const isFullyPaid = newAmountPaid >= totalPrice;
-    const newStatus = isFullyPaid ? 'balance_paid' : 'deposit_paid';
-
-    const dbClient = await pool.connect();
+  // Email client when proposal is sent (non-blocking)
+  if (status === 'sent') {
     try {
-      await dbClient.query('BEGIN');
-
-      await dbClient.query(
-        'UPDATE proposals SET amount_paid = $1, status = $2 WHERE id = $3',
-        [newAmountPaid, newStatus, proposal.id]
-      );
-
-      // Record in proposal_payments. Use the capped delta (newAmountPaid - currentPaid)
-      // so an over-payment request doesn't inflate the ledger beyond the proposal total.
-      await dbClient.query(
-        `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status)
-         VALUES ($1, $2, $3, 'succeeded')`,
-        [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round((newAmountPaid - currentPaid) * 100)]
-      );
-
-      // Log activity
-      await dbClient.query(
-        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, $2, 'admin', $3, $4)`,
-        [proposal.id, isFullyPaid ? 'paid_in_full' : 'deposit_paid', req.user.id,
-          JSON.stringify({ amount: paymentAmount, method: method || 'manual', new_total_paid: newAmountPaid })]
-      );
-
-      // Link payment to the oldest open invoice
-      const openInvoice = await dbClient.query(
-        "SELECT id FROM invoices WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid') ORDER BY created_at ASC LIMIT 1",
-        [proposal.id]
-      );
-      if (openInvoice.rows[0]) {
-        const paymentRow = await dbClient.query(
-          'SELECT id FROM proposal_payments WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 1',
-          [proposal.id]
-        );
-        if (paymentRow.rows[0]) {
-          const payAmountCents = Math.round(paymentAmount * 100);
-          await linkPaymentToInvoice(openInvoice.rows[0].id, paymentRow.rows[0].id, payAmountCents, dbClient);
-        }
-      }
-
-      await dbClient.query('COMMIT');
-    } catch (txErr) {
-      await dbClient.query('ROLLBACK');
-      throw txErr;
-    } finally {
-      dbClient.release();
-    }
-
-    // Email notifications for payment (non-blocking)
-    try {
-      const payData = await pool.query(`
-        SELECT p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
+      const pd = await pool.query(`
+        SELECT p.token, p.event_type, p.event_type_custom, p.event_date, p.created_by,
+               c.name AS client_name, c.email AS client_email
         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
         WHERE p.id = $1
-      `, [proposal.id]);
-      const pd = payData.rows[0];
-      const amountFormatted = paymentAmount.toFixed(2);
-      const payType = isFullyPaid ? 'full payment' : 'deposit';
-      const eventTypeLabel = getEventTypeLabel({ event_type: pd?.event_type, event_type_custom: pd?.event_type_custom });
-
-      if (pd?.client_email) {
-        const tpl = emailTemplates.paymentReceivedClient({ clientName: pd.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType });
-        await sendEmail({ to: pd.client_email, ...tpl });
-      }
-      const adminEmail = process.env.ADMIN_EMAIL;
-      if (adminEmail) {
+      `, [req.params.id]);
+      const p = pd.rows[0];
+      if (p?.client_email && p?.token) {
         const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-        const adminUrl = `${clientUrl}/admin/proposals/${proposal.id}`;
-        const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pd?.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType, proposalId: proposal.id, adminUrl });
-        await sendEmail({ to: adminEmail, ...tpl });
+        const proposalUrl = `${clientUrl}/proposal/${p.token}`;
+        const eventTypeLabel = getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom });
+
+        // Create drink plan and include link in email
+        let planUrl = null;
+        try {
+          const drinkPlan = await createDrinkPlan(req.params.id, {
+            client_name: p.client_name,
+            client_email: p.client_email,
+            event_type: p.event_type,
+            event_type_custom: p.event_type_custom,
+            event_date: p.event_date,
+            created_by: p.created_by,
+          }, { skipEmail: true });
+
+          if (drinkPlan?.token) {
+            planUrl = `${clientUrl}/plan/${drinkPlan.token}`;
+          } else {
+            // Already exists — look up existing token
+            const existingPlan = await pool.query(
+              'SELECT token FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
+              [req.params.id]
+            );
+            if (existingPlan.rows[0]?.token) {
+              planUrl = `${clientUrl}/plan/${existingPlan.rows[0].token}`;
+            }
+          }
+        } catch (planErr) {
+          console.error('Drink plan creation failed (non-blocking):', planErr);
+        }
+
+        const tpl = emailTemplates.proposalSent({ clientName: p.client_name, eventTypeLabel, proposalUrl, planUrl });
+        await sendEmail({ to: p.client_email, ...tpl });
       }
     } catch (emailErr) {
-      console.error('Payment email failed (non-blocking):', emailErr);
+      console.error('Proposal sent email failed (non-blocking):', emailErr);
     }
-
-    // Auto-create event shift
-    try {
-      const shift = await createEventShifts(proposal.id);
-      if (shift) console.log(`Shift #${shift.id} created for proposal ${proposal.id} (manual payment)`);
-    } catch (shiftErr) {
-      console.error('Shift auto-creation failed (non-blocking):', shiftErr);
-    }
-
-    res.json({ success: true, status: newStatus, amount_paid: newAmountPaid });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
   }
-});
+
+  // Auto-create first invoice when proposal is sent
+  if (status === 'sent') {
+    try {
+      await createInvoiceOnSend(parseInt(req.params.id, 10));
+    } catch (invErr) {
+      console.error('Invoice auto-creation failed (non-blocking):', invErr);
+    }
+  }
+
+  res.json(result.rows[0]);
+}));
+
+/** PATCH /api/proposals/:id/notes — update admin notes */
+router.patch('/:id/notes', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const { admin_notes } = req.body;
+  const result = await pool.query(
+    'UPDATE proposals SET admin_notes = $1 WHERE id = $2 RETURNING id, admin_notes',
+    [admin_notes || '', req.params.id]
+  );
+  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
+  res.json(result.rows[0]);
+}));
+
+/** POST /api/proposals/:id/create-shift — manually create event shift from a proposal */
+router.post('/:id/create-shift', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const proposal = await pool.query('SELECT id, status FROM proposals WHERE id = $1', [req.params.id]);
+  if (!proposal.rows[0]) throw new NotFoundError('Proposal not found');
+  if (!['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.rows[0].status)) {
+    throw new ConflictError('Proposal must have deposit paid before creating a shift.', 'DEPOSIT_REQUIRED');
+  }
+  const shift = await createEventShifts(req.params.id);
+  if (!shift) throw new ConflictError('Shift already exists for this proposal.', 'SHIFT_EXISTS');
+  res.status(201).json(shift);
+}));
+
+/** PATCH /api/proposals/:id/balance-due-date — override balance due date */
+router.patch('/:id/balance-due-date', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const { balance_due_date } = req.body;
+  if (!balance_due_date) {
+    throw new ValidationError({ balance_due_date: 'Balance due date is required' });
+  }
+  const result = await pool.query(
+    'UPDATE proposals SET balance_due_date = $1 WHERE id = $2 RETURNING id, balance_due_date',
+    [balance_due_date, req.params.id]
+  );
+  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
+
+  await pool.query(
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, 'balance_due_date_changed', 'admin', $2, $3)`,
+    [req.params.id, req.user.id, JSON.stringify({ balance_due_date })]
+  );
+
+  res.json(result.rows[0]);
+}));
+
+/** POST /api/proposals/:id/record-payment — manually record an outside payment (cash, Venmo, etc.) */
+router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const { amount, paid_in_full, method } = req.body;
+
+  const result = await pool.query(
+    'SELECT id, total_price, amount_paid, deposit_amount, status FROM proposals WHERE id = $1',
+    [req.params.id]
+  );
+  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
+
+  const proposal = result.rows[0];
+  if (['balance_paid', 'confirmed'].includes(proposal.status)) {
+    throw new ConflictError('Proposal is already fully paid.', 'ALREADY_PAID_IN_FULL');
+  }
+
+  const totalPrice = Number(proposal.total_price);
+  const currentPaid = Number(proposal.amount_paid || 0);
+  const paymentAmount = paid_in_full ? totalPrice - currentPaid : Number(amount);
+
+  if (!paymentAmount || paymentAmount <= 0) {
+    throw new ValidationError({ amount: 'Enter a valid payment amount' });
+  }
+
+  const newAmountPaid = Math.min(currentPaid + paymentAmount, totalPrice);
+  const isFullyPaid = newAmountPaid >= totalPrice;
+  const newStatus = isFullyPaid ? 'balance_paid' : 'deposit_paid';
+
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    await dbClient.query(
+      'UPDATE proposals SET amount_paid = $1, status = $2 WHERE id = $3',
+      [newAmountPaid, newStatus, proposal.id]
+    );
+
+    // Record in proposal_payments. Use the capped delta (newAmountPaid - currentPaid)
+    // so an over-payment request doesn't inflate the ledger beyond the proposal total.
+    await dbClient.query(
+      `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status)
+       VALUES ($1, $2, $3, 'succeeded')`,
+      [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round((newAmountPaid - currentPaid) * 100)]
+    );
+
+    // Log activity
+    await dbClient.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, $2, 'admin', $3, $4)`,
+      [proposal.id, isFullyPaid ? 'paid_in_full' : 'deposit_paid', req.user.id,
+        JSON.stringify({ amount: paymentAmount, method: method || 'manual', new_total_paid: newAmountPaid })]
+    );
+
+    // Link payment to the oldest open invoice
+    const openInvoice = await dbClient.query(
+      "SELECT id FROM invoices WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid') ORDER BY created_at ASC LIMIT 1",
+      [proposal.id]
+    );
+    if (openInvoice.rows[0]) {
+      const paymentRow = await dbClient.query(
+        'SELECT id FROM proposal_payments WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 1',
+        [proposal.id]
+      );
+      if (paymentRow.rows[0]) {
+        const payAmountCents = Math.round(paymentAmount * 100);
+        await linkPaymentToInvoice(openInvoice.rows[0].id, paymentRow.rows[0].id, payAmountCents, dbClient);
+      }
+    }
+
+    await dbClient.query('COMMIT');
+  } catch (txErr) {
+    await dbClient.query('ROLLBACK');
+    throw txErr;
+  } finally {
+    dbClient.release();
+  }
+
+  // Email notifications for payment (non-blocking)
+  try {
+    const payData = await pool.query(`
+      SELECT p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
+      FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+      WHERE p.id = $1
+    `, [proposal.id]);
+    const pd = payData.rows[0];
+    const amountFormatted = paymentAmount.toFixed(2);
+    const payType = isFullyPaid ? 'full payment' : 'deposit';
+    const eventTypeLabel = getEventTypeLabel({ event_type: pd?.event_type, event_type_custom: pd?.event_type_custom });
+
+    if (pd?.client_email) {
+      const tpl = emailTemplates.paymentReceivedClient({ clientName: pd.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType });
+      await sendEmail({ to: pd.client_email, ...tpl });
+    }
+    const adminEmail = process.env.ADMIN_EMAIL;
+    if (adminEmail) {
+      const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
+      const adminUrl = `${clientUrl}/admin/proposals/${proposal.id}`;
+      const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pd?.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType, proposalId: proposal.id, adminUrl });
+      await sendEmail({ to: adminEmail, ...tpl });
+    }
+  } catch (emailErr) {
+    console.error('Payment email failed (non-blocking):', emailErr);
+  }
+
+  // Auto-create event shift
+  try {
+    const shift = await createEventShifts(proposal.id);
+    if (shift) console.log(`Shift #${shift.id} created for proposal ${proposal.id} (manual payment)`);
+  } catch (shiftErr) {
+    console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+  }
+
+  res.json({ success: true, status: newStatus, amount_paid: newAmountPaid });
+}));
 
 /** DELETE /api/proposals/:id — delete a proposal */
-router.delete('/:id', auth, requireAdminOrManager, async (req, res) => {
-  try {
-    const result = await pool.query('DELETE FROM proposals WHERE id = $1 RETURNING id', [req.params.id]);
-    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+router.delete('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const result = await pool.query('DELETE FROM proposals WHERE id = $1 RETURNING id', [req.params.id]);
+  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
+  res.json({ success: true });
+}));
 
 module.exports = router;
