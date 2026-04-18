@@ -7,6 +7,9 @@ import LocationInput from '../../components/LocationInput';
 import useFormValidation from '../../hooks/useFormValidation';
 import EVENT_TYPES from '../../data/eventTypes';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
+import { useToast } from '../../context/ToastContext';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
 
 // Generate 30-minute time slots from 6:00 AM to 11:30 PM
 const TIME_OPTIONS = [];
@@ -21,11 +24,14 @@ for (let h = 6; h < 24; h++) {
 
 export default function ProposalCreate() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [packages, setPackages] = useState([]);
   const [addons, setAddons] = useState([]);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
+  const previewErrorShownRef = useRef(false);
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
   const [form, setForm] = useState({
@@ -45,9 +51,9 @@ export default function ProposalCreate() {
       setAddons(addonRes.data);
     }).catch(err => {
       console.error('Failed to load packages/addons:', err);
-      setError('Failed to load packages. Please refresh.');
+      toast.error('Failed to load packages. Please refresh.');
     });
-  }, []);
+  }, [toast]);
 
   const fetchPreview = useCallback(async () => {
     if (!form.package_id) { setPreview(null); return; }
@@ -62,12 +68,32 @@ export default function ProposalCreate() {
         addon_variants: form.addon_variants
       });
       setPreview(res.data);
-    } catch { setPreview(null); }
-  }, [form.package_id, form.guest_count, form.event_duration_hours, form.num_bars, form.num_bartenders, form.addon_ids, form.addon_variants]);
+      previewErrorShownRef.current = false;
+    } catch (err) {
+      // Preserve "clear preview" behavior, but no longer swallow silently —
+      // surface a toast so admins know the preview failed (was the audit's
+      // silent-error bug). Guard so we don't spam toasts on every keystroke.
+      setPreview(null);
+      if (!previewErrorShownRef.current) {
+        previewErrorShownRef.current = true;
+        toast.error(err?.message || 'Could not calculate preview pricing.');
+      }
+    }
+  }, [form.package_id, form.guest_count, form.event_duration_hours, form.num_bars, form.num_bartenders, form.addon_ids, form.addon_variants, toast]);
 
   useEffect(() => { fetchPreview(); }, [fetchPreview]);
 
-  const update = (field, value) => { setForm(f => ({ ...f, [field]: value })); clearField(field); };
+  const update = (field, value) => {
+    setForm(f => ({ ...f, [field]: value }));
+    clearField(field);
+    if (fieldErrors[field]) {
+      setFieldErrors(fe => {
+        const next = { ...fe };
+        delete next[field];
+        return next;
+      });
+    }
+  };
 
   const toggleAddon = (id) => {
     setForm(f => {
@@ -144,6 +170,7 @@ export default function ProposalCreate() {
     const result = validate(rules, form);
     if (!result.valid) { setError(result.message); return; }
     setError('');
+    setFieldErrors({});
     setSubmitting(true);
     try {
       const payload = {
@@ -157,9 +184,11 @@ export default function ProposalCreate() {
         addon_variants: form.addon_variants
       };
       const res = await api.post('/proposals', payload);
+      toast.success('Proposal created!');
       navigate(`/admin/proposals/${res.data.id}`);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create proposal.');
+      setError(err.message || 'Failed to create proposal.');
+      setFieldErrors(err.fieldErrors || {});
     } finally {
       setSubmitting(false);
     }
@@ -172,8 +201,6 @@ export default function ProposalCreate() {
         <button className="btn btn-secondary" onClick={() => navigate('/admin/proposals')}>Back</button>
       </div>
 
-      {error && <div className="card mb-2" style={{ color: '#c0392b', border: '1px solid #c0392b' }}>{error}</div>}
-
       <form onSubmit={handleSubmit}>
         <div className="proposal-layout">
           {/* Left: Form sections */}
@@ -184,7 +211,13 @@ export default function ProposalCreate() {
               <div className="two-col" style={{ gap: '1rem' }}>
                 <div className={"form-group" + fieldClass('client_name')}>
                   <label className="form-label">Client Name *</label>
-                  <input className={"form-input" + inputClass('client_name')} value={form.client_name} onChange={e => update('client_name', e.target.value)} />
+                  <input
+                    className={"form-input" + inputClass('client_name')}
+                    value={form.client_name}
+                    onChange={e => update('client_name', e.target.value)}
+                    aria-invalid={!!fieldErrors?.client_name}
+                  />
+                  <FieldError error={fieldErrors?.client_name} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Email</label>
@@ -288,6 +321,7 @@ export default function ProposalCreate() {
             {/* Package Selection */}
             <div className={"card mb-2" + fieldClass('package_id')}>
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Package *</h3>
+              <FieldError error={fieldErrors?.package_id} />
               <div style={{ display: 'grid', gap: '0.75rem' }}>
                 {packages.map(pkg => (
                   <label key={pkg.id} style={{
@@ -400,6 +434,7 @@ export default function ProposalCreate() {
               ) : (
                 <p className="text-muted text-small">Select a package to see pricing</p>
               )}
+              <FormBanner error={error} fieldErrors={fieldErrors} />
               <button className="btn mt-2" type="submit" disabled={submitting} style={{ width: '100%' }}>
                 {submitting ? 'Creating...' : 'Create Proposal'}
               </button>

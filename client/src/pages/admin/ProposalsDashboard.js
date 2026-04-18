@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import ClickableRow from '../../components/ClickableRow';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { useToast } from '../../context/ToastContext';
 
 const STATUS_LABELS = {
   draft: 'Draft',
@@ -21,6 +22,7 @@ const STATUS_CLASSES = {
 
 export default function ProposalsDashboard() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [proposals, setProposals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -36,10 +38,11 @@ export default function ProposalsDashboard() {
       setProposals(res.data);
     } catch (err) {
       console.error('Failed to fetch proposals:', err);
+      toast.error('Failed to load proposals. Try refreshing.');
     } finally {
       setLoading(false);
     }
-  }, [search, statusFilter]);
+  }, [search, statusFilter, toast]);
 
   useEffect(() => { fetchProposals(); }, [fetchProposals]);
 

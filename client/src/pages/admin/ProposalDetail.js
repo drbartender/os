@@ -12,6 +12,9 @@ import { SYRUPS } from '../../data/syrups';
 import InvoiceDropdown from '../../components/InvoiceDropdown';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { useToast } from '../../context/ToastContext';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
@@ -41,6 +44,7 @@ export default function ProposalDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const toast = useToast();
   const isEventContext = location.pathname.includes('/events/');
   const [proposal, setProposal] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -51,6 +55,7 @@ export default function ProposalDetail() {
   const [generatingLink, setGeneratingLink] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [linkError, setLinkError] = useState('');
+  const [editFieldErrors, setEditFieldErrors] = useState({});
 
   // Balance / autopay state
   const [balanceDueDate, setBalanceDueDate] = useState('');
@@ -121,9 +126,11 @@ export default function ProposalDetail() {
       setNotes(res.data.admin_notes || '');
       setBalanceDueDate(res.data.balance_due_date ? res.data.balance_due_date.slice(0, 10) : '');
     }).catch(err => {
-      if (err.response?.status === 404) {
+      if (err.status === 404) {
+        toast.error('Proposal not found.');
         navigate(isEventContext ? '/admin/events' : '/admin/proposals');
       } else {
+        toast.error(err.message || 'Failed to load proposal. Try refreshing.');
         setEditError('Failed to load proposal. Please try again.');
       }
     }).finally(() => setLoading(false));
@@ -222,7 +229,10 @@ export default function ProposalDetail() {
       await api.put(`/shifts/requests/${requestId}`, { status });
       if (shift) loadRequests(shift.id);
       refreshShift();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      toast.error(e.message || 'Failed to update request status.');
+    }
   };
 
   const handleAutoAssignPreview = async () => {
@@ -277,6 +287,7 @@ export default function ProposalDetail() {
       setAddons(addonRes.data);
     }).catch(err => {
       console.error('Failed to load packages/addons:', err);
+      toast.error('Failed to load packages. Try refreshing.');
       setEditError('Failed to load packages/addons. Please try again.');
     });
     // Pre-populate edit form from current proposal
@@ -326,7 +337,10 @@ export default function ProposalDetail() {
         syrup_selections: editForm.syrup_selections || [],
         adjustments: editForm.adjustments || [],
         total_price_override: editForm.total_price_override,
-      }).then(res => { setEditPreview(res.data); setEditError(''); }).catch(() => { setEditPreview(null); setEditError('Pricing preview unavailable.'); });
+      }).then(res => { setEditPreview(res.data); setEditError(''); }).catch((err) => {
+        setEditPreview(null);
+        setEditError(err?.message || 'Pricing preview unavailable.');
+      });
     }, 400);
     return () => clearTimeout(timer);
   }, [editing, editForm?.package_id, editForm?.guest_count, editForm?.event_duration_hours, editForm?.num_bars, editForm?.addon_ids, editForm?.addon_variants, editForm?.syrup_selections, editForm?.adjustments, editForm?.total_price_override]); // eslint-disable-line
@@ -372,6 +386,7 @@ export default function ProposalDetail() {
     setEditing(false);
     setEditForm(null);
     setEditError('');
+    setEditFieldErrors({});
     if (pendingNavigation) navigate(pendingNavigation);
     setPendingNavigation(null);
   };
@@ -389,6 +404,7 @@ export default function ProposalDetail() {
       setEditing(false);
       setEditForm(null);
       setEditError('');
+      setEditFieldErrors({});
     }
   };
 
@@ -416,8 +432,13 @@ export default function ProposalDetail() {
   };
 
   const handleSaveEdit = async () => {
-    if (!editForm.package_id) { setEditError('Please select a package.'); return; }
+    if (!editForm.package_id) {
+      setEditError('Please select a package.');
+      setEditFieldErrors({ package_id: 'Please select a package' });
+      return;
+    }
     setEditError('');
+    setEditFieldErrors({});
     setSaving(true);
     try {
       // Update client record if we have a client_id
@@ -448,8 +469,10 @@ export default function ProposalDetail() {
       await loadProposal();
       setEditing(false);
       setEditForm(null);
+      toast.success('Proposal updated!');
     } catch (err) {
-      setEditError(err.response?.data?.error || 'Failed to save changes.');
+      setEditError(err.message || 'Failed to save changes.');
+      setEditFieldErrors(err.fieldErrors || {});
     } finally {
       setSaving(false);
     }
@@ -467,8 +490,10 @@ export default function ProposalDetail() {
     setSavingNotes(true);
     try {
       await api.patch(`/proposals/${id}/notes`, { admin_notes: notes });
+      toast.success('Notes saved.');
     } catch (err) {
       console.error('Failed to save notes:', err);
+      toast.error(err.message || 'Failed to save notes.');
     } finally { setSavingNotes(false); }
   };
 
@@ -496,8 +521,12 @@ export default function ProposalDetail() {
     try {
       const res = await api.patch(`/proposals/${id}/status`, { status });
       setProposal(prev => ({ ...prev, status: res.data.status }));
+      if (status === 'sent') toast.success('Proposal sent to client.');
+      else if (status === 'accepted') toast.success('Marked as accepted.');
+      else toast.success(`Status updated to ${status}.`);
     } catch (err) {
       console.error('Failed to update status:', err);
+      toast.error(err.message || 'Failed to update status.');
     }
   };
 
@@ -507,8 +536,10 @@ export default function ProposalDetail() {
     try {
       await api.patch(`/proposals/${id}/balance-due-date`, { balance_due_date: balanceDueDate });
       setProposal(prev => ({ ...prev, balance_due_date: balanceDueDate }));
+      toast.success('Balance due date saved.');
     } catch (err) {
       console.error('Failed to save due date:', err);
+      toast.error(err.message || 'Failed to save due date.');
     } finally { setSavingDueDate(false); }
   };
 
@@ -537,13 +568,16 @@ export default function ProposalDetail() {
         paid_in_full: paymentPaidInFull,
         method: paymentMethod,
       });
-      setPaymentResult(`Payment of ${fmt(paymentPaidInFull ? Number(proposal.total_price) - Number(proposal.amount_paid || 0) : Number(paymentAmount))} recorded successfully.`);
+      const amountStr = fmt(paymentPaidInFull ? Number(proposal.total_price) - Number(proposal.amount_paid || 0) : Number(paymentAmount));
+      setPaymentResult(`Payment of ${amountStr} recorded successfully.`);
+      toast.success(`Payment of ${amountStr} recorded.`);
       setShowRecordPayment(false);
       setPaymentAmount('');
       setPaymentPaidInFull(false);
       await loadProposal();
     } catch (err) {
-      setPaymentResult(err.response?.data?.error || 'Failed to record payment.');
+      setPaymentResult(err.message || 'Failed to record payment.');
+      toast.error(err.message || 'Failed to record payment.');
     } finally { setRecordingPayment(false); }
   };
 
@@ -561,8 +595,10 @@ export default function ProposalDetail() {
       setNewInvoiceAmount('');
       setNewInvoiceDueDate('');
       setInvoiceRefreshKey(k => k + 1);
+      toast.success('Invoice created.');
     } catch (err) {
       console.error('Failed to create invoice:', err);
+      toast.error(err.message || 'Failed to create invoice.');
     } finally {
       setCreatingInvoice(false);
     }
@@ -1282,8 +1318,14 @@ export default function ProposalDetail() {
                     }}>{drinkPlanCopied ? 'Copied!' : 'Copy Client Link'}</button>
                     {drinkPlan.status === 'submitted' && (
                       <button className="btn btn-sm btn-success" onClick={async () => {
-                        try { const res = await api.patch(`/drink-plans/${drinkPlan.id}/status`, { status: 'reviewed' }); setDrinkPlan(prev => ({ ...prev, status: res.data.status })); }
-                        catch (err) { console.error('Failed to update status:', err); }
+                        try {
+                          const res = await api.patch(`/drink-plans/${drinkPlan.id}/status`, { status: 'reviewed' });
+                          setDrinkPlan(prev => ({ ...prev, status: res.data.status }));
+                          toast.success('Drink plan marked as reviewed.');
+                        } catch (err) {
+                          console.error('Failed to update status:', err);
+                          toast.error(err.message || 'Failed to update status.');
+                        }
                       }}>Mark as Reviewed</button>
                     )}
                   </div>
@@ -1295,8 +1337,11 @@ export default function ProposalDetail() {
                     try {
                       const res = await api.post(`/drink-plans/for-proposal/${id}`);
                       setDrinkPlan(res.data);
-
-                    } catch (err) { console.error('Failed to generate drink plan:', err); }
+                      toast.success('Drink plan link generated.');
+                    } catch (err) {
+                      console.error('Failed to generate drink plan:', err);
+                      toast.error(err.message || 'Failed to generate drink plan.');
+                    }
                   }}>Generate Drink Plan Link</button>
                 </div>
               )}
@@ -1434,21 +1479,40 @@ export default function ProposalDetail() {
           {editing && editForm ? (
             <div className="card mb-2">
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Edit Proposal</h3>
-              {editError && <div style={{ color: '#c0392b', marginBottom: '0.75rem', fontSize: '0.9rem' }}>{editError}</div>}
 
               <h4 style={{ color: 'var(--warm-brown)', marginBottom: '0.5rem' }}>Client</h4>
               <div className="two-col" style={{ gap: '0.75rem', marginBottom: '1rem' }}>
                 <div className="form-group">
                   <label className="form-label">Name</label>
-                  <input className="form-input" value={editForm.client_name} onChange={e => updateEdit('client_name', e.target.value)} />
+                  <input
+                    className="form-input"
+                    value={editForm.client_name}
+                    onChange={e => updateEdit('client_name', e.target.value)}
+                    aria-invalid={!!editFieldErrors?.name}
+                  />
+                  <FieldError error={editFieldErrors?.name} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Email</label>
-                  <input className="form-input" type="email" value={editForm.client_email} onChange={e => updateEdit('client_email', e.target.value)} />
+                  <input
+                    className="form-input"
+                    type="email"
+                    value={editForm.client_email}
+                    onChange={e => updateEdit('client_email', e.target.value)}
+                    aria-invalid={!!editFieldErrors?.email}
+                  />
+                  <FieldError error={editFieldErrors?.email} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Phone</label>
-                  <input className="form-input" type="tel" value={formatPhoneInput(editForm.client_phone)} onChange={e => updateEdit('client_phone', stripPhone(e.target.value))} />
+                  <input
+                    className="form-input"
+                    type="tel"
+                    value={formatPhoneInput(editForm.client_phone)}
+                    onChange={e => updateEdit('client_phone', stripPhone(e.target.value))}
+                    aria-invalid={!!editFieldErrors?.phone}
+                  />
+                  <FieldError error={editFieldErrors?.phone} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Source</label>
@@ -1465,7 +1529,14 @@ export default function ProposalDetail() {
               <div className="two-col" style={{ gap: '0.75rem' }}>
                 <div className="form-group">
                   <label className="form-label">Event Date</label>
-                  <input className="form-input" type="date" value={editForm.event_date} onChange={e => updateEdit('event_date', e.target.value)} />
+                  <input
+                    className="form-input"
+                    type="date"
+                    value={editForm.event_date}
+                    onChange={e => updateEdit('event_date', e.target.value)}
+                    aria-invalid={!!editFieldErrors?.event_date}
+                  />
+                  <FieldError error={editFieldErrors?.event_date} />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Start Time</label>
@@ -1596,6 +1667,7 @@ export default function ProposalDetail() {
                 compact
               />
 
+              <FormBanner error={editError} fieldErrors={editFieldErrors} />
               <div className="sticky-save-bar">
                 <button className="btn" onClick={handleSaveEdit} disabled={saving}>
                   {saving ? 'Saving...' : 'Save Changes'}
@@ -2072,7 +2144,11 @@ export default function ProposalDetail() {
                         try {
                           const res = await api.patch(`/drink-plans/${drinkPlan.id}/status`, { status: 'reviewed' });
                           setDrinkPlan(prev => ({ ...prev, status: res.data.status }));
-                        } catch (err) { console.error('Failed to update status:', err); }
+                          toast.success('Drink plan marked as reviewed.');
+                        } catch (err) {
+                          console.error('Failed to update status:', err);
+                          toast.error(err.message || 'Failed to update status.');
+                        }
                       }}>Mark as Reviewed</button>
                     )}
                   </div>
@@ -2084,8 +2160,11 @@ export default function ProposalDetail() {
                     try {
                       const res = await api.post(`/drink-plans/for-proposal/${id}`);
                       setDrinkPlan(res.data);
-
-                    } catch (err) { console.error('Failed to generate drink plan:', err); }
+                      toast.success('Drink plan link generated.');
+                    } catch (err) {
+                      console.error('Failed to generate drink plan:', err);
+                      toast.error(err.message || 'Failed to generate drink plan.');
+                    }
                   }}>Generate Drink Plan Link</button>
                 </div>
               )}
