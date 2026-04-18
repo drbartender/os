@@ -2,6 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { useToast } from '../../context/ToastContext';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
 
 const STATUS_LABELS = {
   pending: 'Pending',
@@ -18,6 +21,7 @@ const STATUS_CLASSES = {
 
 export default function DrinkPlansDashboard() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -25,6 +29,8 @@ export default function DrinkPlansDashboard() {
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ client_name: '', client_email: '', event_date: '' });
+  const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [copyMessage, setCopyMessage] = useState('');
 
   const fetchPlans = useCallback(async () => {
@@ -35,25 +41,32 @@ export default function DrinkPlansDashboard() {
       const res = await api.get('/drink-plans', { params });
       setPlans(res.data);
     } catch (err) {
-      console.error('Failed to fetch drink plans:', err);
+      toast.error('Failed to load drink plans — try refreshing.');
     } finally {
       setLoading(false);
     }
-  }, [search, statusFilter]);
+  }, [search, statusFilter, toast]);
 
   useEffect(() => { fetchPlans(); }, [fetchPlans]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    if (!form.client_name.trim()) return;
+    setError('');
+    setFieldErrors({});
+    if (!form.client_name.trim()) {
+      setFieldErrors({ client_name: 'Client name is required.' });
+      return;
+    }
     setCreating(true);
     try {
       const res = await api.post('/drink-plans', form);
       setPlans(prev => [res.data, ...prev]);
       setForm({ client_name: '', client_email: '', event_date: '' });
       setShowCreate(false);
+      toast.success('Drink plan created.');
     } catch (err) {
-      console.error('Failed to create plan:', err);
+      setError(err.message || 'Failed to create plan.');
+      setFieldErrors(err.fieldErrors || {});
     } finally {
       setCreating(false);
     }
@@ -96,8 +109,10 @@ export default function DrinkPlansDashboard() {
                   value={form.client_name}
                   onChange={(e) => setForm(f => ({ ...f, client_name: e.target.value }))}
                   placeholder="Jane Smith"
+                  aria-invalid={!!fieldErrors?.client_name}
                   required
                 />
+                <FieldError error={fieldErrors?.client_name} />
               </div>
               <div className="form-group">
                 <label className="form-label">Client Email</label>
@@ -107,7 +122,9 @@ export default function DrinkPlansDashboard() {
                   value={form.client_email}
                   onChange={(e) => setForm(f => ({ ...f, client_email: e.target.value }))}
                   placeholder="jane@example.com"
+                  aria-invalid={!!fieldErrors?.client_email}
                 />
+                <FieldError error={fieldErrors?.client_email} />
               </div>
               <div className="form-group">
                 <label className="form-label">Event Date</label>
@@ -116,9 +133,12 @@ export default function DrinkPlansDashboard() {
                   type="date"
                   value={form.event_date}
                   onChange={(e) => setForm(f => ({ ...f, event_date: e.target.value }))}
+                  aria-invalid={!!fieldErrors?.event_date}
                 />
+                <FieldError error={fieldErrors?.event_date} />
               </div>
             </div>
+            <FormBanner error={error} fieldErrors={fieldErrors} />
             <button className="btn mt-1" type="submit" disabled={creating}>
               {creating ? 'Creating...' : 'Create Plan'}
             </button>

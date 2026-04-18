@@ -7,7 +7,7 @@ const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ConflictError, NotFoundError } = require('../utils/errors');
+const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -292,280 +292,225 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
 // ─── Admin routes (auth required) ────────────────────────────────
 
 /** GET /api/drink-plans — list all plans */
-router.get('/', auth, requireAdminOrManager, async (req, res) => {
+router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { status, search } = req.query;
-  try {
-    let query = `
-      SELECT dp.*, u.email AS created_by_email
-      FROM drink_plans dp
-      LEFT JOIN users u ON u.id = dp.created_by
-      WHERE 1=1
-    `;
-    const params = [];
+  let query = `
+    SELECT dp.*, u.email AS created_by_email
+    FROM drink_plans dp
+    LEFT JOIN users u ON u.id = dp.created_by
+    WHERE 1=1
+  `;
+  const params = [];
 
-    if (status) {
-      params.push(status);
-      query += ` AND dp.status = $${params.length}`;
-    }
-    if (search) {
-      params.push(`%${search}%`);
-      query += ` AND (dp.client_name ILIKE $${params.length} OR dp.client_email ILIKE $${params.length})`;
-    }
-
-    query += ' ORDER BY dp.created_at DESC';
-
-    const result = await pool.query(query, params);
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+  if (status) {
+    params.push(status);
+    query += ` AND dp.status = $${params.length}`;
   }
-});
+  if (search) {
+    params.push(`%${search}%`);
+    query += ` AND (dp.client_name ILIKE $${params.length} OR dp.client_email ILIKE $${params.length})`;
+  }
+
+  query += ' ORDER BY dp.created_at DESC';
+
+  const result = await pool.query(query, params);
+  res.json(result.rows);
+}));
 
 /** POST /api/drink-plans — create a new plan */
-router.post('/', auth, requireAdminOrManager, async (req, res) => {
+router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { client_name, client_email, event_type, event_type_custom, event_date } = req.body;
-  if (!client_name) {
-    return res.status(400).json({ error: 'Client name is required.' });
+  if (!client_name || !client_name.trim()) {
+    throw new ValidationError({ client_name: 'Client name is required.' });
   }
-  try {
-    const result = await pool.query(`
-      INSERT INTO drink_plans (client_name, client_email, event_type, event_type_custom, event_date, created_by)
-      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
-    `, [
-      client_name,
-      client_email || null,
-      event_type || null,
-      event_type_custom || null,
-      event_date || null,
-      req.user.id
-    ]);
-    res.status(201).json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+  const result = await pool.query(`
+    INSERT INTO drink_plans (client_name, client_email, event_type, event_type_custom, event_date, created_by)
+    VALUES ($1, $2, $3, $4, $5, $6) RETURNING *
+  `, [
+    client_name,
+    client_email || null,
+    event_type || null,
+    event_type_custom || null,
+    event_date || null,
+    req.user.id
+  ]);
+  res.status(201).json(result.rows[0]);
+}));
 
 /** POST /api/drink-plans/for-proposal/:proposalId — create a drink plan for a proposal (admin) */
-router.post('/for-proposal/:proposalId', auth, requireAdminOrManager, async (req, res) => {
+router.post('/for-proposal/:proposalId', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { createDrinkPlan } = require('../utils/eventCreation');
-  try {
-    // Fetch proposal data
-    const pRes = await pool.query(
-      `SELECT p.*, c.name AS client_name, c.email AS client_email
-       FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
-       WHERE p.id = $1`, [req.params.proposalId]
-    );
-    if (!pRes.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
-    const proposal = pRes.rows[0];
+  // Fetch proposal data
+  const pRes = await pool.query(
+    `SELECT p.*, c.name AS client_name, c.email AS client_email
+     FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+     WHERE p.id = $1`, [req.params.proposalId]
+  );
+  if (!pRes.rows[0]) throw new NotFoundError('Proposal not found.');
+  const proposal = pRes.rows[0];
 
-    const drinkPlan = await createDrinkPlan(proposal.id, {
-      client_name: proposal.client_name,
-      client_email: proposal.client_email,
-      event_type: proposal.event_type,
-      event_type_custom: proposal.event_type_custom,
-      event_date: proposal.event_date,
-      created_by: req.user.id,
-    }, { skipEmail: true });
+  const drinkPlan = await createDrinkPlan(proposal.id, {
+    client_name: proposal.client_name,
+    client_email: proposal.client_email,
+    event_type: proposal.event_type,
+    event_type_custom: proposal.event_type_custom,
+    event_date: proposal.event_date,
+    created_by: req.user.id,
+  }, { skipEmail: true });
 
-    if (drinkPlan) {
-      return res.status(201).json(drinkPlan);
-    }
-
-    // Already exists — return the existing one
-    const existing = await pool.query(
-      'SELECT * FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
-      [req.params.proposalId]
-    );
-    res.json(existing.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+  if (drinkPlan) {
+    return res.status(201).json(drinkPlan);
   }
-});
+
+  // Already exists — return the existing one
+  const existing = await pool.query(
+    'SELECT * FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
+    [req.params.proposalId]
+  );
+  res.json(existing.rows[0]);
+}));
 
 /** GET /api/drink-plans/by-proposal/:proposalId — fetch plan by proposal id */
-router.get('/by-proposal/:proposalId', auth, requireAdminOrManager, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT dp.*, u.email AS created_by_email
-       FROM drink_plans dp
-       LEFT JOIN users u ON u.id = dp.created_by
-       WHERE dp.proposal_id = $1`,
-      [req.params.proposalId]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'No drink plan found for this proposal.' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+router.get('/by-proposal/:proposalId', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    `SELECT dp.*, u.email AS created_by_email
+     FROM drink_plans dp
+     LEFT JOIN users u ON u.id = dp.created_by
+     WHERE dp.proposal_id = $1`,
+    [req.params.proposalId]
+  );
+  if (!result.rows[0]) throw new NotFoundError('No drink plan found for this proposal.');
+  res.json(result.rows[0]);
+}));
 
 /** GET /api/drink-plans/:id/shopping-list-data — fetch shaped data for shopping list generation */
-router.get('/:id/shopping-list-data', auth, requireAdminOrManager, async (req, res) => {
-  try {
-    // Fetch the drink plan, joining proposals for guest_count
-    const planResult = await pool.query(
-      `SELECT dp.*, p.guest_count
-       FROM drink_plans dp
-       LEFT JOIN proposals p ON p.id = dp.proposal_id
-       WHERE dp.id = $1`,
-      [req.params.id]
+router.get('/:id/shopping-list-data', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Fetch the drink plan, joining proposals for guest_count
+  const planResult = await pool.query(
+    `SELECT dp.*, p.guest_count
+     FROM drink_plans dp
+     LEFT JOIN proposals p ON p.id = dp.proposal_id
+     WHERE dp.id = $1`,
+    [req.params.id]
+  );
+  if (!planResult.rows[0]) throw new NotFoundError('Plan not found.');
+  const plan = planResult.rows[0];
+
+  // Resolve signature cocktail IDs to names + ingredients
+  const signatureDrinkIds = (plan.selections && plan.selections.signatureDrinks) || [];
+  let signatureCocktails = [];
+  if (signatureDrinkIds.length > 0) {
+    const cocktailResult = await pool.query(
+      `SELECT id, name, ingredients FROM cocktails WHERE id = ANY($1::text[])`,
+      [signatureDrinkIds]
     );
-    if (!planResult.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
-    const plan = planResult.rows[0];
-
-    // Resolve signature cocktail IDs to names + ingredients
-    const signatureDrinkIds = (plan.selections && plan.selections.signatureDrinks) || [];
-    let signatureCocktails = [];
-    if (signatureDrinkIds.length > 0) {
-      const cocktailResult = await pool.query(
-        `SELECT id, name, ingredients FROM cocktails WHERE id = ANY($1::text[])`,
-        [signatureDrinkIds]
-      );
-      // Preserve the order from selections
-      const byId = Object.fromEntries(cocktailResult.rows.map(c => [c.id, c]));
-      signatureCocktails = signatureDrinkIds
-        .filter(id => byId[id])
-        .map(id => ({
-          name: byId[id].name,
-          ingredients: byId[id].ingredients || [],
-        }));
-    }
-
-    // Extract self-provided syrup IDs from selections
-    const syrupSelfProvided = (plan.selections && plan.selections.syrupSelfProvided) || [];
-
-    // Extract beer/wine/mixer selections for shopping list filtering
-    const serviceStyle = plan.serving_type || 'full_bar';
-    const sel = plan.selections || {};
-    const isFullBar = serviceStyle === 'full_bar';
-    const beerSelections = isFullBar
-      ? (sel.beerFromFullBar || [])
-      : (sel.beerFromBeerWine || []);
-    const wineSelections = isFullBar
-      ? (sel.wineFromFullBar || [])
-      : (sel.wineFromBeerWine || []);
-
-    res.json({
-      client_name: plan.client_name,
-      event_type: plan.event_type,
-      event_type_custom: plan.event_type_custom,
-      event_date: plan.event_date,
-      guest_count: plan.guest_count || null,
-      service_style: serviceStyle,
-      signature_cocktails: signatureCocktails,
-      syrup_self_provided: syrupSelfProvided,
-      beer_selections: beerSelections,
-      wine_selections: wineSelections,
-      mixers_for_signature_drinks: sel.mixersForSignatureDrinks ?? null,
-      notes: plan.admin_notes || '',
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    // Preserve the order from selections
+    const byId = Object.fromEntries(cocktailResult.rows.map(c => [c.id, c]));
+    signatureCocktails = signatureDrinkIds
+      .filter(id => byId[id])
+      .map(id => ({
+        name: byId[id].name,
+        ingredients: byId[id].ingredients || [],
+      }));
   }
-});
+
+  // Extract self-provided syrup IDs from selections
+  const syrupSelfProvided = (plan.selections && plan.selections.syrupSelfProvided) || [];
+
+  // Extract beer/wine/mixer selections for shopping list filtering
+  const serviceStyle = plan.serving_type || 'full_bar';
+  const sel = plan.selections || {};
+  const isFullBar = serviceStyle === 'full_bar';
+  const beerSelections = isFullBar
+    ? (sel.beerFromFullBar || [])
+    : (sel.beerFromBeerWine || []);
+  const wineSelections = isFullBar
+    ? (sel.wineFromFullBar || [])
+    : (sel.wineFromBeerWine || []);
+
+  res.json({
+    client_name: plan.client_name,
+    event_type: plan.event_type,
+    event_type_custom: plan.event_type_custom,
+    event_date: plan.event_date,
+    guest_count: plan.guest_count || null,
+    service_style: serviceStyle,
+    signature_cocktails: signatureCocktails,
+    syrup_self_provided: syrupSelfProvided,
+    beer_selections: beerSelections,
+    wine_selections: wineSelections,
+    mixers_for_signature_drinks: sel.mixersForSignatureDrinks ?? null,
+    notes: plan.admin_notes || '',
+  });
+}));
 
 /** GET /api/drink-plans/:id — fetch single plan by id */
-router.get('/:id', auth, requireAdminOrManager, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT dp.*, u.email AS created_by_email
-       FROM drink_plans dp
-       LEFT JOIN users u ON u.id = dp.created_by
-       WHERE dp.id = $1`,
-      [req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    `SELECT dp.*, u.email AS created_by_email
+     FROM drink_plans dp
+     LEFT JOIN users u ON u.id = dp.created_by
+     WHERE dp.id = $1`,
+    [req.params.id]
+  );
+  if (!result.rows[0]) throw new NotFoundError('Plan not found.');
+  res.json(result.rows[0]);
+}));
 
 /** PATCH /api/drink-plans/:id/notes — update admin notes */
-router.patch('/:id/notes', auth, requireAdminOrManager, async (req, res) => {
+router.patch('/:id/notes', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { admin_notes } = req.body;
-  try {
-    const result = await pool.query(
-      'UPDATE drink_plans SET admin_notes = $1 WHERE id = $2 RETURNING id, admin_notes',
-      [admin_notes || '', req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+  const result = await pool.query(
+    'UPDATE drink_plans SET admin_notes = $1 WHERE id = $2 RETURNING id, admin_notes',
+    [admin_notes || '', req.params.id]
+  );
+  if (!result.rows[0]) throw new NotFoundError('Plan not found.');
+  res.json(result.rows[0]);
+}));
 
 /** PATCH /api/drink-plans/:id/status — update plan status */
-router.patch('/:id/status', auth, requireAdminOrManager, async (req, res) => {
+router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { status } = req.body;
   if (!['pending', 'draft', 'exploration_saved', 'submitted', 'reviewed'].includes(status)) {
-    return res.status(400).json({ error: 'Invalid status.' });
+    throw new ValidationError({ status: 'Invalid status.' });
   }
-  try {
-    const result = await pool.query(
-      'UPDATE drink_plans SET status = $1 WHERE id = $2 RETURNING *',
-      [status, req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+  const result = await pool.query(
+    'UPDATE drink_plans SET status = $1 WHERE id = $2 RETURNING *',
+    [status, req.params.id]
+  );
+  if (!result.rows[0]) throw new NotFoundError('Plan not found.');
+  res.json(result.rows[0]);
+}));
 
 /** GET /api/drink-plans/:id/shopping-list — load saved shopping list */
-router.get('/:id/shopping-list', auth, requireAdminOrManager, async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT shopping_list FROM drink_plans WHERE id = $1',
-      [req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
-    res.json({ shopping_list: result.rows[0].shopping_list || null });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+router.get('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    'SELECT shopping_list FROM drink_plans WHERE id = $1',
+    [req.params.id]
+  );
+  if (!result.rows[0]) throw new NotFoundError('Plan not found.');
+  res.json({ shopping_list: result.rows[0].shopping_list || null });
+}));
 
 /** PUT /api/drink-plans/:id/shopping-list — save/update shopping list */
-router.put('/:id/shopping-list', auth, requireAdminOrManager, async (req, res) => {
+router.put('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { shopping_list } = req.body;
   if (!shopping_list || typeof shopping_list !== 'object') {
-    return res.status(400).json({ error: 'Invalid shopping list data.' });
+    throw new ValidationError({ shopping_list: 'Invalid shopping list data.' });
   }
-  try {
-    const result = await pool.query(
-      'UPDATE drink_plans SET shopping_list = $1, updated_at = NOW() WHERE id = $2 RETURNING id',
-      [JSON.stringify(shopping_list), req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+  const result = await pool.query(
+    'UPDATE drink_plans SET shopping_list = $1, updated_at = NOW() WHERE id = $2 RETURNING id',
+    [JSON.stringify(shopping_list), req.params.id]
+  );
+  if (!result.rows[0]) throw new NotFoundError('Plan not found.');
+  res.json({ success: true });
+}));
 
 /** DELETE /api/drink-plans/:id — delete a plan */
-router.delete('/:id', auth, requireAdminOrManager, async (req, res) => {
-  try {
-    const result = await pool.query('DELETE FROM drink_plans WHERE id = $1 RETURNING id', [req.params.id]);
-    if (!result.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+router.delete('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const result = await pool.query('DELETE FROM drink_plans WHERE id = $1 RETURNING id', [req.params.id]);
+  if (!result.rows[0]) throw new NotFoundError('Plan not found.');
+  res.json({ success: true });
+}));
 
 module.exports = router;

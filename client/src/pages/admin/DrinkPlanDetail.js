@@ -4,6 +4,9 @@ import api from '../../utils/api';
 import DrinkPlanSelections from '../../components/DrinkPlanSelections';
 import ShoppingListButton from '../../components/ShoppingList/ShoppingListButton';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { useToast } from '../../context/ToastContext';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
 
 const STATUS_LABELS = {
   pending: 'Pending',
@@ -21,15 +24,19 @@ const STATUS_CLASSES = {
 export default function DrinkPlanDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
   const [plan, setPlan] = useState(null);
   const [cocktails, setCocktails] = useState([]);
   const [mocktailItems, setMocktailItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [notesError, setNotesError] = useState('');
+  const [notesFieldErrors, setNotesFieldErrors] = useState({});
   const [copyMessage, setCopyMessage] = useState('');
 
   useEffect(() => {
+    let cancelled = false;
     async function fetchData() {
       try {
         const [planRes, cocktailsRes, mocktailsRes] = await Promise.all([
@@ -37,27 +44,34 @@ export default function DrinkPlanDetail() {
           api.get('/cocktails'),
           api.get('/mocktails').catch(() => ({ data: { mocktails: [] } })),
         ]);
+        if (cancelled) return;
         setPlan(planRes.data);
         setNotes(planRes.data.admin_notes || '');
         setCocktails(cocktailsRes.data.cocktails || []);
         setMocktailItems(mocktailsRes.data.mocktails || []);
       } catch (err) {
+        if (cancelled) return;
         if (err.response?.status !== 404) {
-          console.error('Failed to fetch plan:', err);
+          toast.error('Failed to load drink plan — try refreshing.');
         }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
     fetchData();
-  }, [id]);
+    return () => { cancelled = true; };
+  }, [id, toast]);
 
   const saveNotes = async () => {
+    setNotesError('');
+    setNotesFieldErrors({});
     setSaving(true);
     try {
       await api.patch(`/drink-plans/${id}/notes`, { admin_notes: notes });
+      toast.success('Saved.');
     } catch (err) {
-      console.error('Failed to save notes:', err);
+      setNotesError(err.message || 'Failed to save notes.');
+      setNotesFieldErrors(err.fieldErrors || {});
     } finally {
       setSaving(false);
     }
@@ -67,8 +81,9 @@ export default function DrinkPlanDetail() {
     try {
       const res = await api.patch(`/drink-plans/${id}/status`, { status: 'reviewed' });
       setPlan(prev => ({ ...prev, status: res.data.status }));
+      toast.success('Plan marked as reviewed.');
     } catch (err) {
-      console.error('Failed to update status:', err);
+      toast.error(err.message || 'Failed to update status.');
     }
   };
 
@@ -76,9 +91,10 @@ export default function DrinkPlanDetail() {
     if (!window.confirm('Delete this drink plan? This cannot be undone.')) return;
     try {
       await api.delete(`/drink-plans/${id}`);
+      toast.success('Drink plan deleted.');
       navigate('/admin/drink-plans');
     } catch (err) {
-      console.error('Failed to delete plan:', err);
+      toast.error(err.message || 'Failed to delete plan.');
     }
   };
 
@@ -173,7 +189,10 @@ export default function DrinkPlanDetail() {
           placeholder="Internal notes about this plan..."
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
+          aria-invalid={!!notesFieldErrors?.admin_notes}
         />
+        <FieldError error={notesFieldErrors?.admin_notes} />
+        <FormBanner error={notesError} fieldErrors={notesFieldErrors} />
         <button
           className="btn btn-sm mt-1"
           onClick={saveNotes}
