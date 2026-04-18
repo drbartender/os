@@ -23,7 +23,7 @@ const path = require('path');
 const { initDb } = require('./db');
 const { auth } = require('./middleware/auth');
 const { getSignedUrl } = require('./utils/storage');
-const { AppError } = require('./utils/errors');
+const { AppError, ExternalServiceError } = require('./utils/errors');
 const { processAutopayCharges, processEventCompletions } = require('./utils/balanceScheduler');
 const { processScheduledAutoAssigns } = require('./utils/autoAssignScheduler');
 const { processSequenceSteps, expireStaleQuoteDrafts } = require('./utils/emailSequenceScheduler');
@@ -140,6 +140,20 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
 
   if (err instanceof AppError) {
+    // External-service failures (Stripe / R2 / Twilio / Resend / Nominatim) MUST land in Sentry
+    // so we hear about provider outages without waiting for user reports. Other AppError
+    // subclasses are user-facing validation/auth/conflict errors — not Sentry-worthy.
+    if (err instanceof ExternalServiceError && process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(err.originalError || err, {
+        tags: {
+          service: err.service,
+          route: req.originalUrl,
+          method: req.method,
+          code: err.code,
+        },
+        user: req.user ? { id: req.user.id, role: req.user.role } : undefined,
+      });
+    }
     const body = { error: err.message, code: err.code };
     if (err.fieldErrors) body.fieldErrors = err.fieldErrors;
     return res.status(err.statusCode).json(body);
