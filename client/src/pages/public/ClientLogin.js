@@ -1,27 +1,41 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import PublicLayout from '../../components/PublicLayout';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
+import { useToast } from '../../context/ToastContext';
 import { useClientAuth } from '../../context/ClientAuthContext';
 import { API_BASE_URL } from '../../utils/api';
 
 export default function ClientLogin() {
   const { isClientAuthenticated, clientLogin } = useClientAuth();
+  const toast = useToast();
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [email, setEmail] = useState('');
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
 
   useEffect(() => {
     if (isClientAuthenticated) navigate('/my-proposals', { replace: true });
   }, [isClientAuthenticated, navigate]);
 
+  const parseError = async (res) => {
+    let data = {};
+    try { data = await res.json(); } catch { /* no body */ }
+    const message = data.error || 'Something went wrong. Please try again.';
+    const err = new Error(message);
+    err.fieldErrors = data.fieldErrors;
+    err.code = data.code;
+    return err;
+  };
+
   const handleRequestOtp = async (e) => {
     e.preventDefault();
     setError('');
-    setMessage('');
+    setFieldErrors({});
     setLoading(true);
 
     try {
@@ -30,12 +44,13 @@ export default function ClientLogin() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Something went wrong');
-      setMessage('If an account exists for this email, a login code has been sent.');
+      if (!res.ok) throw await parseError(res);
+      // Neutral success — does not reveal whether the email is on file.
+      toast.success('If an account exists for this email, a login code has been sent.');
       setStep(2);
     } catch (err) {
       setError(err.message);
+      setFieldErrors(err.fieldErrors || {});
     } finally {
       setLoading(false);
     }
@@ -44,6 +59,7 @@ export default function ClientLogin() {
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
     setError('');
+    setFieldErrors({});
     setLoading(true);
 
     try {
@@ -52,12 +68,13 @@ export default function ClientLogin() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, otp }),
       });
+      if (!res.ok) throw await parseError(res);
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Invalid code');
       clientLogin(data.token, data.client);
       navigate('/my-proposals', { replace: true });
     } catch (err) {
       setError(err.message);
+      setFieldErrors(err.fieldErrors || {});
     } finally {
       setLoading(false);
     }
@@ -65,17 +82,19 @@ export default function ClientLogin() {
 
   const handleResend = async () => {
     setError('');
-    setMessage('');
+    setFieldErrors({});
     setLoading(true);
     try {
-      await fetch(`${API_BASE_URL}/client-auth/request`, {
+      const res = await fetch(`${API_BASE_URL}/client-auth/request`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       });
-      setMessage('A new code has been sent to your email.');
-    } catch {
-      setError('Failed to resend code. Please try again.');
+      if (!res.ok) throw await parseError(res);
+      toast.success('A new code has been sent to your email.');
+    } catch (err) {
+      setError(err.message || 'Failed to resend code. Please try again.');
+      setFieldErrors(err.fieldErrors || {});
     } finally {
       setLoading(false);
     }
@@ -130,9 +149,6 @@ export default function ClientLogin() {
               : 'Enter the 6-digit code sent to your email.'}
           </p>
 
-          {error && <div className="client-alert client-alert-error">{error}</div>}
-          {message && <div className="client-alert client-alert-success">{message}</div>}
-
           {step === 1 ? (
             <form onSubmit={handleRequestOtp}>
               <label className="client-label">Email Address</label>
@@ -145,6 +161,8 @@ export default function ClientLogin() {
                 required
                 autoFocus
               />
+              <FieldError error={fieldErrors.email} />
+              <FormBanner error={error} fieldErrors={fieldErrors} />
               <button type="submit" className="btn client-btn-primary" disabled={loading}>
                 {loading ? 'Sending...' : 'Send Code'}
               </button>
@@ -165,6 +183,8 @@ export default function ClientLogin() {
                 required
                 autoFocus
               />
+              <FieldError error={fieldErrors.otp} />
+              <FormBanner error={error} fieldErrors={fieldErrors} />
               <button type="submit" className="btn client-btn-primary" disabled={loading || otp.length !== 6}>
                 {loading ? 'Verifying...' : 'Sign In'}
               </button>

@@ -4,6 +4,7 @@ import PublicLayout, { clientLoginPath } from '../../components/PublicLayout';
 import { useClientAuth } from '../../context/ClientAuthContext';
 import api from '../../utils/api';
 import InvoiceDropdown from '../../components/InvoiceDropdown';
+import { useToast } from '../../context/ToastContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const STATUS_LABELS = {
@@ -38,6 +39,7 @@ function formatCurrency(amount) {
 
 export default function ClientDashboard() {
   const { clientUser, clientLoading, clientLogout, isClientAuthenticated } = useClientAuth();
+  const toast = useToast();
   const navigate = useNavigate();
   const [proposals, setProposals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -66,12 +68,13 @@ export default function ClientDashboard() {
         if (cancelled) return;
         console.error('Failed to load client proposals:', err);
         setError('Could not load your proposals. Please try again.');
+        toast.error('Failed to load your proposals. Try refreshing.');
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [clientLoading, isClientAuthenticated]);
+  }, [clientLoading, isClientAuthenticated, toast]);
 
   if (clientLoading) {
     return (
