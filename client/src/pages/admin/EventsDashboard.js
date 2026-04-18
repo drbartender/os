@@ -3,6 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { formatPhone } from '../../utils/formatPhone';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { useToast } from '../../context/ToastContext';
+import FormBanner from '../../components/FormBanner';
+import FieldError from '../../components/FieldError';
 
 const TIME_SLOTS = [];
 for (let h = 6; h < 24; h++) {
@@ -22,6 +25,7 @@ const EMPTY_FORM = {
 
 export default function EventsDashboard() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -30,17 +34,18 @@ export default function EventsDashboard() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const fetchEvents = useCallback(async () => {
     try {
       const res = await api.get('/shifts');
       setEvents(res.data);
     } catch (err) {
-      console.error('Failed to fetch events:', err);
+      toast.error('Failed to load events — try refreshing.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => { fetchEvents(); }, [fetchEvents]);
 
@@ -55,16 +60,26 @@ export default function EventsDashboard() {
     return `$${Number(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
-  const handleField = (field, value) => setForm(f => ({ ...f, [field]: value }));
+  const handleField = (field, value) => {
+    setForm(f => ({ ...f, [field]: value }));
+    if (fieldErrors[field]) {
+      setFieldErrors(fe => {
+        const next = { ...fe };
+        delete next[field];
+        return next;
+      });
+    }
+  };
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    setCreateError('');
+    setFieldErrors({});
     if (!form.event_date) {
-      setCreateError('Event date is required.');
+      setFieldErrors({ event_date: 'Event date is required.' });
       return;
     }
     setCreating(true);
-    setCreateError('');
     try {
       // Build positions_needed as an array of N "Bartender" entries
       const posCount = parseInt(form.positions_needed, 10) || 1;
@@ -82,6 +97,7 @@ export default function EventsDashboard() {
         guest_count: form.guest_count || null,
         positions_needed: positions,
       });
+      toast.success('Event created.');
       setForm(EMPTY_FORM);
       setShowCreateForm(false);
       // Navigate directly to the new event detail page
@@ -92,7 +108,8 @@ export default function EventsDashboard() {
         navigate(`/admin/events/shift/${newShift.id}`);
       }
     } catch (err) {
-      setCreateError(err.response?.data?.error || 'Failed to create event.');
+      setCreateError(err.message || 'Failed to create event.');
+      setFieldErrors(err.fieldErrors || {});
     } finally {
       setCreating(false);
     }
@@ -141,67 +158,131 @@ export default function EventsDashboard() {
             No payment received for this event.
           </div>
 
-          {createError && (
-            <div style={{
-              background: '#f8d7da', border: '1px solid #f5c6cb', borderRadius: '8px',
-              padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#721c24',
-            }}>{createError}</div>
-          )}
-
           <form onSubmit={handleCreate}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }}>
               <div>
                 <label className="form-label">Client Name</label>
-                <input className="form-input" value={form.client_name} onChange={e => handleField('client_name', e.target.value)} />
+                <input
+                  className="form-input"
+                  value={form.client_name}
+                  onChange={e => handleField('client_name', e.target.value)}
+                  aria-invalid={!!fieldErrors?.client_name}
+                />
+                <FieldError error={fieldErrors?.client_name} />
               </div>
               <div>
                 <label className="form-label">Client Email</label>
-                <input className="form-input" type="email" value={form.client_email} onChange={e => handleField('client_email', e.target.value)} />
+                <input
+                  className="form-input"
+                  type="email"
+                  value={form.client_email}
+                  onChange={e => handleField('client_email', e.target.value)}
+                  aria-invalid={!!fieldErrors?.client_email}
+                />
+                <FieldError error={fieldErrors?.client_email} />
               </div>
               <div>
                 <label className="form-label">Client Phone</label>
-                <input className="form-input" value={form.client_phone} onChange={e => handleField('client_phone', e.target.value)} />
+                <input
+                  className="form-input"
+                  value={form.client_phone}
+                  onChange={e => handleField('client_phone', e.target.value)}
+                  aria-invalid={!!fieldErrors?.client_phone}
+                />
+                <FieldError error={fieldErrors?.client_phone} />
               </div>
               <div>
                 <label className="form-label">Event Date *</label>
-                <input className="form-input" type="date" value={form.event_date} onChange={e => handleField('event_date', e.target.value)} required />
+                <input
+                  className="form-input"
+                  type="date"
+                  value={form.event_date}
+                  onChange={e => handleField('event_date', e.target.value)}
+                  required
+                  aria-invalid={!!fieldErrors?.event_date}
+                />
+                <FieldError error={fieldErrors?.event_date} />
               </div>
               <div>
                 <label className="form-label">Start Time</label>
-                <select className="form-select" value={form.start_time} onChange={e => handleField('start_time', e.target.value)}>
+                <select
+                  className="form-select"
+                  value={form.start_time}
+                  onChange={e => handleField('start_time', e.target.value)}
+                  aria-invalid={!!fieldErrors?.start_time}
+                >
                   <option value="">Select...</option>
                   {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
+                <FieldError error={fieldErrors?.start_time} />
               </div>
               <div>
                 <label className="form-label">End Time</label>
-                <select className="form-select" value={form.end_time} onChange={e => handleField('end_time', e.target.value)}>
+                <select
+                  className="form-select"
+                  value={form.end_time}
+                  onChange={e => handleField('end_time', e.target.value)}
+                  aria-invalid={!!fieldErrors?.end_time}
+                >
                   <option value="">Select...</option>
                   {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
+                <FieldError error={fieldErrors?.end_time} />
               </div>
               <div>
                 <label className="form-label">Duration (hours)</label>
-                <input className="form-input" type="number" step="0.5" min="0.5" value={form.event_duration_hours} onChange={e => handleField('event_duration_hours', e.target.value)} />
+                <input
+                  className="form-input"
+                  type="number"
+                  step="0.5"
+                  min="0.5"
+                  value={form.event_duration_hours}
+                  onChange={e => handleField('event_duration_hours', e.target.value)}
+                  aria-invalid={!!fieldErrors?.event_duration_hours}
+                />
+                <FieldError error={fieldErrors?.event_duration_hours} />
               </div>
               <div>
                 <label className="form-label">Location</label>
-                <input className="form-input" value={form.location} onChange={e => handleField('location', e.target.value)} />
+                <input
+                  className="form-input"
+                  value={form.location}
+                  onChange={e => handleField('location', e.target.value)}
+                  aria-invalid={!!fieldErrors?.location}
+                />
+                <FieldError error={fieldErrors?.location} />
               </div>
               <div>
                 <label className="form-label">Guest Count</label>
-                <input className="form-input" type="number" min="1" value={form.guest_count} onChange={e => handleField('guest_count', e.target.value)} />
+                <input
+                  className="form-input"
+                  type="number"
+                  min="1"
+                  value={form.guest_count}
+                  onChange={e => handleField('guest_count', e.target.value)}
+                  aria-invalid={!!fieldErrors?.guest_count}
+                />
+                <FieldError error={fieldErrors?.guest_count} />
               </div>
               <div>
                 <label className="form-label">Positions Needed</label>
-                <input className="form-input" type="number" min="1" value={form.positions_needed} onChange={e => handleField('positions_needed', e.target.value)} />
+                <input
+                  className="form-input"
+                  type="number"
+                  min="1"
+                  value={form.positions_needed}
+                  onChange={e => handleField('positions_needed', e.target.value)}
+                  aria-invalid={!!fieldErrors?.positions_needed}
+                />
+                <FieldError error={fieldErrors?.positions_needed} />
               </div>
             </div>
+            <FormBanner error={createError} fieldErrors={fieldErrors} />
             <div style={{ marginTop: '1.25rem', display: 'flex', gap: '0.75rem' }}>
               <button className="btn btn-primary" type="submit" disabled={creating}>
                 {creating ? 'Creating...' : 'Create Event'}
               </button>
-              <button className="btn btn-secondary" type="button" onClick={() => { setShowCreateForm(false); setForm(EMPTY_FORM); setCreateError(''); }}>
+              <button className="btn btn-secondary" type="button" onClick={() => { setShowCreateForm(false); setForm(EMPTY_FORM); setCreateError(''); setFieldErrors({}); }}>
                 Cancel
               </button>
             </div>

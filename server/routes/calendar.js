@@ -3,6 +3,8 @@ const rateLimit = require('express-rate-limit');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { getEventTypeLabel } = require('../utils/eventTypes');
+const asyncHandler = require('../middleware/asyncHandler');
+const { NotFoundError, PermissionError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -251,139 +253,60 @@ function buildStaffDescription(shift, teamList) {
 // ─── Routes ───────────────────────────────────────────────────────
 
 /** GET /api/calendar/feed/:token — iCal feed (public, token-gated) */
-router.get('/feed/:token', calendarLimiter, async (req, res) => {
-  try {
-    // Look up user by calendar token
-    const userRes = await pool.query(
-      'SELECT id, role FROM users WHERE calendar_token = $1',
-      [req.params.token]
-    );
-    if (!userRes.rows[0]) return res.status(404).send('Not found');
-    const user = userRes.rows[0];
-    const isAdmin = user.role === 'admin' || user.role === 'manager';
+router.get('/feed/:token', calendarLimiter, asyncHandler(async (req, res) => {
+  // Look up user by calendar token
+  const userRes = await pool.query(
+    'SELECT id, role FROM users WHERE calendar_token = $1',
+    [req.params.token]
+  );
+  if (!userRes.rows[0]) throw new NotFoundError('Calendar feed not found');
+  const user = userRes.rows[0];
+  const isAdmin = user.role === 'admin' || user.role === 'manager';
 
-    let shifts;
-    if (isAdmin) {
-      // Admin feed: all shifts within feed window, with client details
-      const result = await pool.query(`
-        SELECT s.*,
-          c.name AS client_name, c.phone AS client_phone, c.email AS client_email,
-          p.total_price AS proposal_total, p.guest_count
-        FROM shifts s
-        LEFT JOIN proposals p ON p.id = s.proposal_id
-        LEFT JOIN clients c ON c.id = p.client_id
-        WHERE s.event_date <= CURRENT_DATE + INTERVAL '365 days'
-        ORDER BY s.event_date ASC
-      `);
-      shifts = result.rows;
-    } else {
-      // Staff feed: only their approved shift requests
-      const result = await pool.query(`
-        SELECT s.*, sr.position,
-          sr.status AS request_status
-        FROM shift_requests sr
-        JOIN shifts s ON s.id = sr.shift_id
-        WHERE sr.user_id = $1 AND sr.status = 'approved'
-          AND s.event_date <= CURRENT_DATE + INTERVAL '365 days'
-        ORDER BY s.event_date ASC
-      `, [user.id]);
-      shifts = result.rows;
-    }
-
-    // Fetch team data for all shifts
-    const shiftIds = shifts.map(s => s.id);
-    const teamsMap = await fetchTeamsByShiftIds(shiftIds);
-
-    // Compute ETag and Last-Modified from latest updated_at
-    let latestUpdate = null;
-    for (const s of shifts) {
-      if (s.updated_at && (!latestUpdate || new Date(s.updated_at) > latestUpdate)) {
-        latestUpdate = new Date(s.updated_at);
-      }
-    }
-
-    // Build events
-    const events = shifts.map(s => {
-      const team = teamsMap.get(s.id) || [];
-      const teamStr = formatTeamList(team, isAdmin ? null : user.id);
-
-      let summary, description;
-      const eventTypeLabel = getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom });
-      if (isAdmin) {
-        summary = s.client_name ? `${s.client_name} — ${eventTypeLabel}` : eventTypeLabel;
-        description = buildAdminDescription(s, teamStr);
-      } else {
-        summary = `Bartending — ${eventTypeLabel}`;
-        description = buildStaffDescription(s, teamStr);
-      }
-
-      return {
-        id: s.id,
-        event_date: s.event_date,
-        start_time: s.start_time,
-        end_time: s.end_time,
-        location: s.location,
-        updated_at: s.updated_at,
-        summary,
-        description,
-        cancelled: s.status === 'closed' || s.status === 'cancelled',
-      };
-    });
-
-    const calName = isAdmin ? 'Dr. Bartender Events' : 'My Shifts — Dr. Bartender';
-    const ical = buildICalFeed(events, calName);
-
-    // Set headers
-    res.set('Content-Type', 'text/calendar; charset=utf-8');
-    res.set('Content-Disposition', 'inline; filename="dr-bartender.ics"');
-    res.set('Cache-Control', 'private, max-age=300');
-    if (latestUpdate) {
-      res.set('ETag', `"${latestUpdate.getTime()}"`);
-      res.set('Last-Modified', latestUpdate.toUTCString());
-    }
-
-    res.send(ical);
-  } catch (err) {
-    console.error('Calendar feed error:', err);
-    res.status(500).send('Server error');
-  }
-});
-
-/** GET /api/calendar/event/:shiftId.ics — single event download (auth required) */
-router.get('/event/:shiftId.ics', auth, async (req, res) => {
-  try {
-    const shiftId = parseInt(req.params.shiftId);
-    const isAdmin = req.user.role === 'admin' || req.user.role === 'manager';
-
-    // Verify access
-    if (!isAdmin) {
-      const check = await pool.query(
-        "SELECT id FROM shift_requests WHERE shift_id = $1 AND user_id = $2 AND status = 'approved'",
-        [shiftId, req.user.id]
-      );
-      if (!check.rows[0]) return res.status(403).json({ error: 'Access denied' });
-    }
-
-    // Fetch shift
+  let shifts;
+  if (isAdmin) {
+    // Admin feed: all shifts within feed window, with client details
     const result = await pool.query(`
       SELECT s.*,
         c.name AS client_name, c.phone AS client_phone, c.email AS client_email,
-        p.total_price AS proposal_total, p.guest_count,
-        sr.position
+        p.total_price AS proposal_total, p.guest_count
       FROM shifts s
       LEFT JOIN proposals p ON p.id = s.proposal_id
       LEFT JOIN clients c ON c.id = p.client_id
-      LEFT JOIN shift_requests sr ON sr.shift_id = s.id AND sr.user_id = $2 AND sr.status = 'approved'
-      WHERE s.id = $1
-    `, [shiftId, req.user.id]);
+      WHERE s.event_date <= CURRENT_DATE + INTERVAL '365 days'
+      ORDER BY s.event_date ASC
+    `);
+    shifts = result.rows;
+  } else {
+    // Staff feed: only their approved shift requests
+    const result = await pool.query(`
+      SELECT s.*, sr.position,
+        sr.status AS request_status
+      FROM shift_requests sr
+      JOIN shifts s ON s.id = sr.shift_id
+      WHERE sr.user_id = $1 AND sr.status = 'approved'
+        AND s.event_date <= CURRENT_DATE + INTERVAL '365 days'
+      ORDER BY s.event_date ASC
+    `, [user.id]);
+    shifts = result.rows;
+  }
 
-    if (!result.rows[0]) return res.status(404).json({ error: 'Shift not found' });
-    const s = result.rows[0];
+  // Fetch team data for all shifts
+  const shiftIds = shifts.map(s => s.id);
+  const teamsMap = await fetchTeamsByShiftIds(shiftIds);
 
-    // Fetch team
-    const teamsMap = await fetchTeamsByShiftIds([shiftId]);
-    const team = teamsMap.get(shiftId) || [];
-    const teamStr = formatTeamList(team, isAdmin ? null : req.user.id);
+  // Compute ETag and Last-Modified from latest updated_at
+  let latestUpdate = null;
+  for (const s of shifts) {
+    if (s.updated_at && (!latestUpdate || new Date(s.updated_at) > latestUpdate)) {
+      latestUpdate = new Date(s.updated_at);
+    }
+  }
+
+  // Build events
+  const events = shifts.map(s => {
+    const team = teamsMap.get(s.id) || [];
+    const teamStr = formatTeamList(team, isAdmin ? null : user.id);
 
     let summary, description;
     const eventTypeLabel = getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom });
@@ -395,7 +318,7 @@ router.get('/event/:shiftId.ics', auth, async (req, res) => {
       description = buildStaffDescription(s, teamStr);
     }
 
-    const event = {
+    return {
       id: s.id,
       event_date: s.event_date,
       start_time: s.start_time,
@@ -406,59 +329,118 @@ router.get('/event/:shiftId.ics', auth, async (req, res) => {
       description,
       cancelled: s.status === 'closed' || s.status === 'cancelled',
     };
+  });
 
-    const ical = buildICalFeed([event], 'Dr. Bartender');
-    const eventTypeLabelFn = getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom });
-    const filename = eventTypeLabelFn.replace(/[^a-zA-Z0-9 -]/g, '').replace(/\s+/g, '-').toLowerCase();
+  const calName = isAdmin ? 'Dr. Bartender Events' : 'My Shifts — Dr. Bartender';
+  const ical = buildICalFeed(events, calName);
 
-    res.set('Content-Type', 'text/calendar; charset=utf-8');
-    res.set('Content-Disposition', `attachment; filename="${filename}.ics"`);
-    res.send(ical);
-  } catch (err) {
-    console.error('Calendar event download error:', err);
-    res.status(500).json({ error: 'Server error' });
+  // Set headers
+  res.set('Content-Type', 'text/calendar; charset=utf-8');
+  res.set('Content-Disposition', 'inline; filename="dr-bartender.ics"');
+  res.set('Cache-Control', 'private, max-age=300');
+  if (latestUpdate) {
+    res.set('ETag', `"${latestUpdate.getTime()}"`);
+    res.set('Last-Modified', latestUpdate.toUTCString());
   }
-});
+
+  res.send(ical);
+}));
+
+/** GET /api/calendar/event/:shiftId.ics — single event download (auth required) */
+router.get('/event/:shiftId.ics', auth, asyncHandler(async (req, res) => {
+  const shiftId = parseInt(req.params.shiftId);
+  const isAdmin = req.user.role === 'admin' || req.user.role === 'manager';
+
+  // Verify access
+  if (!isAdmin) {
+    const check = await pool.query(
+      "SELECT id FROM shift_requests WHERE shift_id = $1 AND user_id = $2 AND status = 'approved'",
+      [shiftId, req.user.id]
+    );
+    if (!check.rows[0]) throw new PermissionError('Access denied');
+  }
+
+  // Fetch shift
+  const result = await pool.query(`
+    SELECT s.*,
+      c.name AS client_name, c.phone AS client_phone, c.email AS client_email,
+      p.total_price AS proposal_total, p.guest_count,
+      sr.position
+    FROM shifts s
+    LEFT JOIN proposals p ON p.id = s.proposal_id
+    LEFT JOIN clients c ON c.id = p.client_id
+    LEFT JOIN shift_requests sr ON sr.shift_id = s.id AND sr.user_id = $2 AND sr.status = 'approved'
+    WHERE s.id = $1
+  `, [shiftId, req.user.id]);
+
+  if (!result.rows[0]) throw new NotFoundError('Shift not found');
+  const s = result.rows[0];
+
+  // Fetch team
+  const teamsMap = await fetchTeamsByShiftIds([shiftId]);
+  const team = teamsMap.get(shiftId) || [];
+  const teamStr = formatTeamList(team, isAdmin ? null : req.user.id);
+
+  let summary, description;
+  const eventTypeLabel = getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom });
+  if (isAdmin) {
+    summary = s.client_name ? `${s.client_name} — ${eventTypeLabel}` : eventTypeLabel;
+    description = buildAdminDescription(s, teamStr);
+  } else {
+    summary = `Bartending — ${eventTypeLabel}`;
+    description = buildStaffDescription(s, teamStr);
+  }
+
+  const event = {
+    id: s.id,
+    event_date: s.event_date,
+    start_time: s.start_time,
+    end_time: s.end_time,
+    location: s.location,
+    updated_at: s.updated_at,
+    summary,
+    description,
+    cancelled: s.status === 'closed' || s.status === 'cancelled',
+  };
+
+  const ical = buildICalFeed([event], 'Dr. Bartender');
+  const eventTypeLabelFn = getEventTypeLabel({ event_type: s.event_type, event_type_custom: s.event_type_custom });
+  const filename = eventTypeLabelFn.replace(/[^a-zA-Z0-9 -]/g, '').replace(/\s+/g, '-').toLowerCase();
+
+  res.set('Content-Type', 'text/calendar; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="${filename}.ics"`);
+  res.send(ical);
+}));
 
 /** GET /api/calendar/token — get current user's feed URL */
-router.get('/token', auth, async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT calendar_token FROM users WHERE id = $1',
-      [req.user.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
+router.get('/token', auth, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    'SELECT calendar_token FROM users WHERE id = $1',
+    [req.user.id]
+  );
+  if (!result.rows[0]) throw new NotFoundError('User not found');
 
-    const token = result.rows[0].calendar_token;
-    // Build the feed URL using the server's own origin
-    const apiBase = process.env.RENDER_EXTERNAL_URL || process.env.API_URL || `http://localhost:${process.env.PORT || 5000}`;
-    const feedUrl = `${apiBase}/api/calendar/feed/${token}`;
+  const token = result.rows[0].calendar_token;
+  // Build the feed URL using the server's own origin
+  const apiBase = process.env.RENDER_EXTERNAL_URL || process.env.API_URL || `http://localhost:${process.env.PORT || 5000}`;
+  const feedUrl = `${apiBase}/api/calendar/feed/${token}`;
 
-    res.json({ token, feed_url: feedUrl });
-  } catch (err) {
-    console.error('Calendar token fetch error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+  res.json({ token, feed_url: feedUrl });
+}));
 
 /** POST /api/calendar/token/regenerate — regenerate feed URL */
-router.post('/token/regenerate', auth, async (req, res) => {
-  try {
-    const result = await pool.query(
-      'UPDATE users SET calendar_token = gen_random_uuid(), calendar_token_created_at = NOW() WHERE id = $1 RETURNING calendar_token',
-      [req.user.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
+router.post('/token/regenerate', auth, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    'UPDATE users SET calendar_token = gen_random_uuid(), calendar_token_created_at = NOW() WHERE id = $1 RETURNING calendar_token',
+    [req.user.id]
+  );
+  if (!result.rows[0]) throw new NotFoundError('User not found');
 
-    const token = result.rows[0].calendar_token;
-    const apiBase = process.env.RENDER_EXTERNAL_URL || process.env.API_URL || `http://localhost:${process.env.PORT || 5000}`;
-    const feedUrl = `${apiBase}/api/calendar/feed/${token}`;
+  const token = result.rows[0].calendar_token;
+  const apiBase = process.env.RENDER_EXTERNAL_URL || process.env.API_URL || `http://localhost:${process.env.PORT || 5000}`;
+  const feedUrl = `${apiBase}/api/calendar/feed/${token}`;
 
-    res.json({ token, feed_url: feedUrl });
-  } catch (err) {
-    console.error('Calendar token regenerate error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+  res.json({ token, feed_url: feedUrl });
+}));
 
 module.exports = router;
