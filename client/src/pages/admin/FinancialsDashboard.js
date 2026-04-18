@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { useToast } from '../../context/ToastContext';
 
 const formatCurrency = (amount) => {
   if (amount == null) return '$0.00';
@@ -25,19 +26,27 @@ const STATUS_CLASSES = {
 
 export default function FinancialsDashboard() {
   const navigate = useNavigate();
+  const toast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
 
   useEffect(() => {
     api.get('/proposals/financials')
       .then(r => setData(r.data))
-      .catch(() => setError('Failed to load financial data'))
+      .catch((err) => {
+        toast.error(err.message || 'Failed to load financial data. Try refreshing.');
+      })
       .finally(() => setLoading(false));
-  }, []);
+  }, [toast]);
 
   if (loading) return <div className="page-container wide"><p>Loading...</p></div>;
-  if (error) return <div className="page-container wide"><div className="card"><p className="text-error">{error}</p></div></div>;
+  if (!data) return (
+    <div className="page-container wide">
+      <div className="card">
+        <p className="text-muted">Couldn’t load financial data. Try refreshing the page.</p>
+      </div>
+    </div>
+  );
 
   const { summary, proposals, recentPayments } = data;
 
