@@ -101,6 +101,9 @@ app.use(cors({
 // Stripe webhook needs raw body — must be registered BEFORE express.json()
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 
+// Resend webhook needs raw body for svix signature verification — also BEFORE express.json()
+app.use('/api/email-marketing/webhook/resend', express.raw({ type: 'application/json' }));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(fileUpload({

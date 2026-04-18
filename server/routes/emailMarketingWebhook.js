@@ -20,11 +20,17 @@ router.post('/resend', asyncHandler(async (req, res) => {
     if (!process.env.RESEND_WEBHOOK_SECRET) {
       console.warn('RESEND_WEBHOOK_SECRET not set — skipping signature verification (non-production)');
     }
+
+    // Body arrives as a raw Buffer because express.raw() is mounted on this route in index.js
+    // (svix requires the exact bytes that were signed — JSON.stringify of a parsed object would
+    // re-order keys / change spacing and fail verification).
+    const payload = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : JSON.stringify(req.body);
+
     if (process.env.RESEND_WEBHOOK_SECRET) {
       const { Webhook } = require('svix');
       const wh = new Webhook(process.env.RESEND_WEBHOOK_SECRET);
       try {
-        wh.verify(JSON.stringify(req.body), {
+        wh.verify(payload, {
           'svix-id': req.headers['svix-id'],
           'svix-timestamp': req.headers['svix-timestamp'],
           'svix-signature': req.headers['svix-signature'],
@@ -35,7 +41,16 @@ router.post('/resend', asyncHandler(async (req, res) => {
       }
     }
 
-    const { type, data } = req.body;
+    // Parse AFTER verification
+    let event;
+    try {
+      event = JSON.parse(payload);
+    } catch (parseErr) {
+      console.error('Webhook payload parse error:', parseErr.message);
+      return res.status(400).json({ error: 'Invalid JSON payload' });
+    }
+
+    const { type, data } = event;
     const resendId = data?.email_id;
 
     if (!type || !resendId) {
@@ -45,7 +60,7 @@ router.post('/resend', asyncHandler(async (req, res) => {
     // Log raw event
     await pool.query(
       `INSERT INTO email_webhook_events (resend_id, event_type, payload) VALUES ($1, $2, $3)`,
-      [resendId, type, JSON.stringify(req.body)]
+      [resendId, type, payload]
     );
 
     // Map Resend event types to our status
