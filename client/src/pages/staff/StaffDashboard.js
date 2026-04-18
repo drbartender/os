@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../utils/api';
 import { WHATSAPP_GROUP_URL, COMPANY_PHONE, COMPANY_PHONE_TEL } from '../../utils/constants';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -112,7 +113,7 @@ export default function StaffDashboard() {
             <div className="card" style={{ marginTop: '1rem', borderLeft: '3px solid var(--success)' }}>
               <h3 style={{ fontSize: '1rem', marginBottom: '0.5rem', color: 'var(--deep-brown)' }}>Next Event</h3>
               <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>
-                {stats.nextEvent.event_name || stats.nextEvent.proposal_event_name || 'Event'}
+                {stats.nextEvent.client_name || 'Event'} — {getEventTypeLabel({ event_type: stats.nextEvent.event_type, event_type_custom: stats.nextEvent.event_type_custom })}
               </div>
               <div style={{ fontSize: '0.85rem', color: 'var(--warm-brown)', marginTop: '0.2rem' }}>
                 {fmtDate(stats.nextEvent.event_date)}

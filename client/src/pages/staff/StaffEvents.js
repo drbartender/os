@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../utils/api';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -48,7 +49,7 @@ export default function StaffEvents() {
               {events.upcoming.map(ev => (
                 <div key={ev.id + '-up'} className="card" style={{ padding: '1rem 1.25rem', borderLeft: '3px solid var(--success)' }}>
                   <div style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.2rem' }}>
-                    {ev.event_name || ev.proposal_event_name || 'Event'}
+                    {ev.client_name || 'Event'} — {getEventTypeLabel({ event_type: ev.event_type, event_type_custom: ev.event_type_custom })}
                   </div>
                   <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
                     {fmtDate(ev.event_date)}
@@ -84,7 +85,7 @@ export default function StaffEvents() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
                     <div>
                       <div style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.15rem' }}>
-                        {ev.event_name || ev.proposal_event_name || 'Event'}
+                        {ev.client_name || 'Event'} — {getEventTypeLabel({ event_type: ev.event_type, event_type_custom: ev.event_type_custom })}
                       </div>
                       <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
                         {fmtDate(ev.event_date)}

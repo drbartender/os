@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../utils/api';
 import { WHATSAPP_GROUP_URL } from '../../utils/constants';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const STATUS_STYLES = {
   pending:  { background: '#FFF3DC', color: '#8B5E0A', border: '1px solid #E5C97A' },
@@ -98,7 +99,7 @@ export default function StaffShifts() {
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
                   <div style={{ flex: 1, minWidth: 220 }}>
                     <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', color: 'var(--deep-brown)', marginBottom: '0.3rem' }}>
-                      {shift.event_name}
+                      {shift.client_name || 'Event'} — {getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom })}
                     </div>
                     <div style={{ fontSize: '0.85rem', color: 'var(--warm-brown)', fontWeight: 600 }}>
                       {fmtDate(shift.event_date)}

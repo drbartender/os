@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../utils/api';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const STATUS_STYLES = {
   pending:  { background: '#FFF3DC', color: '#8B5E0A', border: '1px solid #E5C97A' },
@@ -85,7 +86,7 @@ export default function StaffSchedule() {
             <div key={req.id} className="card" style={{ padding: '1rem 1.25rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
                 <div>
-                  <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>{req.event_name}</div>
+                  <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>{req.client_name || 'Event'} — {getEventTypeLabel({ event_type: req.event_type, event_type_custom: req.event_type_custom })}</div>
                   <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
                     {fmtDate(req.event_date)}
                     {req.start_time && <> &middot; {req.start_time}{req.end_time && ` - ${req.end_time}`}</>}

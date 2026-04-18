@@ -5,6 +5,7 @@ import { useToast } from '../context/ToastContext';
 import BrandLogo from '../components/BrandLogo';
 import api from '../utils/api';
 import { WHATSAPP_GROUP_URL, COMPANY_PHONE, COMPANY_PHONE_TEL } from '../utils/constants';
+import { getEventTypeLabel } from '../utils/eventTypes';
 
 const STATUS_STYLES = {
   pending:  { background: '#FFF3DC', color: '#8B5E0A', border: '1px solid #E5C97A' },
@@ -269,7 +270,7 @@ export default function StaffPortal() {
                           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
                             <div style={{ flex: 1, minWidth: 220 }}>
                               <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', color: 'var(--deep-brown)', marginBottom: '0.3rem' }}>
-                                {shift.event_name}
+                                {shift.client_name || 'Event'} — {getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom })}
                               </div>
                               <div style={{ fontSize: '0.85rem', color: 'var(--warm-brown)', fontWeight: 600 }}>
                                 📅 {fmtDate(shift.event_date)}
@@ -350,7 +351,7 @@ export default function StaffPortal() {
                       <div key={req.id} className="card" style={{ padding: '1rem 1.25rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
                           <div>
-                            <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>{req.event_name}</div>
+                            <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>{req.client_name || 'Event'} — {getEventTypeLabel({ event_type: req.event_type, event_type_custom: req.event_type_custom })}</div>
                             <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
                               {fmtDate(req.event_date)}
                               {req.start_time && <> · {req.start_time}{req.end_time && ` – ${req.end_time}`}</>}
@@ -437,7 +438,7 @@ export default function StaffPortal() {
                         {myEvents.upcoming.map(ev => (
                           <div key={ev.id + '-up'} className="card" style={{ padding: '1rem 1.25rem', borderLeft: '3px solid var(--success)' }}>
                             <div style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.2rem' }}>
-                              {ev.event_name || ev.proposal_event_name || 'Event'}
+                              {ev.client_name || 'Event'} — {getEventTypeLabel({ event_type: ev.event_type, event_type_custom: ev.event_type_custom })}
                             </div>
                             <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
                               {fmtDate(ev.event_date)}
@@ -473,7 +474,7 @@ export default function StaffPortal() {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
                               <div>
                                 <div style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.15rem' }}>
-                                  {ev.event_name || ev.proposal_event_name || 'Event'}
+                                  {ev.client_name || 'Event'} — {getEventTypeLabel({ event_type: ev.event_type, event_type_custom: ev.event_type_custom })}
                                 </div>
                                 <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
                                   {fmtDate(ev.event_date)}
