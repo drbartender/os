@@ -5,6 +5,8 @@ const { pool } = require('../db');
 const { auth, requireAdminOrManager, clientAuth } = require('../middleware/auth');
 const { publicLimiter } = require('../middleware/rateLimiters');
 const { createInvoice, writeLineItems } = require('../utils/invoiceHelpers');
+const asyncHandler = require('../middleware/asyncHandler');
+const { NotFoundError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -15,62 +17,57 @@ const router = express.Router();
  * Fetch a single invoice by its shareable token (public, rate-limited).
  * Excludes voided invoices. Returns line items and payments in parallel.
  */
-router.get('/t/:token', publicLimiter, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT
-         i.id, i.token, i.proposal_id, i.invoice_number, i.label,
-         i.amount_due, i.amount_paid, i.status, i.due_date,
-         i.locked, i.locked_at, i.created_at, i.updated_at,
-         p.event_date, p.event_start_time, p.event_location,
-         p.event_type, p.event_type_custom, p.guest_count,
-         c.name AS client_name, c.email AS client_email
-       FROM invoices i
-       JOIN proposals p ON p.id = i.proposal_id
-       JOIN clients c ON c.id = p.client_id
-       WHERE i.token = $1
-         AND i.status != 'void'`,
-      [req.params.token]
-    );
+router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    `SELECT
+       i.id, i.token, i.proposal_id, i.invoice_number, i.label,
+       i.amount_due, i.amount_paid, i.status, i.due_date,
+       i.locked, i.locked_at, i.created_at, i.updated_at,
+       p.event_date, p.event_start_time, p.event_location,
+       p.event_type, p.event_type_custom, p.guest_count,
+       c.name AS client_name, c.email AS client_email
+     FROM invoices i
+     JOIN proposals p ON p.id = i.proposal_id
+     JOIN clients c ON c.id = p.client_id
+     WHERE i.token = $1
+       AND i.status != 'void'`,
+    [req.params.token]
+  );
 
-    if (!result.rows[0]) {
-      return res.status(404).json({ error: 'Invoice not found.' });
-    }
-
-    const invoice = result.rows[0];
-
-    // Parallel fetch line items and payments
-    const [lineItemsRes, paymentsRes] = await Promise.all([
-      pool.query(
-        `SELECT id, description, quantity, unit_price, line_total, source_type
-           FROM invoice_line_items
-          WHERE invoice_id = $1
-          ORDER BY id`,
-        [invoice.id]
-      ),
-      pool.query(
-        `SELECT ip.id, ip.amount, ip.created_at,
-                pp.payment_type, pp.status AS payment_status
-           FROM invoice_payments ip
-           JOIN proposal_payments pp ON pp.id = ip.payment_id
-          WHERE ip.invoice_id = $1
-          ORDER BY ip.created_at`,
-        [invoice.id]
-      ),
-    ]);
-
-    res.json({
-      invoice: {
-        ...invoice,
-        line_items: lineItemsRes.rows,
-        payments: paymentsRes.rows,
-      },
-    });
-  } catch (err) {
-    console.error('Invoice public token fetch error:', err);
-    res.status(500).json({ error: 'Server error' });
+  if (!result.rows[0]) {
+    throw new NotFoundError('This invoice is no longer available');
   }
-});
+
+  const invoice = result.rows[0];
+
+  // Parallel fetch line items and payments
+  const [lineItemsRes, paymentsRes] = await Promise.all([
+    pool.query(
+      `SELECT id, description, quantity, unit_price, line_total, source_type
+         FROM invoice_line_items
+        WHERE invoice_id = $1
+        ORDER BY id`,
+      [invoice.id]
+    ),
+    pool.query(
+      `SELECT ip.id, ip.amount, ip.created_at,
+              pp.payment_type, pp.status AS payment_status
+         FROM invoice_payments ip
+         JOIN proposal_payments pp ON pp.id = ip.payment_id
+        WHERE ip.invoice_id = $1
+        ORDER BY ip.created_at`,
+      [invoice.id]
+    ),
+  ]);
+
+  res.json({
+    invoice: {
+      ...invoice,
+      line_items: lineItemsRes.rows,
+      payments: paymentsRes.rows,
+    },
+  });
+}));
 
 // ─── Admin / Manager ─────────────────────────────────────────────────────────
 

@@ -8,6 +8,8 @@ const emailTemplates = require('../utils/emailTemplates');
 const { calculateSyrupCost } = require('../utils/pricingEngine');
 const { createBalanceInvoice, linkPaymentToInvoice } = require('../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../utils/eventTypes');
+const asyncHandler = require('../middleware/asyncHandler');
+const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -82,223 +84,229 @@ async function getOrCreateCustomer(proposal) {
 // ─── Public: create a Payment Intent for a proposal ──────────────
 
 /** POST /api/stripe/create-intent/:token — public, token-gated */
-router.post('/create-intent/:token', publicLimiter, async (req, res) => {
-  try {
-    const stripe = getStripe();
-    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
+router.post('/create-intent/:token', publicLimiter, asyncHandler(async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) {
+    throw new ExternalServiceError('Stripe', null, 'Payments are not configured.');
+  }
 
-    const { payment_option = 'deposit', autopay = false } = req.body;
+  const { payment_option = 'deposit', autopay = false } = req.body;
 
-    const result = await pool.query(`
-      SELECT p.id, p.status, p.event_type, p.event_type_custom, p.total_price, p.event_date,
-             p.stripe_customer_id, p.deposit_amount,
-             c.email AS client_email, c.name AS client_name
-      FROM proposals p
-      LEFT JOIN clients c ON c.id = p.client_id
-      WHERE p.token = $1
-    `, [req.params.token]);
+  const result = await pool.query(`
+    SELECT p.id, p.status, p.event_type, p.event_type_custom, p.total_price, p.event_date,
+           p.stripe_customer_id, p.deposit_amount,
+           c.email AS client_email, c.name AS client_name
+    FROM proposals p
+    LEFT JOIN clients c ON c.id = p.client_id
+    WHERE p.token = $1
+  `, [req.params.token]);
 
-    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
+  if (!result.rows[0]) throw new NotFoundError('This proposal is no longer available');
 
-    const proposal = result.rows[0];
-    if (['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status)) {
-      return res.status(400).json({ error: 'Payment has already been made.' });
-    }
-    if (!['sent', 'viewed', 'accepted'].includes(proposal.status)) {
-      return res.status(400).json({ error: 'Proposal is not available for payment.' });
-    }
+  const proposal = result.rows[0];
+  if (['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status)) {
+    throw new ConflictError('Payment has already been made for this proposal', 'ALREADY_PAID');
+  }
+  if (!['sent', 'viewed', 'accepted'].includes(proposal.status)) {
+    throw new ConflictError('This proposal is not available for payment', 'NOT_PAYABLE');
+  }
 
-    const isFullPay = payment_option === 'full';
-    const wantsAutopay = !isFullPay && autopay === true;
-    const amount = isFullPay
-      ? Math.round(Number(proposal.total_price) * 100)
-      : DEPOSIT_AMOUNT;
+  const isFullPay = payment_option === 'full';
+  const wantsAutopay = !isFullPay && autopay === true;
+  const amount = isFullPay
+    ? Math.round(Number(proposal.total_price) * 100)
+    : DEPOSIT_AMOUNT;
 
-    // Reuse existing pending intent if amount matches
-    const existing = await pool.query(
-      "SELECT stripe_payment_intent_id, amount FROM stripe_sessions WHERE proposal_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
-      [proposal.id]
-    );
-    if (existing.rows[0] && existing.rows[0].amount === amount) {
-      try {
-        const intent = await stripe.paymentIntents.retrieve(existing.rows[0].stripe_payment_intent_id);
-        if (intent.status === 'requires_payment_method' || intent.status === 'requires_confirmation') {
-          return res.json({ clientSecret: intent.client_secret });
-        }
-      } catch (e) {
-        // Intent no longer valid, create a new one
+  // Reuse existing pending intent if amount matches
+  const existing = await pool.query(
+    "SELECT stripe_payment_intent_id, amount FROM stripe_sessions WHERE proposal_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
+    [proposal.id]
+  );
+  if (existing.rows[0] && existing.rows[0].amount === amount) {
+    try {
+      const intent = await stripe.paymentIntents.retrieve(existing.rows[0].stripe_payment_intent_id);
+      if (intent.status === 'requires_payment_method' || intent.status === 'requires_confirmation') {
+        return res.json({ clientSecret: intent.client_secret });
       }
+    } catch (e) {
+      // Intent no longer valid, create a new one
     }
+  }
 
-    // Create or retrieve Stripe Customer (needed for autopay card saving)
-    const customerId = await getOrCreateCustomer(proposal);
+  // Create or retrieve Stripe Customer (needed for autopay card saving)
+  const customerId = await getOrCreateCustomer(proposal);
 
-    const intentParams = {
-      amount,
-      currency: 'usd',
-      customer: customerId,
-      description: isFullPay
-        ? `Full Payment — ${eventLabelFor(proposal)}`
-        : `Event Deposit — ${eventLabelFor(proposal)}`,
-      receipt_email: proposal.client_email || undefined,
-      metadata: {
-        proposal_id: String(proposal.id),
-        payment_type: isFullPay ? 'full' : 'deposit',
-      },
-    };
+  const intentParams = {
+    amount,
+    currency: 'usd',
+    customer: customerId,
+    description: isFullPay
+      ? `Full Payment — ${eventLabelFor(proposal)}`
+      : `Event Deposit — ${eventLabelFor(proposal)}`,
+    receipt_email: proposal.client_email || undefined,
+    metadata: {
+      proposal_id: String(proposal.id),
+      payment_type: isFullPay ? 'full' : 'deposit',
+    },
+  };
 
-    // Save payment method for future off-session charges (autopay)
-    if (wantsAutopay) {
-      intentParams.setup_future_usage = 'off_session';
-    }
+  // Save payment method for future off-session charges (autopay)
+  if (wantsAutopay) {
+    intentParams.setup_future_usage = 'off_session';
+  }
 
-    const paymentIntent = await stripe.paymentIntents.create(intentParams);
-
-    await pool.query(
-      `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
-       VALUES ($1, $2, $3, 'pending')
-       ON CONFLICT (stripe_payment_intent_id) DO NOTHING`,
-      [proposal.id, paymentIntent.id, amount]
-    );
-
-    // Update proposal with payment preferences and default balance_due_date
-    await pool.query(`
-      UPDATE proposals
-      SET payment_type = $1,
-          autopay_enrolled = $2,
-          balance_due_date = COALESCE(balance_due_date, event_date - INTERVAL '14 days')
-      WHERE id = $3
-    `, [isFullPay ? 'full' : 'deposit', wantsAutopay, proposal.id]);
-
-    res.json({ clientSecret: paymentIntent.client_secret });
+  let paymentIntent;
+  try {
+    paymentIntent = await stripe.paymentIntents.create(intentParams);
   } catch (err) {
     console.error('Stripe create-intent error:', err);
-    res.status(500).json({ error: 'Failed to create payment intent.' });
+    throw new ExternalServiceError('Stripe', err, 'Payment temporarily unavailable. Please try again.');
   }
-});
+
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
+     VALUES ($1, $2, $3, 'pending')
+     ON CONFLICT (stripe_payment_intent_id) DO NOTHING`,
+    [proposal.id, paymentIntent.id, amount]
+  );
+
+  // Update proposal with payment preferences and default balance_due_date
+  await pool.query(`
+    UPDATE proposals
+    SET payment_type = $1,
+        autopay_enrolled = $2,
+        balance_due_date = COALESCE(balance_due_date, event_date - INTERVAL '14 days')
+    WHERE id = $3
+  `, [isFullPay ? 'full' : 'deposit', wantsAutopay, proposal.id]);
+
+  res.json({ clientSecret: paymentIntent.client_secret });
+}));
 
 // ─── Public: create a Payment Intent for drink plan extras ──────
 
 /** POST /api/stripe/create-drink-plan-intent/:token — public, token-gated (drink plan token) */
-router.post('/create-drink-plan-intent/:token', publicLimiter, async (req, res) => {
-  try {
-    const stripe = getStripe();
-    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
+router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) {
+    throw new ExternalServiceError('Stripe', null, 'Payments are not configured.');
+  }
 
-    const { selections } = req.body;
-    if (!selections) return res.status(400).json({ error: 'Selections required.' });
+  const { selections } = req.body;
+  if (!selections) throw new ValidationError({ selections: 'Selections required' });
 
-    // Look up drink plan + proposal
-    const planRes = await pool.query(`
-      SELECT dp.id AS plan_id, dp.token AS plan_token, dp.status AS plan_status,
-             p.id AS proposal_id, p.total_price, p.amount_paid, p.event_date,
-             p.balance_due_date, p.guest_count, p.num_bars, p.stripe_customer_id,
-             p.event_type, p.event_type_custom, p.pricing_snapshot,
-             c.email AS client_email, c.name AS client_name
-      FROM drink_plans dp
-      JOIN proposals p ON p.id = dp.proposal_id
-      LEFT JOIN clients c ON c.id = p.client_id
-      WHERE dp.token = $1
-    `, [req.params.token]);
+  // Look up drink plan + proposal
+  const planRes = await pool.query(`
+    SELECT dp.id AS plan_id, dp.token AS plan_token, dp.status AS plan_status,
+           p.id AS proposal_id, p.total_price, p.amount_paid, p.event_date,
+           p.balance_due_date, p.guest_count, p.num_bars, p.stripe_customer_id,
+           p.event_type, p.event_type_custom, p.pricing_snapshot,
+           c.email AS client_email, c.name AS client_name
+    FROM drink_plans dp
+    JOIN proposals p ON p.id = dp.proposal_id
+    LEFT JOIN clients c ON c.id = p.client_id
+    WHERE dp.token = $1
+  `, [req.params.token]);
 
-    if (!planRes.rows[0]) return res.status(404).json({ error: 'Plan not found.' });
-    const data = planRes.rows[0];
+  if (!planRes.rows[0]) throw new NotFoundError('This drink plan link is no longer valid');
+  const data = planRes.rows[0];
 
-    if (!data.proposal_id) return res.status(400).json({ error: 'No linked proposal.' });
+  if (!data.proposal_id) throw new ConflictError('No linked proposal for this plan');
 
-    // Calculate extras server-side
-    const addOns = selections.addOns || {};
-    const addonSlugs = Object.keys(addOns).filter(slug => addOns[slug]?.enabled);
-    const addBarRental = selections.logistics?.addBarRental === true;
+  // Calculate extras server-side
+  const addOns = selections.addOns || {};
+  const addonSlugs = Object.keys(addOns).filter(slug => addOns[slug]?.enabled);
+  const addBarRental = selections.logistics?.addBarRental === true;
 
-    // Look up addon pricing
-    let addonTotal = 0;
-    if (addonSlugs.length > 0) {
-      const addonRes = await pool.query(
-        'SELECT slug, rate, billing_type FROM service_addons WHERE slug = ANY($1) AND is_active = true',
-        [addonSlugs]
-      );
-      for (const addon of addonRes.rows) {
-        const rate = Number(addon.rate);
-        if (addon.billing_type === 'per_guest') {
-          addonTotal += rate * (data.guest_count || 1);
-        } else {
-          addonTotal += rate;
-        }
-      }
-    }
-
-    // Bar rental cost
-    let barRentalCost = 0;
-    if (addBarRental) {
-      const snapshot = data.pricing_snapshot || {};
-      const barRental = snapshot.bar_rental || {};
-      if ((data.num_bars || 0) >= 1) {
-        barRentalCost = barRental.additional_bar_fee || 100;
+  // Look up addon pricing
+  let addonTotal = 0;
+  if (addonSlugs.length > 0) {
+    const addonRes = await pool.query(
+      'SELECT slug, rate, billing_type FROM service_addons WHERE slug = ANY($1) AND is_active = true',
+      [addonSlugs]
+    );
+    for (const addon of addonRes.rows) {
+      const rate = Number(addon.rate);
+      if (addon.billing_type === 'per_guest') {
+        addonTotal += rate * (data.guest_count || 1);
       } else {
-        barRentalCost = barRental.first_bar_fee || 50;
+        addonTotal += rate;
       }
     }
+  }
 
-    // Syrup cost (new syrups only, excluding self-provided and proposal syrups)
-    const rawSyrups = selections.syrupSelections || {};
-    const allSyrupIds = Array.isArray(rawSyrups)
-      ? rawSyrups
-      : [...new Set(Object.values(rawSyrups).flat())];
-    const selfProvided = selections.syrupSelfProvided || [];
-    const proposalSyrups = data.pricing_snapshot?.syrups?.selections || [];
-    const newSyrupIds = allSyrupIds
-      .filter(id => !selfProvided.includes(id))
-      .filter(id => !proposalSyrups.includes(id));
-    const syrupCost = calculateSyrupCost(newSyrupIds, data.guest_count);
-
-    const extrasAmount = addonTotal + barRentalCost + syrupCost.total;
-
-    if (extrasAmount <= 0) {
-      return res.json({ noPaymentNeeded: true, extrasAmount: 0 });
-    }
-
-    // Determine payment scenario based on balance_due_date
-    const now = new Date();
-    let balanceDueDate = data.balance_due_date;
-    if (!balanceDueDate && data.event_date) {
-      const d = new Date(data.event_date);
-      d.setDate(d.getDate() - 14);
-      balanceDueDate = d;
-    }
-    const isPastDue = balanceDueDate ? now > new Date(balanceDueDate) : false;
-    const currentBalance = Number(data.total_price || 0) - Number(data.amount_paid || 0);
-
-    let paymentScenario, totalCharge, pastDueAmount = 0;
-    if (isPastDue && currentBalance > 0) {
-      // Past due with outstanding balance — charge extras + balance
-      paymentScenario = 'extras_plus_balance';
-      pastDueAmount = currentBalance;
-      totalCharge = extrasAmount + currentBalance;
-    } else if (isPastDue) {
-      // Past due but balance already paid — charge extras only, required
-      paymentScenario = 'extras_required';
-      totalCharge = extrasAmount;
+  // Bar rental cost
+  let barRentalCost = 0;
+  if (addBarRental) {
+    const snapshot = data.pricing_snapshot || {};
+    const barRental = snapshot.bar_rental || {};
+    if ((data.num_bars || 0) >= 1) {
+      barRentalCost = barRental.additional_bar_fee || 100;
     } else {
-      // Not past due — client can choose
-      paymentScenario = 'extras_optional';
-      totalCharge = extrasAmount;
+      barRentalCost = barRental.first_bar_fee || 50;
     }
+  }
 
-    // Get or create Stripe customer
-    const customerId = await getOrCreateCustomer({
-      id: data.proposal_id,
-      stripe_customer_id: data.stripe_customer_id,
-      client_email: data.client_email,
-      client_name: data.client_name,
-    });
+  // Syrup cost (new syrups only, excluding self-provided and proposal syrups)
+  const rawSyrups = selections.syrupSelections || {};
+  const allSyrupIds = Array.isArray(rawSyrups)
+    ? rawSyrups
+    : [...new Set(Object.values(rawSyrups).flat())];
+  const selfProvided = selections.syrupSelfProvided || [];
+  const proposalSyrups = data.pricing_snapshot?.syrups?.selections || [];
+  const newSyrupIds = allSyrupIds
+    .filter(id => !selfProvided.includes(id))
+    .filter(id => !proposalSyrups.includes(id));
+  const syrupCost = calculateSyrupCost(newSyrupIds, data.guest_count);
 
-    const amountCents = Math.round(totalCharge * 100);
-    const paymentType = paymentScenario === 'extras_plus_balance'
-      ? 'drink_plan_with_balance'
-      : 'drink_plan_extras';
+  const extrasAmount = addonTotal + barRentalCost + syrupCost.total;
 
-    const paymentIntent = await stripe.paymentIntents.create({
+  if (extrasAmount <= 0) {
+    return res.json({ noPaymentNeeded: true, extrasAmount: 0 });
+  }
+
+  // Determine payment scenario based on balance_due_date
+  const now = new Date();
+  let balanceDueDate = data.balance_due_date;
+  if (!balanceDueDate && data.event_date) {
+    const d = new Date(data.event_date);
+    d.setDate(d.getDate() - 14);
+    balanceDueDate = d;
+  }
+  const isPastDue = balanceDueDate ? now > new Date(balanceDueDate) : false;
+  const currentBalance = Number(data.total_price || 0) - Number(data.amount_paid || 0);
+
+  let paymentScenario, totalCharge, pastDueAmount = 0;
+  if (isPastDue && currentBalance > 0) {
+    // Past due with outstanding balance — charge extras + balance
+    paymentScenario = 'extras_plus_balance';
+    pastDueAmount = currentBalance;
+    totalCharge = extrasAmount + currentBalance;
+  } else if (isPastDue) {
+    // Past due but balance already paid — charge extras only, required
+    paymentScenario = 'extras_required';
+    totalCharge = extrasAmount;
+  } else {
+    // Not past due — client can choose
+    paymentScenario = 'extras_optional';
+    totalCharge = extrasAmount;
+  }
+
+  // Get or create Stripe customer
+  const customerId = await getOrCreateCustomer({
+    id: data.proposal_id,
+    stripe_customer_id: data.stripe_customer_id,
+    client_email: data.client_email,
+    client_name: data.client_name,
+  });
+
+  const amountCents = Math.round(totalCharge * 100);
+  const paymentType = paymentScenario === 'extras_plus_balance'
+    ? 'drink_plan_with_balance'
+    : 'drink_plan_extras';
+
+  let paymentIntent;
+  try {
+    paymentIntent = await stripe.paymentIntents.create({
       amount: amountCents,
       currency: 'usd',
       customer: customerId,
@@ -310,102 +318,108 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, async (req, res) 
         payment_type: paymentType,
       },
     });
-
-    await pool.query(
-      `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
-       VALUES ($1, $2, $3, 'pending')
-       ON CONFLICT (stripe_payment_intent_id) DO NOTHING`,
-      [data.proposal_id, paymentIntent.id, amountCents]
-    );
-
-    res.json({
-      clientSecret: paymentIntent.client_secret,
-      extrasAmount,
-      pastDueAmount,
-      totalCharge,
-      paymentScenario,
-    });
   } catch (err) {
     console.error('Drink plan payment intent error:', err);
-    res.status(500).json({ error: 'Failed to prepare payment.' });
+    throw new ExternalServiceError('Stripe', err, 'Payment temporarily unavailable. Please try again.');
   }
-});
+
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
+     VALUES ($1, $2, $3, 'pending')
+     ON CONFLICT (stripe_payment_intent_id) DO NOTHING`,
+    [data.proposal_id, paymentIntent.id, amountCents]
+  );
+
+  res.json({
+    clientSecret: paymentIntent.client_secret,
+    extrasAmount,
+    pastDueAmount,
+    totalCharge,
+    paymentScenario,
+  });
+}));
 
 // ─── Admin: generate a reusable Stripe Payment Link ──────────────
 
 /** POST /api/stripe/payment-link/:id — admin only */
-router.post('/payment-link/:id', auth, requireAdminOrManager, async (req, res) => {
+router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) {
+    throw new ExternalServiceError('Stripe', null, 'Payments are not configured.');
+  }
+
+  const result = await pool.query(
+    'SELECT id, event_type, event_type_custom FROM proposals WHERE id = $1',
+    [req.params.id]
+  );
+  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
+
+  const proposal = result.rows[0];
+  const eventLabel = eventLabelFor(proposal);
+
+  let price, paymentLink;
   try {
-    const stripe = getStripe();
-    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
-
-    const result = await pool.query(
-      'SELECT id, event_type, event_type_custom FROM proposals WHERE id = $1',
-      [req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
-
-    const proposal = result.rows[0];
-    const eventLabel = eventLabelFor(proposal);
-
     // Create a one-time price
-    const price = await stripe.prices.create({
+    price = await stripe.prices.create({
       currency: 'usd',
       unit_amount: DEPOSIT_AMOUNT,
       product_data: { name: `Event Deposit — ${eventLabel}` },
     });
 
-    const paymentLink = await stripe.paymentLinks.create({
+    paymentLink = await stripe.paymentLinks.create({
       line_items: [{ price: price.id, quantity: 1 }],
       metadata: { proposal_id: String(proposal.id) },
       after_completion: { type: 'redirect', redirect: { url: `${process.env.CLIENT_URL}/proposal/${req.query.token || ''}?paid=true` } },
     });
-
-    // Store link reference
-    await pool.query(
-      `INSERT INTO stripe_sessions (proposal_id, stripe_payment_link_id, amount, status)
-       VALUES ($1, $2, $3, 'pending')`,
-      [proposal.id, paymentLink.id, DEPOSIT_AMOUNT]
-    );
-
-    res.json({ url: paymentLink.url });
   } catch (err) {
     console.error('Stripe payment-link error:', err);
-    res.status(500).json({ error: 'Failed to create payment link.' });
+    throw new ExternalServiceError('Stripe', err, 'Payment link unavailable. Please try again.');
   }
-});
+
+  // Store link reference
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_link_id, amount, status)
+     VALUES ($1, $2, $3, 'pending')`,
+    [proposal.id, paymentLink.id, DEPOSIT_AMOUNT]
+  );
+
+  res.json({ url: paymentLink.url });
+}));
 
 // ─── Admin: manually charge autopay balance ──────────────────────
 
 /** POST /api/stripe/charge-balance/:id — admin only */
-router.post('/charge-balance/:id', auth, requireAdminOrManager, async (req, res) => {
+router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) {
+    throw new ExternalServiceError('Stripe', null, 'Payments are not configured.');
+  }
+
+  const result = await pool.query(`
+    SELECT id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
+           autopay_enrolled, status, event_type, event_type_custom
+    FROM proposals WHERE id = $1
+  `, [req.params.id]);
+
+  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
+
+  const proposal = result.rows[0];
+
+  if (proposal.status !== 'deposit_paid') {
+    throw new ConflictError('Proposal must be in deposit_paid status to charge balance', 'INVALID_STATUS');
+  }
+  if (!proposal.stripe_customer_id || !proposal.stripe_payment_method_id) {
+    throw new ConflictError('No saved payment method for this proposal', 'NO_PAYMENT_METHOD');
+  }
+
+  const balanceCents = Math.round((Number(proposal.total_price) - Number(proposal.amount_paid)) * 100);
+  if (balanceCents <= 0) {
+    throw new ConflictError('No remaining balance to charge', 'NO_BALANCE');
+  }
+
+  let intent;
   try {
-    const stripe = getStripe();
-    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
-
-    const result = await pool.query(`
-      SELECT id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
-             autopay_enrolled, status, event_type, event_type_custom
-      FROM proposals WHERE id = $1
-    `, [req.params.id]);
-
-    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
-
-    const proposal = result.rows[0];
-
-    if (proposal.status !== 'deposit_paid') {
-      return res.status(400).json({ error: 'Proposal must be in deposit_paid status.' });
-    }
-    if (!proposal.stripe_customer_id || !proposal.stripe_payment_method_id) {
-      return res.status(400).json({ error: 'No saved payment method for this proposal.' });
-    }
-
-    const balanceCents = Math.round((Number(proposal.total_price) - Number(proposal.amount_paid)) * 100);
-    if (balanceCents <= 0) {
-      return res.status(400).json({ error: 'No remaining balance to charge.' });
-    }
-
-    const intent = await stripe.paymentIntents.create({
+    intent = await stripe.paymentIntents.create({
       amount: balanceCents,
       currency: 'usd',
       customer: proposal.stripe_customer_id,
@@ -418,52 +432,57 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, async (req, res)
         payment_type: 'balance',
       },
     });
-
-    // Webhook will handle status update on success
-    res.json({ status: intent.status, amount: balanceCents });
   } catch (err) {
     console.error('Stripe charge-balance error:', err);
-    const message = err.type === 'StripeCardError'
-      ? `Card declined: ${err.message}`
-      : 'Failed to charge balance.';
-    res.status(400).json({ error: message });
+    // Preserve Stripe's specific decline message for card errors so admins
+    // see the exact reason (e.g. "Your card has insufficient funds.").
+    if (err.type === 'StripeCardError') {
+      throw new ExternalServiceError('Stripe', err, `Card declined: ${err.message}`);
+    }
+    throw new ExternalServiceError('Stripe', err, 'Failed to charge balance. Please try again.');
   }
-});
+
+  // Webhook will handle status update on success
+  res.json({ status: intent.status, amount: balanceCents });
+}));
 
 // ─── Public: create a Payment Intent for an invoice ─────────────
 
 /** POST /api/stripe/create-intent-for-invoice/:token — public, token-gated */
-router.post('/create-intent-for-invoice/:token', publicLimiter, async (req, res) => {
+router.post('/create-intent-for-invoice/:token', publicLimiter, asyncHandler(async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) {
+    throw new ExternalServiceError('Stripe', null, 'Payments are not configured.');
+  }
+
+  const invRes = await pool.query(`
+    SELECT i.id AS invoice_id, i.invoice_number, i.amount_due, i.amount_paid, i.status AS invoice_status,
+           p.id AS proposal_id, p.event_type, p.event_type_custom, p.stripe_customer_id,
+           c.email AS client_email, c.name AS client_name
+    FROM invoices i
+    JOIN proposals p ON p.id = i.proposal_id
+    LEFT JOIN clients c ON c.id = p.client_id
+    WHERE i.token = $1 AND i.status IN ('sent', 'partially_paid')
+  `, [req.params.token]);
+
+  if (!invRes.rows[0]) throw new NotFoundError('This invoice is no longer available');
+
+  const inv = invRes.rows[0];
+  const balanceCents = inv.amount_due - inv.amount_paid;
+  if (balanceCents <= 0) {
+    throw new ConflictError('This invoice has already been paid in full', 'ALREADY_PAID');
+  }
+
+  const customerId = await getOrCreateCustomer({
+    id: inv.proposal_id,
+    stripe_customer_id: inv.stripe_customer_id,
+    client_email: inv.client_email,
+    client_name: inv.client_name,
+  });
+
+  let paymentIntent;
   try {
-    const stripe = getStripe();
-    if (!stripe) return res.status(503).json({ error: 'Payments not configured.' });
-
-    const invRes = await pool.query(`
-      SELECT i.id AS invoice_id, i.invoice_number, i.amount_due, i.amount_paid, i.status AS invoice_status,
-             p.id AS proposal_id, p.event_type, p.event_type_custom, p.stripe_customer_id,
-             c.email AS client_email, c.name AS client_name
-      FROM invoices i
-      JOIN proposals p ON p.id = i.proposal_id
-      LEFT JOIN clients c ON c.id = p.client_id
-      WHERE i.token = $1 AND i.status IN ('sent', 'partially_paid')
-    `, [req.params.token]);
-
-    if (!invRes.rows[0]) return res.status(404).json({ error: 'Invoice not found or already paid.' });
-
-    const inv = invRes.rows[0];
-    const balanceCents = inv.amount_due - inv.amount_paid;
-    if (balanceCents <= 0) {
-      return res.status(400).json({ error: 'Invoice is already fully paid.' });
-    }
-
-    const customerId = await getOrCreateCustomer({
-      id: inv.proposal_id,
-      stripe_customer_id: inv.stripe_customer_id,
-      client_email: inv.client_email,
-      client_name: inv.client_name,
-    });
-
-    const paymentIntent = await stripe.paymentIntents.create({
+    paymentIntent = await stripe.paymentIntents.create({
       amount: balanceCents,
       currency: 'usd',
       customer: customerId,
@@ -475,20 +494,20 @@ router.post('/create-intent-for-invoice/:token', publicLimiter, async (req, res)
         payment_type: 'invoice',
       },
     });
-
-    await pool.query(
-      `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
-       VALUES ($1, $2, $3, 'pending')
-       ON CONFLICT (stripe_payment_intent_id) DO NOTHING`,
-      [inv.proposal_id, paymentIntent.id, balanceCents]
-    );
-
-    res.json({ clientSecret: paymentIntent.client_secret });
   } catch (err) {
     console.error('Stripe invoice payment intent error:', err);
-    res.status(500).json({ error: 'Failed to create payment intent.' });
+    throw new ExternalServiceError('Stripe', err, 'Payment temporarily unavailable. Please try again.');
   }
-});
+
+  await pool.query(
+    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
+     VALUES ($1, $2, $3, 'pending')
+     ON CONFLICT (stripe_payment_intent_id) DO NOTHING`,
+    [inv.proposal_id, paymentIntent.id, balanceCents]
+  );
+
+  res.json({ clientSecret: paymentIntent.client_secret });
+}));
 
 // ─── Stripe Webhook ───────────────────────────────────────────────
 

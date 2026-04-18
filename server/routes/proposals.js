@@ -8,6 +8,8 @@ const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, linkPaymentToInvoice } = require('../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../utils/eventTypes');
+const asyncHandler = require('../middleware/asyncHandler');
+const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -17,154 +19,148 @@ const MAX_FORM_STATE_SIZE = 50 * 1024; // 50 KB
 // ─── Public routes (token-based) ─────────────────────────────────
 
 /** GET /api/proposals/t/:token — fetch proposal by token (public) */
-router.get('/t/:token', publicLimiter, async (req, res) => {
-  try {
-    // Public-safe column allowlist — do NOT expose admin_notes, stripe_customer_id,
-    // stripe_payment_method_id, client_signature_ip, client_signature_user_agent,
-    // created_by, or other internal fields.
-    const result = await pool.query(`
-      SELECT
-        p.id, p.token, p.client_id,
-        p.event_date, p.event_start_time, p.event_duration_hours,
-        p.event_location, p.event_type, p.event_type_category, p.event_type_custom,
-        p.guest_count, p.package_id, p.num_bars, p.num_bartenders,
-        p.pricing_snapshot, p.total_price, p.status,
-        p.amount_paid, p.deposit_amount, p.payment_type, p.autopay_enrolled,
-        p.balance_due_date,
-        p.client_signed_name, p.client_signed_at, p.client_signature_method,
-        p.client_signature_document_version, p.client_signature_data,
-        p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
-        sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
-        sp.includes AS package_includes,
-        c.name AS client_name, c.email AS client_email
-      FROM proposals p
-      LEFT JOIN service_packages sp ON sp.id = p.package_id
-      LEFT JOIN clients c ON c.id = p.client_id
-      WHERE p.token = $1
-    `, [req.params.token]);
+router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
+  // Public-safe column allowlist — do NOT expose admin_notes, stripe_customer_id,
+  // stripe_payment_method_id, client_signature_ip, client_signature_user_agent,
+  // created_by, or other internal fields.
+  const result = await pool.query(`
+    SELECT
+      p.id, p.token, p.client_id,
+      p.event_date, p.event_start_time, p.event_duration_hours,
+      p.event_location, p.event_type, p.event_type_category, p.event_type_custom,
+      p.guest_count, p.package_id, p.num_bars, p.num_bartenders,
+      p.pricing_snapshot, p.total_price, p.status,
+      p.amount_paid, p.deposit_amount, p.payment_type, p.autopay_enrolled,
+      p.balance_due_date,
+      p.client_signed_name, p.client_signed_at, p.client_signature_method,
+      p.client_signature_document_version, p.client_signature_data,
+      p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
+      sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
+      sp.includes AS package_includes,
+      c.name AS client_name, c.email AS client_email
+    FROM proposals p
+    LEFT JOIN service_packages sp ON sp.id = p.package_id
+    LEFT JOIN clients c ON c.id = p.client_id
+    WHERE p.token = $1
+  `, [req.params.token]);
 
-    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
+  if (!result.rows[0]) throw new NotFoundError('This proposal is no longer available');
 
-    const proposal = result.rows[0];
+  const proposal = result.rows[0];
 
-    // Capture IP for view logging (no third-party geo lookup for privacy)
-    const rawIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || '';
-    const ip = rawIp.replace(/^::ffff:/, ''); // strip IPv4-mapped prefix
+  // Capture IP for view logging (no third-party geo lookup for privacy)
+  const rawIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.ip || '';
+  const ip = rawIp.replace(/^::ffff:/, ''); // strip IPv4-mapped prefix
 
-    // Parallelize non-dependent queries: bump view counters + fetch addons + fetch drink plan
-    const [, addonsRes, dpRes] = await Promise.all([
-      pool.query(
-        `UPDATE proposals
-           SET view_count = COALESCE(view_count, 0) + 1,
-               last_viewed_at = NOW(),
-               status = CASE WHEN status = 'sent' THEN 'viewed' ELSE status END
-         WHERE id = $1`,
-        [proposal.id]
-      ),
-      pool.query(
-        'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
-        [proposal.id]
-      ),
-      pool.query(
-        'SELECT token AS drink_plan_token FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
-        [proposal.id]
-      ),
-    ]);
-
-    // Fire-and-forget activity log so a logging failure doesn't block the response
+  // Parallelize non-dependent queries: bump view counters + fetch addons + fetch drink plan
+  const [, addonsRes, dpRes] = await Promise.all([
     pool.query(
-      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'viewed', 'client', $2)`,
-      [proposal.id, JSON.stringify({ ip: ip || null })]
-    ).catch(err => console.error('Proposal view activity log failed:', err));
+      `UPDATE proposals
+         SET view_count = COALESCE(view_count, 0) + 1,
+             last_viewed_at = NOW(),
+             status = CASE WHEN status = 'sent' THEN 'viewed' ELSE status END
+       WHERE id = $1`,
+      [proposal.id]
+    ),
+    pool.query(
+      'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
+      [proposal.id]
+    ),
+    pool.query(
+      'SELECT token AS drink_plan_token FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
+      [proposal.id]
+    ),
+  ]);
 
-    const drinkPlanToken = dpRes.rows[0]?.drink_plan_token || null;
+  // Fire-and-forget activity log so a logging failure doesn't block the response
+  pool.query(
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'viewed', 'client', $2)`,
+    [proposal.id, JSON.stringify({ ip: ip || null })]
+  ).catch(err => console.error('Proposal view activity log failed:', err));
 
-    res.json({
-      ...proposal,
-      addons: addonsRes.rows,
-      drink_plan_token: drinkPlanToken,
-      status: proposal.status === 'sent' ? 'viewed' : proposal.status,
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+  const drinkPlanToken = dpRes.rows[0]?.drink_plan_token || null;
+
+  res.json({
+    ...proposal,
+    addons: addonsRes.rows,
+    drink_plan_token: drinkPlanToken,
+    status: proposal.status === 'sent' ? 'viewed' : proposal.status,
+  });
+}));
 
 const PROPOSAL_DOCUMENT_VERSION = 'event-services-agreement-v2';
 
 /** POST /api/proposals/t/:token/sign — client signs and accepts proposal */
-router.post('/t/:token/sign', publicLimiter, async (req, res) => {
+router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
   const { client_signed_name, client_signature_data, client_signature_method } = req.body;
-  if (!client_signed_name || !client_signature_data) {
-    return res.status(400).json({ error: 'Name and signature are required.' });
+  const fieldErrors = {};
+  if (!client_signed_name) fieldErrors.client_signed_name = 'Please enter your full name';
+  if (!client_signature_data) fieldErrors.signature = 'Please sign before accepting';
+  if (Object.keys(fieldErrors).length > 0) {
+    throw new ValidationError(fieldErrors);
   }
   if (client_signature_method !== 'draw' && client_signature_method !== 'type') {
-    return res.status(400).json({ error: 'Invalid signature method.' });
+    throw new ValidationError({ signature: 'Invalid signature method' });
   }
+
+  const result = await pool.query(
+    "SELECT id, status FROM proposals WHERE token = $1",
+    [req.params.token]
+  );
+  if (!result.rows[0]) throw new NotFoundError('This proposal is no longer available');
+
+  const proposal = result.rows[0];
+  if (['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status)) {
+    throw new ConflictError('This proposal has already been accepted', 'ALREADY_ACCEPTED');
+  }
+
+  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
+  const userAgent = req.headers['user-agent'] || null;
+
+  await pool.query(`
+    UPDATE proposals SET
+      client_signed_name = $1,
+      client_signature_data = $2,
+      client_signed_at = NOW(),
+      client_signature_method = $3,
+      client_signature_ip = $4,
+      client_signature_user_agent = $5,
+      client_signature_document_version = $6,
+      status = 'accepted'
+    WHERE id = $7
+  `, [client_signed_name, client_signature_data, client_signature_method, ip, userAgent, PROPOSAL_DOCUMENT_VERSION, proposal.id]);
+
+  await pool.query(
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'signed', 'client', $2)`,
+    [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method })]
+  );
+
+  // Email notifications (non-blocking)
   try {
-    const result = await pool.query(
-      "SELECT id, status FROM proposals WHERE token = $1",
-      [req.params.token]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Proposal not found.' });
-
-    const proposal = result.rows[0];
-    if (['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status)) {
-      return res.status(400).json({ error: 'Proposal has already been paid.' });
+    const fp = await pool.query(`
+      SELECT p.id, p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
+      FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+      WHERE p.id = $1
+    `, [proposal.id]);
+    const pd = fp.rows[0];
+    const eventTypeLabel = getEventTypeLabel({ event_type: pd?.event_type, event_type_custom: pd?.event_type_custom });
+    if (pd?.client_email) {
+      const tpl = emailTemplates.proposalSignedConfirmation({ clientName: pd.client_name, eventTypeLabel });
+      await sendEmail({ to: pd.client_email, ...tpl });
     }
-
-    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
-    const userAgent = req.headers['user-agent'] || null;
-
-    await pool.query(`
-      UPDATE proposals SET
-        client_signed_name = $1,
-        client_signature_data = $2,
-        client_signed_at = NOW(),
-        client_signature_method = $3,
-        client_signature_ip = $4,
-        client_signature_user_agent = $5,
-        client_signature_document_version = $6,
-        status = 'accepted'
-      WHERE id = $7
-    `, [client_signed_name, client_signature_data, client_signature_method, ip, userAgent, PROPOSAL_DOCUMENT_VERSION, proposal.id]);
-
-    await pool.query(
-      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'signed', 'client', $2)`,
-      [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method })]
-    );
-
-    // Email notifications (non-blocking)
-    try {
-      const fp = await pool.query(`
-        SELECT p.id, p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
-        FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
-        WHERE p.id = $1
-      `, [proposal.id]);
-      const pd = fp.rows[0];
-      const eventTypeLabel = getEventTypeLabel({ event_type: pd?.event_type, event_type_custom: pd?.event_type_custom });
-      if (pd?.client_email) {
-        const tpl = emailTemplates.proposalSignedConfirmation({ clientName: pd.client_name, eventTypeLabel });
-        await sendEmail({ to: pd.client_email, ...tpl });
-      }
-      const adminEmail = process.env.ADMIN_EMAIL;
-      if (adminEmail && pd) {
-        const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-        const adminUrl = `${clientUrl}/admin/proposals/${pd.id}`;
-        const tpl = emailTemplates.clientSignedAdmin({ clientName: pd.client_name, eventTypeLabel, proposalId: pd.id, adminUrl });
-        await sendEmail({ to: adminEmail, ...tpl });
-      }
-    } catch (emailErr) {
-      console.error('Proposal sign emails failed (non-blocking):', emailErr);
+    const adminEmail = process.env.ADMIN_EMAIL;
+    if (adminEmail && pd) {
+      const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
+      const adminUrl = `${clientUrl}/admin/proposals/${pd.id}`;
+      const tpl = emailTemplates.clientSignedAdmin({ clientName: pd.client_name, eventTypeLabel, proposalId: pd.id, adminUrl });
+      await sendEmail({ to: adminEmail, ...tpl });
     }
-
-    res.json({ success: true, status: 'accepted' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+  } catch (emailErr) {
+    console.error('Proposal sign emails failed (non-blocking):', emailErr);
   }
-});
+
+  res.json({ success: true, status: 'accepted' });
+}));
 
 // ─── Public website endpoints (no auth) ─────────────────────────
 
