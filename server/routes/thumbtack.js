@@ -4,6 +4,7 @@ const rateLimit = require('express-rate-limit');
 const { pool } = require('../db');
 const { sendEmail } = require('../utils/email');
 const { newThumbtackLeadAdmin, newThumbtackMessageAdmin, newThumbtackReviewAdmin } = require('../utils/emailTemplates');
+const asyncHandler = require('../middleware/asyncHandler');
 
 const router = express.Router();
 
@@ -190,7 +191,7 @@ function parseReview(body) {
 
 // ─── POST /api/thumbtack/leads ─────────────────────────────────────
 
-router.post('/leads', async (req, res) => {
+router.post('/leads', asyncHandler(async (req, res) => {
   const body = req.body;
   console.log('Thumbtack lead webhook received');
 
@@ -307,11 +308,11 @@ router.post('/leads', async (req, res) => {
   } finally {
     dbClient.release();
   }
-});
+}));
 
 // ─── POST /api/thumbtack/messages ──────────────────────────────────
 
-router.post('/messages', async (req, res) => {
+router.post('/messages', asyncHandler(async (req, res) => {
   const body = req.body;
   console.log('Thumbtack message webhook received');
 
@@ -372,11 +373,11 @@ router.post('/messages', async (req, res) => {
     console.error('Thumbtack message processing error:', err);
     res.status(500).json({ error: 'Internal error' });
   }
-});
+}));
 
 // ─── POST /api/thumbtack/reviews ───────────────────────────────────
 
-router.post('/reviews', async (req, res) => {
+router.post('/reviews', asyncHandler(async (req, res) => {
   const body = req.body;
   console.log('Thumbtack review webhook received');
 
@@ -428,6 +429,6 @@ router.post('/reviews', async (req, res) => {
     console.error('Thumbtack review processing error:', err);
     res.status(500).json({ error: 'Internal error' });
   }
-});
+}));
 
 module.exports = router;

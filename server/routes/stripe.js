@@ -512,7 +512,7 @@ router.post('/create-intent-for-invoice/:token', publicLimiter, asyncHandler(asy
 // ─── Stripe Webhook ───────────────────────────────────────────────
 
 /** POST /api/stripe/webhook — raw body, Stripe signature verified */
-router.post('/webhook', async (req, res) => {
+router.post('/webhook', asyncHandler(async (req, res) => {
   // Try BOTH live and test secrets so events that span a test/live cutoff
   // (e.g., Stripe retrying a `payment_intent.succeeded` as the cutoff passes)
   // are still verified and processed. Whichever client verified the event is
@@ -849,6 +849,6 @@ router.post('/webhook', async (req, res) => {
   }
 
   res.json({ received: true });
-});
+}));
 
 module.exports = router;

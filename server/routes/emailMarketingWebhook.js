@@ -1,5 +1,6 @@
 const express = require('express');
 const { pool } = require('../db');
+const asyncHandler = require('../middleware/asyncHandler');
 
 const router = express.Router();
 
@@ -8,7 +9,7 @@ const router = express.Router();
  * Receives Resend webhook events for email tracking.
  * Verifies signature via svix headers if RESEND_WEBHOOK_SECRET is set.
  */
-router.post('/resend', async (req, res) => {
+router.post('/resend', asyncHandler(async (req, res) => {
   try {
     // Verify webhook signature if secret is configured
     if (!process.env.RESEND_WEBHOOK_SECRET && process.env.NODE_ENV === 'production') {
@@ -109,6 +110,6 @@ router.post('/resend', async (req, res) => {
     console.error('Webhook processing error:', err);
     res.status(500).json({ error: 'Webhook processing failed' });
   }
-});
+}));
 
 module.exports = router;
