@@ -30,7 +30,7 @@ export default function ProposalCreate() {
 
   const [form, setForm] = useState({
     client_name: '', client_email: '', client_phone: '', client_source: 'thumbtack',
-    event_name: '', event_type: '', event_type_category: '', event_type_custom: '',
+    event_type: '', event_type_category: '', event_type_custom: '',
     event_date: '', event_start_time: '17:00', event_duration_hours: 4,
     event_location: '', guest_count: 50, package_id: '', num_bars: 0,
     num_bartenders: null, addon_ids: [], addon_variants: {}
@@ -101,14 +101,11 @@ export default function ProposalCreate() {
   }, []);
 
   const selectEventType = (et) => {
-    const label = et.label === 'Other' ? (form.event_type_custom || 'Other') : et.label;
     setForm(f => ({
       ...f,
       event_type: et.label,
       event_type_category: et.category,
       event_type_custom: et.id === 'other' ? f.event_type_custom : '',
-      // Auto-generate event_name
-      event_name: label,
     }));
     setEventTypeQuery(et.label === 'Other' ? '' : et.label);
     setEventTypeOpen(false);
@@ -247,23 +244,10 @@ export default function ProposalCreate() {
                   )}
                   {form.event_type === 'Other' && (
                     <input className="form-input" value={form.event_type_custom}
-                      onChange={e => {
-                        update('event_type_custom', e.target.value);
-                        // Update event_name with custom value
-                        setForm(f => ({
-                          ...f,
-                          event_type_custom: e.target.value,
-                          event_name: e.target.value,
-                        }));
-                      }}
+                      onChange={e => update('event_type_custom', e.target.value)}
                       placeholder="Describe the event type"
                       style={{ marginTop: '0.5rem' }}
                     />
-                  )}
-                  {form.event_name && (
-                    <div style={{ marginTop: '0.35rem', fontSize: '0.85rem', color: 'var(--warm-brown)' }}>
-                      Title: {form.event_name}
-                    </div>
                   )}
                 </div>
                 <div className="form-group">
