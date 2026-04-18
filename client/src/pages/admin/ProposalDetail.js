@@ -11,6 +11,7 @@ import ConfirmModal from '../../components/ConfirmModal';
 import { SYRUPS } from '../../data/syrups';
 import InvoiceDropdown from '../../components/InvoiceDropdown';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
@@ -293,7 +294,6 @@ export default function ProposalDetail() {
         client_phone: proposal.client_phone || '',
         client_source: proposal.client_source || 'thumbtack',
         // Event fields
-        event_name: proposal.event_name || '',
         event_date: proposal.event_date ? proposal.event_date.slice(0, 10) : '',
         event_start_time: proposal.event_start_time || '',
         event_duration_hours: Number(proposal.event_duration_hours) || 4,
@@ -431,7 +431,6 @@ export default function ProposalDetail() {
       }
       // Update proposal event/package details
       await api.patch(`/proposals/${id}`, {
-        event_name: editForm.event_name,
         event_date: editForm.event_date,
         event_start_time: editForm.event_start_time,
         event_duration_hours: Number(editForm.event_duration_hours),
@@ -721,11 +720,10 @@ export default function ProposalDetail() {
           {/* Header Band */}
           <div className="event-header">
             <div className="event-header-top">
-              <h1 className="event-title">
-                {proposal.client_name && proposal.event_name
-                  ? `${proposal.client_name} - ${proposal.event_name}`
-                  : proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : `Event #${proposal.id}`)}
-              </h1>
+              <div>
+                <h1 className="event-title">{proposal.client_name || `Proposal #${proposal.id}`}</h1>
+                <div className="event-subtitle">{getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom })}</div>
+              </div>
               <div className="event-header-actions">
                 <button className="event-detail-btn" onClick={() => setEditing(true)}>Edit</button>
                 <button className="event-detail-btn" onClick={copyLink}>{copyMessage || 'Copy Link'}</button>
@@ -1356,14 +1354,13 @@ export default function ProposalDetail() {
       {(!isEventContext || editing) && (<>
       {/* Header */}
       <div className="flex-between mb-2">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <h1 style={{ fontFamily: 'var(--font-display)', margin: 0 }}>
-            {proposal.client_name && proposal.event_name
-              ? `${proposal.client_name} - ${proposal.event_name}`
-              : proposal.event_name
-                || (proposal.client_name ? `${proposal.client_name}'s Event` : null)
-                || (isEventContext ? `Event #${proposal.id}` : `Proposal #${proposal.id}`)}
-          </h1>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div>
+            <h1 className="event-title" style={{ fontFamily: 'var(--font-display)', margin: 0 }}>
+              {proposal.client_name || (isEventContext ? `Event #${proposal.id}` : `Proposal #${proposal.id}`)}
+            </h1>
+            <div className="event-subtitle">{getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom })}</div>
+          </div>
         </div>
         <div className="flex gap-1">
           <button className="btn btn-secondary" onClick={() => editing ? handleNavigateAway(isEventContext ? '/admin/events' : '/admin/proposals') : navigate(isEventContext ? '/admin/events' : '/admin/proposals')}>Back</button>
@@ -1466,10 +1463,6 @@ export default function ProposalDetail() {
 
               <h4 style={{ color: 'var(--warm-brown)', marginBottom: '0.5rem' }}>Event</h4>
               <div className="two-col" style={{ gap: '0.75rem' }}>
-                <div className="form-group">
-                  <label className="form-label">Event Name</label>
-                  <input className="form-input" value={editForm.event_name} onChange={e => updateEdit('event_name', e.target.value)} />
-                </div>
                 <div className="form-group">
                   <label className="form-label">Event Date</label>
                   <input className="form-input" type="date" value={editForm.event_date} onChange={e => updateEdit('event_date', e.target.value)} />
@@ -1616,8 +1609,7 @@ export default function ProposalDetail() {
             <div className="card mb-2">
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Event</h3>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                <div><span className="text-muted text-small">Event</span><div>{proposal.event_name || (proposal.client_name ? `${proposal.client_name}'s Event` : '—')}</div></div>
-                {proposal.event_type && <div><span className="text-muted text-small">Event Type</span><div>{proposal.event_type_custom || proposal.event_type}</div></div>}
+                <div><span className="text-muted text-small">Event Type</span><div>{getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom })}</div></div>
                 <div><span className="text-muted text-small">Date</span><div>{formatDateWithDay(proposal.event_date)}</div></div>
                 <div><span className="text-muted text-small">Service Time</span><div>{getServiceTime()}</div></div>
                 <div><span className="text-muted text-small">Guests</span><div>{proposal.guest_count}</div></div>

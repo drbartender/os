@@ -24,7 +24,7 @@ export default function AdminDashboard() {
   const [expandedShift, setExpandedShift]     = useState(null);
   const [shiftRequests, setShiftRequests]     = useState({});
   const [showShiftForm, setShowShiftForm]     = useState(false);
-  const [shiftForm, setShiftForm]             = useState({ event_name: '', event_date: '', start_time: '', end_time: '', location: '', notes: '', positions: [] });
+  const [shiftForm, setShiftForm]             = useState({ event_date: '', start_time: '', end_time: '', location: '', notes: '', positions: [] });
   const [shiftPosInput, setShiftPosInput]     = useState('');
 
   // Messages state
@@ -169,7 +169,7 @@ export default function AdminDashboard() {
     e.preventDefault();
     try {
       await api.post('/shifts', { ...shiftForm, positions_needed: shiftForm.positions });
-      setShiftForm({ event_name: '', event_date: '', start_time: '', end_time: '', location: '', notes: '', positions: [] });
+      setShiftForm({ event_date: '', start_time: '', end_time: '', location: '', notes: '', positions: [] });
       setShiftPosInput('');
       setShowShiftForm(false);
       fetchShifts();
@@ -313,11 +313,6 @@ export default function AdminDashboard() {
                 <form onSubmit={createShift}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
                     <div>
-                      <label className="form-label">Event Name *</label>
-                      <input className="form-input" required value={shiftForm.event_name}
-                        onChange={e => setShiftForm(f => ({ ...f, event_name: e.target.value }))} />
-                    </div>
-                    <div>
                       <label className="form-label">Event Date *</label>
                       <input className="form-input" type="date" required value={shiftForm.event_date}
                         onChange={e => setShiftForm(f => ({ ...f, event_date: e.target.value }))} />
@@ -404,7 +399,8 @@ export default function AdminDashboard() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
                         <div style={{ flex: 1 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-                            <strong style={{ fontSize: '1rem' }}>{shift.event_name}</strong>
+                            <strong style={{ fontSize: '1rem' }}>{shift.client_name || 'Shift'}</strong>
+                            {shift.event_type_label && <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{shift.event_type_label}</div>}
                             <span className={`badge ${shift.status === 'open' ? 'badge-approved' : shift.status === 'filled' ? 'badge-reviewed' : 'badge-deactivated'}`}>
                               {shift.status}
                             </span>
@@ -559,13 +555,13 @@ export default function AdminDashboard() {
                             : 'TBD';
                           const time = shift.start_time && shift.end_time
                             ? `${shift.start_time}\u2013${shift.end_time}` : shift.start_time || 'TBD';
-                          setMsgBody(`Hey! We have an event coming up: ${shift.event_name} on ${date} at ${time} \u2014 ${shift.location || 'TBD'}. Interested in working it? Request the shift in your portal: https://admin.drbartender.com/portal - Dr. Bartender`);
+                          setMsgBody(`Hey! We have an event coming up: ${shift.event_type_label || 'event'} at ${shift.client_name || 'TBD'} on ${date} at ${time} \u2014 ${shift.location || 'TBD'}. Interested in working it? Request the shift in your portal: https://admin.drbartender.com/portal - Dr. Bartender`);
                         }
                       }}>
                       <option value="">Select a shift…</option>
                       {msgShifts.map(s => (
                         <option key={s.id} value={s.id}>
-                          {s.event_name} — {s.event_date ? new Date(s.event_date.slice(0, 10) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '?'}
+                          {s.event_type_label || 'event'} — {s.event_date ? new Date(s.event_date.slice(0, 10) + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '?'}
                         </option>
                       ))}
                     </select>
@@ -676,8 +672,8 @@ export default function AdminDashboard() {
                             <span className={`badge ${g.message_type === 'invitation' ? 'badge-reviewed' : g.message_type === 'reminder' ? 'badge-inprogress' : g.message_type === 'announcement' ? 'badge-submitted' : 'badge-approved'}`} style={{ textTransform: 'capitalize' }}>
                               {g.message_type}
                             </span>
-                            {g.shift_event_name && (
-                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>for {g.shift_event_name}</span>
+                            {g.shift_event_type_label && (
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>for {g.shift_event_type_label}</span>
                             )}
                             <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                               {new Date(g.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}

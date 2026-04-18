@@ -4,6 +4,7 @@ import api from '../utils/api';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 import { useToast } from '../context/ToastContext';
 import FormBanner from '../components/FormBanner';
+import { getEventTypeLabel } from '../utils/eventTypes';
 
 function Section({ title, children }) {
   return (
@@ -690,7 +691,10 @@ export default function AdminUserDetail() {
                         }}>
                           <div style={{ flex: 1, minWidth: 200 }}>
                             <div style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.2rem' }}>
-                              {ev.event_name || ev.proposal_event_name || 'Untitled Event'}
+                              {getEventTypeLabel({
+                                event_type: ev.event_type || ev.proposal_event_type,
+                                event_type_custom: ev.event_type_custom || ev.proposal_event_type_custom
+                              })}
                             </div>
                             <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
                               {ev.event_date ? new Date(ev.event_date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
@@ -729,7 +733,10 @@ export default function AdminUserDetail() {
                         }}>
                           <div style={{ flex: 1, minWidth: 200 }}>
                             <div style={{ fontWeight: 600, color: 'var(--deep-brown)', marginBottom: '0.2rem' }}>
-                              {ev.event_name || ev.proposal_event_name || 'Untitled Event'}
+                              {getEventTypeLabel({
+                                event_type: ev.event_type || ev.proposal_event_type,
+                                event_type_custom: ev.event_type_custom || ev.proposal_event_type_custom
+                              })}
                             </div>
                             <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>
                               {ev.event_date ? new Date(ev.event_date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
@@ -873,8 +880,8 @@ export default function AdminUserDetail() {
                           <span className={`badge ${m.message_type === 'invitation' ? 'badge-reviewed' : m.message_type === 'reminder' ? 'badge-inprogress' : 'badge-submitted'}`} style={{ textTransform: 'capitalize' }}>
                             {m.message_type}
                           </span>
-                          {m.shift_event_name && (
-                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>for {m.shift_event_name}</span>
+                          {m.shift_event_type_label && (
+                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>for {m.shift_event_type_label}</span>
                           )}
                         </div>
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>

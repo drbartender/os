@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const STATUS_LABELS = {
   pending: 'Pending',
@@ -23,7 +24,7 @@ export default function DrinkPlansDashboard() {
   const [statusFilter, setStatusFilter] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ client_name: '', client_email: '', event_name: '', event_date: '' });
+  const [form, setForm] = useState({ client_name: '', client_email: '', event_date: '' });
   const [copyMessage, setCopyMessage] = useState('');
 
   const fetchPlans = useCallback(async () => {
@@ -49,7 +50,7 @@ export default function DrinkPlansDashboard() {
     try {
       const res = await api.post('/drink-plans', form);
       setPlans(prev => [res.data, ...prev]);
-      setForm({ client_name: '', client_email: '', event_name: '', event_date: '' });
+      setForm({ client_name: '', client_email: '', event_date: '' });
       setShowCreate(false);
     } catch (err) {
       console.error('Failed to create plan:', err);
@@ -106,15 +107,6 @@ export default function DrinkPlansDashboard() {
                   value={form.client_email}
                   onChange={(e) => setForm(f => ({ ...f, client_email: e.target.value }))}
                   placeholder="jane@example.com"
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Event Name</label>
-                <input
-                  className="form-input"
-                  value={form.event_name}
-                  onChange={(e) => setForm(f => ({ ...f, event_name: e.target.value }))}
-                  placeholder="Smith Wedding"
                 />
               </div>
               <div className="form-group">
@@ -186,7 +178,7 @@ export default function DrinkPlansDashboard() {
                   <strong>{plan.client_name || '—'}</strong>
                   {plan.client_email && <div className="text-muted text-small">{plan.client_email}</div>}
                 </td>
-                <td>{plan.event_name || '—'}</td>
+                <td>{getEventTypeLabel({ event_type: plan.event_type, event_type_custom: plan.event_type_custom })}</td>
                 <td>{formatDate(plan.event_date)}</td>
                 <td>{plan.serving_type ? { full_bar: 'Full Bar', beer_wine: 'Beer & Wine', beer_wine_seltzer: 'Beer, Wine & Seltzer', non_alcoholic: 'Non-Alcoholic', mocktail: 'Mocktail' }[plan.serving_type] || plan.serving_type.replace(/_/g, ' ') : '—'}</td>
                 <td>

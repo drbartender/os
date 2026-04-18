@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { formatPhone } from '../../utils/formatPhone';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const TIME_SLOTS = [];
 for (let h = 6; h < 24; h++) {
@@ -14,7 +15,7 @@ for (let h = 6; h < 24; h++) {
 }
 
 const EMPTY_FORM = {
-  event_name: '', client_name: '', client_email: '', client_phone: '',
+  client_name: '', client_email: '', client_phone: '',
   event_date: '', start_time: '', end_time: '', event_duration_hours: '',
   location: '', guest_count: '', positions_needed: 1,
 };
@@ -54,19 +55,12 @@ export default function EventsDashboard() {
     return `$${Number(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
-  const eventTitle = (event) => {
-    if (event.client_name && event.event_name) return `${event.client_name} - ${event.event_name}`;
-    if (event.event_name) return event.event_name;
-    if (event.client_name) return `${event.client_name}'s Event`;
-    return 'Untitled Event';
-  };
-
   const handleField = (field, value) => setForm(f => ({ ...f, [field]: value }));
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    if (!form.event_name || !form.event_date) {
-      setCreateError('Event name and date are required.');
+    if (!form.event_date) {
+      setCreateError('Event date is required.');
       return;
     }
     setCreating(true);
@@ -77,7 +71,6 @@ export default function EventsDashboard() {
       const positions = Array.from({ length: posCount }, () => 'Bartender');
 
       const res = await api.post('/shifts', {
-        event_name: form.event_name,
         client_name: form.client_name,
         client_email: form.client_email,
         client_phone: form.client_phone,
@@ -111,7 +104,7 @@ export default function EventsDashboard() {
     if (filter === 'past' && e.event_date && e.event_date.slice(0, 10) >= today) return false;
     if (search) {
       const q = search.toLowerCase();
-      const fields = [e.event_name, e.client_name, e.client_email, e.location].filter(Boolean).join(' ').toLowerCase();
+      const fields = [e.client_name, e.client_email, e.location].filter(Boolean).join(' ').toLowerCase();
       if (!fields.includes(q)) return false;
     }
     return true;
@@ -157,10 +150,6 @@ export default function EventsDashboard() {
 
           <form onSubmit={handleCreate}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }}>
-              <div>
-                <label className="form-label">Event Name *</label>
-                <input className="form-input" value={form.event_name} onChange={e => handleField('event_name', e.target.value)} required />
-              </div>
               <div>
                 <label className="form-label">Client Name</label>
                 <input className="form-input" value={form.client_name} onChange={e => handleField('client_name', e.target.value)} />
@@ -264,7 +253,8 @@ export default function EventsDashboard() {
                 onClick={() => navigate(event.proposal_id ? `/admin/events/${event.proposal_id}` : `/admin/events/shift/${event.id}`)}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
                   <strong style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', color: 'var(--deep-brown)' }}>
-                    {eventTitle(event)}
+                    <span className="event-title">{event.client_name || 'Event'}</span>
+                    <span className="event-subtitle"> — {getEventTypeLabel({ event_type: event.event_type, event_type_custom: event.event_type_custom })}</span>
                   </strong>
                   <span className={`badge ${event.status === 'open' ? 'badge-approved' : event.status === 'filled' ? 'badge-reviewed' : 'badge-deactivated'}`}>
                     {event.status}

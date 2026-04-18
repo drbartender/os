@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { formatPhone, formatPhoneInput, stripPhone } from '../../utils/formatPhone';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
@@ -122,7 +123,10 @@ export default function ClientDetail() {
                   style={{ padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--cream-dark, #e8e0d4)', cursor: 'pointer' }}
                 >
                   <div className="flex-between">
-                    <strong>{p.event_name || `Proposal #${p.id}`}</strong>
+                    <div>
+                      <strong>{p.client_name || `Proposal #${p.id}`}</strong>
+                      <div className="event-subtitle">{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</div>
+                    </div>
                     <span className={`badge ${STATUS_CLASSES[p.status] || ''}`}>{STATUS_LABELS[p.status] || p.status}</span>
                   </div>
                   <div className="text-muted text-small" style={{ marginTop: '0.3rem' }}>

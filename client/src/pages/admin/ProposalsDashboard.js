@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import ClickableRow from '../../components/ClickableRow';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const STATUS_LABELS = {
   draft: 'Draft',
@@ -118,10 +119,10 @@ export default function ProposalsDashboard() {
             {proposals.map(p => (
               <ClickableRow key={p.id} to={`/admin/proposals/${p.id}`}>
                 <td>
-                  <strong>{p.client_name && p.event_name ? `${p.client_name} - ${p.event_name}` : p.client_name || '—'}</strong>
+                  <strong>{p.client_name || '—'}</strong>
                   {p.client_email && <div className="text-muted text-small">{p.client_email}</div>}
                 </td>
-                <td>{p.event_name || '—'}</td>
+                <td>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</td>
                 <td>{formatDate(p.event_date)}</td>
                 <td>{p.package_name || '—'}</td>
                 <td style={{ fontWeight: 600 }}>{formatCurrency(p.total_price)}</td>

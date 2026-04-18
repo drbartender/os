@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const fmtDate = (iso) => {
   if (!iso) return '—';
@@ -137,7 +138,7 @@ export default function Dashboard() {
               <tbody>
                 {upcomingEvents.slice(0, 5).map(e => (
                   <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/events/${e.proposal_id}`)} onKeyDown={(e2) => e2.key === 'Enter' && navigate(`/admin/events/${e.proposal_id}`)} tabIndex={0} role="link">
-                    <td>{e.event_name || '—'}</td>
+                    <td>{getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })}</td>
                     <td>{fmtDate(e.event_date)}</td>
                     <td>{e.client_name || '—'}</td>
                   </tr>
@@ -186,7 +187,7 @@ export default function Dashboard() {
                 {paymentsDue.slice(0, 5).map(p => (
                   <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/proposals/${p.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/proposals/${p.id}`)} tabIndex={0} role="link">
                     <td>{p.client_name || p.client_email || '—'}</td>
-                    <td>{p.event_name || fmtDate(p.event_date)}</td>
+                    <td>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</td>
                     <td>{formatCurrency(Number(p.total_price || 0) - Number(p.amount_paid || 0))}</td>
                   </tr>
                 ))}
@@ -209,7 +210,7 @@ export default function Dashboard() {
               <tbody>
                 {unstaffedEvents.slice(0, 5).map(e => (
                   <tr key={e.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/admin/events/${e.proposal_id}`)} onKeyDown={(e2) => e2.key === 'Enter' && navigate(`/admin/events/${e.proposal_id}`)} tabIndex={0} role="link">
-                    <td>{e.event_name || '—'}</td>
+                    <td>{getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })}</td>
                     <td>{fmtDate(e.event_date)}</td>
                     <td>{Number(e.request_count || 0)} / {Number(e.bartenders_needed || e.positions_needed || 1)}</td>
                   </tr>

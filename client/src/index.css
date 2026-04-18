@@ -2622,6 +2622,11 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   color: var(--cream-text);
   margin: 0 0 0.75rem 0;
 }
+.event-subtitle {
+  font-size: 0.95rem;
+  color: var(--warm-brown, #6b4b2a);
+  margin-top: 0.15rem;
+}
 .event-header-top {
   display: flex;
   justify-content: space-between;

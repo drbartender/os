@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import DrinkPlanSelections from '../../components/DrinkPlanSelections';
 import ShoppingListButton from '../../components/ShoppingList/ShoppingListButton';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const STATUS_LABELS = {
   pending: 'Pending',
@@ -125,7 +126,7 @@ export default function DrinkPlanDetail() {
               {plan.client_name || 'Unnamed Client'}
             </h2>
             {plan.client_email && <p className="text-muted text-small">{plan.client_email}</p>}
-            {plan.event_name && <p className="mt-1"><strong>Event:</strong> {plan.event_name}</p>}
+            <p className="mt-1"><strong>Event type:</strong> {getEventTypeLabel({ event_type: plan.event_type, event_type_custom: plan.event_type_custom })}</p>
             {plan.event_date && <p><strong>Date:</strong> {formatDate(plan.event_date)}</p>}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>

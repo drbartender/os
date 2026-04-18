@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 const formatCurrency = (amount) => {
   if (amount == null) return '$0.00';
@@ -93,7 +94,7 @@ export default function FinancialsDashboard() {
                     role="link"
                   >
                     <td>{p.client_name || '—'}</td>
-                    <td>{p.event_name || '—'}</td>
+                    <td>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</td>
                     <td>{formatDate(p.event_date)}</td>
                     <td>{formatCurrency(p.total_price)}</td>
                     <td>{formatCurrency(p.amount_paid)}</td>
@@ -140,7 +141,7 @@ export default function FinancialsDashboard() {
                     title={pp.invoice_token ? 'View invoice' : 'No invoice linked'}
                   >
                     <td>{pp.client_name || '—'}</td>
-                    <td>{pp.event_name || '—'}</td>
+                    <td>{getEventTypeLabel({ event_type: pp.event_type, event_type_custom: pp.event_type_custom })}</td>
                     <td style={{ textTransform: 'capitalize' }}>{pp.payment_type}</td>
                     <td>{formatCurrency(pp.amount / 100)}</td>
                     <td>{formatDate(pp.created_at)}</td>

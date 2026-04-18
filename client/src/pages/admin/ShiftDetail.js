@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { formatPhone } from '../../utils/formatPhone';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -57,7 +58,6 @@ export default function ShiftDetail() {
 
   const startEdit = () => {
     setEditForm({
-      event_name: shift.event_name || '',
       client_name: shift.client_name || '',
       client_email: shift.client_email || '',
       client_phone: shift.client_phone || '',
@@ -112,16 +112,15 @@ export default function ShiftDetail() {
   if (loading) return <div className="page-container"><div className="loading"><div className="spinner" />Loading...</div></div>;
   if (!shift) return <div className="page-container"><p>Event not found.</p></div>;
 
-  const title = shift.client_name && shift.event_name
-    ? `${shift.client_name} - ${shift.event_name}`
-    : shift.event_name || 'Event';
-
   return (
     <div className="page-container wide">
       {/* Header */}
       <div className="event-header">
         <div className="event-header-top">
-          <h1 className="event-title">{title}</h1>
+          <div>
+            <h1 className="event-title">{shift.client_name || 'Shift'}</h1>
+            <div className="event-subtitle">{getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom })} on {fmtDate(shift.event_date)}</div>
+          </div>
           <div className="event-header-actions">
             {!editing && <button className="event-detail-btn" onClick={startEdit}>Edit</button>}
           </div>
@@ -158,10 +157,6 @@ export default function ShiftDetail() {
             <h3 style={{ fontFamily: 'var(--font-display)', marginBottom: '1rem' }}>Edit Event</h3>
             {error && <div className="alert alert-error">{error}</div>}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }}>
-              <div>
-                <label className="form-label">Event Name</label>
-                <input className="form-input" value={editForm.event_name} onChange={e => setEditForm(f => ({ ...f, event_name: e.target.value }))} />
-              </div>
               <div>
                 <label className="form-label">Client Name</label>
                 <input className="form-input" value={editForm.client_name} onChange={e => setEditForm(f => ({ ...f, client_name: e.target.value }))} />
