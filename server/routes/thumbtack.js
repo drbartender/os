@@ -1,6 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('../utils/email');
 const { newThumbtackLeadAdmin, newThumbtackMessageAdmin, newThumbtackReviewAdmin } = require('../utils/emailTemplates');
@@ -297,12 +298,22 @@ router.post('/leads', asyncHandler(async (req, res) => {
         await sendEmail({ to: adminEmail, ...tpl });
       }
     } catch (emailErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(emailErr, {
+          tags: { webhook: 'thumbtack', route: '/leads' },
+        });
+      }
       console.error('Thumbtack admin notification failed (non-blocking):', emailErr);
     }
 
     res.status(200).json({ status: 'ok' });
   } catch (err) {
     await dbClient.query('ROLLBACK');
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(err, {
+        tags: { webhook: 'thumbtack', route: '/leads' },
+      });
+    }
     console.error('Thumbtack lead processing error:', err);
     res.status(500).json({ error: 'Internal error' });
   } finally {
@@ -364,12 +375,22 @@ router.post('/messages', asyncHandler(async (req, res) => {
           await sendEmail({ to: adminEmail, ...tpl });
         }
       } catch (emailErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(emailErr, {
+            tags: { webhook: 'thumbtack', route: '/messages' },
+          });
+        }
         console.error('Thumbtack message notification failed (non-blocking):', emailErr);
       }
     }
 
     res.status(200).json({ status: 'ok' });
   } catch (err) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(err, {
+        tags: { webhook: 'thumbtack', route: '/messages' },
+      });
+    }
     console.error('Thumbtack message processing error:', err);
     res.status(500).json({ error: 'Internal error' });
   }
@@ -421,11 +442,21 @@ router.post('/reviews', asyncHandler(async (req, res) => {
         await sendEmail({ to: adminEmail, ...tpl });
       }
     } catch (emailErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(emailErr, {
+          tags: { webhook: 'thumbtack', route: '/reviews' },
+        });
+      }
       console.error('Thumbtack review notification failed (non-blocking):', emailErr);
     }
 
     res.status(200).json({ status: 'ok' });
   } catch (err) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(err, {
+        tags: { webhook: 'thumbtack', route: '/reviews' },
+      });
+    }
     console.error('Thumbtack review processing error:', err);
     res.status(500).json({ error: 'Internal error' });
   }

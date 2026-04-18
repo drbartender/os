@@ -1,4 +1,5 @@
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const asyncHandler = require('../middleware/asyncHandler');
 
@@ -107,6 +108,11 @@ router.post('/resend', asyncHandler(async (req, res) => {
 
     res.json({ received: true });
   } catch (err) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(err, {
+        tags: { webhook: 'resend', route: '/resend' },
+      });
+    }
     console.error('Webhook processing error:', err);
     res.status(500).json({ error: 'Webhook processing failed' });
   }

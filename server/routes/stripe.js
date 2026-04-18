@@ -1,4 +1,5 @@
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicLimiter } = require('../middleware/rateLimiters');
@@ -568,6 +569,11 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         await sendEmail({ to: adminEmail, ...tpl });
       }
     } catch (emailErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(emailErr, {
+          tags: { webhook: 'stripe', route: '/webhook' },
+        });
+      }
       console.error('Payment notification email failed (non-blocking):', emailErr);
     }
   }
@@ -704,6 +710,11 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         }
       } catch (dbErr) {
         await dbClient.query('ROLLBACK');
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(dbErr, {
+            tags: { webhook: 'stripe', route: '/webhook' },
+          });
+        }
         console.error('Webhook DB error:', dbErr);
       } finally {
         dbClient.release();
@@ -717,6 +728,11 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           const shift = await createEventShifts(proposalId);
           if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
         } catch (shiftErr) {
+          if (process.env.SENTRY_DSN_SERVER) {
+            Sentry.captureException(shiftErr, {
+              tags: { webhook: 'stripe', route: '/webhook' },
+            });
+          }
           console.error('Shift auto-creation failed (non-blocking):', shiftErr);
         }
       }
@@ -764,6 +780,11 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           }).catch(e => console.error('Failed payment notification email error:', e));
         }
       } catch (err) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(err, {
+            tags: { webhook: 'stripe', route: '/webhook' },
+          });
+        }
         console.error('payment_intent.payment_failed handler error:', err);
       }
     }
@@ -830,6 +851,11 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         }
       } catch (dbErr) {
         await dbClient.query('ROLLBACK');
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(dbErr, {
+            tags: { webhook: 'stripe', route: '/webhook' },
+          });
+        }
         console.error('Webhook DB error:', dbErr);
       } finally {
         dbClient.release();
@@ -842,6 +868,11 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           const shift = await createEventShifts(proposalId);
           if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
         } catch (shiftErr) {
+          if (process.env.SENTRY_DSN_SERVER) {
+            Sentry.captureException(shiftErr, {
+              tags: { webhook: 'stripe', route: '/webhook' },
+            });
+          }
           console.error('Shift auto-creation failed (non-blocking):', shiftErr);
         }
       }
