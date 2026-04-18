@@ -180,7 +180,7 @@ export default function AdminUserDetail() {
       const hist = await api.get(`/messages/user/${id}`);
       setUserMessages(hist.data.messages);
     } catch (err) {
-      setUserMsgResult({ error: err.response?.data?.error || 'Failed to send' });
+      setUserMsgResult({ error: err.message || 'Failed to send' });
     } finally {
       setUserMsgSending(false);
     }

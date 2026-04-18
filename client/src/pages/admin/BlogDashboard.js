@@ -166,7 +166,7 @@ export default function BlogDashboard() {
       const { data } = await api.post('/admin/blog/upload-image', formData);
       return resolveImageUrl(data.url);
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Image upload failed.');
+      toast.error(err.message || 'Image upload failed.');
       return null;
     } finally {
       setUploading(false);
@@ -187,9 +187,8 @@ export default function BlogDashboard() {
       toast.success(wasPublished ? 'Post published.' : 'Post saved.');
       fetchPosts();
     } catch (err) {
-      const data = err.response?.data;
-      setCreateError(data?.error || 'Failed to create post.');
-      setCreateFieldErrors(data?.fieldErrors || {});
+      setCreateError(err.message || 'Failed to create post.');
+      setCreateFieldErrors(err.fieldErrors || {});
     }
   };
 
@@ -224,9 +223,8 @@ export default function BlogDashboard() {
       toast.success(isFirstPublish ? 'Post published.' : 'Post saved.');
       fetchPosts();
     } catch (err) {
-      const data = err.response?.data;
-      setEditError(data?.error || 'Failed to update post.');
-      setEditFieldErrors(data?.fieldErrors || {});
+      setEditError(err.message || 'Failed to update post.');
+      setEditFieldErrors(err.fieldErrors || {});
     }
   };
 
@@ -237,7 +235,7 @@ export default function BlogDashboard() {
       toast.success('Post deleted.');
       fetchPosts();
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to delete post.');
+      toast.error(err.message || 'Failed to delete post.');
     }
   };
 

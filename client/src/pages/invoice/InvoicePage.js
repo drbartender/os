@@ -77,7 +77,7 @@ export default function InvoicePage() {
         const { data } = await api.get(`/invoices/t/${token}`);
         if (!cancelled) setInvoice(data.invoice);
       } catch (err) {
-        if (!cancelled) setError(err.response?.data?.error || 'Invoice not found or no longer available.');
+        if (!cancelled) setError(err.message || 'Invoice not found or no longer available.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -101,8 +101,8 @@ export default function InvoicePage() {
       setClientSecret(data.clientSecret);
       setShowPayment(true);
     } catch (err) {
-      setFormError(err.response?.data?.error || 'Failed to initiate payment.');
-      setFieldErrors(err.response?.data?.fieldErrors || {});
+      setFormError(err.message || 'Failed to initiate payment.');
+      setFieldErrors(err.fieldErrors || {});
     }
   }, [token]);
 

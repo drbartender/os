@@ -19,17 +19,12 @@ api.interceptors.response.use(
   (err) => {
     // Network failure — no response received
     if (!err.response) {
-      const payload = {
+      return Promise.reject({
         message: 'Network error — check your connection.',
         code: 'NETWORK_ERROR',
         fieldErrors: undefined,
         status: 0,
-        // Backward-compat shim so existing `err.response?.data?.error` callers
-        // still surface a usable message. Remove after Phase 3 sweep converts
-        // callers to read `err.message` directly.
-        response: { data: { error: 'Network error — check your connection.' }, status: 0 },
-      };
-      return Promise.reject(payload);
+      });
     }
 
     const { status } = err.response;
@@ -49,8 +44,6 @@ api.interceptors.response.use(
       code: data.code,
       fieldErrors: data.fieldErrors,
       status,
-      // Backward-compat shim — see comment above.
-      response: { data, status },
     });
   }
 );

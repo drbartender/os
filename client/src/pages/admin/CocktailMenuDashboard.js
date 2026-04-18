@@ -344,9 +344,8 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setEditingCocktail(null);
       toast.success('Saved.');
     } catch (err) {
-      const data = err.response?.data;
-      setEditCocktailError(data?.error || 'Failed to save cocktail.');
-      setEditCocktailFieldErrors(data?.fieldErrors || {});
+      setEditCocktailError(err.message || 'Failed to save cocktail.');
+      setEditCocktailFieldErrors(err.fieldErrors || {});
     }
   };
 
@@ -356,7 +355,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       const res = await api.put(`/cocktails/${c.id}`, { is_active: !c.is_active });
       setCocktails(prev => prev.map(x => x.id === c.id ? { ...x, ...res.data } : x));
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to update cocktail.');
+      toast.error(err.message || 'Failed to update cocktail.');
     }
   };
 
@@ -384,9 +383,8 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setAddCocktailCategory(null);
       toast.success('Cocktail created.');
     } catch (err) {
-      const data = err.response?.data;
-      setAddCocktailError(data?.error || 'Failed to add cocktail.');
-      setAddCocktailFieldErrors(data?.fieldErrors || {});
+      setAddCocktailError(err.message || 'Failed to add cocktail.');
+      setAddCocktailFieldErrors(err.fieldErrors || {});
     }
   };
 
@@ -413,9 +411,8 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setEditingCocktailCat(null);
       toast.success('Saved.');
     } catch (err) {
-      const data = err.response?.data;
-      setEditCocktailCatError(data?.error || 'Failed to save category.');
-      setEditCocktailCatFieldErrors(data?.fieldErrors || {});
+      setEditCocktailCatError(err.message || 'Failed to save category.');
+      setEditCocktailCatFieldErrors(err.fieldErrors || {});
     }
   };
 
@@ -426,7 +423,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setCocktailCategories(prev => prev.filter(c => c.id !== id));
       toast.success('Deleted.');
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to delete category.');
+      toast.error(err.message || 'Failed to delete category.');
     }
   };
 
@@ -448,9 +445,8 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setShowAddCocktailCat(false);
       toast.success('Category created.');
     } catch (err) {
-      const data = err.response?.data;
-      setAddCocktailCatError(data?.error || 'Failed to add category.');
-      setAddCocktailCatFieldErrors(data?.fieldErrors || {});
+      setAddCocktailCatError(err.message || 'Failed to add category.');
+      setAddCocktailCatFieldErrors(err.fieldErrors || {});
     }
   };
 
@@ -477,9 +473,8 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setEditingMocktail(null);
       toast.success('Saved.');
     } catch (err) {
-      const data = err.response?.data;
-      setEditMocktailError(data?.error || 'Failed to save mocktail.');
-      setEditMocktailFieldErrors(data?.fieldErrors || {});
+      setEditMocktailError(err.message || 'Failed to save mocktail.');
+      setEditMocktailFieldErrors(err.fieldErrors || {});
     }
   };
 
@@ -489,7 +484,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       const res = await api.put(`/mocktails/${m.id}`, { is_active: !m.is_active });
       setMocktails(prev => prev.map(x => x.id === m.id ? { ...x, ...res.data } : x));
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to update mocktail.');
+      toast.error(err.message || 'Failed to update mocktail.');
     }
   };
 
@@ -515,9 +510,8 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setAddMocktailCategory(null);
       toast.success('Mocktail created.');
     } catch (err) {
-      const data = err.response?.data;
-      setAddMocktailError(data?.error || 'Failed to add mocktail.');
-      setAddMocktailFieldErrors(data?.fieldErrors || {});
+      setAddMocktailError(err.message || 'Failed to add mocktail.');
+      setAddMocktailFieldErrors(err.fieldErrors || {});
     }
   };
 
@@ -543,9 +537,8 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setEditingMocktailCat(null);
       toast.success('Saved.');
     } catch (err) {
-      const data = err.response?.data;
-      setEditMocktailCatError(data?.error || 'Failed to save category.');
-      setEditMocktailCatFieldErrors(data?.fieldErrors || {});
+      setEditMocktailCatError(err.message || 'Failed to save category.');
+      setEditMocktailCatFieldErrors(err.fieldErrors || {});
     }
   };
 
@@ -556,7 +549,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setMocktailCategories(prev => prev.filter(c => c.id !== id));
       toast.success('Deleted.');
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to delete category.');
+      toast.error(err.message || 'Failed to delete category.');
     }
   };
 
@@ -578,9 +571,8 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       setShowAddMocktailCat(false);
       toast.success('Category created.');
     } catch (err) {
-      const data = err.response?.data;
-      setAddMocktailCatError(data?.error || 'Failed to add category.');
-      setAddMocktailCatFieldErrors(data?.fieldErrors || {});
+      setAddMocktailCatError(err.message || 'Failed to add category.');
+      setAddMocktailCatFieldErrors(err.fieldErrors || {});
     }
   };
 

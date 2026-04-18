@@ -79,7 +79,7 @@ export default function ShiftDetail() {
       setEditing(false);
       loadData();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save.');
+      setError(err.message || 'Failed to save.');
     } finally {
       setSaving(false);
     }
@@ -103,7 +103,7 @@ export default function ShiftDetail() {
       setAssignPosition('');
       loadData();
     } catch (e) {
-      setStaffError(e.response?.data?.error || 'Failed to assign staff');
+      setStaffError(e.message || 'Failed to assign staff');
     } finally {
       setAssigning(false);
     }

@@ -200,7 +200,7 @@ export default function ProposalDetail() {
       refreshShift();
     } catch (e) {
       console.error('Failed to assign staff:', e);
-      setStaffError(e.response?.data?.error || 'Failed to assign staff');
+      setStaffError(e.message || 'Failed to assign staff');
     } finally { setAssigningStaff(false); }
   };
 
@@ -243,7 +243,7 @@ export default function ProposalDetail() {
       setAutoAssignPreview({ shiftId: shift.id, ...res.data });
     } catch (e) {
       console.error('Auto-assign preview failed:', e);
-      setStaffError(e.response?.data?.error || 'Auto-assign failed');
+      setStaffError(e.message || 'Auto-assign failed');
     } finally { setAutoAssignLoading(false); }
   };
 
@@ -255,7 +255,7 @@ export default function ProposalDetail() {
       refreshShift();
     } catch (e) {
       console.error('Auto-assign confirm failed:', e);
-      setStaffError(e.response?.data?.error || 'Auto-assign failed');
+      setStaffError(e.message || 'Auto-assign failed');
     }
   };
 
@@ -504,7 +504,7 @@ export default function ProposalDetail() {
       const res = await api.post(`/stripe/payment-link/${id}?token=${proposal.token}`);
       setPaymentLinkUrl(res.data.url);
     } catch (err) {
-      setLinkError(err.response?.data?.error || 'Failed to generate payment link. Check that Stripe env vars are set in Render.');
+      setLinkError(err.message || 'Failed to generate payment link. Check that Stripe env vars are set in Render.');
     } finally {
       setGeneratingLink(false);
     }
@@ -551,7 +551,7 @@ export default function ProposalDetail() {
       setChargeResult(`Charged ${fmt(res.data.amount / 100)} successfully.`);
       await loadProposal();
     } catch (err) {
-      setChargeResult(err.response?.data?.error || 'Failed to charge balance.');
+      setChargeResult(err.message || 'Failed to charge balance.');
     } finally { setChargingBalance(false); }
   };
 

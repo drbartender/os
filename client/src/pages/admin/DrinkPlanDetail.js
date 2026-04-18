@@ -51,7 +51,7 @@ export default function DrinkPlanDetail() {
         setMocktailItems(mocktailsRes.data.mocktails || []);
       } catch (err) {
         if (cancelled) return;
-        if (err.response?.status !== 404) {
+        if (err.status !== 404) {
           toast.error('Failed to load drink plan — try refreshing.');
         }
       } finally {

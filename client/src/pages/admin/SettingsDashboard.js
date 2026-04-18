@@ -199,7 +199,7 @@ function AutoAssignSettings() {
       const r = await api.post('/admin/backfill-geocodes');
       setBackfillResult(r.data);
     } catch (e) {
-      setBackfillResult({ error: e.response?.data?.error || 'Backfill failed' });
+      setBackfillResult({ error: e.message || 'Backfill failed' });
     } finally {
       setBackfilling(false);
       setShowBackfillConfirm(false);
