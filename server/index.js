@@ -7,7 +7,29 @@ if (process.env.SENTRY_DSN_SERVER) {
     environment: process.env.NODE_ENV || 'development',
     tracesSampleRate: 0.1,
     beforeSend(event) {
+      // Redact request body (passwords, tokens, PII)
       if (event.request?.data) event.request.data = '[redacted]';
+
+      // Redact public token segments and query-string tokens from URLs
+      const scrubUrl = (u) => {
+        if (!u) return u;
+        return String(u)
+          .replace(/\/t\/[^/?#]+/g, '/t/[redacted]')
+          .replace(/\/unsubscribe\/[^/?#]+/g, '/unsubscribe/[redacted]')
+          .replace(/\/reset-password\/[^/?#]+/g, '/reset-password/[redacted]')
+          .replace(/[?&]token=[^&]+/g, (m) => m[0] + 'token=[redacted]');
+      };
+      if (event.request?.url) event.request.url = scrubUrl(event.request.url);
+      if (event.request?.query_string) {
+        event.request.query_string = String(event.request.query_string).replace(/token=[^&]+/g, 'token=[redacted]');
+      }
+
+      // Drop request headers entirely — default scrub list misses x-thumbtack-secret etc.
+      if (event.request) delete event.request.headers;
+
+      // Scrub the route tag we set in the global error handler too
+      if (event.tags?.route) event.tags.route = scrubUrl(event.tags.route);
+
       return event;
     },
   });
