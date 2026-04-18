@@ -158,7 +158,11 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
     setDownloading(true);
     setPdfError('');
     try {
-      const finalData = { ...edited, guestCount: parseInt(guestCount, 10) || edited.guestCount };
+      const finalData = {
+        ...edited,
+        guestCount: parseInt(guestCount, 10) || edited.guestCount,
+        eventTypeLabel: edited.eventTypeLabel || listData.eventTypeLabel,
+      };
       const blob = await generateShoppingListPDF(finalData);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

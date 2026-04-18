@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import api from '../../utils/api';
 import { generateShoppingList } from './generateShoppingList';
 import ShoppingListModal from './ShoppingListModal';
+import { getEventTypeLabel } from '../../utils/eventTypes';
 
 export default function ShoppingListButton({ planId, planToken }) {
   const [loading, setLoading] = useState(false);
@@ -27,6 +28,12 @@ export default function ShoppingListButton({ planId, planToken }) {
         beerSelections: apiData.beer_selections || [],
         wineSelections: apiData.wine_selections || [],
         mixersForSignatureDrinks: apiData.mixers_for_signature_drinks,
+      });
+      // Attach event-type label so the modal/PDF can render it in the header.
+      // generateShoppingList doesn't carry this field through, so we add it here.
+      listData.eventTypeLabel = getEventTypeLabel({
+        event_type: apiData.event_type,
+        event_type_custom: apiData.event_type_custom,
       });
       setModalData(listData);
     }

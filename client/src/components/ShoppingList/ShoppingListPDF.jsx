@@ -46,6 +46,7 @@ export async function generateShoppingListPDF(listData) {
 
   const {
     clientName = 'Event',
+    eventTypeLabel = 'event',
     guestCount = 0,
     eventDate,
     signatureCocktailNames = [],
@@ -113,11 +114,17 @@ export async function generateShoppingListPDF(listData) {
   doc.setTextColor(...C.cream);
   doc.text(clientName, PW - MX, 40, { align: 'right' });
 
+  // Event-type label (matches meta style; sits between clientName and the meta line)
+  doc.setFont('times', 'italic');
+  doc.setFontSize(10);
+  doc.setTextColor(...C.amberLt);
+  doc.text(`Event type: ${eventTypeLabel}`, PW - MX, 54, { align: 'right' });
+
   const meta = `${guestCount} Guests${eventDate ? `  \u00B7  ${formatDate(eventDate)}` : ''}`;
   doc.setFont('times', 'italic');
   doc.setFontSize(10);
   doc.setTextColor(...C.amberLt);
-  doc.text(meta, PW - MX, 55, { align: 'right' });
+  doc.text(meta, PW - MX, 68, { align: 'right' });
 
   doc.setDrawColor(...C.amber);
   doc.setLineWidth(2);
