@@ -6,117 +6,111 @@ const { auth } = require('../middleware/auth');
 const { isValidUpload } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
 const { encrypt, decrypt } = require('../utils/encryption');
+const asyncHandler = require('../middleware/asyncHandler');
+const { ValidationError } = require('../utils/errors');
 
 const router = express.Router();
 
 // Get payment profile
-router.get('/', auth, async (req, res) => {
-  try {
-    const result = await pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [req.user.id]);
-    const profile = result.rows[0] || {};
-    if (profile.routing_number) {
-      const raw = decrypt(profile.routing_number);
-      profile.routing_number = '****' + raw.slice(-4);
-    }
-    if (profile.account_number) {
-      const raw = decrypt(profile.account_number);
-      profile.account_number = '****' + raw.slice(-4);
-    }
-    res.json(profile);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+router.get('/', auth, asyncHandler(async (req, res) => {
+  const result = await pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [req.user.id]);
+  const profile = result.rows[0] || {};
+  if (profile.routing_number) {
+    const raw = decrypt(profile.routing_number);
+    profile.routing_number = '****' + raw.slice(-4);
   }
-});
+  if (profile.account_number) {
+    const raw = decrypt(profile.account_number);
+    profile.account_number = '****' + raw.slice(-4);
+  }
+  res.json(profile);
+}));
 
 // Save payment profile
-router.post('/', auth, async (req, res) => {
+router.post('/', auth, asyncHandler(async (req, res) => {
   const { preferred_payment_method, payment_username, routing_number, account_number } = req.body;
 
   if (!preferred_payment_method) {
-    return res.status(400).json({ error: 'Payment method required' });
+    throw new ValidationError({ preferred_payment_method: 'Payment method is required.' });
   }
 
+  let w9_url = null, w9_name = null;
+
+  // Fetch existing record first so we can fall back to the saved W-9 if no new file
+  const existing = await pool.query('SELECT id, w9_file_url, w9_filename FROM payment_profiles WHERE user_id = $1', [req.user.id]);
+
+  if (req.files?.w9) {
+    const file = req.files.w9;
+    if (!isValidUpload(file)) {
+      throw new ValidationError({ w9: 'Invalid file type. Use PDF, JPEG, or PNG only.' });
+    }
+    const ext = path.extname(file.name);
+    const filename = `${req.user.id}_w9_${uuidv4()}${ext}`;
+    await uploadFile(file.data, filename);
+    w9_url = `/files/${filename}`;
+    w9_name = file.name;
+  } else if (existing.rows[0]?.w9_file_url) {
+    // Reuse previously uploaded W-9
+    w9_url = existing.rows[0].w9_file_url;
+    w9_name = existing.rows[0].w9_filename;
+  }
+
+  // Enforce W-9 requirement on the backend (not just the frontend)
+  if (!w9_url) {
+    throw new ValidationError({ w9: 'A signed W-9 is required.' });
+  }
+
+  const client = await pool.connect();
   try {
-    let w9_url = null, w9_name = null;
+    await client.query('BEGIN');
 
-    // Fetch existing record first so we can fall back to the saved W-9 if no new file
-    const existing = await pool.query('SELECT id, w9_file_url, w9_filename FROM payment_profiles WHERE user_id = $1', [req.user.id]);
-
-    if (req.files?.w9) {
-      const file = req.files.w9;
-      if (!isValidUpload(file)) return res.status(400).json({ error: 'Invalid file type. Use PDF, JPEG, or PNG only.' });
-      const ext = path.extname(file.name);
-      const filename = `${req.user.id}_w9_${uuidv4()}${ext}`;
-      await uploadFile(file.data, filename);
-      w9_url = `/files/${filename}`;
-      w9_name = file.name;
-    } else if (existing.rows[0]?.w9_file_url) {
-      // Reuse previously uploaded W-9
-      w9_url = existing.rows[0].w9_file_url;
-      w9_name = existing.rows[0].w9_filename;
-    }
-
-    // Enforce W-9 requirement on the backend (not just the frontend)
-    if (!w9_url) {
-      return res.status(400).json({ error: 'A signed W-9 is required.' });
-    }
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      if (existing.rows[0]) {
-        await client.query(
-          `UPDATE payment_profiles
-           SET preferred_payment_method=$1, payment_username=$2, routing_number=$3, account_number=$4,
-               w9_file_url=$5, w9_filename=$6
-           WHERE user_id=$7`,
-          [preferred_payment_method, payment_username || null, routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null,
-           w9_url, w9_name, req.user.id]
-        );
-      } else {
-        await client.query(
-          `INSERT INTO payment_profiles
-             (user_id, preferred_payment_method, payment_username, routing_number, account_number, w9_file_url, w9_filename)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [req.user.id, preferred_payment_method, payment_username || null,
-           routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null, w9_url, w9_name]
-        );
-      }
-
-      // Mark payday protocols and full onboarding complete
+    if (existing.rows[0]) {
       await client.query(
-        `UPDATE onboarding_progress SET payday_protocols_completed=true, onboarding_completed=true, last_completed_step='onboarding_completed' WHERE user_id=$1`,
-        [req.user.id]
+        `UPDATE payment_profiles
+         SET preferred_payment_method=$1, payment_username=$2, routing_number=$3, account_number=$4,
+             w9_file_url=$5, w9_filename=$6
+         WHERE user_id=$7`,
+        [preferred_payment_method, payment_username || null, routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null,
+         w9_url, w9_name, req.user.id]
       );
-
-      // Update user onboarding status
-      await client.query("UPDATE users SET onboarding_status='submitted' WHERE id=$1", [req.user.id]);
-
-      await client.query('COMMIT');
-    } catch (err) {
-      try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
-      throw err;
-    } finally {
-      client.release();
+    } else {
+      await client.query(
+        `INSERT INTO payment_profiles
+           (user_id, preferred_payment_method, payment_username, routing_number, account_number, w9_file_url, w9_filename)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [req.user.id, preferred_payment_method, payment_username || null,
+         routing_number ? encrypt(routing_number) : null, account_number ? encrypt(account_number) : null, w9_url, w9_name]
+      );
     }
 
-    const result = await pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [req.user.id]);
-    const profile = result.rows[0];
-    if (profile.routing_number) {
-      const raw = decrypt(profile.routing_number);
-      profile.routing_number = '****' + raw.slice(-4);
-    }
-    if (profile.account_number) {
-      const raw = decrypt(profile.account_number);
-      profile.account_number = '****' + raw.slice(-4);
-    }
-    res.json(profile);
+    // Mark payday protocols and full onboarding complete
+    await client.query(
+      `UPDATE onboarding_progress SET payday_protocols_completed=true, onboarding_completed=true, last_completed_step='onboarding_completed' WHERE user_id=$1`,
+      [req.user.id]
+    );
+
+    // Update user onboarding status
+    await client.query("UPDATE users SET onboarding_status='submitted' WHERE id=$1", [req.user.id]);
+
+    await client.query('COMMIT');
   } catch (err) {
-    console.error('payment profile save error:', err);
-    res.status(500).json({ error: 'Server error' });
+    try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    throw err;
+  } finally {
+    client.release();
   }
-});
+
+  const result = await pool.query('SELECT * FROM payment_profiles WHERE user_id = $1', [req.user.id]);
+  const profile = result.rows[0];
+  if (profile.routing_number) {
+    const raw = decrypt(profile.routing_number);
+    profile.routing_number = '****' + raw.slice(-4);
+  }
+  if (profile.account_number) {
+    const raw = decrypt(profile.account_number);
+    profile.account_number = '****' + raw.slice(-4);
+  }
+  res.json(profile);
+}));
 
 module.exports = router;
