@@ -126,7 +126,9 @@ dr-bartender/
 │   │   │   ├── packages.js        # Service package definitions
 │   │   │   └── syrups.js          # Syrup product definitions
 │   │   ├── hooks/
-│   │   │   └── useFormValidation.js # Form validation hook
+│   │   │   ├── useDebounce.js     # Debounced callback helper
+│   │   │   ├── useFormValidation.js # Form validation hook
+│   │   │   └── useWizardHistory.js # Wizard step ↔ browser history sync
 │   │   ├── pages/
 │   │   │   ├── Login.js, Register.js, ForgotPassword.js, ResetPassword.js
 │   │   │   ├── Welcome.js, FieldGuide.js, Agreement.js

@@ -7,6 +7,7 @@ import { useToast } from '../../context/ToastContext';
 import { getPackageBySlug } from '../../data/packages';
 import { ADDON_CATEGORIES, ADDON_ICONS } from '../../data/addonCategories';
 import useFormValidation from '../../hooks/useFormValidation';
+import useWizardHistory from '../../hooks/useWizardHistory';
 import EVENT_TYPES from '../../data/eventTypes';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 
@@ -63,6 +64,7 @@ export default function QuoteWizard() {
   const toast = useToast();
   const [searchParams] = useSearchParams();
   const [step, setStep] = useState(0);
+  useWizardHistory(step, setStep);
   const [packages, setPackages] = useState([]);
   const [addons, setAddons] = useState([]);
   const [loading, setLoading] = useState(true);

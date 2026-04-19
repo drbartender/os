@@ -4,6 +4,7 @@ import PublicLayout from '../../components/PublicLayout';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import { useToast } from '../../context/ToastContext';
+import useWizardHistory from '../../hooks/useWizardHistory';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
@@ -32,6 +33,7 @@ export default function ClassWizard() {
   const navigate = useNavigate();
   const toast = useToast();
   const [step, setStep] = useState(0);
+  useWizardHistory(step, setStep);
   const [packages, setPackages] = useState([]);
   const [addons, setAddons] = useState([]);
   const [preview, setPreview] = useState(null);

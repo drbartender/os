@@ -164,7 +164,7 @@ dr-bartender/
 │   │   │                       # FormBanner, FieldError, SessionExpiryHandler
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
 │   │   ├── data/               # Shared data (addonCategories, eventTypes, packages, syrups)
-│   │   ├── hooks/              # Custom hooks (useFormValidation)
+│   │   ├── hooks/              # Custom hooks (useDebounce, useFormValidation, useWizardHistory)
 │   │   ├── pages/
 │   │   │   ├── (auth)          # Login, Register, ForgotPassword, ResetPassword
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
