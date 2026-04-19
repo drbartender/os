@@ -10,6 +10,7 @@ const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfN
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
+const Sentry = require('@sentry/node');
 
 const router = express.Router();
 
@@ -165,82 +166,68 @@ router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
 // ─── Public website endpoints (no auth) ─────────────────────────
 
 /** GET /api/proposals/public/packages — list active packages (public, limited fields) */
-router.get('/public/packages', publicLimiter, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT id, name, slug, category, bar_type, description, pricing_type, includes,
-              base_rate_3hr, base_rate_4hr, base_rate_3hr_small, base_rate_4hr_small,
-              extra_hour_rate, extra_hour_rate_small, min_guests, min_total,
-              guests_per_bartender, bartenders_included, extra_bartender_hourly,
-              first_bar_fee, additional_bar_fee
-       FROM service_packages WHERE is_active = true ORDER BY sort_order`
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+router.get('/public/packages', publicLimiter, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    `SELECT id, name, slug, category, bar_type, description, pricing_type, includes,
+            base_rate_3hr, base_rate_4hr, base_rate_3hr_small, base_rate_4hr_small,
+            extra_hour_rate, extra_hour_rate_small, min_guests, min_total,
+            guests_per_bartender, bartenders_included, extra_bartender_hourly,
+            first_bar_fee, additional_bar_fee
+     FROM service_packages WHERE is_active = true ORDER BY sort_order`
+  );
+  res.json(result.rows);
+}));
 
 /** GET /api/proposals/public/addons — list active add-ons (public, limited fields) */
-router.get('/public/addons', publicLimiter, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT id, name, slug, description, billing_type, rate, extra_hour_rate, applies_to, category, requires_addon_slug
-       FROM service_addons WHERE is_active = true ORDER BY sort_order`
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+router.get('/public/addons', publicLimiter, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    `SELECT id, name, slug, description, billing_type, rate, extra_hour_rate, applies_to, category, requires_addon_slug
+     FROM service_addons WHERE is_active = true ORDER BY sort_order`
+  );
+  res.json(result.rows);
+}));
 
 /** POST /api/proposals/public/calculate — preview pricing (public, no save) */
-router.post('/public/calculate', publicLimiter, async (req, res) => {
+router.post('/public/calculate', publicLimiter, asyncHandler(async (req, res) => {
   const { package_id, guest_count, duration_hours, num_bars, addon_ids, addon_quantities, syrup_selections } = req.body;
-  try {
-    const pkgResult = await pool.query('SELECT * FROM service_packages WHERE id = $1 AND is_active = true', [package_id]);
-    if (!pkgResult.rows[0]) return res.status(400).json({ error: 'Package not found.' });
+  if (!package_id) throw new ValidationError({ package_id: 'Package is required' });
 
-    let addons = [];
-    if (addon_ids && addon_ids.length > 0) {
-      const addonResult = await pool.query(
-        'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
-        [addon_ids]
-      );
-      addons = addonResult.rows.map(a => ({
-        ...a,
-        quantity: addon_quantities?.[String(a.id)] || 1,
-      }));
-    }
+  const pkgResult = await pool.query('SELECT * FROM service_packages WHERE id = $1 AND is_active = true', [package_id]);
+  if (!pkgResult.rows[0]) throw new ValidationError({ package_id: 'Invalid package' });
 
-    const snapshot = calculateProposal({
-      pkg: pkgResult.rows[0],
-      guestCount: guest_count || 50,
-      durationHours: duration_hours || 4,
-      numBars: num_bars ?? 0,
-      addons,
-      syrupSelections: syrup_selections || [],
-    });
-
-    res.json(snapshot);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+  let addons = [];
+  if (addon_ids && addon_ids.length > 0) {
+    const addonResult = await pool.query(
+      'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
+      [addon_ids]
+    );
+    addons = addonResult.rows.map(a => ({
+      ...a,
+      quantity: addon_quantities?.[String(a.id)] || 1,
+    }));
   }
-});
+
+  const snapshot = calculateProposal({
+    pkg: pkgResult.rows[0],
+    guestCount: guest_count || 50,
+    durationHours: duration_hours || 4,
+    numBars: num_bars ?? 0,
+    addons,
+    syrupSelections: syrup_selections || [],
+  });
+
+  res.json(snapshot);
+}));
 
 /** POST /api/proposals/public/capture-lead — capture partial lead from quote wizard + create draft */
-router.post('/public/capture-lead', publicLimiter, async (req, res) => {
+router.post('/public/capture-lead', publicLimiter, asyncHandler(async (req, res) => {
+  const { name, email, phone, guest_count, event_date, source, form_state, current_step } = req.body;
+  if (!email || !email.trim()) {
+    throw new ValidationError({ email: 'Email is required' });
+  }
+  const cleanEmail = email.trim().toLowerCase();
   const dbClient = await pool.connect();
   try {
-    const { name, email, phone, guest_count, event_date, source, form_state, current_step } = req.body;
-    if (!email || !email.trim()) {
-      dbClient.release();
-      return res.status(400).json({ error: 'Email is required' });
-    }
-    const cleanEmail = email.trim().toLowerCase();
     const cleanName = name ? name.trim() : null;
     const safeStep = Math.max(0, Math.min(10, parseInt(current_step, 10) || 0));
 
@@ -313,61 +300,55 @@ router.post('/public/capture-lead', publicLimiter, async (req, res) => {
         }
       }
     } catch (enrollErr) {
+      Sentry.captureException(enrollErr, { tags: { route: 'proposals/public/capture-lead', phase: 'enrollment' } });
       console.error('Abandoned quote enrollment error (non-blocking):', enrollErr.message);
     }
 
     res.json({ ok: true, draft_token: draftToken });
   } catch (err) {
-    await dbClient.query('ROLLBACK').catch(() => {});
-    console.error('Lead capture error:', err.message);
-    res.status(500).json({ ok: false });
+    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    throw err;
   } finally {
     dbClient.release();
   }
-});
+}));
 
 /** GET /api/proposals/public/quote-draft/:token — fetch saved draft for resume */
-router.get('/public/quote-draft/:token', publicReadLimiter, async (req, res) => {
-  try {
-    if (!UUID_RE.test(req.params.token)) return res.status(404).json({ error: 'Draft not found' });
-    const result = await pool.query(
-      `SELECT token, form_state, current_step FROM quote_drafts
-       WHERE token = $1 AND status = 'draft' AND updated_at > NOW() - INTERVAL '30 days'`,
-      [req.params.token]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Draft not found or expired' });
-    res.json(result.rows[0]);
-  } catch (err) {
-    console.error('Fetch quote draft error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+router.get('/public/quote-draft/:token', publicReadLimiter, asyncHandler(async (req, res) => {
+  if (!UUID_RE.test(req.params.token)) throw new NotFoundError('This quote link is no longer valid');
+  const result = await pool.query(
+    `SELECT token, form_state, current_step FROM quote_drafts
+     WHERE token = $1 AND status = 'draft' AND updated_at > NOW() - INTERVAL '30 days'`,
+    [req.params.token]
+  );
+  if (!result.rows[0]) throw new NotFoundError('This quote link is no longer valid');
+  res.json(result.rows[0]);
+}));
 
 /** PUT /api/proposals/public/quote-draft/:token — auto-save draft state */
-router.put('/public/quote-draft/:token', publicReadLimiter, async (req, res) => {
-  try {
-    if (!UUID_RE.test(req.params.token)) return res.status(404).json({ error: 'Draft not found' });
-    const { form_state, current_step } = req.body;
-    if (!form_state || typeof form_state !== 'object') return res.status(400).json({ error: 'Invalid form state' });
-    const safeStep = Math.max(0, Math.min(10, parseInt(current_step, 10) || 0));
-    const serialized = JSON.stringify(form_state);
-    if (serialized.length > MAX_FORM_STATE_SIZE) return res.status(400).json({ error: 'Form state too large' });
-    const result = await pool.query(
-      `UPDATE quote_drafts SET form_state = $1, current_step = $2, updated_at = NOW()
-       WHERE token = $3 AND status = 'draft'
-       RETURNING token`,
-      [serialized, safeStep, req.params.token]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Draft not found' });
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('Save quote draft error:', err);
-    res.status(500).json({ error: 'Server error' });
+router.put('/public/quote-draft/:token', publicReadLimiter, asyncHandler(async (req, res) => {
+  if (!UUID_RE.test(req.params.token)) throw new NotFoundError('This quote link is no longer valid');
+  const { form_state, current_step } = req.body;
+  if (!form_state || typeof form_state !== 'object') {
+    throw new ValidationError({ form_state: 'Invalid form state' });
   }
-});
+  const safeStep = Math.max(0, Math.min(10, parseInt(current_step, 10) || 0));
+  const serialized = JSON.stringify(form_state);
+  if (serialized.length > MAX_FORM_STATE_SIZE) {
+    throw new ValidationError({ form_state: 'Form state too large' });
+  }
+  const result = await pool.query(
+    `UPDATE quote_drafts SET form_state = $1, current_step = $2, updated_at = NOW()
+     WHERE token = $3 AND status = 'draft'
+     RETURNING token`,
+    [serialized, safeStep, req.params.token]
+  );
+  if (!result.rows[0]) throw new NotFoundError('This quote link is no longer valid');
+  res.json({ ok: true });
+}));
 
 /** POST /api/proposals/public/submit — create a proposal from the public website quote wizard */
-router.post('/public/submit', publicLimiter, async (req, res) => {
+router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   const {
     client_name, client_email, client_phone,
     event_date, event_start_time, event_duration_hours,
@@ -377,10 +358,12 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
     client_provides_glassware
   } = req.body;
 
-  if (!client_name || !client_name.trim()) return res.status(400).json({ error: 'Name is required.' });
-  if (!client_email || !client_email.trim()) return res.status(400).json({ error: 'Email is required.' });
-  if (!package_id) return res.status(400).json({ error: 'Package is required.' });
-  if (!guest_count || guest_count < 1) return res.status(400).json({ error: 'Guest count is required.' });
+  const fieldErrors = {};
+  if (!client_name || !client_name.trim()) fieldErrors.client_name = 'Name is required';
+  if (!client_email || !client_email.trim()) fieldErrors.client_email = 'Email is required';
+  if (!package_id) fieldErrors.package_id = 'Package is required';
+  if (!guest_count || guest_count < 1) fieldErrors.guest_count = 'Guest count is required';
+  if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
   const dbClient = await pool.connect();
   try {
@@ -410,8 +393,8 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
     // Fetch package
     const pkgResult = await dbClient.query('SELECT * FROM service_packages WHERE id = $1 AND is_active = true', [package_id]);
     if (!pkgResult.rows[0]) {
-      await dbClient.query('ROLLBACK');
-      return res.status(400).json({ error: 'Package not found.' });
+      try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+      throw new ValidationError({ package_id: 'Invalid package' });
     }
 
     // Fetch add-ons
@@ -510,18 +493,18 @@ router.post('/public/submit', publicLimiter, async (req, res) => {
         await sendEmail({ to: adminEmail, subject: `New Website Quote: ${eventTypeLabel}`, html: tpl2.html });
       }
     } catch (emailErr) {
+      Sentry.captureException(emailErr, { tags: { route: 'proposals/public/submit', phase: 'email' } });
       console.error('Public proposal emails failed (non-blocking):', emailErr);
     }
 
     res.status(201).json({ token: proposal.token, total: snapshot.total });
   } catch (err) {
-    await dbClient.query('ROLLBACK');
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
+    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    throw err;
   } finally {
     dbClient.release();
   }
-});
+}));
 
 // ─── Package & add-on listing (auth required) ────────────────────
 
