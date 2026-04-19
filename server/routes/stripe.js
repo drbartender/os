@@ -709,7 +709,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           console.log(`Payment (${paymentType}) received for proposal ${proposalId}: $${(intent.amount / 100).toFixed(2)}`);
         }
       } catch (dbErr) {
-        await dbClient.query('ROLLBACK');
+        try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
         if (process.env.SENTRY_DSN_SERVER) {
           Sentry.captureException(dbErr, {
             tags: { webhook: 'stripe', route: '/webhook' },
@@ -850,7 +850,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           console.log(`Deposit paid (payment link) for proposal ${proposalId}`);
         }
       } catch (dbErr) {
-        await dbClient.query('ROLLBACK');
+        try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
         if (process.env.SENTRY_DSN_SERVER) {
           Sentry.captureException(dbErr, {
             tags: { webhook: 'stripe', route: '/webhook' },

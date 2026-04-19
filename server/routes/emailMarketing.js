@@ -159,7 +159,7 @@ router.post('/leads/import', auth, requireAdminOrManager, asyncHandler(async (re
     await client.query('COMMIT');
     res.json({ imported, skipped, errors: errors.slice(0, 10) });
   } catch (err) {
-    await client.query('ROLLBACK');
+    try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
     throw err;
   } finally {
     client.release();

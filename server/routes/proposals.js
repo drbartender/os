@@ -764,7 +764,7 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     await dbClient.query('COMMIT');
     res.status(201).json(proposal);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
     throw err;
   } finally {
     dbClient.release();
@@ -900,7 +900,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       await createAdditionalInvoiceIfNeeded(parseInt(req.params.id, 10), oldTotalCents, invClient);
       await invClient.query('COMMIT');
     } catch (invErr) {
-      await invClient.query('ROLLBACK');
+      try { await invClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
       console.error('Invoice refresh failed (non-blocking):', invErr);
     } finally {
       invClient.release();
@@ -910,7 +910,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     const updated = await pool.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
     res.json(updated.rows[0]);
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
     throw err;
   } finally {
     dbClient.release();
@@ -1110,7 +1110,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
 
     await dbClient.query('COMMIT');
   } catch (txErr) {
-    await dbClient.query('ROLLBACK');
+    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
     throw txErr;
   } finally {
     dbClient.release();

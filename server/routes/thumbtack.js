@@ -308,7 +308,7 @@ router.post('/leads', asyncHandler(async (req, res) => {
 
     res.status(200).json({ status: 'ok' });
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
     if (process.env.SENTRY_DSN_SERVER) {
       Sentry.captureException(err, {
         tags: { webhook: 'thumbtack', route: '/leads' },
