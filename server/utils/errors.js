@@ -40,6 +40,12 @@ class ExternalServiceError extends AppError {
   }
 }
 
+class PaymentError extends AppError {
+  constructor(message, code = 'PAYMENT_ERROR') {
+    super(message, 402, code);
+  }
+}
+
 module.exports = {
   AppError,
   ValidationError,
@@ -47,4 +53,5 @@ module.exports = {
   NotFoundError,
   PermissionError,
   ExternalServiceError,
+  PaymentError,
 };

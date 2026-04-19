@@ -10,7 +10,7 @@ const { calculateSyrupCost } = require('../utils/pricingEngine');
 const { createBalanceInvoice, linkPaymentToInvoice } = require('../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../utils/errors');
+const { ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -438,9 +438,9 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
     // Preserve Stripe's specific decline message for card errors so admins
     // see the exact reason (e.g. "Your card has insufficient funds.").
     if (err.type === 'StripeCardError') {
-      throw new ExternalServiceError('Stripe', err, `Card declined: ${err.message}`);
+      throw new PaymentError(`Card declined: ${err.message}`, 'CARD_DECLINED');
     }
-    throw new ExternalServiceError('Stripe', err, 'Failed to charge balance. Please try again.');
+    throw new ExternalServiceError('Stripe', err, 'Payment temporarily unavailable. Please try again.');
   }
 
   // Webhook will handle status update on success
