@@ -165,6 +165,8 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
               lineTotal = rate * quantity;
             }
 
+            // TODO: when variant-capable add-ons become available in drink-plan resolution,
+            // pull `variant` from the resolution payload and include it in this INSERT.
             await client.query(`
               INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
               VALUES ($1, $2, $3, $4, $5, $6, $7)
