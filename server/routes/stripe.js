@@ -11,6 +11,7 @@ const { createBalanceInvoice, linkPaymentToInvoice } = require('../utils/invoice
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
+const { PUBLIC_SITE_URL, ADMIN_URL } = require('../utils/urls');
 
 const router = express.Router();
 
@@ -370,7 +371,7 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
     paymentLink = await stripe.paymentLinks.create({
       line_items: [{ price: price.id, quantity: 1 }],
       metadata: { proposal_id: String(proposal.id) },
-      after_completion: { type: 'redirect', redirect: { url: `${process.env.CLIENT_URL}/proposal/${req.query.token || ''}?paid=true` } },
+      after_completion: { type: 'redirect', redirect: { url: `${PUBLIC_SITE_URL}/proposal/${req.query.token || ''}?paid=true` } },
     });
   } catch (err) {
     console.error('Stripe payment-link error:', err);
@@ -563,8 +564,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
       }
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
-        const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-        const adminUrl = `${clientUrl}/admin/proposals/${proposalId}`;
+        const adminUrl = `${ADMIN_URL}/admin/proposals/${proposalId}`;
         const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabelFor(pi), amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
         await sendEmail({ to: adminEmail, ...tpl });
       }
@@ -770,13 +770,12 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             WHERE p.id = $1
           `, [proposalId]);
           const pi = payInfo.rows[0];
-          const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
           await sendEmail({
             to: adminEmail,
             subject: `Payment Failed — ${pi?.client_name || 'Unknown'} (${eventLabelFor(pi)})`,
             html: `<p>A ${paymentType} payment of $${(intent.amount / 100).toFixed(2)} failed for <strong>${pi?.client_name || 'Unknown'}</strong>.</p>
                    <p><strong>Reason:</strong> ${intent.last_payment_error?.message || 'Unknown error'}</p>
-                   <p><a href="${clientUrl}/admin/proposals/${proposalId}">View Proposal</a></p>`,
+                   <p><a href="${ADMIN_URL}/admin/proposals/${proposalId}">View Proposal</a></p>`,
           }).catch(e => console.error('Failed payment notification email error:', e));
         }
       } catch (err) {

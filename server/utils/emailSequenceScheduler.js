@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { wrapMarketingEmail } = require('./emailTemplates');
+const { PUBLIC_SITE_URL } = require('./urls');
 
 function escapeHtml(str) {
   if (!str) return '';
@@ -63,10 +64,9 @@ async function processSequenceSteps() {
         const unsubscribeUrl = `${unsubscribeBase}?token=${unsubscribeToken}`;
 
         // Replace template variables ({{name}}, {{resume_url}}) in both HTML and plaintext
-        const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
         const resumeUrl = enrollment.quote_draft_token
-          ? `${clientUrl}/quote?resume=${enrollment.quote_draft_token}`
-          : `${clientUrl}/quote`;
+          ? `${PUBLIC_SITE_URL}/quote?resume=${enrollment.quote_draft_token}`
+          : `${PUBLIC_SITE_URL}/quote`;
         let htmlBody = step.html_body;
         htmlBody = htmlBody.replace(/\{\{name\}\}/g, escapeHtml(enrollment.name) || 'there');
         htmlBody = htmlBody.replace(/\{\{resume_url\}\}/g, resumeUrl);

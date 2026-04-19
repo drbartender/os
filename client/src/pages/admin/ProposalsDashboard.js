@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import ClickableRow from '../../components/ClickableRow';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
 
 const STATUS_LABELS = {
@@ -47,7 +48,7 @@ export default function ProposalsDashboard() {
   useEffect(() => { fetchProposals(); }, [fetchProposals]);
 
   const copyLink = (token) => {
-    const url = `${window.location.origin}/proposal/${token}`;
+    const url = `${PUBLIC_SITE_URL}/proposal/${token}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopyMessage(token);
       setTimeout(() => setCopyMessage(''), 2000);

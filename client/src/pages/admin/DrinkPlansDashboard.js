@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
@@ -73,7 +74,7 @@ export default function DrinkPlansDashboard() {
   };
 
   const copyLink = (token) => {
-    const url = `${window.location.origin}/plan/${token}`;
+    const url = `${PUBLIC_SITE_URL}/plan/${token}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopyMessage(token);
       setTimeout(() => setCopyMessage(''), 2000);

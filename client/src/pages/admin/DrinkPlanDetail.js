@@ -4,6 +4,7 @@ import api from '../../utils/api';
 import DrinkPlanSelections from '../../components/DrinkPlanSelections';
 import ShoppingListButton from '../../components/ShoppingList/ShoppingListButton';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
@@ -99,7 +100,7 @@ export default function DrinkPlanDetail() {
   };
 
   const copyLink = () => {
-    const url = `${window.location.origin}/plan/${plan.token}`;
+    const url = `${PUBLIC_SITE_URL}/plan/${plan.token}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopyMessage('Copied!');
       setTimeout(() => setCopyMessage(''), 2000);

@@ -2,6 +2,7 @@ const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { drinkPlanLink } = require('./emailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
+const { PUBLIC_SITE_URL } = require('./urls');
 
 /**
  * Convert a 24-hour time string (e.g. "17:00") and add hours to produce a new time string.
@@ -63,8 +64,7 @@ async function createDrinkPlan(proposalId, proposal, { skipEmail = false } = {})
 
   // Email the drink plan link to the client (unless caller handles it)
   if (!skipEmail && clientEmail && drinkPlan.token) {
-    const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-    const planUrl = `${clientUrl}/plan/${drinkPlan.token}`;
+    const planUrl = `${PUBLIC_SITE_URL}/plan/${drinkPlan.token}`;
     const eventTypeLabel = getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom });
 
     try {

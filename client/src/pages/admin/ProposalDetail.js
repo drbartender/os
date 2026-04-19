@@ -12,6 +12,7 @@ import { SYRUPS } from '../../data/syrups';
 import InvoiceDropdown from '../../components/InvoiceDropdown';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
@@ -479,7 +480,7 @@ export default function ProposalDetail() {
   };
 
   const copyLink = () => {
-    const url = `${window.location.origin}/proposal/${proposal.token}`;
+    const url = `${PUBLIC_SITE_URL}/proposal/${proposal.token}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopyMessage('Copied!');
       setTimeout(() => setCopyMessage(''), 2000);
@@ -1313,7 +1314,7 @@ export default function ProposalDetail() {
                     )}
                     <button className="btn btn-sm" onClick={() => navigate(`/admin/drink-plans/${drinkPlan.id}`)}>View Details</button>
                     <button className="btn btn-sm btn-secondary" onClick={() => {
-                      const url = `${window.location.origin}/plan/${drinkPlan.token}`;
+                      const url = `${PUBLIC_SITE_URL}/plan/${drinkPlan.token}`;
                       navigator.clipboard.writeText(url).then(() => { setDrinkPlanCopied(true); setTimeout(() => setDrinkPlanCopied(false), 2000); });
                     }}>{drinkPlanCopied ? 'Copied!' : 'Copy Client Link'}</button>
                     {drinkPlan.status === 'submitted' && (
@@ -2131,7 +2132,7 @@ export default function ProposalDetail() {
                     )}
                     <button className="btn btn-sm" onClick={() => navigate(`/admin/drink-plans/${drinkPlan.id}`)}>View Details</button>
                     <button className="btn btn-sm btn-secondary" onClick={() => {
-                      const url = `${window.location.origin}/plan/${drinkPlan.token}`;
+                      const url = `${PUBLIC_SITE_URL}/plan/${drinkPlan.token}`;
                       navigator.clipboard.writeText(url).then(() => {
                         setDrinkPlanCopied(true);
                         setTimeout(() => setDrinkPlanCopied(false), 2000);

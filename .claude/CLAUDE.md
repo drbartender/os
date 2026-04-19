@@ -206,7 +206,8 @@ See `.env.example` for the full list. Key ones:
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string |
 | `JWT_SECRET` | Token signing key |
-| `CLIENT_URL` | Frontend origin (CORS) |
+| `CLIENT_URL` | Admin/staff frontend origin (CORS + admin dashboard links in emails). In prod: `https://admin.drbartender.com` |
+| `PUBLIC_SITE_URL` | Public marketing site origin used in client-facing token URLs (proposal, drink plan, invoice, shopping list). In prod: `https://drbartender.com` |
 | `R2_*` | Cloudflare R2 credentials |
 | `RESEND_API_KEY` | Resend email |
 | `RESEND_WEBHOOK_SECRET` | Resend webhook signing secret (svix) |

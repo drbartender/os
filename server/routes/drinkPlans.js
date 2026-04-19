@@ -8,6 +8,7 @@ const emailTemplates = require('../utils/emailTemplates');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
+const { ADMIN_URL } = require('../utils/urls');
 
 const router = express.Router();
 
@@ -235,7 +236,6 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
                   ? Math.ceil((new Date(proposal.event_date) - new Date()) / (1000 * 60 * 60 * 24))
                   : null;
                 const isUrgent = daysUntil !== null && daysUntil <= 14;
-                const clientUrl = process.env.CLIENT_URL || 'https://drbartender.com';
 
                 const planName = existing.rows[0]?.client_name || 'Client';
                 const addonNames = resolvedAddons.map(a => a.name);
@@ -249,7 +249,7 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
                          <p><strong>Amount paid:</strong> $${amountPaid.toFixed(2)}</p>
                          <p><strong>Balance due:</strong> $${(snapshot.total - amountPaid).toFixed(2)}</p>
                          ${isUrgent ? `<p style="color: red;"><strong>Event is in ${daysUntil} days!</strong></p>` : ''}
-                         <p><a href="${clientUrl}/admin/proposals/${proposal.id}">View Proposal</a></p>`,
+                         <p><a href="${ADMIN_URL}/admin/proposals/${proposal.id}">View Proposal</a></p>`,
                 }).catch(emailErr => console.error('Admin notification email failed:', emailErr));
               }
 

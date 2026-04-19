@@ -10,6 +10,7 @@ const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfN
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
+const { PUBLIC_SITE_URL, ADMIN_URL } = require('../utils/urls');
 const Sentry = require('@sentry/node');
 
 const router = express.Router();
@@ -151,8 +152,7 @@ router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
     }
     const adminEmail = process.env.ADMIN_EMAIL;
     if (adminEmail && pd) {
-      const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-      const adminUrl = `${clientUrl}/admin/proposals/${pd.id}`;
+      const adminUrl = `${ADMIN_URL}/admin/proposals/${pd.id}`;
       const tpl = emailTemplates.clientSignedAdmin({ clientName: pd.client_name, eventTypeLabel, proposalId: pd.id, adminUrl });
       await sendEmail({ to: adminEmail, ...tpl });
     }
@@ -478,15 +478,14 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
 
     // Send email notifications (non-blocking)
     try {
-      const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
-      const proposalUrl = `${clientUrl}/proposal/${proposal.token}`;
+      const proposalUrl = `${PUBLIC_SITE_URL}/proposal/${proposal.token}`;
       const eventTypeLabel = getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom });
       const tpl = emailTemplates.proposalSent({ clientName: client_name.trim(), eventTypeLabel, proposalUrl });
       await sendEmail({ to: client_email.trim().toLowerCase(), ...tpl });
 
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
-        const adminUrl = `${clientUrl}/admin/proposals/${proposal.id}`;
+        const adminUrl = `${ADMIN_URL}/admin/proposals/${proposal.id}`;
         const tpl2 = emailTemplates.clientSignedAdmin({
           clientName: client_name.trim(),
           eventTypeLabel,
@@ -935,8 +934,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
       `, [req.params.id]);
       const p = pd.rows[0];
       if (p?.client_email && p?.token) {
-        const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-        const proposalUrl = `${clientUrl}/proposal/${p.token}`;
+        const proposalUrl = `${PUBLIC_SITE_URL}/proposal/${p.token}`;
         const eventTypeLabel = getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom });
 
         // Create drink plan and include link in email
@@ -952,7 +950,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
           }, { skipEmail: true });
 
           if (drinkPlan?.token) {
-            planUrl = `${clientUrl}/plan/${drinkPlan.token}`;
+            planUrl = `${PUBLIC_SITE_URL}/plan/${drinkPlan.token}`;
           } else {
             // Already exists — look up existing token
             const existingPlan = await pool.query(
@@ -960,7 +958,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
               [req.params.id]
             );
             if (existingPlan.rows[0]?.token) {
-              planUrl = `${clientUrl}/plan/${existingPlan.rows[0].token}`;
+              planUrl = `${PUBLIC_SITE_URL}/plan/${existingPlan.rows[0].token}`;
             }
           }
         } catch (planErr) {
@@ -1132,8 +1130,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     }
     const adminEmail = process.env.ADMIN_EMAIL;
     if (adminEmail) {
-      const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-      const adminUrl = `${clientUrl}/admin/proposals/${proposal.id}`;
+      const adminUrl = `${ADMIN_URL}/admin/proposals/${proposal.id}`;
       const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pd?.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType, proposalId: proposal.id, adminUrl });
       await sendEmail({ to: adminEmail, ...tpl });
     }

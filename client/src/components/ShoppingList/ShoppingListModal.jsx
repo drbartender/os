@@ -17,6 +17,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import api from '../../utils/api';
+import { PUBLIC_SITE_URL } from '../../utils/constants';
 
 export default function ShoppingListModal({ listData, onClose, planId, planToken }) {
   const [edited, setEdited] = useState(() => deepClone(listData));
@@ -182,7 +183,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
 
   const handleShareLink = () => {
     if (!planToken) return;
-    const url = `${window.location.origin}/shopping-list/${planToken}`;
+    const url = `${PUBLIC_SITE_URL}/shopping-list/${planToken}`;
     navigator.clipboard.writeText(url).then(() => {
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);

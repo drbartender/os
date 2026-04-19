@@ -9,6 +9,7 @@ const emailTemplates = require('../utils/emailTemplates');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError, PermissionError } = require('../utils/errors');
+const { ADMIN_URL } = require('../utils/urls');
 
 const router = express.Router();
 
@@ -245,13 +246,12 @@ router.post('/:id/request', auth, requireOnboarded, asyncHandler(async (req, res
       const eventDate = si?.event_date
         ? new Date(si.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
         : 'TBD';
-      const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
       const tpl = emailTemplates.shiftRequestAdmin({
         staffName,
         eventTypeLabel: getEventTypeLabel({ event_type: si?.event_type, event_type_custom: si?.event_type_custom }),
         eventDate,
         position: position || 'Bartender',
-        adminUrl: `${clientUrl}/admin/shifts`,
+        adminUrl: `${ADMIN_URL}/admin/shifts`,
       });
       await sendEmail({ to: adminEmail, ...tpl });
     }
