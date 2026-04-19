@@ -14,8 +14,15 @@ router.post('/resend', asyncHandler(async (req, res) => {
   try {
     // Verify webhook signature if secret is configured
     if (!process.env.RESEND_WEBHOOK_SECRET && process.env.NODE_ENV === 'production') {
-      console.error('RESEND_WEBHOOK_SECRET is not set in production — rejecting webhook');
-      return res.status(500).json({ error: 'Webhook secret not configured' });
+      // Return 200 to stop Resend's retry loop, but capture to Sentry once so ops is paged.
+      const err = new Error('RESEND_WEBHOOK_SECRET not configured in production');
+      console.error(err.message);
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(err, {
+          tags: { webhook: 'resend', route: '/resend', issue: 'missing-secret' },
+        });
+      }
+      return res.status(200).json({ ok: true, note: 'webhook not configured' });
     }
     if (!process.env.RESEND_WEBHOOK_SECRET) {
       console.warn('RESEND_WEBHOOK_SECRET not set — skipping signature verification (non-production)');
