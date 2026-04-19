@@ -116,7 +116,7 @@ export default function AdminDashboard() {
       setMsgShiftId('');
       fetchMsgHistory();
     } catch (err) {
-      setMsgResult({ error: err.response?.data?.error || 'Failed to send' });
+      setMsgResult({ error: err.message || 'Failed to send' });
     } finally {
       setMsgSending(false);
     }
