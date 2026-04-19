@@ -157,6 +157,9 @@ router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
       await sendEmail({ to: adminEmail, ...tpl });
     }
   } catch (emailErr) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(emailErr, { tags: { route: 'proposals/sign', issue: 'email' } });
+    }
     console.error('Proposal sign emails failed (non-blocking):', emailErr);
   }
 
@@ -884,6 +887,9 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       await invClient.query('COMMIT');
     } catch (invErr) {
       try { await invClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(invErr, { tags: { route: 'proposals/update', issue: 'invoice-refresh' } });
+      }
       console.error('Invoice refresh failed (non-blocking):', invErr);
     } finally {
       invClient.release();
@@ -958,6 +964,9 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
             }
           }
         } catch (planErr) {
+          if (process.env.SENTRY_DSN_SERVER) {
+            Sentry.captureException(planErr, { tags: { route: 'proposals/status', issue: 'drink-plan-creation' } });
+          }
           console.error('Drink plan creation failed (non-blocking):', planErr);
         }
 
@@ -965,6 +974,9 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
         await sendEmail({ to: p.client_email, ...tpl });
       }
     } catch (emailErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(emailErr, { tags: { route: 'proposals/status', issue: 'email' } });
+      }
       console.error('Proposal sent email failed (non-blocking):', emailErr);
     }
   }
@@ -974,6 +986,9 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
     try {
       await createInvoiceOnSend(parseInt(req.params.id, 10));
     } catch (invErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(invErr, { tags: { route: 'proposals/status', issue: 'invoice-auto-create' } });
+      }
       console.error('Invoice auto-creation failed (non-blocking):', invErr);
     }
   }
@@ -1123,6 +1138,9 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
       await sendEmail({ to: adminEmail, ...tpl });
     }
   } catch (emailErr) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(emailErr, { tags: { route: 'proposals/payment', issue: 'email' } });
+    }
     console.error('Payment email failed (non-blocking):', emailErr);
   }
 
@@ -1131,6 +1149,9 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     const shift = await createEventShifts(proposal.id);
     if (shift) console.log(`Shift #${shift.id} created for proposal ${proposal.id} (manual payment)`);
   } catch (shiftErr) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(shiftErr, { tags: { route: 'proposals/payment', issue: 'shift-auto-create' } });
+    }
     console.error('Shift auto-creation failed (non-blocking):', shiftErr);
   }
 
