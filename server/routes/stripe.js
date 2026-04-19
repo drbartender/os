@@ -10,7 +10,7 @@ const { calculateSyrupCost } = require('../utils/pricingEngine');
 const { createBalanceInvoice, linkPaymentToInvoice } = require('../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
+const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -88,7 +88,7 @@ async function getOrCreateCustomer(proposal) {
 router.post('/create-intent/:token', publicLimiter, asyncHandler(async (req, res) => {
   const stripe = getStripe();
   if (!stripe) {
-    throw new ExternalServiceError('Stripe', null, 'Payments are not configured.');
+    throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
   }
 
   const { payment_option = 'deposit', autopay = false } = req.body;
@@ -189,7 +189,7 @@ router.post('/create-intent/:token', publicLimiter, asyncHandler(async (req, res
 router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(async (req, res) => {
   const stripe = getStripe();
   if (!stripe) {
-    throw new ExternalServiceError('Stripe', null, 'Payments are not configured.');
+    throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
   }
 
   const { selections } = req.body;
@@ -346,7 +346,7 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(asyn
 router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const stripe = getStripe();
   if (!stripe) {
-    throw new ExternalServiceError('Stripe', null, 'Payments are not configured.');
+    throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
   }
 
   const result = await pool.query(
@@ -393,7 +393,7 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
 router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const stripe = getStripe();
   if (!stripe) {
-    throw new ExternalServiceError('Stripe', null, 'Payments are not configured.');
+    throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
   }
 
   const result = await pool.query(`
@@ -453,7 +453,7 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
 router.post('/create-intent-for-invoice/:token', publicLimiter, asyncHandler(async (req, res) => {
   const stripe = getStripe();
   if (!stripe) {
-    throw new ExternalServiceError('Stripe', null, 'Payments are not configured.');
+    throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
   }
 
   const invRes = await pool.query(`
