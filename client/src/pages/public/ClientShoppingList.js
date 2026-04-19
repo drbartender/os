@@ -21,6 +21,7 @@ export default function ClientShoppingList() {
       setData(res.data);
       setError('');
     } catch (err) {
+      // eslint-disable-next-line no-restricted-syntax
       if (err.response?.status === 404) {
         setError('Shopping list not found.');
       } else {

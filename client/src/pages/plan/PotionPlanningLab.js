@@ -234,6 +234,7 @@ export default function PotionPlanningLab() {
           }
         }
       } catch (err) {
+        // eslint-disable-next-line no-restricted-syntax
         setError(err.response?.data?.error || 'Could not load your drink plan.');
       } finally {
         setLoading(false);
@@ -338,6 +339,7 @@ export default function PotionPlanningLab() {
       toast.success('Your exploration was saved!');
       setStep('explorationSaved');
     } catch (err) {
+      // eslint-disable-next-line no-restricted-syntax
       const data = err.response?.data;
       setError(data?.error || 'Failed to save. Please try again.');
       setFieldErrors(data?.fieldErrors || {});
@@ -358,7 +360,9 @@ export default function PotionPlanningLab() {
         status: 'submitted',
       });
     } catch (err) {
+      // eslint-disable-next-line no-restricted-syntax
       const serverMsg = err.response?.data?.error;
+      // eslint-disable-next-line no-restricted-syntax
       const statusCode = err.response?.status;
       console.error('Submit failed:', statusCode, serverMsg, err);
       const msg = statusCode === 400

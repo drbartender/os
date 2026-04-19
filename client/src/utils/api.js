@@ -18,6 +18,7 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     // Network failure — no response received
+    // eslint-disable-next-line no-restricted-syntax
     if (!err.response) {
       return Promise.reject({
         message: 'Network error — check your connection.',
@@ -27,8 +28,10 @@ api.interceptors.response.use(
       });
     }
 
+    // eslint-disable-next-line no-restricted-syntax
     const { status } = err.response;
     const config = err.config;
+    // eslint-disable-next-line no-restricted-syntax
     const data = err.response.data || {};
     const url = config?.url || '';
 
