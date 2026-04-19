@@ -6,8 +6,16 @@ import React from 'react';
 // brief init window simply aren't reported — acceptable because this only
 // fires on unhandled render errors, which are rare.
 let sentryRef = null;
+const pendingErrors = [];
 if (process.env.REACT_APP_SENTRY_DSN_CLIENT) {
-  import('@sentry/react').then((m) => { sentryRef = m; });
+  import('@sentry/react').then((m) => {
+    sentryRef = m;
+    // Flush any errors that came in during the load window
+    while (pendingErrors.length > 0) {
+      const [error, options] = pendingErrors.shift();
+      sentryRef.captureException(error, options);
+    }
+  });
 }
 
 class ErrorBoundary extends React.Component {
@@ -22,8 +30,13 @@ class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) {
     console.error('ErrorBoundary caught:', error, errorInfo);
-    if (sentryRef) {
-      sentryRef.captureException(error, { extra: errorInfo });
+    if (process.env.REACT_APP_SENTRY_DSN_CLIENT) {
+      if (sentryRef) {
+        sentryRef.captureException(error, { extra: errorInfo });
+      } else {
+        // SDK still loading — queue for flush
+        pendingErrors.push([error, { extra: errorInfo }]);
+      }
     }
   }
 
