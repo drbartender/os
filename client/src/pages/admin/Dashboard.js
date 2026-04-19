@@ -30,13 +30,20 @@ export default function Dashboard() {
       api.get('/shifts').then(r => r.data).catch(() => { trackFail(); return []; }),
       api.get('/proposals').then(r => r.data).catch(() => { trackFail(); return []; }),
       api.get('/admin/applications').then(r => r.data).catch(() => { trackFail(); return { applications: [] }; }),
-    ]).then(([shiftsData, proposalsData, appsData]) => {
-      setEvents(shiftsData.filter(s => s.proposal_id));
-      setProposals(proposalsData);
-      setApplications(appsData.applications || appsData || []);
-      setLoading(false);
-      if (anyFailed) toast.error('Some dashboard data failed to load. Try refreshing.');
-    });
+    ])
+      .then(([shiftsData, proposalsData, appsData]) => {
+        setEvents(shiftsData.filter(s => s.proposal_id));
+        setProposals(proposalsData);
+        setApplications(appsData.applications || appsData || []);
+        if (anyFailed) toast.error('Some dashboard data failed to load. Try refreshing.');
+      })
+      .catch((err) => {
+        toast.error('Some dashboard data failed to load. Try refreshing.');
+        console.error(err);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, [toast]);
 
   const today = new Date().toISOString().slice(0, 10);
