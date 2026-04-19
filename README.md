@@ -124,6 +124,7 @@ dr-bartender/
 │   │   ├── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
 │   │   ├── invoices.js         # Invoice CRUD, public token view, client portal
 │   │   ├── publicReviews.js    # Public cached endpoint for Thumbtack reviews on homepage
+│   │   ├── testFeedback.js     # Receives tester bug/checklist submissions from /testing-guide.html and emails contact@drbartender.com
 │   │   └── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   ├── utils/
 │   │   ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)

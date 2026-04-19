@@ -340,6 +340,11 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 |---|---|---|---|
 | GET | `/` | No | Returns curated 4–5 star Thumbtack reviews + count + average rating for the public HomePage. 5-minute in-memory cache, 120 req/min rate limit. Query: `?limit=1..20` (default 9). |
 
+### Test Feedback — `/api/test-feedback`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/` | No (rate-limited, 20/15min) | Receives tester submissions from `/testing-guide.html` (name, optional email, progress summary, bug count, exported report text) and emails `contact@drbartender.com` via Resend. Reply-to set to the tester's email when provided. |
+
 ### Other
 | Method | Path | Auth | Description |
 |---|---|---|---|
