@@ -24,7 +24,9 @@ The site is live at its real web addresses (drbartender.com, etc.), but no real 
   - Keeping them separate stops the two logins from fighting each other
 - **Your real email address** — the site will send real emails to whatever address you type in forms
 - **Your real phone number** — the site will send real text messages
-- **Admin login details** — provided separately by Dallas
+- **Admin login** (temporary, for testing only):
+  - Email: `admin@drbartender.com`
+  - Password: `DrBartender2024!`
 - **Stripe test credit card numbers:**
   - Works: `4242 4242 4242 4242`, expiry any future date (`12/34`), CVC any 3 digits (`123`), ZIP any 5 digits (`12345`)
   - Declined (for testing error messages): `4000 0000 0000 0002`

@@ -90,6 +90,12 @@
     color: var(--fg);
   }
   .actions button:hover { background: var(--bg-alt); }
+  .actions button.primary-action {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-fg);
+  }
+  .actions button.primary-action:hover { filter: brightness(1.05); background: var(--accent); }
   .actions .md-link {
     font: inherit;
     font-size: 0.9rem;
@@ -375,6 +381,7 @@
   <span class="progress-text" id="progress-text">0 / 0 (0%)</span>
   <div class="actions">
     <a class="md-link" href="/TESTING.md" download title="Download the plain Markdown version">Plain .md</a>
+    <button type="button" id="send-btn" title="Email your progress and bugs to Dallas" class="primary-action">Send feedback</button>
     <button type="button" id="export-btn" title="Download progress and bugs as a .txt file">Export</button>
     <button type="button" id="reset-btn" title="Clear all checkboxes and bug reports">Reset</button>
   </div>
@@ -383,6 +390,24 @@
 <main id="guide">
 <!-- CONTENT -->
 </main>
+
+<dialog class="bug-dialog" id="send-dialog">
+  <form method="dialog" id="send-form">
+    <h2>Send feedback to Dallas</h2>
+    <p style="margin:0 0 12px;color:#555;font-size:14px;">This will email your checklist progress and all bug reports to contact@drbartender.com.</p>
+    <label>Your name
+      <input type="text" name="testerName" required maxlength="120">
+    </label>
+    <label>Your email (optional, so Dallas can reply)
+      <input type="email" name="testerEmail" maxlength="200">
+    </label>
+    <div class="dialog-actions">
+      <button type="button" value="cancel" id="send-cancel">Cancel</button>
+      <button type="submit" class="primary" id="send-submit">Send</button>
+    </div>
+    <p id="send-status" style="margin:12px 0 0;font-size:14px;min-height:18px;"></p>
+  </form>
+</dialog>
 
 <dialog class="bug-dialog" id="bug-dialog">
   <form method="dialog" id="bug-form">
@@ -422,6 +447,11 @@
   'use strict';
 
   const STORAGE_KEY = 'drb-qa-v1';
+  const FEEDBACK_NAME_KEY = 'drb-qa-tester-name';
+  const FEEDBACK_EMAIL_KEY = 'drb-qa-tester-email';
+  const API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
+    ? 'http://localhost:5000'
+    : 'https://os-g7oa.onrender.com';
 
   // ---------- State ----------
   function loadState() {
@@ -779,6 +809,91 @@
       if (!confirm('Clear all checkboxes and bug reports? This cannot be undone.')) return;
       localStorage.removeItem(STORAGE_KEY);
       location.reload();
+    });
+
+    // Send feedback
+    const sendDialog = document.getElementById('send-dialog');
+    const sendForm = document.getElementById('send-form');
+    const sendCancel = document.getElementById('send-cancel');
+    const sendSubmit = document.getElementById('send-submit');
+    const sendStatus = document.getElementById('send-status');
+
+    document.getElementById('send-btn').addEventListener('click', function () {
+      sendStatus.textContent = '';
+      sendStatus.style.color = '';
+      sendForm.elements.testerName.value = localStorage.getItem(FEEDBACK_NAME_KEY) || '';
+      sendForm.elements.testerEmail.value = localStorage.getItem(FEEDBACK_EMAIL_KEY) || '';
+      sendSubmit.disabled = false;
+      sendSubmit.textContent = 'Send';
+      if (typeof sendDialog.showModal === 'function') sendDialog.showModal();
+      else sendDialog.setAttribute('open', '');
+      setTimeout(function () { sendForm.elements.testerName.focus(); }, 10);
+    });
+
+    sendCancel.addEventListener('click', function () {
+      if (typeof sendDialog.close === 'function') sendDialog.close();
+      else sendDialog.removeAttribute('open');
+    });
+
+    sendForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      const data = new FormData(sendForm);
+      const testerName = (data.get('testerName') || '').trim();
+      const testerEmail = (data.get('testerEmail') || '').trim();
+      if (!testerName) {
+        sendStatus.style.color = '#b42318';
+        sendStatus.textContent = 'Please enter your name.';
+        return;
+      }
+      localStorage.setItem(FEEDBACK_NAME_KEY, testerName);
+      if (testerEmail) localStorage.setItem(FEEDBACK_EMAIL_KEY, testerEmail);
+
+      const reportText = formatExport(index);
+      const total = index.entries.length;
+      const done = index.entries.filter(function (e) { return e.input.checked; }).length;
+      const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+      const progressSummary = done + ' / ' + total + ' (' + pct + '%)';
+
+      sendSubmit.disabled = true;
+      sendSubmit.textContent = 'Sending…';
+      sendStatus.style.color = '';
+      sendStatus.textContent = 'Sending…';
+
+      fetch(API_BASE + '/api/test-feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          testerName: testerName,
+          testerEmail: testerEmail,
+          progressSummary: progressSummary,
+          bugCount: state.bugs.length,
+          reportText: reportText,
+        }),
+      })
+        .then(function (resp) {
+          return resp.json().then(function (body) { return { ok: resp.ok, body: body }; });
+        })
+        .then(function (r) {
+          if (r.ok) {
+            sendStatus.style.color = '#1a7f37';
+            sendStatus.textContent = 'Feedback sent! Thanks for testing.';
+            setTimeout(function () {
+              if (typeof sendDialog.close === 'function') sendDialog.close();
+              else sendDialog.removeAttribute('open');
+            }, 1500);
+          } else {
+            sendSubmit.disabled = false;
+            sendSubmit.textContent = 'Send';
+            sendStatus.style.color = '#b42318';
+            sendStatus.textContent = (r.body && r.body.error) || 'Could not send. Try Export and email the file instead.';
+          }
+        })
+        .catch(function () {
+          sendSubmit.disabled = false;
+          sendSubmit.textContent = 'Send';
+          sendStatus.style.color = '#b42318';
+          sendStatus.textContent = 'Network error. Try Export and email the file instead.';
+        });
     });
   });
 })();
