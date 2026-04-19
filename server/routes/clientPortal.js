@@ -55,7 +55,7 @@ router.get('/proposals/:token', asyncHandler(async (req, res) => {
   // (explicit columns — no SELECT *)
   const [addons, payments] = await Promise.all([
     pool.query(
-      'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
+      'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [proposal.id]
     ),
     pool.query(
