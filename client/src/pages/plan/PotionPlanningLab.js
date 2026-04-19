@@ -804,7 +804,6 @@ export default function PotionPlanningLab() {
             onSyrupToggle={toggleSyrup}
             proposalSyrups={proposalSyrups}
             phase={phase}
-            skipGate={quickPickChoice === 'mocktails'}
             onNext={() => handleNext()}
             onBack={() => handleBack()}
           />

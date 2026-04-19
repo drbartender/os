@@ -15,15 +15,9 @@ export default function MocktailStep({
   onSyrupToggle,
   proposalSyrups = [],
   phase = 'refinement',
-  skipGate = false,
   onNext,
   onBack,
 }) {
-  // Gate: ask if they want mocktails before showing the picker
-  // Auto-show picker if they already have selections (returning to step) or skipGate is true
-  const [wantsMocktails, setWantsMocktails] = useState(
-    skipGate || selected.length > 0 ? true : null
-  );
   const [activeTab, setActiveTab] = useState(categories[0]?.id || 'fruity-refreshing');
   const [lastBrowseTab, setLastBrowseTab] = useState(categories[0]?.id || 'fruity-refreshing');
 
@@ -54,54 +48,6 @@ export default function MocktailStep({
     if (catId === 'your-menu') return selected.length;
     return mocktails.filter(d => d.category_id === catId && selected.includes(d.id)).length;
   };
-
-  // Gate screen: ask if they want to see the mocktail picker
-  if (wantsMocktails === null) {
-    return (
-      <div>
-        <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-          <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
-            Mocktails
-          </h2>
-          <p className="text-muted">
-            Would you like to include non-alcoholic drinks at your event?
-            Great for kids, designated drivers, or anyone who prefers to skip the spirits.
-          </p>
-        </div>
-
-        <div className="vibe-grid">
-          <button
-            className="vibe-card"
-            onClick={() => setWantsMocktails(true)}
-          >
-            <span className="vibe-emoji">{'\uD83E\uDDC3'}</span>
-            <span className="vibe-label">Yes, show me the menu</span>
-            <span className="vibe-desc">Browse our handcrafted mocktail selection.</span>
-          </button>
-          <button
-            className="vibe-card"
-            onClick={() => {
-              // Clear any stale mocktail selections and skip
-              if (selected.length > 0) onChange([]);
-              if (notes) onNotesChange('');
-              onNext();
-            }}
-          >
-            <span className="vibe-emoji">{'\u274C'}</span>
-            <span className="vibe-label">No thanks, skip mocktails</span>
-            <span className="vibe-desc">No non-alcoholic drinks needed.</span>
-          </button>
-        </div>
-
-        <div className="step-nav">
-          {onBack ? (
-            <button className="btn btn-secondary" onClick={onBack}>Back</button>
-          ) : <div />}
-          <div />
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div>
