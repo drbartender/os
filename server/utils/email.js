@@ -21,11 +21,12 @@ if (process.env.RESEND_API_KEY) {
  * @param {string} [options.text] - Plain text fallback
  * @param {string} [options.from] - Override default from address
  * @param {string} [options.replyTo] - Reply-to address
+ * @param {Array<{filename: string, content: Buffer|string}>} [options.attachments] - Resend attachments
  * @returns {Promise<{id: string}>}
  */
-async function sendEmail({ to, subject, html, text, from, replyTo }) {
+async function sendEmail({ to, subject, html, text, from, replyTo, attachments }) {
   if (!resend) {
-    console.log(`[DEV] Email skipped → ${to} | Subject: ${subject}`);
+    console.log(`[DEV] Email skipped → ${to} | Subject: ${subject}${attachments ? ` (with ${attachments.length} attachment(s))` : ''}`);
     return { id: 'dev-skipped' };
   }
 
@@ -36,6 +37,7 @@ async function sendEmail({ to, subject, html, text, from, replyTo }) {
     html,
     ...(text && { text }),
     ...(replyTo && { reply_to: replyTo }),
+    ...(attachments && attachments.length && { attachments }),
   });
 
   if (error) {
