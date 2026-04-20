@@ -33,9 +33,10 @@ export default function ClassWizard() {
   const navigate = useNavigate();
   const toast = useToast();
   const [step, setStep] = useState(0);
-  useWizardHistory(step, setStep);
+  const { replaceStep } = useWizardHistory(step, setStep);
   const [packages, setPackages] = useState([]);
   const [addons, setAddons] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -68,6 +69,8 @@ export default function ClassWizard() {
     }).catch(err => {
       console.error('Failed to load class data:', err);
       toast.error('Failed to load classes. Try refreshing the page.');
+    }).finally(() => {
+      setLoading(false);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -281,7 +284,7 @@ export default function ClassWizard() {
             <button
               key={s.key}
               className={`wz-step-dot ${i === step ? 'active' : ''} ${i < step ? 'done' : ''}`}
-              onClick={() => i < step && setStep(i)}
+              onClick={() => i < step && replaceStep(i)}
               disabled={i > step}
             >
               <span className="wz-step-num">{i < step ? '\u2713' : i + 1}</span>
@@ -296,20 +299,26 @@ export default function ClassWizard() {
             {currentStepKey === 'class' && (
               <div className="wz-card">
                 <h3>Pick your class</h3>
-                <div className="wz-class-grid">
-                  {packages.map(pkg => (
-                    <button
-                      key={pkg.id}
-                      type="button"
-                      className={`wz-class-card ${Number(form.package_id) === pkg.id ? 'selected' : ''}`}
-                      onClick={() => handleClassSelect(pkg.id)}
-                    >
-                      <div className="wz-class-card-name">{pkg.name}</div>
-                      <div className="wz-class-card-desc">{pkg.description}</div>
-                      <div className="wz-class-card-price">${Number(pkg.base_rate_4hr)}/person</div>
-                    </button>
-                  ))}
-                </div>
+                {loading ? (
+                  <p className="wz-no-addons">Loading classes...</p>
+                ) : packages.length === 0 ? (
+                  <p className="wz-no-addons">No classes available right now. Please try refreshing.</p>
+                ) : (
+                  <div className="wz-class-grid">
+                    {packages.map(pkg => (
+                      <button
+                        key={pkg.id}
+                        type="button"
+                        className={`wz-class-card ${Number(form.package_id) === pkg.id ? 'selected' : ''}`}
+                        onClick={() => handleClassSelect(pkg.id)}
+                      >
+                        <div className="wz-class-card-name">{pkg.name}</div>
+                        <div className="wz-class-card-desc">{pkg.description}</div>
+                        <div className="wz-class-card-price">${Number(pkg.base_rate_4hr)}/person</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 {/* Spirits Tasting sub-option */}
                 {isSpirits && (
@@ -420,7 +429,7 @@ export default function ClassWizard() {
                 {form.supply_addon_id && (
                   <div className="wz-supply-summary">
                     Selected: {addons.find(a => a.id === Number(form.supply_addon_id))?.name || 'Supply upgrade'}
-                    {' '}<button type="button" className="wz-change-type" onClick={() => setStep(0)}>Change</button>
+                    {' '}<button type="button" className="wz-change-type" onClick={() => replaceStep(0)}>Change</button>
                   </div>
                 )}
               </div>

@@ -64,7 +64,7 @@ export default function QuoteWizard() {
   const toast = useToast();
   const [searchParams] = useSearchParams();
   const [step, setStep] = useState(0);
-  useWizardHistory(step, setStep);
+  const { replaceStep } = useWizardHistory(step, setStep);
   const [packages, setPackages] = useState([]);
   const [addons, setAddons] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -177,7 +177,7 @@ export default function QuoteWizard() {
         .then(data => {
           if (data && data.form_state) {
             setForm(f => ({ ...f, ...data.form_state }));
-            setStep(data.current_step || 0);
+            replaceStep(data.current_step || 0);
             draftTokenRef.current = data.token;
             setHasDraftToken(true);
             setResumed(true);
@@ -196,7 +196,7 @@ export default function QuoteWizard() {
           const { form: savedForm, step: savedStep, token } = JSON.parse(saved);
           if (savedForm) {
             setForm(f => ({ ...f, ...savedForm }));
-            setStep(savedStep || 0);
+            replaceStep(savedStep || 0);
             if (token) {
               draftTokenRef.current = token;
               setHasDraftToken(true);
@@ -275,7 +275,7 @@ export default function QuoteWizard() {
   // Dismiss the "welcome back" banner
   const dismissResume = () => setResumed(false);
   const editAnswers = () => {
-    setStep(0);
+    replaceStep(0);
     setResumed(false);
   };
 
@@ -753,7 +753,7 @@ export default function QuoteWizard() {
           <button
             key={s.key}
             className={`wz-step-dot ${i === step ? 'active' : ''} ${i < step ? 'done' : ''}`}
-            onClick={() => i < step && setStep(i)}
+            onClick={() => i < step && replaceStep(i)}
             disabled={i > step}
           >
             <span className="wz-step-num">{i < step ? '\u2713' : i + 1}</span>
@@ -1152,7 +1152,7 @@ export default function QuoteWizard() {
                 <div className="wz-review-section">
                   <div className="wz-review-heading">
                     <h4>Event Details</h4>
-                    <button type="button" className="wz-review-edit" onClick={() => setStep(0)}>Edit</button>
+                    <button type="button" className="wz-review-edit" onClick={() => replaceStep(0)}>Edit</button>
                   </div>
                   <div className="wz-review-grid">
                     {form.event_type && <div><span className="wz-review-label">Event Type</span><span>{form.event_type === 'Other' ? form.event_type_custom : form.event_type}</span></div>}
@@ -1165,7 +1165,7 @@ export default function QuoteWizard() {
                 <div className="wz-review-section">
                   <div className="wz-review-heading">
                     <h4>Contact</h4>
-                    <button type="button" className="wz-review-edit" onClick={() => setStep(1)}>Edit</button>
+                    <button type="button" className="wz-review-edit" onClick={() => replaceStep(1)}>Edit</button>
                   </div>
                   <div className="wz-review-grid">
                     <div><span className="wz-review-label">Name</span><span>{form.client_name}</span></div>
