@@ -6,7 +6,7 @@ import { COMPANY_PHONE } from '../utils/constants';
 
 const SECTIONS = [
   {
-    num: '01', title: 'Field Duties', image: '/images/field_duties.avif',
+    num: '01', title: 'Field Duties', emoji: '🍸',
     content: (
       <>
         <p>You're the face of the lab. Whether you're slinging signature cocktails or crushing through a beer-and-wine wedding, your energy sets the tone.</p>
@@ -19,7 +19,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '02', title: 'Appearance Protocols', image: '/images/appearance.avif',
+    num: '02', title: 'Appearance Protocols', emoji: '👔',
     content: (
       <>
         <p>Clients trust us to show up sharp. That doesn't mean boring — it means intentional.</p>
@@ -34,7 +34,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '03', title: 'Tools of the Trade', image: '/images/tools.avif',
+    num: '03', title: 'Tools of the Trade', emoji: '🧰',
     content: (
       <>
         <p>You're expected to bring your own tools. Don't show up empty-handed — you won't be staffed again.</p>
@@ -49,7 +49,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '04', title: 'Timing & Punctuality', image: '/images/timing.avif',
+    num: '04', title: 'Timing & Punctuality', emoji: '⏰',
     content: (
       <>
         <ul>
@@ -62,7 +62,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '05', title: 'Tips & Gratuities', image: '/images/tips.avif',
+    num: '05', title: 'Tips & Gratuities', emoji: '💰',
     content: (
       <>
         <p>We believe good service earns good tips — and we're all for making money.</p>
@@ -77,7 +77,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '06', title: 'Professional Boundaries', image: '/images/boundaries.avif',
+    num: '06', title: 'Professional Boundaries', emoji: '🧭',
     content: (
       <>
         <p>We're fun — not sloppy. We work with high-profile clients who expect chill, collected, competent bartenders.</p>
@@ -91,7 +91,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '07', title: 'Event Flow 101', image: '/images/flow.avif',
+    num: '07', title: 'Event Flow 101', emoji: '📋',
     content: (
       <>
         <p>Call time is 1 hour before the event unless otherwise noted.</p>
@@ -112,7 +112,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '08', title: 'Loaner Gear & Supply Runs', image: '/images/gear.avif',
+    num: '08', title: 'Loaner Gear & Supply Runs', emoji: '📦',
     content: (
       <>
         <p>Sometimes we'll provide bars, coolers, garnish trays, or ice bins. Other times we'll ask you to grab items on the way — we'll cover costs if it's pre-approved.</p>
@@ -128,7 +128,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '09', title: 'Communication & Feedback', image: '/images/communication.avif',
+    num: '09', title: 'Communication & Feedback', emoji: '💬',
     content: (
       <>
         <p>Good science needs good signal. Here's how we keep the lab connected.</p>
@@ -142,7 +142,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '10', title: 'Paperwork & Payments', image: '/images/payments.avif',
+    num: '10', title: 'Paperwork & Payments', emoji: '🧾',
     content: (
       <>
         <p>You're a contractor, not an employee. That means:</p>
@@ -162,7 +162,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '11', title: 'Alcohol Service Laws & Cut-Off Policy',
+    num: '11', title: 'Alcohol Service Laws & Cut-Off Policy', emoji: '⚖️',
     content: (
       <>
         <p>Serving alcohol comes with legal responsibility. Know the laws and protect yourself, the guests, and Dr. Bartender.</p>
@@ -179,7 +179,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '12', title: 'Carding & ID Verification',
+    num: '12', title: 'Carding & ID Verification', emoji: '🪪',
     content: (
       <>
         <p>When in doubt, card them. It's the law, and it protects you.</p>
@@ -194,7 +194,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '13', title: 'Contractor Sobriety Policy',
+    num: '13', title: 'Contractor Sobriety Policy', emoji: '🚫',
     content: (
       <>
         <p>This one's simple: <strong>do not drink on the job.</strong></p>
@@ -209,7 +209,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '14', title: 'Injury & Incident Reporting',
+    num: '14', title: 'Injury & Incident Reporting', emoji: '🚑',
     content: (
       <>
         <p>If something goes wrong at an event — whether it involves you, a guest, or property — report it immediately.</p>
@@ -232,7 +232,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '15', title: 'Social Media & Photography Policy',
+    num: '15', title: 'Social Media & Photography Policy', emoji: '📸',
     content: (
       <>
         <p>Events are memorable, and we love seeing great moments — but there are boundaries.</p>
@@ -247,7 +247,7 @@ const SECTIONS = [
     )
   },
   {
-    num: '16', title: 'Harassment & Inappropriate Guest Behavior',
+    num: '16', title: 'Harassment & Inappropriate Guest Behavior', emoji: '🛡️',
     content: (
       <>
         <p>You deserve a safe work environment at every event. Dr. Bartender takes harassment seriously — from any direction.</p>
@@ -311,26 +311,14 @@ export default function FieldGuide() {
             aria-expanded={!!open[i]}
           >
             <span className="guide-section-number">{section.num}</span>
+            <span className="guide-section-emoji" aria-hidden="true">{section.emoji}</span>
             <span className="guide-section-title">{section.title}</span>
             <span style={{ marginLeft: 'auto', color: 'var(--amber)', fontSize: '1.1rem' }}>
               {open[i] ? '−' : '+'}
             </span>
           </div>
           <div className={`guide-section-body ${open[i] ? 'open' : ''}`}>
-            {open[i] ? (
-              <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-                {section.image && (
-                  <img
-                    src={section.image}
-                    alt={section.title}
-                    style={{ height: '180px', width: 'auto', borderRadius: '4px', flexShrink: 0 }}
-                  />
-                )}
-                <div style={{ flex: 1 }}>
-                  {section.content}
-                </div>
-              </div>
-            ) : null}
+            {open[i] ? section.content : null}
           </div>
         </div>
       ))}

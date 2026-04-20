@@ -939,6 +939,24 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   line-height: 1.5;
 }
 
+.guide-section-body p,
+.guide-section-body ol {
+  color: var(--deep-brown);
+}
+
+.guide-section-body ol li {
+  color: var(--deep-brown);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 0.4rem;
+}
+
+.guide-section-emoji {
+  font-size: 1.35rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 .guide-sub-heading {
   font-weight: 600;
   font-size: 0.85rem;
