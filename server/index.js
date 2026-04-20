@@ -80,12 +80,14 @@ app.use(helmet({
 // Gzip compression for all responses
 app.use(compression());
 
-// Middleware — allow requests from both public site and admin subdomain
+// Middleware — allow requests from public site, admin, hiring, and staff subdomains
 const allowedOrigins = [
   process.env.CLIENT_URL || 'http://localhost:3000',
   'https://drbartender.com',
   'https://www.drbartender.com',
   'https://admin.drbartender.com',
+  'https://hiring.drbartender.com',
+  'https://staff.drbartender.com',
 ].filter(Boolean);
 
 app.use(cors({
