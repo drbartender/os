@@ -501,9 +501,21 @@ export default function StaffPortal() {
                     <Link to="/field-guide" className="btn btn-secondary" style={{ textAlign: 'left', textDecoration: 'none' }}>
                       📖 Field Guide
                     </Link>
-                    <Link to="/agreement" className="btn btn-secondary" style={{ textAlign: 'left', textDecoration: 'none' }}>
-                      📝 My Signed Agreement
-                    </Link>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ textAlign: 'left', textDecoration: 'none' }}
+                      onClick={async () => {
+                        try {
+                          const r = await api.get('/agreement/download');
+                          window.open(r.data.url, '_blank', 'noopener,noreferrer');
+                        } catch (err) {
+                          toast.error(err.message || 'Signed agreement not available yet.');
+                        }
+                      }}
+                    >
+                      📝 Download My Signed Agreement
+                    </button>
                     <Link to="/payday-protocols" className="btn btn-secondary" style={{ textAlign: 'left', textDecoration: 'none' }}>
                       💳 Payday Protocols
                     </Link>
