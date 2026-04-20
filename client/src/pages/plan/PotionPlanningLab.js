@@ -274,10 +274,11 @@ export default function PotionPlanningLab() {
   quickPickRef.current = quickPickChoice;
   stepRef.current = step;
 
-  // Auto-save draft
-  const saveDraft = useCallback(async (currentQuickPick, currentActiveModules, currentSelections) => {
+  // Auto-save draft. Pass silent=true to skip the visible "Saving…" indicator —
+  // the 30s background interval uses this so it doesn't toggle layout every cycle.
+  const saveDraft = useCallback(async (currentQuickPick, currentActiveModules, currentSelections, silent = false) => {
     if (!token || submittingRef.current) return;
-    setSaving(true);
+    if (!silent) setSaving(true);
     setSaveFailed(false);
     try {
       await axios.put(`${BASE_URL}/drink-plans/t/${token}`, {
@@ -289,17 +290,17 @@ export default function PotionPlanningLab() {
       console.error('Auto-save failed:', err);
       setSaveFailed(true);
     } finally {
-      setSaving(false);
+      if (!silent) setSaving(false);
     }
   }, [token]);
 
-  // Periodic auto-save every 30 seconds (crash recovery)
+  // Periodic auto-save every 30 seconds (crash recovery, silent — no UI flash)
   useEffect(() => {
     if (!plan || step === 'submitted' || step === 'explorationSaved' || step === 'welcome') return;
     const interval = setInterval(() => {
       const s = stepRef.current;
       if (s === 'submitted' || s === 'explorationSaved' || s === 'welcome') return;
-      saveDraft(quickPickRef.current, activeModulesRef.current, selectionsRef.current);
+      saveDraft(quickPickRef.current, activeModulesRef.current, selectionsRef.current, true);
     }, 30000);
     return () => clearInterval(interval);
   }, [plan, step, saveDraft]);
@@ -891,16 +892,16 @@ export default function PotionPlanningLab() {
           </div>
         )}
 
-        {saving && (
-          <div role="status" aria-live="polite" style={{ textAlign: 'center', padding: '0.25rem', opacity: 0.6, fontSize: '0.85rem' }}>
-            Saving...
-          </div>
-        )}
-        {saveFailed && !saving && (
-          <div role="alert" style={{ textAlign: 'center', padding: '0.25rem', fontSize: '0.85rem', color: '#c0392b' }}>
-            Draft may not be saved. Check your connection.
-          </div>
-        )}
+        {/* Reserve vertical space so the indicator (when it appears for
+            manual saves or intermittent save failures) doesn't shift layout. */}
+        <div style={{ minHeight: '1.5rem', textAlign: 'center', padding: '0.25rem', fontSize: '0.85rem' }}>
+          {saving && (
+            <span role="status" aria-live="polite" style={{ opacity: 0.6 }}>Saving…</span>
+          )}
+          {saveFailed && !saving && (
+            <span role="alert" style={{ color: '#c0392b' }}>Draft may not be saved. Check your connection.</span>
+          )}
+        </div>
 
         <div className="potion-step" key={step}>
           {renderStep()}
