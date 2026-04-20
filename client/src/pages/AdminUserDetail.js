@@ -467,8 +467,8 @@ export default function AdminUserDetail() {
                   <Field label="Signed At" value={new Date(agreement.signed_at).toLocaleString()} />
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
                     <Field label="SMS Consent" value={agreement.sms_consent ? '✓ Yes' : '✗ No'} />
-                    <Field label="Field Guide Acknowledged" value={agreement.acknowledged_field_guide ? '✓ Yes' : '✗ No'} />
-                    <Field label="Non-Solicitation" value={agreement.agreed_non_solicitation ? '✓ Yes' : '✗ No'} />
+                    <Field label="Field Guide Acknowledged" value={(agreement.acknowledged_field_guide || agreement.ack_field_guide) ? '✓ Yes' : '✗ No'} />
+                    <Field label="Non-Solicitation" value={(agreement.agreed_non_solicitation || agreement.ack_non_solicit) ? '✓ Yes' : '✗ No'} />
                   </div>
                   {agreement.signature_data && (
                     <div>

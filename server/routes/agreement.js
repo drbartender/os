@@ -8,6 +8,7 @@ const { getCurrentAgreement, CURRENT_VERSION } = require('../data/contractorAgre
 const { renderAgreementPdf } = require('../utils/agreementPdf');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { sendEmail } = require('../utils/email');
+const { ADMIN_URL } = require('../utils/urls');
 
 const router = express.Router();
 
@@ -66,6 +67,10 @@ router.post('/', auth, asyncHandler(async (req, res) => {
   if (!signature_data) fieldErrors.signature = 'Please sign the agreement before submitting';
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
+  if (typeof signature_data !== 'string' || signature_data.length > 200000) {
+    throw new ValidationError({ signature: 'Signature payload is too large.' });
+  }
+
   if (signature_method !== 'draw' && signature_method !== 'type') {
     throw new ValidationError({ signature: 'Invalid signature method.' });
   }
@@ -74,6 +79,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
   const userAgent = req.headers['user-agent'] || null;
 
   // ── Transaction: upsert agreement row + mark onboarding step ──────
+  let saved;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -92,7 +98,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     ];
 
     if (existing.rows[0]) {
-      await client.query(
+      const upd = await client.query(
         `UPDATE agreements SET
            full_name=$1, email=$2, phone=$3, sms_consent=$4,
            ack_ic_status=$5, ack_commitment=$6, ack_non_solicit=$7,
@@ -100,7 +106,8 @@ router.post('/', auth, asyncHandler(async (req, res) => {
            signature_data=$11, signature_method=$12, signature_ip=$13, signature_user_agent=$14,
            signature_document_version=$15, signed_at=NOW(),
            pdf_storage_key=NULL, pdf_generated_at=NULL, pdf_email_sent_at=NULL
-         WHERE user_id=$16`,
+         WHERE user_id=$16
+         RETURNING *`,
         [
           full_name, email, phone, !!sms_consent,
           !!ack_ic_status, !!ack_commitment, !!ack_non_solicit,
@@ -109,12 +116,14 @@ router.post('/', auth, asyncHandler(async (req, res) => {
           CURRENT_VERSION, req.user.id,
         ]
       );
+      saved = upd.rows[0];
     } else {
-      await client.query(
+      const ins = await client.query(
         `INSERT INTO agreements
            (user_id, ${cols.join(', ')})
          VALUES
-           ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())`,
+           ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
+         RETURNING *`,
         [
           req.user.id,
           full_name, email, phone, !!sms_consent,
@@ -124,6 +133,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
           CURRENT_VERSION,
         ]
       );
+      saved = ins.rows[0];
     }
 
     await client.query(
@@ -142,7 +152,6 @@ router.post('/', auth, asyncHandler(async (req, res) => {
   }
 
   // ── Post-commit: render PDF, upload, email ────────────────────────
-  const saved = (await pool.query('SELECT * FROM agreements WHERE user_id = $1', [req.user.id])).rows[0];
 
   let pdfUrl = null;
   try {
@@ -181,7 +190,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     // Email with PDF attached — failures are logged, not thrown.
     try {
       const safeName = escapeHtml(saved.full_name) || 'there';
-      const portalUrl = escapeHtml(`${process.env.CLIENT_URL || ''}/staff-portal`);
+      const portalUrl = escapeHtml(`${ADMIN_URL}/portal`);
       await sendEmail({
         to: saved.email,
         subject: 'Your signed Dr. Bartender Contractor Agreement',
@@ -202,11 +211,11 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       );
     } catch (emailErr) {
       console.error('[agreement] PDF email send failed:', emailErr.message);
-      Sentry.captureException?.(emailErr, { tags: { route: 'POST /api/agreement', step: 'email' } });
+      Sentry.captureException(emailErr, { tags: { route: 'POST /api/agreement', step: 'email' } });
     }
   } catch (pdfErr) {
     console.error('[agreement] PDF render/upload failed:', pdfErr.message);
-    Sentry.captureException?.(pdfErr, { tags: { route: 'POST /api/agreement', step: 'pdf' } });
+    Sentry.captureException(pdfErr, { tags: { route: 'POST /api/agreement', step: 'pdf' } });
     // Continue — signature record itself is already committed.
   }
 
