@@ -98,6 +98,15 @@ ALTER TABLE agreements ADD COLUMN IF NOT EXISTS signature_method VARCHAR(10);
 ALTER TABLE agreements ADD COLUMN IF NOT EXISTS signature_ip VARCHAR(45);
 ALTER TABLE agreements ADD COLUMN IF NOT EXISTS signature_user_agent TEXT;
 ALTER TABLE agreements ADD COLUMN IF NOT EXISTS signature_document_version VARCHAR(50);
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS ack_ic_status BOOLEAN;
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS ack_commitment BOOLEAN;
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS ack_non_solicit BOOLEAN;
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS ack_damage_recoupment BOOLEAN;
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS ack_legal_protections BOOLEAN;
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS ack_field_guide BOOLEAN;
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_storage_key VARCHAR(500);
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_generated_at TIMESTAMPTZ;
+ALTER TABLE agreements ADD COLUMN IF NOT EXISTS pdf_email_sent_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS payment_profiles (
   id SERIAL PRIMARY KEY,
