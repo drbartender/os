@@ -94,6 +94,8 @@ The frontend uses one build-time variable set in `client/.env.production`:
 dr-bartender/
 ├── server/
 │   ├── index.js                # Express app setup, middleware, route mounting
+│   ├── data/
+│   │   └── contractorAgreement.js # Versioned v2 legal text (clauses, acknowledgments, effective date)
 │   ├── db/
 │   │   ├── index.js            # PostgreSQL pool connection + schema initialization
 │   │   ├── schema.sql          # Full DDL: tables, triggers, constraints, seed data
@@ -129,6 +131,7 @@ dr-bartender/
 │   │   ├── testFeedback.js     # Receives tester bug/checklist submissions from /testing-guide.html and emails contact@drbartender.com
 │   │   └── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   ├── utils/
+│   │   ├── agreementPdf.js     # PDFKit renderer for signed contractor agreements
 │   │   ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)
 │   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
 │   │   ├── balanceScheduler.js # Autopay balance charge scheduler

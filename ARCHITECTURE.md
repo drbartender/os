@@ -120,8 +120,31 @@ Routes throw via `asyncHandler`-wrapped handlers; the global error middleware in
 ### Contractor Agreement — `/api/agreement`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/` | Yes | Get current agreement data |
-| POST | `/` | Yes | Save signature, legal consents, SMS opt-in |
+| GET | `/` | Yes | Get current agreement data (legacy compatibility) |
+| GET | `/legal-text` | Yes | Fetch current version payload (clauses, acknowledgments, effective date) rendered by the client |
+| POST | `/` | Yes | Save signature, six v2 acknowledgments, SMS opt-in — then render PDF, upload to R2, email to signer |
+| GET | `/download` | Yes | Short-lived signed R2 URL for the signer's most recent agreement PDF |
+
+#### Contractor Agreement Flow
+
+The contractor agreement is versioned. The current version is defined in `server/data/contractorAgreement.js`
+(`CURRENT_VERSION = 'contractor-agreement-v2'`). The React page at `/agreement` fetches the current version
+payload from `GET /api/agreement/legal-text` and renders it dynamically (At-a-Glance bullets, 11 clauses, 6
+per-clause acknowledgments).
+
+On sign (`POST /api/agreement`), the server:
+
+1. Writes all six `ack_*` booleans, signature data, IP, user agent, and `signature_document_version` to the
+   `agreements` table inside a transaction with the onboarding progress update.
+2. Post-commit: renders a PDF via `server/utils/agreementPdf.js` (pdfkit), uploads to R2 under
+   `agreements/{user_id}/{version}-{timestamp}.pdf`, stores the key on the row.
+3. Sends the PDF to the signer as a Resend email attachment. Email failures are logged to Sentry; the
+   signature record is already committed.
+
+`GET /api/agreement/download` returns a short-lived signed R2 URL for the current user's latest PDF.
+
+V1 signers (pre-v2 schema) remain valid. The legacy `acknowledged_field_guide` and `agreed_non_solicitation`
+columns are preserved for historical records; new v2 signers populate the `ack_*` columns instead.
 
 ### Contractor Profile — `/api/contractor`
 | Method | Path | Auth | Description |
@@ -390,7 +413,11 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 **agreements** — Signed legal documents
 - `user_id` FK → users
 - `signature_data` (base64 canvas image), `signed_at`
-- `sms_consent`, `acknowledged_field_guide`, `agreed_non_solicitation`
+- `signature_document_version` — version of the agreement text the user signed (e.g. `contractor-agreement-v2`)
+- `sms_consent`
+- Legacy v1 columns (preserved for historical records): `acknowledged_field_guide`, `agreed_non_solicitation`
+- V2 acknowledgment booleans: `ack_ic_status`, `ack_commitment`, `ack_non_solicit`, `ack_damage_recoupment`, `ack_legal_protections`, `ack_field_guide`
+- PDF record: `pdf_storage_key` (R2 object key), `pdf_generated_at`, `pdf_email_sent_at`
 
 **payment_profiles** — Payment method preferences
 - `user_id` FK → users

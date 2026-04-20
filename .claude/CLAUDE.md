@@ -22,6 +22,8 @@
 dr-bartender/
 ├── server/
 │   ├── index.js              # Express entry point, middleware, route mounting
+│   ├── data/
+│   │   └── contractorAgreement.js # Versioned v2 legal text (clauses, acknowledgments, effective date)
 │   ├── db/
 │   │   ├── index.js          # PostgreSQL pool + schema init
 │   │   ├── schema.sql        # Full DDL (tables, triggers, seed data)
@@ -57,6 +59,7 @@ dr-bartender/
 │   │   ├── testFeedback.js    # Receives tester bug/checklist submissions from /testing-guide.html and emails contact@drbartender.com
 │   │   └── thumbtack.js       # Thumbtack webhook endpoints (leads, messages, reviews)
 │   ├── utils/
+│   │   ├── agreementPdf.js    # PDFKit renderer for signed contractor agreements
 │   │   ├── autoAssign.js      # Auto-assign algorithm (seniority + geo + equipment)
 │   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
 │   │   ├── balanceScheduler.js # Scheduled balance/payment tasks
