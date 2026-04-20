@@ -70,8 +70,7 @@ body {
 
 /* Admin page — chalkboard to match */
 .admin-page {
-  background: url('./images/chalkboard_background.png') center top repeat;
-  background-size: cover;
+  background: url('./images/chalkboard_background.png') center top / 1200px auto repeat;
   background-color: var(--chalkboard);
 }
 
@@ -79,8 +78,7 @@ body {
 main {
   position: relative;
   min-height: calc(100vh - 8rem);
-  background: url('./images/chalkboard_background.png') center top repeat;
-  background-size: cover;
+  background: url('./images/chalkboard_background.png') center top / 1200px auto repeat;
   background-color: var(--chalkboard);
 }
 
