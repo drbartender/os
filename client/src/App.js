@@ -184,7 +184,7 @@ function PublicWebsiteRoutes() {
   );
 }
 
-/** hiring.drbartender.com — applicant-focused routes only */
+/** hiring.drbartender.com — applicant intake + post-hire onboarding/portal (mirrors staff.drbartender.com once logged in) */
 function HiringRoutes() {
   return (
     <Suspense fallback={SuspenseFallback}>
@@ -196,6 +196,25 @@ function HiringRoutes() {
         <Route path="/reset-password/:token" element={<RedirectIfLoggedIn><ResetPassword /></RedirectIfLoggedIn>} />
         <Route path="/apply" element={<ProtectedRoute><Application /></ProtectedRoute>} />
         <Route path="/application-status" element={<ProtectedRoute><ApplicationStatus /></ProtectedRoute>} />
+        {/* Onboarding flow — hired contractors complete paperwork here without jumping to staff subdomain */}
+        <Route element={<RequireHired><Layout /></RequireHired>}>
+          <Route path="/welcome" element={<Welcome />} />
+          <Route path="/field-guide" element={<FieldGuide />} />
+          <Route path="/agreement" element={<Agreement />} />
+          <Route path="/contractor-profile" element={<ContractorProfile />} />
+          <Route path="/payday-protocols" element={<PaydayProtocols />} />
+          <Route path="/complete" element={<Completion />} />
+        </Route>
+        {/* Staff portal — kept here so fully-onboarded users who bookmarked hiring.drb.com don't hit a blank page */}
+        <Route path="/portal" element={<RequirePortal><StaffLayout /></RequirePortal>}>
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<StaffDashboard />} />
+          <Route path="shifts" element={<StaffShifts />} />
+          <Route path="schedule" element={<StaffSchedule />} />
+          <Route path="events" element={<StaffEvents />} />
+          <Route path="resources" element={<StaffResources />} />
+          <Route path="profile" element={<StaffProfile />} />
+        </Route>
         {/* Public token routes still work */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />

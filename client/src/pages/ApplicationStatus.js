@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import BrandLogo from '../components/BrandLogo';
 import { COMPANY_PHONE, COMPANY_PHONE_TEL } from '../utils/constants';
@@ -8,6 +8,13 @@ export default function ApplicationStatus() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const status = user?.onboarding_status;
+
+  // If the user's status has advanced past the applicant phase (e.g. admin
+  // flipped them to 'hired' after they applied), forward them to the correct
+  // destination instead of stranding them on the "application received" card.
+  if (status === 'hired') return <Navigate to="/welcome" replace />;
+  if (['submitted', 'reviewed', 'approved'].includes(status)) return <Navigate to="/portal" replace />;
+  if (status === 'in_progress' && !user?.has_application) return <Navigate to="/apply" replace />;
 
   return (
     <div className="auth-page" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
