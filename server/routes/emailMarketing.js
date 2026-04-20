@@ -4,6 +4,7 @@ const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
 const { wrapMarketingEmail } = require('../utils/emailTemplates');
+const { API_URL } = require('../utils/urls');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../utils/errors');
 
@@ -427,8 +428,9 @@ router.post('/campaigns/:id/send', auth, requireAdminOrManager, asyncHandler(asy
 
     await client.query('COMMIT');
 
-    // Send emails in background (don't block response)
-    const unsubscribeBase = `${process.env.CLIENT_URL || 'http://localhost:3000'}/api/email-marketing/unsubscribe`;
+    // Send emails in background (don't block response). Unsubscribe is
+    // server-rendered by Express — must hit API_URL, not the Vercel SPA.
+    const unsubscribeBase = `${API_URL}/api/email-marketing/unsubscribe`;
     sendBlastEmails(c, leads.rows, unsubscribeBase).catch(err => {
       console.error('Blast send error:', err);
     });

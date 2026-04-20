@@ -2,7 +2,7 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { wrapMarketingEmail } = require('./emailTemplates');
-const { PUBLIC_SITE_URL } = require('./urls');
+const { PUBLIC_SITE_URL, API_URL } = require('./urls');
 
 function escapeHtml(str) {
   if (!str) return '';
@@ -35,7 +35,9 @@ async function processSequenceSteps() {
 
     console.log(`[SequenceScheduler] Processing ${dueEnrollments.rows.length} due enrollment(s)`);
 
-    const unsubscribeBase = `${process.env.CLIENT_URL || 'http://localhost:3000'}/api/email-marketing/unsubscribe`;
+    // Unsubscribe is server-rendered by the Express backend — must hit API_URL,
+    // not the Vercel SPA (which catches /api/* via rewrite and serves index.html).
+    const unsubscribeBase = `${API_URL}/api/email-marketing/unsubscribe`;
 
     for (const enrollment of dueEnrollments.rows) {
       try {

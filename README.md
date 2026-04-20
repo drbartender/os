@@ -60,6 +60,7 @@ Copy `.env.example` and fill in values. All variables:
 | `JWT_SECRET` | Yes | Long random string for signing tokens |
 | `CLIENT_URL` | Yes | Admin/staff frontend URL for CORS + admin dashboard links in emails (e.g., `http://localhost:3000` in dev, `https://admin.drbartender.com` in prod) |
 | `PUBLIC_SITE_URL` | Yes | Public marketing site URL used in client-facing token links — proposals, drink plans, invoices, shopping lists (e.g., `http://localhost:3000` in dev, `https://drbartender.com` in prod) |
+| `API_URL` | No | Backend origin for server-rendered email links (unsubscribe). Defaults to `RENDER_EXTERNAL_URL` in prod, `http://localhost:5000` in dev. |
 | `MAX_FILE_SIZE` | No | Upload limit in bytes (default: 10MB) |
 | `R2_ACCOUNT_ID` | For uploads | Cloudflare R2 account ID |
 | `R2_BUCKET_NAME` | For uploads | R2 bucket name |

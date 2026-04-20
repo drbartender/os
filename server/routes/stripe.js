@@ -371,7 +371,7 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
     paymentLink = await stripe.paymentLinks.create({
       line_items: [{ price: price.id, quantity: 1 }],
       metadata: { proposal_id: String(proposal.id) },
-      after_completion: { type: 'redirect', redirect: { url: `${PUBLIC_SITE_URL}/proposal/${req.query.token || ''}?paid=true` } },
+      after_completion: { type: 'redirect', redirect: { url: `${PUBLIC_SITE_URL}/proposal/${encodeURIComponent(req.query.token || '')}?paid=true` } },
     });
   } catch (err) {
     console.error('Stripe payment-link error:', err);

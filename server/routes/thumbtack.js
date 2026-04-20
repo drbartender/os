@@ -5,6 +5,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('../utils/email');
 const { newThumbtackLeadAdmin, newThumbtackMessageAdmin, newThumbtackReviewAdmin } = require('../utils/emailTemplates');
+const { ADMIN_URL } = require('../utils/urls');
 const asyncHandler = require('../middleware/asyncHandler');
 
 const router = express.Router();
@@ -283,8 +284,7 @@ router.post('/leads', asyncHandler(async (req, res) => {
     try {
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
-        const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
-        const adminUrl = clientId ? `${clientUrl}/admin/clients/${clientId}` : null;
+        const adminUrl = clientId ? `${ADMIN_URL}/admin/clients/${clientId}` : null;
         const tpl = newThumbtackLeadAdmin({
           customerName: lead.customerName,
           customerPhone: lead.customerPhone,
@@ -364,9 +364,8 @@ router.post('/messages', asyncHandler(async (req, res) => {
             'SELECT client_id, customer_name FROM thumbtack_leads WHERE negotiation_id = $1',
             [msg.negotiationId]
           );
-          const clientUrl = process.env.CLIENT_URL || 'https://www.drbartender.com';
           const clientId = lead.rows[0]?.client_id;
-          const adminUrl = clientId ? `${clientUrl}/admin/clients/${clientId}` : null;
+          const adminUrl = clientId ? `${ADMIN_URL}/admin/clients/${clientId}` : null;
           const tpl = newThumbtackMessageAdmin({
             customerName: lead.rows[0]?.customer_name || msg.senderName || 'Unknown',
             text: msg.text,

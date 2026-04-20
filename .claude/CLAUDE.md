@@ -208,6 +208,7 @@ See `.env.example` for the full list. Key ones:
 | `JWT_SECRET` | Token signing key |
 | `CLIENT_URL` | Admin/staff frontend origin (CORS + admin dashboard links in emails). In prod: `https://admin.drbartender.com` |
 | `PUBLIC_SITE_URL` | Public marketing site origin used in client-facing token URLs (proposal, drink plan, invoice, shopping list). In prod: `https://drbartender.com` |
+| `API_URL` | Backend origin for server-rendered email links (unsubscribe). Optional — defaults to `RENDER_EXTERNAL_URL` in prod, `localhost:5000` in dev. |
 | `R2_*` | Cloudflare R2 credentials |
 | `RESEND_API_KEY` | Resend email |
 | `RESEND_WEBHOOK_SECRET` | Resend webhook signing secret (svix) |
