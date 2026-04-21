@@ -394,6 +394,22 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 - `can_hire`, `can_staff` (boolean permission flags)
 - `notifications_opt_in`
 
+**Onboarding status lifecycle** — what each value means and what it unlocks
+
+| Status | Meaning | Route guard | Portal / shift access |
+|---|---|---|---|
+| `in_progress` | Registered, hasn't applied yet | `ProtectedRoute` | — |
+| `applied` | Submitted application | `ProtectedRoute` | — |
+| `interviewing` | Admin moved them into the interview stage | `ProtectedRoute` | — |
+| `hired` | Admin accepted — entered onboarding flow (welcome → payday protocols). Admin-hire also seeds `contractor_profiles` from the application. | `RequireHired` | — |
+| `submitted` | Finished the onboarding forms (set by POST `/payment`) | `RequireHired` + `RequirePortal` | Full portal + can request shifts |
+| `reviewed` | Admin has reviewed the submission | `RequireHired` + `RequirePortal` | Full portal + can request shifts |
+| `approved` | Admin has formally approved the contractor | `RequireHired` + `RequirePortal` | Full portal + can request shifts |
+| `rejected` | Application denied | login blocked for staff | — |
+| `deactivated` | Offboarded | login blocked | — |
+
+Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `server/routes/shifts.js`) treats `submitted`/`reviewed`/`approved` as equivalent — the distinction is an admin-facing label, not a gate.
+
 **onboarding_progress** — Tracks completion of each onboarding step
 - `user_id` FK → users
 - Boolean columns: `account_created`, `welcome_viewed`, `field_guide_completed`, `agreement_completed`, `contractor_profile_completed`, `payday_protocols_completed`, `onboarding_completed`
