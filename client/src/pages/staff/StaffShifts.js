@@ -33,7 +33,9 @@ export default function StaffShifts() {
   const [requestingId, setRequestingId] = useState(null);
   const [selectedPositions, setSelectedPositions] = useState({});
 
-  const isApproved = user?.onboarding_status === 'approved';
+  // Backend shifts route accepts submitted/reviewed/approved — keep the frontend in sync
+  // so staff can request shifts as soon as they finish onboarding.
+  const canRequestShifts = ['submitted', 'reviewed', 'approved'].includes(user?.onboarding_status);
 
   const fetchData = async () => {
     setLoading(true);
@@ -47,7 +49,7 @@ export default function StaffShifts() {
     }
   };
 
-  useEffect(() => { if (isApproved) fetchData(); }, [isApproved]);
+  useEffect(() => { if (canRequestShifts) fetchData(); }, [canRequestShifts]);
 
   async function requestShift(shiftId) {
     const position = selectedPositions[shiftId] || '';

@@ -1,9 +1,17 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { WHATSAPP_GROUP_URL, COMPANY_PHONE, COMPANY_PHONE_TEL } from '../utils/constants';
 
 export default function Completion() {
   const navigate = useNavigate();
+  const { refreshUser } = useAuth();
+
+  // Safety net: if the user landed here without a fresh session (e.g. hard refresh),
+  // reload /auth/me so RequirePortal sees the 'submitted' status set by payment.js.
+  useEffect(() => {
+    refreshUser().catch(() => {});
+  }, [refreshUser]);
 
   return (
     <div className="page-container" style={{ maxWidth: 600 }}>
@@ -14,23 +22,24 @@ export default function Completion() {
 
         <p style={{ fontSize: '1.05rem', marginBottom: '1.25rem' }}>
           Thanks for wrapping things up — your info's in and you're officially part of the team.
+          Your staff portal is open — head there to see open shifts and request your first gig.
         </p>
 
-        <div style={{ marginBottom: '1.5rem' }}>
+        <div style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => navigate('/welcome')}
+            onClick={() => navigate('/portal/shifts')}
           >
-            Back to overview
+            See Open Shifts →
           </button>
-        </div>
-
-        <div className="alert alert-success" style={{ textAlign: 'left', marginBottom: '1.5rem' }}>
-          <strong>Keep an eye on your inbox!</strong>
-          <p style={{ marginTop: '0.35rem', marginBottom: 0, fontSize: '0.9rem' }}>
-            You'll receive an invite to Dr. Bartender, where you can view upcoming gigs and request events.
-          </p>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => navigate('/portal/dashboard')}
+          >
+            Go to Dashboard
+          </button>
         </div>
 
         <div style={{
@@ -39,10 +48,10 @@ export default function Completion() {
         }}>
           <h4 style={{ marginBottom: '0.5rem' }}>What Happens Next</h4>
           <ul style={{ paddingLeft: '1.25rem', fontSize: '0.9rem' }}>
-            <li style={{ marginBottom: '0.35rem' }}>Your onboarding will be reviewed by the Dr. Bartender team.</li>
-            <li style={{ marginBottom: '0.35rem' }}>You'll receive an invite via email once approved.</li>
+            <li style={{ marginBottom: '0.35rem' }}>Browse open shifts in the staff portal and request the ones that fit your schedule.</li>
+            <li style={{ marginBottom: '0.35rem' }}>We'll confirm your requests as shifts get staffed — watch for SMS/email updates.</li>
             <li style={{ marginBottom: '0.35rem' }}>
-              Join our team WhatsApp group for scheduling updates:{' '}
+              Join our team WhatsApp group for real-time scheduling updates:{' '}
               <a href={WHATSAPP_GROUP_URL} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--amber)', fontWeight: 600 }}>
                 Join the WhatsApp Group →
               </a>

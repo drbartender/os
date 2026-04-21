@@ -5,6 +5,7 @@ import W9Form from '../components/W9Form';
 import FormBanner from '../components/FormBanner';
 import FieldError from '../components/FieldError';
 import api from '../utils/api';
+import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { COMPANY_PHONE } from '../utils/constants';
 import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
@@ -15,6 +16,7 @@ const PAYMENT_METHODS = ['Venmo', 'Zelle', 'Cash App', 'PayPal', 'Direct Deposit
 export default function PaydayProtocols() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { refreshUser } = useAuth();
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -133,6 +135,9 @@ export default function PaydayProtocols() {
       if (w9File) data.append('w9', w9File);
 
       await api.post('/payment', data);
+      // Backend flipped onboarding_status to 'submitted' — pull the fresh user so
+      // RequirePortal lets them into the staff portal right after Completion.
+      await refreshUser();
       toast.success('Payment info saved.');
       navigate('/complete');
     } catch (err) {

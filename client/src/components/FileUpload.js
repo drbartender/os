@@ -1,5 +1,12 @@
 import React, { useId } from 'react';
 
+// Touch-first devices (phones/tablets) have a coarse pointer. On desktop with a mouse,
+// the "Take Photo" affordance just falls through to a file picker, which is confusing —
+// so we only render it on devices that can actually open a camera.
+const hasTouchCamera = typeof window !== 'undefined'
+  && typeof window.matchMedia === 'function'
+  && window.matchMedia('(pointer: coarse)').matches;
+
 export default function FileUpload({ label, name, accept, helper, onChange, currentFile, camera }) {
   const inputId = useId();
   const cameraInputId = useId();
@@ -9,8 +16,8 @@ export default function FileUpload({ label, name, accept, helper, onChange, curr
     if (file) onChange(name, file);
   }
 
-  // Camera mode with no file yet: show two distinct picker buttons
-  if (camera && !currentFile) {
+  // Camera mode with no file yet AND on a touch device: show two distinct picker buttons
+  if (camera && !currentFile && hasTouchCamera) {
     return (
       <div className="form-group">
         <label className="form-label">{label}</label>

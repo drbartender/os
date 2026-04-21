@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../utils/api';
-import { WHATSAPP_GROUP_URL, COMPANY_PHONE, COMPANY_PHONE_TEL } from '../../utils/constants';
+import { WHATSAPP_GROUP_URL } from '../../utils/constants';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 
 function fmtDate(iso) {
@@ -15,12 +15,13 @@ export default function StaffDashboard() {
   const { user } = useAuth();
   const [stats, setStats] = useState(null);
 
-  const isApproved = user?.onboarding_status === 'approved';
-  const isPending = ['submitted', 'reviewed'].includes(user?.onboarding_status);
+  // Staff can view and request shifts as soon as onboarding is submitted —
+  // admin approval is a back-office label, not a portal gate.
+  const isOnboarded = ['submitted', 'reviewed', 'approved'].includes(user?.onboarding_status);
   const displayName = user?.preferred_name || user?.email?.split('@')[0] || 'there';
 
   useEffect(() => {
-    if (!isApproved) return;
+    if (!isOnboarded) return;
     Promise.all([
       api.get('/shifts'),
       api.get('/shifts/my-requests'),
@@ -37,7 +38,7 @@ export default function StaffDashboard() {
         });
       })
       .catch(console.error);
-  }, [isApproved, user?.id]);
+  }, [isOnboarded, user?.id]);
 
   return (
     <div className="page-container" style={{ maxWidth: 860 }}>
@@ -52,12 +53,7 @@ export default function StaffDashboard() {
             <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.5rem', color: 'var(--cream-text)', marginBottom: '0.3rem' }}>
               Welcome back, {displayName}
             </div>
-            {isPending && (
-              <p style={{ color: 'var(--parchment)', opacity: 0.8, fontSize: '0.9rem', margin: 0 }}>
-                Your onboarding is under review. You'll get full portal access once approved.
-              </p>
-            )}
-            {isApproved && (
+            {isOnboarded && (
               <p style={{ color: 'var(--parchment)', opacity: 0.8, fontSize: '0.9rem', margin: 0 }}>
                 You're an active Dr. Bartender team member.
               </p>
@@ -73,20 +69,7 @@ export default function StaffDashboard() {
         </div>
       </div>
 
-      {isPending && (
-        <div className="card" style={{ marginTop: '1rem', textAlign: 'center', padding: '2.5rem' }}>
-          <h3 style={{ marginBottom: '0.5rem' }}>Onboarding Under Review</h3>
-          <p style={{ color: 'var(--text-muted)', maxWidth: 480, margin: '0 auto 1.5rem' }}>
-            The Dr. Bartender team is reviewing your submission. Once approved, you'll be able to view available shifts and request gigs here.
-          </p>
-          <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-            Questions? Text us at <a href={COMPANY_PHONE_TEL} style={{ color: 'var(--amber)' }}>{COMPANY_PHONE}</a> or email{' '}
-            <a href="mailto:contact@drbartender.com" style={{ color: 'var(--amber)' }}>contact@drbartender.com</a>
-          </p>
-        </div>
-      )}
-
-      {isApproved && stats && (
+      {isOnboarded && stats && (
         <>
           {/* Quick Stats */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginTop: '1.25rem' }}>
