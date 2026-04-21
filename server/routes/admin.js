@@ -97,130 +97,149 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
     throw new ValidationError({ status: 'Invalid status' });
   }
 
-  // Get current status before changing (for the audit log)
-  const currentRes = await pool.query(
-    "SELECT onboarding_status FROM users WHERE id=$1 AND role IN ('staff','manager')",
-    [req.params.id]
-  );
-  if (!currentRes.rows[0]) throw new NotFoundError('User not found');
-  const oldStatus = currentRes.rows[0].onboarding_status;
+  // All writes in this handler (users status + onboarding_progress seed + contractor_profiles
+  // seed from application + audit log) share one transaction so a partial failure can't leave
+  // a user flipped to 'hired' with a half-seeded profile.
+  const client = await pool.connect();
+  let result;
+  let oldStatus;
+  try {
+    await client.query('BEGIN');
 
-  const result = await pool.query(
-    "UPDATE users SET onboarding_status=$1 WHERE id=$2 AND role IN ('staff','manager') RETURNING id, email, onboarding_status",
-    [status, req.params.id]
-  );
-  if (!result.rows[0]) throw new NotFoundError('User not found');
-
-  // When hiring, ensure onboarding progress record exists and seed the contractor
-  // profile from the application so admin + contractor views have the data immediately.
-  if (status === 'hired') {
-    const progressExists = await pool.query('SELECT id FROM onboarding_progress WHERE user_id = $1', [req.params.id]);
-    if (!progressExists.rows[0]) {
-      await pool.query(
-        'INSERT INTO onboarding_progress (user_id, account_created) VALUES ($1, true)',
-        [req.params.id]
-      );
-    }
-
-    // Only seed/overwrite if the contractor hasn't yet filled in their profile.
-    // A filled-in profile always has preferred_name; an empty/skeleton row does not.
-    const existing = await pool.query(
-      'SELECT preferred_name, hire_date FROM contractor_profiles WHERE user_id = $1',
+    // Lock the user row so a concurrent status change can't slip between our read and write
+    const currentRes = await client.query(
+      "SELECT onboarding_status FROM users WHERE id=$1 AND role IN ('staff','manager') FOR UPDATE",
       [req.params.id]
     );
-    const isSkeletonOrMissing = !existing.rows[0] || !existing.rows[0].preferred_name;
+    if (!currentRes.rows[0]) throw new NotFoundError('User not found');
+    oldStatus = currentRes.rows[0].onboarding_status;
 
-    if (isSkeletonOrMissing) {
-      const appRes = await pool.query('SELECT * FROM applications WHERE user_id = $1', [req.params.id]);
-      if (appRes.rows[0]) {
-        // Populate contractor_profiles from the application. Preserve an existing
-        // hire_date if one was already set (re-hire or status-toggle case).
-        await pool.query(`
-          INSERT INTO contractor_profiles (
-            user_id, preferred_name, phone, email, birth_month, birth_day, birth_year,
-            street_address, city, state, zip_code,
-            travel_distance, reliable_transportation,
-            equipment_portable_bar, equipment_cooler, equipment_table_with_spandex,
-            equipment_none_but_open, equipment_no_space,
-            emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
-            alcohol_certification_file_url, alcohol_certification_filename,
-            resume_file_url, resume_filename,
-            headshot_file_url, headshot_filename,
-            hire_date
-          )
-          SELECT
-            u.id, a.full_name, a.phone, u.email, a.birth_month, a.birth_day, a.birth_year,
-            a.street_address, a.city, a.state, a.zip_code,
-            a.travel_distance, a.reliable_transportation,
-            COALESCE(a.equipment_portable_bar, false), COALESCE(a.equipment_cooler, false),
-            COALESCE(a.equipment_table_with_spandex, false), COALESCE(a.equipment_none_but_open, false),
-            COALESCE(a.equipment_no_space, false),
-            a.emergency_contact_name, a.emergency_contact_phone, a.emergency_contact_relationship,
-            a.basset_file_url, a.basset_filename,
-            a.resume_file_url, a.resume_filename,
-            a.headshot_file_url, a.headshot_filename,
-            COALESCE($2::date, CURRENT_DATE)
-          FROM users u
-          JOIN applications a ON a.user_id = u.id
-          WHERE u.id = $1
-          ON CONFLICT (user_id) DO UPDATE SET
-            preferred_name = EXCLUDED.preferred_name,
-            phone = EXCLUDED.phone,
-            email = EXCLUDED.email,
-            birth_month = EXCLUDED.birth_month,
-            birth_day = EXCLUDED.birth_day,
-            birth_year = EXCLUDED.birth_year,
-            street_address = EXCLUDED.street_address,
-            city = EXCLUDED.city,
-            state = EXCLUDED.state,
-            zip_code = EXCLUDED.zip_code,
-            travel_distance = EXCLUDED.travel_distance,
-            reliable_transportation = EXCLUDED.reliable_transportation,
-            equipment_portable_bar = EXCLUDED.equipment_portable_bar,
-            equipment_cooler = EXCLUDED.equipment_cooler,
-            equipment_table_with_spandex = EXCLUDED.equipment_table_with_spandex,
-            equipment_none_but_open = EXCLUDED.equipment_none_but_open,
-            equipment_no_space = EXCLUDED.equipment_no_space,
-            emergency_contact_name = EXCLUDED.emergency_contact_name,
-            emergency_contact_phone = EXCLUDED.emergency_contact_phone,
-            emergency_contact_relationship = EXCLUDED.emergency_contact_relationship,
-            alcohol_certification_file_url = EXCLUDED.alcohol_certification_file_url,
-            alcohol_certification_filename = EXCLUDED.alcohol_certification_filename,
-            resume_file_url = EXCLUDED.resume_file_url,
-            resume_filename = EXCLUDED.resume_filename,
-            headshot_file_url = EXCLUDED.headshot_file_url,
-            headshot_filename = EXCLUDED.headshot_filename,
-            hire_date = EXCLUDED.hire_date
-        `, [req.params.id, existing.rows[0]?.hire_date || null]);
+    result = await client.query(
+      "UPDATE users SET onboarding_status=$1 WHERE id=$2 AND role IN ('staff','manager') RETURNING id, email, onboarding_status",
+      [status, req.params.id]
+    );
+    if (!result.rows[0]) throw new NotFoundError('User not found');
+
+    // When hiring, ensure onboarding progress record exists and seed the contractor
+    // profile from the application so admin + contractor views have the data immediately.
+    if (status === 'hired') {
+      const progressExists = await client.query('SELECT id FROM onboarding_progress WHERE user_id = $1', [req.params.id]);
+      if (!progressExists.rows[0]) {
+        await client.query(
+          'INSERT INTO onboarding_progress (user_id, account_created) VALUES ($1, true)',
+          [req.params.id]
+        );
+      }
+
+      // Lock the (possibly absent) contractor_profiles row so the skeleton-vs-filled check
+      // and the subsequent seed are atomic — prevents clobbering a name the contractor
+      // saves between our read and our write.
+      const existing = await client.query(
+        'SELECT preferred_name, hire_date FROM contractor_profiles WHERE user_id = $1 FOR UPDATE',
+        [req.params.id]
+      );
+      const isSkeletonOrMissing = !existing.rows[0] || !existing.rows[0].preferred_name;
+
+      if (isSkeletonOrMissing) {
+        const appExists = await client.query('SELECT 1 FROM applications WHERE user_id = $1 LIMIT 1', [req.params.id]);
+        if (appExists.rows[0]) {
+          // Populate contractor_profiles from the application. Preserve an existing
+          // hire_date if one was already set (re-hire or status-toggle case).
+          // KEEP IN SYNC WITH schema.sql contractor_profiles + PUT /users/:id/profile.
+          await client.query(`
+            INSERT INTO contractor_profiles (
+              user_id, preferred_name, phone, email, birth_month, birth_day, birth_year,
+              street_address, city, state, zip_code,
+              travel_distance, reliable_transportation,
+              equipment_portable_bar, equipment_cooler, equipment_table_with_spandex,
+              equipment_none_but_open, equipment_no_space,
+              emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
+              alcohol_certification_file_url, alcohol_certification_filename,
+              resume_file_url, resume_filename,
+              headshot_file_url, headshot_filename,
+              hire_date
+            )
+            SELECT
+              u.id, a.full_name, a.phone, u.email, a.birth_month, a.birth_day, a.birth_year,
+              a.street_address, a.city, a.state, a.zip_code,
+              a.travel_distance, a.reliable_transportation,
+              COALESCE(a.equipment_portable_bar, false), COALESCE(a.equipment_cooler, false),
+              COALESCE(a.equipment_table_with_spandex, false), COALESCE(a.equipment_none_but_open, false),
+              COALESCE(a.equipment_no_space, false),
+              a.emergency_contact_name, a.emergency_contact_phone, a.emergency_contact_relationship,
+              a.basset_file_url, a.basset_filename,
+              a.resume_file_url, a.resume_filename,
+              a.headshot_file_url, a.headshot_filename,
+              COALESCE($2::date, CURRENT_DATE)
+            FROM users u
+            JOIN applications a ON a.user_id = u.id
+            WHERE u.id = $1
+            ON CONFLICT (user_id) DO UPDATE SET
+              preferred_name = EXCLUDED.preferred_name,
+              phone = EXCLUDED.phone,
+              email = EXCLUDED.email,
+              birth_month = EXCLUDED.birth_month,
+              birth_day = EXCLUDED.birth_day,
+              birth_year = EXCLUDED.birth_year,
+              street_address = EXCLUDED.street_address,
+              city = EXCLUDED.city,
+              state = EXCLUDED.state,
+              zip_code = EXCLUDED.zip_code,
+              travel_distance = EXCLUDED.travel_distance,
+              reliable_transportation = EXCLUDED.reliable_transportation,
+              equipment_portable_bar = EXCLUDED.equipment_portable_bar,
+              equipment_cooler = EXCLUDED.equipment_cooler,
+              equipment_table_with_spandex = EXCLUDED.equipment_table_with_spandex,
+              equipment_none_but_open = EXCLUDED.equipment_none_but_open,
+              equipment_no_space = EXCLUDED.equipment_no_space,
+              emergency_contact_name = EXCLUDED.emergency_contact_name,
+              emergency_contact_phone = EXCLUDED.emergency_contact_phone,
+              emergency_contact_relationship = EXCLUDED.emergency_contact_relationship,
+              alcohol_certification_file_url = EXCLUDED.alcohol_certification_file_url,
+              alcohol_certification_filename = EXCLUDED.alcohol_certification_filename,
+              resume_file_url = EXCLUDED.resume_file_url,
+              resume_filename = EXCLUDED.resume_filename,
+              headshot_file_url = EXCLUDED.headshot_file_url,
+              headshot_filename = EXCLUDED.headshot_filename,
+              hire_date = EXCLUDED.hire_date
+          `, [req.params.id, existing.rows[0]?.hire_date || null]);
+        } else {
+          // No application on file (rare — direct admin hire) — just ensure a skeleton row with hire_date
+          await client.query(`
+            INSERT INTO contractor_profiles (user_id, hire_date)
+            VALUES ($1, CURRENT_DATE)
+            ON CONFLICT (user_id) DO UPDATE SET hire_date = COALESCE(contractor_profiles.hire_date, CURRENT_DATE)
+          `, [req.params.id]);
+        }
       } else {
-        // No application on file (rare — direct admin hire) — just ensure a skeleton row with hire_date
-        await pool.query(`
-          INSERT INTO contractor_profiles (user_id, hire_date)
-          VALUES ($1, CURRENT_DATE)
-          ON CONFLICT (user_id) DO UPDATE SET hire_date = COALESCE(contractor_profiles.hire_date, CURRENT_DATE)
+        // Contractor has already filled in their profile — only ensure hire_date is set
+        await client.query(`
+          UPDATE contractor_profiles SET hire_date = COALESCE(hire_date, CURRENT_DATE)
+          WHERE user_id = $1
         `, [req.params.id]);
       }
-    } else {
-      // Contractor has already filled in their profile — only ensure hire_date is set
-      await pool.query(`
-        UPDATE contractor_profiles SET hire_date = COALESCE(hire_date, CURRENT_DATE)
-        WHERE user_id = $1
-      `, [req.params.id]);
     }
-  }
 
-  // Log status change as a system note in the interview_notes table
-  if (oldStatus !== status) {
-    const toLabel = s => (s || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    try {
-      await pool.query(
-        `INSERT INTO interview_notes (user_id, admin_id, note, note_type) VALUES ($1, $2, $3, 'status_change')`,
-        [req.params.id, req.user.id, `${toLabel(oldStatus)} → ${toLabel(status)}`]
-      );
-    } catch (logErr) {
-      // Audit log failures should not block the status change
-      console.error('Status change log failed:', logErr);
+    // Log status change as a system note in the interview_notes table.
+    // Audit log failures should not block the primary status change, so swallow the error.
+    if (oldStatus !== status) {
+      const toLabel = s => (s || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+      try {
+        await client.query(
+          `INSERT INTO interview_notes (user_id, admin_id, note, note_type) VALUES ($1, $2, $3, 'status_change')`,
+          [req.params.id, req.user.id, `${toLabel(oldStatus)} → ${toLabel(status)}`]
+        );
+      } catch (logErr) {
+        console.error('Status change log failed:', logErr);
+      }
     }
+
+    await client.query('COMMIT');
+  } catch (txErr) {
+    try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    throw txErr;
+  } finally {
+    client.release();
   }
 
   res.json(result.rows[0]);
