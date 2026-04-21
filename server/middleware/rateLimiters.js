@@ -16,4 +16,12 @@ const publicReadLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { publicLimiter, publicReadLimiter };
+const signLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,
+  message: { error: 'Too many signing attempts. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+module.exports = { publicLimiter, publicReadLimiter, signLimiter };
