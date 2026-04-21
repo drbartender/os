@@ -20,7 +20,6 @@ export default function Agreement() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
-  const [loadError, setLoadError] = useState('');
   const { validate, fieldClass, inputClass, clearField } = useFormValidation();
 
   const [form, setForm] = useState({
@@ -111,8 +110,13 @@ export default function Agreement() {
     try {
       const payload = { ...form, ...acks };
       await api.post('/agreement', payload);
-      const r = await api.put('/progress/step', { step: 'agreement_completed' });
-      setProgress(r.data);
+      // POST /agreement already marks agreement_completed in onboarding_progress
+      // atomically in the same transaction — just mirror it optimistically here.
+      setProgress(prev => ({
+        ...(prev || {}),
+        agreement_completed: true,
+        last_completed_step: 'agreement_completed',
+      }));
       toast.success('Agreement signed.');
       navigate('/contractor-profile');
     } catch (err) {
@@ -148,8 +152,6 @@ export default function Agreement() {
           This is the contract between you and Dr. Bartender. Please read it carefully — you can come back to it later from your staff portal.
         </p>
       </div>
-
-      {loadError && <div className="alert alert-info">{loadError}</div>}
 
       {/* ── At a Glance ─────────────────────────────────────── */}
       <div

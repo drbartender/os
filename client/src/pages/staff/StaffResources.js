@@ -1,9 +1,11 @@
 import React, { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../utils/api';
+import { useToast } from '../../context/ToastContext';
 import { WHATSAPP_GROUP_URL, COMPANY_PHONE, COMPANY_PHONE_TEL } from '../../utils/constants';
 
 export default function StaffResources() {
+  const toast = useToast();
   const [calFeedUrl, setCalFeedUrl] = useState('');
   const [calCopied, setCalCopied] = useState(false);
   const [calLoading, setCalLoading] = useState(false);
@@ -47,9 +49,21 @@ export default function StaffResources() {
             <Link to="/field-guide" className="btn btn-secondary" style={{ textAlign: 'left', textDecoration: 'none' }}>
               Field Guide
             </Link>
-            <Link to="/agreement" className="btn btn-secondary" style={{ textAlign: 'left', textDecoration: 'none' }}>
-              My Signed Agreement
-            </Link>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ textAlign: 'left', textDecoration: 'none' }}
+              onClick={async () => {
+                try {
+                  const r = await api.get('/agreement/download');
+                  window.open(r.data.url, '_blank', 'noopener,noreferrer');
+                } catch (err) {
+                  toast.error(err.message || 'Signed agreement not available yet.');
+                }
+              }}
+            >
+              Download My Signed Agreement
+            </button>
             <Link to="/payday-protocols" className="btn btn-secondary" style={{ textAlign: 'left', textDecoration: 'none' }}>
               Payday Protocols
             </Link>
