@@ -37,9 +37,19 @@ export function AuthProvider({ children }) {
   const refreshUser = useCallback(async () => {
     const token = localStorage.getItem('token');
     if (!token) return null;
-    const res = await api.get('/auth/me');
-    setUser(res.data.user);
-    return res.data.user;
+    try {
+      const res = await api.get('/auth/me');
+      setUser(res.data.user);
+      return res.data.user;
+    } catch (err) {
+      // Mirror the bootstrap behavior: a dead JWT should sign the user out
+      // instead of lingering as a stale token.
+      if (err?.status === 401) {
+        localStorage.removeItem('token');
+        setUser(null);
+      }
+      throw err;
+    }
   }, []);
 
   return (

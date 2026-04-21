@@ -135,9 +135,10 @@ export default function PaydayProtocols() {
       if (w9File) data.append('w9', w9File);
 
       await api.post('/payment', data);
-      // Backend flipped onboarding_status to 'submitted' — pull the fresh user so
-      // RequirePortal lets them into the staff portal right after Completion.
-      await refreshUser();
+      // Payment saved. Refresh the user so RequirePortal sees the new 'submitted'
+      // status, but don't fail the success flow if /auth/me errors — Completion.js
+      // runs its own refresh on mount as a safety net.
+      try { await refreshUser(); } catch { /* ignored; Completion will retry */ }
       toast.success('Payment info saved.');
       navigate('/complete');
     } catch (err) {

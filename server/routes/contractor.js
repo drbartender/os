@@ -11,6 +11,14 @@ const { ValidationError } = require('../utils/errors');
 
 const router = express.Router();
 
+// Fields the contractor is allowed to see in their own profile response.
+// Excludes internal columns like `seniority_adjustment` (admin-only auto-assign weight).
+function sanitizeProfile(profile) {
+  if (!profile) return null;
+  const { seniority_adjustment, ...safe } = profile; // eslint-disable-line no-unused-vars
+  return safe;
+}
+
 // Get contractor profile (falls back to application data for auto-fill if profile is empty)
 router.get('/', auth, asyncHandler(async (req, res) => {
   const result = await pool.query('SELECT * FROM contractor_profiles WHERE user_id = $1', [req.user.id]);
@@ -19,15 +27,17 @@ router.get('/', auth, asyncHandler(async (req, res) => {
   // A profile is "filled in" once the user has saved their preferred_name.
   // Admin-on-hire creates a skeleton row with only hire_date — treat that as empty.
   if (profile && profile.preferred_name) {
-    return res.json(profile);
+    return res.json(sanitizeProfile(profile));
   }
 
-  // Empty or missing profile — fall back to application data for auto-fill
+  // Empty or missing profile — fall back to application data for auto-fill.
+  // Only the hire_date from the skeleton row is preserved; we don't spread the
+  // whole profile to avoid leaking internal columns.
   const appResult = await pool.query('SELECT * FROM applications WHERE user_id = $1', [req.user.id]);
   if (appResult.rows[0]) {
     const app = appResult.rows[0];
     return res.json({
-      ...(profile || {}), // preserve hire_date and any skeleton fields
+      hire_date: profile?.hire_date || null,
       _from_application: true,
       preferred_name: app.full_name,
       phone: app.phone,
@@ -58,7 +68,7 @@ router.get('/', auth, asyncHandler(async (req, res) => {
     });
   }
 
-  res.json(profile || {});
+  res.json(sanitizeProfile(profile) || {});
 }));
 
 // Save contractor profile
