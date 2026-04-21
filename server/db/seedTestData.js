@@ -64,8 +64,14 @@ async function seedTestData() {
     `, [staff3.id]);
     await client.query(`
       INSERT INTO agreements (user_id, full_name, email, phone, sms_consent, acknowledged_field_guide,
-        agreed_non_solicitation, signature_data, signature_method, signed_at)
-      VALUES ($1, 'Tony Kim', 'tony.kim@test.com', '3125551234', true, true, true, 'data:image/png;base64,test', 'draw', NOW())
+        agreed_non_solicitation,
+        ack_ic_status, ack_commitment, ack_non_solicit,
+        ack_damage_recoupment, ack_legal_protections, ack_field_guide,
+        signature_data, signature_method, signature_document_version, signed_at)
+      VALUES ($1, 'Tony Kim', 'tony.kim@test.com', '3125551234', true, true, true,
+        true, true, true,
+        true, true, true,
+        'data:image/png;base64,test', 'draw', 'contractor-agreement-v2', NOW())
       ON CONFLICT (user_id) DO NOTHING
     `, [staff3.id]);
     await client.query(`
@@ -96,8 +102,14 @@ async function seedTestData() {
     `, [staff4.id]);
     await client.query(`
       INSERT INTO agreements (user_id, full_name, email, phone, sms_consent, acknowledged_field_guide,
-        agreed_non_solicitation, signature_data, signature_method, signed_at)
-      VALUES ($1, 'Lisa Chen', 'lisa.chen@test.com', '7735559876', true, true, true, 'data:image/png;base64,test', 'draw', NOW())
+        agreed_non_solicitation,
+        ack_ic_status, ack_commitment, ack_non_solicit,
+        ack_damage_recoupment, ack_legal_protections, ack_field_guide,
+        signature_data, signature_method, signature_document_version, signed_at)
+      VALUES ($1, 'Lisa Chen', 'lisa.chen@test.com', '7735559876', true, true, true,
+        true, true, true,
+        true, true, true,
+        'data:image/png;base64,test', 'draw', 'contractor-agreement-v2', NOW())
       ON CONFLICT (user_id) DO NOTHING
     `, [staff4.id]);
     await client.query(`

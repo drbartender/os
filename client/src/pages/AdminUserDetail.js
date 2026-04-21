@@ -467,8 +467,12 @@ export default function AdminUserDetail() {
                   <Field label="Signed At" value={new Date(agreement.signed_at).toLocaleString()} />
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
                     <Field label="SMS Consent" value={agreement.sms_consent ? '✓ Yes' : '✗ No'} />
-                    <Field label="Field Guide Acknowledged" value={(agreement.acknowledged_field_guide || agreement.ack_field_guide) ? '✓ Yes' : '✗ No'} />
+                    <Field label="Independent Contractor Status" value={agreement.ack_ic_status ? '✓ Yes' : '✗ No'} />
+                    <Field label="Event Commitment" value={agreement.ack_commitment ? '✓ Yes' : '✗ No'} />
                     <Field label="Non-Solicitation" value={(agreement.agreed_non_solicitation || agreement.ack_non_solicit) ? '✓ Yes' : '✗ No'} />
+                    <Field label="Damage Recoupment" value={agreement.ack_damage_recoupment ? '✓ Yes' : '✗ No'} />
+                    <Field label="Legal Protections (Reps/Indemnification)" value={agreement.ack_legal_protections ? '✓ Yes' : '✗ No'} />
+                    <Field label="Field Guide Acknowledged" value={(agreement.acknowledged_field_guide || agreement.ack_field_guide) ? '✓ Yes' : '✗ No'} />
                   </div>
                   {agreement.signature_data && (
                     <div>
