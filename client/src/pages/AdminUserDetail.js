@@ -510,26 +510,40 @@ export default function AdminUserDetail() {
                   </button>
                 ) : <Field label="W-9" value={null} />}
 
-                {profile.alcohol_certification_file_url ? (
-                  <button className="btn btn-secondary btn-sm" style={{ textAlign: 'left' }}
-                    onClick={() => downloadFile(profile.alcohol_certification_file_url, profile.alcohol_certification_filename)}>
-                    📄 Alcohol Cert: {profile.alcohol_certification_filename}
-                  </button>
-                ) : <Field label="Alcohol Certification" value={null} />}
+                {/* Fall back to the application's uploaded files when the contractor
+                    profile hasn't been filled in yet (e.g. just hired, hasn't logged in). */}
+                {(() => {
+                  const alcoholUrl = profile.alcohol_certification_file_url || application?.basset_file_url;
+                  const alcoholName = profile.alcohol_certification_filename || application?.basset_filename;
+                  return alcoholUrl ? (
+                    <button className="btn btn-secondary btn-sm" style={{ textAlign: 'left' }}
+                      onClick={() => downloadFile(alcoholUrl, alcoholName)}>
+                      📄 Alcohol Cert: {alcoholName}
+                    </button>
+                  ) : <Field label="Alcohol Certification" value={null} />;
+                })()}
 
-                {profile.resume_file_url ? (
-                  <button className="btn btn-secondary btn-sm" style={{ textAlign: 'left' }}
-                    onClick={() => downloadFile(profile.resume_file_url, profile.resume_filename)}>
-                    📄 Resume: {profile.resume_filename}
-                  </button>
-                ) : <Field label="Resume" value={null} />}
+                {(() => {
+                  const resumeUrl = profile.resume_file_url || application?.resume_file_url;
+                  const resumeName = profile.resume_filename || application?.resume_filename;
+                  return resumeUrl ? (
+                    <button className="btn btn-secondary btn-sm" style={{ textAlign: 'left' }}
+                      onClick={() => downloadFile(resumeUrl, resumeName)}>
+                      📄 Resume: {resumeName}
+                    </button>
+                  ) : <Field label="Resume" value={null} />;
+                })()}
 
-                {profile.headshot_file_url ? (
-                  <button className="btn btn-secondary btn-sm" style={{ textAlign: 'left' }}
-                    onClick={() => downloadFile(profile.headshot_file_url, profile.headshot_filename)}>
-                    📄 Headshot: {profile.headshot_filename}
-                  </button>
-                ) : <Field label="Headshot" value={null} />}
+                {(() => {
+                  const headshotUrl = profile.headshot_file_url || application?.headshot_file_url;
+                  const headshotName = profile.headshot_filename || application?.headshot_filename;
+                  return headshotUrl ? (
+                    <button className="btn btn-secondary btn-sm" style={{ textAlign: 'left' }}
+                      onClick={() => downloadFile(headshotUrl, headshotName)}>
+                      📄 Headshot: {headshotName}
+                    </button>
+                  ) : <Field label="Headshot" value={null} />;
+                })()}
               </div>
             </Section>
           </div>
