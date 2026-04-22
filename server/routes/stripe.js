@@ -882,3 +882,4 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 }));
 
 module.exports = router;
+module.exports.getStripe = getStripe;
