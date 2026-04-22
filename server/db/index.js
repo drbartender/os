@@ -8,27 +8,49 @@ const pool = new Pool({
 });
 
 // Split a SQL script into individual statements on `;`, while respecting
-// `$$ ... $$` dollar-quoted bodies so DO blocks and function definitions
-// stay intact. A naive `.split(';')` shreds every DO block that contains
-// inner semicolons (END IF;, ALTER TABLE ... ;), so every fragment fails.
+// PostgreSQL dollar-quoted bodies so DO blocks, function bodies, and seed
+// rows with embedded HTML stay intact.
+//
+// Handles both bare (`$$...$$`) and named tags (`$body$...$body$`, `$txt$...$txt$`).
+// A tag only closes when the exact same tag appears again — `$body$ ... $$`
+// does NOT close. Statements are split on `;` only when outside any
+// dollar-quoted region.
+//
+// Doesn't handle single-quoted strings or SQL comments containing `;` —
+// schema.sql doesn't use those patterns today. If you add them, teach this
+// splitter first.
 function splitStatements(sql) {
+  const TAG_RE = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/;
   const statements = [];
   let buf = '';
-  let inDollar = false;
-  for (let i = 0; i < sql.length; i++) {
-    if (sql[i] === '$' && sql[i + 1] === '$') {
-      inDollar = !inDollar;
-      buf += '$$';
-      i++;
-      continue;
-    }
-    if (sql[i] === ';' && !inDollar) {
-      const stmt = buf.trim();
-      if (stmt.length > 0) statements.push(stmt);
-      buf = '';
+  let openTag = null; // the exact string (e.g. '$$', '$body$') we're inside
+  let i = 0;
+  while (i < sql.length) {
+    if (openTag === null) {
+      if (sql[i] === '$') {
+        const m = TAG_RE.exec(sql.slice(i));
+        if (m) {
+          openTag = m[0];
+          buf += openTag;
+          i += openTag.length;
+          continue;
+        }
+      }
+      if (sql[i] === ';') {
+        const stmt = buf.trim();
+        if (stmt.length > 0) statements.push(stmt);
+        buf = '';
+        i++;
+        continue;
+      }
+    } else if (sql.startsWith(openTag, i)) {
+      buf += openTag;
+      i += openTag.length;
+      openTag = null;
       continue;
     }
     buf += sql[i];
+    i++;
   }
   const tail = buf.trim();
   if (tail.length > 0) statements.push(tail);

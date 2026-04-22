@@ -21,7 +21,6 @@ function eventLabelFor(row) {
 
 const {
   getStripe,
-  getWebhookSecret,
   getPublishableKey,
   getLiveClient,
   getTestClient,

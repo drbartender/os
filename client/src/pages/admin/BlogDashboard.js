@@ -195,8 +195,10 @@ export default function BlogDashboard() {
   const startEdit = async (post) => {
     // Claim the edit slot up front so the Edit/Delete buttons disable
     // immediately — prevents double-clicks and row-switch races during
-    // the /admin/blog/:id fetch.
+    // the /admin/blog/:id fetch. Also clear editForm so a prior post's
+    // data doesn't flash into the form while the fetch is in flight.
     setEditingId(post.id);
+    setEditForm({ ...EMPTY_FORM });
     setShowCreateForm(false);
     setEditError('');
     setEditFieldErrors({});
