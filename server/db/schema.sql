@@ -1503,23 +1503,12 @@ ALTER TABLE service_addons ADD CONSTRAINT service_addons_applies_to_check
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS class_options JSONB;
 
 -- Retire the deprecated "The Doctor's Orders" package.
--- Hard delete if no proposals reference it; otherwise mark inactive to preserve history.
-DO $$
-DECLARE
-  docs_id INTEGER;
-  ref_count INTEGER;
-BEGIN
-  SELECT id INTO docs_id FROM service_packages WHERE slug = 'the-doctors-orders';
-  IF docs_id IS NULL THEN
-    RETURN;
-  END IF;
-  SELECT COUNT(*) INTO ref_count FROM proposals WHERE package_id = docs_id;
-  IF ref_count = 0 THEN
-    DELETE FROM service_packages WHERE id = docs_id;
-  ELSE
-    UPDATE service_packages SET is_active = FALSE WHERE id = docs_id;
-  END IF;
-END $$;
+-- Soft-delete (keep history for any existing proposals), then hard-delete only if unreferenced.
+-- Plain idempotent statements — no DO block — so this survives naive SQL splitters.
+UPDATE service_packages SET is_active = FALSE WHERE slug = 'the-doctors-orders';
+DELETE FROM service_packages sp
+  WHERE sp.slug = 'the-doctors-orders'
+    AND NOT EXISTS (SELECT 1 FROM proposals WHERE package_id = sp.id);
 
 -- Seed 6 class packages (per_guest $35, 2hr, 8-20 guests, bar_type='class').
 -- Category 'hosted' keeps the per-guest pricing-engine path; wizard filters on bar_type.
@@ -1605,3 +1594,12 @@ INSERT INTO service_addons (slug, name, description, billing_type, rate, applies
     'Standard shaker tins, strainer, jigger, bar spoon for use during class.',
     'per_guest', 10.00, 'class', 302, 'class_equipment')
 ON CONFLICT (slug) DO NOTHING;
+
+-- Index the new FK so ON DELETE SET NULL scans and admin "addons for package X"
+-- queries stay fast as the add-on catalog grows.
+CREATE INDEX IF NOT EXISTS idx_service_addons_linked_package_id
+  ON service_addons(linked_package_id) WHERE linked_package_id IS NOT NULL;
+
+-- Pre-existing FK without an index; exposed by the retirement query's reference
+-- check. Tiny today, but indexing FK columns is the standard rule.
+CREATE INDEX IF NOT EXISTS idx_proposals_package_id ON proposals(package_id);

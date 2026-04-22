@@ -1,4 +1,4 @@
-const { getStripe } = require('../routes/stripe');
+const { getStripe } = require('./stripeClient');
 const { pool } = require('../db');
 const { getEventTypeLabel } = require('./eventTypes');
 

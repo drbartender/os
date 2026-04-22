@@ -197,7 +197,7 @@ function topShelfClassRequestAdmin({ clientName, clientEmail, clientPhone, spiri
   const name = clientName || 'A client';
   const category = spiritCategory === 'whiskey_bourbon' ? 'Whiskey & Bourbon' : spiritCategory === 'tequila_mezcal' ? 'Tequila & Mezcal' : 'Spirits Tasting';
   return {
-    subject: `[Top Shelf Class Quote] ${name} — ${category}`,
+    subject: `[Top Shelf Class Quote] ${esc(name)} — ${esc(category)}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Top Shelf Class Request</h2>
       <p><strong>${esc(name)}</strong> has requested a Top Shelf <strong>${esc(category)}</strong> class. They expect a custom quote — the draft proposal has no pricing yet.</p>

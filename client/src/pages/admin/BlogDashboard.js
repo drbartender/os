@@ -193,6 +193,10 @@ export default function BlogDashboard() {
   };
 
   const startEdit = async (post) => {
+    // Claim the edit slot up front so the Edit/Delete buttons disable
+    // immediately — prevents double-clicks and row-switch races during
+    // the /admin/blog/:id fetch.
+    setEditingId(post.id);
     setShowCreateForm(false);
     setEditError('');
     setEditFieldErrors({});
@@ -208,8 +212,8 @@ export default function BlogDashboard() {
         body: fullPost.body || '',
         _prevTitle: fullPost.title,
       });
-      setEditingId(post.id);
     } catch (err) {
+      setEditingId(null);
       toast.error(err.message || 'Failed to load post. Try again.');
     }
   };

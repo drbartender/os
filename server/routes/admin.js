@@ -908,9 +908,15 @@ router.post('/blog/upload-image', auth, adminOnly, asyncHandler(async (req, res)
 
 // Get single post with full body (admin edit)
 router.get('/blog/:id', auth, adminOnly, asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id)) {
+    throw new ValidationError({ id: 'Invalid post id' });
+  }
   const result = await pool.query(
-    'SELECT * FROM blog_posts WHERE id = $1',
-    [req.params.id]
+    `SELECT id, slug, title, excerpt, body, cover_image_url,
+            published, published_at, created_at, updated_at
+     FROM blog_posts WHERE id = $1`,
+    [id]
   );
   if (result.rows.length === 0) {
     throw new NotFoundError('Post not found');

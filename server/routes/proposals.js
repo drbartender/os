@@ -374,7 +374,6 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   const cleanClassOptions = isClassBooking && class_options && typeof class_options === 'object'
     ? {
         spirit_category: ['whiskey_bourbon', 'tequila_mezcal'].includes(class_options.spirit_category) ? class_options.spirit_category : null,
-        supply_tier: ['standard', 'premium', 'top_shelf', 'byob'].includes(class_options.supply_tier) ? class_options.supply_tier : null,
         top_shelf_requested: class_options.top_shelf_requested === true,
       }
     : null;
@@ -410,6 +409,14 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     if (!pkgResult.rows[0]) {
       try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
       throw new ValidationError({ package_id: 'Invalid package' });
+    }
+
+    // Top Shelf is a class-only flow. Reject any attempt to short-circuit
+    // pricing against a non-class package (e.g. full-bar wedding) — otherwise
+    // a scripted client could create $0 drafts for premium packages.
+    if (isTopShelfClass && pkgResult.rows[0].bar_type !== 'class') {
+      try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+      throw new ValidationError({ class_options: 'Top Shelf is only valid for class packages' });
     }
 
     // Fetch add-ons (skipped for Top Shelf — pricing is TBD, no addons billable yet)

@@ -19,41 +19,15 @@ function eventLabelFor(row) {
   return getEventTypeLabel({ event_type: row?.event_type, event_type_custom: row?.event_type_custom });
 }
 
-const DEPOSIT_AMOUNT = parseInt(process.env.STRIPE_DEPOSIT_AMOUNT) || 10000; // $100.00
+const {
+  getStripe,
+  getWebhookSecret,
+  getPublishableKey,
+  getLiveClient,
+  getTestClient,
+} = require('../utils/stripeClient');
 
-// ─── Stripe mode toggle ─────────────────────────────────────────────
-// When STRIPE_TEST_MODE_UNTIL (ISO date) is in the future, every Stripe
-// call uses the *_TEST credentials. Once the cutoff passes, the next
-// request flips back to live — no redeploy required (isTestMode() is
-// evaluated per request, not cached at boot).
-
-const stripeLive = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
-const stripeTest = process.env.STRIPE_SECRET_KEY_TEST ? require('stripe')(process.env.STRIPE_SECRET_KEY_TEST) : null;
-
-function isTestMode() {
-  const until = process.env.STRIPE_TEST_MODE_UNTIL;
-  if (!until) return false;
-  const t = new Date(until).getTime();
-  return Number.isFinite(t) && Date.now() < t;
-}
-
-function getStripe() {
-  return isTestMode() && stripeTest ? stripeTest : stripeLive;
-}
-
-function getWebhookSecret() {
-  if (isTestMode() && process.env.STRIPE_WEBHOOK_SECRET_TEST) {
-    return process.env.STRIPE_WEBHOOK_SECRET_TEST;
-  }
-  return process.env.STRIPE_WEBHOOK_SECRET;
-}
-
-function getPublishableKey() {
-  if (isTestMode() && process.env.STRIPE_PUBLISHABLE_KEY_TEST) {
-    return process.env.STRIPE_PUBLISHABLE_KEY_TEST;
-  }
-  return process.env.STRIPE_PUBLISHABLE_KEY;
-}
+const DEPOSIT_AMOUNT = parseInt(process.env.STRIPE_DEPOSIT_AMOUNT, 10) || 10000; // $100.00
 
 /** GET /api/stripe/publishable-key — returns the active publishable key */
 router.get('/publishable-key', (_req, res) => {
@@ -521,8 +495,8 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   // the one whose API keypair matches the event's mode.
   const sig = req.headers['stripe-signature'];
   const verifiers = [
-    { secret: process.env.STRIPE_WEBHOOK_SECRET, client: stripeLive },
-    { secret: process.env.STRIPE_WEBHOOK_SECRET_TEST, client: stripeTest },
+    { secret: process.env.STRIPE_WEBHOOK_SECRET, client: getLiveClient() },
+    { secret: process.env.STRIPE_WEBHOOK_SECRET_TEST, client: getTestClient() },
   ].filter(v => v.secret && v.client);
 
   if (verifiers.length === 0) {
@@ -882,4 +856,3 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 }));
 
 module.exports = router;
-module.exports.getStripe = getStripe;

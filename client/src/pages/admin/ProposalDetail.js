@@ -1692,7 +1692,7 @@ export default function ProposalDetail() {
           ) : null}
 
           {/* Class Options — visible when proposal came from the class wizard */}
-          {proposal.class_options && (proposal.class_options.spirit_category || proposal.class_options.supply_tier || proposal.class_options.top_shelf_requested) && (
+          {proposal.class_options && (proposal.class_options.spirit_category || proposal.class_options.top_shelf_requested) && (
             <div className="card mb-2">
               <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>Class Details</h3>
               {proposal.class_options.top_shelf_requested && (
@@ -1700,20 +1700,12 @@ export default function ProposalDetail() {
                   <strong>Top Shelf requested.</strong> This proposal is a draft with no pricing — set a custom total before sending to the client.
                 </div>
               )}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                {proposal.class_options.spirit_category && (
-                  <div>
-                    <span className="text-muted text-small">Tasting Category</span>
-                    <div>{proposal.class_options.spirit_category === 'whiskey_bourbon' ? 'Whiskey & Bourbon' : proposal.class_options.spirit_category === 'tequila_mezcal' ? 'Tequila & Mezcal' : proposal.class_options.spirit_category}</div>
-                  </div>
-                )}
-                {proposal.class_options.supply_tier && (
-                  <div>
-                    <span className="text-muted text-small">Supply Tier</span>
-                    <div style={{ textTransform: 'capitalize' }}>{String(proposal.class_options.supply_tier).replace('_', ' ')}</div>
-                  </div>
-                )}
-              </div>
+              {proposal.class_options.spirit_category && (
+                <div>
+                  <span className="text-muted text-small">Tasting Category</span>
+                  <div>{proposal.class_options.spirit_category === 'whiskey_bourbon' ? 'Whiskey & Bourbon' : proposal.class_options.spirit_category === 'tequila_mezcal' ? 'Tequila & Mezcal' : proposal.class_options.spirit_category}</div>
+                </div>
+              )}
             </div>
           )}
 
