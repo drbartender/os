@@ -146,7 +146,8 @@ dr-bartender/
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
 │   │   ├── pricingEngine.js    # Pure pricing calculation engine
 │   │   ├── sms.js              # Twilio SMS wrapper
-│   │   └── storage.js          # Cloudflare R2 upload + signed URL helpers
+│   │   ├── storage.js          # Cloudflare R2 upload + signed URL helpers
+│   │   └── stripeClient.js     # Central Stripe client factory (test-mode toggle, fail-closed)
 │   └── scripts/
 │       ├── importBlogPosts.js     # Blog post import script (legacy)
 │       ├── migrateBlogBodies.js  # One-time: convert blog blocks → HTML

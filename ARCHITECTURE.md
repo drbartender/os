@@ -475,17 +475,19 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - Bar fees: `first_bar_fee`, `additional_bar_fee`
 - `includes` (JSONB array of what's included)
 
-**service_addons** (18 rows) — Add-on services
+**service_addons** — Add-on services
 - `slug`, `name`, `description`
 - `billing_type`: per_guest | per_hour | flat | per_guest_timed
 - `rate`, `extra_hour_rate`
-- `applies_to`: byob | hosted | all
+- `applies_to`: byob | hosted | all | class
+- `linked_package_id` FK → service_packages (nullable, ON DELETE SET NULL) — ties supply add-ons to a specific class package; NULL addons are universal (e.g., class equipment kits)
 
 **proposals** — Generated service proposals
 - `token` UUID (public access), `client_id` FK → clients
 - Event details: type, date, start time, duration, location, guest count
 - `package_id` FK → service_packages, `num_bars`, `num_bartenders`
 - `pricing_snapshot` (JSONB — full pricing breakdown at time of creation)
+- `class_options` (JSONB — nullable) — set for class-category bookings; shape: `{ spirit_category: 'whiskey_bourbon' | 'tequila_mezcal' | null, top_shelf_requested: bool }`. Written only by `POST /api/proposals/public/submit` via a whitelist; other writers must preserve the same shape.
 - `total_price`, `status`: draft | sent | viewed | modified | accepted | deposit_paid | balance_paid | confirmed
 - Client signature: `client_signed_name`, `client_signature_data`, `client_signed_at`
 - Payment: `payment_type` (deposit | full), `autopay_enrolled`, `deposit_amount`, `amount_paid`, `balance_due_date`
