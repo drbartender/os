@@ -493,21 +493,21 @@
 <h3>Class Wizard</h3>
 <ul>
 <li><input disabled="" type="checkbox"> Go to <a href="https://drbartender.com/classes" target="_blank" rel="noopener"><code>drbartender.com/classes</code></a></li>
-<li><input disabled="" type="checkbox"> <strong>Step 1 — Choose Class:</strong><ul>
-<li><input disabled="" type="checkbox"> Pick &quot;Craft Cocktails&quot;</li>
+<li><input disabled="" type="checkbox"> <strong>Step 1 — Choose Class:</strong> six classes are listed (Mixology 101, Spirits Tasting, Margarita Workshop, Tropical / Tiki Night, Brunch Cocktails, Mocktail Workshop). Each shows &quot;$35/person&quot;.<ul>
+<li><input disabled="" type="checkbox"> Pick &quot;Mixology 101&quot;</li>
+<li><input disabled="" type="checkbox"> A supply-upgrade section appears below. Leave it on &quot;BYOB — I&#39;ll provide the alcohol&quot; (the default).</li>
 <li><input disabled="" type="checkbox"> Click Next</li>
 </ul>
 </li>
 <li><input disabled="" type="checkbox"> <strong>Step 2 — Details:</strong><ul>
-<li><input disabled="" type="checkbox"> Enter 10 guests, 2 hours</li>
-<li><input disabled="" type="checkbox"> Pick date and start time</li>
-<li><input disabled="" type="checkbox"> Enter event name &quot;Class Test&quot; and a location</li>
+<li><input disabled="" type="checkbox"> Enter 10 guests (duration is locked at 2 hours)</li>
+<li><input disabled="" type="checkbox"> Pick a date and start time</li>
+<li><input disabled="" type="checkbox"> Enter a city or venue name in the Location field</li>
 <li><input disabled="" type="checkbox"> Click Next</li>
 </ul>
 </li>
 <li><input disabled="" type="checkbox"> <strong>Step 3 — Equipment:</strong><ul>
-<li><input disabled="" type="checkbox"> Pick a Tool Kit (Purchase OR Rental — not both)</li>
-<li><input disabled="" type="checkbox"> Check 1–2 equipment boxes</li>
+<li><input disabled="" type="checkbox"> Pick a Tool Kit (Purchase OR Rental — selecting one should deselect the other)</li>
 <li><input disabled="" type="checkbox"> Click Next</li>
 </ul>
 </li>
@@ -516,7 +516,18 @@
 <li><input disabled="" type="checkbox"> Click Submit</li>
 </ul>
 </li>
-<li><input disabled="" type="checkbox"> Success message appears and you&#39;re redirected to a proposal page</li>
+<li><input disabled="" type="checkbox"> Success message appears. Click &quot;View Your Proposal&quot; to open the proposal page.</li>
+<li><input disabled="" type="checkbox"> Verify the proposal shows the class, supply line (or BYOB), tool kit, and the expected total. At 10 guests, BYOB + Tool Kit Rental = $350 (class) + $100 (kit) = $450.</li>
+</ul>
+<h3>Class Wizard — Spirits Tasting with Top Shelf</h3>
+<ul>
+<li><input disabled="" type="checkbox"> Back at <code>/classes</code>, pick <strong>Spirits Tasting</strong></li>
+<li><input disabled="" type="checkbox"> Pick a tasting category (Whiskey &amp; Bourbon or Tequila &amp; Mezcal)</li>
+<li><input disabled="" type="checkbox"> In the supply section, pick <strong>Top Shelf</strong>. The success-screen expectation: &quot;we&#39;ll follow up with custom pricing&quot;.</li>
+<li><input disabled="" type="checkbox"> Fill in the rest of the steps and submit</li>
+<li><input disabled="" type="checkbox"> Success screen should read <strong>&quot;Request submitted!&quot;</strong> with a note about custom Top Shelf pricing — NOT a dollar total.</li>
+<li><input disabled="" type="checkbox"> <strong>Switch to admin.</strong> Find the new proposal — status should be <strong>Draft</strong>, total should be $0.00, and a &quot;Class Details&quot; card should show the tasting category plus a &quot;Top Shelf requested&quot; banner.</li>
+<li><input disabled="" type="checkbox"> <code>contact@drbartender.com</code> should receive an email with subject <code>[Top Shelf Class Quote] {name} — {category}</code>.</li>
 </ul>
 <h3>Lab Notes (Blog)</h3>
 <ul>
@@ -1104,10 +1115,12 @@ Carol Test,carol@example.com,Solo,birthday,manual
 </ul>
 <h4><code>/classes</code> (Class Wizard)</h4>
 <ul>
-<li><input disabled="" type="checkbox"> All 4 steps</li>
-<li><input disabled="" type="checkbox"> Spirit category dropdown (if Spirits Tasting picked)</li>
-<li><input disabled="" type="checkbox"> Supply add-ons mutually exclusive</li>
-<li><input disabled="" type="checkbox"> Top Shelf toggle (if present)</li>
+<li><input disabled="" type="checkbox"> Six class cards render on step 1, each priced at $35/person (Mixology 101, Spirits Tasting, Margarita Workshop, Tropical / Tiki Night, Brunch Cocktails, Mocktail Workshop)</li>
+<li><input disabled="" type="checkbox"> Selecting a class shows the supply upgrade options (BYOB + per-class tiers)</li>
+<li><input disabled="" type="checkbox"> Spirits Tasting surfaces whiskey/bourbon + tequila/mezcal sub-options</li>
+<li><input disabled="" type="checkbox"> Top Shelf tier (Spirits Tasting only) routes to a custom-quote success screen — no dollar total shown</li>
+<li><input disabled="" type="checkbox"> Tool Kit Purchase and Rental are mutually exclusive</li>
+<li><input disabled="" type="checkbox"> Guest count validation: 7 or 21 is rejected; 8 and 20 are accepted</li>
 </ul>
 <h4><code>/labnotes</code> and <code>/labnotes/:slug</code></h4>
 <ul>

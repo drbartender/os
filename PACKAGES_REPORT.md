@@ -80,20 +80,26 @@ If event > 4 hours:   4-hour rate + (extra hours x extra hour rate)
 
 ---
 
-### The Doctor's Orders -- Mixology Class
+### Mixology Classes (6 classes, per-guest pricing)
 
-| Duration | Price |
-|----------|-------|
-| Up to 3 hours | $300 |
-| Each extra hour | +$100 |
-| 4-hour class | $400 |
-| 5-hour class | $500 |
+All classes: **$35/person**, 2 hours, 8-20 guests, 1 instructor, digital recipe cards via QR code, $2M insurance included. Pricing follows the hosted per-guest model even though clients BYOB by default — the $35 is for instruction, equipment, and class materials, not alcohol. Full spec lives in `dr-bartender-class-menu.md`.
 
-**What's included:** Professional instructor, setup & breakdown, cooler, shakers, tools, mixers, juices, garnishes, menu planning, digital curriculum (recipes & instructions), $2M insurance.
+| Class | Slug | Supply Add-on |
+|-------|------|---------------|
+| Mixology 101 | `mixology-101` | $25/person |
+| Spirits Tasting (Whiskey/Bourbon OR Tequila/Mezcal) | `spirits-tasting` | Standard $30 / Premium $45 / Top Shelf custom |
+| Margarita Workshop | `margarita-workshop` | $25/person |
+| Tropical / Tiki Night | `tropical-tiki-night` | $30/person |
+| Brunch Cocktails | `brunch-cocktails` | $30/person |
+| Mocktail Workshop | `mocktail-workshop` | $15/person |
 
-**What the client provides:** The liquor only.
+**Universal class equipment add-ons (mutually exclusive):**
+- Tool Kit Purchase — $55/person (A Bar Above kit, guests keep)
+- Tool Kit Rental — $10/person
 
-**Bar type:** Class -- hands-on mixology instruction.
+**Top Shelf tier (Spirits Tasting only):** wizard submits `class_options.top_shelf_requested = true`; server creates a **draft** proposal with no total and emails admin for manual pricing. Client sees "we'll follow up with custom pricing" on the wizard success screen — no client email goes out until admin sends the priced proposal.
+
+**Bar type:** Class -- hands-on instruction, not event service. Wizard filters `bar_type = 'class'`.
 
 ---
 
@@ -464,14 +470,21 @@ Note: Under 50 guests triggers the small event rates.
 | Bar Rental (0 bars) | Client has own bar | $0.00 |
 | **TOTAL** | | **$690.00** |
 
-### Example 5: BYOB Class (20 guests, 3 hours)
+### Example 5: Mixology 101 class (10 guests, 2 hours, BYOB + Tool Kit Rental)
 
 | Line Item | Calculation | Amount |
 |-----------|-------------|--------|
-| The Doctor's Orders (3hrs) | $300 (flat 3hr rate) | $300.00 |
-| Bar Rental (0 bars) | N/A for class | $0.00 |
-| Handcrafted Syrups 3-Pack | Flat | $75.00 |
-| **TOTAL** | | **$375.00** |
+| Mixology 101 | 10 × $35/person | $350.00 |
+| Tool Kit Rental | 10 × $10/person | $100.00 |
+| **TOTAL** | | **$450.00** |
+
+### Example 6: Spirits Tasting — Whiskey & Bourbon, Standard (12 guests)
+
+| Line Item | Calculation | Amount |
+|-----------|-------------|--------|
+| Spirits Tasting | 12 × $35/person | $420.00 |
+| Standard Tier Spirits | 12 × $30/person | $360.00 |
+| **TOTAL** | | **$780.00** |
 
 ---
 

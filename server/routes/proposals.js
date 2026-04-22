@@ -184,7 +184,7 @@ router.get('/public/packages', publicLimiter, asyncHandler(async (req, res) => {
 /** GET /api/proposals/public/addons — list active add-ons (public, limited fields) */
 router.get('/public/addons', publicLimiter, asyncHandler(async (req, res) => {
   const result = await pool.query(
-    `SELECT id, name, slug, description, billing_type, rate, extra_hour_rate, applies_to, category, requires_addon_slug
+    `SELECT id, name, slug, description, billing_type, rate, extra_hour_rate, applies_to, category, requires_addon_slug, linked_package_id
      FROM service_addons WHERE is_active = true ORDER BY sort_order`
   );
   res.json(result.rows);
@@ -358,7 +358,8 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     event_location, guest_count, package_id, num_bars, addon_ids,
     addon_quantities, syrup_selections,
     event_type, event_type_category, event_type_custom,
-    client_provides_glassware
+    client_provides_glassware,
+    class_options
   } = req.body;
 
   const fieldErrors = {};
@@ -367,6 +368,17 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   if (!package_id) fieldErrors.package_id = 'Package is required';
   if (!guest_count || guest_count < 1) fieldErrors.guest_count = 'Guest count is required';
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
+
+  // Normalize class_options: only persist recognized keys and only for class bookings
+  const isClassBooking = event_type_category === 'class';
+  const cleanClassOptions = isClassBooking && class_options && typeof class_options === 'object'
+    ? {
+        spirit_category: ['whiskey_bourbon', 'tequila_mezcal'].includes(class_options.spirit_category) ? class_options.spirit_category : null,
+        supply_tier: ['standard', 'premium', 'top_shelf', 'byob'].includes(class_options.supply_tier) ? class_options.supply_tier : null,
+        top_shelf_requested: class_options.top_shelf_requested === true,
+      }
+    : null;
+  const isTopShelfClass = !!cleanClassOptions && cleanClassOptions.top_shelf_requested;
 
   const dbClient = await pool.connect();
   try {
@@ -400,9 +412,9 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       throw new ValidationError({ package_id: 'Invalid package' });
     }
 
-    // Fetch add-ons
+    // Fetch add-ons (skipped for Top Shelf — pricing is TBD, no addons billable yet)
     let addons = [];
-    if (addon_ids && addon_ids.length > 0) {
+    if (!isTopShelfClass && addon_ids && addon_ids.length > 0) {
       const addonResult = await dbClient.query(
         'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
         [addon_ids]
@@ -413,49 +425,62 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       }));
     }
 
-    // Calculate pricing
+    // Calculate pricing (skipped for Top Shelf — draft with no total, admin prices later)
     const gc = Number(guest_count) || 50;
     const dh = Number(event_duration_hours) || 4;
     const nb = Number(num_bars) || 0;
-    const snapshot = calculateProposal({
-      pkg: pkgResult.rows[0],
-      guestCount: gc,
-      durationHours: dh,
-      numBars: nb,
-      addons,
-      syrupSelections: syrup_selections || [],
-    });
+    const snapshot = isTopShelfClass
+      ? null
+      : calculateProposal({
+          pkg: pkgResult.rows[0],
+          guestCount: gc,
+          durationHours: dh,
+          numBars: nb,
+          addons,
+          syrupSelections: syrup_selections || [],
+        });
+
+    const proposalStatus = isTopShelfClass ? 'draft' : 'sent';
+    const snapshotJson = snapshot ? JSON.stringify(snapshot) : '{}';
+    const totalPrice = snapshot ? snapshot.total : 0;
+    const numBartenders = snapshot ? snapshot.staffing.actual : 1;
 
     // Insert proposal
     const glasswareNote = client_provides_glassware ? 'Client will provide their own glassware (for Flavor Blaster)' : null;
     const proposalResult = await dbClient.query(`
       INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours,
         event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, status,
-        event_type, event_type_category, event_type_custom, admin_notes)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'sent',$12,$13,$14,$15)
+        event_type, event_type_category, event_type_custom, admin_notes, class_options)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
       RETURNING *
     `, [
       finalClientId, event_date || null,
       event_start_time || null, dh, event_location || null, gc, package_id, nb,
-      snapshot.staffing.actual, JSON.stringify(snapshot), snapshot.total,
+      numBartenders, snapshotJson, totalPrice, proposalStatus,
       event_type || null, event_type_category || null, event_type_custom || null,
-      glasswareNote
+      glasswareNote,
+      cleanClassOptions ? JSON.stringify(cleanClassOptions) : null
     ]);
 
     const proposal = proposalResult.rows[0];
 
-    // Insert proposal add-ons
-    for (const addon of snapshot.addons) {
-      await dbClient.query(`
-        INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      `, [proposal.id, addon.id, addon.name, addon.billing_type, addon.rate, addon.quantity, addon.line_total, addon.variant || null]);
+    // Insert proposal add-ons (Top Shelf has no snapshot, so nothing to insert)
+    if (snapshot) {
+      for (const addon of snapshot.addons) {
+        await dbClient.query(`
+          INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        `, [proposal.id, addon.id, addon.name, addon.billing_type, addon.rate, addon.quantity, addon.line_total, addon.variant || null]);
+      }
     }
 
     // Log creation
+    const logDetails = snapshot
+      ? { source: 'website_quote_wizard', total: snapshot.total, package: snapshot.package.name }
+      : { source: 'website_quote_wizard', top_shelf_requested: true, package: pkgResult.rows[0].name, spirit_category: cleanClassOptions?.spirit_category || null };
     await dbClient.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'created', 'client', $2)`,
-      [proposal.id, JSON.stringify({ source: 'website_quote_wizard', total: snapshot.total, package: snapshot.package.name })]
+      [proposal.id, JSON.stringify(logDetails)]
     );
 
     // Mark any active quote draft as completed
@@ -478,28 +503,48 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
 
     // Send email notifications (non-blocking)
     try {
-      const proposalUrl = `${PUBLIC_SITE_URL}/proposal/${proposal.token}`;
-      const eventTypeLabel = getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom });
-      const tpl = emailTemplates.proposalSent({ clientName: client_name.trim(), eventTypeLabel, proposalUrl });
-      await sendEmail({ to: client_email.trim().toLowerCase(), ...tpl });
-
       const adminEmail = process.env.ADMIN_EMAIL;
-      if (adminEmail) {
-        const adminUrl = `${ADMIN_URL}/admin/proposals/${proposal.id}`;
-        const tpl2 = emailTemplates.clientSignedAdmin({
-          clientName: client_name.trim(),
-          eventTypeLabel,
-          proposalId: proposal.id,
-          adminUrl
-        });
-        await sendEmail({ to: adminEmail, subject: `New Website Quote: ${eventTypeLabel}`, html: tpl2.html });
+      const adminUrl = `${ADMIN_URL}/admin/proposals/${proposal.id}`;
+
+      if (isTopShelfClass) {
+        // Top Shelf: admin-only alert (pricing is TBD). Client already saw
+        // "we'll follow up with custom pricing" on the wizard success screen.
+        if (adminEmail) {
+          const tpl = emailTemplates.topShelfClassRequestAdmin({
+            clientName: client_name.trim(),
+            clientEmail: client_email.trim().toLowerCase(),
+            clientPhone: client_phone || null,
+            spiritCategory: cleanClassOptions?.spirit_category || null,
+            guestCount: gc,
+            eventDate: event_date || null,
+            eventLocation: event_location || null,
+            proposalId: proposal.id,
+            adminUrl,
+          });
+          await sendEmail({ to: adminEmail, ...tpl });
+        }
+      } else {
+        const proposalUrl = `${PUBLIC_SITE_URL}/proposal/${proposal.token}`;
+        const eventTypeLabel = getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom });
+        const tpl = emailTemplates.proposalSent({ clientName: client_name.trim(), eventTypeLabel, proposalUrl });
+        await sendEmail({ to: client_email.trim().toLowerCase(), ...tpl });
+
+        if (adminEmail) {
+          const tpl2 = emailTemplates.clientSignedAdmin({
+            clientName: client_name.trim(),
+            eventTypeLabel,
+            proposalId: proposal.id,
+            adminUrl
+          });
+          await sendEmail({ to: adminEmail, subject: `New Website Quote: ${eventTypeLabel}`, html: tpl2.html });
+        }
       }
     } catch (emailErr) {
       Sentry.captureException(emailErr, { tags: { route: 'proposals/public/submit', phase: 'email' } });
       console.error('Public proposal emails failed (non-blocking):', emailErr);
     }
 
-    res.status(201).json({ token: proposal.token, total: snapshot.total });
+    res.status(201).json({ token: proposal.token, total: snapshot ? snapshot.total : 0, top_shelf: isTopShelfClass });
   } catch (err) {
     try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
     throw err;

@@ -1487,3 +1487,121 @@ DO $$ BEGIN
   -- Ensure invoice_line_items.invoice_id is NOT NULL on existing tables
   ALTER TABLE invoice_line_items ALTER COLUMN invoice_id SET NOT NULL;
 END $$;
+
+-- ─── Mixology Classes ──────────────────────────────────────────────
+-- Source of truth: dr-bartender-class-menu.md (6 classes, $35/person, 2hr, 8-20 guests).
+-- Wizard: client/src/pages/website/ClassWizard.js (filters by bar_type='class').
+
+-- Schema extensions the wizard already expects
+ALTER TABLE service_addons ADD COLUMN IF NOT EXISTS linked_package_id INTEGER
+  REFERENCES service_packages(id) ON DELETE SET NULL;
+
+ALTER TABLE service_addons DROP CONSTRAINT IF EXISTS service_addons_applies_to_check;
+ALTER TABLE service_addons ADD CONSTRAINT service_addons_applies_to_check
+  CHECK (applies_to IN ('byob', 'hosted', 'all', 'class'));
+
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS class_options JSONB;
+
+-- Retire the deprecated "The Doctor's Orders" package.
+-- Hard delete if no proposals reference it; otherwise mark inactive to preserve history.
+DO $$
+DECLARE
+  docs_id INTEGER;
+  ref_count INTEGER;
+BEGIN
+  SELECT id INTO docs_id FROM service_packages WHERE slug = 'the-doctors-orders';
+  IF docs_id IS NULL THEN
+    RETURN;
+  END IF;
+  SELECT COUNT(*) INTO ref_count FROM proposals WHERE package_id = docs_id;
+  IF ref_count = 0 THEN
+    DELETE FROM service_packages WHERE id = docs_id;
+  ELSE
+    UPDATE service_packages SET is_active = FALSE WHERE id = docs_id;
+  END IF;
+END $$;
+
+-- Seed 6 class packages (per_guest $35, 2hr, 8-20 guests, bar_type='class').
+-- Category 'hosted' keeps the per-guest pricing-engine path; wizard filters on bar_type.
+-- first_bar_fee/additional_bar_fee=0 so num_bars>0 edge cases don't incur bar charges.
+-- extra_hour_rate=0 because the menu locks duration at 2hr; admin overrides in-app if needed.
+INSERT INTO service_packages (slug, name, description, category, pricing_type,
+    base_rate_3hr, base_rate_4hr, extra_hour_rate, min_guests,
+    base_rate_3hr_small, base_rate_4hr_small, extra_hour_rate_small,
+    bartenders_included, guests_per_bartender, extra_bartender_hourly,
+    first_bar_fee, additional_bar_fee, bar_type, min_total, includes, sort_order)
+VALUES
+  ('mixology-101', 'Mixology 101',
+    'Learn the fundamentals of cocktail making. 2-3 classic cocktails (Old Fashioned, Margarita, Martini rotation) with hands-on technique training in shaking, stirring, muddling, measuring, and ice handling.',
+    'hosted', 'per_guest', NULL, 35, 0, 8, NULL, 35, 0, 1, 100, 40, 0, 0, 'class', NULL,
+    '["2-3 classic cocktails (rotating selection)","Hands-on technique training","Shaking, stirring, muddling, measuring","Digital recipe cards via QR code","Professional instructor","Class materials & equipment setup","$2 million liquor liability insurance"]', 101),
+  ('spirits-tasting', 'Spirits Tasting',
+    'A guided tasting experience with education on tasting notes, history, regions, and production. Choose Whiskey & Bourbon or Tequila & Mezcal — 4-5 selections with nosing techniques and flavor profiles.',
+    'hosted', 'per_guest', NULL, 35, 0, 8, NULL, 35, 0, 1, 100, 40, 0, 0, 'class', NULL,
+    '["Choose Whiskey & Bourbon or Tequila & Mezcal","4-5 guided tasting selections","Nosing techniques & flavor profile education","Regional differences & production methods","Digital recipe cards via QR code","Professional instructor","$2 million liquor liability insurance"]', 102),
+  ('margarita-workshop', 'Margarita Workshop',
+    'A deep dive into the margarita. 3-4 variations exploring how triple sec, Cointreau, agave syrup, and Grand Marnier change the drink, plus flavor additions (spicy, mango, strawberry).',
+    'hosted', 'per_guest', NULL, 35, 0, 8, NULL, 35, 0, 1, 100, 40, 0, 0, 'class', NULL,
+    '["3-4 margarita variations","Recipe education on base ingredients","Flavor additions: spicy, mango, strawberry","Digital recipe cards via QR code","Professional instructor","Class materials & equipment setup","$2 million liquor liability insurance"]', 103),
+  ('tropical-tiki-night', 'Tropical / Tiki Night',
+    'A fun, colorful class exploring tiki cocktails and rum-based drinks. 4 cocktails (Mai Tai, Piña Colada, Rum Punch, Painkiller) with education on rum styles, tropical techniques, and tiki culture.',
+    'hosted', 'per_guest', NULL, 35, 0, 8, NULL, 35, 0, 1, 100, 40, 0, 0, 'class', NULL,
+    '["4 tiki cocktails: Mai Tai, Piña Colada, Rum Punch, Painkiller","Rum styles & tropical techniques","Tiki culture & history","Fun extras: falernum, orgeat, cinnamon syrup","Digital recipe cards via QR code","Professional instructor","$2 million liquor liability insurance"]', 104),
+  ('brunch-cocktails', 'Brunch Cocktails',
+    'Master the art of brunch drinks. 4 cocktails (Mimosa variations, Bloody Mary build, Espresso Martini, Aperol Spritz) with education on champagne cocktails and espresso techniques.',
+    'hosted', 'per_guest', NULL, 35, 0, 8, NULL, 35, 0, 1, 100, 40, 0, 0, 'class', NULL,
+    '["4 brunch cocktails: Mimosa, Bloody Mary, Espresso Martini, Aperol Spritz","Champagne cocktail education","Building a Bloody Mary bar","Espresso techniques","Digital recipe cards via QR code","Professional instructor","$2 million liquor liability insurance"]', 105),
+  ('mocktail-workshop', 'Mocktail Workshop',
+    'Virgin versions of popular cocktails — same techniques, same flavor, no alcohol. 4 mocktails (Mojito, Espresso Martini, Margarita, Piña Colada). Great for corporate events, inclusive gatherings, and sober-curious crowds.',
+    'hosted', 'per_guest', NULL, 35, 0, 8, NULL, 35, 0, 1, 100, 40, 0, 0, 'class', NULL,
+    '["4 virgin cocktails: Mojito, Espresso Martini, Margarita, Piña Colada","Build flavor without alcohol using real cocktail techniques","Digital recipe cards via QR code","Professional instructor","Class materials & equipment setup","$2 million liquor liability insurance"]', 106)
+ON CONFLICT (slug) DO NOTHING;
+
+-- Seed per-class supply add-ons (linked_package_id ties each to its class).
+-- Spirits Tasting has two tiers (Standard, Premium); Top Shelf is handled via
+-- class_options.top_shelf_requested and an admin alert — no seeded row.
+INSERT INTO service_addons (slug, name, description, billing_type, rate, applies_to, sort_order, category, linked_package_id)
+SELECT 'mixology-101-supplies', 'Mixology 101 Supplies', 'Spirits (Tito''s Vodka, Jim Beam Bourbon, Bacardi Rum, 1800 Tequila, Bombay Gin) plus all mixers, garnishes, ice, and disposables.', 'per_guest', 25.00, 'class', 201, 'class_supplies', sp.id
+FROM service_packages sp WHERE sp.slug = 'mixology-101'
+ON CONFLICT (slug) DO NOTHING;
+
+INSERT INTO service_addons (slug, name, description, billing_type, rate, applies_to, sort_order, category, linked_package_id)
+SELECT 'spirits-tasting-standard', 'Standard Tier Spirits', 'Whiskey: Buffalo Trace, Bulleit, Maker''s Mark, Woodford Reserve. Tequila: 1800, Espolòn, Altos, Vida Mezcal. Selections may vary seasonally.', 'per_guest', 30.00, 'class', 202, 'class_supplies', sp.id
+FROM service_packages sp WHERE sp.slug = 'spirits-tasting'
+ON CONFLICT (slug) DO NOTHING;
+
+INSERT INTO service_addons (slug, name, description, billing_type, rate, applies_to, sort_order, category, linked_package_id)
+SELECT 'spirits-tasting-premium', 'Premium Tier Spirits', 'Whiskey: Angel''s Envy, Knob Creek, Four Roses Single Barrel, rye selection. Tequila: Casamigos, Milagro Reposado, Del Maguey, Fortaleza.', 'per_guest', 45.00, 'class', 203, 'class_supplies', sp.id
+FROM service_packages sp WHERE sp.slug = 'spirits-tasting'
+ON CONFLICT (slug) DO NOTHING;
+
+INSERT INTO service_addons (slug, name, description, billing_type, rate, applies_to, sort_order, category, linked_package_id)
+SELECT 'margarita-workshop-supplies', 'Margarita Workshop Supplies', 'Tequila, all recipe variation components, fresh fruit, mixers, garnishes, ice, and disposables.', 'per_guest', 25.00, 'class', 204, 'class_supplies', sp.id
+FROM service_packages sp WHERE sp.slug = 'margarita-workshop'
+ON CONFLICT (slug) DO NOTHING;
+
+INSERT INTO service_addons (slug, name, description, billing_type, rate, applies_to, sort_order, category, linked_package_id)
+SELECT 'tropical-tiki-supplies', 'Tropical / Tiki Supplies', 'Multiple rum styles (white, dark, spiced), coconut cream, pineapple, orgeat, falernum, cinnamon syrup, garnishes, ice, and disposables.', 'per_guest', 30.00, 'class', 205, 'class_supplies', sp.id
+FROM service_packages sp WHERE sp.slug = 'tropical-tiki-night'
+ON CONFLICT (slug) DO NOTHING;
+
+INSERT INTO service_addons (slug, name, description, billing_type, rate, applies_to, sort_order, category, linked_package_id)
+SELECT 'brunch-cocktails-supplies', 'Brunch Cocktails Supplies', 'Prosecco/champagne, vodka, Aperol, espresso liqueur, juices, Bloody Mary fixings, garnishes, ice, and disposables.', 'per_guest', 30.00, 'class', 206, 'class_supplies', sp.id
+FROM service_packages sp WHERE sp.slug = 'brunch-cocktails'
+ON CONFLICT (slug) DO NOTHING;
+
+INSERT INTO service_addons (slug, name, description, billing_type, rate, applies_to, sort_order, category, linked_package_id)
+SELECT 'mocktail-workshop-supplies', 'Mocktail Workshop Supplies', 'All juices, syrups, sodas, garnishes, ice, and disposables.', 'per_guest', 15.00, 'class', 207, 'class_supplies', sp.id
+FROM service_packages sp WHERE sp.slug = 'mocktail-workshop'
+ON CONFLICT (slug) DO NOTHING;
+
+-- Universal class equipment add-ons (not tied to a specific package).
+-- Wizard enforces mutual exclusion between purchase and rental.
+INSERT INTO service_addons (slug, name, description, billing_type, rate, applies_to, sort_order, category) VALUES
+  ('class-tool-kit-purchase', 'Tool Kit (Purchase)',
+    'A Bar Above kit: Boston shaker tins (engraved with the Dr. Bartender logo), hawthorne strainer, jigger, bar spoon. Guests keep everything.',
+    'per_guest', 55.00, 'class', 301, 'class_equipment'),
+  ('class-tool-kit-rental', 'Tool Kit (Rental)',
+    'Standard shaker tins, strainer, jigger, bar spoon for use during class.',
+    'per_guest', 10.00, 'class', 302, 'class_equipment')
+ON CONFLICT (slug) DO NOTHING;

@@ -94,22 +94,32 @@ You're a first-time visitor who's thinking about hiring a bartender. Use Window 
 
 ### Class Wizard
 - [ ] Go to `drbartender.com/classes`
-- [ ] **Step 1 — Choose Class:**
-  - [ ] Pick "Craft Cocktails"
+- [ ] **Step 1 — Choose Class:** six classes are listed (Mixology 101, Spirits Tasting, Margarita Workshop, Tropical / Tiki Night, Brunch Cocktails, Mocktail Workshop). Each shows "$35/person".
+  - [ ] Pick "Mixology 101"
+  - [ ] A supply-upgrade section appears below. Leave it on "BYOB — I'll provide the alcohol" (the default).
   - [ ] Click Next
 - [ ] **Step 2 — Details:**
-  - [ ] Enter 10 guests, 2 hours
-  - [ ] Pick date and start time
-  - [ ] Enter event name "Class Test" and a location
+  - [ ] Enter 10 guests (duration is locked at 2 hours)
+  - [ ] Pick a date and start time
+  - [ ] Enter a city or venue name in the Location field
   - [ ] Click Next
 - [ ] **Step 3 — Equipment:**
-  - [ ] Pick a Tool Kit (Purchase OR Rental — not both)
-  - [ ] Check 1–2 equipment boxes
+  - [ ] Pick a Tool Kit (Purchase OR Rental — selecting one should deselect the other)
   - [ ] Click Next
 - [ ] **Step 4 — Your Info:**
   - [ ] Name, email, phone
   - [ ] Click Submit
-- [ ] Success message appears and you're redirected to a proposal page
+- [ ] Success message appears. Click "View Your Proposal" to open the proposal page.
+- [ ] Verify the proposal shows the class, supply line (or BYOB), tool kit, and the expected total. At 10 guests, BYOB + Tool Kit Rental = $350 (class) + $100 (kit) = $450.
+
+### Class Wizard — Spirits Tasting with Top Shelf
+- [ ] Back at `/classes`, pick **Spirits Tasting**
+- [ ] Pick a tasting category (Whiskey & Bourbon or Tequila & Mezcal)
+- [ ] In the supply section, pick **Top Shelf**. The success-screen expectation: "we'll follow up with custom pricing".
+- [ ] Fill in the rest of the steps and submit
+- [ ] Success screen should read **"Request submitted!"** with a note about custom Top Shelf pricing — NOT a dollar total.
+- [ ] **Switch to admin.** Find the new proposal — status should be **Draft**, total should be $0.00, and a "Class Details" card should show the tasting category plus a "Top Shelf requested" banner.
+- [ ] `contact@drbartender.com` should receive an email with subject `[Top Shelf Class Quote] {name} — {category}`.
 
 ### Lab Notes (Blog)
 - [ ] Go to `drbartender.com/labnotes`
@@ -639,10 +649,12 @@ For the thorough regression pass. This is a flat list of every page on every sub
 - [ ] Bottom CTA button
 
 #### `/classes` (Class Wizard)
-- [ ] All 4 steps
-- [ ] Spirit category dropdown (if Spirits Tasting picked)
-- [ ] Supply add-ons mutually exclusive
-- [ ] Top Shelf toggle (if present)
+- [ ] Six class cards render on step 1, each priced at $35/person (Mixology 101, Spirits Tasting, Margarita Workshop, Tropical / Tiki Night, Brunch Cocktails, Mocktail Workshop)
+- [ ] Selecting a class shows the supply upgrade options (BYOB + per-class tiers)
+- [ ] Spirits Tasting surfaces whiskey/bourbon + tequila/mezcal sub-options
+- [ ] Top Shelf tier (Spirits Tasting only) routes to a custom-quote success screen — no dollar total shown
+- [ ] Tool Kit Purchase and Rental are mutually exclusive
+- [ ] Guest count validation: 7 or 21 is rejected; 8 and 20 are accepted
 
 #### `/labnotes` and `/labnotes/:slug`
 - [ ] Empty state if no posts

@@ -193,6 +193,25 @@ function paymentReceivedAdmin({ clientName, eventTypeLabel = 'event', amount, pa
   };
 }
 
+function topShelfClassRequestAdmin({ clientName, clientEmail, clientPhone, spiritCategory, guestCount, eventDate, eventLocation, proposalId, adminUrl }) {
+  const name = clientName || 'A client';
+  const category = spiritCategory === 'whiskey_bourbon' ? 'Whiskey & Bourbon' : spiritCategory === 'tequila_mezcal' ? 'Tequila & Mezcal' : 'Spirits Tasting';
+  return {
+    subject: `[Top Shelf Class Quote] ${name} — ${category}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Top Shelf Class Request</h2>
+      <p><strong>${esc(name)}</strong> has requested a Top Shelf <strong>${esc(category)}</strong> class. They expect a custom quote — the draft proposal has no pricing yet.</p>
+      <p style="background:${BRAND.bg};padding:12px;border-radius:4px;margin:16px 0;">
+        <strong>Contact:</strong> ${esc(clientEmail || 'no email')}${clientPhone ? ` &middot; ${esc(clientPhone)}` : ''}<br/>
+        <strong>Guests:</strong> ${esc(guestCount || '?')} &middot; <strong>Event:</strong> ${esc(eventDate || 'TBD')}${eventLocation ? ` &middot; ${esc(eventLocation)}` : ''}
+      </p>
+      <p>Open the draft, set the custom total, then send to the client.</p>
+      ${ctaButton(adminUrl, 'Open Draft Proposal')}
+    `),
+    text: `Top Shelf class request from ${name} (${clientEmail || 'no email'}${clientPhone ? `, ${clientPhone}` : ''}): ${category}, ${guestCount || '?'} guests, ${eventDate || 'date TBD'}. Draft #${proposalId}. Open: ${adminUrl}`,
+  };
+}
+
 function newApplicationAdmin({ applicantName, applicantEmail, adminUrl }) {
   return {
     subject: `New Application: ${applicantName}`,
@@ -391,6 +410,7 @@ module.exports = {
   drinkPlanBalanceUpdate,
   clientSignedAdmin,
   paymentReceivedAdmin,
+  topShelfClassRequestAdmin,
   newApplicationAdmin,
   shiftRequestAdmin,
   shiftRequestApproved,
