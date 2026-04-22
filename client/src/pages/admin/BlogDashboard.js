@@ -192,21 +192,26 @@ export default function BlogDashboard() {
     }
   };
 
-  const startEdit = (post) => {
-    setEditingId(post.id);
+  const startEdit = async (post) => {
     setShowCreateForm(false);
     setEditError('');
     setEditFieldErrors({});
-    setEditForm({
-      title: post.title,
-      slug: post.slug,
-      excerpt: post.excerpt || '',
-      cover_image_url: post.cover_image_url || '',
-      published: post.published,
-      published_at: post.published_at || '',
-      body: post.body || '',
-      _prevTitle: post.title,
-    });
+    try {
+      const { data: fullPost } = await api.get(`/admin/blog/${post.id}`);
+      setEditForm({
+        title: fullPost.title,
+        slug: fullPost.slug,
+        excerpt: fullPost.excerpt || '',
+        cover_image_url: fullPost.cover_image_url || '',
+        published: fullPost.published,
+        published_at: fullPost.published_at || '',
+        body: fullPost.body || '',
+        _prevTitle: fullPost.title,
+      });
+      setEditingId(post.id);
+    } catch (err) {
+      toast.error(err.message || 'Failed to load post. Try again.');
+    }
   };
 
   const handleUpdate = async (e) => {

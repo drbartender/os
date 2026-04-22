@@ -906,6 +906,18 @@ router.post('/blog/upload-image', auth, adminOnly, asyncHandler(async (req, res)
   res.json({ url: `/api/blog/images/${filename}` });
 }));
 
+// Get single post with full body (admin edit)
+router.get('/blog/:id', auth, adminOnly, asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    'SELECT * FROM blog_posts WHERE id = $1',
+    [req.params.id]
+  );
+  if (result.rows.length === 0) {
+    throw new NotFoundError('Post not found');
+  }
+  res.json(result.rows[0]);
+}));
+
 // Update post
 router.put('/blog/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   const { id } = req.params;
