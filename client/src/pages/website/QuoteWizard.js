@@ -473,7 +473,7 @@ export default function QuoteWizard() {
     'flavor-blaster-rental': 'Aromatic bubbles that burst on the first sip',
     'smoked-cocktail-kit': 'Torch and wood chips — smoke any drink on demand',
     // Beverage
-    'soft-drink-addon': 'Required if your guests will be drinking soda',
+    'soft-drink-addon': 'Required when 10+ guests (or 20%) drink soda on their own',
     'mocktail-bar': 'We bring all the specialty ingredients',
     'pre-batched-mocktail': 'Simple, ready-to-pour NA option',
     'house-made-ginger-beer': 'Fresh-pressed, carbonated live at the bar',

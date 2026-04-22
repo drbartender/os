@@ -594,7 +594,7 @@ INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_h
   ('full-mixers-only', 'Full Mixers', 'Complete mixer selection. Does not include Foundation items.', 'per_guest', 4.50, NULL, 'byob', 8),
   ('garnish-package-only', 'Garnish Package', 'Premium garnish package (lemons, limes, oranges, cherries, olives).', 'per_100_guests', 50.00, NULL, 'byob', 9),
   ('champagne-toast', 'Champagne Toast', 'Champagne toast for all guests.', 'per_guest', 2.50, NULL, 'all', 10),
-  ('soft-drink-addon', 'Soft Drink Add-On', 'Soft drinks for all guests.', 'per_guest', 3.00, NULL, 'all', 20),
+  ('soft-drink-addon', 'Soft Drink Add-On', 'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine — but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy — mixers stay flowing, and the non-drinkers get their own dedicated stash.', 'per_guest', 3.00, NULL, 'all', 20),
   ('pre-batched-mocktail', 'Pre-Batched Mocktail', 'A pre-batched non-alcoholic cocktail ready to pour. Great for events where you want a sophisticated NA option without the complexity of a full mocktail bar. Add more for variety.', 'per_guest', 1.50, NULL, 'all', 21),
   ('mocktail-bar', 'Mocktail Bar', 'Full mocktail bar with signature recipes.', 'per_guest_timed', 7.50, 2.00, 'all', 22),
   ('non-alcoholic-beer', 'Non-Alcoholic Beer', 'NA beer selection for guests (Athletic Brewing, Heineken 0.0, etc.).', 'per_guest', 4.00, NULL, 'hosted', 23),
@@ -629,6 +629,14 @@ UPDATE service_addons SET category = 'logistics' WHERE slug = 'parking-fee';
 -- Update prices to match spec
 UPDATE service_addons SET rate = 3.50 WHERE slug = 'soft-drink-addon';
 UPDATE service_addons SET rate = 2.00 WHERE slug = 'pre-batched-mocktail';
+
+-- Gated description update for soft-drink-addon: only replaces the old terse seed
+-- default. Admin edits are preserved (description stays untouched if it no longer
+-- matches the old seed). Fresh DBs get the new text directly from the INSERT above,
+-- so this becomes a no-op there.
+UPDATE service_addons
+SET description = 'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine — but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy — mixers stay flowing, and the non-drinkers get their own dedicated stash.'
+WHERE slug = 'soft-drink-addon' AND description = 'Soft drinks for all guests.';
 
 -- Polished descriptions were previously applied unconditionally on every boot,
 -- clobbering any admin-dashboard edits. The INSERT above seeds reasonable
