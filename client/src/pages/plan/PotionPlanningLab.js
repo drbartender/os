@@ -4,7 +4,7 @@ import axios from 'axios';
 import { API_BASE_URL as BASE_URL } from '../../utils/api';
 import FormBanner from '../../components/FormBanner';
 import { useToast } from '../../context/ToastContext';
-import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue, buildExplorationQueue, derivePhase } from './data/servingTypes';
+import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue, buildExplorationQueue, derivePhase, buildHostedStepQueue, hostedActiveModules, HOSTED_GUEST_PREFS_STEP } from './data/servingTypes';
 import { DRINK_UPGRADES, PER_DRINK_UPGRADE_SLUGS } from './data/drinkUpgrades';
 import WelcomeStep from './steps/WelcomeStep';
 import QuickPickStep from './steps/QuickPickStep';
@@ -24,6 +24,7 @@ import ExplorationBrowseStep from './steps/ExplorationBrowseStep';
 import MocktailInterestStep from './steps/MocktailInterestStep';
 import ExplorationSaveStep from './steps/ExplorationSaveStep';
 import RefinementWelcomeStep from './steps/RefinementWelcomeStep';
+import HostedGuestPrefsStep from './steps/HostedGuestPrefsStep';
 
 const DEFAULT_ACTIVE_MODULES = { signatureDrinks: false, mocktails: false, fullBar: false, beerWineOnly: false };
 
@@ -114,6 +115,12 @@ export default function PotionPlanningLab() {
     () => new URLSearchParams(window.location.search).get('paid') === 'true',
     []
   );
+
+  const isHostedRefinement = useMemo(() => {
+    if (!plan) return false;
+    if (phase !== 'refinement') return false;
+    return plan.package_category === 'hosted';
+  }, [plan, phase]);
 
   // Flow state
   const [step, setStep] = useState('welcome');
@@ -252,12 +259,12 @@ export default function PotionPlanningLab() {
             // If already has a serving type and modules, stay at current state
             // Otherwise start at refinement welcome
             if (!data.serving_type) {
-              // Mocktail-only package — auto-select mocktails quick pick
-              if (planData.package_bar_type === 'mocktail') {
-                const mocktailPick = QUICK_PICKS.find(p => p.key === 'mocktails');
-                setQuickPickChoice('mocktails');
-                setActiveModules(mocktailPick.activeModules);
-                setModuleQueue(buildStepQueue(mocktailPick.activeModules));
+              if (planData.package_category === 'hosted') {
+                // Hosted package — skip QuickPick, derive queue directly from bar_type
+                const barType = planData.package_bar_type || 'full_bar';
+                setQuickPickChoice(barType);
+                setActiveModules(hostedActiveModules(barType));
+                setModuleQueue(buildHostedStepQueue(barType));
               }
               setStep('refinementWelcome');
             }
@@ -636,7 +643,8 @@ export default function PotionPlanningLab() {
 
     // Refinement navigation
     if (step === 'welcome' || step === 'refinementWelcome') {
-      // Mocktail-only packages skip the quick pick
+      // Hosted packages skip the QuickPick — queue was pre-built from bar_type.
+      if (plan?.package_category === 'hosted') return goToStep(moduleQueue[0]);
       if (plan?.package_bar_type === 'mocktail') return goToStep(moduleQueue[0]);
       return goToStep('quickPick');
     }
@@ -686,7 +694,10 @@ export default function PotionPlanningLab() {
       if (currentIdx > 0) {
         return goToStep(moduleQueue[currentIdx - 1]);
       }
-      // Mocktail-only packages skip back to quickPick
+      // Hosted packages never show QuickPick; back from first step goes to welcome.
+      if (plan?.package_category === 'hosted') {
+        return goToStep(plan?.exploration_submitted_at ? 'refinementWelcome' : 'welcome');
+      }
       if (plan?.package_bar_type === 'mocktail') {
         return goToStep(plan?.exploration_submitted_at ? 'refinementWelcome' : 'welcome');
       }
@@ -909,6 +920,7 @@ export default function PotionPlanningLab() {
             onSelfProvidedChange={updateSyrupSelfProvided}
             proposalSyrups={proposalSyrups}
             phase={phase}
+            plan={plan}
             onNext={() => handleNext()}
             onBack={() => handleBack()}
             onSkipMocktails={() => handleSkipToAfter(MODULE_STEP_MAP.mocktails)}
@@ -930,6 +942,7 @@ export default function PotionPlanningLab() {
             onSyrupToggle={toggleSyrup}
             proposalSyrups={proposalSyrups}
             phase={phase}
+            plan={plan}
             onNext={() => handleNext()}
             onBack={() => handleBack()}
           />
@@ -965,6 +978,17 @@ export default function PotionPlanningLab() {
             onChange={updateSelections}
           />
         );
+      case HOSTED_GUEST_PREFS_STEP:
+        return (
+          <HostedGuestPrefsStep
+            plan={plan}
+            selections={selections}
+            onChange={updateSelections}
+            addOns={selections.addOns || {}}
+            toggleAddOn={toggleAddOn}
+            addonPricing={addonPricing}
+          />
+        );
       case MODULE_STEP_MAP.logistics:
         return (
           <LogisticsStep
@@ -978,6 +1002,7 @@ export default function PotionPlanningLab() {
             numBartenders={numBartenders}
             numBars={numBars}
             pricingSnapshot={pricingSnapshot}
+            plan={plan}
           />
         );
       case 'confirmation':
