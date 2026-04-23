@@ -178,7 +178,7 @@ dr-bartender/
 │   │   │   ├── (staff)         # Application, ApplicationStatus, StaffPortal
 │   │   │   ├── (admin)         # AdminDashboard, AdminApplicationDetail, AdminUserDetail
 │   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, menus, hiring, blog, email marketing)
-│   │   │   ├── plan/           # PotionPlanningLab — public event questionnaire (with steps/ and data/)
+│   │   │   ├── plan/           # PotionPlanningLab — public event questionnaire (with steps/ and data/; steps/HostedGuestPrefsStep.js = compact hosted-refinement step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test)
 │   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment
 │   │   │   ├── proposal/       # ProposalView — public client-facing proposal
 │   │   │   ├── public/         # Client portal (ClientLogin, ClientDashboard, Blog, BlogPost)

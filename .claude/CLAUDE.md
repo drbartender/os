@@ -168,8 +168,8 @@ dr-bartender/
 │   │   │   │   └── EmailConversations.js       # Conversation inbox
 │   │   │   ├── plan/             # PotionPlanningLab (public questionnaire)
 │   │   │   │   ├── PotionPlanningLab.js
-│   │   │   │   ├── data/         # cocktailMenu.js, servingTypes.js, drinkUpgrades.js
-│   │   │   │   └── steps/        # WelcomeStep, LogisticsStep, FullBarStep, SyrupUpsellStep, etc.
+│   │   │   │   ├── data/         # cocktailMenu.js, servingTypes.js, drinkUpgrades.js, packageGaps.js (hosted-package gap helpers; packageGaps.test.js is the Jest test)
+│   │   │   │   └── steps/        # WelcomeStep, LogisticsStep, FullBarStep, SyrupUpsellStep, HostedGuestPrefsStep (compact guest-prefs step for hosted refinement), etc.
 │   │   │   ├── invoice/
 │   │   │   │   └── InvoicePage.js     # Public token-gated invoice view + payment
 │   │   │   ├── proposal/         # ProposalView (public client-facing)

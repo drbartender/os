@@ -474,6 +474,9 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - Staffing: `bartenders_included`, `guests_per_bartender`, `extra_bartender_hourly`
 - Bar fees: `first_bar_fee`, `additional_bar_fee`
 - `includes` (JSONB array of what's included)
+- `service_packages.covered_addon_slugs TEXT[]` — which add-on slugs the hosted
+  package's base price already includes. Used by the Potion Planning Lab to
+  suppress redundant add-on offers and compute cocktail ingredient gaps.
 
 **service_addons** — Add-on services
 - `slug`, `name`, `description`
@@ -546,6 +549,9 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 **cocktail_categories** (5 rows) + **cocktails** (25 rows) — Cocktail menu
 - Categories: Crowd Favorites, Light & Refreshing, Classic, Bold, Bartender's Picks
 - Each cocktail: name, emoji, base_spirit, description, sort_order, is_active, ingredients (JSONB array of strings — used by the Shopping List Generator)
+- `cocktails.upgrade_addon_slugs TEXT[]` — add-on slugs that must be purchased
+  when the client's hosted package doesn't already cover them. Auto-added when
+  the client selects such a cocktail on the planner.
 
 **mocktail_categories** (4 rows) + **mocktails** (16 rows) — Mocktail menu
 - Categories: Fruity & Refreshing, Creamy & Sweet, Sparkling & Light, Bold & Complex
@@ -697,6 +703,22 @@ Located in `server/utils/pricingEngine.js`. Pure functions, no database dependen
 6. **Total**: Sum of all components
 
 The result is stored as a `pricing_snapshot` JSONB on the proposal for historical accuracy.
+
+## Hosted package-aware refinement
+
+When a drink plan's linked proposal has a hosted package
+(`service_packages.category = 'hosted'`) and the proposal has reached
+refinement phase (deposit paid or later), the Potion Planning Lab skips the
+serving-style quick pick, the spirits selection, and the beer/wine selection
+— these are already fixed by the package. A compact `HostedGuestPrefsStep`
+replaces them, asking only how guests lean (mostly beer / cocktails / wine /
+balanced). Cocktail cards show a "+$X/guest" badge when the drink needs
+ingredients outside the package's stocked catalog; selecting such a drink
+auto-adds the relevant specialty-ingredient add-on to the proposal with a
+toast confirmation. Add-ons already covered by the package are suppressed
+from every offer point. Logic lives in `client/src/pages/plan/data/packageGaps.js`
+(pure helpers) + `server/utils/pricingEngine.js` (parity helpers); the data
+model is `service_packages.covered_addon_slugs` and `cocktails.upgrade_addon_slugs`.
 
 ## Third-Party Integrations
 
