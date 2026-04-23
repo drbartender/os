@@ -5,19 +5,9 @@ import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import { useToast } from '../../context/ToastContext';
 import useWizardHistory from '../../hooks/useWizardHistory';
+import TimePicker from '../../components/TimePicker';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
-
-// 30-minute time slots from 8 AM to 11 PM
-const TIME_OPTIONS = [];
-for (let h = 8; h < 23; h++) {
-  ['00', '30'].forEach(m => {
-    const val = `${String(h).padStart(2, '0')}:${m}`;
-    const hour12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    TIME_OPTIONS.push({ value: val, label: `${hour12}:${m} ${ampm}` });
-  });
-}
 
 const STEPS = [
   { key: 'class', label: 'Choose Class' },
@@ -412,11 +402,12 @@ export default function ClassWizard() {
                   </div>
                   <div className="form-group">
                     <label className="form-label">Start Time</label>
-                    <select className="form-select" value={form.event_start_time}
-                      onChange={e => update('event_start_time', e.target.value)}>
-                      <option value="">-- Select --</option>
-                      {TIME_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                    </select>
+                    <TimePicker
+                      value={form.event_start_time}
+                      onChange={(v) => update('event_start_time', v)}
+                      minHour={8}
+                      maxHour={22}
+                    />
                   </div>
                   <div className="form-group" style={{ gridColumn: '1 / -1' }}>
                     <label className="form-label">Location</label>
