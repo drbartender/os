@@ -13,10 +13,31 @@ export default function RefinementWelcomeStep({ plan, exploration, guestCount })
   const hasExploration = exploration && (exploration.vibe || exploration.favoriteDrinks?.length > 0);
 
   return (
-    <div className="card" style={{ overflow: 'hidden' }}>
-      <h1 className="potion-welcome-title">
-        Welcome Back!
-      </h1>
+    <>
+      {plan?.package_category === 'hosted' && Array.isArray(plan.package_includes) && plan.package_includes.length > 0 && (
+        <div className="card mb-2">
+          <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
+            Your package: {plan.package_name}
+          </h3>
+          <p className="text-muted text-small" style={{ color: 'var(--warm-brown)', marginBottom: '0.5rem' }}>
+            Stocked &amp; ready:
+          </p>
+          <ul style={{ fontSize: '0.9rem', color: 'var(--deep-brown)', paddingLeft: '1.25rem', margin: 0 }}>
+            {plan.package_includes
+              .filter((item) => !/\{(hours|bartenders|bartenders_s)\}/.test(item))
+              .map((item, i) => (
+                <li key={i}>{item}</li>
+              ))}
+          </ul>
+          <p className="text-muted text-small" style={{ marginTop: '0.5rem', fontStyle: 'italic' }}>
+            Anything beyond this list is an upgrade.
+          </p>
+        </div>
+      )}
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <h1 className="potion-welcome-title">
+          Welcome Back!
+        </h1>
 
       <div className="potion-welcome-body">
         <img
@@ -67,6 +88,7 @@ export default function RefinementWelcomeStep({ plan, exploration, guestCount })
           className="potion-welcome-drinks"
         />
       </div>
-    </div>
+      </div>
+    </>
   );
 }
