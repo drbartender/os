@@ -117,6 +117,7 @@ dr-bartender/
 │   │   │   ├── SequenceStepEditor.js # Drip sequence step editor
 │   │   │   ├── CampaignMetricsBar.js # Campaign performance metrics bar
 │   │   │   ├── SyrupPicker.js    # Syrup add-on selection component
+│   │   │   ├── TimePicker.js     # Unified time input (type, 30-min arrows, dropdown)
 │   │   │   └── ShoppingList/     # Shopping list generator
 │   │   │       ├── ShoppingListButton.jsx
 │   │   │       ├── ShoppingListModal.jsx
