@@ -6407,3 +6407,107 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   overflow-x: auto;
 }
 
+
+/* =========================================================
+   TimePicker
+   ========================================================= */
+.time-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  width: 100%;
+}
+
+.time-picker-input {
+  flex: 1 1 auto;
+  padding-right: 56px; /* room for stepper + chevron */
+}
+
+.time-picker-steppers {
+  position: absolute;
+  top: 1px;
+  right: 26px;
+  bottom: 1px;
+  display: flex;
+  flex-direction: column;
+  width: 22px;
+  border-left: 1px solid #d1d5db;
+}
+
+.time-picker-steppers button {
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 0;
+  font-size: 9px;
+  line-height: 1;
+  background: #f9fafb;
+  color: #374151;
+  border: none;
+  border-bottom: 1px solid #e5e7eb;
+  cursor: pointer;
+}
+.time-picker-steppers button:last-child { border-bottom: none; }
+.time-picker-steppers button:hover:not(:disabled) { background: #f3f4f6; }
+.time-picker-steppers button:disabled { color: #d1d5db; cursor: not-allowed; }
+
+.time-picker-chevron {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 24px;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  background: #f9fafb;
+  color: #374151;
+  border: none;
+  border-left: 1px solid #d1d5db;
+  cursor: pointer;
+}
+.time-picker-chevron:hover:not(:disabled) { background: #f3f4f6; }
+.time-picker-chevron:disabled { color: #d1d5db; cursor: not-allowed; }
+
+.time-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 20;
+}
+
+.time-picker-dropdown li {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #111827;
+}
+.time-picker-dropdown li:hover { background: #f3f4f6; }
+.time-picker-dropdown li.selected { background: #e0e7ff; font-weight: 600; }
+
+.time-picker-flash .time-picker-input {
+  animation: time-picker-flash 0.4s ease-out;
+}
+@keyframes time-picker-flash {
+  0%   { background: #fee2e2; border-color: #f87171; }
+  100% { background: transparent; border-color: inherit; }
+}
+
+.time-picker-disabled { opacity: 0.6; }
+
+/* Mobile: bigger touch targets */
+@media (max-width: 640px) {
+  .time-picker-steppers { width: 28px; right: 32px; }
+  .time-picker-chevron { width: 30px; }
+  .time-picker-input { padding-right: 68px; }
+  .time-picker-dropdown li { padding: 10px 12px; }
+}
