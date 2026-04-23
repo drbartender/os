@@ -597,8 +597,8 @@ INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_h
   ('soft-drink-addon', 'Soft Drink Add-On', 'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine — but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy — mixers stay flowing, and the non-drinkers get their own dedicated stash.', 'per_guest', 3.00, NULL, 'all', 20),
   ('pre-batched-mocktail', 'Pre-Batched Mocktail', 'A pre-batched non-alcoholic cocktail ready to pour. Great for events where you want a sophisticated NA option without the complexity of a full mocktail bar. Add more for variety.', 'per_guest', 1.50, NULL, 'all', 21),
   ('mocktail-bar', 'Mocktail Bar', 'Full mocktail bar with signature recipes.', 'per_guest_timed', 7.50, 2.00, 'all', 22),
-  ('non-alcoholic-beer', 'Non-Alcoholic Beer', 'NA beer selection for guests (Athletic Brewing, Heineken 0.0, etc.).', 'per_guest', 4.00, NULL, 'hosted', 23),
-  ('zero-proof-spirits', 'Zero-Proof Spirits', 'Premium zero-proof spirit alternatives for crafted NA cocktails (Seedlip, Lyre''s, etc.).', 'per_guest', 5.00, NULL, 'hosted', 24),
+  ('non-alcoholic-beer', 'Non-Alcoholic Beer', 'Non-alcoholic beer from Athletic Brewing: Upside Dawn (golden ale) and Free Wave Hazy IPA. Two varieties, served chilled at the bar.', 'per_guest', 4.00, NULL, 'hosted', 23),
+  ('zero-proof-spirits', 'Zero-Proof Spirits', 'Premium zero-proof spirits from Lyre''s — non-alcoholic versions of gin, whiskey, rum, and more, used to craft full-flavor NA cocktails.', 'per_guest', 5.00, NULL, 'hosted', 24),
   ('banquet-server', 'Banquet Server', 'Professional banquet server.', 'per_hour', 75.00, NULL, 'all', 41),
   ('flavor-blaster-rental', 'Flavor Blaster Rental', 'Flavor blaster equipment rental.', 'flat', 150.00, NULL, 'all', 35),
   ('handcrafted-syrups', 'Handcrafted Syrups', 'Single 750ml bottle of handcrafted syrup.', 'flat', 30.00, NULL, 'all', 30),
@@ -637,6 +637,17 @@ UPDATE service_addons SET rate = 2.00 WHERE slug = 'pre-batched-mocktail';
 UPDATE service_addons
 SET description = 'Required if more than 10 guests (or 20% of your headcount) will be drinking soft drinks on their own. Our hosted packages already include Coke, Diet Coke, Sprite, OJ, cranberry, pineapple, soda water, tonic, and grenadine — but those are stocked as mixers (1-3 oz per cocktail), not full pours. Kids, designated drivers, and guests sipping soda or juice straight go through stock fast and can leave your cocktail crowd dry. This add-on bumps up the soft drink supply so everyone stays happy — mixers stay flowing, and the non-drinkers get their own dedicated stash.'
 WHERE slug = 'soft-drink-addon' AND description = 'Soft drinks for all guests.';
+
+-- Gated description updates for NA beer & zero-proof spirits: endorse Athletic
+-- Brewing (Upside Dawn + Free Wave) and Lyre's respectively. Same pattern as
+-- above — only replaces the original seed text so any admin edit is preserved.
+UPDATE service_addons
+SET description = 'Non-alcoholic beer from Athletic Brewing: Upside Dawn (golden ale) and Free Wave Hazy IPA. Two varieties, served chilled at the bar.'
+WHERE slug = 'non-alcoholic-beer' AND description = 'NA beer selection for guests (Athletic Brewing, Heineken 0.0, etc.).';
+
+UPDATE service_addons
+SET description = 'Premium zero-proof spirits from Lyre''s — non-alcoholic versions of gin, whiskey, rum, and more, used to craft full-flavor NA cocktails.'
+WHERE slug = 'zero-proof-spirits' AND description = 'Premium zero-proof spirit alternatives for crafted NA cocktails (Seedlip, Lyre''s, etc.).';
 
 -- Polished descriptions were previously applied unconditionally on every boot,
 -- clobbering any admin-dashboard edits. The INSERT above seeds reasonable
