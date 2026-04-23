@@ -19,6 +19,26 @@ function isHostedPackage(pkg) {
   return pkg?.pricing_type === 'per_guest';
 }
 
+/**
+ * Hosted-package gap helpers — used by the Potion Planning Lab (client) and
+ * by the drink-plan submit handler (server) to validate auto-added addons.
+ * Load-bearing: do NOT move these away from isHostedPackage — keep them
+ * grep-adjacent so anyone touching hosted-package pricing finds both.
+ */
+function computeCocktailGap(cocktail, pkg) {
+  const required = cocktail?.upgrade_addon_slugs || [];
+  const covered = pkg?.covered_addon_slugs || [];
+  return required.filter(slug => !covered.includes(slug));
+}
+
+function packageSuppressedAddons(pkg) {
+  return pkg?.covered_addon_slugs || [];
+}
+
+function isCocktailFullyCovered(cocktail, pkg) {
+  return computeCocktailGap(cocktail, pkg).length === 0;
+}
+
 function calculateBaseCost(pkg, guestCount, durationHours) {
   if (!durationHours || durationHours <= 0) {
     throw new Error('Duration must be greater than zero.');
@@ -327,4 +347,4 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
   };
 }
 
-module.exports = { calculateProposal, calculateBaseCost, calculateBarRental, calculateStaffing, calculateAddonCost, calculateSyrupCost, getBottlesPerSyrup };
+module.exports = { calculateProposal, calculateBaseCost, calculateBarRental, calculateStaffing, calculateAddonCost, calculateSyrupCost, getBottlesPerSyrup, isHostedPackage, computeCocktailGap, packageSuppressedAddons, isCocktailFullyCovered };
