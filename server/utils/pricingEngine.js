@@ -3,6 +3,22 @@
  * Takes package/addon data as arguments, returns a pricing snapshot.
  */
 
+/**
+ * HOSTED PACKAGE RULE — do not lose this.
+ * ─────────────────────────────────────────────────────────────
+ * Hosted (per_guest) packages price bartender staffing INTO the per-guest
+ * rate. Any additional bartenders the client requests — whether via the
+ * num_bartenders override OR the 'additional-bartender' add-on — are
+ * INCLUDED at no extra charge. That means $0 line items AND $0 gratuity.
+ *
+ * If you add a new code path that charges for bartenders, call this
+ * helper and zero the charge when it returns true. Grep for
+ * `isHostedPackage` before adding bartender logic anywhere else.
+ */
+function isHostedPackage(pkg) {
+  return pkg?.pricing_type === 'per_guest';
+}
+
 function calculateBaseCost(pkg, guestCount, durationHours) {
   if (!durationHours || durationHours <= 0) {
     throw new Error('Duration must be greater than zero.');
@@ -46,10 +62,10 @@ function calculateStaffing(pkg, guestCount, durationHours, numBartendersOverride
   const required = guestCount > 0 ? Math.max(1, Math.ceil(guestCount / perBartender)) : 1;
   const actual = numBartendersOverride !== null && numBartendersOverride !== undefined ? numBartendersOverride : required;
   const extra = Math.max(0, actual - included);
-  // Hosted (per_guest) packages include additional bartenders in the per-guest rate
-  const isHosted = pkg.pricing_type === 'per_guest';
+  const isHosted = isHostedPackage(pkg);
 
-  // Gratuity surcharge for extra bartenders added below guest-ratio threshold
+  // Gratuity surcharge for extra bartenders added below guest-ratio threshold (BYOB only —
+  // hosted packages include bartenders AND gratuity in the per-guest rate).
   let gratuityPerHour = 0;
   if (!isHosted && extra > 0 && actual > required) {
     if (guestCount < 50) gratuityPerHour = 50;
@@ -59,7 +75,7 @@ function calculateStaffing(pkg, guestCount, durationHours, numBartendersOverride
 
   const cost = isHosted ? 0 : extra * durationHours * (hourlyRate + gratuityPerHour);
 
-  return { required, actual, included, extra, hourlyRate, gratuityPerHour, cost };
+  return { required, actual, included, extra, hourlyRate, gratuityPerHour, cost, isHosted };
 }
 
 function calculateAddonCost(addon, guestCount, durationHours, staffCount, addonQuantity) {
@@ -116,8 +132,9 @@ function calculateSyrupCost(syrupSelections, guestCount) {
 }
 
 function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartenders, addons, syrupSelections, adjustments, totalPriceOverride }) {
+  const isHosted = isHostedPackage(pkg); // HOSTED PACKAGE RULE — see helper comment.
   const baseCost = calculateBaseCost(pkg, guestCount, durationHours);
-  const floorApplied = pkg.pricing_type === 'per_guest' && pkg.min_total && baseCost <= Number(pkg.min_total);
+  const floorApplied = isHosted && pkg.min_total && baseCost <= Number(pkg.min_total);
   const barRental = calculateBarRental(pkg, numBars);
   const staffing = calculateStaffing(pkg, guestCount, durationHours, numBartenders);
 
@@ -126,11 +143,10 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
   const totalStaff = staffing.actual + additionalBartenderQty
     + (addons || []).filter(a => a.slug === 'barback' || a.slug === 'banquet-server').reduce((sum, a) => sum + (a.quantity || 1), 0);
 
-  // Gratuity surcharge for additional bartenders added below guest-ratio threshold
-  // Applies to ALL packages — hosted includes bartenders at the recommended ratio,
-  // but extras beyond that are charged with the same gratuity rules
+  // Gratuity surcharge for additional bartenders added below guest-ratio threshold (BYOB only —
+  // hosted packages include bartenders AND gratuity in the per-guest rate).
   let bartenderGratuityPerHour = 0;
-  if (additionalBartenderQty > 0) {
+  if (!isHosted && additionalBartenderQty > 0) {
     if (guestCount < 50) bartenderGratuityPerHour = 50;
     else if (guestCount < 75) bartenderGratuityPerHour = 25;
     else if (guestCount < 100) bartenderGratuityPerHour = 15;
@@ -138,9 +154,9 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
 
   const addonResults = (addons || []).map(addon => {
     if (addon.slug === 'additional-bartender') {
-      // Apply gratuity surcharge on top of base rate
+      // HOSTED PACKAGE RULE: additional bartenders are included at no charge on hosted packages.
       const qty = addon.quantity || 1;
-      const effectiveRate = Number(addon.rate) + bartenderGratuityPerHour;
+      const effectiveRate = isHosted ? 0 : (Number(addon.rate) + bartenderGratuityPerHour);
       const totalCost = qty * durationHours * effectiveRate;
       return {
         id: addon.id,
@@ -150,7 +166,7 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
         rate: Number(addon.rate),
         extra_hour_rate: addon.extra_hour_rate ? Number(addon.extra_hour_rate) : null,
         quantity: durationHours * qty,
-        gratuity_per_hour: bartenderGratuityPerHour,
+        gratuity_per_hour: isHosted ? 0 : bartenderGratuityPerHour,
         line_total: Math.round(totalCost * 100) / 100
       };
     }
@@ -196,29 +212,47 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
     });
   }
   if (staffing.extra > 0) {
-    const baseCostStaffing = staffing.extra * durationHours * staffing.hourlyRate;
-    breakdown.push({
-      label: `Additional Bartender${staffing.extra !== 1 ? 's' : ''} (${staffing.extra})`,
-      amount: Math.round(baseCostStaffing * 100) / 100
-    });
-    if (staffing.gratuityPerHour > 0) {
-      const gratuityAmount = staffing.extra * durationHours * staffing.gratuityPerHour;
+    if (isHosted) {
+      // HOSTED PACKAGE RULE: extras are included in the per-guest rate.
       breakdown.push({
-        label: 'Shared Gratuity',
-        amount: Math.round(gratuityAmount * 100) / 100
+        label: `Additional Bartender${staffing.extra !== 1 ? 's' : ''} (${staffing.extra}) — Included with package`,
+        amount: 0
       });
+    } else {
+      const baseCostStaffing = staffing.extra * durationHours * staffing.hourlyRate;
+      breakdown.push({
+        label: `Additional Bartender${staffing.extra !== 1 ? 's' : ''} (${staffing.extra})`,
+        amount: Math.round(baseCostStaffing * 100) / 100
+      });
+      if (staffing.gratuityPerHour > 0) {
+        const gratuityAmount = staffing.extra * durationHours * staffing.gratuityPerHour;
+        breakdown.push({
+          label: 'Shared Gratuity',
+          amount: Math.round(gratuityAmount * 100) / 100
+        });
+      }
     }
   }
   for (const addon of addonResults) {
     let label = addon.name;
     if (addon.slug === 'additional-bartender') {
       const qty = addon.quantity / durationHours; // recover count from total hours
-      const baseCostAddon = qty * durationHours * Number(addon.rate);
-      label = `Additional Bartender${qty !== 1 ? 's' : ''} (${qty})`;
-      breakdown.push({ label, amount: Math.round(baseCostAddon * 100) / 100 });
-      if (addon.gratuity_per_hour > 0) {
-        const gratuityAmount = qty * durationHours * addon.gratuity_per_hour;
-        breakdown.push({ label: 'Shared Gratuity', amount: Math.round(gratuityAmount * 100) / 100 });
+      if (isHosted) {
+        // HOSTED PACKAGE RULE: addon bartenders are included in the per-guest rate.
+        breakdown.push({
+          label: `Additional Bartender${qty !== 1 ? 's' : ''} (${qty}) — Included with package`,
+          amount: 0
+        });
+      } else {
+        const baseCostAddon = qty * durationHours * Number(addon.rate);
+        breakdown.push({
+          label: `Additional Bartender${qty !== 1 ? 's' : ''} (${qty})`,
+          amount: Math.round(baseCostAddon * 100) / 100
+        });
+        if (addon.gratuity_per_hour > 0) {
+          const gratuityAmount = qty * durationHours * addon.gratuity_per_hour;
+          breakdown.push({ label: 'Shared Gratuity', amount: Math.round(gratuityAmount * 100) / 100 });
+        }
       }
       continue;
     } else if (addon.billing_type === 'per_guest' || addon.billing_type === 'per_guest_timed') {

@@ -320,6 +320,7 @@ When modifying any entity, always check and update **all** related entities too.
 - **Schema column changes** → update every route (SELECT, INSERT, UPDATE), every component that reads/writes that field, and every place that displays it.
 - **New feature data shape** → ensure every consumer of that data (backend endpoints, frontend components, PDF templates) is updated in the same PR.
 - **Event identity** — client name and event type are separate, independent data points. Never concatenate them into a single "title" string or prompt for an `event_name`. Display uses `getEventTypeLabel({ event_type, event_type_custom })` with `'event'` as the graceful fallback. Available in `client/src/utils/eventTypes.js` (ESM) and `server/utils/eventTypes.js` (CJS — kept in sync manually).
+- **Hosted-package bartender rule** — Hosted (per_guest) packages include bartender staffing in the per-guest rate. Any additional bartenders — via the `num_bartenders` override OR the `additional-bartender` add-on — are **$0 line items with $0 gratuity** on hosted packages. Use `isHostedPackage(pkg)` from `server/utils/pricingEngine.js`. Grep for `isHostedPackage` before adding any new bartender-cost code path; replicate the zero-out. This rule has been re-lost multiple times — treat as load-bearing.
 
 The rule: **if you change X, search the codebase for everything that depends on X and update it too.**
 

@@ -80,7 +80,8 @@ async function generateLineItemsFromProposal(proposalId, dbClient) {
     });
   }
 
-  // Extra bartenders
+  // Extra bartenders — skipped on hosted packages (HOSTED PACKAGE RULE:
+  // bartender staffing is included in the per-guest rate, so staffing.total is 0).
   if (snap.staffing && snap.staffing.extra > 0 && snap.staffing.total > 0) {
     const extra = snap.staffing.actual - snap.staffing.included;
     const qty = extra > 0 ? extra : 1;
@@ -96,7 +97,8 @@ async function generateLineItemsFromProposal(proposalId, dbClient) {
     });
   }
 
-  // Add-ons from proposal_addons table (authoritative at booking time)
+  // Add-ons from proposal_addons table (authoritative at booking time).
+  // Skip $0 add-ons (e.g., additional-bartender on hosted packages — HOSTED PACKAGE RULE).
   const addonsResult = await client.query(
     `SELECT id, addon_id, addon_name, billing_type, rate, quantity, line_total
        FROM proposal_addons
@@ -106,9 +108,10 @@ async function generateLineItemsFromProposal(proposalId, dbClient) {
   );
 
   for (const addon of addonsResult.rows) {
+    const lineTotal = toCents(addon.line_total);
+    if (lineTotal === 0) continue;
     const qty = Number(addon.quantity) || 1;
     const unitPrice = toCents(addon.rate);
-    const lineTotal = toCents(addon.line_total);
     items.push({
       description: addon.addon_name || 'Add-on',
       quantity: qty,
