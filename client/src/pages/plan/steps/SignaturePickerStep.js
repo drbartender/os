@@ -221,6 +221,13 @@ export default function SignaturePickerStep({
                     const selectedSyrupDetails = drinkSyrups
                       .map(id => SYRUPS.find(s => s.id === id))
                       .filter(Boolean);
+                    const autoAddedForDrink = Object.entries(addOns)
+                      .filter(([, meta]) => meta?.autoAdded && Array.isArray(meta.triggeredBy) && meta.triggeredBy.includes(drink.id))
+                      .map(([slug]) => {
+                        const pricing = addonPricing.find(a => a.slug === slug);
+                        return pricing ? { slug, name: pricing.name, rate: Number(pricing.rate), billing_type: pricing.billing_type } : null;
+                      })
+                      .filter(Boolean);
 
                     return (
                       <div key={drink.id} className="your-menu-item-wrapper">
@@ -241,7 +248,7 @@ export default function SignaturePickerStep({
                             &times;
                           </button>
                         </div>
-                        {(selectedSyrupDetails.length > 0 || drinkFlairUpgrades.length > 0) && (
+                        {(selectedSyrupDetails.length > 0 || drinkFlairUpgrades.length > 0 || autoAddedForDrink.length > 0) && (
                           <div className="your-menu-drink-extras">
                             {selectedSyrupDetails.map(syrup => {
                               const isSelf = syrupSelfProvided.includes(syrup.id);
@@ -272,6 +279,18 @@ export default function SignaturePickerStep({
                                 {u.emoji} {u.label}
                                 <span className="extra-remove">&times;</span>
                               </button>
+                            ))}
+                            {autoAddedForDrink.map((up) => (
+                              <span
+                                key={up.slug}
+                                className="your-menu-extra-tag"
+                                title={up.billing_type === 'per_guest' ? `$${up.rate.toFixed(2)}/guest` : `$${up.rate.toFixed(2)}`}
+                              >
+                                + {up.name}
+                                <span className="extra-source-badge drb">
+                                  {up.billing_type === 'per_guest' ? `$${up.rate.toFixed(2)}/guest` : `$${up.rate.toFixed(2)}`}
+                                </span>
+                              </span>
                             ))}
                           </div>
                         )}
@@ -477,7 +496,7 @@ export default function SignaturePickerStep({
               </div>
 
               {/* Mixer question — only if Full Bar is NOT active and drinks are selected */}
-              {!isFullBarActive && selectedDrinks.length > 0 && extractedSpirits.length > 0 && (
+              {!isHostedPlan && !isFullBarActive && selectedDrinks.length > 0 && extractedSpirits.length > 0 && (
                 <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1.25rem' }}>
                   <div className="form-group">
                     <label className="form-label">
