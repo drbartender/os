@@ -114,7 +114,11 @@ app.use(fileUpload({
   useTempFiles: false
 }));
 
-// Protected file download — admin and managers only
+// Protected file access — admin and managers only. Returns a short-lived signed
+// R2 URL in JSON rather than 302-redirecting, because a cross-origin XHR that
+// follows a redirect to R2 trips CORS (R2 has no CORS headers for our origin)
+// and surfaces as "Network error" in the client. The client opens the returned
+// URL in a new tab (see AdminApplicationDetail / AdminUserDetail).
 app.get('/api/files/:filename', auth, async (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'manager') {
     return res.status(403).json({ error: 'Access denied' });
@@ -123,9 +127,9 @@ app.get('/api/files/:filename', auth, async (req, res) => {
   const filename = path.basename(req.params.filename);
   try {
     const url = await getSignedUrl(filename);
-    res.redirect(url);
+    res.json({ url });
   } catch (err) {
-    console.error('File download error:', err);
+    console.error('File access error:', err);
     res.status(404).json({ error: 'File not found' });
   }
 });
