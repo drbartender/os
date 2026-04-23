@@ -1671,6 +1671,11 @@ UPDATE cocktails SET upgrade_addon_slugs = '{specialty-bitter-aperitifs}'       
 UPDATE cocktails SET upgrade_addon_slugs = '{specialty-vermouths,specialty-niche-liqueurs}' WHERE id = 'corpse-reviver';
 UPDATE cocktails SET upgrade_addon_slugs = '{specialty-niche-liqueurs}'                 WHERE id = 'last-word';
 
+-- Gated restore: the hosted-package-menu-planner work inadvertently introduced
+-- an unconditional NA-beer UPDATE with generic copy, clobbering the
+-- "Upside Dawn + Free Wave Hazy IPA" wording set by the earlier endorsed-brand
+-- cleanup. Restore the endorsed-brand text only if the generic copy is present.
 UPDATE service_addons
-SET description = 'Non-alcoholic beer from Athletic Brewing — crisp, refreshing, and endorsed by the doctor.'
-WHERE slug = 'non-alcoholic-beer';
+SET description = 'Non-alcoholic beer from Athletic Brewing: Upside Dawn (golden ale) and Free Wave Hazy IPA. Two varieties, served chilled at the bar.'
+WHERE slug = 'non-alcoholic-beer'
+  AND description = 'Non-alcoholic beer from Athletic Brewing — crisp, refreshing, and endorsed by the doctor.';
