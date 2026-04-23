@@ -91,6 +91,41 @@ export function buildStepQueue(activeModules) {
   return steps;
 }
 
+// Hosted-package step for guest preferences — replaces the old spirits/beer-wine
+// steps when the client is on a hosted package (spirits/beer/wine are fixed by the package).
+export const HOSTED_GUEST_PREFS_STEP = 'stepHostedGuestPrefs';
+
+/**
+ * Build the refinement step queue for a client on a hosted package.
+ * Bar type (from service_packages.bar_type) determines the queue directly —
+ * no QuickPick, no spirits/beer-wine selection.
+ */
+export function buildHostedStepQueue(barType) {
+  const queue = [];
+  if (barType === 'full_bar') {
+    queue.push(MODULE_STEP_MAP.signatureDrinks);
+    queue.push(MODULE_STEP_MAP.mocktails);
+  } else if (barType === 'beer_and_wine') {
+    queue.push(MODULE_STEP_MAP.mocktails);
+  } else if (barType === 'mocktail') {
+    queue.push(MODULE_STEP_MAP.mocktails);
+  }
+  queue.push(HOSTED_GUEST_PREFS_STEP);
+  queue.push(MODULE_STEP_MAP.menuDesign);
+  queue.push(MODULE_STEP_MAP.logistics);
+  return queue;
+}
+
+/** Derive the activeModules flags from a hosted bar_type (for display logic in steps). */
+export function hostedActiveModules(barType) {
+  return {
+    signatureDrinks: barType === 'full_bar',
+    mocktails: true,
+    fullBar: false,
+    beerWineOnly: false,
+  };
+}
+
 // Phase derivation from proposal status
 const EXPLORATION_STATUSES = ['sent', 'viewed', 'modified', 'accepted'];
 const REFINEMENT_STATUSES = ['deposit_paid', 'balance_paid', 'confirmed', 'completed'];
