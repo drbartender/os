@@ -259,7 +259,7 @@ Solo developer, trunk-based, vibe-coded. Code preservation is the #1 priority. P
    - **Push cue:** explicit only — "push", "deploy", "ship it", "send it". Claude never auto-pushes on commit cues. **Claude NEVER volunteers a "ready to push?" prompt.** Pushes are user-initiated only. The user coordinates push timing across multiple parallel Claude sessions / terminals and decides when the full batch is ready. After a commit, Claude stands down — silence is correct. No "ready to push?" question, no "want me to push these now?" nudge, nothing.
    - **Agent-run confirmation.** When the user issues a push cue, Claude's FIRST response is a one-line batch summary + confirmation — BEFORE any agent launch: *"N commits / M files pending. Run agents + push?"* Agents fire only on an explicit yes. If the user says *wait / one more thing / defer*, Claude stands down — no agent run, no push. Re-ask on the next push cue. **Never pre-run agents.** Not at end of feature, not to "verify," not on commit cues, not as prep. The confirmation prompt is the single entry point to the agent fleet. This guards against burning a review on a batch the user is about to amend, and lets the user consolidate commits across multiple terminals into ONE review pass.
 5. **Push = deploy.** Every push to `main` ships to Render + Vercel. Treat with gravity.
-6. **Review agents run automatically before every code-touching push.** Claude launches all 5 non-UI agents in parallel (`consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`). Skip agents only when the push contains exclusively `*.md` or `.gitignore` changes. Clean results → push proceeds silently. Any flag → stop, report findings, wait. **Agents run exactly once per logical push, gated by the Pre-Push Procedure step 0.5 confirmation. Claude does NOT pre-run agents at feature completion, task completion, "let me verify," or any point outside the confirmed push flow.**
+6. **Review agents run automatically before every code-touching push.** Claude launches all 5 non-UI agents in parallel (`consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`). Skip agents only when (a) the push contains exclusively `*.md` or `.gitignore` changes, or (b) a fresh `.claude/overnight-review.log` records the current `HEAD` as CLEAN or FIXED with zero flags (see Pre-Push Procedure step 4.5). Clean results → push proceeds silently. Any flag → stop, report findings, wait. **Agents run exactly once per logical push, gated by the Pre-Push Procedure step 0.5 confirmation. Claude does NOT pre-run agents at feature completion, task completion, "let me verify," or any point outside the confirmed push flow.**
 7. **Explicit staging only.** `git add <specific-path>` always. Never `git add .`, `-A`, or `-u`. Prevents sweeping in screenshots, `.playwright-mcp/`, `.env`, etc.
 8. **Branches and stashes require approval with a one-line reason.** Claude may propose but never creates silently.
 9. **Undo rules (safe recipes).**
@@ -279,7 +279,14 @@ When the user gives a push cue, Claude runs this checklist exactly. No steps ski
 1. **Verify branch.** Confirm current branch = `main`. If not, stop and ask.
 2. **Sanity-check working tree.** If there are uncommitted modifications or untracked files other than known-ignored artifacts, pause and ask: *"There are uncommitted changes in X, Y, Z — meant to go in this push or leave them out?"* Not a hard block; user may just say "leave them."
 3. **Inventory the batch.** Run `git log origin/main..HEAD --name-only` to see every file in the pending push.
-4. **Classify code vs. non-code.** If any changed file is not `*.md` or `.gitignore`, agents run. Otherwise skip to step 7.
+4. **Classify code vs. non-code.** If all changed files are `*.md` or `.gitignore`, skip to step 7.
+4.5. **Check overnight-review cache.** If `.claude/overnight-review.log` exists, honor it and skip to step 7 when ALL of the following hold:
+   - Log timestamp is within the last 18 hours
+   - `Current HEAD:` sha in the log matches `git rev-parse HEAD`
+   - `## Result` line begins with `CLEAN` or `FIXED`
+   - `## Flagged for morning (NOT fixed)` section contains only `none`
+
+   If honored, announce one line: *"Honoring overnight-review cache (HEAD `<short-sha>`, result `<CLEAN|FIXED>`)"* and skip to step 7. Otherwise announce one line why the cache was rejected (stale / HEAD mismatch / has flags / missing) and continue to step 5.
 5. **Launch 5 agents in parallel** (single message, 5 concurrent Agent tool calls): `consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`.
 6. **Wait for all agents. Consolidate.** All clean → proceed silently to push. Any flagged issue → stop, present a consolidated report grouped by severity (blockers, warnings, suggestions), ask for direction (fix now, push anyway, abandon).
 7. **Push.** `git push origin main`. If rejected, stop and report (per Rule 12).
@@ -388,11 +395,17 @@ Six review agents live in `.claude/agents/`, all running on opus. Triggered auto
 
 **Auto-run in parallel before every code-touching push to `main`:**
 
-- **@security-review** — Full OWASP Top 10 audit:
-  - SQL injection (string concat in queries), XSS (`dangerouslySetInnerHTML`), SSRF
-  - Missing `auth` middleware, IDOR (missing `req.user.id` ownership checks)
-  - Hardcoded secrets, JWT implementation, Stripe/Resend/Thumbtack webhook verification
-  - Rate limiting, CORS config, file upload validation, `npm audit`
+- **@security-review** — Full OWASP Top 10:2025 audit:
+  - A01 Broken Access Control: missing `auth` middleware, IDOR (missing `req.user.id` ownership checks), SSRF (consolidated into A01 in 2025 — user-controlled URLs in Nominatim/webhooks)
+  - A02 Security Misconfiguration: CORS, Helmet, error leakage, debug endpoints, `STRIPE_TEST_MODE_UNTIL` in prod
+  - A03 Software Supply Chain Failures (NEW/expanded): `npm audit`, lockfile integrity, pinned security packages, suspicious postinstall scripts, Render/Vercel pipeline pinning
+  - A04 Cryptographic Failures: bcryptjs, JWT_SECRET from env, secret keys never in client bundle
+  - A05 Injection: SQL string concat, XSS (`dangerouslySetInnerHTML`), command injection, path traversal
+  - A06 Insecure Design: rate limiting, file upload magic bytes, server-side payment/state-machine validation
+  - A07 Authentication Failures: JWT impl, password requirements, user enumeration
+  - A08 Data Integrity: Stripe/Resend/Thumbtack webhook signature verification, BEGIN/COMMIT/ROLLBACK
+  - A09 Logging & Monitoring: Sentry init, failed-login and payment-event logging, no PII in logs
+  - A10 Mishandling of Exceptional Conditions (NEW): `asyncHandler` coverage, `AppError` hierarchy usage, fail-closed on Stripe/webhook paths, ROLLBACK on error branches, scheduler resilience
 
 - **@code-review** — Code quality + error handling:
   - Missing try/catch on async handlers, missing ROLLBACK after BEGIN, unhandled promises
