@@ -131,9 +131,10 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
 
   // Process addons and bar rental into proposal on submit
   if (newStatus === 'submitted' && updatedPlan.proposal_id) {
-    const addonSlugs = Object.keys(selections?.addOns || {}).filter(slug => selections.addOns[slug]?.enabled);
+    const rawAddons = selections?.addOns || {};
+    const rawAddonSlugs = Object.keys(rawAddons).filter(slug => rawAddons[slug]?.enabled);
     const addBarRental = selections?.logistics?.addBarRental === true;
-    if (addonSlugs.length > 0 || addBarRental) {
+    if (rawAddonSlugs.length > 0 || addBarRental) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -146,6 +147,46 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
         const proposal = proposalRes.rows[0];
 
         if (proposal) {
+          // Pull the package so we can validate autoAdded addons against its coverage.
+          const pkgEarly = proposal && proposal.package_id
+            ? (await client.query('SELECT id, covered_addon_slugs FROM service_packages WHERE id = $1', [proposal.package_id])).rows[0]
+            : null;
+          const coveredAddonSlugs = pkgEarly?.covered_addon_slugs || [];
+
+          // Pull the selected cocktails' upgrade_addon_slugs so we can verify triggers.
+          const sigDrinkIds = Array.isArray(selections?.signatureDrinks) ? selections.signatureDrinks : [];
+          const cocktailRows = sigDrinkIds.length > 0
+            ? (await client.query(
+                'SELECT id, upgrade_addon_slugs FROM cocktails WHERE id = ANY($1::text[])',
+                [sigDrinkIds]
+              )).rows
+            : [];
+          const cocktailById = new Map(cocktailRows.map(r => [r.id, r]));
+
+          // For each autoAdded addon, require a still-selected triggering cocktail whose
+          // upgrade_addon_slugs includes the slug AND the package does not cover it.
+          const addonSlugs = rawAddonSlugs.filter(slug => {
+            const meta = rawAddons[slug];
+            if (coveredAddonSlugs.includes(slug)) return false; // package already covers — never charge
+            if (meta?.autoAdded) {
+              const triggers = Array.isArray(meta.triggeredBy) ? meta.triggeredBy : [];
+              const validTrigger = triggers.some(drinkId => {
+                const c = cocktailById.get(drinkId);
+                return c && Array.isArray(c.upgrade_addon_slugs) && c.upgrade_addon_slugs.includes(slug);
+              });
+              return validTrigger;
+            }
+            return true; // user-added addon — honor it
+          });
+
+          // Build the specialty_upgrades payload for activity-log enrichment.
+          const specialtyUpgrades = addonSlugs
+            .filter(slug => rawAddons[slug]?.autoAdded)
+            .map(slug => ({
+              slug,
+              triggeredBy: (rawAddons[slug].triggeredBy || []).filter(drinkId => cocktailById.has(drinkId)),
+            }));
+
           // Update num_bars if client added a bar rental from the drink plan
           if (addBarRental) {
             const newNumBars = (proposal.num_bars || 0) + 1;
@@ -232,6 +273,7 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
                 champagne_serving_style: selections.addOns?.['champagne-toast']?.servingStyle || null,
                 bar_rental_added: !!addBarRental,
                 new_total: snapshot.total,
+                specialty_upgrades: specialtyUpgrades,
               })]
             );
 
