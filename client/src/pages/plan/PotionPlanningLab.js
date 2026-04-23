@@ -5,6 +5,7 @@ import { API_BASE_URL as BASE_URL } from '../../utils/api';
 import FormBanner from '../../components/FormBanner';
 import { useToast } from '../../context/ToastContext';
 import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue, buildExplorationQueue, derivePhase } from './data/servingTypes';
+import { DRINK_UPGRADES, PER_DRINK_UPGRADE_SLUGS } from './data/drinkUpgrades';
 import WelcomeStep from './steps/WelcomeStep';
 import QuickPickStep from './steps/QuickPickStep';
 import CustomSetupStep from './steps/CustomSetupStep';
@@ -182,6 +183,31 @@ export default function PotionPlanningLab() {
           const hasSavedSyrups = Object.keys(savedMap).length > 0;
           if (!hasSavedSyrups && pSyrups.length > 0) {
             savedSel.syrupSelections = { _general: [...pSyrups] };
+          }
+
+          // Migrate legacy per-drink upgrade addOns: addOns[slug].enabled=true with no drinks[]
+          // means the addon was toggled on globally. Infer the drinks array from selected
+          // applicable drinks so the per-drink display works without erasing the user's intent.
+          if (savedSel.addOns) {
+            const sigDrinks = savedSel.signatureDrinks || [];
+            const favDrinks = savedSel.exploration?.favoriteDrinks || [];
+            const allDrinks = [...new Set([...sigDrinks, ...favDrinks])];
+            for (const slug of PER_DRINK_UPGRADE_SLUGS) {
+              const addon = savedSel.addOns[slug];
+              if (addon?.enabled && !Array.isArray(addon.drinks)) {
+                const upgrade = DRINK_UPGRADES.find(u => u.addonSlug === slug);
+                if (!upgrade) continue;
+                let inferred = allDrinks.filter(d => upgrade.applicableDrinks.includes(d));
+                if (upgrade.maxDrinks && inferred.length > upgrade.maxDrinks) {
+                  inferred = inferred.slice(0, upgrade.maxDrinks);
+                }
+                if (inferred.length === 0) {
+                  delete savedSel.addOns[slug];
+                } else {
+                  savedSel.addOns[slug] = { ...addon, drinks: inferred };
+                }
+              }
+            }
           }
 
           // Phase 2 seeding: if entering refinement and exploration data exists, seed refinement fields
@@ -420,6 +446,47 @@ export default function PotionPlanningLab() {
     });
   };
 
+  // Toggle a per-drink upgrade on/off for a specific drink.
+  // Returns true if the toggle succeeded; false if blocked by a maxDrinks limit
+  // (caller is responsible for surfacing the toast — this lives outside React state).
+  const toggleAddOnForDrink = (slug, drinkId) => {
+    const upgrade = DRINK_UPGRADES.find(u => u.addonSlug === slug);
+    const maxDrinks = upgrade?.maxDrinks;
+    let blocked = false;
+    setSelections(prev => {
+      const newAddOns = { ...prev.addOns };
+      const existing = newAddOns[slug];
+      const currentDrinks = Array.isArray(existing?.drinks) ? existing.drinks : [];
+      const has = currentDrinks.includes(drinkId);
+      if (has) {
+        const next = currentDrinks.filter(d => d !== drinkId);
+        if (next.length === 0) {
+          delete newAddOns[slug];
+        } else {
+          const updated = { ...existing, enabled: true, drinks: next };
+          if (updated.bubbles) {
+            const nextBubbles = { ...updated.bubbles };
+            delete nextBubbles[drinkId];
+            updated.bubbles = nextBubbles;
+          }
+          newAddOns[slug] = updated;
+        }
+      } else {
+        if (maxDrinks && currentDrinks.length >= maxDrinks) {
+          blocked = true;
+          return prev;
+        }
+        newAddOns[slug] = {
+          ...(existing || {}),
+          enabled: true,
+          drinks: [...currentDrinks, drinkId],
+        };
+      }
+      return { ...prev, addOns: newAddOns };
+    });
+    return !blocked;
+  };
+
   // Update metadata on an existing addon
   const updateAddOnMeta = (slug, metadata) => {
     setSelections(prev => ({
@@ -429,6 +496,54 @@ export default function PotionPlanningLab() {
         [slug]: { ...prev.addOns[slug], ...metadata },
       },
     }));
+  };
+
+  // Remove the given drink IDs from every per-drink addon's drinks[] array.
+  // If an addon's drinks list becomes empty, the addon is disabled (deleted).
+  // Used when the user deselects a signature/favorite drink so we don't keep
+  // billing for an upgrade that has no drinks left to apply it to.
+  const pruneAddOnsForRemovedDrinks = (addOns, removedIds) => {
+    if (!removedIds.length) return addOns;
+    const next = { ...addOns };
+    for (const slug of Object.keys(next)) {
+      const addon = next[slug];
+      if (!Array.isArray(addon?.drinks)) continue;
+      const filtered = addon.drinks.filter(d => !removedIds.includes(d));
+      if (filtered.length === 0) {
+        delete next[slug];
+      } else if (filtered.length !== addon.drinks.length) {
+        const updated = { ...addon, drinks: filtered };
+        if (updated.bubbles) {
+          const nextBubbles = { ...updated.bubbles };
+          for (const id of removedIds) delete nextBubbles[id];
+          updated.bubbles = nextBubbles;
+        }
+        next[slug] = updated;
+      }
+    }
+    return next;
+  };
+
+  const updateSignatureDrinks = (drinks) => {
+    setSelections(prev => {
+      const removed = (prev.signatureDrinks || []).filter(d => !drinks.includes(d));
+      return {
+        ...prev,
+        signatureDrinks: drinks,
+        addOns: pruneAddOnsForRemovedDrinks(prev.addOns || {}, removed),
+      };
+    });
+  };
+
+  const updateFavoriteDrinks = (drinks) => {
+    setSelections(prev => {
+      const removed = (prev.exploration?.favoriteDrinks || []).filter(d => !drinks.includes(d));
+      return {
+        ...prev,
+        exploration: { ...prev.exploration, favoriteDrinks: drinks },
+        addOns: pruneAddOnsForRemovedDrinks(prev.addOns || {}, removed),
+      };
+    });
   };
 
   // Toggle a syrup for a specific drink in per-drink syrupSelections map.
@@ -727,9 +842,10 @@ export default function PotionPlanningLab() {
             cocktails={cocktails}
             categories={cocktailCategories}
             favoriteDrinks={selections.exploration.favoriteDrinks}
-            onChange={(val) => updateExploration('favoriteDrinks', val)}
+            onChange={updateFavoriteDrinks}
             addOns={selections.addOns || {}}
             toggleAddOn={toggleAddOn}
+            toggleAddOnForDrink={toggleAddOnForDrink}
             addonPricing={addonPricing}
             syrupSelections={selections.syrupSelections || {}}
             onSyrupToggle={toggleSyrup}
@@ -767,7 +883,7 @@ export default function PotionPlanningLab() {
         return (
           <SignaturePickerStep
             selected={selections.signatureDrinks}
-            onChange={(drinks) => updateSelections('signatureDrinks', drinks)}
+            onChange={updateSignatureDrinks}
             cocktails={cocktails}
             categories={cocktailCategories}
             isFullBarActive={activeModules.fullBar}
@@ -779,6 +895,7 @@ export default function PotionPlanningLab() {
             onCustomCocktailsChange={(val) => updateSelections('customCocktails', val)}
             addOns={selections.addOns || {}}
             toggleAddOn={toggleAddOn}
+            toggleAddOnForDrink={toggleAddOnForDrink}
             updateAddOnMeta={updateAddOnMeta}
             addonPricing={addonPricing}
             guestCount={guestCount}

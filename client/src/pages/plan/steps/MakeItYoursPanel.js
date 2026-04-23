@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { getUpgradesForDrink, getPitch } from '../data/drinkUpgrades';
+import { getUpgradesForDrink, getPitch, isUpgradeSelectedForDrink } from '../data/drinkUpgrades';
 import { DRINK_SYRUP_MAP, SYRUPS, NO_SYRUP_DRINKS, SYRUP_PRICE_SINGLE, SYRUP_PRICE_3PACK, getBottlesPerSyrup, getDrinkSyrupSelections, getAllUniqueSyrups, calculateSyrupCost } from '../../../data/syrups';
+import { useToast } from '../../../context/ToastContext';
 
 /**
  * MakeItYoursPanel — collapsible customization panel shown below a selected drink.
@@ -13,6 +14,7 @@ export default function MakeItYoursPanel({
   phase = 'refinement',
   addOns = {},
   toggleAddOn,
+  toggleAddOnForDrink,
   updateAddOnMeta,
   addonPricing = [],
   syrupSelections = {},
@@ -23,17 +25,43 @@ export default function MakeItYoursPanel({
   guestCount,
 }) {
   const [expanded, setExpanded] = useState(false);
+  const toast = useToast();
 
   const allUpgrades = getUpgradesForDrink(drinkId);
   const featuredAddons = allUpgrades.filter(u => u.featured);
   const flairUpgrades = allUpgrades.filter(u => !u.featured);
 
+  // Per-drink upgrades use toggleAddOnForDrink + their own selection check; non-per-drink
+  // upgrades (e.g. ginger beer for moscow-mule) keep using the global toggleAddOn.
+  const isFlairSelected = (upgrade) =>
+    upgrade.perDrink
+      ? isUpgradeSelectedForDrink(addOns, upgrade.addonSlug, drinkId)
+      : !!addOns[upgrade.addonSlug];
+
+  const handleFlairToggle = (upgrade) => {
+    if (!upgrade.perDrink) {
+      toggleAddOn(upgrade.addonSlug);
+      return;
+    }
+    const ok = toggleAddOnForDrink
+      ? toggleAddOnForDrink(upgrade.addonSlug, drinkId)
+      : (toggleAddOn(upgrade.addonSlug), true);
+    if (!ok && upgrade.maxDrinks) {
+      toast.error(`You can choose up to ${upgrade.maxDrinks} drinks for the ${upgrade.label}.`);
+    }
+  };
+
   // Auto-deselect addons whose required dependency was removed
   useEffect(() => {
     for (const upgrade of allUpgrades) {
-      if (upgrade.requiresAddon && addOns[upgrade.addonSlug]
-          && !addOns[upgrade.requiresAddon] && !addOns['client-glassware']) {
-        toggleAddOn(upgrade.addonSlug);
+      if (!upgrade.requiresAddon) continue;
+      const isOnForThisDrink = isFlairSelected(upgrade);
+      if (isOnForThisDrink && !addOns[upgrade.requiresAddon] && !addOns['client-glassware']) {
+        if (upgrade.perDrink && toggleAddOnForDrink) {
+          toggleAddOnForDrink(upgrade.addonSlug, drinkId);
+        } else {
+          toggleAddOn(upgrade.addonSlug);
+        }
       }
     }
   }, [addOns]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -63,7 +91,7 @@ export default function MakeItYoursPanel({
     .map(id => SYRUPS.find(s => s.id === id)?.name)
     .filter(Boolean);
   const selectedFlairLabels = flairUpgrades
-    .filter(u => !!addOns[u.addonSlug])
+    .filter(isFlairSelected)
     .map(u => u.label);
   const allSelections = [...selectedSyrupNames, ...selectedFlairLabels];
   const hasSelections = allSelections.length > 0;
@@ -280,7 +308,7 @@ export default function MakeItYoursPanel({
                   <div className="make-it-yours-options">
                     {flairUpgrades.map(upgrade => {
                       const pricing = addonPricing.find(a => a.slug === upgrade.addonSlug);
-                      const isSelected = !!addOns[upgrade.addonSlug];
+                      const isSelected = isFlairSelected(upgrade);
                       const pitch = getPitch(upgrade, drinkId);
                       const priceLabel = pricing
                         ? pricing.billing_type === 'per_guest' ? `+$${pricing.rate}/guest` : `+$${pricing.rate}`
@@ -338,7 +366,7 @@ export default function MakeItYoursPanel({
                         <div key={upgrade.addonSlug}>
                           <button
                             className={`make-it-yours-option${isSelected ? ' selected' : ''}`}
-                            onClick={(e) => { e.stopPropagation(); toggleAddOn(upgrade.addonSlug); }}
+                            onClick={(e) => { e.stopPropagation(); handleFlairToggle(upgrade); }}
                             aria-pressed={isSelected}
                           >
                             <span className="option-emoji">{upgrade.emoji}</span>

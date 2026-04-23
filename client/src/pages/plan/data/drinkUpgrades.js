@@ -7,11 +7,15 @@
  */
 
 // --- Service addon upgrades (per-event billing via addOns state) ---
+// `perDrink: true` means the upgrade is selected per-drink (drinks[] array on the addon).
+// `maxDrinks` caps how many drinks may carry the upgrade (e.g. carbonation rig serves up to 2).
 export const DRINK_UPGRADES = [
   {
     addonSlug: 'carbonated-cocktails',
     label: 'Sparkling Upgrade',
     emoji: '\u{1FAD7}',
+    perDrink: true,
+    maxDrinks: 2,
     applicableDrinks: [
       'margarita', 'daiquiri', 'sidecar', 'cosmopolitan',
       'paloma', 'whiskey-sour', 'paper-plane', 'corpse-reviver', 'last-word',
@@ -45,6 +49,7 @@ export const DRINK_UPGRADES = [
     addonSlug: 'smoked-cocktail-kit',
     label: 'Smoked Cocktail',
     emoji: '\uD83D\uDD25',
+    perDrink: true,
     applicableDrinks: [
       'old-fashioned', 'manhattan', 'boulevardier', 'sazerac',
       'negroni', 'black-manhattan', 'whiskey-sour', 'amaretto-sour',
@@ -70,6 +75,7 @@ export const DRINK_UPGRADES = [
     addonSlug: 'flavor-blaster-rental',
     label: 'Smoke Bubble',
     emoji: '\uD83D\uDCA8',
+    perDrink: true,
     requiresAddon: 'real-glassware',
     requiresAddonMessage: 'Aromatic finishing bubbles require proper glassware to form and present correctly. This enhancement is available with our real glassware upgrade.',
     applicableDrinks: [
@@ -141,4 +147,19 @@ export function getUpgradesForDrinks(drinkIds) {
 /** Get pitch text for a specific upgrade + drink combo */
 export function getPitch(upgrade, drinkId) {
   return upgrade.perDrinkPitch[drinkId] || upgrade.defaultPitch;
+}
+
+/** Slugs of upgrades that track per-drink selection in addOns[slug].drinks */
+export const PER_DRINK_UPGRADE_SLUGS = DRINK_UPGRADES
+  .filter(u => u.perDrink)
+  .map(u => u.addonSlug);
+
+/** True if a per-drink upgrade is currently enabled for the given drink. */
+export function isUpgradeSelectedForDrink(addOns, slug, drinkId) {
+  const addon = addOns?.[slug];
+  if (!addon?.enabled) return false;
+  // Legacy drafts may have `enabled: true` without a drinks array — treat as
+  // applying to all selected applicable drinks (migration runs on load to fix).
+  if (!Array.isArray(addon.drinks)) return true;
+  return addon.drinks.includes(drinkId);
 }

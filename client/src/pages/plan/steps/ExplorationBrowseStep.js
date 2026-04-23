@@ -12,6 +12,7 @@ export default function ExplorationBrowseStep({
   onChange,
   addOns = {},
   toggleAddOn,
+  toggleAddOnForDrink,
   addonPricing = [],
   syrupSelections = [],
   onSyrupToggle,
@@ -109,6 +110,7 @@ export default function ExplorationBrowseStep({
                       phase="exploration"
                       addOns={addOns}
                       toggleAddOn={toggleAddOn}
+                      toggleAddOnForDrink={toggleAddOnForDrink}
                       addonPricing={addonPricing}
                       syrupSelections={syrupSelections}
                       onSyrupToggle={onSyrupToggle}

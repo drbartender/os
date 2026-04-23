@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { SYRUPS, SYRUP_CATEGORIES, getAllUniqueSyrups, getDrinkSyrupSelections, calculateSyrupCost, getBottlesPerSyrup } from '../../../data/syrups';
-import { getUpgradesForDrink } from '../data/drinkUpgrades';
+import { getUpgradesForDrink, isUpgradeSelectedForDrink } from '../data/drinkUpgrades';
 import MakeItYoursPanel from './MakeItYoursPanel';
 
 export default function SignaturePickerStep({
@@ -17,6 +17,7 @@ export default function SignaturePickerStep({
   onCustomCocktailsChange,
   addOns = {},
   toggleAddOn,
+  toggleAddOnForDrink,
   updateAddOnMeta,
   addonPricing = [],
   guestCount,
@@ -175,7 +176,9 @@ export default function SignaturePickerStep({
                   {selectedDrinks.map((drink, i) => {
                     const drinkSyrups = getDrinkSyrupSelections(syrupSelections, drink.id);
                     const drinkFlairUpgrades = getUpgradesForDrink(drink.id)
-                      .filter(u => !!addOns[u.addonSlug]);
+                      .filter(u => u.perDrink
+                        ? isUpgradeSelectedForDrink(addOns, u.addonSlug, drink.id)
+                        : !!addOns[u.addonSlug]);
                     const selectedSyrupDetails = drinkSyrups
                       .map(id => SYRUPS.find(s => s.id === id))
                       .filter(Boolean);
@@ -222,7 +225,9 @@ export default function SignaturePickerStep({
                               <button
                                 key={u.addonSlug}
                                 className="your-menu-extra-tag flair removable"
-                                onClick={() => toggleAddOn(u.addonSlug)}
+                                onClick={() => u.perDrink && toggleAddOnForDrink
+                                  ? toggleAddOnForDrink(u.addonSlug, drink.id)
+                                  : toggleAddOn(u.addonSlug)}
                                 title={`Remove ${u.label}`}
                               >
                                 {u.emoji} {u.label}
@@ -522,6 +527,7 @@ export default function SignaturePickerStep({
                         phase={phase}
                         addOns={addOns}
                         toggleAddOn={toggleAddOn}
+                        toggleAddOnForDrink={toggleAddOnForDrink}
                         updateAddOnMeta={updateAddOnMeta}
                         addonPricing={addonPricing}
                         syrupSelections={syrupSelections}
