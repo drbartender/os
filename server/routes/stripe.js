@@ -593,7 +593,8 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             await dbClient.query(`
               UPDATE proposals
               SET status = 'balance_paid',
-                  amount_paid = total_price
+                  amount_paid = total_price,
+                  payment_type = 'full'
               WHERE id = $1 AND status NOT IN ('balance_paid', 'confirmed')
             `, [proposalId]);
           } else if (paymentType === 'balance') {
@@ -628,7 +629,8 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             await dbClient.query(`
               UPDATE proposals
               SET status = 'deposit_paid',
-                  amount_paid = deposit_amount
+                  amount_paid = deposit_amount,
+                  payment_type = 'deposit'
               WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')
             `, [proposalId]);
           }

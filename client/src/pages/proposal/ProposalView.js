@@ -826,7 +826,7 @@ export default function ProposalView() {
         {isPaid && (
           <div style={styles.paidBanner}>
             <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>&#127881;</div>
-            {(proposal.status === 'balance_paid' || proposal.payment_type === 'full') ? (
+            {(proposal.status === 'balance_paid' || Number(proposal.amount_paid || 0) >= Number(proposal.total_price || 0)) ? (
               <>
                 <h3 style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#2d6a4f', margin: '0 0 0.5rem' }}>
                   Fully Paid!
