@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { SYRUPS, SYRUP_CATEGORIES, getAllUniqueSyrups, getDrinkSyrupSelections, calculateSyrupCost, getBottlesPerSyrup } from '../../../data/syrups';
 import { getUpgradesForDrink, isUpgradeSelectedForDrink } from '../data/drinkUpgrades';
+import { computeCocktailGap, computeGapCost } from '../data/packageGaps';
+import { useToast } from '../../../context/ToastContext';
 import MakeItYoursPanel from './MakeItYoursPanel';
 
 export default function SignaturePickerStep({
@@ -26,11 +28,14 @@ export default function SignaturePickerStep({
   syrupSelfProvided = [],
   onSelfProvidedChange,
   proposalSyrups = [],
+  plan,
   phase = 'refinement',
   onNext,
   onSkipMocktails,
   onBack,
 }) {
+  const toast = useToast();
+  const isHostedPlan = plan?.package_category === 'hosted';
   const [activeTab, setActiveTab] = useState(categories[0]?.id || 'crowd-favorites');
   const [lastBrowseTab, setLastBrowseTab] = useState(categories[0]?.id || 'crowd-favorites');
   const [customInput, setCustomInput] = useState('');
@@ -60,11 +65,45 @@ export default function SignaturePickerStep({
   const [dismissedWarning, setDismissedWarning] = useState(false);
 
   const toggleDrink = (drinkId) => {
+    const drink = cocktails.find((c) => c.id === drinkId);
+    const gapSlugs = isHostedPlan && drink ? computeCocktailGap(drink, plan) : [];
+
     if (selected.includes(drinkId)) {
-      onChange(selected.filter(id => id !== drinkId));
+      // Deselecting — remove the drink. Auto-added addons whose triggeredBy becomes
+      // empty are pruned by pruneAddOnsForRemovedDrinks (extended in Task 9 step 5).
+      onChange(selected.filter((id) => id !== drinkId));
     } else {
       onChange([...selected, drinkId]);
       if (selected.length >= 4) setDismissedWarning(false);
+
+      // Auto-add gap addons with autoAdded flag + triggeredBy provenance
+      if (gapSlugs.length > 0) {
+        const cost = computeGapCost(gapSlugs, addonPricing, guestCount);
+        const gapAddonNames = gapSlugs
+          .map((slug) => (addonPricing.find((a) => a.slug === slug) || {}).name)
+          .filter(Boolean)
+          .join(' + ');
+        for (const slug of gapSlugs) {
+          const pricing = addonPricing.find((a) => a.slug === slug);
+          if (!pricing) continue;
+          // If the addon is already on, append drinkId to triggeredBy (preserve autoAdded flag).
+          // If not, toggle on with autoAdded: true + triggeredBy: [drinkId].
+          if (!addOns[slug]) {
+            toggleAddOn(slug, { autoAdded: true, triggeredBy: [drinkId] });
+          } else {
+            const existing = addOns[slug];
+            const triggered = Array.isArray(existing.triggeredBy) ? existing.triggeredBy : [];
+            updateAddOnMeta(slug, {
+              triggeredBy: triggered.includes(drinkId) ? triggered : [...triggered, drinkId],
+            });
+          }
+        }
+        toast.success(
+          cost.perGuest > 0
+            ? `Added ${drink.name} · includes $${cost.perGuest.toFixed(2)}/guest for ${gapAddonNames}.`
+            : `Added ${drink.name} · includes ${gapAddonNames}.`
+        );
+      }
     }
   };
 
@@ -501,6 +540,8 @@ export default function SignaturePickerStep({
             <div className="drink-card-list">
               {filteredDrinks.map(drink => {
                 const isSelected = selected.includes(drink.id);
+                const gapSlugs = isHostedPlan ? computeCocktailGap(drink, plan) : [];
+                const gapCost = gapSlugs.length > 0 ? computeGapCost(gapSlugs, addonPricing, guestCount) : null;
 
                 return (
                   <div key={drink.id}>
@@ -514,6 +555,25 @@ export default function SignaturePickerStep({
                         <span className="drink-card-name">{drink.name}</span>
                         <span className="drink-card-desc">{drink.description}</span>
                       </div>
+                      {gapCost && gapCost.perGuest > 0 && (
+                        <span
+                          className="drink-gap-badge"
+                          style={{
+                            alignSelf: 'center',
+                            marginLeft: '0.5rem',
+                            padding: '0.25rem 0.5rem',
+                            borderRadius: '6px',
+                            background: 'rgba(193, 125, 60, 0.12)',
+                            color: 'var(--warm-brown)',
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap',
+                          }}
+                          title={`Requires $${gapCost.perGuest.toFixed(2)}/guest for ${gapSlugs.map(s => (addonPricing.find(a => a.slug === s) || {}).name).filter(Boolean).join(' + ')}`}
+                        >
+                          +${gapCost.perGuest.toFixed(2)}/guest
+                        </span>
+                      )}
                       <span className="drink-check-stylized">
                         <svg width="14" height="12" viewBox="0 0 14 12" fill="none" aria-hidden="true">
                           <path d="M1.5 6L5 9.5L12.5 1.5" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>

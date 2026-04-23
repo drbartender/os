@@ -518,18 +518,36 @@ export default function PotionPlanningLab() {
     const next = { ...addOns };
     for (const slug of Object.keys(next)) {
       const addon = next[slug];
-      if (!Array.isArray(addon?.drinks)) continue;
-      const filtered = addon.drinks.filter(d => !removedIds.includes(d));
-      if (filtered.length === 0) {
-        delete next[slug];
-      } else if (filtered.length !== addon.drinks.length) {
-        const updated = { ...addon, drinks: filtered };
-        if (updated.bubbles) {
-          const nextBubbles = { ...updated.bubbles };
-          for (const id of removedIds) delete nextBubbles[id];
-          updated.bubbles = nextBubbles;
+      if (!addon) continue;
+
+      // Legacy per-drink addons (carbonation, smoke, smoke-bubble) — prune drinks[]
+      if (Array.isArray(addon.drinks)) {
+        const filtered = addon.drinks.filter(d => !removedIds.includes(d));
+        if (filtered.length === 0) {
+          delete next[slug];
+          continue;
         }
-        next[slug] = updated;
+        if (filtered.length !== addon.drinks.length) {
+          const updated = { ...addon, drinks: filtered };
+          if (updated.bubbles) {
+            const nextBubbles = { ...updated.bubbles };
+            for (const id of removedIds) delete nextBubbles[id];
+            updated.bubbles = nextBubbles;
+          }
+          next[slug] = updated;
+        }
+      }
+
+      // Auto-added specialty addons — prune triggeredBy[]
+      if (Array.isArray(addon.triggeredBy)) {
+        const filtered = addon.triggeredBy.filter(d => !removedIds.includes(d));
+        if (filtered.length === 0 && addon.autoAdded) {
+          delete next[slug];
+          continue;
+        }
+        if (filtered.length !== addon.triggeredBy.length) {
+          next[slug] = { ...addon, triggeredBy: filtered };
+        }
       }
     }
     return next;
