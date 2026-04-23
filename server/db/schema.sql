@@ -352,6 +352,7 @@ ALTER TABLE cocktails ADD COLUMN IF NOT EXISTS base_spirit VARCHAR(100);
 
 -- Add ingredients column for shopping list generation (idempotent)
 ALTER TABLE cocktails ADD COLUMN IF NOT EXISTS ingredients JSONB DEFAULT '[]';
+ALTER TABLE cocktails ADD COLUMN IF NOT EXISTS upgrade_addon_slugs TEXT[] DEFAULT '{}';
 
 INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order) VALUES
   ('vodka-berry-lemonade','Berry Vodka Lemonade','crowd-favorites','🍓','Bright vodka lemonade with mixed berries and a pop of pink.',1),
@@ -514,6 +515,7 @@ CREATE TRIGGER update_service_packages_updated_at BEFORE UPDATE ON service_packa
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 ALTER TABLE service_packages ADD COLUMN IF NOT EXISTS bar_type VARCHAR(50) DEFAULT 'full_bar' CHECK (bar_type IN ('full_bar', 'beer_and_wine', 'mocktail', 'service_only', 'class'));
+ALTER TABLE service_packages ADD COLUMN IF NOT EXISTS covered_addon_slugs TEXT[] DEFAULT '{}';
 
 INSERT INTO service_packages (slug, name, description, category, pricing_type, base_rate_3hr, base_rate_4hr, extra_hour_rate, min_guests, base_rate_3hr_small, base_rate_4hr_small, extra_hour_rate_small, bartenders_included, bar_type, min_total, includes, sort_order) VALUES
   ('the-core-reaction', 'The Core Reaction', 'Service-only. Built to flex. Our most budget-friendly Dry Lab setup. You provide the alcohol and supplies — or grab exactly what we recommend from our customized shopping list. We show up with the know-how, the setup, and the steady hands.', 'byob', 'flat',
@@ -615,6 +617,17 @@ INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_h
   ('smoked-cocktail-kit', 'Smoked Cocktail Kit', 'We bring the torch and wood chips to smoke cocktails on demand at the bar. Available for any drink your guests want, but pairs especially well with Old Fashioneds, whiskey cocktails, and darker spirits.', 'flat', 75.00, NULL, 'all', 34, NULL, 'craft_ingredients', NULL),
   ('barback', 'Barback', 'Dedicated support to keep the bar running smoothly. Handles restocking, ice runs, bussing, cleanup, and general bar maintenance so your bartender never has to leave the station. Ideal for high-volume events or multi-bar setups. Gratuity included.', 'per_hour', 75.00, NULL, 'all', 40, 4, 'staffing', NULL),
   ('additional-bartender', 'Additional Bartender', 'Request an extra bartender beyond what your guest count requires. We recommend 1 bartender per 100 guests, but you can add more for faster service or multiple bar stations.', 'per_hour', 40.00, NULL, 'all', 42, NULL, 'staffing', NULL)
+ON CONFLICT (slug) DO NOTHING;
+
+-- Specialty-ingredient add-ons — auto-added when a selected cocktail's ingredients
+-- are not covered by the client's hosted package. Per-guest billing keeps DRB's
+-- bring-and-take-back model consistent (flat pricing would imply client keeps bottle).
+INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_hour_rate, applies_to, sort_order, minimum_hours, category, requires_addon_slug) VALUES
+  ('specialty-bitter-aperitifs', 'Bitter Aperitifs', 'Campari, Aperol, Cynar, and amaro. For Negronis, Boulevardiers, Paper Planes, and anything with a bitter backbone.', 'per_guest', 3.00, NULL, 'all', 35, NULL, 'craft_ingredients', NULL),
+  ('specialty-vermouths', 'Vermouth & Fortified Wines', 'Sweet and dry vermouth plus Lillet Blanc. For Manhattans, Martinis, Negronis, and Corpse Revivers.', 'per_guest', 1.50, NULL, 'all', 36, NULL, 'craft_ingredients', NULL),
+  ('specialty-niche-liqueurs', 'Specialty Liqueurs', 'Cointreau, green Chartreuse, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur — the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.', 'per_guest', 2.50, NULL, 'all', 37, NULL, 'craft_ingredients', NULL),
+  ('specialty-mezcal', 'Mezcal', 'Smoky agave spirit for Smokey Piñas and mezcal-forward cocktails.', 'per_guest', 3.00, NULL, 'all', 38, NULL, 'craft_ingredients', NULL),
+  ('specialty-cognac', 'Cognac', 'Aged French grape spirit for Sidecars and classic cognac builds.', 'per_guest', 4.00, NULL, 'all', 39, NULL, 'craft_ingredients', NULL)
 ON CONFLICT (slug) DO NOTHING;
 
 -- Set categories on existing add-ons
@@ -1622,3 +1635,42 @@ CREATE INDEX IF NOT EXISTS idx_service_addons_linked_package_id
 -- Pre-existing FK without an index; exposed by the retirement query's reference
 -- check. Tiny today, but indexing FK columns is the standard rule.
 CREATE INDEX IF NOT EXISTS idx_proposals_package_id ON proposals(package_id);
+
+-- Hosted-package coverage: which add-ons the package's base price already includes.
+-- Used by the Potion Planning Lab to (a) suppress redundant add-on offers and
+-- (b) compute cocktail "gaps" against the package's stocked ingredients.
+UPDATE service_packages SET covered_addon_slugs = '{}'                                    WHERE slug = 'the-base-compound';
+UPDATE service_packages SET covered_addon_slugs = '{soft-drink-addon}'                     WHERE slug = 'the-midrange-reaction';
+UPDATE service_packages SET covered_addon_slugs = '{soft-drink-addon}'                     WHERE slug = 'the-enhanced-solution';
+UPDATE service_packages SET covered_addon_slugs = '{soft-drink-addon}'                     WHERE slug = 'formula-no-5';
+UPDATE service_packages SET covered_addon_slugs = '{soft-drink-addon,house-made-ginger-beer}' WHERE slug = 'the-grand-experiment';
+UPDATE service_packages SET covered_addon_slugs = '{}'                                    WHERE slug = 'the-primary-culture';
+UPDATE service_packages SET covered_addon_slugs = '{}'                                    WHERE slug = 'the-refined-reaction';
+UPDATE service_packages SET covered_addon_slugs = '{}'                                    WHERE slug = 'the-carbon-suspension';
+UPDATE service_packages SET covered_addon_slugs = '{}'                                    WHERE slug = 'the-cultivated-complex';
+UPDATE service_packages SET covered_addon_slugs = '{}'                                    WHERE slug = 'the-clear-reaction';
+
+-- Cocktail ingredient gaps: which specialty add-ons each cocktail needs when
+-- the package doesn't cover them. Conservative seed — cheap gaps (grapefruit
+-- juice for Paloma, triple sec for Margarita) are absorbed by DRB (empty array).
+-- Admin tunes via CocktailMenuDashboard as real cost data comes in.
+UPDATE cocktails SET upgrade_addon_slugs = '{house-made-ginger-beer}'                   WHERE id = 'moscow-mule';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-niche-liqueurs}'                 WHERE id = 'espresso-martini';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-bitter-aperitifs}'               WHERE id = 'aperol-spritz';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-cognac,specialty-niche-liqueurs}' WHERE id = 'sidecar';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-vermouths}'                      WHERE id = 'martini';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-vermouths}'                      WHERE id = 'manhattan';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-bitter-aperitifs,specialty-vermouths}' WHERE id = 'negroni';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-niche-liqueurs}'                 WHERE id = 'amaretto-sour';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-mezcal}'                         WHERE id = 'smokey-pina';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-bitter-aperitifs,specialty-vermouths}' WHERE id = 'boulevardier';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-bitter-aperitifs}'               WHERE id = 'black-manhattan';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-niche-liqueurs}'                 WHERE id = 'sazerac';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-niche-liqueurs}'                 WHERE id = 'mai-tai';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-bitter-aperitifs}'               WHERE id = 'paper-plane';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-vermouths,specialty-niche-liqueurs}' WHERE id = 'corpse-reviver';
+UPDATE cocktails SET upgrade_addon_slugs = '{specialty-niche-liqueurs}'                 WHERE id = 'last-word';
+
+UPDATE service_addons
+SET description = 'Non-alcoholic beer from Athletic Brewing — crisp, refreshing, and endorsed by the doctor.'
+WHERE slug = 'non-alcoholic-beer';
