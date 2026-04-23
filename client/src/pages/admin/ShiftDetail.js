@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { formatPhone } from '../../utils/formatPhone';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import TimePicker from '../../components/TimePicker';
 
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -175,11 +176,17 @@ export default function ShiftDetail() {
               </div>
               <div>
                 <label className="form-label">Start Time</label>
-                <input className="form-input" type="time" value={editForm.start_time} onChange={e => setEditForm(f => ({ ...f, start_time: e.target.value }))} />
+                <TimePicker
+                  value={editForm.start_time}
+                  onChange={(v) => setEditForm(f => ({ ...f, start_time: v }))}
+                />
               </div>
               <div>
                 <label className="form-label">End Time</label>
-                <input className="form-input" type="time" value={editForm.end_time} onChange={e => setEditForm(f => ({ ...f, end_time: e.target.value }))} />
+                <TimePicker
+                  value={editForm.end_time}
+                  onChange={(v) => setEditForm(f => ({ ...f, end_time: v }))}
+                />
               </div>
               <div>
                 <label className="form-label">Location</label>
