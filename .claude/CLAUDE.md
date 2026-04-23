@@ -256,9 +256,10 @@ Solo developer, trunk-based, vibe-coded. Code preservation is the #1 priority. P
 3. **Commits are finished, tested work only — and grouped by logical feature, not by step.** "Finished" means either (a) user verified it works in the app, or (b) it's a behavior-inert change (copy, CSS, docs) the user approved. No WIP commits, no checkpoint commits. **Default to one commit per logical feature, not one per file or step.** If a feature touches the AppError class, asyncHandler middleware, and the routes that use them, that's ONE commit, not three. Only split when the pieces are genuinely independent and could be reverted separately.
 4. **Separate cues for commit vs. push.**
    - **Commit cue:** "looks good", "commit", "next task", or any affirmative after Claude reports what to test → commit without re-approval. Use plain `git commit -m "single line"` (no heredoc, no co-author footer) unless the user asks otherwise — keeps permission prompts at zero.
-   - **Push cue:** explicit only — "push", "deploy", "ship it", "send it". Claude never auto-pushes on commit cues. At natural break points Claude may ask *"ready to push these N commits?"*
+   - **Push cue:** explicit only — "push", "deploy", "ship it", "send it". Claude never auto-pushes on commit cues. **Claude NEVER volunteers a "ready to push?" prompt.** Pushes are user-initiated only. The user coordinates push timing across multiple parallel Claude sessions / terminals and decides when the full batch is ready. After a commit, Claude stands down — silence is correct. No "ready to push?" question, no "want me to push these now?" nudge, nothing.
+   - **Agent-run confirmation.** When the user issues a push cue, Claude's FIRST response is a one-line batch summary + confirmation — BEFORE any agent launch: *"N commits / M files pending. Run agents + push?"* Agents fire only on an explicit yes. If the user says *wait / one more thing / defer*, Claude stands down — no agent run, no push. Re-ask on the next push cue. **Never pre-run agents.** Not at end of feature, not to "verify," not on commit cues, not as prep. The confirmation prompt is the single entry point to the agent fleet. This guards against burning a review on a batch the user is about to amend, and lets the user consolidate commits across multiple terminals into ONE review pass.
 5. **Push = deploy.** Every push to `main` ships to Render + Vercel. Treat with gravity.
-6. **Review agents run automatically before every code-touching push.** Claude launches all 5 non-UI agents in parallel (`consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`). Skip agents only when the push contains exclusively `*.md` or `.gitignore` changes. Clean results → push proceeds silently. Any flag → stop, report findings, wait.
+6. **Review agents run automatically before every code-touching push.** Claude launches all 5 non-UI agents in parallel (`consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`). Skip agents only when the push contains exclusively `*.md` or `.gitignore` changes. Clean results → push proceeds silently. Any flag → stop, report findings, wait. **Agents run exactly once per logical push, gated by the Pre-Push Procedure step 0.5 confirmation. Claude does NOT pre-run agents at feature completion, task completion, "let me verify," or any point outside the confirmed push flow.**
 7. **Explicit staging only.** `git add <specific-path>` always. Never `git add .`, `-A`, or `-u`. Prevents sweeping in screenshots, `.playwright-mcp/`, `.env`, etc.
 8. **Branches and stashes require approval with a one-line reason.** Claude may propose but never creates silently.
 9. **Undo rules (safe recipes).**
@@ -272,6 +273,8 @@ Solo developer, trunk-based, vibe-coded. Code preservation is the #1 priority. P
 ### Pre-Push Procedure
 
 When the user gives a push cue, Claude runs this checklist exactly. No steps skipped, no silent deviations.
+
+**0.5 — Confirmation gate (runs BEFORE any other step).** Announce the pending batch in one line: *"N commits / M files. Run agents + push?"* Wait for explicit yes. If the user says *defer / wait / one more thing / hold on*, stand down silently — no agent run, no push, no further pre-push work. Re-ask on the next push cue. This gate ensures agents run AT MOST once per logical push, even when the user is batching work across multiple parallel Claude sessions.
 
 1. **Verify branch.** Confirm current branch = `main`. If not, stop and ask.
 2. **Sanity-check working tree.** If there are uncommitted modifications or untracked files other than known-ignored artifacts, pause and ask: *"There are uncommitted changes in X, Y, Z — meant to go in this push or leave them out?"* Not a hard block; user may just say "leave them."
@@ -381,7 +384,7 @@ Before presenting ANY code change, silently verify:
 
 ### Review Agents (All Opus)
 
-Six review agents live in `.claude/agents/`, all running on opus. Triggered automatically per the Git Workflow rules above (see Rule 6 + Pre-Push Procedure) or explicitly via the `/review-before-deploy` slash command.
+Six review agents live in `.claude/agents/`, all running on opus. Triggered automatically per the Git Workflow rules above (see Rule 6 + Pre-Push Procedure) or explicitly via the `/review-before-deploy` slash command. A complementary `/codex-review` command runs OpenAI Codex (GPT) as a cross-LLM second-opinion reviewer — see its subsection below.
 
 **Auto-run in parallel before every code-touching push to `main`:**
 
@@ -431,3 +434,16 @@ Six review agents live in `.claude/agents/`, all running on opus. Triggered auto
 **Slash Command — `/review-before-deploy`:**
 
 Runs ALL six agents in parallel (the five auto-runners plus `ui-ux-review`). Reserved for heavier gates: end of a major feature, before quarterly deploy, after adding a new third-party integration. Will warn if `npm run dev` isn't running and ask whether to start it or skip the UI agent.
+
+**Slash Command — `/codex-review`:**
+
+Runs OpenAI Codex (GPT) as a second-opinion reviewer over uncommitted changes, a diff range, or a focused sweep. GPT and Claude have different priors, so Codex catches what Claude-style checklist agents miss — logic correctness, business-intent alignment, architectural smell, and test-gap reasoning.
+
+Argument presets (see `.claude/commands/codex-review.md` for the full table):
+- *(empty)* — holistic "anything look off?" on uncommitted changes
+- `tests` — identify missing unit/integration/edge-case tests
+- `pricing` — verify money math (integer cents, hosted-bartender rule, rounding)
+- `intent` — check diff matches the stated commit message / branch intent
+- `architecture` — leaky abstractions, module boundaries, coupling
+
+Read-only by design: the slash command runs exclusively `codex review ...`. All write-capable Codex subcommands (`apply`, `exec`, `cloud`, `resume`, `fork`, `mcp-server`, `app`, `app-server`) are blocked by deny rules in `.claude/settings.local.json`. If Codex suggests a patch, it's presented as text — the user decides what lands.
