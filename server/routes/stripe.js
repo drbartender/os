@@ -7,7 +7,12 @@ const { createEventShifts } = require('../utils/eventCreation');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { calculateSyrupCost } = require('../utils/pricingEngine');
-const { createBalanceInvoice, linkPaymentToInvoice } = require('../utils/invoiceHelpers');
+const {
+  createBalanceInvoice,
+  linkPaymentToInvoice,
+  createDrinkPlanExtrasInvoice,
+  findOpenInvoiceForBalance,
+} = require('../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
@@ -166,10 +171,10 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(asyn
     throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
   }
 
-  const { selections } = req.body;
+  const { selections, paymentChoice: rawChoice } = req.body;
   if (!selections) throw new ValidationError({ selections: 'Selections required' });
+  const paymentChoice = rawChoice === 'with_balance' ? 'with_balance' : 'extras_only';
 
-  // Look up drink plan + proposal
   const planRes = await pool.query(`
     SELECT dp.id AS plan_id, dp.token AS plan_token, dp.status AS plan_status,
            p.id AS proposal_id, p.total_price, p.amount_paid, p.event_date,
@@ -187,12 +192,10 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(asyn
 
   if (!data.proposal_id) throw new ConflictError('No linked proposal for this plan');
 
-  // Calculate extras server-side
   const addOns = selections.addOns || {};
   const addonSlugs = Object.keys(addOns).filter(slug => addOns[slug]?.enabled);
   const addBarRental = selections.logistics?.addBarRental === true;
 
-  // Look up addon pricing
   let addonTotal = 0;
   if (addonSlugs.length > 0) {
     const addonRes = await pool.query(
@@ -209,7 +212,6 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(asyn
     }
   }
 
-  // Bar rental cost
   let barRentalCost = 0;
   if (addBarRental) {
     const snapshot = data.pricing_snapshot || {};
@@ -221,7 +223,6 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(asyn
     }
   }
 
-  // Syrup cost (new syrups only, excluding self-provided and proposal syrups)
   const rawSyrups = selections.syrupSelections || {};
   const allSyrupIds = Array.isArray(rawSyrups)
     ? rawSyrups
@@ -235,11 +236,6 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(asyn
 
   const extrasAmount = addonTotal + barRentalCost + syrupCost.total;
 
-  if (extrasAmount <= 0) {
-    return res.json({ noPaymentNeeded: true, extrasAmount: 0 });
-  }
-
-  // Determine payment scenario based on balance_due_date
   const now = new Date();
   let balanceDueDate = data.balance_due_date;
   if (!balanceDueDate && data.event_date) {
@@ -248,25 +244,35 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(asyn
     balanceDueDate = d;
   }
   const isPastDue = balanceDueDate ? now > new Date(balanceDueDate) : false;
-  const currentBalance = Number(data.total_price || 0) - Number(data.amount_paid || 0);
+  const currentBalance = Math.max(0, Number(data.total_price || 0) - Number(data.amount_paid || 0));
+  const balanceOptionAvailable = !isPastDue && currentBalance > 0 && extrasAmount > 0;
 
-  let paymentScenario, totalCharge, pastDueAmount = 0;
+  if (extrasAmount <= 0 && !(isPastDue && currentBalance > 0)) {
+    return res.json({ noPaymentNeeded: true, extrasAmount: 0, balanceOptionAvailable: false });
+  }
+
+  let paymentScenario;
+  let totalCharge;
+  let pastDueAmount = 0;
+  let balancePortion = 0;
+
   if (isPastDue && currentBalance > 0) {
-    // Past due with outstanding balance — charge extras + balance
     paymentScenario = 'extras_plus_balance';
     pastDueAmount = currentBalance;
+    balancePortion = currentBalance;
     totalCharge = extrasAmount + currentBalance;
   } else if (isPastDue) {
-    // Past due but balance already paid — charge extras only, required
     paymentScenario = 'extras_required';
     totalCharge = extrasAmount;
+  } else if (paymentChoice === 'with_balance' && currentBalance > 0 && extrasAmount > 0) {
+    paymentScenario = 'extras_optional';
+    balancePortion = currentBalance;
+    totalCharge = extrasAmount + currentBalance;
   } else {
-    // Not past due — client can choose
     paymentScenario = 'extras_optional';
     totalCharge = extrasAmount;
   }
 
-  // Get or create Stripe customer
   const customerId = await getOrCreateCustomer({
     id: data.proposal_id,
     stripe_customer_id: data.stripe_customer_id,
@@ -275,9 +281,9 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(asyn
   });
 
   const amountCents = Math.round(totalCharge * 100);
-  const paymentType = paymentScenario === 'extras_plus_balance'
-    ? 'drink_plan_with_balance'
-    : 'drink_plan_extras';
+  const extrasCents = Math.round(extrasAmount * 100);
+  const balanceCents = Math.round(balancePortion * 100);
+  const paymentType = balancePortion > 0 ? 'drink_plan_with_balance' : 'drink_plan_extras';
 
   let paymentIntent;
   try {
@@ -291,6 +297,8 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(asyn
         proposal_id: String(data.proposal_id),
         drink_plan_id: String(data.plan_id),
         payment_type: paymentType,
+        extras_amount_cents: String(extrasCents),
+        balance_amount_cents: String(balanceCents),
       },
     });
   } catch (err) {
@@ -311,6 +319,8 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(asyn
     pastDueAmount,
     totalCharge,
     paymentScenario,
+    balanceOptionAvailable,
+    currentBalance,
   });
 }));
 
@@ -654,22 +664,50 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             [intent.id, 'succeeded']
           );
           if (paymentRow.rows[0]) {
+            const paymentRowId = paymentRow.rows[0].id;
+
             if (invoiceId) {
-              // Payment was made through an invoice — link and lock
-              await linkPaymentToInvoice(Number(invoiceId), paymentRow.rows[0].id, intent.amount, dbClient);
+              await linkPaymentToInvoice(Number(invoiceId), paymentRowId, intent.amount, dbClient);
+            } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
+              const extrasCents = Number(intent.metadata?.extras_amount_cents || 0);
+              const balanceCents = Number(intent.metadata?.balance_amount_cents || 0);
+              const drinkPlanId = Number(intent.metadata?.drink_plan_id);
+
+              if (extrasCents > 0 && drinkPlanId) {
+                const extrasInvoice = await createDrinkPlanExtrasInvoice(
+                  { proposalId, drinkPlanId, extrasAmountCents: extrasCents },
+                  dbClient
+                );
+                await linkPaymentToInvoice(extrasInvoice.id, paymentRowId, extrasCents, dbClient);
+              }
+
+              if (balanceCents > 0) {
+                const balanceInv = await findOpenInvoiceForBalance(proposalId, dbClient);
+                if (balanceInv) {
+                  await linkPaymentToInvoice(balanceInv.id, paymentRowId, balanceCents, dbClient);
+                } else {
+                  console.warn(
+                    `Webhook: drink_plan_with_balance payment ${intent.id} for proposal ${proposalId} had no open invoice to absorb balance portion ($${(balanceCents / 100).toFixed(2)})`
+                  );
+                  if (process.env.SENTRY_DSN_SERVER) {
+                    Sentry.captureMessage(
+                      `Unapplied drink-plan balance portion (proposal ${proposalId}, intent ${intent.id}, cents ${balanceCents})`,
+                      'warning'
+                    );
+                  }
+                }
+              }
             } else {
-              // Legacy payment (not through invoice) — try to find and link the oldest open invoice
               const openInvoice = await dbClient.query(
                 "SELECT id FROM invoices WHERE proposal_id = $1 AND status IN ('sent', 'partially_paid') ORDER BY created_at ASC LIMIT 1",
                 [proposalId]
               );
               if (openInvoice.rows[0]) {
-                await linkPaymentToInvoice(openInvoice.rows[0].id, paymentRow.rows[0].id, intent.amount, dbClient);
+                await linkPaymentToInvoice(openInvoice.rows[0].id, paymentRowId, intent.amount, dbClient);
               }
             }
           }
 
-          // If a deposit was just paid, create the balance invoice
           if (paymentType === 'deposit') {
             await createBalanceInvoice(proposalId, dbClient);
           }

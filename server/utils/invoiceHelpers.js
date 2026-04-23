@@ -514,6 +514,140 @@ async function linkPaymentToInvoice(invoiceId, paymentId, amountCents, dbClient)
   await lockInvoice(invoiceId, dbClient);
 }
 
+// ─── 11. createDrinkPlanExtrasInvoice ────────────────────────────────────────
+
+/**
+ * Create a new "Drink Plan Extras" invoice for a drink-plan payment.
+ *
+ * Reads drink_plan.selections + proposal.pricing_snapshot/num_bars from the DB
+ * and builds line items for the extras the client selected. Caller is
+ * responsible for calling linkPaymentToInvoice() to record the payment.
+ *
+ * @param {{ proposalId:number, drinkPlanId:number, extrasAmountCents:number }} opts
+ * @param {object} dbClient  — must be a transaction client
+ * @returns {Promise<object>} The new invoice row.
+ */
+async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmountCents }, dbClient) {
+  const [dpRes, propRes] = await Promise.all([
+    dbClient.query('SELECT selections FROM drink_plans WHERE id = $1', [drinkPlanId]),
+    dbClient.query(
+      'SELECT guest_count, num_bars, pricing_snapshot FROM proposals WHERE id = $1',
+      [proposalId]
+    ),
+  ]);
+
+  if (!dpRes.rows[0]) throw new Error(`Drink plan ${drinkPlanId} not found`);
+  if (!propRes.rows[0]) throw new Error(`Proposal ${proposalId} not found`);
+
+  const selections = dpRes.rows[0].selections || {};
+  const prop = propRes.rows[0];
+  const snap = prop.pricing_snapshot || {};
+
+  const items = [];
+
+  const addonSlugs = Object.keys(selections.addOns || {}).filter(
+    slug => selections.addOns[slug]?.enabled
+  );
+  if (addonSlugs.length > 0) {
+    const addonRows = await dbClient.query(
+      'SELECT id, slug, name, rate, billing_type FROM service_addons WHERE slug = ANY($1) AND is_active = true',
+      [addonSlugs]
+    );
+    for (const addon of addonRows.rows) {
+      const rate = Number(addon.rate);
+      const isPerGuest = addon.billing_type === 'per_guest';
+      const qty = isPerGuest ? (prop.guest_count || 1) : 1;
+      const lineCents = toCents(rate * qty);
+      const unitCents = toCents(rate);
+      const description = isPerGuest
+        ? `${addon.name} (${qty} guests)`
+        : addon.name;
+      items.push({
+        description,
+        quantity: qty,
+        unit_price: unitCents,
+        line_total: lineCents,
+        source_type: 'addon',
+        source_id: addon.id,
+      });
+    }
+  }
+
+  if (selections.logistics?.addBarRental === true) {
+    const barRental = snap.bar_rental || {};
+    const isAdditional = (prop.num_bars || 0) >= 1;
+    const feeDollars = isAdditional
+      ? (barRental.additional_bar_fee || 100)
+      : (barRental.first_bar_fee || 50);
+    const lineCents = toCents(feeDollars);
+    items.push({
+      description: isAdditional ? 'Additional Portable Bar' : 'Portable Bar Rental',
+      quantity: 1,
+      unit_price: lineCents,
+      line_total: lineCents,
+      source_type: 'fee',
+      source_id: null,
+    });
+  }
+
+  const accountedCents = items.reduce((sum, it) => sum + it.line_total, 0);
+  const syrupCents = extrasAmountCents - accountedCents;
+  if (syrupCents > 0) {
+    items.push({
+      description: 'Hand-Crafted Syrups',
+      quantity: 1,
+      unit_price: syrupCents,
+      line_total: syrupCents,
+      source_type: 'fee',
+      source_id: null,
+    });
+  }
+
+  const invoice = await createInvoice(
+    {
+      proposalId,
+      label: 'Drink Plan Extras',
+      amountDueCents: extrasAmountCents,
+      status: 'sent',
+      dueDate: null,
+    },
+    dbClient
+  );
+  await writeLineItems(invoice.id, items, dbClient);
+  return invoice;
+}
+
+// ─── 12. findOpenInvoiceForBalance ───────────────────────────────────────────
+
+/**
+ * Locate the invoice that represents the proposal's outstanding balance.
+ * Priority: Balance > Full Payment > Deposit. Skips Drink Plan Extras and
+ * any other bespoke-label invoices that shouldn't absorb balance payments.
+ *
+ * @param {number} proposalId
+ * @param {object} [dbClient]
+ * @returns {Promise<{id:number, label:string}|null>}
+ */
+async function findOpenInvoiceForBalance(proposalId, dbClient) {
+  const client = db(dbClient);
+  const result = await client.query(
+    `SELECT id, label
+       FROM invoices
+      WHERE proposal_id = $1
+        AND status IN ('sent', 'partially_paid')
+        AND label IN ('Balance', 'Full Payment', 'Deposit')
+      ORDER BY CASE label
+                 WHEN 'Balance' THEN 1
+                 WHEN 'Full Payment' THEN 2
+                 WHEN 'Deposit' THEN 3
+               END,
+               id ASC
+      LIMIT 1`,
+    [proposalId]
+  );
+  return result.rows[0] || null;
+}
+
 // ─── Exports ─────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -527,4 +661,6 @@ module.exports = {
   createBalanceInvoice,
   createAdditionalInvoiceIfNeeded,
   linkPaymentToInvoice,
+  createDrinkPlanExtrasInvoice,
+  findOpenInvoiceForBalance,
 };

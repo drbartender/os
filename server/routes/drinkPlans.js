@@ -3,6 +3,7 @@ const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters');
 const { calculateProposal } = require('../utils/pricingEngine');
+const { refreshUnlockedInvoices } = require('../utils/invoiceHelpers');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { getEventTypeLabel } = require('../utils/eventTypes');
@@ -67,7 +68,8 @@ router.get('/t/:token', publicReadLimiter, asyncHandler(async (req, res) => {
 
 /** PUT /api/drink-plans/t/:token — save draft or submit (public) */
 router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
-  const { serving_type, selections, status } = req.body;
+  const { serving_type, selections, status, paid_separately } = req.body;
+  const paidSeparately = paid_separately === true;
 
   // Check plan exists and is not already submitted
   const existing = await pool.query(
@@ -274,6 +276,18 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
                   .catch(emailErr => console.error('Client balance email failed:', emailErr));
               }
             }
+          }
+        }
+
+        // Only refresh the Balance invoice when the extras are being *added
+        // to balance* — NOT when the client is paying for them separately via
+        // Stripe on this same submit (those extras will land on their own
+        // "Drink Plan Extras" invoice created by the webhook).
+        if (!paidSeparately) {
+          try {
+            await refreshUnlockedInvoices(proposal.id, client);
+          } catch (refreshErr) {
+            console.error('refreshUnlockedInvoices failed (non-fatal):', refreshErr);
           }
         }
 

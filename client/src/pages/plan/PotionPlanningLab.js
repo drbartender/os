@@ -350,7 +350,10 @@ export default function PotionPlanningLab() {
   };
 
   // Submit drink plan to server (without changing step — used by payment flow)
-  const submitDrinkPlan = async () => {
+  // paidSeparately=true when extras will be charged via Stripe on the same turn:
+  // tells the server to skip refreshing the Balance invoice with the new extras
+  // (they will land on a separate "Drink Plan Extras" invoice via the webhook).
+  const submitDrinkPlan = async (paidSeparately = false) => {
     submittingRef.current = true;
     setSaving(true);
     setError(null);
@@ -359,6 +362,7 @@ export default function PotionPlanningLab() {
         serving_type: quickPickChoice,
         selections: { ...selections, activeModules },
         status: 'submitted',
+        paid_separately: paidSeparately,
       });
     } catch (err) {
       // eslint-disable-next-line no-restricted-syntax
@@ -871,7 +875,7 @@ export default function PotionPlanningLab() {
             pricingSnapshot={pricingSnapshot}
             proposalSyrups={proposalSyrups}
             onSubmit={handleSubmit}
-            onSubmitForPayment={submitDrinkPlan}
+            onSubmitForPayment={() => submitDrinkPlan(true)}
             proposalPaymentInfo={proposalPaymentInfo}
             token={token}
             saving={saving}

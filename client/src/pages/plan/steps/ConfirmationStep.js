@@ -79,7 +79,9 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
   const logistics = selections.logistics || {};
 
   // Payment state
-  const [paymentChoice, setPaymentChoice] = useState('pay_now');
+  const [paymentChoice, setPaymentChoice] = useState('pay_now'); // 'pay_now' | 'pay_everything' | 'add_to_balance'
+  const [balanceOptionAvailable, setBalanceOptionAvailable] = useState(false);
+  const [currentBalance, setCurrentBalance] = useState(0);
   const [clientSecret, setClientSecret] = useState('');
   const [paymentScenario, setPaymentScenario] = useState(null);
   const [paymentAmounts, setPaymentAmounts] = useState({ extrasAmount: 0, pastDueAmount: 0, totalCharge: 0 });
@@ -148,19 +150,26 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
   // Load payment intent when extras > 0 and proposal is linked
   useEffect(() => {
     if (!showPayment || !token) return;
+    if (paymentChoice === 'add_to_balance') {
+      setClientSecret('');
+      return;
+    }
 
     let cancelled = false;
     async function loadPaymentInfo() {
       setLoadingPayment(true);
       setPaymentError('');
       try {
+        const choiceForServer = paymentChoice === 'pay_everything' ? 'with_balance' : 'extras_only';
         const res = await axios.post(`${BASE_URL}/stripe/create-drink-plan-intent/${token}`, {
           selections,
+          paymentChoice: choiceForServer,
         });
         if (cancelled) return;
 
         if (res.data.noPaymentNeeded) {
           setPaymentScenario(null);
+          setBalanceOptionAvailable(false);
           return;
         }
 
@@ -171,8 +180,9 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           pastDueAmount: res.data.pastDueAmount,
           totalCharge: res.data.totalCharge,
         });
+        setBalanceOptionAvailable(!!res.data.balanceOptionAvailable);
+        setCurrentBalance(Number(res.data.currentBalance || 0));
 
-        // Default to pay_now if payment is required
         if (res.data.paymentScenario !== 'extras_optional') {
           setPaymentChoice('pay_now');
         }
@@ -188,7 +198,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
 
     loadPaymentInfo();
     return () => { cancelled = true; };
-  }, [showPayment, token]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [showPayment, token, paymentChoice]);
 
   const paymentRequired = paymentScenario === 'extras_required' || paymentScenario === 'extras_plus_balance';
 
@@ -510,11 +520,41 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
                     style={{ accentColor: 'var(--deep-brown)' }}
                   />
                   <div>
-                    <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>Pay {fmt(paymentAmounts.totalCharge)} Now</div>
-                    <div className="text-muted text-small">Take care of it now and you're all set.</div>
+                    <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>
+                      Pay {fmt(paymentAmounts.extrasAmount)} Now
+                    </div>
+                    <div className="text-muted text-small">Take care of your extras now and you're all set.</div>
                   </div>
                 </div>
               </label>
+
+              {balanceOptionAvailable && (
+                <label style={{
+                  display: 'block', padding: '0.85rem 1rem', borderRadius: '8px', cursor: 'pointer', marginBottom: '0.5rem',
+                  border: paymentChoice === 'pay_everything' ? '2px solid var(--deep-brown)' : '1px solid #d4c4b0',
+                  background: paymentChoice === 'pay_everything' ? 'rgba(193, 125, 60, 0.06)' : 'transparent',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <input
+                      type="radio"
+                      name="paymentChoice"
+                      value="pay_everything"
+                      checked={paymentChoice === 'pay_everything'}
+                      onChange={() => setPaymentChoice('pay_everything')}
+                      style={{ accentColor: 'var(--deep-brown)' }}
+                    />
+                    <div>
+                      <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>
+                        Pay Extras + Balance in Full — {fmt(paymentAmounts.extrasAmount + currentBalance)}
+                      </div>
+                      <div className="text-muted text-small">
+                        Settle your event balance of {fmt(currentBalance)} too
+                        {displayBalanceDueDate && ` (due ${formatDateShort(displayBalanceDueDate)})`}.
+                      </div>
+                    </div>
+                  </div>
+                </label>
+              )}
 
               <label style={{
                 display: 'block', padding: '0.85rem 1rem', borderRadius: '8px', cursor: 'pointer',
@@ -533,7 +573,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
                   <div>
                     <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>Add to My Balance</div>
                     <div className="text-muted text-small">
-                      {fmt(paymentAmounts.totalCharge)} will be added to your balance
+                      {fmt(paymentAmounts.extrasAmount)} will be added to your balance
                       {displayBalanceDueDate && ` (due ${formatDateShort(displayBalanceDueDate)})`}
                     </div>
                   </div>
@@ -543,7 +583,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           )}
 
           {/* Stripe Payment Form */}
-          {(paymentRequired || paymentChoice === 'pay_now') && (
+          {(paymentRequired || paymentChoice === 'pay_now' || paymentChoice === 'pay_everything') && (
             <div style={{ marginTop: paymentScenario === 'extras_optional' ? '0.5rem' : 0 }}>
               {loadingPayment && (
                 <div style={{ textAlign: 'center', padding: '2rem' }}>
