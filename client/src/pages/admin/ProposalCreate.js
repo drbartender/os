@@ -10,17 +10,7 @@ import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
-
-// Generate 30-minute time slots from 6:00 AM to 11:30 PM
-const TIME_OPTIONS = [];
-for (let h = 6; h < 24; h++) {
-  ['00', '30'].forEach(m => {
-    const val = `${String(h).padStart(2, '0')}:${m}`;
-    const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    TIME_OPTIONS.push({ value: val, label: `${hour12}:${m} ${ampm}` });
-  });
-}
+import TimePicker from '../../components/TimePicker';
 
 export default function ProposalCreate() {
   const navigate = useNavigate();
@@ -289,12 +279,12 @@ export default function ProposalCreate() {
                 </div>
                 <div className="form-group">
                   <label className="form-label">Start Time</label>
-                  <select className="form-select" value={form.event_start_time} onChange={e => update('event_start_time', e.target.value)}>
-                    <option value="">— Select time —</option>
-                    {TIME_OPTIONS.map(t => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
-                  </select>
+                  <TimePicker
+                    value={form.event_start_time}
+                    onChange={(v) => update('event_start_time', v)}
+                    minHour={6}
+                    maxHour={23}
+                  />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Duration (hours)</label>
