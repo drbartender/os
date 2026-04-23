@@ -990,7 +990,9 @@ router.get('/badge-counts', auth, adminOnly, asyncHandler(async (req, res) => {
          AND (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = shifts.id AND sr.status = 'approved')
              < json_array_length(positions_needed::json)
       )::int AS unstaffed_events,
-      (SELECT COUNT(*) FROM applications WHERE onboarding_status = 'applied')::int AS new_applications
+      (SELECT COUNT(*) FROM applications a
+         JOIN users u ON u.id = a.user_id
+         WHERE u.onboarding_status = 'applied')::int AS new_applications
   `);
   res.json(result.rows[0]);
 }));

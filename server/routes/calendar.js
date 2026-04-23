@@ -48,7 +48,16 @@ function formatICalDateTime(dateStr, timeStr) {
  *  - Unparseable times → all-day event
  */
 function buildEventTimes(eventDate, startTimeStr, endTimeStr) {
-  const dateOnly = String(eventDate).slice(0, 10); // "YYYY-MM-DD"
+  // pg returns DATE columns as JS Date objects whose String() is "Thu Apr 23 2026 ..." —
+  // not a YYYY-MM-DD slice. Normalize explicitly so downstream date math doesn't crash.
+  let dateOnly;
+  if (eventDate instanceof Date) {
+    if (isNaN(eventDate.getTime())) return { allDay: true, dtstart: '', dtend: '' };
+    dateOnly = eventDate.toISOString().slice(0, 10);
+  } else {
+    dateOnly = String(eventDate).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return { allDay: true, dtstart: '', dtend: '' };
+  }
   const icalDate = dateOnly.replace(/-/g, '');
 
   const startParsed = parseTime12(startTimeStr);
@@ -191,13 +200,15 @@ function buildICalFeed(events, calName) {
   ];
 
   for (const evt of events) {
+    const times = buildEventTimes(evt.event_date, evt.start_time, evt.end_time);
+    if (!times.dtstart || !times.dtend) continue; // skip events with unparseable dates
+
     lines.push('BEGIN:VEVENT');
     lines.push(icalProp('UID', `shift-${evt.id}@drbartender.com`));
     lines.push(icalProp('DTSTAMP', toICalUTC(new Date())));
     if (evt.updated_at) lines.push(icalProp('LAST-MODIFIED', toICalUTC(evt.updated_at)));
     lines.push(icalProp('SEQUENCE', String(toSequence(evt.updated_at))));
 
-    const times = buildEventTimes(evt.event_date, evt.start_time, evt.end_time);
     if (times.allDay) {
       lines.push(`DTSTART;VALUE=DATE:${times.dtstart}`);
       lines.push(`DTEND;VALUE=DATE:${times.dtend}`);
