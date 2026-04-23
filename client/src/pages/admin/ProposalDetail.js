@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import api from '../../utils/api';
 import PricingBreakdown from '../../components/PricingBreakdown';
@@ -720,6 +720,34 @@ export default function ProposalDetail() {
   const amountPaid = Number(proposal.amount_paid || 0);
   const balanceDue = totalPrice - amountPaid;
 
+  // Auto-added specialty upgrades — derived from drinkPlan.selections.addOns metadata.
+  // Shape: { [slug]: { triggeredBy: [drinkId, ...] } } — only slugs with autoAdded=true AND triggeredBy.length > 0.
+  const autoAddedMap = useMemo(() => {
+    const sel = drinkPlan?.selections || {};
+    const out = {};
+    for (const [slug, meta] of Object.entries(sel.addOns || {})) {
+      if (meta?.autoAdded && Array.isArray(meta.triggeredBy) && meta.triggeredBy.length > 0) {
+        out[slug] = { triggeredBy: meta.triggeredBy };
+      }
+    }
+    return out;
+  }, [drinkPlan]);
+
+  // Resolve drink IDs → cocktail names for badge tooltips and activity-log detail.
+  const cocktailNameById = useMemo(() => {
+    const map = {};
+    for (const c of (planCocktails || [])) { map[c.id] = c.name; }
+    return map;
+  }, [planCocktails]);
+
+  // Resolve slugs → addon display names (best-effort; relies on addons master list which
+  // is lazy-loaded when edit mode opens). Falls back to slug text when name is unavailable.
+  const addonNameBySlug = useMemo(() => {
+    const map = {};
+    for (const a of (addons || [])) { if (a.slug) map[a.slug] = a.name; }
+    return map;
+  }, [addons]);
+
   // Assign picker: filter staff
   const filteredStaff = assignSearch.length >= 1
     ? activeStaff.filter(s => {
@@ -1043,6 +1071,33 @@ export default function ProposalDetail() {
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: '0.75rem', marginTop: '0.5rem' }}>
                   <PricingBreakdown snapshot={snapshot} />
                 </div>
+
+                {/* Auto-added specialty upgrades — badges listing which signature cocktails triggered each upgrade */}
+                {Object.keys(autoAddedMap).length > 0 && (
+                  <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                    {Object.entries(autoAddedMap).map(([slug, { triggeredBy }]) => {
+                      const drinkNames = triggeredBy.map(id => cocktailNameById[id] || id).join(', ');
+                      const addonLabel = addonNameBySlug[slug] || slug;
+                      return (
+                        <span
+                          key={slug}
+                          className="addon-auto-badge"
+                          style={{
+                            padding: '0.125rem 0.5rem',
+                            borderRadius: '4px',
+                            background: 'rgba(193, 125, 60, 0.12)',
+                            color: 'var(--warm-brown)',
+                            fontSize: '0.7rem',
+                            fontWeight: 600,
+                          }}
+                          title={`${addonLabel} auto-added from: ${drinkNames}`}
+                        >
+                          {addonLabel}: Auto-added · from {drinkNames}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* Syrup selections detail */}
                 {snapshot?.syrups?.selections?.length > 0 && (
@@ -1376,6 +1431,18 @@ export default function ProposalDetail() {
                         {details.location && <span>{details.location}</span>}
                         {details.ip && <span style={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>{details.ip}</span>}
                       </div>
+                    )}
+                    {entry.action === 'drink_plan_addons_added' && Array.isArray(details.specialty_upgrades) && details.specialty_upgrades.length > 0 && (
+                      <ul style={{ marginTop: '0.25rem', marginBottom: 0, paddingLeft: '1.25rem', fontSize: '0.85rem' }}>
+                        {details.specialty_upgrades.map((u, idx) => (
+                          <li key={idx}>
+                            <strong>{addonNameBySlug[u.slug] || u.slug}</strong>
+                            {Array.isArray(u.triggeredBy) && u.triggeredBy.length > 0 && (
+                              <span className="text-muted"> &mdash; from {u.triggeredBy.map(id => cocktailNameById[id] || id).join(', ')}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
                     )}
                   </div>
                   );
@@ -1867,6 +1934,34 @@ export default function ProposalDetail() {
               </ul>
             ))}
             <PricingBreakdown snapshot={editing ? editPreview : snapshot} />
+
+            {/* Auto-added specialty upgrades — badges listing which signature cocktails triggered each upgrade */}
+            {!editing && Object.keys(autoAddedMap).length > 0 && (
+              <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+                {Object.entries(autoAddedMap).map(([slug, { triggeredBy }]) => {
+                  const drinkNames = triggeredBy.map(id => cocktailNameById[id] || id).join(', ');
+                  const addonLabel = addonNameBySlug[slug] || slug;
+                  return (
+                    <span
+                      key={slug}
+                      className="addon-auto-badge"
+                      style={{
+                        padding: '0.125rem 0.5rem',
+                        borderRadius: '4px',
+                        background: 'rgba(193, 125, 60, 0.12)',
+                        color: 'var(--warm-brown)',
+                        fontSize: '0.7rem',
+                        fontWeight: 600,
+                      }}
+                      title={`${addonLabel} auto-added from: ${drinkNames}`}
+                    >
+                      {addonLabel}: Auto-added · from {drinkNames}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
             {editing && editForm && (
               <div style={{ marginTop: '1rem', borderTop: '1px solid var(--cream-dark, #e8e0d4)', paddingTop: '1rem' }}>
                 <h4 style={{ color: 'var(--warm-brown)', marginBottom: '0.5rem', fontSize: '0.95rem' }}>Price Adjustments</h4>
@@ -2198,6 +2293,18 @@ export default function ProposalDetail() {
                           {details.location && <span>{details.location}</span>}
                           {details.ip && <span style={{ marginLeft: details.location ? '0.5rem' : 0, fontFamily: 'monospace' }}>{details.ip}</span>}
                         </div>
+                      )}
+                      {entry.action === 'drink_plan_addons_added' && Array.isArray(details.specialty_upgrades) && details.specialty_upgrades.length > 0 && (
+                        <ul style={{ marginTop: '0.25rem', marginBottom: 0, paddingLeft: '1.25rem', fontSize: '0.85rem' }}>
+                          {details.specialty_upgrades.map((u, idx) => (
+                            <li key={idx}>
+                              <strong>{addonNameBySlug[u.slug] || u.slug}</strong>
+                              {Array.isArray(u.triggeredBy) && u.triggeredBy.length > 0 && (
+                                <span className="text-muted"> &mdash; from {u.triggeredBy.map(id => cocktailNameById[id] || id).join(', ')}</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
                       )}
                     </div>
                   );
