@@ -118,7 +118,9 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
   // sub-object rather than the whole pricingSnapshot so a parent poll that
   // rebuilds an unrelated field doesn't bust this memo.
   const barRentalSnap = pricingSnapshot?.bar_rental;
-  const { addonItems, barRentalCost, barRentalLabel, syrupCost, extrasTotal } = useMemo(() => {
+  const { barRentalCost, barRentalLabel, syrupCost, extrasTotal } = useMemo(() => {
+    // Addon line totals (used only for the running sum below — render loops iterate
+    // `addOns` directly to split auto-added vs. flat rows at the JSX level).
     const slugs = Object.keys(addOns);
     const items = slugs
       .map((slug) => {
@@ -126,12 +128,10 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
         if (!pricing) return null;
         const rate = Number(pricing.rate);
         let lineTotal = rate;
-        let desc = pricing.name;
         if (pricing.billing_type === 'per_guest' && guestCount) {
           lineTotal = rate * guestCount;
-          desc = `${pricing.name} (${guestCount} guests)`;
         }
-        return { slug, name: desc, total: lineTotal };
+        return { slug, total: lineTotal };
       })
       .filter(Boolean);
 
@@ -153,7 +153,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
     const newSyrupIds = syrupIds.filter((id) => !proposalSyrups.includes(id));
     const syrups = calculateSyrupCost(newSyrupIds.length, getBottlesPerSyrup(guestCount));
     const total = items.reduce((sum, item) => sum + item.total, 0) + syrups.total + barCost;
-    return { addonItems: items, barRentalCost: barCost, barRentalLabel: barLabel, syrupCost: syrups, extrasTotal: total };
+    return { barRentalCost: barCost, barRentalLabel: barLabel, syrupCost: syrups, extrasTotal: total };
   }, [addOns, addonPricing, guestCount, logistics.addBarRental, numBars, barRentalSnap, selections.syrupSelections, selections.syrupSelfProvided, proposalSyrups]);
 
   // Determine if payment section should show
@@ -474,7 +474,29 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
       </div>
 
       {/* Estimated Extras */}
-      {hasExtras && (
+      {hasExtras && (() => {
+        // Split add-ons into auto-bound (nested under triggering drinks) and flat.
+        // `addOns` metadata shape: { enabled, autoAdded?, triggeredBy?: [drinkId] }.
+        const autoByDrink = new Map(); // drinkId -> [{ slug, pricing }]
+        const flatAddons = [];
+        for (const slug of Object.keys(addOns)) {
+          const meta = addOns[slug];
+          if (!meta?.enabled) continue;
+          const pricing = addonPricing.find((a) => a.slug === slug);
+          if (!pricing) continue;
+          if (meta.autoAdded && Array.isArray(meta.triggeredBy) && meta.triggeredBy.length > 0) {
+            for (const drinkId of meta.triggeredBy) {
+              if (!autoByDrink.has(drinkId)) autoByDrink.set(drinkId, []);
+              autoByDrink.get(drinkId).push({ slug, pricing });
+            }
+          } else {
+            flatAddons.push({ slug, pricing });
+          }
+        }
+
+        const selectedCocktails = cocktails.filter((c) => (selections.signatureDrinks || []).includes(c.id));
+
+        return (
         <div className="card mb-2">
           <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
             Estimated Extras
@@ -485,12 +507,44 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
               <span style={{ fontWeight: 600 }}>{fmt(barRentalCost)}</span>
             </div>
           )}
-          {addonItems.map(item => (
-            <div key={item.slug} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-              <span>{item.name}</span>
-              <span style={{ fontWeight: 600 }}>{fmt(item.total)}</span>
-            </div>
-          ))}
+          {selectedCocktails.map((drink) => {
+            const auto = autoByDrink.get(drink.id) || [];
+            if (auto.length === 0) return null;
+            return (
+              <div key={`auto-${drink.id}`} style={{ marginBottom: '0.5rem' }}>
+                <div style={{ fontWeight: 600, color: 'var(--deep-brown)' }}>{drink.name}</div>
+                {auto.map(({ slug, pricing }) => {
+                  const rate = Number(pricing.rate);
+                  const isPerGuest = pricing.billing_type === 'per_guest';
+                  const lineTotal = isPerGuest && guestCount ? rate * guestCount : rate;
+                  const priceLabel = isPerGuest
+                    ? guestCount ? `$${rate.toFixed(2)}/guest × ${guestCount}` : `$${rate.toFixed(2)}/guest`
+                    : `$${rate.toFixed(2)}`;
+                  return (
+                    <div key={slug} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '1.25rem', fontSize: '0.9rem', color: 'var(--warm-brown)' }}>
+                      <span>+ {pricing.name} · {priceLabel}</span>
+                      <span>${lineTotal.toFixed(2)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+          {flatAddons.map(({ slug, pricing }) => {
+            const rate = Number(pricing.rate);
+            let lineTotal = rate;
+            let desc = pricing.name;
+            if (pricing.billing_type === 'per_guest' && guestCount) {
+              lineTotal = rate * guestCount;
+              desc = `${pricing.name} (${guestCount} guests)`;
+            }
+            return (
+              <div key={slug} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                <span>{desc}</span>
+                <span style={{ fontWeight: 600 }}>{fmt(lineTotal)}</span>
+              </div>
+            );
+          })}
           {syrupCost.total > 0 && (
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
               <span>Hand-Crafted Syrups ({syrupCost.totalBottles} bottle{syrupCost.totalBottles !== 1 ? 's' : ''})</span>
@@ -507,7 +561,8 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
             </p>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* Payment Section */}
       {showPayment && paymentScenario && (
