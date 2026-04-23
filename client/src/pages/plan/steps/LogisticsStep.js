@@ -26,7 +26,9 @@ export default function LogisticsStep({
   numBartenders,
   numBars = 0,
   pricingSnapshot = null,
+  plan,
 }) {
+  const coveredSlugs = plan?.package_covered_addon_slugs || [];
   const dayOfContact = logistics?.dayOfContact || { name: '', phone: '' };
   const parking = logistics?.parking || '';
   const equipment = logistics?.equipment || [];
@@ -243,7 +245,7 @@ export default function LogisticsStep({
       </div>
 
       {/* Champagne Toast */}
-      {(() => {
+      {!coveredSlugs.includes(CHAMPAGNE_TOAST.addonSlug) && (() => {
         const toastPricing = addonPricing.find(a => a.slug === CHAMPAGNE_TOAST.addonSlug);
         const coupePricing = addonPricing.find(a => a.slug === CHAMPAGNE_TOAST.coupeUpgradeSlug);
         const toastEnabled = !!addOns[CHAMPAGNE_TOAST.addonSlug];

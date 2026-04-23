@@ -29,13 +29,16 @@ export default function MakeItYoursPanel({
   onSelfProvidedChange,
   proposalSyrups = [],
   guestCount,
+  plan,
 }) {
   const [expanded, setExpanded] = useState(false);
   const toast = useToast();
 
   const allUpgrades = getUpgradesForDrink(drinkId);
-  const featuredAddons = allUpgrades.filter(u => u.featured);
-  const flairUpgrades = allUpgrades.filter(u => !u.featured);
+  const coveredSlugs = plan?.package_covered_addon_slugs || [];
+  const allUpgradesFiltered = allUpgrades.filter((u) => !coveredSlugs.includes(u.addonSlug));
+  const featuredAddons = allUpgradesFiltered.filter((u) => u.featured);
+  const flairUpgrades = allUpgradesFiltered.filter((u) => !u.featured);
 
   // Per-drink upgrades use toggleAddOnForDrink + their own selection check; non-per-drink
   // upgrades (e.g. ginger beer for moscow-mule) keep using the global toggleAddOn.
@@ -59,7 +62,7 @@ export default function MakeItYoursPanel({
 
   // Auto-deselect addons whose required dependency was removed
   useEffect(() => {
-    for (const upgrade of allUpgrades) {
+    for (const upgrade of allUpgradesFiltered) {
       if (!upgrade.requiresAddon) continue;
       const isOnForThisDrink = isFlairSelected(upgrade);
       if (isOnForThisDrink && !addOns[upgrade.requiresAddon] && !addOns['client-glassware']) {

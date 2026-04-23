@@ -15,6 +15,7 @@ export default function MocktailStep({
   onSyrupToggle,
   proposalSyrups = [],
   phase = 'refinement',
+  plan,
   onNext,
   onBack,
 }) {
@@ -189,6 +190,7 @@ export default function MocktailStep({
                         addonPricing={addonPricing}
                         syrupSelections={syrupSelections}
                         onSyrupToggle={onSyrupToggle}
+                        plan={plan}
                       />
                     )}
                   </div>

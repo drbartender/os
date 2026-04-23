@@ -615,6 +615,7 @@ export default function SignaturePickerStep({
                         onSelfProvidedChange={onSelfProvidedChange}
                         proposalSyrups={proposalSyrups}
                         guestCount={guestCount}
+                        plan={plan}
                       />
                     )}
                   </div>
