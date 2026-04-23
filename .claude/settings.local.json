@@ -1,5 +1,17 @@
 {
   "permissions": {
+    "deny": [
+      "Bash(codex apply *)",
+      "Bash(codex a *)",
+      "Bash(codex exec *)",
+      "Bash(codex e *)",
+      "Bash(codex cloud *)",
+      "Bash(codex resume *)",
+      "Bash(codex fork *)",
+      "Bash(codex mcp-server *)",
+      "Bash(codex app *)",
+      "Bash(codex app-server *)"
+    ],
     "allow": [
       "Bash(npm install helmet --save)",
       "Bash(node -e \":*)",
@@ -129,7 +141,21 @@
       "mcp__plugin_playwright_playwright__browser_take_screenshot",
       "mcp__plugin_playwright_playwright__browser_click",
       "WebFetch(domain:os-g7oa.onrender.com)",
-      "mcp__plugin_playwright_playwright__browser_select_option"
+      "mcp__plugin_playwright_playwright__browser_select_option",
+      "Bash(echo \"exit=$?\")",
+      "Bash(git restore *)",
+      "Bash(npm audit *)",
+      "Bash(npm ls *)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(git *)",
+      "mcp__plugin_playwright_playwright__browser_resize",
+      "mcp__plugin_playwright_playwright__browser_evaluate",
+      "mcp__plugin_playwright_playwright__browser_close",
+      "Bash(npm test *)",
+      "Bash(ping -n 1 hiring.localhost)",
+      "mcp__plugin_playwright_playwright__browser_console_messages",
+      "Read(//c/tmp/**)",
+      "Bash(bash scripts/check-docs-drift.sh)"
     ]
   }
 }
