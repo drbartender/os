@@ -240,10 +240,12 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
 
     loadPaymentInfo();
     return () => { controller.abort(); };
-    // paymentIntentKey is a stable JSON hash of the price-affecting selections
-    // fields (see useMemo above). Any change to addOns, logistics.addBarRental,
-    // syrupSelections, or syrupSelfProvided flips the key and refreshes the
-    // PaymentIntent.
+    // `selections` is intentionally excluded — we only want to refresh the
+    // PaymentIntent when a *price-affecting* selection field changes, which
+    // `paymentIntentKey` captures (see useMemo above). Including the whole
+    // `selections` object would thrash the effect on unrelated edits and
+    // churn Stripe PaymentIntents.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showPayment, token, paymentChoice, paymentIntentKey]);
 
   const paymentRequired = paymentScenario === 'extras_required' || paymentScenario === 'extras_plus_balance';
