@@ -54,6 +54,7 @@ function DrinkTable({ drinks, categories, editingId, editForm, editFieldErrors, 
             <th className="col-desc">Description</th>
             {withSpirit && <th className="col-spirit" style={{ width: '100px' }}>Spirit</th>}
             {withSpirit && <th style={{ minWidth: '140px' }}>Ingredients</th>}
+            {withSpirit && <th style={{ minWidth: '140px' }}>Upgrades</th>}
             <th style={{ width: '60px' }}>Active</th>
             <th style={{ width: '70px' }}></th>
           </tr>
@@ -101,6 +102,15 @@ function DrinkTable({ drinks, categories, editingId, editForm, editFieldErrors, 
                         onChange={e => onEditFormChange({ ingredients: e.target.value })} />
                     </td>
                   )}
+                  {withSpirit && (
+                    <td>
+                      <input className="form-input"
+                        placeholder="e.g. specialty-vermouths, specialty-bitter-aperitifs"
+                        title="Comma-separated addon slugs to charge when the package doesn't cover them"
+                        value={editForm.upgrade_addon_slugs || ''}
+                        onChange={e => onEditFormChange({ upgrade_addon_slugs: e.target.value })} />
+                    </td>
+                  )}
                   <td>
                     <input type="checkbox" checked={editForm.is_active}
                       onChange={e => onEditFormChange({ is_active: e.target.checked })} />
@@ -123,6 +133,13 @@ function DrinkTable({ drinks, categories, editingId, editForm, editFieldErrors, 
                     <td className="text-muted text-small">
                       <span className="desc-cell-text">
                         {Array.isArray(c.ingredients) && c.ingredients.length > 0 ? c.ingredients.join(', ') : '—'}
+                      </span>
+                    </td>
+                  )}
+                  {withSpirit && (
+                    <td className="text-muted text-small">
+                      <span className="desc-cell-text">
+                        {Array.isArray(c.upgrade_addon_slugs) && c.upgrade_addon_slugs.length > 0 ? c.upgrade_addon_slugs.join(', ') : '—'}
                       </span>
                     </td>
                   )}
@@ -267,7 +284,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
   const [editCocktailError, setEditCocktailError] = useState('');
   const [editCocktailFieldErrors, setEditCocktailFieldErrors] = useState({});
   const [addCocktailCategory, setAddCocktailCategory] = useState(null);
-  const [newCocktailForm, setNewCocktailForm] = useState({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '' });
+  const [newCocktailForm, setNewCocktailForm] = useState({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '', upgrade_addon_slugs: '' });
   const [addCocktailError, setAddCocktailError] = useState('');
   const [addCocktailFieldErrors, setAddCocktailFieldErrors] = useState({});
 
@@ -339,6 +356,9 @@ export default function CocktailMenuDashboard({ embedded = false }) {
       if (typeof body.ingredients === 'string') {
         body.ingredients = body.ingredients.split(',').map(s => s.trim()).filter(Boolean);
       }
+      if (typeof body.upgrade_addon_slugs === 'string') {
+        body.upgrade_addon_slugs = body.upgrade_addon_slugs.split(',').map(s => s.trim()).filter(Boolean);
+      }
       const res = await api.put(`/cocktails/${id}`, body);
       setCocktails(prev => prev.map(c => c.id === id ? { ...c, ...res.data } : c));
       setEditingCocktail(null);
@@ -377,9 +397,10 @@ export default function CocktailMenuDashboard({ embedded = false }) {
         sort_order: cocktails.filter(c => c.category_id === categoryId).length,
         base_spirit: newCocktailForm.base_spirit || null,
         ingredients: newCocktailForm.ingredients.split(',').map(s => s.trim()).filter(Boolean),
+        upgrade_addon_slugs: newCocktailForm.upgrade_addon_slugs.split(',').map(s => s.trim()).filter(Boolean),
       });
       setCocktails(prev => [...prev, res.data]);
-      setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '' });
+      setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '', upgrade_addon_slugs: '' });
       setAddCocktailCategory(null);
       toast.success('Cocktail created.');
     } catch (err) {
@@ -657,7 +678,7 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                     setAddCocktailCategory(cat.id);
                     setAddCocktailError('');
                     setAddCocktailFieldErrors({});
-                    setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '' });
+                    setNewCocktailForm({ name: '', emoji: '', description: '', sort_order: '', base_spirit: '', ingredients: '', upgrade_addon_slugs: '' });
                   }}>+ Add Cocktail</button>
                 </div>
 
@@ -682,6 +703,11 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                     <input className="form-input mb-1" placeholder="Ingredients (comma-separated, e.g. Vodka, Lime Juice, Sprite)"
                       value={newCocktailForm.ingredients}
                       onChange={e => setNewCocktailForm(p => ({ ...p, ingredients: e.target.value }))} />
+                    <input className="form-input mb-1"
+                      placeholder="Upgrade addon slugs (CSV, e.g. specialty-vermouths, specialty-bitter-aperitifs)"
+                      title="Comma-separated addon slugs to charge when the package doesn't cover them"
+                      value={newCocktailForm.upgrade_addon_slugs}
+                      onChange={e => setNewCocktailForm(p => ({ ...p, upgrade_addon_slugs: e.target.value }))} />
                     <FormBanner error={addCocktailError} fieldErrors={addCocktailFieldErrors} />
                     <div className="flex gap-1">
                       <button className="btn btn-sm" onClick={() => addCocktail(cat.id)}>Save</button>
@@ -702,7 +728,17 @@ export default function CocktailMenuDashboard({ embedded = false }) {
                     withSpirit
                     onStartEdit={(c) => {
                       setEditingCocktail(c.id);
-                      setEditCocktailForm({ name: c.name, emoji: c.emoji || '', description: c.description || '', sort_order: c.sort_order, category_id: c.category_id || '', is_active: c.is_active, base_spirit: c.base_spirit || '', ingredients: (c.ingredients || []).join(', ') });
+                      setEditCocktailForm({
+                        name: c.name,
+                        emoji: c.emoji || '',
+                        description: c.description || '',
+                        sort_order: c.sort_order,
+                        category_id: c.category_id || '',
+                        is_active: c.is_active,
+                        base_spirit: c.base_spirit || '',
+                        ingredients: (c.ingredients || []).join(', '),
+                        upgrade_addon_slugs: Array.isArray(c.upgrade_addon_slugs) ? c.upgrade_addon_slugs.join(', ') : (c.upgrade_addon_slugs || ''),
+                      });
                       setEditCocktailError('');
                       setEditCocktailFieldErrors({});
                     }}

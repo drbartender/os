@@ -139,7 +139,7 @@ router.delete('/categories/:id', auth, requireAdminOrManager, asyncHandler(async
 
 /** POST /api/cocktails — create cocktail */
 router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { id, name, category_id, emoji, description, sort_order, base_spirit, ingredients } = req.body;
+  const { id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs } = req.body;
   const fieldErrors = {};
   if (!id) fieldErrors.id = 'ID is required.';
   if (!name) fieldErrors.name = 'Name is required.';
@@ -147,9 +147,9 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
 
   try {
     const result = await pool.query(
-      `INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order, base_spirit, ingredients)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [id, name, category_id || null, emoji || null, description || null, sort_order || 0, base_spirit || null, JSON.stringify(ingredients || [])]
+      `INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order, base_spirit, ingredients, upgrade_addon_slugs)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [id, name, category_id || null, emoji || null, description || null, sort_order || 0, base_spirit || null, JSON.stringify(ingredients || []), Array.isArray(upgrade_addon_slugs) ? upgrade_addon_slugs : []]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -162,7 +162,7 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
 
 /** PUT /api/cocktails/:id — update cocktail */
 router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { name, category_id, emoji, description, sort_order, is_active, base_spirit, ingredients } = req.body;
+  const { name, category_id, emoji, description, sort_order, is_active, base_spirit, ingredients, upgrade_addon_slugs } = req.body;
   const result = await pool.query(
     `UPDATE cocktails SET
       name        = COALESCE($1, name),
@@ -172,8 +172,9 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       sort_order  = COALESCE($5, sort_order),
       is_active   = COALESCE($6, is_active),
       base_spirit = COALESCE($7, base_spirit),
-      ingredients = COALESCE($8::jsonb, ingredients)
-     WHERE id = $9 RETURNING *`,
+      ingredients = COALESCE($8::jsonb, ingredients),
+      upgrade_addon_slugs = COALESCE($9::text[], upgrade_addon_slugs)
+     WHERE id = $10 RETURNING *`,
     [
       name || null,
       category_id || null,
@@ -183,6 +184,7 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       is_active ?? null,
       base_spirit || null,
       ingredients !== undefined ? JSON.stringify(ingredients) : null,
+      Array.isArray(upgrade_addon_slugs) ? upgrade_addon_slugs : null,
       req.params.id,
     ]
   );
