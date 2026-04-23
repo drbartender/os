@@ -138,29 +138,40 @@ router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
   );
 
   // Email notifications (non-blocking)
-  try {
-    const fp = await pool.query(`
-      SELECT p.id, p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
-      FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
-      WHERE p.id = $1
-    `, [proposal.id]);
-    const pd = fp.rows[0];
-    const eventTypeLabel = getEventTypeLabel({ event_type: pd?.event_type, event_type_custom: pd?.event_type_custom });
-    if (pd?.client_email) {
-      const tpl = emailTemplates.proposalSignedConfirmation({ clientName: pd.client_name, eventTypeLabel });
-      await sendEmail({ to: pd.client_email, ...tpl });
+  // Skip sign-only emails when a payment intent is already in-flight for this
+  // proposal — the Stripe webhook will send a combined "Signed & Paid" email
+  // once the payment succeeds, so we avoid back-to-back sign + payment emails.
+  const pendingPayment = await pool.query(
+    `SELECT 1 FROM stripe_sessions
+     WHERE proposal_id = $1 AND status = 'pending' AND created_at > NOW() - INTERVAL '30 minutes'
+     LIMIT 1`,
+    [proposal.id]
+  );
+  if (pendingPayment.rowCount === 0) {
+    try {
+      const fp = await pool.query(`
+        SELECT p.id, p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
+        FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+        WHERE p.id = $1
+      `, [proposal.id]);
+      const pd = fp.rows[0];
+      const eventTypeLabel = getEventTypeLabel({ event_type: pd?.event_type, event_type_custom: pd?.event_type_custom });
+      if (pd?.client_email) {
+        const tpl = emailTemplates.proposalSignedConfirmation({ clientName: pd.client_name, eventTypeLabel });
+        await sendEmail({ to: pd.client_email, ...tpl });
+      }
+      const adminEmail = process.env.ADMIN_EMAIL;
+      if (adminEmail && pd) {
+        const adminUrl = `${ADMIN_URL}/admin/proposals/${pd.id}`;
+        const tpl = emailTemplates.clientSignedAdmin({ clientName: pd.client_name, eventTypeLabel, proposalId: pd.id, adminUrl });
+        await sendEmail({ to: adminEmail, ...tpl });
+      }
+    } catch (emailErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(emailErr, { tags: { route: 'proposals/sign', issue: 'email' } });
+      }
+      console.error('Proposal sign emails failed (non-blocking):', emailErr);
     }
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (adminEmail && pd) {
-      const adminUrl = `${ADMIN_URL}/admin/proposals/${pd.id}`;
-      const tpl = emailTemplates.clientSignedAdmin({ clientName: pd.client_name, eventTypeLabel, proposalId: pd.id, adminUrl });
-      await sendEmail({ to: adminEmail, ...tpl });
-    }
-  } catch (emailErr) {
-    if (process.env.SENTRY_DSN_SERVER) {
-      Sentry.captureException(emailErr, { tags: { route: 'proposals/sign', issue: 'email' } });
-    }
-    console.error('Proposal sign emails failed (non-blocking):', emailErr);
   }
 
   res.json({ success: true, status: 'accepted' });

@@ -533,22 +533,38 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
     try {
       const payInfo = await pool.query(`
-        SELECT p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
+        SELECT p.event_type, p.event_type_custom, p.client_signed_at,
+               c.name AS client_name, c.email AS client_email
         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
         WHERE p.id = $1
       `, [proposalId]);
       const pi = payInfo.rows[0];
       const amountFormatted = (amountCents / 100).toFixed(2);
       const payLabel = paymentType === 'full' ? 'full payment' : paymentType === 'balance' ? 'balance payment' : 'deposit';
+      const eventLabel = eventLabelFor(pi);
+
+      // Coupled sign+pay: if the client signed within the last 6 hours and this
+      // is a first-time payment (deposit or full), send ONE combined email in
+      // place of the separate sign + payment emails the sign route would
+      // otherwise have already fired.
+      const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+      const isCoupledSigning =
+        !!pi?.client_signed_at
+        && (Date.now() - new Date(pi.client_signed_at).getTime()) < SIX_HOURS_MS
+        && (paymentType === 'deposit' || paymentType === 'full');
 
       if (pi?.client_email) {
-        const tpl = emailTemplates.paymentReceivedClient({ clientName: pi.client_name, eventTypeLabel: eventLabelFor(pi), amount: amountFormatted, paymentType: payLabel });
+        const tpl = isCoupledSigning
+          ? emailTemplates.signedAndPaidClient({ clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel })
+          : emailTemplates.paymentReceivedClient({ clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel });
         await sendEmail({ to: pi.client_email, ...tpl });
       }
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
         const adminUrl = `${ADMIN_URL}/admin/proposals/${proposalId}`;
-        const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabelFor(pi), amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
+        const tpl = isCoupledSigning
+          ? emailTemplates.signedAndPaidAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl })
+          : emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
         await sendEmail({ to: adminEmail, ...tpl });
       }
     } catch (emailErr) {

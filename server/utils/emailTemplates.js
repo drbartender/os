@@ -104,6 +104,22 @@ function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, p
   };
 }
 
+function signedAndPaidClient({ clientName, eventTypeLabel = 'event', amount, paymentType }) {
+  const name = clientName || 'there';
+  return {
+    subject: `Signed & Paid — your ${eventTypeLabel} — Dr. Bartender`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">You're Locked In!</h2>
+      <p>Hi ${name},</p>
+      <p>We've received your signed proposal <em>and</em> your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${eventTypeLabel}</strong>. Your date is officially on the books.</p>
+      <p>We'll be in touch with next steps as your event date approaches.</p>
+      <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, we've received your signed proposal and your ${paymentType} of $${amount} for your ${eventTypeLabel}. Your date is officially on the books. — The Dr. Bartender Team`,
+  };
+}
+
 function drinkPlanLink({ clientName, eventTypeLabel = 'event', planUrl }) {
   const name = clientName || 'there';
   return {
@@ -190,6 +206,19 @@ function paymentReceivedAdmin({ clientName, eventTypeLabel = 'event', amount, pa
       ${ctaButton(adminUrl, 'View Proposal')}
     `),
     text: `${name} paid $${amount} (${paymentType}) for their ${eventTypeLabel} (#${proposalId}). View: ${adminUrl}`,
+  };
+}
+
+function signedAndPaidAdmin({ clientName, eventTypeLabel = 'event', amount, paymentType, proposalId, adminUrl }) {
+  const name = clientName || 'A client';
+  return {
+    subject: `Signed & Paid ($${amount}): ${name} — ${eventTypeLabel} (#${proposalId})`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Signed & Paid</h2>
+      <p><strong>${name}</strong> signed the proposal and paid <strong>$${amount}</strong> (${paymentType}) for their <strong>${eventTypeLabel}</strong> (#${proposalId}).</p>
+      ${ctaButton(adminUrl, 'View Proposal')}
+    `),
+    text: `${name} signed the proposal and paid $${amount} (${paymentType}) for their ${eventTypeLabel} (#${proposalId}). View: ${adminUrl}`,
   };
 }
 
@@ -406,10 +435,12 @@ module.exports = {
   proposalSent,
   proposalSignedConfirmation,
   paymentReceivedClient,
+  signedAndPaidClient,
   drinkPlanLink,
   drinkPlanBalanceUpdate,
   clientSignedAdmin,
   paymentReceivedAdmin,
+  signedAndPaidAdmin,
   topShelfClassRequestAdmin,
   newApplicationAdmin,
   shiftRequestAdmin,
