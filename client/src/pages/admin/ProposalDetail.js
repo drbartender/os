@@ -16,6 +16,7 @@ import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
+import TimePicker from '../../components/TimePicker';
 
 const STATUS_LABELS = {
   draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
@@ -29,17 +30,6 @@ const STATUS_CLASSES = {
 };
 
 const fmt = (n) => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-// Generate 30-minute time slots from 6:00 AM to 11:30 PM
-const TIME_OPTIONS = [];
-for (let h = 6; h < 24; h++) {
-  ['00', '30'].forEach(m => {
-    const val = `${String(h).padStart(2, '0')}:${m}`;
-    const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    TIME_OPTIONS.push({ value: val, label: `${hour12}:${m} ${ampm}` });
-  });
-}
 
 export default function ProposalDetail() {
   const { id } = useParams();
@@ -1541,12 +1531,12 @@ export default function ProposalDetail() {
                 </div>
                 <div className="form-group">
                   <label className="form-label">Start Time</label>
-                  <select className="form-select" value={editForm.event_start_time} onChange={e => updateEdit('event_start_time', e.target.value)}>
-                    <option value="">— Select time —</option>
-                    {TIME_OPTIONS.map(t => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
-                  </select>
+                  <TimePicker
+                    value={editForm.event_start_time || ''}
+                    onChange={(v) => updateEdit('event_start_time', v)}
+                    minHour={6}
+                    maxHour={23}
+                  />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Duration (hours)</label>
