@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatPhone } from '../utils/formatPhone';
+import TimePicker from '../components/TimePicker';
 
 export default function AdminDashboard() {
   const { user } = useAuth();
@@ -318,14 +319,20 @@ export default function AdminDashboard() {
                         onChange={e => setShiftForm(f => ({ ...f, event_date: e.target.value }))} />
                     </div>
                     <div>
-                      <label className="form-label">Start Time</label>
-                      <input className="form-input" type="time" value={shiftForm.start_time}
-                        onChange={e => setShiftForm(f => ({ ...f, start_time: e.target.value }))} />
+                      <label className="form-label" htmlFor="shift-start-time">Start Time</label>
+                      <TimePicker
+                        id="shift-start-time"
+                        value={shiftForm.start_time}
+                        onChange={(v) => setShiftForm(f => ({ ...f, start_time: v }))}
+                      />
                     </div>
                     <div>
-                      <label className="form-label">End Time</label>
-                      <input className="form-input" type="time" value={shiftForm.end_time}
-                        onChange={e => setShiftForm(f => ({ ...f, end_time: e.target.value }))} />
+                      <label className="form-label" htmlFor="shift-end-time">End Time</label>
+                      <TimePicker
+                        id="shift-end-time"
+                        value={shiftForm.end_time}
+                        onChange={(v) => setShiftForm(f => ({ ...f, end_time: v }))}
+                      />
                     </div>
                     <div>
                       <label className="form-label">Location</label>
