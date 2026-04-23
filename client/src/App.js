@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ClientAuthProvider } from './context/ClientAuthContext';
 import { ToastProvider } from './context/ToastContext';
 import ErrorBoundary from './components/ErrorBoundary';
+import ScrollToTop from './components/ScrollToTop';
 import SessionExpiryHandler from './components/SessionExpiryHandler';
 import Layout from './components/Layout';
 import HomePage from './pages/website/HomePage';
@@ -369,6 +370,7 @@ export default function App() {
         <AuthProvider>
           <ClientAuthProvider>
             <BrowserRouter>
+              <ScrollToTop />
               <SessionExpiryHandler />
               <AppRoutes />
             </BrowserRouter>

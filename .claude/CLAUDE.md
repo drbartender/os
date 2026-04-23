@@ -109,6 +109,7 @@ dr-bartender/
 │   │   │   ├── PublicLayout.js    # Public-facing layout wrapper
 │   │   │   ├── RichTextEditor.js  # TipTap WYSIWYG editor (blog + email marketing)
 │   │   │   ├── InvoiceDropdown.js # Invoice list dropdown (admin + client)
+│   │   │   ├── ScrollToTop.js     # Router-level scroll reset on pathname change (skips hash nav)
 │   │   │   ├── SessionExpiryHandler.js  # Listens for session-expired event, shows toast, redirects
 │   │   │   ├── SignaturePad.js    # E-signature canvas
 │   │   │   ├── Toast.js  # Toast container (top-right, dismissible, auto-fade)

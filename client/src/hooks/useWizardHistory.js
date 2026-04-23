@@ -22,6 +22,7 @@ export default function useWizardHistory(step, setStep) {
     } else {
       window.history.pushState({ wizardStep: step }, '', window.location.href);
     }
+    window.scrollTo(0, 0);
   }, [step]);
 
   useEffect(() => {

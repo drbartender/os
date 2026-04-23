@@ -168,7 +168,7 @@ dr-bartender/
 │   │   ├── components/         # Layout, InvoiceDropdown, SignaturePad, ClickableRow, FileUpload,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, AudienceSelector,
 │   │   │                       # SequenceStepEditor, CampaignMetricsBar, SyrupPicker, TimePicker,
-│   │   │                       # Toast, FormBanner, FieldError, SessionExpiryHandler
+│   │   │                       # Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
 │   │   ├── data/               # Shared data (addonCategories, eventTypes, packages, syrups)
 │   │   ├── hooks/              # Custom hooks (useDebounce, useFormValidation, useWizardHistory)
