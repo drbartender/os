@@ -10,6 +10,7 @@ import useFormValidation from '../../hooks/useFormValidation';
 import useWizardHistory from '../../hooks/useWizardHistory';
 import EVENT_TYPES from '../../data/eventTypes';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
+import TimePicker from '../../components/TimePicker';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 const DRAFT_KEY = 'drb_quote_draft';
@@ -35,17 +36,6 @@ const BUNDLE_UNAVAILABLE = {
 const BUNDLE_COVERED = Object.fromEntries(
   BYOB_BUNDLE_SLUGS.map(b => [b, [...(BUNDLE_INCLUDED[b] || []), ...(BUNDLE_UNAVAILABLE[b] || [])]])
 );
-
-// 30-minute time slots from 8 AM to 11 PM
-const TIME_OPTIONS = [];
-for (let h = 8; h < 23; h++) {
-  ['00', '30'].forEach(m => {
-    const val = `${String(h).padStart(2, '0')}:${m}`;
-    const hour12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    TIME_OPTIONS.push({ value: val, label: `${hour12}:${m} ${ampm}` });
-  });
-}
 
 // Build the dynamic step list based on alcohol choice
 function getSteps(alcoholProvider) {
@@ -794,11 +784,13 @@ export default function QuoteWizard() {
                 </div>
                 <div className="form-group">
                   <label htmlFor="wz-event_start_time" className="form-label">Start Time</label>
-                  <select id="wz-event_start_time" className="form-select" value={form.event_start_time}
-                    onChange={e => update('event_start_time', e.target.value)}>
-                    <option value="">-- Select --</option>
-                    {TIME_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
+                  <TimePicker
+                    id="wz-event_start_time"
+                    value={form.event_start_time}
+                    onChange={(v) => update('event_start_time', v)}
+                    minHour={8}
+                    maxHour={22}
+                  />
                 </div>
                 <div className={`form-group${fieldClass('event_city')}`}>
                   <label htmlFor="wz-event_city" className="form-label">City *</label>
