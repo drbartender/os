@@ -114,7 +114,10 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
   }, []);
 
   // Extras-pricing math — recomputes on every Stripe Elements tick once mounted,
-  // so memoize by the exact inputs it reads.
+  // so memoize by the exact inputs it reads. We watch the narrow bar_rental
+  // sub-object rather than the whole pricingSnapshot so a parent poll that
+  // rebuilds an unrelated field doesn't bust this memo.
+  const barRentalSnap = pricingSnapshot?.bar_rental;
   const { addonItems, barRentalCost, barRentalLabel, syrupCost, extrasTotal } = useMemo(() => {
     const slugs = Object.keys(addOns);
     const items = slugs
@@ -132,7 +135,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
       })
       .filter(Boolean);
 
-    const barSnap = pricingSnapshot?.bar_rental || {};
+    const barSnap = barRentalSnap || {};
     let barCost = 0;
     let barLabel = '';
     if (logistics.addBarRental) {
@@ -151,7 +154,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
     const syrups = calculateSyrupCost(newSyrupIds.length, getBottlesPerSyrup(guestCount));
     const total = items.reduce((sum, item) => sum + item.total, 0) + syrups.total + barCost;
     return { addonItems: items, barRentalCost: barCost, barRentalLabel: barLabel, syrupCost: syrups, extrasTotal: total };
-  }, [addOns, addonPricing, guestCount, logistics.addBarRental, numBars, pricingSnapshot, selections.syrupSelections, selections.syrupSelfProvided, proposalSyrups]);
+  }, [addOns, addonPricing, guestCount, logistics.addBarRental, numBars, barRentalSnap, selections.syrupSelections, selections.syrupSelfProvided, proposalSyrups]);
 
   // Determine if payment section should show
   const hasExtras = extrasTotal > 0;
@@ -168,13 +171,17 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
 
   // Selections fingerprint — if any price-affecting field changes while we're
   // on this step (e.g. user tabs back to edit, then returns), refresh the
-  // Stripe PaymentIntent so the amount matches the updated plan.
+  // Stripe PaymentIntent so the amount matches the updated plan. Deps use the
+  // narrow `addBarRental` primitive rather than the whole `logistics` object
+  // so unrelated logistics edits (date, venue) don't cause a PaymentIntent
+  // refresh.
+  const addBarRental = selections.logistics?.addBarRental === true;
   const paymentIntentKey = useMemo(() => JSON.stringify({
     addOns: selections.addOns || {},
-    addBarRental: selections.logistics?.addBarRental || false,
+    addBarRental,
     syrupSelections: selections.syrupSelections || {},
     syrupSelfProvided: selections.syrupSelfProvided || [],
-  }), [selections.addOns, selections.logistics, selections.syrupSelections, selections.syrupSelfProvided]);
+  }), [selections.addOns, addBarRental, selections.syrupSelections, selections.syrupSelfProvided]);
 
   // Load payment intent when extras > 0 and proposal is linked
   useEffect(() => {
@@ -216,13 +223,18 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           setPaymentChoice('pay_now');
         }
       } catch (err) {
-        if (axios.isCancel(err) || err.name === 'CanceledError' || err.name === 'AbortError') return;
-        if (!controller.signal.aborted) {
+        if (axios.isCancel(err) || err.name === 'CanceledError' || err.name === 'AbortError') {
+          // Cleanup or a stale-effect abort — don't surface the error; the
+          // next effect run (if any) will reset loading state below.
+        } else {
           console.error('Failed to load payment info:', err);
           setPaymentError('Unable to load payment form. You can still submit and pay later.');
         }
       } finally {
-        if (!controller.signal.aborted) setLoadingPayment(false);
+        // Always clear the spinner, even on abort — otherwise if `showPayment`
+        // flips false mid-flight and no new effect runs, the spinner stays on.
+        // (React 18 makes setState on an unmounted component a safe no-op.)
+        setLoadingPayment(false);
       }
     }
 

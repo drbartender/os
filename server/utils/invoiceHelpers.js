@@ -600,9 +600,8 @@ async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmo
   }
 
   // Syrup cost — compute directly from selections (instead of deriving by
-  // subtraction from extrasAmountCents) so independent line rounding can't
-  // produce a 1-cent ghost "Hand-Crafted Syrups" item when no syrups were
-  // selected, or mis-state the syrup charge when it was.
+  // subtraction from extrasAmountCents) so we get an honest syrup line with
+  // bottle count, not a ghost 1-cent item when no syrups were selected.
   const rawSyrups = selections.syrupSelections || {};
   const allSyrupIds = Array.isArray(rawSyrups)
     ? rawSyrups
@@ -624,6 +623,29 @@ async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmo
       source_type: 'fee',
       source_id: null,
     });
+  }
+
+  // Ledger invariant: line items must sum to `amount_due` (extrasAmountCents,
+  // what Stripe actually charged). Per-line rounding can drift a cent or two
+  // from the intent-creation rounding in stripe.js; absorb that delta into
+  // the last line so the invoice never shows a phantom balance.
+  const lineSumCents = items.reduce((sum, it) => sum + it.line_total, 0);
+  const driftCents = extrasAmountCents - lineSumCents;
+  if (driftCents !== 0) {
+    if (items.length > 0) {
+      const last = items[items.length - 1];
+      last.line_total += driftCents;
+      if (last.quantity === 1) last.unit_price = last.line_total;
+    } else {
+      items.push({
+        description: 'Drink Plan Extras',
+        quantity: 1,
+        unit_price: extrasAmountCents,
+        line_total: extrasAmountCents,
+        source_type: 'fee',
+        source_id: null,
+      });
+    }
   }
 
   const invoice = await createInvoice(
