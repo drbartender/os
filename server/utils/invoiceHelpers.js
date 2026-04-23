@@ -12,6 +12,7 @@
 'use strict';
 
 const { pool } = require('../db');
+const { calculateSyrupCost } = require('./pricingEngine');
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,11 @@ async function generateLineItemsFromProposal(proposalId, dbClient) {
 
   // Extra bartenders — skipped on hosted packages (HOSTED PACKAGE RULE:
   // bartender staffing is included in the per-guest rate, so staffing.total is 0).
+  // This file relies on pricingEngine.js pre-zeroing staffing.total and the
+  // additional-bartender addon line_total for hosted packages. If you ever
+  // populate snap.staffing.total or addon.line_total from a non-pricingEngine
+  // code path for a hosted proposal, add an explicit isHostedPackage() guard
+  // here — the snapshot fields are load-bearing.
   if (snap.staffing && snap.staffing.extra > 0 && snap.staffing.total > 0) {
     const extra = snap.staffing.actual - snap.staffing.included;
     const qty = extra > 0 ? extra : 1;
@@ -593,11 +599,25 @@ async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmo
     });
   }
 
-  const accountedCents = items.reduce((sum, it) => sum + it.line_total, 0);
-  const syrupCents = extrasAmountCents - accountedCents;
-  if (syrupCents > 0) {
+  // Syrup cost — compute directly from selections (instead of deriving by
+  // subtraction from extrasAmountCents) so independent line rounding can't
+  // produce a 1-cent ghost "Hand-Crafted Syrups" item when no syrups were
+  // selected, or mis-state the syrup charge when it was.
+  const rawSyrups = selections.syrupSelections || {};
+  const allSyrupIds = Array.isArray(rawSyrups)
+    ? rawSyrups
+    : [...new Set(Object.values(rawSyrups).flat())];
+  const selfProvided = selections.syrupSelfProvided || [];
+  const proposalSyrups = snap?.syrups?.selections || [];
+  const newSyrupIds = allSyrupIds
+    .filter((id) => !selfProvided.includes(id))
+    .filter((id) => !proposalSyrups.includes(id));
+  const syrupCost = calculateSyrupCost(newSyrupIds, prop.guest_count);
+  if (syrupCost.total > 0) {
+    const syrupCents = toCents(syrupCost.total);
+    const bottleSuffix = syrupCost.totalBottles > 1 ? ` (${syrupCost.totalBottles} bottles)` : '';
     items.push({
-      description: 'Hand-Crafted Syrups',
+      description: `Hand-Crafted Syrups${bottleSuffix}`,
       quantity: 1,
       unit_price: syrupCents,
       line_total: syrupCents,
@@ -624,8 +644,12 @@ async function createDrinkPlanExtrasInvoice({ proposalId, drinkPlanId, extrasAmo
 
 /**
  * Locate the invoice that represents the proposal's outstanding balance.
- * Priority: Balance > Full Payment > Deposit. Skips Drink Plan Extras and
- * any other bespoke-label invoices that shouldn't absorb balance payments.
+ * Priority: Balance > Full Payment. Skips Drink Plan Extras, Deposit, and
+ * any other bespoke-label invoices that shouldn't absorb balance payments —
+ * absorbing a balance portion into a still-open Deposit invoice would flip it
+ * to 'paid' (and lock it) while misrepresenting what the client actually paid.
+ * If only a Deposit is open, the caller falls through to a Sentry warning so
+ * an admin can reconcile the ledger manually.
  *
  * @param {number} proposalId
  * @param {object} [dbClient]
@@ -638,11 +662,10 @@ async function findOpenInvoiceForBalance(proposalId, dbClient) {
        FROM invoices
       WHERE proposal_id = $1
         AND status IN ('sent', 'partially_paid')
-        AND label IN ('Balance', 'Full Payment', 'Deposit')
+        AND label IN ('Balance', 'Full Payment')
       ORDER BY CASE label
                  WHEN 'Balance' THEN 1
                  WHEN 'Full Payment' THEN 2
-                 WHEN 'Deposit' THEN 3
                END,
                id ASC
       LIMIT 1`,

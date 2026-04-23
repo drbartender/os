@@ -671,9 +671,34 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             if (invoiceId) {
               await linkPaymentToInvoice(Number(invoiceId), paymentRowId, intent.amount, dbClient);
             } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
-              const extrasCents = Number(intent.metadata?.extras_amount_cents || 0);
-              const balanceCents = Number(intent.metadata?.balance_amount_cents || 0);
+              // Idempotency: this whole block is inside `if (isFirstDelivery)`
+              // above, so Stripe retries of the same intent won't re-create
+              // the "Drink Plan Extras" invoice. If this block is ever lifted
+              // out of that guard, add `ON CONFLICT` handling to
+              // createDrinkPlanExtrasInvoice first or you'll duplicate invoices.
+              //
+              // Clamp metadata against the authoritative charged amount so a
+              // mismatched or corrupted extras/balance split can't apportion
+              // more money than was actually captured. extras takes priority
+              // (it's what the client explicitly paid for); balance is what's
+              // left over after extras.
+              const rawExtrasCents = Number(intent.metadata?.extras_amount_cents || 0);
+              const rawBalanceCents = Number(intent.metadata?.balance_amount_cents || 0);
+              const extrasCents = Math.max(0, Math.min(rawExtrasCents, intent.amount));
+              const balanceCents = Math.max(0, intent.amount - extrasCents);
               const drinkPlanId = Number(intent.metadata?.drink_plan_id);
+
+              if ((rawExtrasCents + rawBalanceCents) !== intent.amount) {
+                console.warn(
+                  `Webhook: extras+balance metadata (${rawExtrasCents}+${rawBalanceCents}) != intent.amount (${intent.amount}) for intent ${intent.id}, proposal ${proposalId}`
+                );
+                if (process.env.SENTRY_DSN_SERVER) {
+                  Sentry.captureMessage(
+                    `Drink-plan extras/balance split mismatch (proposal ${proposalId}, intent ${intent.id}, rawExtras ${rawExtrasCents}, rawBalance ${rawBalanceCents}, intent.amount ${intent.amount})`,
+                    'warning'
+                  );
+                }
+              }
 
               if (extrasCents > 0 && drinkPlanId) {
                 const extrasInvoice = await createDrinkPlanExtrasInvoice(

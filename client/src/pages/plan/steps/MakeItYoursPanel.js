@@ -3,6 +3,12 @@ import { getUpgradesForDrink, getPitch, isUpgradeSelectedForDrink } from '../dat
 import { DRINK_SYRUP_MAP, SYRUPS, NO_SYRUP_DRINKS, SYRUP_PRICE_SINGLE, SYRUP_PRICE_3PACK, getBottlesPerSyrup, getDrinkSyrupSelections, getAllUniqueSyrups, calculateSyrupCost } from '../../../data/syrups';
 import { useToast } from '../../../context/ToastContext';
 
+// Module-scoped id→syrup lookup — SYRUPS is static import data, so build the
+// Map once and reuse instead of .find()ing inside every render × every drink ×
+// every syrup.
+const SYRUPS_BY_ID = new Map(SYRUPS.map((s) => [s.id, s]));
+const getSyrup = (id) => SYRUPS_BY_ID.get(id);
+
 /**
  * MakeItYoursPanel — collapsible customization panel shown below a selected drink.
  * Starts collapsed with a summary + clickable "Customize" prompt.
@@ -88,7 +94,7 @@ export default function MakeItYoursPanel({
   // Build collapsed summary of current selections
   const selectedSyrupNames = syrupRecs
     .filter(id => drinkSyrups.includes(id))
-    .map(id => SYRUPS.find(s => s.id === id)?.name)
+    .map(id => getSyrup(id)?.name)
     .filter(Boolean);
   const selectedFlairLabels = flairUpgrades
     .filter(isFlairSelected)
@@ -124,7 +130,7 @@ export default function MakeItYoursPanel({
 
   // Render a single syrup option with source toggle
   const renderSyrupOption = (syrupId, showSourceAlways = false) => {
-    const syrup = SYRUPS.find(s => s.id === syrupId);
+    const syrup = getSyrup(syrupId);
     if (!syrup) return null;
     const isSelected = drinkSyrups.includes(syrupId);
     const drinkNote = syrupMapping.notes?.[syrupId];

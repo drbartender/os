@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { formatTime12h, generateTimeOptions, parseTimeInput } from '../utils/timeOptions';
 
 function toMinutes(hhmm) {
@@ -37,7 +37,7 @@ export default function TimePicker({
     setDisplayValue(formatTime12h(value));
   }, [value]);
 
-  const slots = generateTimeOptions(minHour, maxHour + 1);
+  const slots = useMemo(() => generateTimeOptions(minHour, maxHour + 1), [minHour, maxHour]);
 
   const flash = useCallback(() => {
     setIsFlashing(true);
@@ -127,17 +127,18 @@ export default function TimePicker({
     if (active) active.scrollIntoView({ block: 'nearest' });
   }, [isOpen]);
 
-  const cur = toMinutes(value);
+  const cur = useMemo(() => toMinutes(value), [value]);
   const atMin = cur !== null && cur <= minHour * 60;
   const atMax = cur !== null && cur >= maxHour * 60 + 30;
 
   // Find highlighted slot: exact match if on-grid, else nearest lower
-  let nearestIndex = -1;
-  if (cur !== null) {
+  const nearestIndex = useMemo(() => {
+    if (cur === null) return -1;
     for (let i = slots.length - 1; i >= 0; i--) {
-      if (toMinutes(slots[i].value) <= cur) { nearestIndex = i; break; }
+      if (toMinutes(slots[i].value) <= cur) return i;
     }
-  }
+    return -1;
+  }, [cur, slots]);
 
   return (
     <div ref={wrapperRef} className={`time-picker${isFlashing ? ' time-picker-flash' : ''}${disabled ? ' time-picker-disabled' : ''}`}>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import axios from 'axios';
@@ -6,6 +6,22 @@ import { QUICK_PICKS } from '../data/servingTypes';
 import { formatPhoneInput } from '../../../utils/formatPhone';
 import { SYRUPS, calculateSyrupCost, getBottlesPerSyrup, getAllUniqueSyrups } from '../../../data/syrups';
 import { API_BASE_URL as BASE_URL } from '../../../utils/api';
+
+// Module-scoped lazy init — fetch the publishable key once and reuse the
+// loadStripe() promise across every mount of this component.
+let stripePromiseCache = null;
+function getStripePromise() {
+  if (!stripePromiseCache) {
+    stripePromiseCache = axios
+      .get(`${BASE_URL}/stripe/publishable-key`)
+      .then((r) => (r.data?.key ? loadStripe(r.data.key) : null))
+      .catch(() => {
+        stripePromiseCache = null;
+        return null;
+      });
+  }
+  return stripePromiseCache;
+}
 
 const fmt = (n) =>
   `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -88,51 +104,54 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
   const [loadingPayment, setLoadingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState('');
 
-  // Stripe.js loader — publishable key fetched from server so it matches
-  // whichever mode (live or test) the server is currently using.
+  // Stripe.js loader — resolves a module-scoped cached Promise so the
+  // publishable-key fetch happens once per session, not once per mount.
   const [stripePromise, setStripePromise] = useState(null);
   useEffect(() => {
-    axios.get(`${BASE_URL}/stripe/publishable-key`)
-      .then(r => { if (r.data?.key) setStripePromise(loadStripe(r.data.key)); })
-      .catch(() => setStripePromise(null));
+    let cancelled = false;
+    getStripePromise().then((p) => { if (!cancelled) setStripePromise(p); });
+    return () => { cancelled = true; };
   }, []);
 
-  // Calculate extras total (same logic as before, for display)
-  const addonSlugs = Object.keys(addOns);
-  const addonItems = addonSlugs
-    .map(slug => {
-      const pricing = addonPricing.find(a => a.slug === slug);
-      if (!pricing) return null;
-      const rate = Number(pricing.rate);
-      let lineTotal = rate;
-      let desc = pricing.name;
-      if (pricing.billing_type === 'per_guest' && guestCount) {
-        lineTotal = rate * guestCount;
-        desc = `${pricing.name} (${guestCount} guests)`;
+  // Extras-pricing math — recomputes on every Stripe Elements tick once mounted,
+  // so memoize by the exact inputs it reads.
+  const { addonItems, barRentalCost, barRentalLabel, syrupCost, extrasTotal } = useMemo(() => {
+    const slugs = Object.keys(addOns);
+    const items = slugs
+      .map((slug) => {
+        const pricing = addonPricing.find((a) => a.slug === slug);
+        if (!pricing) return null;
+        const rate = Number(pricing.rate);
+        let lineTotal = rate;
+        let desc = pricing.name;
+        if (pricing.billing_type === 'per_guest' && guestCount) {
+          lineTotal = rate * guestCount;
+          desc = `${pricing.name} (${guestCount} guests)`;
+        }
+        return { slug, name: desc, total: lineTotal };
+      })
+      .filter(Boolean);
+
+    const barSnap = pricingSnapshot?.bar_rental || {};
+    let barCost = 0;
+    let barLabel = '';
+    if (logistics.addBarRental) {
+      if (numBars >= 1) {
+        barCost = barSnap.additional_bar_fee || 100;
+        barLabel = 'Additional Portable Bar';
+      } else {
+        barCost = barSnap.first_bar_fee || 50;
+        barLabel = 'Portable Bar Rental';
       }
-      return { slug, name: desc, total: lineTotal };
-    })
-    .filter(Boolean);
-
-  const barRentalSnapshot = pricingSnapshot?.bar_rental || {};
-  const hasAddBarRental = logistics.addBarRental;
-  let barRentalCost = 0;
-  let barRentalLabel = '';
-  if (hasAddBarRental) {
-    if (numBars >= 1) {
-      barRentalCost = barRentalSnapshot.additional_bar_fee || 100;
-      barRentalLabel = 'Additional Portable Bar';
-    } else {
-      barRentalCost = barRentalSnapshot.first_bar_fee || 50;
-      barRentalLabel = 'Portable Bar Rental';
     }
-  }
 
-  const syrupIds = getAllUniqueSyrups(selections.syrupSelections)
-    .filter(id => !(selections.syrupSelfProvided || []).includes(id));
-  const newSyrupIds = syrupIds.filter(id => !proposalSyrups.includes(id));
-  const syrupCost = calculateSyrupCost(newSyrupIds.length, getBottlesPerSyrup(guestCount));
-  const extrasTotal = addonItems.reduce((sum, item) => sum + item.total, 0) + syrupCost.total + barRentalCost;
+    const syrupIds = getAllUniqueSyrups(selections.syrupSelections)
+      .filter((id) => !(selections.syrupSelfProvided || []).includes(id));
+    const newSyrupIds = syrupIds.filter((id) => !proposalSyrups.includes(id));
+    const syrups = calculateSyrupCost(newSyrupIds.length, getBottlesPerSyrup(guestCount));
+    const total = items.reduce((sum, item) => sum + item.total, 0) + syrups.total + barCost;
+    return { addonItems: items, barRentalCost: barCost, barRentalLabel: barLabel, syrupCost: syrups, extrasTotal: total };
+  }, [addOns, addonPricing, guestCount, logistics.addBarRental, numBars, pricingSnapshot, selections.syrupSelections, selections.syrupSelfProvided, proposalSyrups]);
 
   // Determine if payment section should show
   const hasExtras = extrasTotal > 0;
@@ -147,6 +166,16 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
     displayBalanceDueDate = d.toISOString();
   }
 
+  // Selections fingerprint — if any price-affecting field changes while we're
+  // on this step (e.g. user tabs back to edit, then returns), refresh the
+  // Stripe PaymentIntent so the amount matches the updated plan.
+  const paymentIntentKey = useMemo(() => JSON.stringify({
+    addOns: selections.addOns || {},
+    addBarRental: selections.logistics?.addBarRental || false,
+    syrupSelections: selections.syrupSelections || {},
+    syrupSelfProvided: selections.syrupSelfProvided || [],
+  }), [selections.addOns, selections.logistics, selections.syrupSelections, selections.syrupSelfProvided]);
+
   // Load payment intent when extras > 0 and proposal is linked
   useEffect(() => {
     if (!showPayment || !token) return;
@@ -155,7 +184,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
       return;
     }
 
-    let cancelled = false;
+    const controller = new AbortController();
     async function loadPaymentInfo() {
       setLoadingPayment(true);
       setPaymentError('');
@@ -164,8 +193,8 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
         const res = await axios.post(`${BASE_URL}/stripe/create-drink-plan-intent/${token}`, {
           selections,
           paymentChoice: choiceForServer,
-        });
-        if (cancelled) return;
+        }, { signal: controller.signal });
+        if (controller.signal.aborted) return;
 
         if (res.data.noPaymentNeeded) {
           setPaymentScenario(null);
@@ -187,18 +216,23 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           setPaymentChoice('pay_now');
         }
       } catch (err) {
-        if (!cancelled) {
+        if (axios.isCancel(err) || err.name === 'CanceledError' || err.name === 'AbortError') return;
+        if (!controller.signal.aborted) {
           console.error('Failed to load payment info:', err);
           setPaymentError('Unable to load payment form. You can still submit and pay later.');
         }
       } finally {
-        if (!cancelled) setLoadingPayment(false);
+        if (!controller.signal.aborted) setLoadingPayment(false);
       }
     }
 
     loadPaymentInfo();
-    return () => { cancelled = true; };
-  }, [showPayment, token, paymentChoice]);
+    return () => { controller.abort(); };
+    // paymentIntentKey is a stable JSON hash of the price-affecting selections
+    // fields (see useMemo above). Any change to addOns, logistics.addBarRental,
+    // syrupSelections, or syrupSelfProvided flips the key and refreshes the
+    // PaymentIntent.
+  }, [showPayment, token, paymentChoice, paymentIntentKey]);
 
   const paymentRequired = paymentScenario === 'extras_required' || paymentScenario === 'extras_plus_balance';
 

@@ -1,4 +1,5 @@
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters');
@@ -288,6 +289,12 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
             await refreshUnlockedInvoices(proposal.id, client);
           } catch (refreshErr) {
             console.error('refreshUnlockedInvoices failed (non-fatal):', refreshErr);
+            if (process.env.SENTRY_DSN_SERVER) {
+              Sentry.captureException(refreshErr, {
+                tags: { route: 'drinkPlans/putToken', op: 'refreshUnlockedInvoices' },
+                extra: { proposalId: proposal.id },
+              });
+            }
           }
         }
 

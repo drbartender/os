@@ -163,7 +163,8 @@ dr-bartender/
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── constants.js    # App-wide constants
 │   │   │   ├── eventTypes.js   # Event type id→label resolver (mirrors server)
-│   │   │   └── formatPhone.js  # Phone number formatting
+│   │   │   ├── formatPhone.js  # Phone number formatting
+│   │   │   └── timeOptions.js  # Time option generator + 12h formatter + input parser
 │   │   ├── components/         # Layout, InvoiceDropdown, SignaturePad, ClickableRow, FileUpload,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, AudienceSelector,
 │   │   │                       # SequenceStepEditor, CampaignMetricsBar, SyrupPicker, TimePicker,

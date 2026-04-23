@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { API_BASE_URL as BASE_URL } from '../../utils/api';
@@ -108,8 +108,12 @@ export default function PotionPlanningLab() {
   const [proposalSyrups, setProposalSyrups] = useState([]);
   const [proposalPaymentInfo, setProposalPaymentInfo] = useState(null);
 
-  // Check if returning from Stripe payment redirect
-  const paidFromRedirect = new URLSearchParams(window.location.search).get('paid') === 'true';
+  // Check if returning from Stripe payment redirect. useMemo so we don't reparse
+  // window.location.search on every render of this large component.
+  const paidFromRedirect = useMemo(
+    () => new URLSearchParams(window.location.search).get('paid') === 'true',
+    []
+  );
 
   // Flow state
   const [step, setStep] = useState('welcome');
