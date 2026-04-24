@@ -4,6 +4,9 @@ import RichTextEditor from '../../components/RichTextEditor';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
+import Icon from '../../components/adminos/Icon';
+import StatusChip from '../../components/adminos/StatusChip';
+import { fmtDate } from '../../components/adminos/format';
 
 function resolveImageUrl(url) {
   if (!url) return url;
@@ -20,7 +23,7 @@ function slugify(str) {
 
 function formatDate(d) {
   if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return fmtDate(String(d).slice(0, 10), { year: 'numeric' });
 }
 
 const EMPTY_FORM = {
@@ -250,26 +253,33 @@ export default function BlogDashboard() {
     }
   };
 
-  if (loading) return <div className="loading"><div className="spinner" />Loading...</div>;
+  if (loading) return <div className="page"><div className="muted">Loading…</div></div>;
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-        <h1>Blog Posts</h1>
-        {!showCreateForm && !editingId && (
-          <button className="btn btn-primary" onClick={() => { setShowCreateForm(true); setEditingId(null); setCreateError(''); setCreateFieldErrors({}); }}>New Post</button>
-        )}
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <div className="page-title">Lab Notes</div>
+          <div className="page-subtitle">Blog posts for the public site.</div>
+        </div>
+        <div className="page-actions">
+          {!showCreateForm && !editingId && (
+            <button type="button" className="btn btn-primary" onClick={() => { setShowCreateForm(true); setEditingId(null); setCreateError(''); setCreateFieldErrors({}); }}>
+              <Icon name="plus" />New post
+            </button>
+          )}
+        </div>
       </div>
 
       {showCreateForm && (
-        <div className="card" style={{ marginBottom: '2rem' }}>
-          <h2 style={{ marginBottom: '1rem' }}>New Post</h2>
+        <div className="card" style={{ padding: '1.25rem 1.5rem', marginBottom: 'var(--gap)' }}>
+          <div className="section-title" style={{ margin: 0, marginBottom: 12 }}>New post</div>
           <PostForm
             form={createForm}
             setForm={setCreateForm}
             onSubmit={handleCreate}
             onCancel={() => { setShowCreateForm(false); setCreateForm({ ...EMPTY_FORM }); setCreateError(''); setCreateFieldErrors({}); }}
-            submitLabel="Create Post"
+            submitLabel="Create post"
             uploading={uploading}
             onUploadImage={uploadImage}
             error={createError}
@@ -279,14 +289,14 @@ export default function BlogDashboard() {
       )}
 
       {editingId && (
-        <div className="card" style={{ marginBottom: '2rem' }}>
-          <h2 style={{ marginBottom: '1rem' }}>Edit Post</h2>
+        <div className="card" style={{ padding: '1.25rem 1.5rem', marginBottom: 'var(--gap)' }}>
+          <div className="section-title" style={{ margin: 0, marginBottom: 12 }}>Edit post</div>
           <PostForm
             form={editForm}
             setForm={setEditForm}
             onSubmit={handleUpdate}
             onCancel={() => { setEditingId(null); setEditError(''); setEditFieldErrors({}); }}
-            submitLabel="Save Changes"
+            submitLabel="Save changes"
             uploading={uploading}
             onUploadImage={uploadImage}
             error={editError}
@@ -295,37 +305,40 @@ export default function BlogDashboard() {
         </div>
       )}
 
-      {posts.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: '3rem' }}>
-          <p style={{ color: 'var(--text-muted)' }}>No blog posts yet. Create your first one!</p>
-        </div>
-      ) : (
-        <div className="table-wrap">
-          <table className="data-table">
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div className="tbl-wrap">
+          <table className="tbl">
             <thead>
               <tr>
                 <th>Title</th>
-                <th style={{ width: '100px' }}>Status</th>
-                <th style={{ width: '140px' }}>Published</th>
-                <th style={{ width: '140px' }}>Created</th>
-                <th style={{ width: '120px' }}></th>
+                <th>Status</th>
+                <th>Published</th>
+                <th>Created</th>
+                <th />
               </tr>
             </thead>
             <tbody>
+              {posts.length === 0 && (
+                <tr><td colSpan={5} className="muted">No blog posts yet. Create your first one!</td></tr>
+              )}
               {posts.map(post => (
                 <tr key={post.id} style={{ opacity: editingId === post.id ? 0.5 : 1 }}>
                   <td><strong>{post.title}</strong></td>
                   <td>
-                    <span className={`blog-status-pill ${post.published ? 'published' : 'draft'}`}>
+                    <StatusChip kind={post.published ? 'ok' : 'neutral'}>
                       {post.published ? 'Published' : 'Draft'}
-                    </span>
+                    </StatusChip>
                   </td>
-                  <td>{formatDate(post.published_at)}</td>
-                  <td>{formatDate(post.created_at)}</td>
-                  <td>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
-                      <button className="btn btn-secondary btn-sm" onClick={() => startEdit(post)} disabled={!!editingId}>Edit</button>
-                      <button className="btn btn-danger btn-sm" onClick={() => handleDelete(post.id, post.title)} disabled={!!editingId}>Delete</button>
+                  <td className="muted">{formatDate(post.published_at)}</td>
+                  <td className="muted">{formatDate(post.created_at)}</td>
+                  <td className="shrink">
+                    <div className="hstack" style={{ gap: 4 }}>
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => startEdit(post)} disabled={!!editingId}>
+                        <Icon name="pen" size={11} />Edit
+                      </button>
+                      <button type="button" className="btn btn-ghost btn-sm" style={{ color: 'hsl(var(--danger-h) var(--danger-s) 65%)' }} onClick={() => handleDelete(post.id, post.title)} disabled={!!editingId}>
+                        Delete
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -333,7 +346,7 @@ export default function BlogDashboard() {
             </tbody>
           </table>
         </div>
-      )}
+      </div>
     </div>
   );
 }

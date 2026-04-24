@@ -286,19 +286,20 @@ export default function SettingsDashboard() {
   const [activeTab, setActiveTab] = useState('drink-menu');
 
   return (
-    <div className="page-container wide">
-      <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
+    <div className="page">
+      <div className="page-header">
         <div>
-          <h1 style={{ marginBottom: '0.2rem' }}>Settings</h1>
-          <p className="text-muted text-small">Platform configuration</p>
+          <div className="page-title">Settings</div>
+          <div className="page-subtitle">Drink menu, calendar sync, and auto-assign rules.</div>
         </div>
       </div>
 
-      <div className="tab-nav mb-2">
+      <div className="seg" style={{ marginBottom: 'var(--gap)' }}>
         {TABS.map(tab => (
           <button
             key={tab.key}
-            className={`tab-btn${activeTab === tab.key ? ' active' : ''}`}
+            type="button"
+            className={activeTab === tab.key ? 'active' : ''}
             onClick={() => setActiveTab(tab.key)}
           >
             {tab.label}
