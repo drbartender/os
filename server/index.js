@@ -212,25 +212,33 @@ async function start() {
     app.listen(PORT, () => {
       console.log(`✓ Server running on port ${PORT}`);
 
-      // Autopay balance scheduler — check hourly for due balances
-      setTimeout(processAutopayCharges, 30000); // initial run after 30s
-      setInterval(processAutopayCharges, 60 * 60 * 1000); // then every hour
+      // Schedulers run by default on the single primary instance. Set RUN_SCHEDULERS=false
+      // on additional web instances to prevent duplicate Stripe charges / emails / writes.
+      if (process.env.RUN_SCHEDULERS !== 'false') {
+        // Autopay balance scheduler — check hourly for due balances
+        setTimeout(processAutopayCharges, 30000); // initial run after 30s
+        setInterval(processAutopayCharges, 60 * 60 * 1000); // then every hour
 
-      // Auto-complete events — check hourly for ended, fully-paid events
-      setTimeout(processEventCompletions, 45000); // initial run after 45s
-      setInterval(processEventCompletions, 60 * 60 * 1000); // then every hour
+        // Auto-complete events — check hourly for ended, fully-paid events
+        setTimeout(processEventCompletions, 45000); // initial run after 45s
+        setInterval(processEventCompletions, 60 * 60 * 1000); // then every hour
 
-      // Auto-assign scheduler — check hourly for shifts needing auto-assignment
-      setTimeout(processScheduledAutoAssigns, 60000); // initial run after 60s
-      setInterval(processScheduledAutoAssigns, 60 * 60 * 1000); // then every hour
+        // Auto-assign scheduler — check hourly for shifts needing auto-assignment
+        setTimeout(processScheduledAutoAssigns, 60000); // initial run after 60s
+        setInterval(processScheduledAutoAssigns, 60 * 60 * 1000); // then every hour
 
-      // Email sequence scheduler — check every 15 min for due drip steps
-      setTimeout(processSequenceSteps, 90000); // initial run after 90s
-      setInterval(processSequenceSteps, 15 * 60 * 1000); // then every 15 minutes
+        // Email sequence scheduler — check every 15 min for due drip steps
+        setTimeout(processSequenceSteps, 90000); // initial run after 90s
+        setInterval(processSequenceSteps, 15 * 60 * 1000); // then every 15 minutes
 
-      // Quote draft cleanup — expire stale drafts daily
-      setInterval(expireStaleQuoteDrafts, 24 * 60 * 60 * 1000);
-      setTimeout(expireStaleQuoteDrafts, 120000); // initial run after 2 min
+        // Quote draft cleanup — expire stale drafts daily
+        setInterval(expireStaleQuoteDrafts, 24 * 60 * 60 * 1000);
+        setTimeout(expireStaleQuoteDrafts, 120000); // initial run after 2 min
+
+        console.log('[schedulers] started');
+      } else {
+        console.log('[schedulers] disabled via RUN_SCHEDULERS=false');
+      }
     });
   } catch (err) {
     console.error('Failed to start server:', err);
