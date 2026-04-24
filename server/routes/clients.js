@@ -47,16 +47,21 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
 
 /** GET /api/clients/:id — get client detail with proposals */
 router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const client = await pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
+  // Client and proposals are independent lookups — Promise.all saves one round-trip.
+  // Explicit column allowlist on proposals excludes pricing_snapshot blob.
+  const [client, proposals] = await Promise.all([
+    pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]),
+    pool.query(`
+      SELECT p.id, p.token, p.client_id, p.event_type, p.event_type_custom,
+             p.event_date, p.status, p.total_price, p.amount_paid, p.created_at,
+             sp.name AS package_name, sp.slug AS package_slug
+      FROM proposals p
+      LEFT JOIN service_packages sp ON sp.id = p.package_id
+      WHERE p.client_id = $1
+      ORDER BY p.created_at DESC
+    `, [req.params.id]),
+  ]);
   if (!client.rows[0]) throw new NotFoundError('Client not found.');
-
-  const proposals = await pool.query(`
-    SELECT p.*, sp.name AS package_name, sp.slug AS package_slug
-    FROM proposals p
-    LEFT JOIN service_packages sp ON sp.id = p.package_id
-    WHERE p.client_id = $1
-    ORDER BY p.created_at DESC
-  `, [req.params.id]);
 
   res.json({ ...client.rows[0], proposals: proposals.rows });
 }));

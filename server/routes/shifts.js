@@ -185,34 +185,35 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
 
 /** GET /shifts/detail/:id — single shift details (admin/manager only) */
 router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
-  const result = await pool.query(`
-    SELECT s.*,
-      COALESCE(c.name, s.client_name) AS client_name,
-      COALESCE(c.phone, s.client_phone) AS client_phone,
-      COALESCE(c.email, s.client_email) AS client_email,
-      p.total_price AS proposal_total,
-      p.token AS proposal_token,
-      (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
-      (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count
-    FROM shifts s
-    LEFT JOIN proposals p ON p.id = s.proposal_id
-    LEFT JOIN clients c ON c.id = p.client_id
-    WHERE s.id = $1
-  `, [req.params.id]);
+  // Shift and its requests are independent lookups — Promise.all saves a round-trip.
+  const [result, reqResult] = await Promise.all([
+    pool.query(`
+      SELECT s.*,
+        COALESCE(c.name, s.client_name) AS client_name,
+        COALESCE(c.phone, s.client_phone) AS client_phone,
+        COALESCE(c.email, s.client_email) AS client_email,
+        p.total_price AS proposal_total,
+        p.token AS proposal_token,
+        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
+        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count
+      FROM shifts s
+      LEFT JOIN proposals p ON p.id = s.proposal_id
+      LEFT JOIN clients c ON c.id = p.client_id
+      WHERE s.id = $1
+    `, [req.params.id]),
+    pool.query(`
+      SELECT sr.*,
+        COALESCE(cp.preferred_name, u.email) AS staff_name,
+        u.email AS staff_email,
+        cp.city AS staff_city
+      FROM shift_requests sr
+      JOIN users u ON u.id = sr.user_id
+      LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
+      WHERE sr.shift_id = $1
+      ORDER BY sr.status ASC, sr.created_at ASC
+    `, [req.params.id]),
+  ]);
   if (!result.rows[0]) throw new NotFoundError('Shift not found.');
-
-  // Also fetch shift requests
-  const reqResult = await pool.query(`
-    SELECT sr.*,
-      COALESCE(cp.preferred_name, u.email) AS staff_name,
-      u.email AS staff_email,
-      cp.city AS staff_city
-    FROM shift_requests sr
-    JOIN users u ON u.id = sr.user_id
-    LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-    WHERE sr.shift_id = $1
-    ORDER BY sr.status ASC, sr.created_at ASC
-  `, [req.params.id]);
 
   res.json({ shift: result.rows[0], requests: reqResult.rows });
 }));

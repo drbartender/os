@@ -40,9 +40,11 @@ async function processAutopayCharges() {
 
     console.log(`[BalanceScheduler] Found ${result.rows.length} autopay charge(s) to process`);
 
-    for (const proposal of result.rows) {
+    // Bound concurrency to 5 — Stripe allows 100 req/s but we avoid burst-noisy neighbors.
+    const CONCURRENCY = 5;
+    const chargeOne = async (proposal) => {
       const balanceCents = Math.round((Number(proposal.total_price) - Number(proposal.amount_paid)) * 100);
-      if (balanceCents <= 0) continue;
+      if (balanceCents <= 0) return;
 
       try {
         const intent = await stripe.paymentIntents.create({
@@ -89,6 +91,12 @@ async function processAutopayCharges() {
           console.error('[BalanceScheduler] admin email failed:', mailErr);
         }
       }
+    };
+
+    // Chunked parallel execution
+    for (let i = 0; i < result.rows.length; i += CONCURRENCY) {
+      const chunk = result.rows.slice(i, i + CONCURRENCY);
+      await Promise.all(chunk.map(chargeOne));
     }
   } catch (err) {
     console.error('[BalanceScheduler] Error:', err);

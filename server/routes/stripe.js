@@ -823,19 +823,22 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 
     if (proposalId) {
       try {
-        await pool.query(
-          "UPDATE stripe_sessions SET status = 'failed' WHERE stripe_payment_intent_id = $1",
-          [intent.id]
-        );
-        await pool.query(
-          `INSERT INTO proposal_payments (proposal_id, stripe_payment_intent_id, payment_type, amount, status)
-           VALUES ($1, $2, $3, $4, 'failed')`,
-          [proposalId, intent.id, paymentType, intent.amount]
-        );
-        await pool.query(
-          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'payment_failed', 'system', $2)`,
-          [proposalId, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType, failure_message: intent.last_payment_error?.message || null })]
-        );
+        // Three independent writes — parallelize via Promise.all.
+        await Promise.all([
+          pool.query(
+            "UPDATE stripe_sessions SET status = 'failed' WHERE stripe_payment_intent_id = $1",
+            [intent.id]
+          ),
+          pool.query(
+            `INSERT INTO proposal_payments (proposal_id, stripe_payment_intent_id, payment_type, amount, status)
+             VALUES ($1, $2, $3, $4, 'failed')`,
+            [proposalId, intent.id, paymentType, intent.amount]
+          ),
+          pool.query(
+            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'payment_failed', 'system', $2)`,
+            [proposalId, JSON.stringify({ amount: intent.amount, payment_intent_id: intent.id, payment_type: paymentType, failure_message: intent.last_payment_error?.message || null })]
+          ),
+        ]);
         console.warn(`Payment FAILED (${paymentType}) for proposal ${proposalId}: ${intent.last_payment_error?.message || 'unknown'}`);
 
         // Notify admin of failed payment

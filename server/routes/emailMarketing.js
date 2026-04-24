@@ -205,22 +205,23 @@ function parseCSVLine(line) {
 
 /** GET /leads/:id — lead detail with send history */
 router.get('/leads/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const lead = await pool.query('SELECT * FROM email_leads WHERE id = $1', [req.params.id]);
+  // Three independent lookups — run in parallel to save 2 round-trips.
+  const [lead, sends, conversations] = await Promise.all([
+    pool.query('SELECT * FROM email_leads WHERE id = $1', [req.params.id]),
+    pool.query(
+      `SELECT es.*, ec.name AS campaign_name
+       FROM email_sends es
+       LEFT JOIN email_campaigns ec ON ec.id = es.campaign_id
+       WHERE es.lead_id = $1 ORDER BY es.sent_at DESC LIMIT 50`,
+      [req.params.id]
+    ),
+    // Cap at 100 conversations to prevent unbounded load on lead profile
+    pool.query(
+      'SELECT * FROM email_conversations WHERE lead_id = $1 ORDER BY created_at ASC LIMIT 100',
+      [req.params.id]
+    ),
+  ]);
   if (!lead.rows[0]) throw new NotFoundError('Lead not found.');
-
-  const sends = await pool.query(
-    `SELECT es.*, ec.name AS campaign_name
-     FROM email_sends es
-     LEFT JOIN email_campaigns ec ON ec.id = es.campaign_id
-     WHERE es.lead_id = $1 ORDER BY es.sent_at DESC LIMIT 50`,
-    [req.params.id]
-  );
-
-  // Cap at 100 conversations to prevent unbounded load on lead profile
-  const conversations = await pool.query(
-    'SELECT * FROM email_conversations WHERE lead_id = $1 ORDER BY created_at ASC LIMIT 100',
-    [req.params.id]
-  );
 
   res.json({ ...lead.rows[0], sends: sends.rows, conversations: conversations.rows });
 }));
