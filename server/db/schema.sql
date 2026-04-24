@@ -807,6 +807,12 @@ CREATE TABLE IF NOT EXISTS stripe_sessions (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Allow idempotent lookup of an existing payment-link row for a given proposal + amount,
+-- so retries can reuse the previously-issued Stripe link instead of creating a duplicate.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_stripe_sessions_payment_link
+  ON stripe_sessions(stripe_payment_link_id)
+  WHERE stripe_payment_link_id IS NOT NULL;
+
 -- ─── Proposal Payment Options & Autopay ──────────────────────────
 
 ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_status_check;

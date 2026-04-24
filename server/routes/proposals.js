@@ -930,7 +930,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       adjustments: adj, totalPriceOverride: tpo,
     });
 
-    await dbClient.query(`
+    const updatedRow = await dbClient.query(`
       UPDATE proposals SET
         event_date = COALESCE($1, event_date),
         event_start_time = COALESCE($2, event_start_time), event_duration_hours = $3,
@@ -942,6 +942,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         event_type_custom = COALESCE($14, event_type_custom),
         adjustments = $15, total_price_override = $16
       WHERE id = $11
+      RETURNING *
     `, [
       event_date, event_start_time, dh, event_location, gc,
       pkgId, nb, snapshot.staffing.actual,
@@ -984,9 +985,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       invClient.release();
     }
 
-    // Return updated proposal
-    const updated = await pool.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
-    res.json(updated.rows[0]);
+    // Return updated proposal (from the UPDATE ... RETURNING * above)
+    res.json(updatedRow.rows[0]);
   } catch (err) {
     try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
     throw err;

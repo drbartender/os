@@ -342,6 +342,25 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
   const proposal = result.rows[0];
   const eventLabel = eventLabelFor(proposal);
 
+  // Idempotency: if a pending payment-link already exists for this proposal+amount, reuse it
+  // instead of creating a second Stripe price+link. Avoids duplicate charges when the admin
+  // clicks Generate twice.
+  const existingLink = await pool.query(
+    `SELECT stripe_payment_link_id FROM stripe_sessions
+     WHERE proposal_id = $1 AND stripe_payment_link_id IS NOT NULL
+       AND amount = $2 AND status = 'pending'
+     ORDER BY created_at DESC LIMIT 1`,
+    [proposal.id, DEPOSIT_AMOUNT]
+  );
+  if (existingLink.rows[0]) {
+    try {
+      const existing = await stripe.paymentLinks.retrieve(existingLink.rows[0].stripe_payment_link_id);
+      if (existing && existing.active) {
+        return res.json({ url: existing.url });
+      }
+    } catch (_) { /* fall through and create a new link */ }
+  }
+
   let price, paymentLink;
   try {
     // Create a one-time price
