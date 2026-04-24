@@ -1,17 +1,5 @@
 {
   "permissions": {
-    "deny": [
-      "Bash(codex apply *)",
-      "Bash(codex a *)",
-      "Bash(codex exec *)",
-      "Bash(codex e *)",
-      "Bash(codex cloud *)",
-      "Bash(codex resume *)",
-      "Bash(codex fork *)",
-      "Bash(codex mcp-server *)",
-      "Bash(codex app *)",
-      "Bash(codex app-server *)"
-    ],
     "allow": [
       "Bash(npm install helmet --save)",
       "Bash(node -e \":*)",
@@ -155,7 +143,22 @@
       "Bash(ping -n 1 hiring.localhost)",
       "mcp__plugin_playwright_playwright__browser_console_messages",
       "Read(//c/tmp/**)",
-      "Bash(bash scripts/check-docs-drift.sh)"
+      "Bash(bash scripts/check-docs-drift.sh)",
+      "Bash(npx vercel *)",
+      "Bash(claude mcp *)",
+      "Bash(npx -y @sentry/mcp-server@latest --help)"
+    ],
+    "deny": [
+      "Bash(codex apply *)",
+      "Bash(codex a *)",
+      "Bash(codex exec *)",
+      "Bash(codex e *)",
+      "Bash(codex cloud *)",
+      "Bash(codex resume *)",
+      "Bash(codex fork *)",
+      "Bash(codex mcp-server *)",
+      "Bash(codex app *)",
+      "Bash(codex app-server *)"
     ]
   }
 }
