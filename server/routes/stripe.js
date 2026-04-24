@@ -380,10 +380,14 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
     throw new ExternalServiceError('Stripe', err, 'Payment link unavailable. Please try again.');
   }
 
-  // Store link reference
+  // Store link reference — ON CONFLICT DO NOTHING handles the race where
+  // two requests both pass the idempotency check above and create separate Stripe
+  // links before either INSERTs (only one row wins, the other is orphaned in Stripe
+  // but doesn't corrupt our DB).
   await pool.query(
     `INSERT INTO stripe_sessions (proposal_id, stripe_payment_link_id, amount, status)
-     VALUES ($1, $2, $3, 'pending')`,
+     VALUES ($1, $2, $3, 'pending')
+     ON CONFLICT (stripe_payment_link_id) DO NOTHING`,
     [proposal.id, paymentLink.id, DEPOSIT_AMOUNT]
   );
 

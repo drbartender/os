@@ -80,15 +80,35 @@ async function processAutopayCharges() {
           console.error('[BalanceScheduler] activity-log insert failed:', logErr);
         }
 
-        // Notify admin out-of-band so ops doesn't wait for Render logs
+        // Notify admin out-of-band — but throttle to once per 24h per proposal,
+        // otherwise a permanently-dead card emails the admin every hour forever.
         try {
-          await sendEmail({
-            to: process.env.ADMIN_EMAIL || 'contact@drbartender.com',
-            subject: `Autopay failed: proposal #${proposal.id} ($${(balanceCents / 100).toFixed(2)})`,
-            html: `<p>Autopay attempt failed for proposal #${proposal.id}.</p><p>Error: ${err.message}</p>`,
-          });
+          const recent = await pool.query(
+            `SELECT 1 FROM proposal_activity_log
+             WHERE proposal_id = $1 AND action = 'autopay_failed'
+               AND created_at > NOW() - INTERVAL '24 hours'
+               AND details->>'admin_notified' = 'true'
+             LIMIT 1`,
+            [proposal.id]
+          );
+          if (recent.rowCount === 0) {
+            await sendEmail({
+              to: process.env.ADMIN_EMAIL || 'contact@drbartender.com',
+              subject: `Autopay failed: proposal #${proposal.id} ($${(balanceCents / 100).toFixed(2)})`,
+              html: `<p>Autopay attempt failed for proposal #${proposal.id}.</p><p>Error: ${err.message}</p>`,
+            });
+            // Mark the most-recent autopay_failed row as notified so the next cycle skips
+            await pool.query(
+              `UPDATE proposal_activity_log
+               SET details = details || jsonb_build_object('admin_notified', true)
+               WHERE id = (SELECT id FROM proposal_activity_log
+                           WHERE proposal_id = $1 AND action = 'autopay_failed'
+                           ORDER BY created_at DESC LIMIT 1)`,
+              [proposal.id]
+            );
+          }
         } catch (mailErr) {
-          console.error('[BalanceScheduler] admin email failed:', mailErr);
+          console.error('[BalanceScheduler] admin email / notify-throttle failed:', mailErr);
         }
       }
     };

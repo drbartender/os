@@ -90,15 +90,16 @@ const allowedOrigins = [
   'https://staff.drbartender.com',
 ].filter(Boolean);
 
-// CORS: permissive for the health probe (Render/uptime pingers are origin-less),
-// strict for everything else (require Origin header in the allowlist).
+// CORS: browsers send an Origin header; we enforce an allowlist for those.
+// Server-to-server callers (Stripe/Resend/Thumbtack webhooks, Render's health probe,
+// uptime pingers) send no Origin header — they authenticate via their own signature/secret,
+// not CORS — so we pass those through with no Access-Control-Allow-Origin header.
 app.use(cors((req, callback) => {
-  if (req.path === '/api/health') {
-    return callback(null, { origin: true, credentials: true });
+  if (!req.headers.origin) {
+    return callback(null, { origin: false, credentials: false });
   }
   callback(null, {
     origin: (origin, cb) => {
-      if (!origin) return cb(new Error('Origin required'));
       if (allowedOrigins.includes(origin)) return cb(null, true);
       cb(new Error('Not allowed by CORS'));
     },
