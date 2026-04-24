@@ -6,16 +6,28 @@ import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
+import Icon from '../../components/adminos/Icon';
+import StatusChip from '../../components/adminos/StatusChip';
+import { fmt$, fmt$cents, fmtDate, fmtDateFull } from '../../components/adminos/format';
 
-const STATUS_LABELS = {
-  draft: 'Draft', sent: 'Sent', viewed: 'Viewed', modified: 'Modified',
-  accepted: 'Accepted', deposit_paid: 'Deposit Paid', confirmed: 'Confirmed',
+const SOURCE = {
+  direct:    { label: 'Direct',    kind: 'neutral' },
+  thumbtack: { label: 'Thumbtack', kind: 'info' },
+  referral:  { label: 'Referral',  kind: 'ok' },
+  website:   { label: 'Website',   kind: 'accent' },
+  instagram: { label: 'Instagram', kind: 'violet' },
 };
-const STATUS_CLASSES = {
-  draft: 'badge-inprogress', sent: 'badge-submitted', viewed: 'badge-submitted',
-  modified: 'badge-inprogress', accepted: 'badge-approved', deposit_paid: 'badge-approved', confirmed: 'badge-approved',
+
+const PROP_STATUS = {
+  draft: 'neutral', sent: 'info', viewed: 'accent', modified: 'violet',
+  accepted: 'ok', deposit_paid: 'ok', balance_paid: 'ok', completed: 'ok',
+  declined: 'danger', confirmed: 'ok',
 };
-const SOURCE_LABELS = { direct: 'Direct', thumbtack: 'Thumbtack', referral: 'Referral', website: 'Website' };
+
+function initialsOf(name) {
+  if (!name) return '?';
+  return name.split(/\s+/).map(s => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+}
 
 export default function ClientDetail() {
   const { id } = useParams();
@@ -31,7 +43,16 @@ export default function ClientDetail() {
 
   useEffect(() => {
     api.get(`/clients/${id}`)
-      .then(res => { setClient(res.data); setForm({ name: res.data.name, email: res.data.email || '', phone: res.data.phone || '', source: res.data.source || 'direct', notes: res.data.notes || '' }); })
+      .then(res => {
+        setClient(res.data);
+        setForm({
+          name: res.data.name,
+          email: res.data.email || '',
+          phone: res.data.phone || '',
+          source: res.data.source || 'direct',
+          notes: res.data.notes || '',
+        });
+      })
       .catch(() => {
         toast.error('Failed to load client. Try refreshing.');
         navigate('/admin/clients');
@@ -61,141 +82,199 @@ export default function ClientDetail() {
     } catch (err) {
       setError(err.message || 'Failed to save client. Please try again.');
       setFieldErrors(err.fieldErrors || {});
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleCancelEdit = () => {
     setError('');
     setFieldErrors({});
     setEditing(false);
-    // Reset form to last-saved client values so a re-open doesn't keep stale edits
     if (client) {
-      setForm({ name: client.name, email: client.email || '', phone: client.phone || '', source: client.source || 'direct', notes: client.notes || '' });
+      setForm({
+        name: client.name,
+        email: client.email || '',
+        phone: client.phone || '',
+        source: client.source || 'direct',
+        notes: client.notes || '',
+      });
     }
   };
 
-  const formatDate = (d) => {
-    if (!d) return '—';
-    return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  };
-
-  const formatCurrency = (amount) => {
-    if (amount == null) return '—';
-    return `$${Number(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
-
-  if (loading) return <div className="page-container" style={{ textAlign: 'center', padding: '3rem' }}><div className="spinner" /></div>;
+  if (loading) return <div className="page"><div className="muted">Loading client…</div></div>;
   if (!client) return null;
 
+  const proposals = client.proposals || [];
+  const ltv = proposals.reduce((s, p) => s + Number(p.amount_paid || 0), 0);
+  const totalBooked = proposals.reduce((s, p) => s + Number(p.total_price || 0), 0);
+  const src = SOURCE[client.source] || { label: client.source || '—', kind: 'neutral' };
+
   return (
-    <div className="page-container wide">
-      <div className="flex-between mb-2">
-        <h1 style={{ fontFamily: 'var(--font-display)' }}>{client.name}</h1>
-        <div className="flex gap-1">
-          <button className="btn btn-secondary" onClick={() => navigate('/admin/clients')}>Back</button>
-          <button className="btn btn-primary" onClick={() => navigate('/admin/proposals/new')}>+ New Proposal</button>
+    <div className="page" style={{ maxWidth: 1280 }}>
+      <div className="hstack" style={{ marginBottom: 8 }}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/clients')}>
+          <Icon name="left" size={11} />Clients
+        </button>
+      </div>
+
+      {/* Identity bar */}
+      <div className="card" style={{ padding: '1.5rem 1.75rem', marginBottom: 'var(--gap)' }}>
+        <div className="hstack" style={{ gap: 18, alignItems: 'flex-start' }}>
+          <div className="avatar" style={{ width: 56, height: 56, fontSize: 18, flexShrink: 0 }}>
+            {initialsOf(client.name)}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10, marginBottom: 4 }}>
+              Client · #{client.id}
+            </div>
+            <div className="hstack" style={{ gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
+              <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, margin: 0, lineHeight: 1.15 }}>
+                {client.name}
+              </h1>
+              <StatusChip kind={src.kind}>{src.label}</StatusChip>
+            </div>
+            <div className="muted" style={{ fontSize: 13 }}>
+              {client.email || '—'}{client.phone ? ` · ${formatPhone(client.phone)}` : ''}
+              {client.created_at && ` · added ${fmtDateFull(String(client.created_at).slice(0, 10))}`}
+            </div>
+          </div>
+          <div className="page-actions" style={{ flexShrink: 0 }}>
+            {client.email && (
+              <a className="btn btn-ghost" href={`mailto:${client.email}`}>
+                <Icon name="mail" size={12} />Email
+              </a>
+            )}
+            {client.phone && (
+              <a className="btn btn-ghost" href={`tel:${client.phone}`}>
+                <Icon name="phone" size={12} />Call
+              </a>
+            )}
+            <button type="button" className="btn btn-primary" onClick={() => navigate(`/admin/proposals/new?client_id=${client.id}`)}>
+              <Icon name="plus" size={12} />New proposal
+            </button>
+          </div>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', alignItems: 'start' }}>
-        {/* Client Info */}
-        <div className="card">
-          <div className="flex-between" style={{ marginBottom: '1rem' }}>
-            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>Client Info</h3>
-            <button className="btn btn-sm btn-secondary" onClick={() => editing ? handleCancelEdit() : setEditing(true)}>
-              {editing ? 'Cancel' : 'Edit'}
-            </button>
-          </div>
-          {editing ? (
-            <div style={{ display: 'grid', gap: '0.75rem' }}>
-              <div className="form-group">
-                <label className="form-label">Name</label>
-                <input
-                  className="form-input"
-                  value={form.name}
-                  onChange={e => { setForm(f => ({ ...f, name: e.target.value })); clearServerFieldError('name'); }}
-                  aria-invalid={!!fieldErrors?.name}
-                />
-                <FieldError error={fieldErrors?.name} />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Email</label>
-                <input
-                  className="form-input"
-                  type="email"
-                  value={form.email}
-                  onChange={e => { setForm(f => ({ ...f, email: e.target.value })); clearServerFieldError('email'); }}
-                  aria-invalid={!!fieldErrors?.email}
-                />
-                <FieldError error={fieldErrors?.email} />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Phone</label>
-                <input
-                  className="form-input"
-                  type="tel"
-                  value={formatPhoneInput(form.phone)}
-                  onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearServerFieldError('phone'); }}
-                  aria-invalid={!!fieldErrors?.phone}
-                />
-                <FieldError error={fieldErrors?.phone} />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Source</label>
-                <select
-                  className="form-select"
-                  value={form.source}
-                  onChange={e => { setForm(f => ({ ...f, source: e.target.value })); clearServerFieldError('source'); }}
-                  aria-invalid={!!fieldErrors?.source}
-                >
-                  {Object.entries(SOURCE_LABELS).map(([val, label]) => <option key={val} value={val}>{label}</option>)}
-                </select>
-                <FieldError error={fieldErrors?.source} />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Notes</label>
-                <textarea className="form-input" rows={3} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
-              </div>
-              <FormBanner error={error} fieldErrors={fieldErrors} />
-              <button className="btn btn-sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 'var(--gap)' }}>
+        <div className="vstack" style={{ gap: 'var(--gap)' }}>
+          <div className="card">
+            <div className="card-head">
+              <h3>Proposals & events</h3>
+              <span className="k">{proposals.length}</span>
             </div>
-          ) : (
-            <div style={{ display: 'grid', gap: '0.5rem' }}>
-              <div><span className="text-muted text-small">Email</span><div>{client.email || '—'}</div></div>
-              <div><span className="text-muted text-small">Phone</span><div>{formatPhone(client.phone)}</div></div>
-              <div><span className="text-muted text-small">Source</span><div>{SOURCE_LABELS[client.source] || client.source}</div></div>
-              <div><span className="text-muted text-small">Added</span><div>{formatDate(client.created_at)}</div></div>
-              {client.notes && <div><span className="text-muted text-small">Notes</span><div>{client.notes}</div></div>}
+            {proposals.length === 0 ? (
+              <div className="card-body"><div className="muted tiny">No proposals yet.</div></div>
+            ) : (
+              <div className="tbl-wrap">
+                <table className="tbl">
+                  <thead>
+                    <tr>
+                      <th>Event</th>
+                      <th>Date</th>
+                      <th>Package</th>
+                      <th>Status</th>
+                      <th className="num">Total</th>
+                      <th className="num">Paid</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {proposals.map(p => (
+                      <tr key={p.id} onClick={() => navigate(`/admin/proposals/${p.id}`)}>
+                        <td>
+                          <strong>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</strong>
+                        </td>
+                        <td>{p.event_date ? fmtDate(String(p.event_date).slice(0, 10), { year: 'numeric' }) : '—'}</td>
+                        <td className="muted">{p.package_name || '—'}</td>
+                        <td><StatusChip kind={PROP_STATUS[p.status] || 'neutral'}>{p.status || '—'}</StatusChip></td>
+                        <td className="num">{fmt$(p.total_price)}</td>
+                        <td className="num muted">{fmt$(p.amount_paid)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {client.notes && !editing && (
+            <div className="card">
+              <div className="card-head"><h3>Notes</h3></div>
+              <div className="card-body">
+                <div style={{ color: 'var(--ink-2)', fontSize: 13, whiteSpace: 'pre-wrap' }}>{client.notes}</div>
+              </div>
             </div>
           )}
         </div>
 
-        {/* Proposals */}
-        <div className="card">
-          <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Proposals</h3>
-          {!client.proposals || client.proposals.length === 0 ? (
-            <p className="text-muted text-small">No proposals yet.</p>
-          ) : (
-            <div style={{ display: 'grid', gap: '0.5rem' }}>
-              {client.proposals.map(p => (
-                <div key={p.id}
-                  onClick={() => navigate(`/admin/proposals/${p.id}`)}
-                  style={{ padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--cream-dark, #e8e0d4)', cursor: 'pointer' }}
-                >
-                  <div className="flex-between">
-                    <div>
-                      <strong>{p.client_name || `Proposal #${p.id}`}</strong>
-                      <div className="event-subtitle">{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</div>
-                    </div>
-                    <span className={`badge ${STATUS_CLASSES[p.status] || ''}`}>{STATUS_LABELS[p.status] || p.status}</span>
+        <div className="vstack" style={{ gap: 'var(--gap)' }}>
+          <div className="card">
+            <div className="card-head">
+              <h3>Contact</h3>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => editing ? handleCancelEdit() : setEditing(true)}>
+                <Icon name={editing ? 'x' : 'pen'} size={11} />{editing ? 'Cancel' : 'Edit'}
+              </button>
+            </div>
+            <div className="card-body">
+              {editing ? (
+                <div style={{ display: 'grid', gap: 10 }}>
+                  <div>
+                    <div className="meta-k" style={{ marginBottom: 4 }}>Name</div>
+                    <input className="input" value={form.name} onChange={e => { setForm(f => ({ ...f, name: e.target.value })); clearServerFieldError('name'); }} aria-invalid={!!fieldErrors?.name} />
+                    <FieldError error={fieldErrors?.name} />
                   </div>
-                  <div className="text-muted text-small" style={{ marginTop: '0.3rem' }}>
-                    {formatDate(p.event_date)} · {p.package_name || '—'} · {formatCurrency(p.total_price)}
+                  <div>
+                    <div className="meta-k" style={{ marginBottom: 4 }}>Email</div>
+                    <input className="input" type="email" value={form.email} onChange={e => { setForm(f => ({ ...f, email: e.target.value })); clearServerFieldError('email'); }} aria-invalid={!!fieldErrors?.email} />
+                    <FieldError error={fieldErrors?.email} />
+                  </div>
+                  <div>
+                    <div className="meta-k" style={{ marginBottom: 4 }}>Phone</div>
+                    <input className="input" type="tel" value={formatPhoneInput(form.phone)} onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearServerFieldError('phone'); }} aria-invalid={!!fieldErrors?.phone} />
+                    <FieldError error={fieldErrors?.phone} />
+                  </div>
+                  <div>
+                    <div className="meta-k" style={{ marginBottom: 4 }}>Source</div>
+                    <select className="select" value={form.source} onChange={e => { setForm(f => ({ ...f, source: e.target.value })); clearServerFieldError('source'); }}>
+                      {Object.entries(SOURCE).map(([val, cfg]) => <option key={val} value={val}>{cfg.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div className="meta-k" style={{ marginBottom: 4 }}>Notes</div>
+                    <textarea className="input" rows={3} style={{ height: 'auto', padding: '0.5rem 0.6rem' }} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+                  </div>
+                  <FormBanner error={error} fieldErrors={fieldErrors} />
+                  <div className="hstack" style={{ gap: 6 }}>
+                    <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+                    <button type="button" className="btn btn-ghost" onClick={handleCancelEdit}>Cancel</button>
                   </div>
                 </div>
-              ))}
+              ) : (
+                <dl className="dl">
+                  <dt>Email</dt><dd>{client.email || '—'}</dd>
+                  <dt>Phone</dt><dd>{client.phone ? formatPhone(client.phone) : '—'}</dd>
+                  <dt>Source</dt><dd><StatusChip kind={src.kind}>{src.label}</StatusChip></dd>
+                  <dt>Added</dt><dd>{client.created_at ? fmtDate(String(client.created_at).slice(0, 10), { year: 'numeric' }) : '—'}</dd>
+                </dl>
+              )}
             </div>
-          )}
+          </div>
+
+          <div className="card">
+            <div className="card-head"><h3>Lifetime</h3></div>
+            <div className="card-body">
+              <dl className="dl">
+                <dt>Events</dt><dd className="num">{proposals.length}</dd>
+                <dt>Booked</dt><dd className="num">{fmt$cents(totalBooked)}</dd>
+                <dt>Collected</dt><dd className="num">{fmt$cents(ltv)}</dd>
+                <dt>Outstanding</dt>
+                <dd className="num" style={{ color: totalBooked - ltv > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
+                  {fmt$cents(totalBooked - ltv)}
+                </dd>
+              </dl>
+            </div>
+          </div>
         </div>
       </div>
     </div>
