@@ -164,6 +164,9 @@ app.use('/api/test-feedback', require('./routes/testFeedback'));
 // Health check — must be registered BEFORE the React catch-all below
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
+// TEMP: Sentry verification route — remove after confirming error shows up
+app.get('/api/__sentry-test', () => { throw new Error('sentry server test ' + Date.now()); });
+
 // Frontend is served separately on Vercel
 
 // Global error handler — must be the last middleware
