@@ -12,17 +12,13 @@ const router = express.Router();
  */
 router.post('/resend', asyncHandler(async (req, res) => {
   try {
-    // Verify webhook signature if secret is configured
+    // Fail closed: in production, a missing secret means forged events would be accepted.
     if (!process.env.RESEND_WEBHOOK_SECRET && process.env.NODE_ENV === 'production') {
-      // Return 200 to stop Resend's retry loop, but capture to Sentry once so ops is paged.
-      const err = new Error('RESEND_WEBHOOK_SECRET not configured in production');
-      console.error(err.message);
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(err, {
-          tags: { webhook: 'resend', route: '/resend', issue: 'missing-secret' },
-        });
-      }
-      return res.status(200).json({ ok: true, note: 'webhook not configured' });
+      Sentry.captureMessage('RESEND_WEBHOOK_SECRET not set in production', {
+        level: 'error',
+        tags: { webhook: 'resend', reason: 'missing_secret' },
+      });
+      return res.status(401).json({ error: 'Webhook signature verification unavailable' });
     }
     if (!process.env.RESEND_WEBHOOK_SECRET) {
       console.warn('RESEND_WEBHOOK_SECRET not set — skipping signature verification (non-production)');
@@ -43,7 +39,10 @@ router.post('/resend', asyncHandler(async (req, res) => {
           'svix-signature': req.headers['svix-signature'],
         });
       } catch (verifyErr) {
-        console.error('Webhook signature verification failed:', verifyErr.message);
+        Sentry.captureMessage('Resend webhook signature failure', {
+          level: 'warning',
+          tags: { webhook: 'resend', reason: 'invalid_signature' },
+        });
         return res.status(401).json({ error: 'Invalid signature' });
       }
     }
