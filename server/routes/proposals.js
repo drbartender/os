@@ -18,6 +18,23 @@ const router = express.Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_FORM_STATE_SIZE = 50 * 1024; // 50 KB
 
+// Status state machine — enforced on PATCH /:id/status unless ?force=true (admin only).
+// Transitions are one-way except for admin-backed corrections via force.
+const STATUS_TRANSITIONS = {
+  draft: ['sent', 'archived'],
+  sent: ['viewed', 'accepted', 'modified', 'draft'],
+  viewed: ['accepted', 'modified', 'sent'],
+  modified: ['sent', 'accepted'],
+  accepted: ['deposit_paid', 'confirmed'],
+  deposit_paid: ['balance_paid', 'confirmed', 'completed'],
+  balance_paid: ['completed'],
+  confirmed: ['completed', 'deposit_paid', 'balance_paid'],
+  completed: [],
+  archived: ['draft'],
+};
+
+const TOTAL_PRICE_OVERRIDE_MAX = 1_000_000;
+
 // ─── Public routes (token-based) ─────────────────────────────────
 
 /** GET /api/proposals/t/:token — fetch proposal by token (public) */
@@ -897,6 +914,16 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     const nb = num_bars ?? old.num_bars;
     const adj = adjustments ?? (old.adjustments || []);
     const tpo = total_price_override !== undefined ? total_price_override : old.total_price_override;
+
+    // Validate total_price_override bounds when explicitly supplied
+    if (total_price_override !== undefined && total_price_override !== null) {
+      const n = Number(total_price_override);
+      if (!Number.isFinite(n) || n < 0 || n >= TOTAL_PRICE_OVERRIDE_MAX) {
+        throw new ValidationError({
+          total_price_override: `Must be between 0 and ${TOTAL_PRICE_OVERRIDE_MAX - 1}`,
+        });
+      }
+    }
     const snapshot = calculateProposal({
       pkg: pkgResult.rows[0], guestCount: gc, durationHours: dh, numBars: nb,
       numBartenders: num_bartenders, addons, syrupSelections: syrups,
@@ -968,22 +995,40 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   }
 }));
 
-/** PATCH /api/proposals/:id/status — update status */
+/** PATCH /api/proposals/:id/status — update status. Enforce state machine unless ?force=true (admin-only) */
 router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { status } = req.body;
-  const validStatuses = ['draft', 'sent', 'viewed', 'modified', 'accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed'];
+  const validStatuses = Object.keys(STATUS_TRANSITIONS);
   if (!validStatuses.includes(status)) {
     throw new ValidationError({ status: 'Invalid status' });
   }
+
+  const force = req.query.force === 'true' && req.user.role === 'admin';
+
+  // Fetch current status for transition check
+  const current = await pool.query('SELECT status FROM proposals WHERE id = $1', [req.params.id]);
+  if (!current.rows[0]) throw new NotFoundError('Proposal not found');
+  const currentStatus = current.rows[0].status;
+
+  if (!force && currentStatus !== status) {
+    const allowed = STATUS_TRANSITIONS[currentStatus] || [];
+    if (!allowed.includes(status)) {
+      throw new ValidationError({
+        status: `Cannot transition from '${currentStatus}' to '${status}'. Allowed: [${allowed.join(', ') || 'none'}]. Admins may use ?force=true.`,
+      });
+    }
+  }
+
   const result = await pool.query(
     'UPDATE proposals SET status = $1 WHERE id = $2 RETURNING *',
     [status, req.params.id]
   );
   if (!result.rows[0]) throw new NotFoundError('Proposal not found');
 
+  const action = force ? 'status_force_changed' : 'status_changed';
   await pool.query(
-    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, 'status_changed', 'admin', $2, $3)`,
-    [req.params.id, req.user.id, JSON.stringify({ new_status: status })]
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, $2, 'admin', $3, $4)`,
+    [req.params.id, action, req.user.id, JSON.stringify({ from: currentStatus, to: status, forced: force })]
   );
 
   // Email client when proposal is sent (non-blocking)
