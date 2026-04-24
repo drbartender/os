@@ -49,7 +49,7 @@ router.post('/register', authLimiter, asyncHandler(async (req, res) => {
 
   const hash = await bcrypt.hash(password, 12);
   const result = await pool.query(
-    'INSERT INTO users (email, password_hash, notifications_opt_in) VALUES ($1, $2, $3) RETURNING id, email, role, onboarding_status',
+    'INSERT INTO users (email, password_hash, notifications_opt_in) VALUES ($1, $2, $3) RETURNING id, email, role, onboarding_status, token_version',
     [email.toLowerCase(), hash, notifications_opt_in || false]
   );
   const user = result.rows[0];
@@ -60,7 +60,11 @@ router.post('/register', authLimiter, asyncHandler(async (req, res) => {
     [user.id]
   );
 
-  const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  const token = jwt.sign(
+    { userId: user.id, tokenVersion: user.token_version ?? 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
   res.status(201).json({ token, user: { ...user, has_application: false } });
 }));
 
@@ -83,7 +87,7 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
     }
   }
 
-  const result = await pool.query('SELECT id, email, role, onboarding_status, can_hire, can_staff, password_hash FROM users WHERE email = $1', [normalizedEmail]);
+  const result = await pool.query('SELECT id, email, role, onboarding_status, can_hire, can_staff, password_hash, token_version FROM users WHERE email = $1', [normalizedEmail]);
   const user = result.rows[0];
   if (!user) {
     throw new ConflictError('Invalid email or password', 'INVALID_CREDENTIALS');
@@ -115,7 +119,11 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
   // Check if user has an application on file
   const appResult = await pool.query('SELECT id FROM applications WHERE user_id = $1', [user.id]);
 
-  const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+  const token = jwt.sign(
+    { userId: user.id, tokenVersion: user.token_version ?? 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
   const { password_hash: _, ...safeUser } = user;
   res.json({ token, user: { ...safeUser, has_application: appResult.rows.length > 0 } });
 }));
@@ -210,11 +218,14 @@ router.post('/reset-password', authLimiter, asyncHandler(async (req, res) => {
     throw new ValidationError({ token: 'This reset link is invalid or has expired' });
   }
 
-  // Hash new password and update user
+  // Hash new password and update user; bump token_version to invalidate existing JWTs.
   const hash = await bcrypt.hash(password, 12);
-  await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, resetRecord.user_id]);
+  await pool.query(
+    'UPDATE users SET password_hash = $1, token_version = token_version + 1, updated_at = NOW() WHERE id = $2',
+    [hash, resetRecord.user_id]
+  );
 
-  // Invalidate the token
+  // Invalidate the reset token
   await pool.query('DELETE FROM password_reset_tokens WHERE user_id = $1', [resetRecord.user_id]);
 
   res.json({ message: 'Password reset successfully.' });
