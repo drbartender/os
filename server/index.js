@@ -90,14 +90,20 @@ const allowedOrigins = [
   'https://staff.drbartender.com',
 ].filter(Boolean);
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (server-to-server, curl, mobile apps)
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true
+// CORS: permissive for the health probe (Render/uptime pingers are origin-less),
+// strict for everything else (require Origin header in the allowlist).
+app.use(cors((req, callback) => {
+  if (req.path === '/api/health') {
+    return callback(null, { origin: true, credentials: true });
+  }
+  callback(null, {
+    origin: (origin, cb) => {
+      if (!origin) return cb(new Error('Origin required'));
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      cb(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+  });
 }));
 
 // Stripe webhook needs raw body — must be registered BEFORE express.json()
