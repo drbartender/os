@@ -166,11 +166,11 @@ dr-bartender/
 │   │   │   ├── formatPhone.js  # Phone number formatting
 │   │   │   └── timeOptions.js  # Time option generator + 12h formatter + input parser
 │   │   ├── components/         # Layout, InvoiceDropdown, SignaturePad, ClickableRow, FileUpload,
-│   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, AudienceSelector,
-│   │   │                       # SequenceStepEditor, CampaignMetricsBar, SyrupPicker, TimePicker,
-│   │   │                       # Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler
+│   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, MenuSamplesModal,
+│   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,
+│   │   │                       # TimePicker, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
-│   │   ├── data/               # Shared data (addonCategories, eventTypes, packages, syrups)
+│   │   ├── data/               # Shared data (addonCategories, eventTypes, menuSamples, packages, syrups)
 │   │   ├── hooks/              # Custom hooks (useDebounce, useFormValidation, useWizardHistory)
 │   │   ├── pages/
 │   │   │   ├── (auth)          # Login, Register, ForgotPassword, ResetPassword

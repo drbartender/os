@@ -1,8 +1,11 @@
-import React from 'react';
+import React, { useState } from 'react';
+import MenuSamplesModal from '../../../components/MenuSamplesModal';
+import { MENU_SAMPLES } from '../../../data/menuSamples';
 
 export default function MenuDesignStep({ selections, activeModules, cocktails = [], mocktails = [], onChange }) {
   const selectedDrinks = cocktails.filter(d => (selections.signatureDrinks || []).includes(d.id));
   const selectedMocktails = mocktails.filter(d => (selections.mocktails || []).includes(d.id));
+  const [samplesOpen, setSamplesOpen] = useState(false);
 
   return (
     <div>
@@ -124,6 +127,15 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
           <p className="text-muted text-small mb-1" style={{ color: 'var(--warm-brown)' }}>
             We'll create a custom bar menu to match your event's look and feel.
           </p>
+          {MENU_SAMPLES.length > 0 && (
+            <button
+              type="button"
+              className="menu-samples-trigger"
+              onClick={() => setSamplesOpen(true)}
+            >
+              See sample menus →
+            </button>
+          )}
           <div className="checkbox-grid">
             <label className="checkbox-label">
               <input
@@ -143,17 +155,10 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
               />
               <span>No thanks</span>
             </label>
-            <label className="checkbox-label">
-              <input
-                type="radio"
-                name="customMenuDesign"
-                checked={selections.customMenuDesign === 'undecided'}
-                onChange={() => onChange('customMenuDesign', 'undecided')}
-              />
-              <span>I'd like to see options before deciding</span>
-            </label>
           </div>
         </div>
+
+        <MenuSamplesModal isOpen={samplesOpen} onClose={() => setSamplesOpen(false)} />
 
         {selections.customMenuDesign === true && (
           <>

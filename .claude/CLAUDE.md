@@ -115,6 +115,7 @@ dr-bartender/
 │   │   │   ├── Toast.js  # Toast container (top-right, dismissible, auto-fade)
 │   │   │   ├── W9Form.js         # W-9 tax form component
 │   │   │   ├── LeadImportModal.js # CSV lead import modal
+│   │   │   ├── MenuSamplesModal.js # Sample menu designs lightbox (Potion Planning Lab)
 │   │   │   ├── AudienceSelector.js # Campaign audience filter/selector
 │   │   │   ├── SequenceStepEditor.js # Drip sequence step editor
 │   │   │   ├── CampaignMetricsBar.js # Campaign performance metrics bar
@@ -130,6 +131,7 @@ dr-bartender/
 │   │   ├── data/
 │   │   │   ├── addonCategories.js # Add-on category definitions
 │   │   │   ├── eventTypes.js      # Event type definitions
+│   │   │   ├── menuSamples.js     # Curated menu design samples (Menu Design step popup)
 │   │   │   ├── packages.js        # Service package definitions
 │   │   │   └── syrups.js          # Syrup product definitions
 │   │   ├── hooks/

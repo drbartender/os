@@ -627,6 +627,34 @@ export default function ProposalDetail() {
     return `${formatTime12(start)} – ${formatTime12(endTime)} (${duration}hr${duration !== 1 ? 's' : ''})`;
   };
 
+  // Auto-added specialty upgrades — derived from drinkPlan.selections.addOns metadata.
+  // Shape: { [slug]: { triggeredBy: [drinkId, ...] } } — only slugs with autoAdded=true AND triggeredBy.length > 0.
+  const autoAddedMap = useMemo(() => {
+    const sel = drinkPlan?.selections || {};
+    const out = {};
+    for (const [slug, meta] of Object.entries(sel.addOns || {})) {
+      if (meta?.autoAdded && Array.isArray(meta.triggeredBy) && meta.triggeredBy.length > 0) {
+        out[slug] = { triggeredBy: meta.triggeredBy };
+      }
+    }
+    return out;
+  }, [drinkPlan]);
+
+  // Resolve drink IDs → cocktail names for badge tooltips and activity-log detail.
+  const cocktailNameById = useMemo(() => {
+    const map = {};
+    for (const c of (planCocktails || [])) { map[c.id] = c.name; }
+    return map;
+  }, [planCocktails]);
+
+  // Resolve slugs → addon display names (best-effort; relies on addons master list which
+  // is lazy-loaded when edit mode opens). Falls back to slug text when name is unavailable.
+  const addonNameBySlug = useMemo(() => {
+    const map = {};
+    for (const a of (addons || [])) { if (a.slug) map[a.slug] = a.name; }
+    return map;
+  }, [addons]);
+
   if (loading) return <div className="page-container" style={{ textAlign: 'center', padding: '3rem' }}><div className="spinner" /></div>;
   if (!proposal) return null;
 
@@ -719,34 +747,6 @@ export default function ProposalDetail() {
   const totalPrice = Number(proposal.total_price || 0);
   const amountPaid = Number(proposal.amount_paid || 0);
   const balanceDue = totalPrice - amountPaid;
-
-  // Auto-added specialty upgrades — derived from drinkPlan.selections.addOns metadata.
-  // Shape: { [slug]: { triggeredBy: [drinkId, ...] } } — only slugs with autoAdded=true AND triggeredBy.length > 0.
-  const autoAddedMap = useMemo(() => {
-    const sel = drinkPlan?.selections || {};
-    const out = {};
-    for (const [slug, meta] of Object.entries(sel.addOns || {})) {
-      if (meta?.autoAdded && Array.isArray(meta.triggeredBy) && meta.triggeredBy.length > 0) {
-        out[slug] = { triggeredBy: meta.triggeredBy };
-      }
-    }
-    return out;
-  }, [drinkPlan]);
-
-  // Resolve drink IDs → cocktail names for badge tooltips and activity-log detail.
-  const cocktailNameById = useMemo(() => {
-    const map = {};
-    for (const c of (planCocktails || [])) { map[c.id] = c.name; }
-    return map;
-  }, [planCocktails]);
-
-  // Resolve slugs → addon display names (best-effort; relies on addons master list which
-  // is lazy-loaded when edit mode opens). Falls back to slug text when name is unavailable.
-  const addonNameBySlug = useMemo(() => {
-    const map = {};
-    for (const a of (addons || [])) { if (a.slug) map[a.slug] = a.name; }
-    return map;
-  }, [addons]);
 
   // Assign picker: filter staff
   const filteredStaff = assignSearch.length >= 1
