@@ -1,11 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
-import { formatPhone } from '../../utils/formatPhone';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
+import Icon from '../../components/adminos/Icon';
+import StatusChip from '../../components/adminos/StatusChip';
+import StaffPills from '../../components/adminos/StaffPills';
+import Toolbar from '../../components/adminos/Toolbar';
+import useDrawerParam from '../../hooks/useDrawerParam';
+import EventDrawer from '../../components/adminos/drawers/EventDrawer';
+import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
 
 const TIME_SLOTS = [];
 for (let h = 6; h < 24; h++) {
@@ -23,13 +29,42 @@ const EMPTY_FORM = {
   location: '', guest_count: '', positions_needed: 1,
 };
 
+function eventStatusChip(e) {
+  const total = Number(e.proposal_total || 0);
+  const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
+  if (e.proposal_status === 'sent' || e.proposal_status === 'viewed' || e.proposal_status === 'modified') {
+    return <StatusChip kind="warn">Contract out</StatusChip>;
+  }
+  if (paid <= 0) return <StatusChip kind="warn">No payment</StatusChip>;
+  if (paid < total) return <StatusChip kind="info">Deposit paid</StatusChip>;
+  return <StatusChip kind="ok">Paid in full</StatusChip>;
+}
+
+function shiftPositions(s) {
+  const needed = Number(s.bartenders_needed || s.positions_needed || 1);
+  const positionsCount = (() => {
+    try { return JSON.parse(s.positions_needed || '[]').length || needed; }
+    catch { return needed; }
+  })();
+  const filled = Number(s.approved_count || s.assignments_count || 0);
+  const pending = Math.min(positionsCount - filled, Number(s.request_count || 0));
+  return Array.from({ length: positionsCount }, (_, i) => {
+    if (i < filled) return { role: 'Bartender', name: 'Filled', status: 'approved' };
+    if (i < filled + pending) return { role: 'Bartender', name: null, status: 'pending' };
+    return { role: 'Bartender', name: null, status: null };
+  });
+}
+
 export default function EventsDashboard() {
   const navigate = useNavigate();
   const toast = useToast();
+  const drawer = useDrawerParam();
+
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState('upcoming');
+  const [tab, setTab] = useState('upcoming');
+  const [statusFilter, setStatusFilter] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
@@ -39,7 +74,7 @@ export default function EventsDashboard() {
   const fetchEvents = useCallback(async () => {
     try {
       const res = await api.get('/shifts');
-      setEvents(res.data);
+      setEvents(res.data || []);
     } catch (err) {
       toast.error('Failed to load events — try refreshing.');
     } finally {
@@ -48,17 +83,6 @@ export default function EventsDashboard() {
   }, [toast]);
 
   useEffect(() => { fetchEvents(); }, [fetchEvents]);
-
-  const fmtDate = (iso) => {
-    if (!iso) return '\u2014';
-    const dateStr = typeof iso === 'string' ? iso.slice(0, 10) : new Date(iso).toISOString().slice(0, 10);
-    return new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-  };
-
-  const formatCurrency = (amount) => {
-    if (amount == null) return '\u2014';
-    return `$${Number(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
 
   const handleField = (field, value) => {
     setForm(f => ({ ...f, [field]: value }));
@@ -81,10 +105,8 @@ export default function EventsDashboard() {
     }
     setCreating(true);
     try {
-      // Build positions_needed as an array of N "Bartender" entries
       const posCount = parseInt(form.positions_needed, 10) || 1;
       const positions = Array.from({ length: posCount }, () => 'Bartender');
-
       const res = await api.post('/shifts', {
         client_name: form.client_name,
         client_email: form.client_email,
@@ -100,7 +122,6 @@ export default function EventsDashboard() {
       toast.success('Event created.');
       setForm(EMPTY_FORM);
       setShowCreateForm(false);
-      // Navigate directly to the new event detail page
       const newShift = res.data;
       if (newShift.proposal_id) {
         navigate(`/admin/events/${newShift.proposal_id}`);
@@ -115,174 +136,138 @@ export default function EventsDashboard() {
     }
   };
 
-  const today = new Date().toISOString().slice(0, 10);
-  const filtered = events.filter(e => {
-    if (filter === 'upcoming' && e.event_date && e.event_date.slice(0, 10) < today) return false;
-    if (filter === 'past' && e.event_date && e.event_date.slice(0, 10) >= today) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      const fields = [e.client_name, e.client_email, e.location].filter(Boolean).join(' ').toLowerCase();
-      if (!fields.includes(q)) return false;
-    }
-    return true;
-  });
+  const filtered = useMemo(() => {
+    return events
+      .filter(e => {
+        const day = e.event_date ? dayDiff(e.event_date.slice(0, 10)) : null;
+        if (tab === 'upcoming' && day != null && day < 0) return false;
+        if (tab === 'past' && day != null && day >= 0) return false;
+        if (tab === 'unstaffed') {
+          if (day != null && day < 0) return false;
+          const positionsCount = (() => {
+            try { return JSON.parse(e.positions_needed || '[]').length || Number(e.bartenders_needed || 1); }
+            catch { return Number(e.bartenders_needed || 1); }
+          })();
+          const filled = Number(e.approved_count || e.assignments_count || 0);
+          if (filled >= positionsCount) return false;
+        }
+        if (statusFilter === 'contract' && e.proposal_status === 'accepted') return false;
+        if (statusFilter === 'payment') {
+          const total = Number(e.proposal_total || 0);
+          const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
+          if (total > 0 && paid >= total) return false;
+        }
+        if (search) {
+          const q = search.toLowerCase();
+          const fields = [e.client_name, e.client_email, e.location].filter(Boolean).join(' ').toLowerCase();
+          if (!fields.includes(q)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => (a.event_date || '').localeCompare(b.event_date || ''));
+  }, [events, tab, statusFilter, search]);
+
+  const tabs = useMemo(() => {
+    const upcomingCount = events.filter(e => e.event_date && dayDiff(e.event_date.slice(0, 10)) >= 0).length;
+    const unstaffedCount = events.filter(e => {
+      if (!e.event_date || dayDiff(e.event_date.slice(0, 10)) < 0) return false;
+      const positionsCount = (() => {
+        try { return JSON.parse(e.positions_needed || '[]').length || Number(e.bartenders_needed || 1); }
+        catch { return Number(e.bartenders_needed || 1); }
+      })();
+      const filled = Number(e.approved_count || e.assignments_count || 0);
+      return filled < positionsCount;
+    }).length;
+    return [
+      { id: 'upcoming',  label: 'Upcoming',  count: upcomingCount },
+      { id: 'unstaffed', label: 'Unstaffed', count: unstaffedCount },
+      { id: 'past',      label: 'Past' },
+      { id: 'all',       label: 'All' },
+    ];
+  }, [events]);
 
   return (
-    <div className="page-container wide">
-      <div className="flex-between mb-2" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
+    <div className="page">
+      <div className="page-header">
         <div>
-          <h1 style={{ fontFamily: 'var(--font-display)', marginBottom: '0.2rem' }}>Events</h1>
-          <p className="text-muted text-small">All confirmed and manually created events</p>
+          <div className="page-title">Events</div>
+          <div className="page-subtitle">Every confirmed and manually-created event — staffing and financials in one row.</div>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowCreateForm(!showCreateForm)}>
-          {showCreateForm ? 'Cancel' : '+ Create Event'}
-        </button>
+        <div className="page-actions">
+          <button type="button" className="btn btn-primary" onClick={() => setShowCreateForm(v => !v)}>
+            <Icon name={showCreateForm ? 'x' : 'plus'} />{showCreateForm ? 'Cancel' : 'New event'}
+          </button>
+        </div>
       </div>
 
-      {/* Create Event Form */}
       {showCreateForm && (
-        <div className="card mb-2" style={{ padding: '1.5rem' }}>
-          <h3 style={{ fontFamily: 'var(--font-display)', marginBottom: '1rem' }}>Create Event</h3>
-
-          {/* Warning banners */}
-          <div style={{
-            background: '#fef3cd', border: '1px solid #ffc107', borderRadius: '8px',
-            padding: '0.75rem 1rem', marginBottom: '0.75rem', fontSize: '0.85rem', color: '#856404',
-          }}>
-            No signed contract on file for this event.
-          </div>
-          <div style={{
-            background: '#fef3cd', border: '1px solid #ffc107', borderRadius: '8px',
-            padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem', color: '#856404',
-          }}>
-            No payment received for this event.
-          </div>
-
+        <div className="card" style={{ padding: '1.25rem 1.5rem', marginBottom: 'var(--gap)' }}>
+          <div className="section-title" style={{ margin: 0, marginBottom: 12 }}>New event</div>
           <form onSubmit={handleCreate}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.85rem' }}>
               <div>
-                <label className="form-label">Client Name</label>
-                <input
-                  className="form-input"
-                  value={form.client_name}
-                  onChange={e => handleField('client_name', e.target.value)}
-                  aria-invalid={!!fieldErrors?.client_name}
-                />
+                <div className="meta-k" style={{ marginBottom: 4 }}>Client name</div>
+                <input className="input" value={form.client_name} onChange={e => handleField('client_name', e.target.value)} aria-invalid={!!fieldErrors?.client_name} />
                 <FieldError error={fieldErrors?.client_name} />
               </div>
               <div>
-                <label className="form-label">Client Email</label>
-                <input
-                  className="form-input"
-                  type="email"
-                  value={form.client_email}
-                  onChange={e => handleField('client_email', e.target.value)}
-                  aria-invalid={!!fieldErrors?.client_email}
-                />
+                <div className="meta-k" style={{ marginBottom: 4 }}>Client email</div>
+                <input className="input" type="email" value={form.client_email} onChange={e => handleField('client_email', e.target.value)} aria-invalid={!!fieldErrors?.client_email} />
                 <FieldError error={fieldErrors?.client_email} />
               </div>
               <div>
-                <label className="form-label">Client Phone</label>
-                <input
-                  className="form-input"
-                  value={form.client_phone}
-                  onChange={e => handleField('client_phone', e.target.value)}
-                  aria-invalid={!!fieldErrors?.client_phone}
-                />
+                <div className="meta-k" style={{ marginBottom: 4 }}>Client phone</div>
+                <input className="input" value={form.client_phone} onChange={e => handleField('client_phone', e.target.value)} aria-invalid={!!fieldErrors?.client_phone} />
                 <FieldError error={fieldErrors?.client_phone} />
               </div>
               <div>
-                <label className="form-label">Event Date *</label>
-                <input
-                  className="form-input"
-                  type="date"
-                  value={form.event_date}
-                  onChange={e => handleField('event_date', e.target.value)}
-                  required
-                  aria-invalid={!!fieldErrors?.event_date}
-                />
+                <div className="meta-k" style={{ marginBottom: 4 }}>Event date *</div>
+                <input className="input" type="date" required value={form.event_date} onChange={e => handleField('event_date', e.target.value)} aria-invalid={!!fieldErrors?.event_date} />
                 <FieldError error={fieldErrors?.event_date} />
               </div>
               <div>
-                <label className="form-label">Start Time</label>
-                <select
-                  className="form-select"
-                  value={form.start_time}
-                  onChange={e => handleField('start_time', e.target.value)}
-                  aria-invalid={!!fieldErrors?.start_time}
-                >
-                  <option value="">Select...</option>
+                <div className="meta-k" style={{ marginBottom: 4 }}>Start time</div>
+                <select className="select" value={form.start_time} onChange={e => handleField('start_time', e.target.value)}>
+                  <option value="">Select…</option>
                   {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
                 <FieldError error={fieldErrors?.start_time} />
               </div>
               <div>
-                <label className="form-label">End Time</label>
-                <select
-                  className="form-select"
-                  value={form.end_time}
-                  onChange={e => handleField('end_time', e.target.value)}
-                  aria-invalid={!!fieldErrors?.end_time}
-                >
-                  <option value="">Select...</option>
+                <div className="meta-k" style={{ marginBottom: 4 }}>End time</div>
+                <select className="select" value={form.end_time} onChange={e => handleField('end_time', e.target.value)}>
+                  <option value="">Select…</option>
                   {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
                 <FieldError error={fieldErrors?.end_time} />
               </div>
               <div>
-                <label className="form-label">Duration (hours)</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  step="0.5"
-                  min="0.5"
-                  value={form.event_duration_hours}
-                  onChange={e => handleField('event_duration_hours', e.target.value)}
-                  aria-invalid={!!fieldErrors?.event_duration_hours}
-                />
+                <div className="meta-k" style={{ marginBottom: 4 }}>Duration (hours)</div>
+                <input className="input" type="number" step="0.5" min="0.5" value={form.event_duration_hours} onChange={e => handleField('event_duration_hours', e.target.value)} />
                 <FieldError error={fieldErrors?.event_duration_hours} />
               </div>
               <div>
-                <label className="form-label">Location</label>
-                <input
-                  className="form-input"
-                  value={form.location}
-                  onChange={e => handleField('location', e.target.value)}
-                  aria-invalid={!!fieldErrors?.location}
-                />
+                <div className="meta-k" style={{ marginBottom: 4 }}>Location</div>
+                <input className="input" value={form.location} onChange={e => handleField('location', e.target.value)} />
                 <FieldError error={fieldErrors?.location} />
               </div>
               <div>
-                <label className="form-label">Guest Count</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="1"
-                  value={form.guest_count}
-                  onChange={e => handleField('guest_count', e.target.value)}
-                  aria-invalid={!!fieldErrors?.guest_count}
-                />
+                <div className="meta-k" style={{ marginBottom: 4 }}>Guest count</div>
+                <input className="input" type="number" min="1" value={form.guest_count} onChange={e => handleField('guest_count', e.target.value)} />
                 <FieldError error={fieldErrors?.guest_count} />
               </div>
               <div>
-                <label className="form-label">Positions Needed</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="1"
-                  value={form.positions_needed}
-                  onChange={e => handleField('positions_needed', e.target.value)}
-                  aria-invalid={!!fieldErrors?.positions_needed}
-                />
+                <div className="meta-k" style={{ marginBottom: 4 }}>Positions needed</div>
+                <input className="input" type="number" min="1" value={form.positions_needed} onChange={e => handleField('positions_needed', e.target.value)} />
                 <FieldError error={fieldErrors?.positions_needed} />
               </div>
             </div>
             <FormBanner error={createError} fieldErrors={fieldErrors} />
-            <div style={{ marginTop: '1.25rem', display: 'flex', gap: '0.75rem' }}>
-              <button className="btn btn-primary" type="submit" disabled={creating}>
-                {creating ? 'Creating...' : 'Create Event'}
+            <div className="hstack" style={{ marginTop: 14, gap: 8 }}>
+              <button type="submit" className="btn btn-primary" disabled={creating}>
+                {creating ? 'Creating…' : 'Create event'}
               </button>
-              <button className="btn btn-secondary" type="button" onClick={() => { setShowCreateForm(false); setForm(EMPTY_FORM); setCreateError(''); setFieldErrors({}); }}>
+              <button type="button" className="btn btn-ghost" onClick={() => { setShowCreateForm(false); setForm(EMPTY_FORM); setCreateError(''); setFieldErrors({}); }}>
                 Cancel
               </button>
             </div>
@@ -290,117 +275,87 @@ export default function EventsDashboard() {
         </div>
       )}
 
-      <div className="flex gap-1 mb-2" style={{ flexWrap: 'wrap' }}>
-        <input
-          className="form-input"
-          style={{ maxWidth: '280px' }}
-          placeholder="Search by event, client, or location..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <select
-          className="form-select"
-          style={{ maxWidth: '160px' }}
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        >
-          <option value="upcoming">Upcoming</option>
-          <option value="past">Past</option>
-          <option value="all">All Events</option>
-        </select>
+      <Toolbar
+        search={search}
+        setSearch={setSearch}
+        tabs={tabs}
+        tab={tab}
+        setTab={setTab}
+        filters={(
+          <select className="select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ minWidth: 160 }}>
+            <option value="">All statuses</option>
+            <option value="contract">Contract pending</option>
+            <option value="payment">Balance due</option>
+          </select>
+        )}
+      />
+
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Event</th>
+                <th>Date</th>
+                <th>Location</th>
+                <th className="num">Guests</th>
+                <th>Staffing</th>
+                <th>Status</th>
+                <th className="num">Total</th>
+                <th className="num">Balance</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr><td colSpan={9} className="muted">Loading…</td></tr>
+              )}
+              {!loading && filtered.length === 0 && (
+                <tr><td colSpan={9} className="muted">No events match these filters.</td></tr>
+              )}
+              {!loading && filtered.map(e => {
+                const total = Number(e.proposal_total || 0);
+                const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
+                const bal = total - paid;
+                const guestCount = e.guest_count || e.proposal_guest_count;
+                return (
+                  <tr key={e.id} onClick={() => drawer.open('event', e.id)}>
+                    <td>
+                      <strong>{e.client_name || 'Event'}</strong>
+                      <div className="sub">{getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })}{!e.proposal_id && ' · Manual'}</div>
+                    </td>
+                    <td>
+                      <div>{fmtDate(e.event_date && e.event_date.slice(0, 10))}</div>
+                      <div className="sub">{e.event_date ? `${relDay(e.event_date.slice(0, 10))}${e.start_time ? ' · ' + e.start_time : ''}` : '—'}</div>
+                    </td>
+                    <td className="muted">{e.location || '—'}</td>
+                    <td className="num">{guestCount || '—'}</td>
+                    <td><StaffPills positions={shiftPositions(e)} /></td>
+                    <td>{e.proposal_id ? eventStatusChip(e) : <StatusChip kind="neutral">Manual</StatusChip>}</td>
+                    <td className="num">{total > 0 ? <strong>{fmt$(total)}</strong> : '—'}</td>
+                    <td className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'var(--ink-3)' }}>
+                      {bal > 0 ? fmt$(bal) : '—'}
+                    </td>
+                    <td className="shrink"><button type="button" className="icon-btn" onClick={(ev) => ev.stopPropagation()} title="More"><Icon name="kebab" size={14} /></button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: '2rem' }}>
-          <div className="spinner" />
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center', padding: '3rem 1rem' }}>
-          <p className="text-muted">
-            {events.length === 0
-              ? 'No events yet. Create one or events are created automatically when a proposal deposit is paid.'
-              : 'No events match your filters.'}
-          </p>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          {filtered.map(event => {
-            let positions = [];
-            try { positions = JSON.parse(event.positions_needed || '[]').map(p => typeof p === 'string' ? p : p.position || 'Bartender'); } catch (e) {}
-            const approvedCount = Number(event.approved_count) || 0;
-
-            return (
-              <div key={event.id} className="card card-clickable" style={{ padding: '1.25rem 1.5rem' }}
-                onClick={() => navigate(event.proposal_id ? `/admin/events/${event.proposal_id}` : `/admin/events/shift/${event.id}`)}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
-                  <strong style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', color: 'var(--deep-brown)' }}>
-                    <span className="event-title">{event.client_name || 'Event'}</span>
-                    <span className="event-subtitle"> — {getEventTypeLabel({ event_type: event.event_type, event_type_custom: event.event_type_custom })}</span>
-                  </strong>
-                  <span className={`badge ${event.status === 'open' ? 'badge-approved' : event.status === 'filled' ? 'badge-reviewed' : 'badge-deactivated'}`}>
-                    {event.status}
-                  </span>
-                  {!event.proposal_id && (
-                    <span style={{
-                      background: 'var(--warm-brown)', color: 'white', borderRadius: '99px',
-                      padding: '0.1rem 0.5rem', fontSize: '0.72rem', fontWeight: 700,
-                    }}>Manual</span>
-                  )}
-                  {Number(event.request_count) > 0 && (
-                    <span style={{
-                      background: 'var(--amber)', color: 'white', borderRadius: '99px',
-                      padding: '0.1rem 0.5rem', fontSize: '0.72rem', fontWeight: 700,
-                    }}>{event.request_count} request{event.request_count !== '1' ? 's' : ''}</span>
-                  )}
-                </div>
-
-                <div style={{ marginTop: '0.4rem', fontSize: '0.85rem', color: 'var(--warm-brown)', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                  <span>{fmtDate(event.event_date)}</span>
-                  {(event.start_time || event.end_time) && (
-                    <span>{event.start_time || '?'} – {event.end_time || '?'}</span>
-                  )}
-                  {event.location && <span>{event.location}</span>}
-                </div>
-
-                {event.client_name && (
-                  <div style={{ marginTop: '0.4rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    <strong>{event.client_name}</strong>
-                    {event.client_phone && <span> &middot; {formatPhone(event.client_phone)}</span>}
-                    {event.client_email && <span> &middot; {event.client_email}</span>}
-                  </div>
-                )}
-
-                <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                  {positions.length > 0 && (
-                    <span style={{
-                      fontSize: '0.82rem', fontWeight: 600,
-                      color: approvedCount >= positions.length ? 'var(--success)' : 'var(--warm-brown)',
-                    }}>
-                      {approvedCount}/{positions.length} Bartender{positions.length !== 1 ? 's' : ''} filled
-                    </span>
-                  )}
-                  {event.proposal_total && (
-                    <span style={{
-                      fontSize: '0.8rem', color: 'var(--text-muted)',
-                      borderLeft: '1px solid var(--border-dark)', paddingLeft: '0.5rem',
-                    }}>
-                      {formatCurrency(event.proposal_total)}
-                    </span>
-                  )}
-                  {event.proposal_guest_count && (
-                    <span style={{
-                      fontSize: '0.8rem', color: 'var(--text-muted)',
-                      borderLeft: '1px solid var(--border-dark)', paddingLeft: '0.5rem',
-                    }}>
-                      {event.proposal_guest_count} guests
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+      {!loading && (
+        <div className="tiny muted" style={{ padding: '8px 2px' }}>
+          {filtered.length} {filtered.length === 1 ? 'event' : 'events'} · Click a row to peek
         </div>
       )}
+
+      <EventDrawer
+        id={drawer.kind === 'event' ? drawer.id : null}
+        open={drawer.kind === 'event'}
+        onClose={drawer.close}
+      />
     </div>
   );
 }
