@@ -523,6 +523,10 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   }
   if (!event) {
     console.error('Webhook signature verification failed against all configured secrets');
+    Sentry.captureMessage('Stripe webhook signature failure', {
+      level: 'warning',
+      tags: { webhook: 'stripe', reason: 'invalid_signature' },
+    });
     return res.status(400).send('Webhook signature verification failed');
   }
   // `stripeForEvent` is intentionally available for any downstream Stripe API

@@ -54,6 +54,10 @@ function verifyWebhook(req, res, next) {
   if (safeEqual(req.headers['x-thumbtack-secret'], secret)) return next();
 
   console.error('Thumbtack webhook auth failed');
+  Sentry.captureMessage('Thumbtack webhook signature failure', {
+    level: 'warning',
+    tags: { webhook: 'thumbtack', reason: 'invalid_signature' },
+  });
   return res.status(401).json({ error: 'Unauthorized' });
 }
 
