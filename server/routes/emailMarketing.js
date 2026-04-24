@@ -805,29 +805,32 @@ router.post('/conversations/:leadId/mark-replied', auth, requireAdminOrManager, 
 // ─── Public Unsubscribe ───────────────────────────────────────────
 
 /** GET /unsubscribe — public unsubscribe endpoint */
-router.get('/unsubscribe', async (req, res) => {
+router.get('/unsubscribe', asyncHandler(async (req, res) => {
   const { token } = req.query;
   if (!token) return res.status(400).send('Invalid unsubscribe link.');
+
+  let decoded;
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    await pool.query(
-      `UPDATE email_leads SET status = 'unsubscribed', unsubscribed_at = NOW() WHERE id = $1`,
-      [decoded.leadId]
-    );
-    // Also pause any active enrollments
-    await pool.query(
-      `UPDATE email_sequence_enrollments SET status = 'unsubscribed' WHERE lead_id = $1 AND status = 'active'`,
-      [decoded.leadId]
-    );
-    res.send(`
-      <html><body style="font-family:Georgia,serif;text-align:center;padding:60px;">
-        <h2>You've been unsubscribed</h2>
-        <p>You will no longer receive marketing emails from Dr. Bartender.</p>
-      </body></html>
-    `);
+    decoded = jwt.verify(token, process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET);
   } catch (err) {
-    res.status(400).send('Invalid or expired unsubscribe link.');
+    return res.status(400).send('Invalid or expired unsubscribe link.');
   }
-});
+
+  // DB errors propagate to asyncHandler → global error middleware (500 + Sentry).
+  await pool.query(
+    `UPDATE email_leads SET status = 'unsubscribed', unsubscribed_at = NOW() WHERE id = $1`,
+    [decoded.leadId]
+  );
+  await pool.query(
+    `UPDATE email_sequence_enrollments SET status = 'unsubscribed' WHERE lead_id = $1 AND status = 'active'`,
+    [decoded.leadId]
+  );
+  res.send(`
+    <html><body style="font-family:Georgia,serif;text-align:center;padding:60px;">
+      <h2>You've been unsubscribed</h2>
+      <p>You will no longer receive marketing emails from Dr. Bartender.</p>
+    </body></html>
+  `);
+}));
 
 module.exports = router;

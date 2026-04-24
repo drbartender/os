@@ -349,10 +349,10 @@ router.get('/applications', auth, adminOnly, asyncHandler(async (req, res) => {
   const offset = (page - 1) * limit;
   const archived = req.query.archived === 'true';
 
-  // Status filter: archived view shows only rejected; default shows only applied/interviewing
-  const statusClause = archived
-    ? "u.onboarding_status = 'rejected'"
-    : "u.onboarding_status IN ('applied', 'interviewing')";
+  // Status filter uses a CASE expression parameterized by $1 (archived boolean)
+  // to avoid any SQL-string interpolation on the WHERE clause.
+  const ARCHIVED_FILTER = `AND CASE WHEN $1 THEN u.onboarding_status = 'rejected'
+                                    ELSE u.onboarding_status IN ('applied', 'interviewing') END`;
 
   const [appsResult, countResult, statusCountsResult, archivedCountResult] = await Promise.all([
     pool.query(`
@@ -365,12 +365,13 @@ router.get('/applications', auth, adminOnly, asyncHandler(async (req, res) => {
         a.reliable_transportation, a.comfortable_working_alone
       FROM users u
       INNER JOIN applications a ON a.user_id = u.id
-      WHERE u.role IN ('staff', 'manager') AND ${statusClause}
+      WHERE u.role IN ('staff', 'manager') ${ARCHIVED_FILTER}
       ORDER BY a.created_at DESC
-      LIMIT $1 OFFSET $2
-    `, [limit, offset]),
+      LIMIT $2 OFFSET $3
+    `, [archived, limit, offset]),
     pool.query(
-      `SELECT COUNT(*) FROM applications a INNER JOIN users u ON u.id = a.user_id WHERE u.role IN ('staff', 'manager') AND ${statusClause}`
+      `SELECT COUNT(*) FROM applications a INNER JOIN users u ON u.id = a.user_id WHERE u.role IN ('staff', 'manager') ${ARCHIVED_FILTER}`,
+      [archived]
     ),
     // Active status counts (only applied/interviewing)
     pool.query(`
