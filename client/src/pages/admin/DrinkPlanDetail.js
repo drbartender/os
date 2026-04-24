@@ -8,18 +8,15 @@ import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
+import Icon from '../../components/adminos/Icon';
+import StatusChip from '../../components/adminos/StatusChip';
+import { fmtDateFull } from '../../components/adminos/format';
 
-const STATUS_LABELS = {
-  pending: 'Pending',
-  draft: 'Draft',
-  submitted: 'Submitted',
-  reviewed: 'Reviewed',
-};
-const STATUS_CLASSES = {
-  pending: 'badge-inprogress',
-  draft: 'badge-inprogress',
-  submitted: 'badge-submitted',
-  reviewed: 'badge-approved',
+const STATUS = {
+  pending:   { label: 'Pending',   kind: 'warn' },
+  draft:     { label: 'Draft',     kind: 'neutral' },
+  submitted: { label: 'Submitted', kind: 'info' },
+  reviewed:  { label: 'Reviewed',  kind: 'ok' },
 };
 
 export default function DrinkPlanDetail() {
@@ -52,9 +49,7 @@ export default function DrinkPlanDetail() {
         setMocktailItems(mocktailsRes.data.mocktails || []);
       } catch (err) {
         if (cancelled) return;
-        if (err.status !== 404) {
-          toast.error('Failed to load drink plan — try refreshing.');
-        }
+        if (err.status !== 404) toast.error('Failed to load drink plan — try refreshing.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -100,6 +95,7 @@ export default function DrinkPlanDetail() {
   };
 
   const copyLink = () => {
+    if (!plan?.token) return;
     const url = `${PUBLIC_SITE_URL}/plan/${plan.token}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopyMessage('Copied!');
@@ -107,100 +103,104 @@ export default function DrinkPlanDetail() {
     });
   };
 
-  if (loading) {
-    return (
-      <div className="page-container" style={{ textAlign: 'center', paddingTop: '2rem' }}>
-        <div className="spinner" />
-      </div>
-    );
-  }
-
+  if (loading) return <div className="page"><div className="muted">Loading drink plan…</div></div>;
   if (!plan) {
     return (
-      <div className="page-container">
-        <div className="card" style={{ textAlign: 'center' }}>
-          <p className="text-muted">Plan not found.</p>
-          <button className="btn btn-secondary mt-1" onClick={() => navigate('/admin/drink-plans')}>
-            Back to Drink Plans
+      <div className="page">
+        <div className="hstack" style={{ marginBottom: 8 }}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/drink-plans')}>
+            <Icon name="left" size={11} />Drink Plans
           </button>
         </div>
+        <div className="muted">Plan not found.</div>
       </div>
     );
   }
 
-  const formatDate = (d) => {
-    if (!d) return '—';
-    return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  };
+  const st = STATUS[plan.status] || { label: plan.status || '—', kind: 'neutral' };
+  const eventTypeLabel = getEventTypeLabel({ event_type: plan.event_type, event_type_custom: plan.event_type_custom });
 
   return (
-    <div className="page-container">
-      {/* Top card: client info + actions */}
-      <div className="card mb-2">
-        <div className="flex-between" style={{ flexWrap: 'wrap', gap: '1rem' }}>
-          <div>
-            <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: 0 }}>
-              {plan.client_name || 'Unnamed Client'}
-            </h2>
-            {plan.client_email && <p className="text-muted text-small">{plan.client_email}</p>}
-            <p className="mt-1"><strong>Event type:</strong> {getEventTypeLabel({ event_type: plan.event_type, event_type_custom: plan.event_type_custom })}</p>
-            {plan.event_date && <p><strong>Date:</strong> {formatDate(plan.event_date)}</p>}
+    <div className="page" style={{ maxWidth: 1200 }}>
+      <div className="hstack" style={{ marginBottom: 8 }}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/drink-plans')}>
+          <Icon name="left" size={11} />Drink Plans
+        </button>
+      </div>
+
+      <div className="card" style={{ padding: '1.5rem 1.75rem', marginBottom: 'var(--gap)' }}>
+        <div className="hstack" style={{ gap: 18, alignItems: 'flex-start' }}>
+          <div style={{
+            width: 56, height: 56, display: 'grid', placeItems: 'center',
+            background: 'var(--bg-2)', border: '1px solid var(--line-1)',
+            borderRadius: 4, flexShrink: 0,
+          }}>
+            <Icon name="flask" size={22} />
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem' }}>
-            <span className={`badge ${STATUS_CLASSES[plan.status] || ''}`}>
-              {STATUS_LABELS[plan.status] || plan.status}
-            </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: 10, marginBottom: 4 }}>
+              Drink plan · #{plan.id}
+            </div>
+            <div className="hstack" style={{ gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
+              <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, margin: 0, lineHeight: 1.15 }}>
+                {plan.client_name || 'Unnamed Client'}
+              </h1>
+              <StatusChip kind={st.kind}>{st.label}</StatusChip>
+            </div>
+            <div className="muted" style={{ fontSize: 13 }}>
+              {eventTypeLabel}
+              {plan.event_date && ` · ${fmtDateFull(String(plan.event_date).slice(0, 10))}`}
+              {plan.client_email && ` · ${plan.client_email}`}
+            </div>
           </div>
-        </div>
-        {/* Action buttons in top card */}
-        <div className="flex gap-05 mt-1" style={{ flexWrap: 'wrap' }}>
-          {(plan.status === 'submitted' || plan.status === 'reviewed') && (
-            <ShoppingListButton planId={id} planToken={plan.token} />
-          )}
-          <button className="btn btn-sm btn-secondary" onClick={copyLink}>
-            {copyMessage || 'Copy Client Link'}
-          </button>
-          {plan.status === 'submitted' && (
-            <button className="btn btn-sm btn-success" onClick={markReviewed}>
-              Mark as Reviewed
+          <div className="page-actions" style={{ flexShrink: 0 }}>
+            {(plan.status === 'submitted' || plan.status === 'reviewed') && (
+              <ShoppingListButton planId={id} planToken={plan.token} />
+            )}
+            <button type="button" className="btn btn-secondary" onClick={copyLink}>
+              <Icon name={copyMessage ? 'check' : 'copy'} size={12} />{copyMessage || 'Copy link'}
             </button>
-          )}
-          <button className="btn btn-sm btn-danger" onClick={deletePlan} style={{ marginLeft: 'auto' }}>
-            Delete Plan
-          </button>
+            {plan.status === 'submitted' && (
+              <button type="button" className="btn btn-primary" onClick={markReviewed}>
+                <Icon name="check" size={12} />Mark reviewed
+              </button>
+            )}
+            <button type="button" className="btn btn-ghost" onClick={deletePlan} style={{ color: 'hsl(var(--danger-h) var(--danger-s) 65%)' }}>
+              Delete
+            </button>
+          </div>
         </div>
       </div>
 
       {plan.status !== 'pending' && (
-        <div className="card mb-2">
-          <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>
-            Selections
-          </h3>
-          <DrinkPlanSelections plan={plan} cocktails={cocktails} mocktails={mocktailItems} />
+        <div className="card" style={{ marginBottom: 'var(--gap)' }}>
+          <div className="card-head"><h3>Selections</h3></div>
+          <div className="card-body">
+            <DrinkPlanSelections plan={plan} cocktails={cocktails} mocktails={mocktailItems} />
+          </div>
         </div>
       )}
 
-      <div className="card mb-2">
-        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.75rem' }}>
-          Admin Notes
-        </h3>
-        <textarea
-          className="form-textarea"
-          rows={4}
-          placeholder="Internal notes about this plan..."
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          aria-invalid={!!notesFieldErrors?.admin_notes}
-        />
-        <FieldError error={notesFieldErrors?.admin_notes} />
-        <FormBanner error={notesError} fieldErrors={notesFieldErrors} />
-        <button
-          className="btn btn-sm mt-1"
-          onClick={saveNotes}
-          disabled={saving}
-        >
-          {saving ? 'Saving...' : 'Save Notes'}
-        </button>
+      <div className="card">
+        <div className="card-head"><h3>Admin notes</h3></div>
+        <div className="card-body">
+          <textarea
+            className="input"
+            rows={4}
+            style={{ height: 'auto', padding: '0.6rem 0.75rem', width: '100%' }}
+            placeholder="Internal notes about this plan…"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            aria-invalid={!!notesFieldErrors?.admin_notes}
+          />
+          <FieldError error={notesFieldErrors?.admin_notes} />
+          <FormBanner error={notesError} fieldErrors={notesFieldErrors} />
+          <div className="hstack" style={{ marginTop: 12 }}>
+            <button type="button" className="btn btn-primary" onClick={saveNotes} disabled={saving}>
+              {saving ? 'Saving…' : 'Save notes'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
