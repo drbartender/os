@@ -1,100 +1,65 @@
-import React, { useState, useEffect } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
-import BrandLogo from './BrandLogo';
-import AdminBreadcrumbs from './AdminBreadcrumbs';
+import React, { useEffect, useState, useCallback } from 'react';
+import { Outlet, useNavigate } from 'react-router-dom';
 import api from '../utils/api';
-
-const NAV_ITEMS = [
-  { label: 'Dashboard',   path: '/admin/dashboard',   icon: '📊' },
-  { label: 'Events',      path: '/admin/events',      icon: '📅', badgeKey: 'unstaffed_events' },
-  { label: 'Proposals',   path: '/admin/proposals',   icon: '📋', badgeKey: 'pending_proposals' },
-  { label: 'Clients',     path: '/admin/clients',     icon: '🤝' },
-  { label: 'Staff',       path: '/admin/staffing',    icon: '👥' },
-  { label: 'Hiring',      path: '/admin/hiring',      icon: '📝', badgeKey: 'new_applications' },
-  { label: 'Financials',  path: '/admin/financials',  icon: '📒' },
-  { label: 'Blog',        path: '/admin/blog',        icon: '✏' },
-  { label: 'Marketing',   path: '/admin/email-marketing', icon: '✉' },
-  'divider',
-  { label: 'Settings',    path: '/admin/settings',    icon: '⚙' },
-];
+import Sidebar from './adminos/Sidebar';
+import Header from './adminos/Header';
+import CommandPalette from './adminos/CommandPalette';
 
 export default function AdminLayout() {
-  const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [badges, setBadges] = useState({});
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Mark the document as being inside the Admin OS shell so the scoped CSS
+  // (html[data-app="admin-os"] …) takes effect. Remove on unmount so public /
+  // staff / auth pages revert to their own styling.
+  useEffect(() => {
+    const root = document.documentElement;
+    const prev = root.getAttribute('data-app');
+    root.setAttribute('data-app', 'admin-os');
+    return () => {
+      if (prev) root.setAttribute('data-app', prev);
+      else root.removeAttribute('data-app');
+    };
+  }, []);
 
   useEffect(() => {
     const fetchBadges = () => {
-      api.get('/admin/badge-counts').then(r => setBadges(r.data)).catch(() => {});
+      api.get('/admin/badge-counts').then(r => setBadges(r.data || {})).catch(() => {});
     };
     fetchBadges();
     const interval = setInterval(fetchBadges, 60000);
     return () => clearInterval(interval);
   }, []);
 
-  const handleLogout = () => { logout(); navigate('/login'); };
+  const onKey = useCallback((e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      setPaletteOpen(v => !v);
+    } else if (e.key === 'Escape') {
+      setPaletteOpen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onKey]);
 
   return (
-    <div className="admin-page" style={{ minHeight: '100vh' }}>
+    <>
       <a href="#main-content" className="skip-nav">Skip to main content</a>
-      {/* ── Shared Header ── */}
-      <header className="site-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <button
-            className="admin-sidebar-toggle"
-            onClick={() => setSidebarOpen(o => !o)}
-            aria-label="Toggle sidebar"
-          >
-            ☰
-          </button>
-          <BrandLogo admin />
-        </div>
-        <div className="header-actions">
-          <span className="header-user">{user?.name || user?.email}</span>
-          <button className="btn btn-secondary btn-sm" onClick={handleLogout}>Sign Out</button>
-        </div>
-      </header>
-
-      {/* ── Shell: Sidebar + Content ── */}
-      <div className="admin-shell">
-        <aside className={`admin-sidebar${sidebarOpen ? ' open' : ''}`}>
-          <nav className="admin-sidebar-nav">
-            {NAV_ITEMS.map((item, i) =>
-              item === 'divider' ? (
-                <div key={i} className="admin-sidebar-divider" />
-              ) : (
-                <NavLink
-                  key={item.path}
-                  to={item.path}
-                  end={false}
-                  className={({ isActive }) =>
-                    `admin-nav-item${isActive ? ' active' : ''}`
-                  }
-                  onClick={() => setSidebarOpen(false)}
-                >
-                  <span className="admin-nav-icon">{item.icon}</span>
-                  {item.label}
-                  {item.badgeKey && badges[item.badgeKey] > 0 && (
-                    <span className="nav-badge">{badges[item.badgeKey]}</span>
-                  )}
-                </NavLink>
-              )
-            )}
-          </nav>
-        </aside>
-
-        <main className="admin-content" id="main-content">
-          <AdminBreadcrumbs />
+      <div className="shell">
+        <Sidebar badges={badges} />
+        <Header
+          onOpenPalette={() => setPaletteOpen(true)}
+          onQuickAdd={() => navigate('/admin/proposals/new')}
+        />
+        <main className="main scroll-thin" id="main-content">
           <Outlet />
         </main>
       </div>
-
-      {/* Mobile overlay */}
-      {sidebarOpen && (
-        <div className="admin-sidebar-overlay" aria-label="Close sidebar" onClick={() => setSidebarOpen(false)} />
-      )}
-    </div>
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+    </>
   );
 }
