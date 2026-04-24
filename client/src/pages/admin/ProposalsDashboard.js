@@ -1,53 +1,53 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
-import ClickableRow from '../../components/ClickableRow';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 import { useToast } from '../../context/ToastContext';
+import Icon from '../../components/adminos/Icon';
+import StatusChip from '../../components/adminos/StatusChip';
+import Toolbar from '../../components/adminos/Toolbar';
+import useDrawerParam from '../../hooks/useDrawerParam';
+import ProposalDrawer from '../../components/adminos/drawers/ProposalDrawer';
+import { fmt$, fmtDate, relDay } from '../../components/adminos/format';
 
-const STATUS_LABELS = {
-  draft: 'Draft',
-  sent: 'Sent',
-  viewed: 'Viewed',
-  modified: 'Modified',
-  accepted: 'Accepted',
-};
-const STATUS_CLASSES = {
-  draft: 'badge-inprogress',
-  sent: 'badge-submitted',
-  viewed: 'badge-submitted',
-  modified: 'badge-inprogress',
-  accepted: 'badge-approved',
+const STATUS = {
+  draft:    { label: 'Draft',    kind: 'neutral' },
+  sent:     { label: 'Sent',     kind: 'info' },
+  viewed:   { label: 'Viewed',   kind: 'accent' },
+  modified: { label: 'Modified', kind: 'violet' },
+  accepted: { label: 'Accepted', kind: 'ok' },
+  declined: { label: 'Declined', kind: 'danger' },
 };
 
 export default function ProposalsDashboard() {
   const navigate = useNavigate();
   const toast = useToast();
+  const drawer = useDrawerParam();
+
   const [proposals, setProposals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [tab, setTab] = useState('active');
   const [copyMessage, setCopyMessage] = useState('');
 
   const fetchProposals = useCallback(async () => {
     try {
-      const params = {};
-      if (search) params.search = search;
-      if (statusFilter) params.status = statusFilter;
-      const res = await api.get('/proposals', { params });
-      setProposals(res.data);
+      const res = await api.get('/proposals');
+      setProposals(res.data || []);
     } catch (err) {
       console.error('Failed to fetch proposals:', err);
       toast.error('Failed to load proposals. Try refreshing.');
     } finally {
       setLoading(false);
     }
-  }, [search, statusFilter, toast]);
+  }, [toast]);
 
   useEffect(() => { fetchProposals(); }, [fetchProposals]);
 
-  const copyLink = (token) => {
+  const copyLink = (e, token) => {
+    e.stopPropagation();
+    if (!token) return;
     const url = `${PUBLIC_SITE_URL}/proposal/${token}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopyMessage(token);
@@ -55,100 +55,116 @@ export default function ProposalsDashboard() {
     });
   };
 
-  const formatDate = (d) => {
-    if (!d) return '—';
-    return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  };
+  const filtered = useMemo(() => proposals.filter(p => {
+    if (tab === 'active' && !['sent', 'viewed', 'modified'].includes(p.status)) return false;
+    if (tab === 'draft' && p.status !== 'draft') return false;
+    if (tab === 'won' && p.status !== 'accepted') return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const fields = [p.client_name, p.client_email, p.event_type, p.event_type_custom].filter(Boolean).join(' ').toLowerCase();
+      if (!fields.includes(q)) return false;
+    }
+    return true;
+  }), [proposals, tab, search]);
 
-  const formatCurrency = (amount) => {
-    if (amount == null) return '—';
-    return `$${Number(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
+  const tabs = useMemo(() => ([
+    { id: 'active', label: 'Active', count: proposals.filter(p => ['sent', 'viewed', 'modified'].includes(p.status)).length },
+    { id: 'draft',  label: 'Draft',  count: proposals.filter(p => p.status === 'draft').length },
+    { id: 'won',    label: 'Accepted', count: proposals.filter(p => p.status === 'accepted').length },
+    { id: 'all',    label: 'All' },
+  ]), [proposals]);
 
   return (
-    <div className="page-container wide">
-      <div className="flex-between mb-2">
-        <h1 style={{ fontFamily: 'var(--font-display)' }}>Proposals</h1>
-        <button className="btn btn-primary" onClick={() => navigate('/admin/proposals/new')}>
-          + New Proposal
-        </button>
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <div className="page-title">Proposals</div>
+          <div className="page-subtitle">Quotes out the door — track which are sent, viewed, and accepted.</div>
+        </div>
+        <div className="page-actions">
+          <button type="button" className="btn btn-primary" onClick={() => navigate('/admin/proposals/new')}>
+            <Icon name="plus" />New proposal
+          </button>
+        </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex gap-1 mb-2" style={{ flexWrap: 'wrap' }}>
-        <input
-          className="form-input"
-          style={{ maxWidth: '280px' }}
-          placeholder="Search by client, event, or email..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <select
-          className="form-select"
-          style={{ maxWidth: '160px' }}
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-        >
-          <option value="">All Statuses</option>
-          {Object.entries(STATUS_LABELS).map(([val, label]) => (
-            <option key={val} value={val}>{label}</option>
-          ))}
-        </select>
+      <Toolbar search={search} setSearch={setSearch} tabs={tabs} tab={tab} setTab={setTab} />
+
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Client</th>
+                <th>Event</th>
+                <th>Event date</th>
+                <th>Package</th>
+                <th>Status</th>
+                <th>Sent</th>
+                <th className="num">Total</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (
+                <tr><td colSpan={8} className="muted">Loading…</td></tr>
+              )}
+              {!loading && filtered.length === 0 && (
+                <tr><td colSpan={8} className="muted">No proposals match these filters.</td></tr>
+              )}
+              {!loading && filtered.map(p => {
+                const st = STATUS[p.status] || { label: p.status || '—', kind: 'neutral' };
+                return (
+                  <tr key={p.id} onClick={() => drawer.open('proposal', p.id)}>
+                    <td>
+                      <strong>{p.client_name || '—'}</strong>
+                      {p.client_email && <div className="sub">{p.client_email}</div>}
+                    </td>
+                    <td>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</td>
+                    <td>
+                      {p.event_date ? (
+                        <>
+                          <div>{fmtDate(String(p.event_date).slice(0, 10))}</div>
+                          <div className="sub">{relDay(String(p.event_date).slice(0, 10))}</div>
+                        </>
+                      ) : '—'}
+                    </td>
+                    <td className="muted">{p.package_name || '—'}</td>
+                    <td><StatusChip kind={st.kind}>{st.label}</StatusChip></td>
+                    <td className="muted">{p.sent_at ? relDay(String(p.sent_at).slice(0, 10)) : '—'}</td>
+                    <td className="num"><strong>{fmt$(p.total_price)}</strong></td>
+                    <td className="shrink">
+                      <div className="hstack" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title={copyMessage === p.token ? 'Copied!' : 'Copy link'}
+                          onClick={(e) => copyLink(e, p.token)}
+                          disabled={!p.token}
+                        >
+                          <Icon name={copyMessage === p.token ? 'check' : 'copy'} size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {/* Table */}
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: '2rem' }}>
-          <div className="spinner" />
-        </div>
-      ) : proposals.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center' }}>
-          <p className="text-muted">No proposals yet. Create one to get started!</p>
-        </div>
-      ) : (
-        <div className="table-wrap">
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>Client</th>
-              <th>Event</th>
-              <th>Date</th>
-              <th>Package</th>
-              <th>Total</th>
-              <th>Status</th>
-              <th>Link</th>
-            </tr>
-          </thead>
-          <tbody>
-            {proposals.map(p => (
-              <ClickableRow key={p.id} to={`/admin/proposals/${p.id}`}>
-                <td>
-                  <strong>{p.client_name || '—'}</strong>
-                  {p.client_email && <div className="text-muted text-small">{p.client_email}</div>}
-                </td>
-                <td>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</td>
-                <td>{formatDate(p.event_date)}</td>
-                <td>{p.package_name || '—'}</td>
-                <td style={{ fontWeight: 600 }}>{formatCurrency(p.total_price)}</td>
-                <td>
-                  <span className={`badge ${STATUS_CLASSES[p.status] || ''}`}>
-                    {STATUS_LABELS[p.status] || p.status}
-                  </span>
-                </td>
-                <td>
-                  <button
-                    className="btn btn-sm btn-secondary"
-                    onClick={() => copyLink(p.token)}
-                  >
-                    {copyMessage === p.token ? 'Copied!' : 'Copy Link'}
-                  </button>
-                </td>
-              </ClickableRow>
-            ))}
-          </tbody>
-        </table>
+      {!loading && (
+        <div className="tiny muted" style={{ padding: '8px 2px' }}>
+          {filtered.length} {filtered.length === 1 ? 'proposal' : 'proposals'} · Click a row to peek
         </div>
       )}
+
+      <ProposalDrawer
+        id={drawer.kind === 'proposal' ? drawer.id : null}
+        open={drawer.kind === 'proposal'}
+        onClose={drawer.close}
+      />
     </div>
   );
 }
