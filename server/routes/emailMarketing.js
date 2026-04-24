@@ -454,7 +454,7 @@ async function sendBlastEmails(campaign, leads, unsubscribeBase) {
     const batch = leads.slice(i, i + BATCH_SIZE);
 
     const emailPromises = batch.map(async (lead) => {
-      const unsubscribeToken = jwt.sign({ leadId: lead.id }, process.env.JWT_SECRET, { expiresIn: '365d' });
+      const unsubscribeToken = jwt.sign({ leadId: lead.id }, process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET, { expiresIn: '365d' });
       const unsubscribeUrl = `${unsubscribeBase}?token=${unsubscribeToken}`;
       const html = wrapMarketingEmail(campaign.html_body, unsubscribeUrl);
 

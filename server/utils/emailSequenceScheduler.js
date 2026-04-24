@@ -61,8 +61,12 @@ async function processSequenceSteps() {
 
         const step = stepResult.rows[0];
 
-        // Build unsubscribe URL
-        const unsubscribeToken = jwt.sign({ leadId: enrollment.lead_id }, process.env.JWT_SECRET, { expiresIn: '365d' });
+        // Build unsubscribe URL — use UNSUBSCRIBE_SECRET if set, else JWT_SECRET fallback
+        const unsubscribeToken = jwt.sign(
+          { leadId: enrollment.lead_id },
+          process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET,
+          { expiresIn: '365d' }
+        );
         const unsubscribeUrl = `${unsubscribeBase}?token=${unsubscribeToken}`;
 
         // Replace template variables ({{name}}, {{resume_url}}) in both HTML and plaintext
