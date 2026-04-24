@@ -58,6 +58,8 @@ Copy `.env.example` and fill in values. All variables:
 | `NODE_ENV` | No | `development` or `production` |
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `JWT_SECRET` | Yes | Long random string for signing tokens |
+| `UNSUBSCRIBE_SECRET` | No | Separate signing key for unsubscribe/marketing-link JWTs. Falls back to `JWT_SECRET` if unset. |
+| `RUN_SCHEDULERS` | No | Set to `false` on additional web instances to prevent duplicate scheduler runs. Default runs schedulers — single-instance deploys unaffected. |
 | `CLIENT_URL` | Yes | Admin/staff frontend URL for CORS + admin dashboard links in emails (e.g., `http://localhost:3000` in dev, `https://admin.drbartender.com` in prod) |
 | `PUBLIC_SITE_URL` | Yes | Public marketing site URL used in client-facing token links — proposals, drink plans, invoices, shopping lists (e.g., `http://localhost:3000` in dev, `https://drbartender.com` in prod) |
 | `API_URL` | No | Backend origin for server-rendered email links (unsubscribe). Defaults to `RENDER_EXTERNAL_URL` in prod, `http://localhost:5000` in dev. |
@@ -138,7 +140,8 @@ dr-bartender/
 │   │   ├── email.js            # Resend email wrapper (send + batch)
 │   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
 │   │   ├── emailTemplates.js   # Email template helpers (transactional + marketing)
-│   │   ├── errors.js           # AppError class hierarchy (ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError)
+│   │   ├── encryption.js       # AES-256-GCM wrapper for bank PII at rest (fails closed in prod)
+│   │   ├── errors.js           # AppError class hierarchy (ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError, PaymentError)
 │   │   ├── eventCreation.js    # Auto-create shifts from paid proposals
 │   │   ├── eventTypes.js       # Event type id→label resolver (mirrors client)
 │   │   ├── fileValidation.js   # Magic-byte file type validation
@@ -147,7 +150,8 @@ dr-bartender/
 │   │   ├── pricingEngine.js    # Pure pricing calculation engine
 │   │   ├── sms.js              # Twilio SMS wrapper
 │   │   ├── storage.js          # Cloudflare R2 upload + signed URL helpers
-│   │   └── stripeClient.js     # Central Stripe client factory (test-mode toggle, fail-closed)
+│   │   ├── stripeClient.js     # Central Stripe client factory (test-mode toggle, fail-closed)
+│   │   └── urls.js             # Canonical PUBLIC_SITE_URL / ADMIN_URL / API_URL resolvers
 │   └── scripts/
 │       ├── importBlogPosts.js     # Blog post import script (legacy)
 │       ├── migrateBlogBodies.js  # One-time: convert blog blocks → HTML
@@ -163,9 +167,12 @@ dr-bartender/
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── constants.js    # App-wide constants
 │   │   │   ├── eventTypes.js   # Event type id→label resolver (mirrors server)
+│   │   │   ├── formatCurrency.js  # $ formatting with consistent precision
 │   │   │   ├── formatPhone.js  # Phone number formatting
+│   │   │   ├── statusMaps.js   # Status → label/color helpers
 │   │   │   └── timeOptions.js  # Time option generator + 12h formatter + input parser
-│   │   ├── components/         # Layout, InvoiceDropdown, SignaturePad, ClickableRow, FileUpload,
+│   │   ├── components/         # AdminBreadcrumbs, AdminLayout, StaffLayout, Layout, PublicLayout,
+│   │   │                       # InvoiceDropdown, SignaturePad, ClickableRow, FileUpload,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, MenuSamplesModal,
 │   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,
 │   │   │                       # TimePicker, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler
@@ -175,13 +182,14 @@ dr-bartender/
 │   │   ├── pages/
 │   │   │   ├── (auth)          # Login, Register, ForgotPassword, ResetPassword
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
-│   │   │   ├── (staff)         # Application, ApplicationStatus, StaffPortal
+│   │   │   ├── (staff)         # Application, ApplicationStatus, HiringLanding
 │   │   │   ├── (admin)         # AdminDashboard, AdminApplicationDetail, AdminUserDetail
-│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, menus, hiring, blog, email marketing)
+│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, shifts, menus, hiring, blog, email marketing)
+│   │   │   ├── staff/          # Staff portal (StaffDashboard, StaffShifts, StaffSchedule, StaffEvents, StaffResources, StaffProfile)
 │   │   │   ├── plan/           # PotionPlanningLab — public event questionnaire (with steps/ and data/; steps/HostedGuestPrefsStep.js = compact hosted-refinement step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test)
 │   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment
 │   │   │   ├── proposal/       # ProposalView — public client-facing proposal
-│   │   │   ├── public/         # Client portal (ClientLogin, ClientDashboard, Blog, BlogPost)
+│   │   │   ├── public/         # Client portal (ClientLogin, ClientDashboard, ClientShoppingList, Blog, BlogPost)
 │   │   │   └── website/        # Public website (Website, HomePage, QuoteWizard, QuotePage, FaqPage, ClassWizard)
 │   │   ├── images/             # Brand assets
 │   │   └── index.css           # Global styles

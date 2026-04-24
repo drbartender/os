@@ -66,7 +66,8 @@ dr-bartender/
 │   │   ├── email.js           # Resend wrapper (send + batch)
 │   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
 │   │   ├── emailTemplates.js  # Email template helpers (transactional + marketing)
-│   │   ├── errors.js   # AppError class hierarchy (ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError)
+│   │   ├── encryption.js      # AES-256-GCM wrapper for bank PII at rest (fails closed in prod)
+│   │   ├── errors.js          # AppError class hierarchy (ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError, PaymentError)
 │   │   ├── eventCreation.js   # Event creation helpers
 │   │   ├── eventTypes.js      # Event type id→label resolver (mirrors client)
 │   │   ├── fileValidation.js  # Magic-byte validation
@@ -75,7 +76,8 @@ dr-bartender/
 │   │   ├── pricingEngine.js   # Pure pricing calculation functions
 │   │   ├── sms.js             # Twilio wrapper
 │   │   ├── storage.js         # R2 upload/signed-URL helpers
-│   │   └── stripeClient.js    # Central Stripe client factory (test-mode toggle, fail-closed)
+│   │   ├── stripeClient.js    # Central Stripe client factory (test-mode toggle, fail-closed)
+│   │   └── urls.js            # Canonical PUBLIC_SITE_URL / ADMIN_URL / API_URL resolvers
 │   └── scripts/
 │       ├── importBlogPosts.js     # Blog post import script (legacy)
 │       ├── migrateBlogBodies.js  # One-time: convert blog blocks → HTML
@@ -91,9 +93,12 @@ dr-bartender/
 │   │   │   ├── api.js             # Axios instance with JWT interceptor
 │   │   │   ├── constants.js       # App-wide constants
 │   │   │   ├── eventTypes.js      # Event type id→label resolver (mirrors server)
+│   │   │   ├── formatCurrency.js  # $ formatting with consistent precision
 │   │   │   ├── formatPhone.js     # Phone number formatting
+│   │   │   ├── statusMaps.js      # Status → label/color helpers (proposals, shifts, campaigns)
 │   │   │   └── timeOptions.js     # Time option generator + 12h formatter + input parser (TimePicker)
 │   │   ├── components/
+│   │   │   ├── AdminBreadcrumbs.js # Breadcrumb trail inside the admin layout header
 │   │   │   ├── AdminLayout.js     # Admin sidebar + header layout
 │   │   │   ├── BrandLogo.js       # Dr. Bartender logo component
 │   │   │   ├── ClickableRow.js    # <tr> wrapper: click navigates, drag selects text
@@ -112,6 +117,7 @@ dr-bartender/
 │   │   │   ├── ScrollToTop.js     # Router-level scroll reset on pathname change (skips hash nav)
 │   │   │   ├── SessionExpiryHandler.js  # Listens for session-expired event, shows toast, redirects
 │   │   │   ├── SignaturePad.js    # E-signature canvas
+│   │   │   ├── StaffLayout.js     # Staff-facing layout wrapper (sidebar nav for staff.drbartender.com)
 │   │   │   ├── Toast.js  # Toast container (top-right, dismissible, auto-fade)
 │   │   │   ├── W9Form.js         # W-9 tax form component
 │   │   │   ├── LeadImportModal.js # CSV lead import modal
@@ -144,7 +150,7 @@ dr-bartender/
 │   │   │   ├── ContractorProfile.js, PaydayProtocols.js, Completion.js
 │   │   │   ├── Application.js, ApplicationStatus.js
 │   │   │   ├── AdminDashboard.js, AdminApplicationDetail.js, AdminUserDetail.js
-│   │   │   ├── StaffPortal.js
+│   │   │   ├── HiringLanding.js           # Public hiring site (hiring.drbartender.com)
 │   │   │   ├── admin/
 │   │   │   │   ├── BlogDashboard.js
 │   │   │   │   ├── ClientDetail.js
@@ -160,6 +166,7 @@ dr-bartender/
 │   │   │   │   ├── ProposalDetail.js
 │   │   │   │   ├── ProposalsDashboard.js
 │   │   │   │   ├── SettingsDashboard.js
+│   │   │   │   ├── ShiftDetail.js               # Admin shift detail view (requests, assignments, SMS)
 │   │   │   │   ├── EmailMarketingDashboard.js  # Email marketing hub (tabs)
 │   │   │   │   ├── EmailLeadsDashboard.js      # Lead list + import
 │   │   │   │   ├── EmailLeadDetail.js          # Lead profile + history
@@ -178,7 +185,15 @@ dr-bartender/
 │   │   │   ├── public/           # Client portal pages
 │   │   │   │   ├── Blog.js, BlogPost.js
 │   │   │   │   ├── ClientDashboard.js
-│   │   │   │   └── ClientLogin.js
+│   │   │   │   ├── ClientLogin.js
+│   │   │   │   └── ClientShoppingList.js  # Client-facing read-only shopping list
+│   │   │   ├── staff/            # Staff portal (staff.drbartender.com)
+│   │   │   │   ├── StaffDashboard.js
+│   │   │   │   ├── StaffEvents.js
+│   │   │   │   ├── StaffProfile.js
+│   │   │   │   ├── StaffResources.js
+│   │   │   │   ├── StaffSchedule.js
+│   │   │   │   └── StaffShifts.js
 │   │   │   └── website/          # Public website pages
 │   │   │       ├── Website.js
 │   │   │       ├── HomePage.js       # Public homepage
@@ -215,6 +230,8 @@ See `.env.example` for the full list. Key ones:
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string |
 | `JWT_SECRET` | Token signing key |
+| `UNSUBSCRIBE_SECRET` | Optional. Separate signing key for unsubscribe/marketing-link JWTs (365-day lifetime). Falls back to `JWT_SECRET` if unset. |
+| `RUN_SCHEDULERS` | Set to `false` on additional web instances to prevent duplicate scheduler runs. Default (unset) runs schedulers — single-instance deploys unaffected. |
 | `CLIENT_URL` | Admin/staff frontend origin (CORS + admin dashboard links in emails). In prod: `https://admin.drbartender.com` |
 | `PUBLIC_SITE_URL` | Public marketing site origin used in client-facing token URLs (proposal, drink plan, invoice, shopping list). In prod: `https://drbartender.com` |
 | `API_URL` | Backend origin for server-rendered email links (unsubscribe). Optional — defaults to `RENDER_EXTERNAL_URL` in prod, `localhost:5000` in dev. |

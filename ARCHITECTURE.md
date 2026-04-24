@@ -86,6 +86,7 @@ All error responses (4xx and 5xx) use this shape:
 | `NotFoundError(message?)` | 404 | `NOT_FOUND` | Resource doesn't exist |
 | `PermissionError(message?)` | 403 | `PERMISSION_DENIED` | Authenticated but not allowed |
 | `ExternalServiceError(service, originalError, message?)` | 502 | `EXTERNAL_SERVICE_ERROR` | Stripe/R2/Twilio/Resend/Nominatim failure |
+| `PaymentError(message, code?)` | 402 | `PAYMENT_FAILED` (or custom) | Stripe card decline, insufficient funds, post-payment mutation conflicts |
 
 Routes throw via `asyncHandler`-wrapped handlers; the global error middleware in `server/index.js` formats the response envelope and reports unknown errors to Sentry.
 
