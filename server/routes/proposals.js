@@ -698,11 +698,20 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
 
 // ─── Admin CRUD ──────────────────────────────────────────────────
 
-/** GET /api/proposals — list all proposals */
+/** GET /api/proposals — list all proposals. Explicit column list — do NOT ship
+ *  pricing_snapshot / admin_notes / questionnaire_data / signature_data / stripe_*
+ *  to list responses (blobs, PII, can each be 10-50 KB × 50 rows = 2.5 MB). */
 router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { status, search, page = 1, limit = 50 } = req.query;
   let query = `
-    SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
+    SELECT p.id, p.token, p.client_id, p.event_type, p.event_type_custom,
+           p.event_type_category, p.event_date, p.event_start_time,
+           p.event_duration_hours, p.event_location, p.guest_count, p.num_bars,
+           p.num_bartenders, p.package_id, p.status, p.total_price, p.amount_paid,
+           p.deposit_amount, p.balance_due_date, p.payment_type, p.autopay_enrolled,
+           p.sent_at, p.accepted_at, p.client_signed_at, p.last_viewed_at,
+           p.created_at, p.updated_at,
+           c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
            sp.name AS package_name, sp.slug AS package_slug
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id

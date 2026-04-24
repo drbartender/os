@@ -253,11 +253,14 @@ router.delete('/leads/:id', auth, requireAdminOrManager, asyncHandler(async (req
 
 // ─── Campaign Management ──────────────────────────────────────────
 
-/** GET /campaigns — list campaigns */
+/** GET /campaigns — list campaigns. Explicit columns — exclude html_body,
+ *  text_body, html_draft (can be MB-scale with TipTap inline images). */
 router.get('/campaigns', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { type, status } = req.query;
   let query = `
-    SELECT c.*,
+    SELECT c.id, c.name, c.type, c.status, c.subject, c.from_email, c.reply_to,
+           c.target_sources, c.target_event_types, c.created_by, c.created_at,
+           c.updated_at, c.sent_at,
       (SELECT COUNT(*) FROM email_sends WHERE campaign_id = c.id) AS total_sends,
       (SELECT COUNT(*) FROM email_sends WHERE campaign_id = c.id AND status = 'opened') AS total_opens,
       (SELECT COUNT(*) FROM email_sends WHERE campaign_id = c.id AND status = 'clicked') AS total_clicks
@@ -319,28 +322,36 @@ router.get('/campaigns/:id', auth, requireAdminOrManager, asyncHandler(async (re
     FROM email_sends WHERE campaign_id = $1
   `, [req.params.id]);
 
+  // LIMIT 500 so a mature sequence blasted to 10k leads doesn't dump 10k rows per page load.
   const sends = await pool.query(
-    `SELECT es.*, el.name AS lead_name, el.email AS lead_email
+    `SELECT es.id, es.campaign_id, es.lead_id, es.subject, es.status,
+            es.sent_at, es.opened_at, es.clicked_at, es.bounced_at, es.complained_at,
+            es.error_message,
+            el.name AS lead_name, el.email AS lead_email
      FROM email_sends es
      JOIN email_leads el ON el.id = es.lead_id
-     WHERE es.campaign_id = $1 ORDER BY es.sent_at DESC`,
+     WHERE es.campaign_id = $1 ORDER BY es.sent_at DESC LIMIT 500`,
     [req.params.id]
   );
 
   let steps = [];
   let enrollments = [];
   if (campaign.rows[0].type === 'sequence') {
+    // Campaign detail loads all steps with their html_body (needed for edit view).
     const stepsResult = await pool.query(
       'SELECT * FROM email_sequence_steps WHERE campaign_id = $1 ORDER BY step_order',
       [req.params.id]
     );
     steps = stepsResult.rows;
 
+    // LIMIT enrollments so a campaign with 10k leads doesn't ship every row on every page load.
     const enrollResult = await pool.query(
-      `SELECT e.*, el.name AS lead_name, el.email AS lead_email
+      `SELECT e.id, e.campaign_id, e.lead_id, e.status, e.current_step,
+              e.next_step_due_at, e.enrolled_at, e.completed_at,
+              el.name AS lead_name, el.email AS lead_email
        FROM email_sequence_enrollments e
        JOIN email_leads el ON el.id = e.lead_id
-       WHERE e.campaign_id = $1 ORDER BY e.enrolled_at DESC`,
+       WHERE e.campaign_id = $1 ORDER BY e.enrolled_at DESC LIMIT 500`,
       [req.params.id]
     );
     enrollments = enrollResult.rows;

@@ -55,6 +55,7 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
       LEFT JOIN proposals p ON p.id = s.proposal_id
       LEFT JOIN clients c ON c.id = p.client_id
       ORDER BY s.event_date ASC
+      LIMIT 500
     `);
     return res.json(result.rows);
   }
@@ -69,6 +70,7 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
     LEFT JOIN shift_requests sr ON sr.shift_id = s.id AND sr.user_id = $1
     WHERE s.status = 'open' AND s.event_date >= CURRENT_DATE
     ORDER BY s.event_date ASC
+    LIMIT 500
   `, [req.user.id]);
   res.json(result.rows);
 }));

@@ -366,11 +366,16 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
 
 // ─── Admin routes (auth required) ────────────────────────────────
 
-/** GET /api/drink-plans — list all plans */
+/** GET /api/drink-plans — list all plans. Exclude selections/shopping_list JSONB blobs
+ *  (each 100 KB+). Detail endpoint returns selections; shopping_list has its own route. */
 router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { status, search } = req.query;
   let query = `
-    SELECT dp.*, u.email AS created_by_email
+    SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
+           dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
+           dp.status, dp.exploration_submitted_at, dp.submitted_at, dp.created_at,
+           dp.updated_at, dp.created_by,
+           u.email AS created_by_email
     FROM drink_plans dp
     LEFT JOIN users u ON u.id = dp.created_by
     WHERE 1=1
@@ -445,10 +450,15 @@ router.post('/for-proposal/:proposalId', auth, requireAdminOrManager, asyncHandl
   res.json(existing.rows[0]);
 }));
 
-/** GET /api/drink-plans/by-proposal/:proposalId — fetch plan by proposal id */
+/** GET /api/drink-plans/by-proposal/:proposalId — fetch plan by proposal id. Keep
+ *  selections (needed for detail); exclude shopping_list (has its own endpoint). */
 router.get('/by-proposal/:proposalId', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const result = await pool.query(
-    `SELECT dp.*, u.email AS created_by_email
+    `SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
+            dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
+            dp.selections, dp.status, dp.admin_notes, dp.exploration_submitted_at,
+            dp.submitted_at, dp.created_at, dp.updated_at, dp.created_by,
+            u.email AS created_by_email
      FROM drink_plans dp
      LEFT JOIN users u ON u.id = dp.created_by
      WHERE dp.proposal_id = $1`,
@@ -519,10 +529,15 @@ router.get('/:id/shopping-list-data', auth, requireAdminOrManager, asyncHandler(
   });
 }));
 
-/** GET /api/drink-plans/:id — fetch single plan by id */
+/** GET /api/drink-plans/:id — fetch single plan by id. Exclude shopping_list
+ *  (has its own endpoint); keep selections for detail rendering. */
 router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const result = await pool.query(
-    `SELECT dp.*, u.email AS created_by_email
+    `SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
+            dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
+            dp.selections, dp.status, dp.admin_notes, dp.exploration_submitted_at,
+            dp.submitted_at, dp.created_at, dp.updated_at, dp.created_by,
+            u.email AS created_by_email
      FROM drink_plans dp
      LEFT JOIN users u ON u.id = dp.created_by
      WHERE dp.id = $1`,
