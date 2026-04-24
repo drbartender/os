@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { API_BASE_URL as BASE_URL } from '../../utils/api';
@@ -6,25 +6,28 @@ import FormBanner from '../../components/FormBanner';
 import { useToast } from '../../context/ToastContext';
 import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue, buildExplorationQueue, derivePhase, buildHostedStepQueue, hostedActiveModules, HOSTED_GUEST_PREFS_STEP } from './data/servingTypes';
 import { DRINK_UPGRADES, PER_DRINK_UPGRADE_SLUGS } from './data/drinkUpgrades';
+// WelcomeStep renders first — keep eager to avoid a Suspense flash on initial load.
 import WelcomeStep from './steps/WelcomeStep';
-import QuickPickStep from './steps/QuickPickStep';
-import CustomSetupStep from './steps/CustomSetupStep';
-import SignaturePickerStep from './steps/SignaturePickerStep';
-import BeerWineStep from './steps/BeerWineStep';
-import FullBarSpiritsStep from './steps/FullBarSpiritsStep';
-import FullBarBeerWineStep from './steps/FullBarBeerWineStep';
-import MocktailStep from './steps/MocktailStep';
-import MenuDesignStep from './steps/MenuDesignStep';
-import LogisticsStep from './steps/LogisticsStep';
-import ConfirmationStep from './steps/ConfirmationStep';
+// All other step components are lazy-loaded: cuts ~18 chunks out of the initial bundle
+// for a public-facing page where most visitors only traverse a subset of the steps.
+const QuickPickStep = lazy(() => import('./steps/QuickPickStep'));
+const CustomSetupStep = lazy(() => import('./steps/CustomSetupStep'));
+const SignaturePickerStep = lazy(() => import('./steps/SignaturePickerStep'));
+const BeerWineStep = lazy(() => import('./steps/BeerWineStep'));
+const FullBarSpiritsStep = lazy(() => import('./steps/FullBarSpiritsStep'));
+const FullBarBeerWineStep = lazy(() => import('./steps/FullBarBeerWineStep'));
+const MocktailStep = lazy(() => import('./steps/MocktailStep'));
+const MenuDesignStep = lazy(() => import('./steps/MenuDesignStep'));
+const LogisticsStep = lazy(() => import('./steps/LogisticsStep'));
+const ConfirmationStep = lazy(() => import('./steps/ConfirmationStep'));
 // Exploration phase steps
-import VibeStep from './steps/VibeStep';
-import FlavorDirectionStep from './steps/FlavorDirectionStep';
-import ExplorationBrowseStep from './steps/ExplorationBrowseStep';
-import MocktailInterestStep from './steps/MocktailInterestStep';
-import ExplorationSaveStep from './steps/ExplorationSaveStep';
-import RefinementWelcomeStep from './steps/RefinementWelcomeStep';
-import HostedGuestPrefsStep from './steps/HostedGuestPrefsStep';
+const VibeStep = lazy(() => import('./steps/VibeStep'));
+const FlavorDirectionStep = lazy(() => import('./steps/FlavorDirectionStep'));
+const ExplorationBrowseStep = lazy(() => import('./steps/ExplorationBrowseStep'));
+const MocktailInterestStep = lazy(() => import('./steps/MocktailInterestStep'));
+const ExplorationSaveStep = lazy(() => import('./steps/ExplorationSaveStep'));
+const RefinementWelcomeStep = lazy(() => import('./steps/RefinementWelcomeStep'));
+const HostedGuestPrefsStep = lazy(() => import('./steps/HostedGuestPrefsStep'));
 
 const DEFAULT_ACTIVE_MODULES = { signatureDrinks: false, mocktails: false, fullBar: false, beerWineOnly: false };
 
@@ -1066,7 +1069,9 @@ export default function PotionPlanningLab() {
         </div>
 
         <div className="potion-step" key={step}>
-          {renderStep()}
+          <Suspense fallback={<div style={{ padding: '3rem', textAlign: 'center', color: '#6b5a4e' }}>Loading…</div>}>
+            {renderStep()}
+          </Suspense>
         </div>
 
         {/* Surface submit/save errors near the navigation buttons */}

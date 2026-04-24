@@ -421,6 +421,7 @@ router.get('/applications/:userId', auth, adminOnly, asyncHandler(async (req, re
       LEFT JOIN users u ON u.id = n.admin_id
       WHERE n.user_id = $1
       ORDER BY n.created_at DESC
+      LIMIT 100
     `, [userId])
   ]);
 

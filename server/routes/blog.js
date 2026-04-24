@@ -80,6 +80,8 @@ router.get('/:slug', asyncHandler(async (req, res) => {
   if (result.rows.length === 0) {
     throw new NotFoundError('Post not found');
   }
+  // Public blog posts: cache at CDN edge + browser for 5 min / 10 min on CDN
+  res.set('Cache-Control', 'public, max-age=300, s-maxage=600');
   res.json(result.rows[0]);
 }));
 

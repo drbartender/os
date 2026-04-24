@@ -100,6 +100,7 @@ router.get('/user/:userId/events', auth, asyncHandler(async (req, res) => {
     LEFT JOIN clients c ON c.id = p.client_id
     WHERE sr.user_id = $1 AND sr.status = 'approved'
     ORDER BY s.event_date DESC
+    LIMIT 500
   `, [userId]);
 
   const today = new Date().toISOString().slice(0, 10);
@@ -126,6 +127,7 @@ router.get('/my-requests', auth, asyncHandler(async (req, res) => {
     JOIN shifts s ON s.id = sr.shift_id
     WHERE sr.user_id = $1
     ORDER BY s.event_date DESC
+    LIMIT 500
   `, [req.user.id]);
 
   const requests = result.rows;
@@ -514,6 +516,7 @@ router.get('/:id/requests', auth, requireStaffing, asyncHandler(async (req, res)
     LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
     WHERE sr.shift_id = $1
     ORDER BY sr.created_at ASC
+    LIMIT 500
   `, [req.params.id]);
   res.json(result.rows);
 }));
