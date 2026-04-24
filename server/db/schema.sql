@@ -926,6 +926,7 @@ CREATE INDEX IF NOT EXISTS idx_sms_messages_created_at ON sms_messages(created_a
 -- Drink Plans
 CREATE INDEX IF NOT EXISTS idx_drink_plans_token ON drink_plans(token);
 CREATE INDEX IF NOT EXISTS idx_drink_plans_proposal_id ON drink_plans(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_drink_plans_created_at ON drink_plans(created_at DESC);
 
 -- ─── FK Migrations (idempotent) ─────────────────────────────────
 

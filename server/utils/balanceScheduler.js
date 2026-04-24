@@ -70,45 +70,52 @@ async function processAutopayCharges() {
           extra: { amount_cents: balanceCents },
         });
 
-        // Log the failure for admin visibility (wrapped so one failure doesn't kill the loop)
+        // Log the failure for admin visibility and capture the inserted row's id
+        // so the throttle UPDATE below can target THIS row (not a stale older one
+        // if the INSERT silently failed, which would cause re-email every cycle).
+        let logRowId = null;
         try {
-          await pool.query(
-            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'autopay_failed', 'system', $2)`,
+          const logRes = await pool.query(
+            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'autopay_failed', 'system', $2) RETURNING id`,
             [proposal.id, JSON.stringify({ error: err.message, amount: balanceCents })]
           );
+          logRowId = logRes.rows[0]?.id ?? null;
         } catch (logErr) {
           console.error('[BalanceScheduler] activity-log insert failed:', logErr);
         }
 
         // Notify admin out-of-band — but throttle to once per 24h per proposal,
         // otherwise a permanently-dead card emails the admin every hour forever.
-        try {
-          const recent = await pool.query(
-            `SELECT 1 FROM proposal_activity_log
-             WHERE proposal_id = $1 AND action = 'autopay_failed'
-               AND created_at > NOW() - INTERVAL '24 hours'
-               AND details->>'admin_notified' = 'true'
-             LIMIT 1`,
-            [proposal.id]
-          );
-          if (recent.rowCount === 0) {
-            await sendEmail({
-              to: process.env.ADMIN_EMAIL || 'contact@drbartender.com',
-              subject: `Autopay failed: proposal #${proposal.id} ($${(balanceCents / 100).toFixed(2)})`,
-              html: `<p>Autopay attempt failed for proposal #${proposal.id}.</p><p>Error: ${err.message}</p>`,
-            });
-            // Mark the most-recent autopay_failed row as notified so the next cycle skips
-            await pool.query(
-              `UPDATE proposal_activity_log
-               SET details = details || jsonb_build_object('admin_notified', true)
-               WHERE id = (SELECT id FROM proposal_activity_log
-                           WHERE proposal_id = $1 AND action = 'autopay_failed'
-                           ORDER BY created_at DESC LIMIT 1)`,
-              [proposal.id]
+        // Only proceed if we successfully wrote a log row (otherwise we can't
+        // reliably mark it as notified and would re-email next cycle).
+        if (logRowId !== null) {
+          try {
+            const recent = await pool.query(
+              `SELECT 1 FROM proposal_activity_log
+               WHERE proposal_id = $1 AND action = 'autopay_failed'
+                 AND id <> $2
+                 AND created_at > NOW() - INTERVAL '24 hours'
+                 AND details->>'admin_notified' = 'true'
+               LIMIT 1`,
+              [proposal.id, logRowId]
             );
+            if (recent.rowCount === 0) {
+              await sendEmail({
+                to: process.env.ADMIN_EMAIL || 'contact@drbartender.com',
+                subject: `Autopay failed: proposal #${proposal.id} ($${(balanceCents / 100).toFixed(2)})`,
+                html: `<p>Autopay attempt failed for proposal #${proposal.id}.</p><p>Error: ${err.message}</p>`,
+              });
+              // Mark THIS log row (not the most-recent via ORDER BY) as notified
+              await pool.query(
+                `UPDATE proposal_activity_log
+                 SET details = details || jsonb_build_object('admin_notified', true)
+                 WHERE id = $1`,
+                [logRowId]
+              );
+            }
+          } catch (mailErr) {
+            console.error('[BalanceScheduler] admin email / notify-throttle failed:', mailErr);
           }
-        } catch (mailErr) {
-          console.error('[BalanceScheduler] admin email / notify-throttle failed:', mailErr);
         }
       }
     };

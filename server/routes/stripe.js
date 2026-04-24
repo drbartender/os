@@ -380,14 +380,13 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
     throw new ExternalServiceError('Stripe', err, 'Payment link unavailable. Please try again.');
   }
 
-  // Store link reference — ON CONFLICT DO NOTHING handles the race where
-  // two requests both pass the idempotency check above and create separate Stripe
-  // links before either INSERTs (only one row wins, the other is orphaned in Stripe
-  // but doesn't corrupt our DB).
+  // Store link reference. The ON CONFLICT target must include the partial-index
+  // WHERE predicate (Postgres requires this for inference against partial unique
+  // indexes — see idx_stripe_sessions_payment_link at schema.sql:812).
   await pool.query(
     `INSERT INTO stripe_sessions (proposal_id, stripe_payment_link_id, amount, status)
      VALUES ($1, $2, $3, 'pending')
-     ON CONFLICT (stripe_payment_link_id) DO NOTHING`,
+     ON CONFLICT (stripe_payment_link_id) WHERE stripe_payment_link_id IS NOT NULL DO NOTHING`,
     [proposal.id, paymentLink.id, DEPOSIT_AMOUNT]
   );
 

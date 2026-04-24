@@ -128,6 +128,44 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 **Why deferred:** Low immediate risk. Sentry captures patterns via rate-limit 429s.
 **Next step:** Optional — add `failed_logins` table if audit/compliance needs grow.
 
+### Pagination on tenure-dependent endpoints
+
+**Source:** 2026-04-24 push pre-review (database-review agent).
+**What:** Five admin/staff endpoints now have `LIMIT 500` added in the bucket-B push to prevent unbounded list returns, but the cap is high enough that long-tenured users won't hit it for 1-2 years:
+- `server/routes/shifts.js:/user/:userId/events` (LIMIT 500) — 2.5+ year bartender at 4 events/week hits it
+- `server/routes/shifts.js:/my-requests` (LIMIT 500) — same tenure threshold
+- `server/routes/emailMarketing.js:/campaigns/:id` sends (LIMIT 500) — hits with a single 10k-lead campaign
+- `server/routes/emailMarketing.js:/campaigns/:id` enrollments (LIMIT 500) — same
+- `server/routes/emailMarketing.js:/campaigns/:id` conversation history — paginated already
+**Why deferred:** Each needs frontend pagination support (paging controls, "load more" button, or infinite scroll). Frontend consumers were not touched in the bucket-B push to keep the commit focused. Once a user hits the cap, the UI silently shows an incomplete list with no indicator.
+**Next step:** Add `?page=` / `?limit=` query support and frontend paging in an incremental PR. Triggered event: first support ticket mentioning "missing old events" or "campaign shows 500 sends but blast went to 10k."
+
+### Campaign-list query performance
+
+**Source:** 2026-04-24 push pre-review (database-review agent).
+**What:** `GET /api/email-marketing/campaigns` list uses three correlated `COUNT(*) FROM email_sends WHERE campaign_id = c.id AND status = ...` subqueries per row. At 100 campaigns × 10k sends per campaign that's 3M row scans per list call.
+**Why deferred:** Scale concern, not a current problem.
+**Next step:** Add partial indexes on `email_sends(campaign_id) WHERE status = 'opened'` / `WHERE status = 'clicked'`, OR refactor to a single aggregated subquery with `COUNT(*) FILTER (WHERE status = ...)`.
+
+### admin.js applications filter CASE expression blocks index
+
+**Source:** 2026-04-24 push pre-review (database-review agent).
+**What:** `server/routes/admin.js:354-385` uses `CASE WHEN $1 THEN u.onboarding_status = 'rejected' ELSE u.onboarding_status IN ('applied','interviewing') END`. The parameterized CASE prevents Postgres from using `idx_users_onboarding_status` — predicate pushdown doesn't apply to parameterized branches.
+**Why deferred:** At current scale (~100s of applicants) seq-scan is faster than index anyway. Parameterization was chosen over string-concat specifically to remove the SQL-injection-adjacent pattern flagged by the audit.
+**Next step:** When application volume exceeds 10k rows, rewrite as two branches selected in JS with const string literals (no user input = no injection surface):
+```js
+const statusPredicate = archived
+  ? `u.onboarding_status = 'rejected'`
+  : `u.onboarding_status IN ('applied','interviewing')`;
+```
+
+### Stripe webhook catch swallows DB errors (returns 200)
+
+**Source:** 2026-04-24 push pre-review (security-review agent, M2).
+**What:** `server/routes/stripe.js:788-798` (and 931-941) — when the DB transaction fails inside the signature-verified webhook handler, the `catch` block captures to Sentry + ROLLBACKs, but falls through to `res.json({ received: true })` on line 961. Stripe sees 200, does not retry. A transient DB outage during `payment_intent.succeeded` processing silently drops the payment record.
+**Why deferred:** Pre-existing behavior (not introduced by bucket B). Narrow-scope remediation was the goal.
+**Next step:** Rethrow from the catch blocks to propagate to asyncHandler → 500 response → Stripe retry.
+
 ### Dead-letter readers for forensic blobs
 
 **Source:** schema-drift scan section 5.
