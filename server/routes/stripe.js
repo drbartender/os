@@ -334,7 +334,7 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
   }
 
   const result = await pool.query(
-    'SELECT id, event_type, event_type_custom FROM proposals WHERE id = $1',
+    'SELECT id, token, event_type, event_type_custom FROM proposals WHERE id = $1',
     [req.params.id]
   );
   if (!result.rows[0]) throw new NotFoundError('Proposal not found');
@@ -354,7 +354,7 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
     paymentLink = await stripe.paymentLinks.create({
       line_items: [{ price: price.id, quantity: 1 }],
       metadata: { proposal_id: String(proposal.id) },
-      after_completion: { type: 'redirect', redirect: { url: `${PUBLIC_SITE_URL}/proposal/${encodeURIComponent(req.query.token || '')}?paid=true` } },
+      after_completion: { type: 'redirect', redirect: { url: `${PUBLIC_SITE_URL}/proposal/${encodeURIComponent(proposal.token)}?paid=true` } },
     });
   } catch (err) {
     console.error('Stripe payment-link error:', err);
