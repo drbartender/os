@@ -1,5 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const createDOMPurify = require('dompurify');
+const { JSDOM } = require('jsdom');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
@@ -9,6 +11,20 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../utils/errors');
 
 const router = express.Router();
+
+// Server-side HTML sanitization for admin-authored campaign bodies. Mirrors the blog
+// post flow — admin is a trust boundary; a compromised admin account can't inject
+// <script> into outbound emails.
+const DOMPurify = createDOMPurify(new JSDOM('').window);
+const EMAIL_SANITIZE_OPTIONS = {
+  ALLOWED_TAGS: ['a', 'b', 'br', 'div', 'em', 'h1', 'h2', 'h3', 'h4', 'hr', 'i', 'img',
+    'li', 'ol', 'p', 'pre', 'span', 'strong', 'u', 'ul',
+    'table', 'tbody', 'td', 'th', 'thead', 'tr'],
+  ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'style', 'width', 'height', 'target', 'rel'],
+  ALLOW_DATA_ATTR: false,
+};
+const sanitizeHtml = (html) =>
+  html ? DOMPurify.sanitize(html, EMAIL_SANITIZE_OPTIONS) : html;
 
 const VALID_LEAD_SOURCES = ['manual', 'csv_import', 'website', 'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other'];
 
@@ -278,7 +294,7 @@ router.post('/campaigns', auth, requireAdminOrManager, asyncHandler(async (req, 
   const result = await pool.query(
     `INSERT INTO email_campaigns (name, type, subject, html_body, text_body, from_email, reply_to, target_sources, target_event_types, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-    [name.trim(), type || 'blast', subject || null, html_body || null, text_body || null,
+    [name.trim(), type || 'blast', subject || null, sanitizeHtml(html_body) || null, text_body || null,
      from_email || null, reply_to || null,
      target_sources ? JSON.stringify(target_sources) : null,
      target_event_types ? JSON.stringify(target_event_types) : null,
@@ -351,7 +367,7 @@ router.put('/campaigns/:id', auth, requireAdminOrManager, asyncHandler(async (re
       target_event_types = COALESCE($8, target_event_types),
       status = COALESCE($9, status)
     WHERE id = $10 RETURNING *
-  `, [name, subject, html_body, text_body, from_email, reply_to,
+  `, [name, subject, sanitizeHtml(html_body), text_body, from_email, reply_to,
       target_sources ? JSON.stringify(target_sources) : null,
       target_event_types ? JSON.stringify(target_event_types) : null,
       status, req.params.id]);
@@ -541,9 +557,10 @@ router.post('/campaigns/:id/steps', auth, requireAdminOrManager, asyncHandler(as
   const nextOrder = maxStep.rows[0].max_order + 1;
 
   const result = await pool.query(
+    // Sanitize html_body server-side before persisting
     `INSERT INTO email_sequence_steps (campaign_id, step_order, subject, html_body, text_body, delay_days, delay_hours)
      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-    [req.params.id, nextOrder, subject, html_body, text_body || null, delay_days || 0, delay_hours || 0]
+    [req.params.id, nextOrder, subject, sanitizeHtml(html_body), text_body || null, delay_days || 0, delay_hours || 0]
   );
   res.status(201).json(result.rows[0]);
 }));
@@ -557,7 +574,7 @@ router.put('/campaigns/:id/steps/:stepId', auth, requireAdminOrManager, asyncHan
       text_body = COALESCE($3, text_body), delay_days = COALESCE($4, delay_days),
       delay_hours = COALESCE($5, delay_hours)
     WHERE id = $6 AND campaign_id = $7 RETURNING *
-  `, [subject, html_body, text_body, delay_days, delay_hours, req.params.stepId, req.params.id]);
+  `, [subject, sanitizeHtml(html_body), text_body, delay_days, delay_hours, req.params.stepId, req.params.id]);
 
   if (!result.rows[0]) throw new NotFoundError('Step not found.');
   res.json(result.rows[0]);

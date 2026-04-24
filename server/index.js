@@ -112,7 +112,10 @@ app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 // Resend webhook needs raw body for svix signature verification — also BEFORE express.json()
 app.use('/api/email-marketing/webhook/resend', express.raw({ type: 'application/json' }));
 
-app.use(express.json({ limit: '10mb' }));
+// Blog admin can post TipTap-inlined images that approach 10MB; scope the big
+// limit to the blog route only. Everything else uses the 1MB default.
+app.use('/api/blog', express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(fileUpload({
   limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024 },
