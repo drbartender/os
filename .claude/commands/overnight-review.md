@@ -12,8 +12,22 @@ Run these in order. If any check fails, write a one-line reason to `.claude/over
 
 1. `git rev-parse --abbrev-ref HEAD` — must equal `main`. Otherwise log `skipped: wrong branch (<actual>)` and exit.
 2. `git status --porcelain` — must be empty. Working-tree dirt means user has WIP; do NOT touch it. Log `skipped: dirty working tree` and exit.
-3. `git log origin/main..HEAD --oneline` — must be non-empty. Otherwise log `skipped: no unpushed commits` and exit.
+3. `git log origin/main..HEAD --oneline` — must be non-empty (**unless** Sentry has unresolved production issues — see Step 0). Otherwise log `skipped: no unpushed commits and no Sentry issues` and exit.
 4. Record `ORIGINAL_HEAD=$(git rev-parse HEAD)` — this is the sha the agents will review.
+
+## Step 0 — Pull production errors from Sentry
+
+Use the Sentry MCP tools (namespace `mcp__sentry__*`) to pull unresolved issues across both `drbartender-server` and `drbartender-client` projects, org slug `dr-bartender`.
+
+1. List unresolved issues, sorted by event count DESC, for both projects. Cap at 20 per project.
+2. For each issue in the top list, pull full details: stack trace, first seen, last seen, event count, affected URL/route, sample event.
+3. Classify each issue:
+   - **Actionable-by-agent**: clear stack trace pointing into our code, deterministic error (not a transient network/timeout), root cause plausibly fixable via a small diff (null check, missing guard, schema drift, off-by-one, etc.).
+   - **Flag-for-morning**: ambiguous cause, touches pricing/Stripe/auth, requires architectural judgment, or the error is in third-party code.
+
+Issues become **inputs** to the 5 agents in Step 1: attach the issue list as context so the agents can root-cause them alongside reviewing the unpushed commits. An agent may decide a finding it would have surfaced anyway is in fact the root cause of a Sentry issue — in that case, noting the Sentry issue id alongside the finding is the goal.
+
+**Sentry-only runs are allowed.** If there are no unpushed commits but Sentry has actionable issues, proceed with the 5 agents anyway — their job becomes "root-cause and fix these production errors."
 
 ## Step 1 — Run 5 agents in parallel
 
@@ -44,6 +58,8 @@ Only mechanical, unambiguous, behavior-inert fixes:
 - Stale folder-tree entries in `CLAUDE.md`, `README.md`, `ARCHITECTURE.md` → sync to reality.
 - Missing `IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS` guards on schema DDL → add.
 - Typos, naming inconsistencies inside a single file → fix.
+- **Sentry-linked null/undefined crashes** with an unambiguous stack trace into our code → add the missing guard (e.g., `if (!x) return null`, optional chaining, default value). After committing, call `mcp__sentry__update_issue` with `status: "resolved"` and include the commit sha in the resolution comment.
+- **Sentry-linked schema drift** (e.g., column removed but code still references it) with clear stack trace → sync the code to current schema. Resolve issue after commit.
 
 ### Flag for morning (DO NOT auto-fix)
 When in doubt, flag. These always flag:
@@ -56,6 +72,8 @@ When in doubt, flag. These always flag:
 - **Anything requiring browser or visual verification to confirm.**
 - **Anything that changes user-facing behavior** — copy, UI layout, API response shapes.
 - **Anything touching `.env*`, secrets, lockfiles, or `package.json` dependencies.**
+- **Sentry issues without a clear stack trace into our code** (stack bottoms out in node_modules, browser internals, or third-party SDK) — root cause is ambiguous.
+- **Sentry issues in routes you are not touching tonight AND where the fix would require more than a null/type guard** — flag with recommended fix so morning user can decide.
 
 ## Step 3 — Apply auto-fixes
 
@@ -79,6 +97,8 @@ Reviewed from: <ORIGINAL_HEAD sha>
 Current HEAD:  <sha after fixes, or ORIGINAL_HEAD if no fixes>
 Commits reviewed: <count from git log origin/main..ORIGINAL_HEAD>
 Fixes committed: <count of new commits you created>
+Sentry issues pulled: <total unresolved count>
+Sentry issues auto-resolved: <count you resolved via mcp__sentry__update_issue>
 
 ## Result
 <ONE of these lines, exactly>
@@ -86,16 +106,25 @@ CLEAN — no findings. Safe to push.
 FIXED — N auto-fixes applied. Review diffs then push. K items still flagged for morning.
 BLOCKED — M items require human attention. Do NOT push until resolved.
 
+## Sentry — top unresolved (at start of run)
+- <issue-id> [<project>] <count> events — <error title>
+  URL: <sentry issue URL>
+  Disposition: <auto-fixed | flagged | ignored (reason)>
+...
+(or: "none" if Sentry had zero unresolved issues)
+
 ## Auto-fixed (committed)
-- [<agent>] <severity> <file:line> — <finding summary>
+- [<agent or "sentry">] <severity> <file:line> — <finding summary>
   Commit: <sha> <commit message>
+  Sentry issue (if any): <issue-id> — resolved
 ...
 (or: "none" if nothing was auto-fixed)
 
 ## Flagged for morning (NOT fixed)
-- [<agent>] <severity> <file:line> — <finding summary>
+- [<agent or "sentry">] <severity> <file:line> — <finding summary>
   Reason not auto-fixed: <which flag-for-morning rule caught it>
   Recommended fix: <what to do>
+  Sentry issue (if any): <issue-id> — left unresolved
 ...
 (or: "none" if nothing was flagged)
 
@@ -104,12 +133,12 @@ BLOCKED — M items require human attention. Do NOT push until resolved.
 ...
 
 ## Abort / error notes
-<any agent crashes, timeout, or attempted-but-aborted fixes>
+<any agent crashes, Sentry MCP failures, timeouts, or attempted-but-aborted fixes>
 ```
 
 Result-line rules:
-- **CLEAN** → no findings at all from any agent.
-- **FIXED** → at least one auto-fix committed AND zero flagged-for-morning items.
+- **CLEAN** → no findings at all from any agent AND zero unresolved Sentry issues (or all Sentry issues were auto-resolved this run).
+- **FIXED** → at least one auto-fix committed (agent-derived OR Sentry-derived) AND zero flagged-for-morning items.
 - If there are any flagged-for-morning items, result is **BLOCKED** regardless of how many fixes you applied.
 
 ## Hard rules (never break)
@@ -121,5 +150,7 @@ Result-line rules:
 - Never run `npm install`, `npm update`, or anything that would mutate dependencies.
 - Never delete a file unless Grep confirms zero references.
 - Never open the dev server, never run `npm run dev`.
+- Never resolve a Sentry issue unless you committed a fix this run. "Looks fine now" is not grounds for resolution — only a commit sha tied to the root cause.
+- If the Sentry MCP is unavailable / errors out: log "sentry step skipped: <reason>" and proceed with the 5 agents over commits only. Do not abort the whole run.
 - If anything feels ambiguous: flag for morning, write the log, exit.
 - On any unexpected state (unexpected branch, remote change, merge conflict): abort, write log, exit. Do NOT try to recover.
