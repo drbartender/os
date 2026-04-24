@@ -26,6 +26,9 @@ router.get('/', asyncHandler(async (req, res) => {
 
 // ─── Public: serve blog images (no auth) ─────────────────────────
 
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
+
 router.get('/images/:filename', asyncHandler(async (req, res) => {
   const filename = path.basename(req.params.filename);
   let url;
@@ -44,10 +47,21 @@ router.get('/images/:filename', asyncHandler(async (req, res) => {
   if (!response.ok) {
     throw new NotFoundError('Image not found');
   }
-  const contentType = response.headers.get('content-type') || 'application/octet-stream';
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  const contentLength = parseInt(response.headers.get('content-length') || '0', 10);
+  if (!ALLOWED_IMAGE_TYPES.some(t => contentType.startsWith(t))) {
+    return res.status(415).send('Unsupported image type');
+  }
+  if (contentLength > MAX_IMAGE_BYTES) {
+    return res.status(413).send('Image too large');
+  }
   res.set('Content-Type', contentType);
   res.set('Cache-Control', 'public, max-age=600');
   const buffer = Buffer.from(await response.arrayBuffer());
+  // Double-check actual size after download in case Content-Length was missing/lying
+  if (buffer.length > MAX_IMAGE_BYTES) {
+    return res.status(413).send('Image too large');
+  }
   res.send(buffer);
 }));
 
