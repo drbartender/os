@@ -1,6 +1,12 @@
+const Sentry = require('@sentry/node');
 const { getStripe } = require('./stripeClient');
 const { pool } = require('../db');
 const { getEventTypeLabel } = require('./eventTypes');
+const { sendEmail } = require('./email');
+
+// Rate-limit the no-stripe-client alert so Sentry isn't spammed every cycle.
+let stripeUnavailableLastLog = 0;
+const STRIPE_ALERT_INTERVAL_MS = 60 * 60 * 1000; // once per hour
 
 /**
  * Process autopay charges for proposals with balance due today or earlier.
@@ -8,7 +14,17 @@ const { getEventTypeLabel } = require('./eventTypes');
  */
 async function processAutopayCharges() {
   const stripe = getStripe();
-  if (!stripe) return;
+  if (!stripe) {
+    const now = Date.now();
+    if (now - stripeUnavailableLastLog > STRIPE_ALERT_INTERVAL_MS) {
+      Sentry.captureMessage('Autopay disabled — no Stripe client', {
+        level: 'warning',
+        tags: { scheduler: 'autopay', reason: 'no_stripe_client' },
+      });
+      stripeUnavailableLastLog = now;
+    }
+    return;
+  }
   try {
     const result = await pool.query(`
       SELECT id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id, event_type, event_type_custom
@@ -47,12 +63,31 @@ async function processAutopayCharges() {
         // Webhook will handle status update and logging
       } catch (err) {
         console.error(`[BalanceScheduler] Failed to charge proposal ${proposal.id}:`, err.message);
+        Sentry.captureException(err, {
+          tags: { scheduler: 'autopay', proposalId: proposal.id },
+          extra: { amount_cents: balanceCents },
+        });
 
-        // Log the failure for admin visibility
-        await pool.query(
-          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'autopay_failed', 'system', $2)`,
-          [proposal.id, JSON.stringify({ error: err.message, amount: balanceCents })]
-        );
+        // Log the failure for admin visibility (wrapped so one failure doesn't kill the loop)
+        try {
+          await pool.query(
+            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'autopay_failed', 'system', $2)`,
+            [proposal.id, JSON.stringify({ error: err.message, amount: balanceCents })]
+          );
+        } catch (logErr) {
+          console.error('[BalanceScheduler] activity-log insert failed:', logErr);
+        }
+
+        // Notify admin out-of-band so ops doesn't wait for Render logs
+        try {
+          await sendEmail({
+            to: process.env.ADMIN_EMAIL || 'contact@drbartender.com',
+            subject: `Autopay failed: proposal #${proposal.id} ($${(balanceCents / 100).toFixed(2)})`,
+            html: `<p>Autopay attempt failed for proposal #${proposal.id}.</p><p>Error: ${err.message}</p>`,
+          });
+        } catch (mailErr) {
+          console.error('[BalanceScheduler] admin email failed:', mailErr);
+        }
       }
     }
   } catch (err) {
@@ -81,10 +116,15 @@ async function processEventCompletions() {
       console.log(`[BalanceScheduler] Auto-completed ${result.rows.length} event(s): ${result.rows.map(r => `#${r.id}`).join(', ')}`);
 
       for (const proposal of result.rows) {
-        await pool.query(
-          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'status_changed', 'system', $2)`,
-          [proposal.id, JSON.stringify({ from: 'confirmed/balance_paid', to: 'completed', reason: 'auto_complete' })]
-        );
+        try {
+          await pool.query(
+            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'status_changed', 'system', $2)`,
+            [proposal.id, JSON.stringify({ from: 'confirmed/balance_paid', to: 'completed', reason: 'auto_complete' })]
+          );
+        } catch (logErr) {
+          console.error(`[BalanceScheduler] activity-log insert failed for #${proposal.id}:`, logErr);
+          Sentry.captureException(logErr, { tags: { scheduler: 'auto-complete', proposalId: proposal.id } });
+        }
       }
     }
   } catch (err) {

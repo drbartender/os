@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { wrapMarketingEmail } = require('./emailTemplates');
@@ -132,12 +133,15 @@ async function processSequenceSteps() {
       } catch (stepErr) {
         console.error(`[SequenceScheduler] Error processing enrollment ${enrollment.id}:`, stepErr);
 
-        // Record failed send
+        // Record failed send — don't swallow the DB error silently.
         await pool.query(
           `INSERT INTO email_sends (campaign_id, lead_id, subject, status, error_message, sent_at)
            VALUES ($1, $2, 'Sequence step failed', 'failed', $3, NOW())`,
           [enrollment.campaign_id, enrollment.lead_id, stepErr.message]
-        ).catch(() => {});
+        ).catch(logErr => Sentry.captureException(logErr, {
+          tags: { scheduler: 'emailSequence', op: 'record-failed-send' },
+          extra: { enrollmentId: enrollment.id, originalError: stepErr.message },
+        }));
       }
     }
   } catch (err) {

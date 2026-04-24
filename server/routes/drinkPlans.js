@@ -347,7 +347,12 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
 
         await client.query('COMMIT');
       } catch (addonErr) {
-        await client.query('ROLLBACK');
+        try {
+          await client.query('ROLLBACK');
+        } catch (rbErr) {
+          console.error('ROLLBACK failed:', rbErr);
+          Sentry.captureException(rbErr, { tags: { route: 'drinkPlans', op: 'rollback' } });
+        }
         console.error('Addon processing error (non-fatal):', addonErr);
         // Don't fail the submission — addons are best-effort
       } finally {
