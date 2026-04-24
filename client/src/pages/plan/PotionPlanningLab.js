@@ -116,12 +116,6 @@ export default function PotionPlanningLab() {
     []
   );
 
-  const isHostedRefinement = useMemo(() => {
-    if (!plan) return false;
-    if (phase !== 'refinement') return false;
-    return plan.package_category === 'hosted';
-  }, [plan, phase]);
-
   // Flow state
   const [step, setStep] = useState('welcome');
   const [quickPickChoice, setQuickPickChoice] = useState(null);
