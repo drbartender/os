@@ -292,14 +292,16 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
     };
   }
 
-  // 10. Approve selected candidates
+  // 10. Approve selected candidates — batch DB update, then sequential SMS (Twilio throttle)
   const approved = [];
-  for (const candidate of selected) {
+  if (selected.length) {
     await pool.query(
-      `UPDATE shift_requests SET status = 'approved' WHERE id = $1`,
-      [candidate.request_id]
+      `UPDATE shift_requests SET status = 'approved' WHERE id = ANY($1)`,
+      [selected.map(c => c.request_id)]
     );
+  }
 
+  for (const candidate of selected) {
     // Send SMS notification (same pattern as shifts.js)
     if (candidate.phone) {
       try {

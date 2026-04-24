@@ -74,55 +74,57 @@ router.post('/send', auth, adminOnly, asyncHandler(async (req, res) => {
     WHERE u.id = ANY($1)
   `, [recipient_ids]);
 
+  // Twilio sends stay sequential (carrier throttle), but DB inserts batch into one query at the end.
   const results = [];
+  const rows = []; // tuples for bulk INSERT
+  const trimmedBody = body.trim();
   let sentCount = 0;
   let failedCount = 0;
 
   for (const recipient of recipientResult.rows) {
     const normalized = normalizePhone(recipient.phone);
 
-    // Check consent and phone validity
     if (!recipient.sms_consent) {
       failedCount++;
-      await pool.query(
-        `INSERT INTO sms_messages (group_id, sender_id, recipient_id, recipient_phone, recipient_name, body, message_type, shift_id, status, error_message)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'failed', 'No SMS consent')`,
-        [group_id, req.user.id, recipient.user_id, recipient.phone || 'none', recipient.preferred_name, body.trim(), message_type, shift_id]
-      );
+      rows.push([group_id, req.user.id, recipient.user_id, recipient.phone || 'none',
+        recipient.preferred_name, trimmedBody, message_type, shift_id, null, 'failed', 'No SMS consent']);
       results.push({ recipient_id: recipient.user_id, status: 'failed', error_message: 'No SMS consent' });
       continue;
     }
 
     if (!normalized) {
       failedCount++;
-      await pool.query(
-        `INSERT INTO sms_messages (group_id, sender_id, recipient_id, recipient_phone, recipient_name, body, message_type, shift_id, status, error_message)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'failed', 'Invalid phone number')`,
-        [group_id, req.user.id, recipient.user_id, recipient.phone || 'none', recipient.preferred_name, body.trim(), message_type, shift_id]
-      );
+      rows.push([group_id, req.user.id, recipient.user_id, recipient.phone || 'none',
+        recipient.preferred_name, trimmedBody, message_type, shift_id, null, 'failed', 'Invalid phone number']);
       results.push({ recipient_id: recipient.user_id, status: 'failed', error_message: 'Invalid phone number' });
       continue;
     }
 
     try {
-      const message = await sendSMS({ to: normalized, body: body.trim() });
+      const message = await sendSMS({ to: normalized, body: trimmedBody });
       sentCount++;
-      await pool.query(
-        `INSERT INTO sms_messages (group_id, sender_id, recipient_id, recipient_phone, recipient_name, body, message_type, shift_id, twilio_sid, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'sent')`,
-        [group_id, req.user.id, recipient.user_id, normalized, recipient.preferred_name, body.trim(), message_type, shift_id, message.sid]
-      );
+      rows.push([group_id, req.user.id, recipient.user_id, normalized,
+        recipient.preferred_name, trimmedBody, message_type, shift_id, message.sid, 'sent', null]);
       results.push({ recipient_id: recipient.user_id, status: 'sent' });
     } catch (smsErr) {
-      // Per-recipient Twilio failure: record and continue (batch semantics — partial success allowed)
       failedCount++;
-      await pool.query(
-        `INSERT INTO sms_messages (group_id, sender_id, recipient_id, recipient_phone, recipient_name, body, message_type, shift_id, status, error_message)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'failed', $9)`,
-        [group_id, req.user.id, recipient.user_id, normalized || recipient.phone, recipient.preferred_name, body.trim(), message_type, shift_id, smsErr.message]
-      );
+      rows.push([group_id, req.user.id, recipient.user_id, normalized || recipient.phone,
+        recipient.preferred_name, trimmedBody, message_type, shift_id, null, 'failed', smsErr.message]);
       results.push({ recipient_id: recipient.user_id, status: 'failed', error_message: smsErr.message });
     }
+  }
+
+  if (rows.length) {
+    const placeholders = rows.map((_, i) => {
+      const b = i * 11;
+      return `($${b+1}, $${b+2}, $${b+3}, $${b+4}, $${b+5}, $${b+6}, $${b+7}, $${b+8}, $${b+9}, $${b+10}, $${b+11})`;
+    }).join(',');
+    await pool.query(
+      `INSERT INTO sms_messages (group_id, sender_id, recipient_id, recipient_phone, recipient_name,
+                                 body, message_type, shift_id, twilio_sid, status, error_message)
+       VALUES ${placeholders}`,
+      rows.flat()
+    );
   }
 
   res.json({ group_id, total: recipientResult.rows.length, sent: sentCount, failed: failedCount, results });

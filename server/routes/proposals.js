@@ -499,14 +499,19 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
 
     const proposal = proposalResult.rows[0];
 
-    // Insert proposal add-ons (Top Shelf has no snapshot, so nothing to insert)
-    if (snapshot) {
-      for (const addon of snapshot.addons) {
-        await dbClient.query(`
-          INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-        `, [proposal.id, addon.id, addon.name, addon.billing_type, addon.rate, addon.quantity, addon.line_total, addon.variant || null]);
-      }
+    // Insert proposal add-ons — single bulk INSERT instead of N round-trips.
+    if (snapshot && snapshot.addons.length) {
+      const placeholders = snapshot.addons.map((_, i) => {
+        const b = i * 8;
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`;
+      }).join(',');
+      const values = snapshot.addons.flatMap(a =>
+        [proposal.id, a.id, a.name, a.billing_type, a.rate, a.quantity, a.line_total, a.variant || null]
+      );
+      await dbClient.query(
+        `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant) VALUES ${placeholders}`,
+        values
+      );
     }
 
     // Log creation
@@ -821,12 +826,19 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
 
     const proposal = proposalResult.rows[0];
 
-    // Insert proposal add-ons
-    for (const addon of snapshot.addons) {
-      await dbClient.query(`
-        INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      `, [proposal.id, addon.id, addon.name, addon.billing_type, addon.rate, addon.quantity, addon.line_total, addon.variant || null]);
+    // Insert proposal add-ons — single bulk INSERT
+    if (snapshot.addons.length) {
+      const placeholders = snapshot.addons.map((_, i) => {
+        const b = i * 8;
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`;
+      }).join(',');
+      const values = snapshot.addons.flatMap(a =>
+        [proposal.id, a.id, a.name, a.billing_type, a.rate, a.quantity, a.line_total, a.variant || null]
+      );
+      await dbClient.query(
+        `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant) VALUES ${placeholders}`,
+        values
+      );
     }
 
     // Log creation
@@ -960,13 +972,20 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       JSON.stringify(adj), tpo ?? null
     ]);
 
-    // Replace proposal add-ons
+    // Replace proposal add-ons — single bulk INSERT
     await dbClient.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [req.params.id]);
-    for (const addon of snapshot.addons) {
-      await dbClient.query(`
-        INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      `, [req.params.id, addon.id, addon.name, addon.billing_type, addon.rate, addon.quantity, addon.line_total, addon.variant || null]);
+    if (snapshot.addons.length) {
+      const placeholders = snapshot.addons.map((_, i) => {
+        const b = i * 8;
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`;
+      }).join(',');
+      const values = snapshot.addons.flatMap(a =>
+        [req.params.id, a.id, a.name, a.billing_type, a.rate, a.quantity, a.line_total, a.variant || null]
+      );
+      await dbClient.query(
+        `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant) VALUES ${placeholders}`,
+        values
+      );
     }
 
     await dbClient.query(

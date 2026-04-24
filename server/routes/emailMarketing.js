@@ -673,32 +673,21 @@ router.post('/campaigns/:id/enroll', auth, requireAdminOrManager, asyncHandler(a
     [req.params.id]
   );
 
-  let enrolled = 0;
-  for (const leadId of lead_ids) {
-    try {
-      if (firstStep.rows[0]) {
-        const { delay_days, delay_hours } = firstStep.rows[0];
-        await pool.query(
-          `INSERT INTO email_sequence_enrollments (campaign_id, lead_id, next_step_due_at)
-           VALUES ($1, $2, NOW() + MAKE_INTERVAL(days => $3, hours => $4))
-           ON CONFLICT (campaign_id, lead_id) DO NOTHING`,
-          [req.params.id, leadId, delay_days, delay_hours]
-        );
-      } else {
-        await pool.query(
-          `INSERT INTO email_sequence_enrollments (campaign_id, lead_id, next_step_due_at)
-           VALUES ($1, $2, NOW())
-           ON CONFLICT (campaign_id, lead_id) DO NOTHING`,
-          [req.params.id, leadId]
-        );
-      }
-      enrolled++;
-    } catch (enrollErr) {
-      console.error(`Error enrolling lead ${leadId}:`, enrollErr);
-    }
-  }
+  // Bulk INSERT: one query for N leads instead of N per-lead round-trips.
+  // Only enroll lead IDs that actually exist (guards against stale client state).
+  const delay_days = firstStep.rows[0]?.delay_days ?? 0;
+  const delay_hours = firstStep.rows[0]?.delay_hours ?? 0;
 
-  res.json({ enrolled });
+  const bulkResult = await pool.query(
+    `INSERT INTO email_sequence_enrollments (campaign_id, lead_id, next_step_due_at)
+     SELECT $1, id, NOW() + MAKE_INTERVAL(days => $2, hours => $3)
+     FROM email_leads WHERE id = ANY($4)
+     ON CONFLICT (campaign_id, lead_id) DO NOTHING
+     RETURNING id`,
+    [req.params.id, delay_days, delay_hours, lead_ids]
+  );
+
+  res.json({ enrolled: bulkResult.rowCount });
 }));
 
 /** GET /campaigns/:id/enrollments — list enrollments */
