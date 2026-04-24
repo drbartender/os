@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ClientAuthProvider } from './context/ClientAuthContext';
 import { ToastProvider } from './context/ToastContext';
+import { UserPrefsProvider } from './context/UserPrefsContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import ScrollToTop from './components/ScrollToTop';
 import SessionExpiryHandler from './components/SessionExpiryHandler';
@@ -368,13 +369,15 @@ export default function App() {
     <ErrorBoundary>
       <ToastProvider>
         <AuthProvider>
-          <ClientAuthProvider>
-            <BrowserRouter>
-              <ScrollToTop />
-              <SessionExpiryHandler />
-              <AppRoutes />
-            </BrowserRouter>
-          </ClientAuthProvider>
+          <UserPrefsProvider>
+            <ClientAuthProvider>
+              <BrowserRouter>
+                <ScrollToTop />
+                <SessionExpiryHandler />
+                <AppRoutes />
+              </BrowserRouter>
+            </ClientAuthProvider>
+          </UserPrefsProvider>
         </AuthProvider>
       </ToastProvider>
     </ErrorBoundary>
