@@ -59,12 +59,15 @@ export function UserPrefsProvider({ children }) {
 
   useEffect(() => {
     setPrefs(load(user));
+    // user object identity churns each render; key off user.id only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   useEffect(() => {
     const key = storageKey(user);
     if (!key) return;
     try { localStorage.setItem(key, JSON.stringify(prefs)); } catch { /* quota etc. */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefs, user?.id]);
 
   // Apply prefs to <html> as data attributes and HSL custom properties.
