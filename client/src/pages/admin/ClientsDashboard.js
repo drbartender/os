@@ -1,20 +1,37 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../../utils/api';
 import { formatPhone, formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import useFormValidation from '../../hooks/useFormValidation';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
+import Icon from '../../components/adminos/Icon';
+import StatusChip from '../../components/adminos/StatusChip';
+import Toolbar from '../../components/adminos/Toolbar';
+import useDrawerParam from '../../hooks/useDrawerParam';
+import ClientDrawer from '../../components/adminos/drawers/ClientDrawer';
+import { fmt$, fmtDate } from '../../components/adminos/format';
 
-const SOURCE_LABELS = { direct: 'Direct', thumbtack: 'Thumbtack', referral: 'Referral', website: 'Website' };
+const SOURCE = {
+  direct:    { label: 'Direct',    kind: 'neutral' },
+  thumbtack: { label: 'Thumbtack', kind: 'info' },
+  referral:  { label: 'Referral',  kind: 'ok' },
+  website:   { label: 'Website',   kind: 'accent' },
+  instagram: { label: 'Instagram', kind: 'violet' },
+};
+
+function initialsOf(name) {
+  if (!name) return '?';
+  return name.split(/\s+/).map(s => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+}
 
 export default function ClientsDashboard() {
-  const navigate = useNavigate();
   const toast = useToast();
+  const drawer = useDrawerParam();
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState('recent');
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', phone: '', source: 'direct' });
@@ -24,14 +41,14 @@ export default function ClientsDashboard() {
 
   const fetchClients = useCallback(async () => {
     try {
-      const params = {};
-      if (search) params.search = search;
-      const res = await api.get('/clients', { params });
-      setClients(res.data);
+      const res = await api.get('/clients');
+      setClients(res.data || []);
     } catch (err) {
       toast.error('Failed to load clients. Try refreshing.');
-    } finally { setLoading(false); }
-  }, [search, toast]);
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
 
   useEffect(() => { fetchClients(); }, [fetchClients]);
 
@@ -61,45 +78,59 @@ export default function ClientsDashboard() {
     } catch (err) {
       setError(err.message || 'Failed to add client. Please try again.');
       setFieldErrors(err.fieldErrors || {});
-    } finally { setCreating(false); }
+    } finally {
+      setCreating(false);
+    }
   };
 
-  const formatDate = (d) => {
-    if (!d) return '—';
-    return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  };
+  const filtered = useMemo(() => {
+    const list = clients.filter(c => {
+      if (!search) return true;
+      const q = search.toLowerCase();
+      const fields = [c.name, c.email, c.phone].filter(Boolean).join(' ').toLowerCase();
+      return fields.includes(q);
+    });
+    return list.sort((a, b) => {
+      if (sort === 'ltv') return Number(b.lifetime_value || 0) - Number(a.lifetime_value || 0);
+      if (sort === 'name') return (a.name || '').localeCompare(b.name || '');
+      // default 'recent'
+      return String(b.created_at || '').localeCompare(String(a.created_at || ''));
+    });
+  }, [clients, search, sort]);
 
   return (
-    <div className="page-container wide">
-      <div className="flex-between mb-2">
+    <div className="page">
+      <div className="page-header">
         <div>
-          <h1 style={{ fontFamily: 'var(--font-display)', marginBottom: '0.2rem' }}>Clients</h1>
-          <p className="text-muted text-small">Client relationships and lead management</p>
+          <div className="page-title">Clients</div>
+          <div className="page-subtitle">Relationships and lifetime value across all events.</div>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowCreate(!showCreate)}>
-          {showCreate ? 'Cancel' : '+ New Client'}
-        </button>
+        <div className="page-actions">
+          <button type="button" className="btn btn-primary" onClick={() => setShowCreate(v => !v)}>
+            <Icon name={showCreate ? 'x' : 'plus'} />{showCreate ? 'Cancel' : 'New client'}
+          </button>
+        </div>
       </div>
 
       {showCreate && (
-        <div className="card mb-2">
-          <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '1rem' }}>Add New Client</h3>
+        <div className="card" style={{ padding: '1.25rem 1.5rem', marginBottom: 'var(--gap)' }}>
+          <div className="section-title" style={{ margin: 0, marginBottom: 12 }}>New client</div>
           <form onSubmit={handleCreate}>
-            <div className="two-col" style={{ gap: '1rem' }}>
-              <div className={"form-group" + fieldClass('name')}>
-                <label className="form-label">Name *</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '0.85rem' }}>
+              <div className={fieldClass('name')}>
+                <div className="meta-k" style={{ marginBottom: 4 }}>Name *</div>
                 <input
-                  className={"form-input" + inputClass('name')}
+                  className={'input' + inputClass('name')}
                   value={form.name}
                   onChange={e => { setForm(f => ({ ...f, name: e.target.value })); clearField('name'); clearServerFieldError('name'); }}
                   aria-invalid={!!fieldErrors?.name}
                 />
                 <FieldError error={fieldErrors?.name} />
               </div>
-              <div className="form-group">
-                <label className="form-label">Email</label>
+              <div>
+                <div className="meta-k" style={{ marginBottom: 4 }}>Email</div>
                 <input
-                  className="form-input"
+                  className="input"
                   type="email"
                   value={form.email}
                   onChange={e => { setForm(f => ({ ...f, email: e.target.value })); clearServerFieldError('email'); }}
@@ -107,10 +138,10 @@ export default function ClientsDashboard() {
                 />
                 <FieldError error={fieldErrors?.email} />
               </div>
-              <div className="form-group">
-                <label className="form-label">Phone</label>
+              <div>
+                <div className="meta-k" style={{ marginBottom: 4 }}>Phone</div>
                 <input
-                  className="form-input"
+                  className="input"
                   type="tel"
                   value={formatPhoneInput(form.phone)}
                   onChange={e => { setForm(f => ({ ...f, phone: stripPhone(e.target.value) })); clearServerFieldError('phone'); }}
@@ -118,69 +149,105 @@ export default function ClientsDashboard() {
                 />
                 <FieldError error={fieldErrors?.phone} />
               </div>
-              <div className="form-group">
-                <label className="form-label">Source</label>
+              <div>
+                <div className="meta-k" style={{ marginBottom: 4 }}>Source</div>
                 <select
-                  className="form-select"
+                  className="select"
                   value={form.source}
                   onChange={e => { setForm(f => ({ ...f, source: e.target.value })); clearServerFieldError('source'); }}
-                  aria-invalid={!!fieldErrors?.source}
                 >
-                  {Object.entries(SOURCE_LABELS).map(([val, label]) => <option key={val} value={val}>{label}</option>)}
+                  {Object.entries(SOURCE).map(([val, cfg]) => <option key={val} value={val}>{cfg.label}</option>)}
                 </select>
                 <FieldError error={fieldErrors?.source} />
               </div>
             </div>
             <FormBanner error={error} fieldErrors={fieldErrors} />
-            <button className="btn mt-1" type="submit" disabled={creating}>
-              {creating ? 'Adding...' : 'Add Client'}
-            </button>
+            <div className="hstack" style={{ marginTop: 14, gap: 8 }}>
+              <button type="submit" className="btn btn-primary" disabled={creating}>
+                {creating ? 'Adding…' : 'Add client'}
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => { setShowCreate(false); setForm({ name: '', email: '', phone: '', source: 'direct' }); setError(''); setFieldErrors({}); }}>
+                Cancel
+              </button>
+            </div>
           </form>
         </div>
       )}
 
-      <div className="flex gap-1 mb-2" style={{ flexWrap: 'wrap' }}>
-        <input
-          className="form-input"
-          style={{ maxWidth: '280px' }}
-          placeholder="Search by name, email, or phone..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      <Toolbar
+        search={search}
+        setSearch={setSearch}
+        filters={(
+          <select className="select" value={sort} onChange={e => setSort(e.target.value)} style={{ minWidth: 180 }}>
+            <option value="recent">Sort · Recently added</option>
+            <option value="ltv">Sort · Lifetime value</option>
+            <option value="name">Sort · Name</option>
+          </select>
+        )}
+      />
+
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Contact</th>
+                <th>Source</th>
+                <th>Added</th>
+                <th className="num">Events</th>
+                <th className="num">Lifetime value</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {loading && (<tr><td colSpan={7} className="muted">Loading…</td></tr>)}
+              {!loading && filtered.length === 0 && (
+                <tr><td colSpan={7} className="muted">No clients match this search.</td></tr>
+              )}
+              {!loading && filtered.map(c => {
+                const src = SOURCE[c.source] || { label: c.source || '—', kind: 'neutral' };
+                return (
+                  <tr key={c.id} onClick={() => drawer.open('client', c.id)}>
+                    <td>
+                      <div className="hstack">
+                        <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{initialsOf(c.name)}</div>
+                        <strong>{c.name}</strong>
+                      </div>
+                    </td>
+                    <td>
+                      {c.email && <div>{c.email}</div>}
+                      {c.phone && <div className="sub">{formatPhone(c.phone)}</div>}
+                      {!c.email && !c.phone && <span className="muted">—</span>}
+                    </td>
+                    <td><StatusChip kind={src.kind}>{src.label}</StatusChip></td>
+                    <td className="muted">{fmtDate(c.created_at && String(c.created_at).slice(0, 10), { year: 'numeric' })}</td>
+                    <td className="num">{c.events_count != null ? c.events_count : '—'}</td>
+                    <td className="num"><strong>{c.lifetime_value != null ? fmt$(c.lifetime_value) : '—'}</strong></td>
+                    <td className="shrink">
+                      <button type="button" className="icon-btn" onClick={(e) => e.stopPropagation()} title="More">
+                        <Icon name="kebab" size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: '2rem' }}><div className="spinner" /></div>
-      ) : clients.length === 0 ? (
-        <div className="card" style={{ textAlign: 'center' }}>
-          <p className="text-muted">No clients yet. Add one to get started!</p>
-        </div>
-      ) : (
-        <div className="table-wrap">
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Email</th>
-              <th>Phone</th>
-              <th>Source</th>
-              <th>Added</th>
-            </tr>
-          </thead>
-          <tbody>
-            {clients.map(c => (
-              <tr key={c.id} onClick={() => navigate(`/admin/clients/${c.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/clients/${c.id}`)} tabIndex={0} role="link" style={{ cursor: 'pointer' }}>
-                <td><strong>{c.name}</strong></td>
-                <td>{c.email || '—'}</td>
-                <td>{formatPhone(c.phone)}</td>
-                <td>{SOURCE_LABELS[c.source] || c.source}</td>
-                <td>{formatDate(c.created_at)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {!loading && (
+        <div className="tiny muted" style={{ padding: '8px 2px' }}>
+          {filtered.length} {filtered.length === 1 ? 'client' : 'clients'} · Click a row to peek
         </div>
       )}
+
+      <ClientDrawer
+        id={drawer.kind === 'client' ? drawer.id : null}
+        open={drawer.kind === 'client'}
+        onClose={drawer.close}
+      />
     </div>
   );
 }
