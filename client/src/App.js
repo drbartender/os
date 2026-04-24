@@ -45,6 +45,7 @@ const StaffResources = lazy(() => import('./pages/staff/StaffResources'));
 const StaffProfile = lazy(() => import('./pages/staff/StaffProfile'));
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
 const AdminUserDetail = lazy(() => import('./pages/AdminUserDetail'));
 const AdminApplicationDetail = lazy(() => import('./pages/AdminApplicationDetail'));
 const EventsDashboard = lazy(() => import('./pages/admin/EventsDashboard'));
@@ -328,7 +329,8 @@ function AppRoutes() {
       <Route path="/admin" element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}>
         <Route index element={<Navigate to="dashboard" replace />} />
         <Route path="dashboard" element={<Dashboard />} />
-        <Route path="staffing" element={<AdminDashboard />} />
+        <Route path="staffing" element={<AdminStaffDashboard />} />
+        <Route path="staffing/legacy" element={<AdminDashboard />} />
         <Route path="staffing/users/:id" element={<AdminUserDetail />} />
         <Route path="staffing/applications/:id" element={<AdminApplicationDetail />} />
         <Route path="hiring" element={<HiringDashboard />} />
