@@ -90,6 +90,16 @@ const allowedOrigins = [
   'https://staff.drbartender.com',
 ].filter(Boolean);
 
+// In development, allow any http://localhost:<port> so the dev server can run
+// on alternate ports (e.g. 3010 when 3000 is taken by another project) without
+// editing this allowlist each time.
+const isDev = process.env.NODE_ENV !== 'production';
+const isAllowedOrigin = (origin) => {
+  if (allowedOrigins.includes(origin)) return true;
+  if (isDev && /^https?:\/\/localhost(:\d+)?$/.test(origin)) return true;
+  return false;
+};
+
 // CORS: browsers send an Origin header; we enforce an allowlist for those.
 // Server-to-server callers (Stripe/Resend/Thumbtack webhooks, Render's health probe,
 // uptime pingers) send no Origin header — they authenticate via their own signature/secret,
@@ -100,7 +110,7 @@ app.use(cors((req, callback) => {
   }
   callback(null, {
     origin: (origin, cb) => {
-      if (allowedOrigins.includes(origin)) return cb(null, true);
+      if (isAllowedOrigin(origin)) return cb(null, true);
       cb(new Error('Not allowed by CORS'));
     },
     credentials: true,
