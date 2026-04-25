@@ -163,7 +163,9 @@ dr-bartender/
 │   │   │   │   ├── FinancialsDashboard.js
 │   │   │   │   ├── HiringDashboard.js
 │   │   │   │   ├── ProposalCreate.js
-│   │   │   │   ├── ProposalDetail.js
+│   │   │   │   ├── ProposalDetail.js              # Lean container (identity bar, two-col layout, drink plan, notes, activity)
+│   │   │   │   ├── ProposalDetailEditForm.js      # Edit-mode sibling: client/event/package/addons/syrups/adjustments/override + dirty guard
+│   │   │   │   ├── ProposalDetailPaymentPanel.js  # Payment sibling: invoices, balance due date, charge balance, payment link, record payment
 │   │   │   │   ├── ProposalsDashboard.js
 │   │   │   │   ├── SettingsDashboard.js
 │   │   │   │   ├── ShiftDetail.js               # Admin shift detail view (requests, assignments, SMS)
