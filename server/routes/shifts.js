@@ -377,7 +377,8 @@ router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
           client_name, client_email, client_phone, guest_count, event_duration_hours } = req.body;
   const result = await pool.query(`
     UPDATE shifts SET
-      event_type = $1, event_type_custom = $2, event_date = $3,
+      event_type = $1, event_type_custom = $2,
+      event_date = COALESCE($3, event_date),
       start_time = $4, end_time = $5, location = $6,
       positions_needed = $7, notes = $8,
       status = COALESCE($9, status),
@@ -392,7 +393,7 @@ router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
       event_duration_hours = COALESCE($20, event_duration_hours)
     WHERE id = $14 RETURNING *
   `, [
-    event_type || null, event_type_custom || null, event_date,
+    event_type || null, event_type_custom || null, event_date || null,
     start_time || null, end_time || null,
     location || null,
     positions_needed ? JSON.stringify(positions_needed) : '[]',
