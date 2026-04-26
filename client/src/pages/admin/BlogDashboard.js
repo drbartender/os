@@ -1,15 +1,15 @@
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import api, { API_BASE_URL } from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
-
-// TipTap is ~200 KB; load it only when the editor actually mounts so visiting
-// the blog list (the more common path) doesn't pull the editor chunk.
-const RichTextEditor = lazy(() => import('../../components/RichTextEditor'));
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmtDate } from '../../components/adminos/format';
+
+// TipTap is ~200 KB; load it only when the editor actually mounts so visiting
+// the blog list (the more common path) doesn't pull the editor chunk.
+const RichTextEditor = lazy(() => import('../../components/RichTextEditor'));
 
 function resolveImageUrl(url) {
   if (!url) return url;
