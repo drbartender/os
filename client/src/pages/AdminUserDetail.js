@@ -10,20 +10,29 @@ import Icon from '../components/adminos/Icon';
 import StatusChip from '../components/adminos/StatusChip';
 import { fmt$, fmtDate, fmtDateFull, relDay } from '../components/adminos/format';
 
-// Until per-staff hourly rate + a payouts ledger exist in the schema, YTD
-// earnings is an estimate: `(past shifts this calendar year) × DEFAULT_HOURS
-// × DEFAULT_HOURLY`. Once those tables land, swap this for the real sum.
+// YTD earnings estimate: `(past shifts this calendar year) × DEFAULT_HOURS ×
+// hourly_rate`. Hourly rate comes from contractor_profiles.hourly_rate (default
+// $20/hr in the schema, admin-editable on the Payouts tab). Once a payouts
+// ledger lands we'll swap this rough estimate for the real sum.
 const DEFAULT_HOURS_PER_SHIFT = 4;
-const DEFAULT_HOURLY_RATE = 40;
+const DEFAULT_HOURLY_RATE = 20;
 
-function computeYtdEstEarnings(pastEvents) {
+function rateOf(profile) {
+  const r = Number(profile?.hourly_rate);
+  return Number.isFinite(r) && r > 0 ? r : DEFAULT_HOURLY_RATE;
+}
+
+function ytdShiftCount(pastEvents) {
   const yr = new Date().getFullYear();
-  const ytdCount = (pastEvents || []).filter(ev => {
+  return (pastEvents || []).filter(ev => {
     if (!ev.event_date) return false;
     const d = new Date(String(ev.event_date).slice(0, 10) + 'T12:00:00');
     return !Number.isNaN(d.getTime()) && d.getFullYear() === yr;
   }).length;
-  return ytdCount * DEFAULT_HOURS_PER_SHIFT * DEFAULT_HOURLY_RATE;
+}
+
+function computeYtdEstEarnings(pastEvents, profile) {
+  return ytdShiftCount(pastEvents) * DEFAULT_HOURS_PER_SHIFT * rateOf(profile);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -254,6 +263,7 @@ export default function AdminUserDetail() {
       payment_username: pay.payment_username || '',
       routing_number: pay.routing_number || '',
       account_number: pay.account_number || '',
+      hourly_rate: p.hourly_rate != null ? String(p.hourly_rate) : '',
     });
     setProfileError('');
     setProfileFieldErrors({});
@@ -324,7 +334,9 @@ export default function AdminUserDetail() {
   const upcomingEvents = events?.upcoming || [];
   const pastEvents = events?.past || [];
   const totalShifts = upcomingEvents.length + pastEvents.length;
-  const ytdEarningsEst = computeYtdEstEarnings(pastEvents);
+  const ytdEarningsEst = computeYtdEstEarnings(pastEvents, profile);
+  const hourlyRate = rateOf(profile);
+  const ytdShifts = ytdShiftCount(pastEvents);
 
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
@@ -421,7 +433,7 @@ export default function AdminUserDetail() {
             <div className="stat-label">YTD earnings · est.</div>
             <div className="stat-value" style={{ color: 'hsl(var(--ok-h) var(--ok-s) 52%)' }}>{fmt$(ytdEarningsEst)}</div>
             <div className="stat-sub">
-              <span>{pastEvents.filter(ev => ev.event_date && new Date(String(ev.event_date).slice(0,10)+'T12:00:00').getFullYear() === new Date().getFullYear()).length} shifts × {DEFAULT_HOURS_PER_SHIFT}hr × ${DEFAULT_HOURLY_RATE}/hr</span>
+              <span>{ytdShifts} shifts × {DEFAULT_HOURS_PER_SHIFT}hr × ${hourlyRate}/hr</span>
             </div>
           </div>
         </div>
@@ -473,6 +485,7 @@ export default function AdminUserDetail() {
 
       {tab === 'payouts' && (
         <PayoutsTab
+          profile={profile}
           payment={payment}
           seniority={seniority}
           seniorityLoading={seniorityLoading}
@@ -1057,10 +1070,11 @@ function CertificationsTab({ profile, application, downloadFile }) {
 
 function PayoutsTab(props) {
   const {
-    payment, seniority, seniorityLoading,
+    profile, payment, seniority, seniorityLoading,
     seniorityForm, setSeniorityForm, saveSeniority, senioritySaving, seniorityError, seniorityFieldErrors,
     editing, editForm, setEditForm, startEditing, cancelEditing, saveProfile, saving, profileError, profileFieldErrors,
   } = props;
+  const currentRate = rateOf(profile);
 
   const updateField = (k, v) => setEditForm(f => ({ ...f, [k]: v }));
   const w9 = !!payment?.w9_file_url;
@@ -1153,7 +1167,7 @@ function PayoutsTab(props) {
       {/* Sidebar */}
       <div className="vstack" style={{ gap: 'var(--gap)' }}>
         <div className="card">
-          <div className="card-head"><h3>Payout method</h3>
+          <div className="card-head"><h3>Compensation</h3>
             {editing ? (
               <div className="hstack" style={{ gap: 4 }}>
                 <button type="button" className="btn btn-ghost btn-sm" disabled={saving} onClick={cancelEditing}>Cancel</button>
@@ -1172,7 +1186,26 @@ function PayoutsTab(props) {
               <div className="vstack" style={{ gap: 10 }}>
                 <FormBanner error={profileError} fieldErrors={profileFieldErrors} />
                 <div>
-                  <div className="meta-k" style={{ marginBottom: 4 }}>Method</div>
+                  <div className="meta-k" style={{ marginBottom: 4 }}>Hourly rate</div>
+                  <div className="input-group" style={{ padding: '0 10px' }}>
+                    <span className="tiny" style={{ color: 'var(--ink-3)' }}>$</span>
+                    <input
+                      className="num"
+                      type="number"
+                      min="0"
+                      max="1000"
+                      step="0.5"
+                      value={editForm.hourly_rate}
+                      onChange={(e) => updateField('hourly_rate', e.target.value)}
+                      style={{ flex: 1, textAlign: 'right' }}
+                    />
+                    <span className="tiny" style={{ color: 'var(--ink-3)' }}>/hr</span>
+                  </div>
+                  <FieldError error={profileFieldErrors?.hourly_rate} />
+                  <div className="tiny muted" style={{ marginTop: 3 }}>Defaults to $20/hr for new contractors.</div>
+                </div>
+                <div>
+                  <div className="meta-k" style={{ marginBottom: 4 }}>Payout method</div>
                   <select className="select" value={editForm.preferred_payment_method} onChange={(e) => updateField('preferred_payment_method', e.target.value)}>
                     <option value="">—</option>
                     {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
@@ -1191,26 +1224,31 @@ function PayoutsTab(props) {
                   <input className="input" value={editForm.account_number} onChange={(e) => updateField('account_number', e.target.value)} />
                 </div>
               </div>
-            ) : payment?.preferred_payment_method ? (
+            ) : (
               <div className="vstack" style={{ gap: 10 }}>
-                <div className="hstack" style={{ padding: '10px 12px', background: 'var(--bg-2)', borderRadius: 3, border: '1px solid var(--line-1)' }}>
-                  <Icon name="dollar" size={14} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <strong style={{ fontSize: 12.5 }}>{payment.preferred_payment_method}</strong>
-                    <div className="tiny muted">{payment.payment_username || (payment.account_number ? `Account ··· ${String(payment.account_number).slice(-4)}` : 'Not configured')}</div>
+                <dl className="dl">
+                  <dt>Hourly rate</dt>
+                  <dd className="num"><strong>{fmt$(currentRate)}</strong>/hr</dd>
+                  <dt>Tip share</dt>
+                  <dd className="muted">Pooled · 1.0×</dd>
+                </dl>
+                {payment?.preferred_payment_method ? (
+                  <div className="hstack" style={{ padding: '10px 12px', background: 'var(--bg-2)', borderRadius: 3, border: '1px solid var(--line-1)' }}>
+                    <Icon name="dollar" size={14} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <strong style={{ fontSize: 12.5 }}>{payment.preferred_payment_method}</strong>
+                      <div className="tiny muted">{payment.payment_username || (payment.account_number ? `Account ··· ${String(payment.account_number).slice(-4)}` : 'Not configured')}</div>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="hstack">
+                    <StatusChip kind="warn">Payout method not configured</StatusChip>
+                  </div>
+                )}
                 <dl className="dl">
                   <dt>W-9</dt>
                   <dd>{w9 ? <StatusChip kind="ok">On file</StatusChip> : <StatusChip kind="danger">Missing</StatusChip>}</dd>
                 </dl>
-              </div>
-            ) : (
-              <div className="vstack" style={{ gap: 8 }}>
-                <StatusChip kind="warn">Not configured</StatusChip>
-                <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'flex-start' }} onClick={startEditing}>
-                  <Icon name="plus" size={11} />Configure payout method
-                </button>
               </div>
             )}
           </div>

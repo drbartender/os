@@ -255,7 +255,19 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
     equipment_none_but_open, equipment_no_space, equipment_will_pickup,
     emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
     preferred_payment_method, payment_username, routing_number, account_number,
+    hourly_rate,
   } = req.body;
+
+  // hourly_rate is optional in the payload — when omitted we leave the column
+  // alone (COALESCE keeps the existing value, defaulting to $20 on first insert).
+  let rate = null;
+  if (hourly_rate !== undefined && hourly_rate !== null && hourly_rate !== '') {
+    const n = Number(hourly_rate);
+    if (!Number.isFinite(n) || n < 0 || n > 1000) {
+      throw new ValidationError({ hourly_rate: 'Hourly rate must be between $0 and $1000.' });
+    }
+    rate = n;
+  }
 
   // Upsert contractor profile
   await pool.query(`
@@ -264,14 +276,16 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
       city, state, street_address, zip_code, travel_distance, reliable_transportation,
       equipment_portable_bar, equipment_cooler, equipment_table_with_spandex,
       equipment_none_but_open, equipment_no_space, equipment_will_pickup,
-      emergency_contact_name, emergency_contact_phone, emergency_contact_relationship
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+      emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
+      hourly_rate
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,COALESCE($23, 20.00))
     ON CONFLICT (user_id) DO UPDATE SET
       preferred_name=$2, phone=$3, email=$4, birth_month=$5, birth_day=$6, birth_year=$7,
       city=$8, state=$9, street_address=$10, zip_code=$11, travel_distance=$12, reliable_transportation=$13,
       equipment_portable_bar=$14, equipment_cooler=$15, equipment_table_with_spandex=$16,
       equipment_none_but_open=$17, equipment_no_space=$18, equipment_will_pickup=$19,
-      emergency_contact_name=$20, emergency_contact_phone=$21, emergency_contact_relationship=$22
+      emergency_contact_name=$20, emergency_contact_phone=$21, emergency_contact_relationship=$22,
+      hourly_rate=COALESCE($23, contractor_profiles.hourly_rate)
   `, [
     userId, preferred_name || null, phone || null, profileEmail || null,
     birth_month || null, birth_day || null, birth_year || null,
@@ -280,6 +294,7 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
     equipment_portable_bar || false, equipment_cooler || false, equipment_table_with_spandex || false,
     equipment_none_but_open || false, equipment_no_space || false, equipment_will_pickup || false,
     emergency_contact_name || null, emergency_contact_phone || null, emergency_contact_relationship || null,
+    rate,
   ]);
 
   // Geocode address in background (fire-and-forget; failures logged only)

@@ -74,6 +74,10 @@ ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS emergency_contact_phone
 ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS emergency_contact_relationship VARCHAR(100);
 ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS headshot_file_url VARCHAR(500);
 ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS headshot_filename VARCHAR(255);
+-- Per-contractor hourly pay rate. Defaults to $20/hr; admin-editable on the
+-- staff detail page (Payouts tab). Used for YTD-earnings rollups and future
+-- payout-period generation.
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(6,2) NOT NULL DEFAULT 20.00;
 
 CREATE TABLE IF NOT EXISTS agreements (
   id SERIAL PRIMARY KEY,
