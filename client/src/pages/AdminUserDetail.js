@@ -8,7 +8,23 @@ import FieldError from '../components/FieldError';
 import { getEventTypeLabel } from '../utils/eventTypes';
 import Icon from '../components/adminos/Icon';
 import StatusChip from '../components/adminos/StatusChip';
-import { fmtDate, fmtDateFull, relDay } from '../components/adminos/format';
+import { fmt$, fmtDate, fmtDateFull, relDay } from '../components/adminos/format';
+
+// Until per-staff hourly rate + a payouts ledger exist in the schema, YTD
+// earnings is an estimate: `(past shifts this calendar year) × DEFAULT_HOURS
+// × DEFAULT_HOURLY`. Once those tables land, swap this for the real sum.
+const DEFAULT_HOURS_PER_SHIFT = 4;
+const DEFAULT_HOURLY_RATE = 40;
+
+function computeYtdEstEarnings(pastEvents) {
+  const yr = new Date().getFullYear();
+  const ytdCount = (pastEvents || []).filter(ev => {
+    if (!ev.event_date) return false;
+    const d = new Date(String(ev.event_date).slice(0, 10) + 'T12:00:00');
+    return !Number.isNaN(d.getTime()) && d.getFullYear() === yr;
+  }).length;
+  return ytdCount * DEFAULT_HOURS_PER_SHIFT * DEFAULT_HOURLY_RATE;
+}
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -16,26 +32,6 @@ function initialsOf(name, email) {
   const src = (name || email || '?').trim();
   return src.split(/\s+/).map(s => s[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
 }
-
-function tenureLabel(hireIso) {
-  if (!hireIso) return '—';
-  const d = new Date(String(hireIso).slice(0, 10) + 'T12:00:00');
-  if (Number.isNaN(d.getTime())) return '—';
-  const months = Math.max(1, Math.round((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24 * 30.4)));
-  return months >= 12 ? `${(months / 12).toFixed(1)} yr` : `${months} mo`;
-}
-
-const STEP_LABELS = {
-  account_created: 'Account Created',
-  welcome_viewed: 'Welcome Viewed',
-  field_guide_completed: 'Field Guide',
-  agreement_completed: 'Agreement Signed',
-  contractor_profile_completed: 'Contractor Profile',
-  payday_protocols_completed: 'Payday Protocols',
-  onboarding_completed: 'Onboarding Complete',
-};
-
-const ONBOARDING_STEPS = Object.keys(STEP_LABELS);
 
 const PAYMENT_METHODS = ['Zelle', 'Venmo', 'CashApp', 'PayPal', 'Direct Deposit'];
 
@@ -328,7 +324,7 @@ export default function AdminUserDetail() {
   const upcomingEvents = events?.upcoming || [];
   const pastEvents = events?.past || [];
   const totalShifts = upcomingEvents.length + pastEvents.length;
-  const onboardingDone = ONBOARDING_STEPS.filter(s => progress?.[s]).length;
+  const ytdEarningsEst = computeYtdEstEarnings(pastEvents);
 
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
@@ -415,16 +411,18 @@ export default function AdminUserDetail() {
             <div className="stat-value">{totalShifts}</div>
           </div>
           <div className="stat">
-            <div className="stat-label">Tenure</div>
-            <div className="stat-value" style={{ fontSize: 20 }}>{tenureLabel(seniority?.hire_date)}</div>
-          </div>
-          <div className="stat">
             <div className="stat-label">Seniority</div>
             <div className="stat-value">{seniority?.computed_score ?? '—'}</div>
+            <div className="stat-sub">
+              <span>{seniority?.tenure_months ? `${seniority.tenure_months}mo tenure · ` : ''}{seniority?.events_worked ?? 0} events worked</span>
+            </div>
           </div>
           <div className="stat">
-            <div className="stat-label">Onboarding</div>
-            <div className="stat-value" style={{ fontSize: 20 }}>{onboardingDone}/{ONBOARDING_STEPS.length}</div>
+            <div className="stat-label">YTD earnings · est.</div>
+            <div className="stat-value" style={{ color: 'hsl(var(--ok-h) var(--ok-s) 52%)' }}>{fmt$(ytdEarningsEst)}</div>
+            <div className="stat-sub">
+              <span>{pastEvents.filter(ev => ev.event_date && new Date(String(ev.event_date).slice(0,10)+'T12:00:00').getFullYear() === new Date().getFullYear()).length} shifts × {DEFAULT_HOURS_PER_SHIFT}hr × ${DEFAULT_HOURLY_RATE}/hr</span>
+            </div>
           </div>
         </div>
       </div>
@@ -447,7 +445,6 @@ export default function AdminUserDetail() {
         <OverviewTab
           user={user}
           profile={profile}
-          progress={progress}
           upcoming={upcomingEvents}
           recent={pastEvents.slice(0, 4)}
           eventsLoading={eventsLoading}
@@ -560,7 +557,7 @@ export default function AdminUserDetail() {
 
 function OverviewTab(props) {
   const {
-    user, profile, progress, upcoming, recent, eventsLoading,
+    user, profile, upcoming, recent, eventsLoading,
     editing, editForm, setEditForm, startEditing, cancelEditing,
     saveProfile, saving, profileError, profileFieldErrors,
     permsSaving, updatePermission, navigate,
@@ -794,22 +791,6 @@ function OverviewTab(props) {
           <div className="card-head"><h3>Equipment</h3></div>
           <div className="card-body">
             <EquipmentDisplay profile={profile} editing={editing} editForm={editForm} updateField={updateField} />
-          </div>
-        </div>
-
-        {/* Onboarding progress */}
-        <div className="card">
-          <div className="card-head"><h3>Onboarding</h3><span className="muted tiny">{ONBOARDING_STEPS.filter(s => progress?.[s]).length}/{ONBOARDING_STEPS.length}</span></div>
-          <div className="card-body vstack" style={{ gap: 6 }}>
-            {ONBOARDING_STEPS.map(step => {
-              const done = !!progress?.[step];
-              return (
-                <div key={step} className="hstack" style={{ fontSize: 12.5 }}>
-                  <Icon name={done ? 'check' : 'clock'} size={11} style={{ color: done ? 'hsl(var(--ok-h) var(--ok-s) 52%)' : 'var(--ink-4)' }} />
-                  <span style={{ color: done ? 'var(--ink-1)' : 'var(--ink-3)' }}>{STEP_LABELS[step]}</span>
-                </div>
-              );
-            })}
           </div>
         </div>
 
