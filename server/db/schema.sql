@@ -729,7 +729,7 @@ CREATE TABLE IF NOT EXISTS proposals (
   pricing_snapshot JSONB NOT NULL DEFAULT '{}',
   total_price NUMERIC(10,2),
   status VARCHAR(30) DEFAULT 'draft'
-    CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','confirmed')),
+    CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed','cancelled')),
   last_viewed_at TIMESTAMPTZ,
   view_count INTEGER DEFAULT 0,
   admin_notes TEXT,
@@ -983,10 +983,12 @@ CREATE INDEX IF NOT EXISTS idx_shifts_auto_assign ON shifts(event_date, auto_ass
 -- Setup time (default 1 hour before event start)
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS setup_minutes_before INTEGER DEFAULT 60;
 
--- Add 'completed' to proposal status
+-- Add 'completed' and 'cancelled' to proposal status. 'cancelled' is for archiving
+-- duplicate or abandoned proposals so they vanish from the dashboard tabs without
+-- losing audit trail (see Julia Neave 6-dupe incident, 2026-04).
 ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_status_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
-  CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed'));
+  CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed','cancelled'));
 
 -- Feedback tracking (fields only, feature built later)
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS feedback_request_sent_at TIMESTAMPTZ;
