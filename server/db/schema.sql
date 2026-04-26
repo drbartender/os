@@ -1082,7 +1082,7 @@ CREATE TABLE IF NOT EXISTS email_leads (
   event_type VARCHAR(100),
   location VARCHAR(255),
   lead_source VARCHAR(100) DEFAULT 'manual'
-    CHECK (lead_source IN ('manual','csv_import','website','thumbtack','referral','instagram','facebook','google','other')),
+    CHECK (lead_source IN ('manual','csv_import','website','quote_wizard','potion_lab','thumbtack','referral','instagram','facebook','google','other')),
   notes TEXT,
   status VARCHAR(30) DEFAULT 'active'
     CHECK (status IN ('active','unsubscribed','bounced','complained')),
@@ -1691,3 +1691,47 @@ UPDATE service_addons
 SET description = 'Non-alcoholic beer from Athletic Brewing: Upside Dawn (golden ale) and Free Wave Hazy IPA. Two varieties, served chilled at the bar.'
 WHERE slug = 'non-alcoholic-beer'
   AND description = 'Non-alcoholic beer from Athletic Brewing — crisp, refreshing, and endorsed by the doctor.';
+
+-- ─── Sentry hardening: proposals.sent_at / accepted_at ────────────
+-- The list endpoint selects p.sent_at and p.accepted_at (added in c9feb3f),
+-- but the columns were never created. Add them and backfill from the
+-- activity log so existing 'sent'/'accepted' proposals show a real timestamp
+-- in the "Sent" column instead of "—".
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
+
+UPDATE proposals p
+SET sent_at = (
+  SELECT MIN(al.created_at) FROM proposal_activity_log al
+  WHERE al.proposal_id = p.id AND al.details->>'to' = 'sent'
+)
+WHERE p.sent_at IS NULL
+  AND p.status IN ('sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed');
+
+UPDATE proposals p
+SET accepted_at = (
+  SELECT MIN(al.created_at) FROM proposal_activity_log al
+  WHERE al.proposal_id = p.id AND al.details->>'to' = 'accepted'
+)
+WHERE p.accepted_at IS NULL
+  AND p.status IN ('accepted','deposit_paid','balance_paid','confirmed','completed');
+
+-- ─── Sentry hardening: email_leads.lead_source allowlist ──────────
+-- The public quote wizard sends source='quote_wizard'. The original CHECK
+-- constraint omitted it, causing every wizard lead capture to fail with a
+-- constraint violation. Replace the constraint to include wizard + lab
+-- sources used by public funnels.
+ALTER TABLE email_leads DROP CONSTRAINT IF EXISTS email_leads_lead_source_check;
+ALTER TABLE email_leads ADD CONSTRAINT email_leads_lead_source_check
+  CHECK (lead_source IN ('manual','csv_import','website','quote_wizard','potion_lab','thumbtack','referral','instagram','facebook','google','other'));
+
+-- ─── Sentry hardening: shifts.positions_needed normalization ──────
+-- The badge-counts query crashed with "cannot get array length of a scalar"
+-- because some rows store a non-array JSON value (legacy data, manual edits)
+-- in positions_needed (TEXT, JSON-encoded). Normalize anything that doesn't
+-- start with '[' back to an empty array. The admin route now also guards
+-- with jsonb_typeof so a bad row can't take down sidebar counts again.
+UPDATE shifts SET positions_needed = '[]'
+WHERE positions_needed IS NULL
+   OR TRIM(positions_needed) = ''
+   OR positions_needed !~ '^\s*\[';
