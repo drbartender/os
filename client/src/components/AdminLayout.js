@@ -25,8 +25,10 @@ export default function AdminLayout() {
 
   // Lazy-load the admin-OS font set (Inter / JetBrains Mono / Libre Caslon)
   // from inside the admin shell so the public pages never pay the ~80-200ms
-  // first-paint cost. The link is appended once and persists across admin
-  // page navigations; we only remove it if/when this layout itself unmounts.
+  // first-paint cost. The `media="print"` + onload trick fetches the
+  // stylesheet without blocking initial render — the swap to `media="all"`
+  // applies the rules once they arrive (system-font fallback in the meantime).
+  // The link is appended once and persists across admin page navigations.
   useEffect(() => {
     const ID = 'admin-os-fonts';
     let link = document.getElementById(ID);
@@ -35,6 +37,8 @@ export default function AdminLayout() {
       link = document.createElement('link');
       link.id = ID;
       link.rel = 'stylesheet';
+      link.media = 'print';
+      link.onload = () => { link.media = 'all'; };
       link.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&display=swap';
       document.head.appendChild(link);
       createdHere = true;

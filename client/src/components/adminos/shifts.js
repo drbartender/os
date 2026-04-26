@@ -8,16 +8,27 @@
 import React from 'react';
 import StatusChip from './StatusChip';
 
+// Returns the parsed `positions_needed` array. Tolerates both array-shaped
+// (already parsed) and string-shaped (JSON-encoded TEXT) inputs. Empty array
+// when the value is missing/malformed.
+export function parsePositionsArray(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 // Returns the count of position slots a shift needs (length of the JSON array).
 export function parsePositionsCount(s) {
   if (!s) return 1;
-  try {
-    const arr = JSON.parse(s.positions_needed || '[]');
-    if (Array.isArray(arr) && arr.length > 0) return arr.length;
-  } catch {
-    // fall through
-  }
-  return 1;
+  const arr = parsePositionsArray(s.positions_needed);
+  return arr.length || 1;
 }
 
 // Returns the count of approved bartenders for a shift.

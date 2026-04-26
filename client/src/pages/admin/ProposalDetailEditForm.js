@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { unstable_usePrompt as usePrompt } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
@@ -90,20 +89,17 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
     [editForm]
   );
 
-  // Browser refresh / close guard
+  // Browser refresh / close guard. (In-app navigation away — sidebar clicks,
+  // breadcrumbs — would need react-router's `useBlocker`, which requires
+  // migrating the app from `<BrowserRouter>` to `createBrowserRouter`. That's a
+  // larger refactor; until then the user's only loss path is clicking an
+  // in-app link mid-edit, which the explicit Cancel button + leave-confirm
+  // modal cover for the most common exit.)
   useEffect(() => {
     const handler = (e) => { if (isDirty) { e.preventDefault(); e.returnValue = ''; } };
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
-
-  // In-app navigation guard (sidebar links, breadcrumbs, browser back/forward).
-  // Pairs with the beforeunload handler above — that one covers refresh/close,
-  // this one covers SPA navigation that wouldn't trigger beforeunload.
-  usePrompt({
-    when: isDirty,
-    message: 'You have unsaved changes. Leave anyway?',
-  });
 
   const update = (field, value) => setEditForm(f => ({ ...f, [field]: value }));
 

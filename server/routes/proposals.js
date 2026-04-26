@@ -744,7 +744,10 @@ router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (
         COALESCE(SUM(p.amount_paid), 0)::float8 AS collected
       FROM months m
       LEFT JOIN proposals p
-        ON date_trunc('month', p.event_date)::date = m.month_start
+        -- Range comparison keeps the idx_proposals_event_date btree usable —
+        -- wrapping in date_trunc(...) on the join key would force a seq scan.
+        ON p.event_date >= m.month_start
+        AND p.event_date <  (m.month_start + INTERVAL '1 month')::date
         AND p.status IN ${PAID_STATUSES}
       GROUP BY m.month_start
       ORDER BY m.month_start

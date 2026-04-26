@@ -201,7 +201,9 @@ router.get('/my-requests', auth, asyncHandler(async (req, res) => {
 /** GET /shifts/by-proposal/:proposalId — return every shift attached to a
  *  proposal as an array. A single proposal can spawn multiple shifts
  *  (e.g. multi-day events). Avoids the EventDetailPage shipping the full
- *  /shifts list to the browser just to filter for one proposal. */
+ *  /shifts list to the browser just to filter for one proposal.
+ *  LIMIT 100 is defensive — a single event with >100 shifts is unheard of,
+ *  but it bounds the worst case if a future bug ever creates a runaway loop. */
 router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT s.*,
@@ -210,6 +212,7 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
     FROM shifts s
     WHERE s.proposal_id = $1
     ORDER BY s.event_date ASC, s.start_time ASC, s.id ASC
+    LIMIT 100
   `, [req.params.proposalId]);
   res.json(result.rows);
 }));

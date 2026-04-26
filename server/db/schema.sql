@@ -819,9 +819,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_stripe_sessions_payment_link
 
 -- ─── Proposal Payment Options & Autopay ──────────────────────────
 
+-- Status enum is re-asserted in a later block (see "Event Detail Redesign")
+-- with the full ('completed','cancelled') set. Keep this earlier ADD aligned
+-- so a partial-run state (one block applied, the other skipped) doesn't block
+-- writes that try to set status='cancelled'.
 ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_status_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
-  CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed'));
+  CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed','cancelled'));
 
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS payment_type VARCHAR(20) DEFAULT 'deposit';
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS autopay_enrolled BOOLEAN DEFAULT false;

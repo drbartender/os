@@ -6,25 +6,7 @@ import Icon from '../Icon';
 import StatusChip from '../StatusChip';
 import { fmt$cents, fmtDateFull } from '../format';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
-
-function eventStatusChip(s) {
-  const total = Number(s.proposal_total || 0);
-  const paid = Number(s.proposal_amount_paid || s.amount_paid || 0);
-  if (s.proposal_status === 'sent' || s.proposal_status === 'viewed' || s.proposal_status === 'modified') {
-    return <StatusChip kind="warn">Contract out</StatusChip>;
-  }
-  if (paid <= 0) return <StatusChip kind="warn">No payment</StatusChip>;
-  if (paid < total) return <StatusChip kind="info">Deposit paid</StatusChip>;
-  return <StatusChip kind="ok">Paid in full</StatusChip>;
-}
-
-function parsePositions(raw) {
-  if (Array.isArray(raw)) return raw;
-  if (typeof raw === 'string') {
-    try { return JSON.parse(raw); } catch { return []; }
-  }
-  return [];
-}
+import { eventStatusChip, parsePositionsArray, approvedCount } from '../shifts';
 
 export default function EventDrawer({ id, open, onClose }) {
   const navigate = useNavigate();
@@ -78,9 +60,9 @@ function EventDrawerBody({ shift, requests }) {
   const total = Number(shift.proposal_total || 0);
   const paid = Number(shift.proposal_amount_paid || shift.amount_paid || 0);
   const bal = total - paid;
-  const positions = parsePositions(shift.positions_needed);
-  const needed = positions.length || Number(shift.bartenders_needed || 1);
-  const filled = Number(shift.approved_count || 0);
+  const positions = parsePositionsArray(shift.positions_needed);
+  const needed = positions.length || 1;
+  const filled = approvedCount(shift);
   const eventTypeLabel = getEventTypeLabel({
     event_type: shift.event_type,
     event_type_custom: shift.event_type_custom,

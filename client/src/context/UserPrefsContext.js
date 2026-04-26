@@ -55,20 +55,21 @@ function load(user) {
 
 export function UserPrefsProvider({ children }) {
   const { user } = useAuth();
+  // user object identity churns each render; key off user.id everywhere.
+  const userId = user?.id || null;
   const [prefs, setPrefs] = useState(DEFAULT_PREFS);
 
   useEffect(() => {
     setPrefs(load(user));
-    // user object identity churns each render; key off user.id only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, [userId]);
 
   useEffect(() => {
     const key = storageKey(user);
     if (!key) return;
     try { localStorage.setItem(key, JSON.stringify(prefs)); } catch { /* quota etc. */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefs, user?.id]);
+  }, [prefs, userId]);
 
   // Apply prefs to <html> as data attributes and HSL custom properties.
   // These only take effect when [data-app="admin-os"] is also set on <html>,
@@ -92,7 +93,7 @@ export function UserPrefsProvider({ children }) {
       PROPS.forEach(k => root.style.removeProperty(k));
     };
 
-    if (!user) {
+    if (!userId) {
       stripAll();
       return stripAll;
     }
@@ -124,7 +125,7 @@ export function UserPrefsProvider({ children }) {
     root.style.setProperty('--font-numeric', f.numeric);
 
     return stripAll;
-  }, [prefs, user]);
+  }, [prefs, userId]);
 
   const setPref = useCallback((key, value) => {
     setPrefs(p => ({ ...p, [key]: value }));
