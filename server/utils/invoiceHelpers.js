@@ -519,8 +519,13 @@ async function linkPaymentToInvoice(invoiceId, paymentId, amountCents, dbClient)
     const inv = invUpdate.rows[0];
     const newStatus = inv.amount_paid >= inv.amount_due ? 'paid' : 'partially_paid';
     await dbClient.query('UPDATE invoices SET status = $1 WHERE id = $2', [newStatus, invoiceId]);
+    // Only lock when fully paid. Locking partially_paid invoices would freeze
+    // them before later proposal changes (addons, balance refresh) can flow
+    // through, leaving stale balances no admin can adjust.
+    if (newStatus === 'paid') {
+      await lockInvoice(invoiceId, dbClient);
+    }
   }
-  await lockInvoice(invoiceId, dbClient);
 }
 
 // ─── 11. createDrinkPlanExtrasInvoice ────────────────────────────────────────

@@ -24,4 +24,16 @@ const signLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { publicLimiter, publicReadLimiter, signLimiter };
+// Drink-plan PUTs autosave every 30 seconds, so a normal client racks up ~30
+// requests per 15-minute window. publicLimiter (max=20) was rate-limiting
+// real workflows. Key by token so one client can't drown another's budget.
+const drinkPlanWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 80,
+  keyGenerator: (req) => req.params?.token || req.ip,
+  message: { error: 'Too many save attempts. Please try again in a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter };

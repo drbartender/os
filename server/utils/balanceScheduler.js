@@ -26,14 +26,26 @@ async function processAutopayCharges() {
     return;
   }
   try {
+    // Atomic claim: a single UPDATE...RETURNING acts as both selection and
+    // row-lock so concurrent scheduler runs (or a manual admin charge race)
+    // can't grab the same proposal. autopay_status='in_progress' blocks
+    // re-selection until the webhook moves status='balance_paid' OR the
+    // 24h TTL elapses for stuck claims (webhook never landed).
     const result = await pool.query(`
-      SELECT id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id, event_type, event_type_custom
-      FROM proposals
+      UPDATE proposals
+      SET autopay_status = 'in_progress', autopay_attempted_at = NOW()
       WHERE status = 'deposit_paid'
         AND autopay_enrolled = true
         AND balance_due_date <= CURRENT_DATE
         AND stripe_customer_id IS NOT NULL
         AND stripe_payment_method_id IS NOT NULL
+        AND (
+          autopay_status IS NULL
+          OR autopay_status = 'failed'
+          OR (autopay_status = 'in_progress' AND autopay_attempted_at < NOW() - INTERVAL '24 hours')
+        )
+      RETURNING id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
+                event_type, event_type_custom, balance_due_date
     `);
 
     if (result.rows.length === 0) return;
@@ -44,7 +56,23 @@ async function processAutopayCharges() {
     const CONCURRENCY = 5;
     const chargeOne = async (proposal) => {
       const balanceCents = Math.round((Number(proposal.total_price) - Number(proposal.amount_paid)) * 100);
-      if (balanceCents <= 0) return;
+      if (balanceCents <= 0) {
+        // Nothing to charge; clear claim so future runs can re-evaluate.
+        await pool.query(
+          `UPDATE proposals SET autopay_status = NULL WHERE id = $1`,
+          [proposal.id]
+        );
+        return;
+      }
+
+      // Stripe idempotency key: scoped per (proposal, balance_due_date) so a
+      // retried call against the same balance returns the original PaymentIntent
+      // instead of charging again. balance_due_date is part of the key so a
+      // genuinely new balance (rescheduled event) gets a fresh charge.
+      const balanceDueIso = proposal.balance_due_date
+        ? new Date(proposal.balance_due_date).toISOString().slice(0, 10)
+        : 'no-date';
+      const idempotencyKey = `autopay-balance-${proposal.id}-${balanceDueIso}`;
 
       try {
         const intent = await stripe.paymentIntents.create({
@@ -59,7 +87,7 @@ async function processAutopayCharges() {
             proposal_id: String(proposal.id),
             payment_type: 'balance',
           },
-        });
+        }, { idempotencyKey });
 
         console.log(`[BalanceScheduler] Charged $${(balanceCents / 100).toFixed(2)} for proposal ${proposal.id} (intent: ${intent.id})`);
         // Webhook will handle status update and logging
@@ -69,6 +97,18 @@ async function processAutopayCharges() {
           tags: { scheduler: 'autopay', proposalId: proposal.id },
           extra: { amount_cents: balanceCents },
         });
+
+        // Release the claim into a 'failed' state — admin gets a one-time
+        // email (throttled below); future cycles won't auto-retry until the
+        // claim is reset (e.g. admin re-enrolls or fixes the card).
+        try {
+          await pool.query(
+            `UPDATE proposals SET autopay_status = 'failed' WHERE id = $1`,
+            [proposal.id]
+          );
+        } catch (claimErr) {
+          console.error('[BalanceScheduler] Failed to mark autopay_status=failed:', claimErr);
+        }
 
         // Log the failure for admin visibility and capture the inserted row's id
         // so the throttle UPDATE below can target THIS row (not a stale older one

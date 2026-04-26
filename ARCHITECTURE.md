@@ -499,6 +499,7 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - Client signature: `client_signed_name`, `client_signature_data`, `client_signed_at`
 - Payment: `payment_type` (deposit | full), `autopay_enrolled`, `deposit_amount`, `amount_paid`, `balance_due_date`
 - Stripe: `stripe_customer_id`, `stripe_payment_method_id` (for autopay off-session charges)
+- Autopay claim: `autopay_status` (NULL | 'in_progress' | 'failed') and `autopay_attempted_at` — atomic row-claim used by both the scheduler and the admin manual charge so concurrent runs can't double-charge. Cleared to NULL when `payment_intent.succeeded` flips status to `balance_paid`. Stuck `'in_progress'` claims expire after 24h.
 - Tracking: `view_count`, `last_viewed_at`
 
 Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional `event_type_custom` (for "Other"). No free-text title. Display via `getEventTypeLabel({ event_type, event_type_custom })` helper, mirrored in `client/src/utils/eventTypes.js` and `server/utils/eventTypes.js`. Falls back to the literal string `'event'` when type is unset.

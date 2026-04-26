@@ -14,19 +14,39 @@ const calendarLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, keyGenerator: 
 // ─── Time parsing helpers ─────────────────────────────────────────
 
 /**
- * Parse a 12-hour time string like "5:00 PM" into { hours, minutes }.
- * Returns null if unparseable.
+ * Parse a shift time into { hours, minutes }. Accepts BOTH formats currently
+ * stored in shifts.start_time/end_time:
+ *   - 12-hour with period: "5:00 PM" (written by eventCreation.js auto-create)
+ *   - 24-hour: "17:00" (written by the admin TimePicker)
+ * Returns null if unparseable. Without dual support, manually-edited shifts
+ * silently downgrade to all-day events in calendar feeds.
  */
 function parseTime12(timeStr) {
   if (!timeStr) return null;
-  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (!match) return null;
-  let hours = parseInt(match[1]);
-  const minutes = parseInt(match[2]);
-  const period = match[3].toUpperCase();
-  if (period === 'PM' && hours !== 12) hours += 12;
-  if (period === 'AM' && hours === 12) hours = 0;
-  return { hours, minutes };
+  const trimmed = timeStr.trim();
+
+  // 12-hour with AM/PM
+  const m12 = trimmed.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (m12) {
+    let hours = parseInt(m12[1]);
+    const minutes = parseInt(m12[2]);
+    const period = m12[3].toUpperCase();
+    if (hours < 1 || hours > 12 || minutes < 0 || minutes > 59) return null;
+    if (period === 'PM' && hours !== 12) hours += 12;
+    if (period === 'AM' && hours === 12) hours = 0;
+    return { hours, minutes };
+  }
+
+  // 24-hour HH:mm
+  const m24 = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (m24) {
+    const hours = parseInt(m24[1]);
+    const minutes = parseInt(m24[2]);
+    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+    return { hours, minutes };
+  }
+
+  return null;
 }
 
 /**

@@ -407,14 +407,20 @@ router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
   const { event_type, event_type_custom, event_date, start_time, end_time, location, positions_needed, notes, status,
           equipment_required, auto_assign_days_before, setup_minutes_before, lat, lng,
           client_name, client_email, client_phone, guest_count, event_duration_hours } = req.body;
+  // PATCH semantics: missing fields preserve existing values via COALESCE.
+  // The previous version sent '[]' for omitted positions_needed /
+  // equipment_required, silently wiping staffing + gear when the admin only
+  // edited a date or note. Pass null for omitted JSONB fields so COALESCE
+  // keeps the prior row.
   const result = await pool.query(`
     UPDATE shifts SET
       event_type = $1, event_type_custom = $2,
       event_date = COALESCE($3, event_date),
       start_time = $4, end_time = $5, location = $6,
-      positions_needed = $7, notes = $8,
+      positions_needed = COALESCE($7, positions_needed),
+      notes = $8,
       status = COALESCE($9, status),
-      equipment_required = $10,
+      equipment_required = COALESCE($10, equipment_required),
       auto_assign_days_before = $11,
       lat = COALESCE($12, lat), lng = COALESCE($13, lng),
       setup_minutes_before = COALESCE($15, setup_minutes_before),
@@ -428,9 +434,9 @@ router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
     event_type || null, event_type_custom || null, event_date || null,
     start_time || null, end_time || null,
     location || null,
-    positions_needed ? JSON.stringify(positions_needed) : '[]',
+    positions_needed !== undefined ? JSON.stringify(positions_needed) : null,
     notes || null, status || null,
-    equipment_required ? JSON.stringify(equipment_required) : '[]',
+    equipment_required !== undefined ? JSON.stringify(equipment_required) : null,
     auto_assign_days_before !== null && auto_assign_days_before !== undefined ? auto_assign_days_before : null,
     lat || null, lng || null,
     req.params.id,

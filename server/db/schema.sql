@@ -834,6 +834,23 @@ ALTER TABLE proposals ADD COLUMN IF NOT EXISTS stripe_payment_method_id VARCHAR(
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS deposit_amount NUMERIC(10,2) DEFAULT 100.00;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(10,2) DEFAULT 0;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS balance_due_date DATE;
+-- Autopay row-claim: scheduler atomically claims a row before charging so
+-- two workers (or a worker racing a manual admin charge) can't double-charge.
+-- A 24h TTL on 'in_progress' lets us recover if the webhook never lands.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS autopay_status TEXT;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS autopay_attempted_at TIMESTAMPTZ;
+-- Lock the autopay_status enum so a typo at any of the 5 write sites
+-- (scheduler claim/release, admin charge-balance claim/release, webhook clear)
+-- fails loudly instead of silently breaking the claim gate.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.constraint_column_usage
+    WHERE table_name = 'proposals' AND constraint_name = 'proposals_autopay_status_check'
+  ) THEN
+    ALTER TABLE proposals ADD CONSTRAINT proposals_autopay_status_check
+      CHECK (autopay_status IS NULL OR autopay_status IN ('in_progress', 'failed'));
+  END IF;
+END $$;
 
 -- Drop old check if it exists from initial CREATE TABLE, then re-add with payment_type
 DO $$ BEGIN

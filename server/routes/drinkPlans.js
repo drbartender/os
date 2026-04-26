@@ -2,7 +2,7 @@ const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
-const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters');
+const { publicReadLimiter, drinkPlanWriteLimiter } = require('../middleware/rateLimiters');
 const { calculateProposal } = require('../utils/pricingEngine');
 const { refreshUnlockedInvoices } = require('../utils/invoiceHelpers');
 const { sendEmail } = require('../utils/email');
@@ -73,7 +73,7 @@ router.get('/t/:token', publicReadLimiter, asyncHandler(async (req, res) => {
 }));
 
 /** PUT /api/drink-plans/t/:token — save draft or submit (public) */
-router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
+router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
   const { serving_type, selections, status, paid_separately } = req.body;
   const paidSeparately = paid_separately === true;
 
@@ -96,7 +96,273 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
   const submittedNow = newStatus === 'submitted' ? new Date() : null;
   const explorationNow = newStatus === 'exploration_saved' ? new Date() : null;
 
-  // Draft saves must not overwrite submitted/reviewed status (race condition protection)
+  // Detect submit-with-side-effects up front. When true, we run the plan
+  // UPDATE inside the same transaction as the addon/total/invoice work so a
+  // rollback also rolls back the plan-status change. Previously the plan was
+  // committed first and the addon block was marked "non-fatal", which caused
+  // split-brain: client saw success while pricing/invoices stayed stale.
+  const rawAddons = selections?.addOns || {};
+  const rawAddonSlugs = Object.keys(rawAddons).filter(slug => rawAddons[slug]?.enabled);
+  const addBarRental = selections?.logistics?.addBarRental === true;
+  const hasFinancialSideEffects =
+    newStatus === 'submitted'
+    && !!existing.rows[0].proposal_id
+    && (rawAddonSlugs.length > 0 || addBarRental);
+
+  if (hasFinancialSideEffects) {
+    // Atomic submit path: plan UPDATE + addons + total + invoice all in one
+    // transaction. Email side-effects deferred until after COMMIT (captured
+    // in `pendingNotifications` and sent below).
+    const client = await pool.connect();
+    let updatedPlan;
+    let pendingNotifications = null;
+    try {
+      await client.query('BEGIN');
+
+      const planUpd = await client.query(`
+        UPDATE drink_plans SET
+          serving_type = COALESCE($1, serving_type),
+          selections = COALESCE($2::jsonb, selections),
+          status = $3,
+          submitted_at = COALESCE($4, submitted_at),
+          exploration_submitted_at = COALESCE($5, exploration_submitted_at)
+        WHERE token = $6
+        RETURNING id, token, status, serving_type, submitted_at, proposal_id
+      `, [serving_type || null, selections ? JSON.stringify(selections) : null, newStatus, submittedNow, explorationNow, req.params.token]);
+
+      if (!planUpd.rows[0]) {
+        await client.query('ROLLBACK');
+        throw new NotFoundError('This drink plan link is no longer valid');
+      }
+      updatedPlan = planUpd.rows[0];
+
+      // Lock the proposal row
+      const proposalRes = await client.query(
+        'SELECT * FROM proposals WHERE id = $1 FOR UPDATE',
+        [updatedPlan.proposal_id]
+      );
+      const proposal = proposalRes.rows[0];
+
+      if (proposal) {
+        // Pull the package so we can validate autoAdded addons against its coverage.
+        const pkgEarly = proposal.package_id
+          ? (await client.query('SELECT id, covered_addon_slugs FROM service_packages WHERE id = $1', [proposal.package_id])).rows[0]
+          : null;
+        const coveredAddonSlugs = pkgEarly?.covered_addon_slugs || [];
+
+        // Pull the selected cocktails' upgrade_addon_slugs so we can verify triggers.
+        const sigDrinkIds = Array.isArray(selections?.signatureDrinks) ? selections.signatureDrinks : [];
+        const cocktailRows = sigDrinkIds.length > 0
+          ? (await client.query(
+              'SELECT id, upgrade_addon_slugs FROM cocktails WHERE id = ANY($1::text[])',
+              [sigDrinkIds]
+            )).rows
+          : [];
+        const cocktailById = new Map(cocktailRows.map(r => [r.id, r]));
+
+        // For each autoAdded addon, require a still-selected triggering cocktail whose
+        // upgrade_addon_slugs includes the slug AND the package does not cover it.
+        const addonSlugs = rawAddonSlugs.filter(slug => {
+          const meta = rawAddons[slug];
+          if (coveredAddonSlugs.includes(slug)) return false; // package already covers — never charge
+          if (meta?.autoAdded) {
+            const triggers = Array.isArray(meta.triggeredBy) ? meta.triggeredBy : [];
+            const validTrigger = triggers.some(drinkId => {
+              const c = cocktailById.get(drinkId);
+              return c && Array.isArray(c.upgrade_addon_slugs) && c.upgrade_addon_slugs.includes(slug);
+            });
+            return validTrigger;
+          }
+          return true; // user-added addon — honor it
+        });
+
+        // Build the specialty_upgrades payload for activity-log enrichment.
+        const specialtyUpgrades = addonSlugs
+          .filter(slug => rawAddons[slug]?.autoAdded)
+          .map(slug => ({
+            slug,
+            triggeredBy: (rawAddons[slug].triggeredBy || []).filter(drinkId => cocktailById.has(drinkId)),
+          }));
+
+        // Update num_bars if client added a bar rental from the drink plan
+        if (addBarRental) {
+          const newNumBars = (proposal.num_bars || 0) + 1;
+          await client.query(
+            'UPDATE proposals SET num_bars = $1 WHERE id = $2',
+            [newNumBars, proposal.id]
+          );
+          proposal.num_bars = newNumBars;
+        }
+
+        // Resolve addon slugs to service_addon rows
+        const addonRes = await client.query(
+          'SELECT * FROM service_addons WHERE slug = ANY($1) AND is_active = true',
+          [addonSlugs]
+        );
+        const resolvedAddons = addonRes.rows;
+
+        // UPSERT each resolved addon into proposal_addons
+        for (const addon of resolvedAddons) {
+          const rate = Number(addon.rate);
+          let quantity = 1;
+          let lineTotal = rate;
+
+          if (addon.billing_type === 'per_guest') {
+            quantity = proposal.guest_count || 1;
+            lineTotal = rate * quantity;
+          }
+
+          await client.query(`
+            INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (proposal_id, addon_id) DO UPDATE SET
+              quantity = EXCLUDED.quantity,
+              line_total = EXCLUDED.line_total
+          `, [proposal.id, addon.id, addon.name, addon.billing_type, rate, quantity, lineTotal]);
+        }
+
+        // Log unknown slugs
+        const resolvedSlugs = resolvedAddons.map(a => a.slug);
+        addonSlugs.forEach(slug => {
+          if (!resolvedSlugs.includes(slug)) {
+            console.warn(`Drink plan addon slug not found in DB: ${slug}`);
+          }
+        });
+
+        // Recalculate proposal total with all addons (existing + new)
+        const allAddonsRes = await client.query(
+          'SELECT sa.* FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1',
+          [proposal.id]
+        );
+        const pkgRes = await client.query('SELECT * FROM service_packages WHERE id = $1', [proposal.package_id]);
+        const pkg = pkgRes.rows[0];
+
+        if (pkg && proposal.guest_count && proposal.event_duration_hours) {
+          const rawSyrups = selections.syrupSelections || {};
+          const syrupSels = Array.isArray(rawSyrups)
+            ? rawSyrups
+            : [...new Set(Object.values(rawSyrups).flat())];
+          const snapshot = calculateProposal({
+            pkg,
+            guestCount: proposal.guest_count,
+            durationHours: Number(proposal.event_duration_hours),
+            numBars: proposal.num_bars ?? 0,
+            numBartenders: proposal.num_bartenders,
+            addons: allAddonsRes.rows,
+            syrupSelections: syrupSels,
+          });
+
+          await client.query(
+            'UPDATE proposals SET total_price = $1, pricing_snapshot = $2, updated_at = NOW() WHERE id = $3',
+            [snapshot.total, JSON.stringify(snapshot), proposal.id]
+          );
+
+          await client.query(
+            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
+             VALUES ($1, 'drink_plan_addons_added', 'client', $2)`,
+            [proposal.id, JSON.stringify({
+              addons: addonSlugs,
+              syrups: syrupSels,
+              champagne_serving_style: selections.addOns?.['champagne-toast']?.servingStyle || null,
+              bar_rental_added: !!addBarRental,
+              new_total: snapshot.total,
+              specialty_upgrades: specialtyUpgrades,
+            })]
+          );
+
+          // Capture data for post-commit notifications. Don't send inside the
+          // transaction — a rollback after sending would leak misleading email.
+          const amountPaid = Number(proposal.amount_paid) || 0;
+          if (amountPaid < snapshot.total) {
+            const addonNames = resolvedAddons.map(a => a.name);
+            if (addBarRental) addonNames.push('Portable Bar Rental');
+            pendingNotifications = {
+              proposal: {
+                id: proposal.id,
+                event_date: proposal.event_date,
+                event_type: existing.rows[0]?.event_type || proposal.event_type,
+                event_type_custom: existing.rows[0]?.event_type_custom || proposal.event_type_custom,
+                balance_due_date: proposal.balance_due_date,
+                prevTotal: Number(proposal.total_price) || 0,
+              },
+              snapshot,
+              amountPaid,
+              addonNames,
+              clientName: existing.rows[0]?.client_name || 'Client',
+              clientEmail: existing.rows[0]?.client_email || proposal.client_email,
+            };
+          }
+        }
+      }
+
+      // Refresh the Balance invoice unless extras are being paid separately
+      // via Stripe (those land on their own webhook-created "Drink Plan Extras"
+      // invoice). Skip when the proposal row was deleted between the existence
+      // check and the FOR UPDATE lock — refreshing against a missing row would
+      // throw and roll back an otherwise-valid plan submission. Failure here
+      // is otherwise FATAL — a rolled-back refresh rolls back the plan UPDATE,
+      // so the client retries cleanly.
+      if (!paidSeparately && proposal) {
+        await refreshUnlockedInvoices(proposal.id, client);
+      }
+
+      await client.query('COMMIT');
+    } catch (txErr) {
+      try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(txErr, {
+          tags: { route: 'drinkPlans/putToken', op: 'submit_with_addons' },
+          extra: { token: req.params.token, proposalId: existing.rows[0].proposal_id },
+        });
+      }
+      console.error('Drink-plan submit transaction failed:', txErr);
+      throw txErr; // surface as 5xx so client can retry instead of seeing a phantom success
+    } finally {
+      client.release();
+    }
+
+    // Post-commit notifications (best-effort; logged but never block response).
+    if (pendingNotifications) {
+      const { proposal: pn, snapshot, amountPaid, addonNames, clientName, clientEmail } = pendingNotifications;
+      const adminEmail = process.env.ADMIN_EMAIL;
+      if (adminEmail) {
+        const daysUntil = pn.event_date
+          ? Math.ceil((new Date(pn.event_date) - new Date()) / (1000 * 60 * 60 * 24))
+          : null;
+        const isUrgent = daysUntil !== null && daysUntil <= 14;
+        sendEmail({
+          to: adminEmail,
+          subject: `${isUrgent ? 'URGENT: ' : ''}Drink Plan Submitted with Add-Ons — ${clientName}`,
+          html: `<p><strong>${clientName}</strong> submitted their drink plan.</p>
+                 <p><strong>Add-ons selected:</strong> ${addonNames.join(', ')}</p>
+                 <p><strong>New total:</strong> $${snapshot.total.toFixed(2)}</p>
+                 <p><strong>Amount paid:</strong> $${amountPaid.toFixed(2)}</p>
+                 <p><strong>Balance due:</strong> $${(snapshot.total - amountPaid).toFixed(2)}</p>
+                 ${isUrgent ? `<p style="color: red;"><strong>Event is in ${daysUntil} days!</strong></p>` : ''}
+                 <p><a href="${ADMIN_URL}/admin/proposals/${pn.id}">View Proposal</a></p>`,
+        }).catch(emailErr => console.error('Admin notification email failed:', emailErr));
+      }
+      if (clientEmail) {
+        const extrasAmount = snapshot.total - pn.prevTotal;
+        const balanceDue = snapshot.total - amountPaid;
+        const tpl = emailTemplates.drinkPlanBalanceUpdate({
+          clientName,
+          eventTypeLabel: getEventTypeLabel({ event_type: pn.event_type, event_type_custom: pn.event_type_custom }),
+          extrasAmount,
+          newTotal: snapshot.total,
+          amountPaid,
+          balanceDue,
+          balanceDueDate: pn.balance_due_date,
+        });
+        sendEmail({ to: clientEmail, ...tpl }).catch(emailErr => console.error('Client balance email failed:', emailErr));
+      }
+    }
+
+    return res.json(updatedPlan);
+  }
+
+  // Fast path: drafts, exploration_saved, or submit-without-addons. No
+  // financial side effects, so we can use a single auto-committed UPDATE.
   let result;
   if (newStatus === 'draft') {
     result = await pool.query(`
@@ -127,241 +393,7 @@ router.put('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
     return res.json({ status: 'submitted', skipped: true });
   }
 
-  const updatedPlan = result.rows[0];
-
-  // Process addons and bar rental into proposal on submit
-  if (newStatus === 'submitted' && updatedPlan.proposal_id) {
-    const rawAddons = selections?.addOns || {};
-    const rawAddonSlugs = Object.keys(rawAddons).filter(slug => rawAddons[slug]?.enabled);
-    const addBarRental = selections?.logistics?.addBarRental === true;
-    if (rawAddonSlugs.length > 0 || addBarRental) {
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-
-        // Lock the proposal row
-        const proposalRes = await client.query(
-          'SELECT * FROM proposals WHERE id = $1 FOR UPDATE',
-          [updatedPlan.proposal_id]
-        );
-        const proposal = proposalRes.rows[0];
-
-        if (proposal) {
-          // Pull the package so we can validate autoAdded addons against its coverage.
-          const pkgEarly = proposal && proposal.package_id
-            ? (await client.query('SELECT id, covered_addon_slugs FROM service_packages WHERE id = $1', [proposal.package_id])).rows[0]
-            : null;
-          const coveredAddonSlugs = pkgEarly?.covered_addon_slugs || [];
-
-          // Pull the selected cocktails' upgrade_addon_slugs so we can verify triggers.
-          const sigDrinkIds = Array.isArray(selections?.signatureDrinks) ? selections.signatureDrinks : [];
-          const cocktailRows = sigDrinkIds.length > 0
-            ? (await client.query(
-                'SELECT id, upgrade_addon_slugs FROM cocktails WHERE id = ANY($1::text[])',
-                [sigDrinkIds]
-              )).rows
-            : [];
-          const cocktailById = new Map(cocktailRows.map(r => [r.id, r]));
-
-          // For each autoAdded addon, require a still-selected triggering cocktail whose
-          // upgrade_addon_slugs includes the slug AND the package does not cover it.
-          const addonSlugs = rawAddonSlugs.filter(slug => {
-            const meta = rawAddons[slug];
-            if (coveredAddonSlugs.includes(slug)) return false; // package already covers — never charge
-            if (meta?.autoAdded) {
-              const triggers = Array.isArray(meta.triggeredBy) ? meta.triggeredBy : [];
-              const validTrigger = triggers.some(drinkId => {
-                const c = cocktailById.get(drinkId);
-                return c && Array.isArray(c.upgrade_addon_slugs) && c.upgrade_addon_slugs.includes(slug);
-              });
-              return validTrigger;
-            }
-            return true; // user-added addon — honor it
-          });
-
-          // Build the specialty_upgrades payload for activity-log enrichment.
-          const specialtyUpgrades = addonSlugs
-            .filter(slug => rawAddons[slug]?.autoAdded)
-            .map(slug => ({
-              slug,
-              triggeredBy: (rawAddons[slug].triggeredBy || []).filter(drinkId => cocktailById.has(drinkId)),
-            }));
-
-          // Update num_bars if client added a bar rental from the drink plan
-          if (addBarRental) {
-            const newNumBars = (proposal.num_bars || 0) + 1;
-            await client.query(
-              'UPDATE proposals SET num_bars = $1 WHERE id = $2',
-              [newNumBars, proposal.id]
-            );
-            proposal.num_bars = newNumBars;
-          }
-
-          // Resolve addon slugs to service_addon rows
-          const addonRes = await client.query(
-            'SELECT * FROM service_addons WHERE slug = ANY($1) AND is_active = true',
-            [addonSlugs]
-          );
-          const resolvedAddons = addonRes.rows;
-
-          // UPSERT each resolved addon into proposal_addons
-          for (const addon of resolvedAddons) {
-            const rate = Number(addon.rate);
-            let quantity = 1;
-            let lineTotal = rate;
-
-            if (addon.billing_type === 'per_guest') {
-              quantity = proposal.guest_count || 1;
-              lineTotal = rate * quantity;
-            }
-
-            // TODO: when variant-capable add-ons become available in drink-plan resolution,
-            // pull `variant` from the resolution payload and include it in this INSERT.
-            await client.query(`
-              INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total)
-              VALUES ($1, $2, $3, $4, $5, $6, $7)
-              ON CONFLICT (proposal_id, addon_id) DO UPDATE SET
-                quantity = EXCLUDED.quantity,
-                line_total = EXCLUDED.line_total
-            `, [proposal.id, addon.id, addon.name, addon.billing_type, rate, quantity, lineTotal]);
-          }
-
-          // Log unknown slugs
-          const resolvedSlugs = resolvedAddons.map(a => a.slug);
-          addonSlugs.forEach(slug => {
-            if (!resolvedSlugs.includes(slug)) {
-              console.warn(`Drink plan addon slug not found in DB: ${slug}`);
-            }
-          });
-
-          // Recalculate proposal total with all addons (existing + new)
-          const allAddonsRes = await client.query(
-            'SELECT sa.* FROM proposal_addons pa JOIN service_addons sa ON sa.id = pa.addon_id WHERE pa.proposal_id = $1',
-            [proposal.id]
-          );
-          const pkgRes = await client.query('SELECT * FROM service_packages WHERE id = $1', [proposal.package_id]);
-          const pkg = pkgRes.rows[0];
-
-          if (pkg && proposal.guest_count && proposal.event_duration_hours) {
-            // Flatten per-drink syrup map to unique array (supports legacy flat arrays too)
-            const rawSyrups = selections.syrupSelections || {};
-            const syrupSels = Array.isArray(rawSyrups)
-              ? rawSyrups
-              : [...new Set(Object.values(rawSyrups).flat())];
-            const snapshot = calculateProposal({
-              pkg,
-              guestCount: proposal.guest_count,
-              durationHours: Number(proposal.event_duration_hours),
-              numBars: proposal.num_bars ?? 0,
-              numBartenders: proposal.num_bartenders,
-              addons: allAddonsRes.rows,
-              syrupSelections: syrupSels,
-            });
-
-            await client.query(
-              'UPDATE proposals SET total_price = $1, pricing_snapshot = $2, updated_at = NOW() WHERE id = $3',
-              [snapshot.total, JSON.stringify(snapshot), proposal.id]
-            );
-
-            // Log activity
-            await client.query(
-              `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
-               VALUES ($1, 'drink_plan_addons_added', 'client', $2)`,
-              [proposal.id, JSON.stringify({
-                addons: addonSlugs,
-                syrups: syrupSels,
-                champagne_serving_style: selections.addOns?.['champagne-toast']?.servingStyle || null,
-                bar_rental_added: !!addBarRental,
-                new_total: snapshot.total,
-                specialty_upgrades: specialtyUpgrades,
-              })]
-            );
-
-            // Send admin notification if balance changed
-            const amountPaid = Number(proposal.amount_paid) || 0;
-            if (amountPaid < snapshot.total) {
-              const adminEmail = process.env.ADMIN_EMAIL;
-              if (adminEmail) {
-                const daysUntil = proposal.event_date
-                  ? Math.ceil((new Date(proposal.event_date) - new Date()) / (1000 * 60 * 60 * 24))
-                  : null;
-                const isUrgent = daysUntil !== null && daysUntil <= 14;
-
-                const planName = existing.rows[0]?.client_name || 'Client';
-                const addonNames = resolvedAddons.map(a => a.name);
-                if (addBarRental) addonNames.push('Portable Bar Rental');
-                await sendEmail({
-                  to: adminEmail,
-                  subject: `${isUrgent ? 'URGENT: ' : ''}Drink Plan Submitted with Add-Ons — ${planName}`,
-                  html: `<p><strong>${planName}</strong> submitted their drink plan.</p>
-                         <p><strong>Add-ons selected:</strong> ${addonNames.join(', ')}</p>
-                         <p><strong>New total:</strong> $${snapshot.total.toFixed(2)}</p>
-                         <p><strong>Amount paid:</strong> $${amountPaid.toFixed(2)}</p>
-                         <p><strong>Balance due:</strong> $${(snapshot.total - amountPaid).toFixed(2)}</p>
-                         ${isUrgent ? `<p style="color: red;"><strong>Event is in ${daysUntil} days!</strong></p>` : ''}
-                         <p><a href="${ADMIN_URL}/admin/proposals/${proposal.id}">View Proposal</a></p>`,
-                }).catch(emailErr => console.error('Admin notification email failed:', emailErr));
-              }
-
-              // Send client email with updated balance
-              const clientEmail = existing.rows[0]?.client_email || proposal.client_email;
-              if (clientEmail) {
-                const extrasAmount = snapshot.total - (Number(proposal.total_price) || 0);
-                const balanceDue = snapshot.total - amountPaid;
-                const tpl = emailTemplates.drinkPlanBalanceUpdate({
-                  clientName: existing.rows[0]?.client_name || 'Client',
-                  eventTypeLabel: getEventTypeLabel({
-                    event_type: existing.rows[0]?.event_type || proposal.event_type,
-                    event_type_custom: existing.rows[0]?.event_type_custom || proposal.event_type_custom
-                  }),
-                  extrasAmount,
-                  newTotal: snapshot.total,
-                  amountPaid,
-                  balanceDue,
-                  balanceDueDate: proposal.balance_due_date,
-                });
-                sendEmail({ to: clientEmail, ...tpl })
-                  .catch(emailErr => console.error('Client balance email failed:', emailErr));
-              }
-            }
-          }
-        }
-
-        // Only refresh the Balance invoice when the extras are being *added
-        // to balance* — NOT when the client is paying for them separately via
-        // Stripe on this same submit (those extras will land on their own
-        // "Drink Plan Extras" invoice created by the webhook).
-        if (!paidSeparately) {
-          try {
-            await refreshUnlockedInvoices(proposal.id, client);
-          } catch (refreshErr) {
-            console.error('refreshUnlockedInvoices failed (non-fatal):', refreshErr);
-            if (process.env.SENTRY_DSN_SERVER) {
-              Sentry.captureException(refreshErr, {
-                tags: { route: 'drinkPlans/putToken', op: 'refreshUnlockedInvoices' },
-                extra: { proposalId: proposal.id },
-              });
-            }
-          }
-        }
-
-        await client.query('COMMIT');
-      } catch (addonErr) {
-        try {
-          await client.query('ROLLBACK');
-        } catch (rbErr) {
-          console.error('ROLLBACK failed:', rbErr);
-          Sentry.captureException(rbErr, { tags: { route: 'drinkPlans', op: 'rollback' } });
-        }
-        console.error('Addon processing error (non-fatal):', addonErr);
-        // Don't fail the submission — addons are best-effort
-      } finally {
-        client.release();
-      }
-    }
-  }
-
-  res.json(updatedPlan);
+  res.json(result.rows[0]);
 }));
 
 // ─── Admin routes (auth required) ────────────────────────────────

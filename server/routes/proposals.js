@@ -127,21 +127,20 @@ router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
     throw new ValidationError({ signature: 'Invalid signature method' });
   }
 
-  const result = await pool.query(
-    "SELECT id, status FROM proposals WHERE token = $1",
+  const lookup = await pool.query(
+    "SELECT id FROM proposals WHERE token = $1",
     [req.params.token]
   );
-  if (!result.rows[0]) throw new NotFoundError('This proposal is no longer available');
-
-  const proposal = result.rows[0];
-  if (['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status)) {
-    throw new ConflictError('This proposal has already been accepted', 'ALREADY_ACCEPTED');
-  }
+  if (!lookup.rows[0]) throw new NotFoundError('This proposal is no longer available');
 
   const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
   const userAgent = req.headers['user-agent'] || null;
 
-  await pool.query(`
+  // Make the UPDATE itself the gate: WHERE clause re-asserts both that no
+  // signature has been recorded yet AND that the status is still in a signable
+  // state. This collapses the SELECT-then-UPDATE TOCTOU window so two parallel
+  // requests on the same token can't both pass a check and overwrite each other.
+  const upd = await pool.query(`
     UPDATE proposals SET
       client_signed_name = $1,
       client_signature_data = $2,
@@ -152,7 +151,14 @@ router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
       client_signature_document_version = $6,
       status = 'accepted'
     WHERE id = $7
-  `, [client_signed_name, client_signature_data, client_signature_method, ip, userAgent, PROPOSAL_DOCUMENT_VERSION, proposal.id]);
+      AND client_signed_at IS NULL
+      AND status NOT IN ('accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'cancelled')
+    RETURNING id
+  `, [client_signed_name, client_signature_data, client_signature_method, ip, userAgent, PROPOSAL_DOCUMENT_VERSION, lookup.rows[0].id]);
+  if (!upd.rows[0]) {
+    throw new ConflictError('This proposal has already been accepted', 'ALREADY_ACCEPTED');
+  }
+  const proposal = { id: lookup.rows[0].id };
 
   await pool.query(
     `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'signed', 'client', $2)`,

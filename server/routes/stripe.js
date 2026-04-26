@@ -413,27 +413,61 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
     throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
   }
 
+  // Atomic claim: same gate as the scheduler so a manual click can't race a
+  // scheduler tick (or a double-click) and double-charge. Returns the proposal
+  // row only if no charge is already in flight.
   const result = await pool.query(`
-    SELECT id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
-           autopay_enrolled, status, event_type, event_type_custom
-    FROM proposals WHERE id = $1
+    UPDATE proposals
+    SET autopay_status = 'in_progress', autopay_attempted_at = NOW()
+    WHERE id = $1
+      AND status = 'deposit_paid'
+      AND stripe_customer_id IS NOT NULL
+      AND stripe_payment_method_id IS NOT NULL
+      AND (
+        autopay_status IS NULL
+        OR autopay_status = 'failed'
+        OR (autopay_status = 'in_progress' AND autopay_attempted_at < NOW() - INTERVAL '24 hours')
+      )
+    RETURNING id, total_price, amount_paid, stripe_customer_id, stripe_payment_method_id,
+              autopay_enrolled, status, event_type, event_type_custom, balance_due_date
   `, [req.params.id]);
 
-  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
+  if (!result.rows[0]) {
+    // Distinguish "not found" from "already charging" with a follow-up read so
+    // admins see why the click was rejected.
+    const probe = await pool.query(
+      `SELECT status, autopay_status, stripe_customer_id, stripe_payment_method_id FROM proposals WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!probe.rows[0]) throw new NotFoundError('Proposal not found');
+    const p = probe.rows[0];
+    if (p.status !== 'deposit_paid') {
+      throw new ConflictError('Proposal must be in deposit_paid status to charge balance', 'INVALID_STATUS');
+    }
+    if (!p.stripe_customer_id || !p.stripe_payment_method_id) {
+      throw new ConflictError('No saved payment method for this proposal', 'NO_PAYMENT_METHOD');
+    }
+    if (p.autopay_status === 'in_progress') {
+      throw new ConflictError('A balance charge is already in progress for this proposal', 'CHARGE_IN_PROGRESS');
+    }
+    throw new ConflictError('Unable to charge balance', 'INVALID_STATUS');
+  }
 
   const proposal = result.rows[0];
 
-  if (proposal.status !== 'deposit_paid') {
-    throw new ConflictError('Proposal must be in deposit_paid status to charge balance', 'INVALID_STATUS');
-  }
-  if (!proposal.stripe_customer_id || !proposal.stripe_payment_method_id) {
-    throw new ConflictError('No saved payment method for this proposal', 'NO_PAYMENT_METHOD');
-  }
-
   const balanceCents = Math.round((Number(proposal.total_price) - Number(proposal.amount_paid)) * 100);
   if (balanceCents <= 0) {
+    // Release the claim before bailing out so a real balance charge can run later.
+    await pool.query(`UPDATE proposals SET autopay_status = NULL WHERE id = $1`, [proposal.id]);
     throw new ConflictError('No remaining balance to charge', 'NO_BALANCE');
   }
+
+  // Stripe idempotency key shared with the scheduler — a manual click +
+  // scheduler tick that race against the same balance return the SAME intent.
+  const balanceDueIso = proposal.balance_due_date
+    ? new Date(proposal.balance_due_date).toISOString().slice(0, 10)
+    : 'no-date';
+  const idempotencyKey = `autopay-balance-${proposal.id}-${balanceDueIso}`;
 
   let intent;
   try {
@@ -449,8 +483,10 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
         proposal_id: String(proposal.id),
         payment_type: 'balance',
       },
-    });
+    }, { idempotencyKey });
   } catch (err) {
+    // Release the claim so the admin can retry after fixing the card.
+    await pool.query(`UPDATE proposals SET autopay_status = 'failed' WHERE id = $1`, [proposal.id]);
     console.error('Stripe charge-balance error:', err);
     // Preserve Stripe's specific decline message for card errors so admins
     // see the exact reason (e.g. "Your card has insufficient funds.").
@@ -654,7 +690,8 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             await dbClient.query(`
               UPDATE proposals
               SET status = 'balance_paid',
-                  amount_paid = total_price
+                  amount_paid = total_price,
+                  autopay_status = NULL
               WHERE id = $1 AND status = 'deposit_paid'
             `, [proposalId]);
           } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
@@ -803,10 +840,14 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
         if (process.env.SENTRY_DSN_SERVER) {
           Sentry.captureException(dbErr, {
-            tags: { webhook: 'stripe', route: '/webhook' },
+            tags: { webhook: 'stripe', route: '/webhook', event: 'payment_intent.succeeded' },
           });
         }
         console.error('Webhook DB error:', dbErr);
+        // Re-throw so asyncHandler returns 5xx and Stripe retries delivery.
+        // A 200 would tell Stripe the event was processed and silently strand
+        // the proposal in an inconsistent state.
+        throw dbErr;
       } finally {
         dbClient.release();
       }
@@ -946,10 +987,12 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
         if (process.env.SENTRY_DSN_SERVER) {
           Sentry.captureException(dbErr, {
-            tags: { webhook: 'stripe', route: '/webhook' },
+            tags: { webhook: 'stripe', route: '/webhook', event: 'checkout.session.completed' },
           });
         }
         console.error('Webhook DB error:', dbErr);
+        // Re-throw so asyncHandler returns 5xx and Stripe retries delivery.
+        throw dbErr;
       } finally {
         dbClient.release();
       }

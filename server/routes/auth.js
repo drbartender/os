@@ -150,8 +150,11 @@ router.post('/forgot-password', authLimiter, asyncHandler(async (req, res) => {
   const user = result.rows[0];
 
   if (user) {
-    // Generate token and store with 1-hour expiry
-    const token = crypto.randomUUID();
+    // Generate a high-entropy raw token for the email link, but store ONLY a
+    // SHA-256 hash so a DB/log/backup leak can't be used to take over accounts.
+    // (UUIDs were too low-entropy AND stored as plaintext — both fixed here.)
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
     // Invalidate any existing tokens for this user
@@ -159,12 +162,12 @@ router.post('/forgot-password', authLimiter, asyncHandler(async (req, res) => {
 
     await pool.query(
       'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
-      [user.id, token, expiresAt]
+      [user.id, tokenHash, expiresAt]
     );
 
-    // Build reset URL
+    // Build reset URL with the raw token (the only place it ever exists in plaintext)
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
-    const resetUrl = `${clientUrl}/reset-password/${token}`;
+    const resetUrl = `${clientUrl}/reset-password/${rawToken}`;
 
     await sendEmail({
       to: user.email,
@@ -207,10 +210,12 @@ router.post('/reset-password', authLimiter, asyncHandler(async (req, res) => {
   }
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
-  // Find valid token
+  // Hash the submitted raw token and look up by hash — the DB never holds the
+  // raw token, so a DB leak yields nothing the attacker can use.
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
   const result = await pool.query(
     'SELECT * FROM password_reset_tokens WHERE token = $1 AND expires_at > NOW()',
-    [token]
+    [tokenHash]
   );
   const resetRecord = result.rows[0];
 
