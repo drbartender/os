@@ -492,7 +492,7 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `package_id` FK → service_packages, `num_bars`, `num_bartenders`
 - `pricing_snapshot` (JSONB — full pricing breakdown at time of creation)
 - `class_options` (JSONB — nullable) — set for class-category bookings; shape: `{ spirit_category: 'whiskey_bourbon' | 'tequila_mezcal' | null, top_shelf_requested: bool }`. Written only by `POST /api/proposals/public/submit` via a whitelist; other writers must preserve the same shape.
-- `total_price`, `status`: draft | sent | viewed | modified | accepted | deposit_paid | balance_paid | confirmed
+- `total_price`, `status`: draft | sent | viewed | modified | accepted | deposit_paid | balance_paid | confirmed | completed | cancelled
 - Client signature: `client_signed_name`, `client_signature_data`, `client_signed_at`
 - Payment: `payment_type` (deposit | full), `autopay_enrolled`, `deposit_amount`, `amount_paid`, `balance_due_date`
 - Stripe: `stripe_customer_id`, `stripe_payment_method_id` (for autopay off-session charges)
