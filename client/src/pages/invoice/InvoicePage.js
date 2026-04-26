@@ -17,6 +17,11 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
+function formatDateOnly(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
+}
+
 function PaymentForm({ onSuccess }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -160,7 +165,7 @@ export default function InvoicePage() {
             {invoice.due_date && (
               <>
                 <p className="text-muted text-small" style={{ marginTop: '0.5rem' }}>Due Date</p>
-                <p>{formatDate(invoice.due_date)}</p>
+                <p>{formatDateOnly(invoice.due_date)}</p>
               </>
             )}
           </div>
@@ -175,7 +180,7 @@ export default function InvoicePage() {
         <div className="invoice-event-block">
           <p className="text-muted text-small">Event</p>
           <p style={{ fontWeight: 600 }}>{getEventTypeLabel({ event_type: invoice.event_type, event_type_custom: invoice.event_type_custom })}</p>
-          <p className="text-small">{formatDate(invoice.event_date)}{invoice.event_location ? ` · ${invoice.event_location}` : ''}{invoice.guest_count ? ` · ${invoice.guest_count} guests` : ''}</p>
+          <p className="text-small">{formatDateOnly(invoice.event_date)}{invoice.event_location ? ` · ${invoice.event_location}` : ''}{invoice.guest_count ? ` · ${invoice.guest_count} guests` : ''}</p>
         </div>
 
         <table className="invoice-table">

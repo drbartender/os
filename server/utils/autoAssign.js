@@ -42,8 +42,8 @@ function computeSeniorityScore(eventsWorked, hireDateISO, seniorityAdjustment, w
     const hire = new Date(hireDateISO);
     const now = new Date();
     tenureMonths = Math.max(0,
-      (now.getFullYear() - hire.getFullYear()) * 12 +
-      (now.getMonth() - hire.getMonth())
+      (now.getUTCFullYear() - hire.getUTCFullYear()) * 12 +
+      (now.getUTCMonth() - hire.getUTCMonth())
     );
   }
 

@@ -102,7 +102,7 @@ export default function ClientShoppingList() {
 
   const formatDate = (d) => {
     if (!d) return '';
-    return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    return new Date(d).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
   };
 
   const renderSection = (title, items, section) => {

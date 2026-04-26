@@ -637,7 +637,7 @@ router.get('/users/:id/seniority', auth, adminOnly, asyncHandler(async (req, res
   if (profile.hire_date) {
     const hire = new Date(profile.hire_date);
     const now = new Date();
-    tenureMonths = Math.max(0, (now.getFullYear() - hire.getFullYear()) * 12 + (now.getMonth() - hire.getMonth()));
+    tenureMonths = Math.max(0, (now.getUTCFullYear() - hire.getUTCFullYear()) * 12 + (now.getUTCMonth() - hire.getUTCMonth()));
   }
 
   const seniorityAdjustment = profile.seniority_adjustment || 0;

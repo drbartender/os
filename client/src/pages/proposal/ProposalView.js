@@ -37,7 +37,7 @@ function calcEndTime(startTime, durationHours) {
 
 function formatDateShort(d) {
   if (!d) return '';
-  return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  return new Date(d).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
 }
 
 // ─── Stripe payment form (must be inside <Elements>) ─────────────
@@ -219,7 +219,7 @@ export default function ProposalView() {
 
   const formatDate = (d) => {
     if (!d) return '';
-    return new Date(d).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    return new Date(d).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   };
 
   // Sign the proposal — called by PaymentForm before confirming payment
@@ -308,7 +308,7 @@ export default function ProposalView() {
   let balanceDueDate = proposal.balance_due_date;
   if (!balanceDueDate && proposal.event_date) {
     const d = new Date(proposal.event_date);
-    d.setDate(d.getDate() - 14);
+    d.setUTCDate(d.getUTCDate() - 14);
     balanceDueDate = d.toISOString();
   }
 

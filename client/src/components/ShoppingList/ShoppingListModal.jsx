@@ -238,7 +238,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
             </p>
             {edited.eventDate && (
               <p style={{ color: '#D49549', fontSize: '0.8rem', margin: '2px 0 0', fontStyle: 'italic' }}>
-                {new Date(edited.eventDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                {new Date(edited.eventDate).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' })}
               </p>
             )}
           </div>

@@ -158,7 +158,7 @@ function clientOtp({ name, otp }) {
 function drinkPlanBalanceUpdate({ clientName, eventTypeLabel = 'event', extrasAmount, newTotal, amountPaid, balanceDue, balanceDueDate }) {
   const name = clientName || 'there';
   const dueDate = balanceDueDate
-    ? new Date(balanceDueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    ? new Date(balanceDueDate).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' })
     : 'before your event';
   return {
     subject: `Drink Plan Submitted — Updated Balance for your ${eventTypeLabel}`,

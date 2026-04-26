@@ -26,6 +26,7 @@ const STATUS_CLASSES = {
 function formatDate(dateStr) {
   if (!dateStr) return '—';
   return new Date(dateStr).toLocaleDateString('en-US', {
+    timeZone: 'UTC',
     month: 'short',
     day: 'numeric',
     year: 'numeric',

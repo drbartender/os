@@ -251,7 +251,7 @@ router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(asyn
   let balanceDueDate = data.balance_due_date;
   if (!balanceDueDate && data.event_date) {
     const d = new Date(data.event_date);
-    d.setDate(d.getDate() - 14);
+    d.setUTCDate(d.getUTCDate() - 14);
     balanceDueDate = d;
   }
   const isPastDue = balanceDueDate ? now > new Date(balanceDueDate) : false;

@@ -20,7 +20,7 @@ const DISCLAIMER = '*Given the natural variation in preferred drink choices this
 
 function formatDate(d) {
   if (!d) return '';
-  return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  return new Date(d).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
 }
 
 function clamp(v, min, max) { return Math.min(Math.max(v, min), max); }

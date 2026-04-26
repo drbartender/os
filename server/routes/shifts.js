@@ -249,7 +249,7 @@ router.post('/:id/request', auth, requireOnboarded, asyncHandler(async (req, res
       const si = shiftInfo.rows[0];
       const staffName = si?.preferred_name || req.user.email || 'A staff member';
       const eventDate = si?.event_date
-        ? new Date(si.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+        ? new Date(si.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
         : 'TBD';
       const tpl = emailTemplates.shiftRequestAdmin({
         staffName,
@@ -460,7 +460,7 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
     const cp = cpRes.rows[0];
     if (cp?.phone) {
       const date = shift.event_date
-        ? new Date(shift.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+        ? new Date(shift.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
         : 'TBD';
       const time = shift.start_time && shift.end_time
         ? `${shift.start_time}–${shift.end_time}`
@@ -489,7 +489,7 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
     );
     if (staffEmail) {
       const date = shift.event_date
-        ? new Date(shift.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+        ? new Date(shift.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
         : 'TBD';
       const tpl = emailTemplates.shiftRequestApproved({
         staffName: cpRes2.rows[0]?.preferred_name || 'there',
@@ -550,7 +550,7 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
       const info = infoRes.rows[0];
       if (info?.phone) {
         const date = info.event_date
-          ? new Date(info.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+          ? new Date(info.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
           : 'TBD';
         const time = info.start_time && info.end_time
           ? `${info.start_time}–${info.end_time}`
@@ -584,7 +584,7 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
       `, [req.params.requestId])).rows[0];
       if (staffEmail && infoForEmail) {
         const date = infoForEmail.event_date
-          ? new Date(infoForEmail.event_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
+          ? new Date(infoForEmail.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
           : 'TBD';
         const tpl = emailTemplates.shiftRequestApproved({
           staffName: infoForEmail.preferred_name || 'there',

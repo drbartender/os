@@ -28,7 +28,7 @@ const fmt = (n) =>
 
 function formatDateShort(d) {
   if (!d) return '';
-  return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  return new Date(d).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
 }
 
 // ─── Stripe payment form (must be inside <Elements>) ─────────────
@@ -165,7 +165,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
   let displayBalanceDueDate = proposalPaymentInfo?.balanceDueDate;
   if (!displayBalanceDueDate && proposalPaymentInfo?.eventDate) {
     const d = new Date(proposalPaymentInfo.eventDate);
-    d.setDate(d.getDate() - 14);
+    d.setUTCDate(d.getUTCDate() - 14);
     displayBalanceDueDate = d.toISOString();
   }
 
