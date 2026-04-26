@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import api, { API_BASE_URL } from '../../utils/api';
-import RichTextEditor from '../../components/RichTextEditor';
 import { useToast } from '../../context/ToastContext';
+
+// TipTap is ~200 KB; load it only when the editor actually mounts so visiting
+// the blog list (the more common path) doesn't pull the editor chunk.
+const RichTextEditor = lazy(() => import('../../components/RichTextEditor'));
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import Icon from '../../components/adminos/Icon';
@@ -95,11 +98,13 @@ function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, o
 
       <div className="form-group">
         <label className="form-label">Content</label>
-        <RichTextEditor
-          content={form.body}
-          onChange={body => setForm(f => ({ ...f, body }))}
-          onUploadImage={onUploadImage}
-        />
+        <Suspense fallback={<div className="muted" style={{ padding: '1rem 0' }}>Loading editor…</div>}>
+          <RichTextEditor
+            content={form.body}
+            onChange={body => setForm(f => ({ ...f, body }))}
+            onUploadImage={onUploadImage}
+          />
+        </Suspense>
         <FieldError error={fieldErrors?.body} />
       </div>
 

@@ -1350,6 +1350,11 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 -- ─── Performance Indexes ─────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_proposals_status_financial ON proposals(status) WHERE status IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed');
 CREATE INDEX IF NOT EXISTS idx_proposals_autopay_balance ON proposals(balance_due_date) WHERE status = 'deposit_paid' AND autopay_enrolled = true;
+-- Backs the autopay claim WHERE clause (autopay_status filter post-scan).
+-- The existing partial index above pre-filters status+autopay_enrolled; this
+-- adds autopay_status to the index so the eligible-for-charge subset stays
+-- index-only as enrolled proposals scale beyond a few hundred.
+CREATE INDEX IF NOT EXISTS idx_proposals_autopay_claim ON proposals(balance_due_date, autopay_status) WHERE status = 'deposit_paid' AND autopay_enrolled = true;
 CREATE INDEX IF NOT EXISTS idx_email_webhook_events_resend_type ON email_webhook_events(resend_id, event_type);
 CREATE INDEX IF NOT EXISTS idx_email_conversations_unread ON email_conversations(read_at) WHERE read_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_shifts_open_upcoming ON shifts(event_date) WHERE status = 'open';
@@ -1723,21 +1728,43 @@ WHERE slug = 'non-alcoholic-beer'
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS sent_at TIMESTAMPTZ;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
 
-UPDATE proposals p
-SET sent_at = (
-  SELECT MIN(al.created_at) FROM proposal_activity_log al
-  WHERE al.proposal_id = p.id AND al.details->>'to' = 'sent'
-)
-WHERE p.sent_at IS NULL
-  AND p.status IN ('sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed');
+-- Both backfills short-circuit via EXISTS so a fully-backfilled DB doesn't
+-- sequentially scan proposal_activity_log on every container boot. Once every
+-- eligible proposal has its column populated, the EXISTS returns false and the
+-- UPDATE is a no-op.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM proposals
+    WHERE sent_at IS NULL
+      AND status IN ('sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed')
+    LIMIT 1
+  ) THEN
+    UPDATE proposals p
+    SET sent_at = (
+      SELECT MIN(al.created_at) FROM proposal_activity_log al
+      WHERE al.proposal_id = p.id AND al.details->>'to' = 'sent'
+    )
+    WHERE p.sent_at IS NULL
+      AND p.status IN ('sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed');
+  END IF;
+END $$;
 
-UPDATE proposals p
-SET accepted_at = (
-  SELECT MIN(al.created_at) FROM proposal_activity_log al
-  WHERE al.proposal_id = p.id AND al.details->>'to' = 'accepted'
-)
-WHERE p.accepted_at IS NULL
-  AND p.status IN ('accepted','deposit_paid','balance_paid','confirmed','completed');
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM proposals
+    WHERE accepted_at IS NULL
+      AND status IN ('accepted','deposit_paid','balance_paid','confirmed','completed')
+    LIMIT 1
+  ) THEN
+    UPDATE proposals p
+    SET accepted_at = (
+      SELECT MIN(al.created_at) FROM proposal_activity_log al
+      WHERE al.proposal_id = p.id AND al.details->>'to' = 'accepted'
+    )
+    WHERE p.accepted_at IS NULL
+      AND p.status IN ('accepted','deposit_paid','balance_paid','confirmed','completed');
+  END IF;
+END $$;
 
 -- ─── Sentry hardening: email_leads.lead_source allowlist ──────────
 -- The public quote wizard sends source='quote_wizard'. The original CHECK
@@ -1754,7 +1781,19 @@ ALTER TABLE email_leads ADD CONSTRAINT email_leads_lead_source_check
 -- in positions_needed (TEXT, JSON-encoded). Normalize anything that doesn't
 -- start with '[' back to an empty array. The admin route now also guards
 -- with jsonb_typeof so a bad row can't take down sidebar counts again.
-UPDATE shifts SET positions_needed = '[]'
-WHERE positions_needed IS NULL
-   OR TRIM(positions_needed) = ''
-   OR positions_needed !~ '^\s*\[';
+-- Short-circuit via EXISTS so a fully-normalized table doesn't sequentially
+-- scan shifts on every boot.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM shifts
+    WHERE positions_needed IS NULL
+       OR TRIM(positions_needed) = ''
+       OR positions_needed !~ '^\s*\['
+    LIMIT 1
+  ) THEN
+    UPDATE shifts SET positions_needed = '[]'
+    WHERE positions_needed IS NULL
+       OR TRIM(positions_needed) = ''
+       OR positions_needed !~ '^\s*\[';
+  END IF;
+END $$;

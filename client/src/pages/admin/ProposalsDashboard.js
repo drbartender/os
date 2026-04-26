@@ -11,13 +11,23 @@ import useDrawerParam from '../../hooks/useDrawerParam';
 import ProposalDrawer from '../../components/adminos/drawers/ProposalDrawer';
 import { fmt$, fmtDate, relDay } from '../../components/adminos/format';
 
+// Mirrors `proposals_status_check` in server/db/schema.sql. Keep in sync —
+// the constraint allows draft/sent/viewed/modified/accepted/deposit_paid/
+// balance_paid/confirmed/completed/cancelled. ('declined' is not in the
+// constraint but appears here as a safety entry — the sign endpoint never
+// writes it; remove if unused after one full deploy cycle.)
 const STATUS = {
-  draft:    { label: 'Draft',    kind: 'neutral' },
-  sent:     { label: 'Sent',     kind: 'info' },
-  viewed:   { label: 'Viewed',   kind: 'accent' },
-  modified: { label: 'Modified', kind: 'violet' },
-  accepted: { label: 'Accepted', kind: 'ok' },
-  declined: { label: 'Declined', kind: 'danger' },
+  draft:        { label: 'Draft',        kind: 'neutral' },
+  sent:         { label: 'Sent',         kind: 'info' },
+  viewed:       { label: 'Viewed',       kind: 'accent' },
+  modified:     { label: 'Modified',     kind: 'violet' },
+  accepted:     { label: 'Accepted',     kind: 'ok' },
+  deposit_paid: { label: 'Deposit Paid', kind: 'ok' },
+  balance_paid: { label: 'Paid in Full', kind: 'ok' },
+  confirmed:    { label: 'Confirmed',    kind: 'ok' },
+  completed:    { label: 'Completed',    kind: 'neutral' },
+  cancelled:    { label: 'Cancelled',    kind: 'danger' },
+  declined:     { label: 'Declined',     kind: 'danger' },
 };
 
 export default function ProposalsDashboard() {

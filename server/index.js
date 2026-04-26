@@ -95,7 +95,9 @@ const allowedOrigins = [
 // editing this allowlist each time. Gate is an explicit positive match — a typo'd
 // NODE_ENV (e.g. 'staging', 'prod', or unset) closes the localhost door instead
 // of opening it. Restricted to http only — CRA/Vite dev servers don't serve https.
-const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
+// Strictly 'development'. NODE_ENV='test' or unset would otherwise open the
+// localhost door on a misconfigured Render deploy.
+const isDev = process.env.NODE_ENV === 'development';
 const isAllowedOrigin = (origin) => {
   if (allowedOrigins.includes(origin)) return true;
   if (isDev && /^http:\/\/localhost(:\d+)?$/.test(origin)) return true;
@@ -189,7 +191,6 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 // Frontend is served separately on Vercel
 
 // Global error handler — must be the last middleware
-// eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
 

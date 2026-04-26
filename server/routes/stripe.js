@@ -53,7 +53,25 @@ async function getOrCreateCustomer(proposal) {
         return proposal.stripe_customer_id;
       }
     } catch (err) {
-      console.warn(`[Stripe] Cached customer ${proposal.stripe_customer_id} not retrievable in current mode for proposal ${proposal.id}; creating new`);
+      // Distinguish "really gone / wrong mode" from "transient API failure".
+      // resource_missing → safe to create a new customer (the old one is
+      // unusable in this mode). Anything else (network blip, 5xx, auth error)
+      // → re-throw so we don't silently overwrite a valid stripe_customer_id
+      // with a brand-new customer; a future autopay charge against a stale
+      // payment_method would fail loudly instead.
+      if (err && err.code === 'resource_missing') {
+        console.warn(`[Stripe] Cached customer ${proposal.stripe_customer_id} not retrievable in current mode for proposal ${proposal.id}; creating new`);
+        if (process.env.SENTRY_DSN_SERVER) {
+          const Sentry = require('@sentry/node');
+          Sentry.captureMessage(`Stripe customer mode mismatch for proposal ${proposal.id}; recreating`, {
+            level: 'warning',
+            tags: { area: 'stripe', op: 'getOrCreateCustomer' },
+          });
+        }
+        // fall through to create
+      } else {
+        throw err;
+      }
     }
   }
   const customer = await stripe.customers.create({

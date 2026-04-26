@@ -399,9 +399,13 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
 // ─── Admin routes (auth required) ────────────────────────────────
 
 /** GET /api/drink-plans — list all plans. Exclude selections/shopping_list JSONB blobs
- *  (each 100 KB+). Detail endpoint returns selections; shopping_list has its own route. */
+ *  (each 100 KB+). Detail endpoint returns selections; shopping_list has its own route.
+ *  Paginated via ?limit (default 200, max 500) + ?offset to keep the response
+ *  bounded as the table grows. */
 router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { status, search } = req.query;
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   let query = `
     SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
            dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
@@ -423,7 +427,11 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     query += ` AND (dp.client_name ILIKE $${params.length} OR dp.client_email ILIKE $${params.length})`;
   }
 
-  query += ' ORDER BY dp.created_at DESC';
+  params.push(limit);
+  const limitIdx = params.length;
+  params.push(offset);
+  const offsetIdx = params.length;
+  query += ` ORDER BY dp.created_at DESC LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
 
   const result = await pool.query(query, params);
   res.json(result.rows);
