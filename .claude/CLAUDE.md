@@ -110,6 +110,7 @@ dr-bartender/
 │   │   │   ├── FormBanner.js  # Error banner above submit button (auto-scrolls into view)
 │   │   │   ├── Layout.js          # Staff-facing layout wrapper
 │   │   │   ├── LocationInput.js   # Nominatim address autocomplete
+│   │   │   ├── NumberStepper.js   # Numeric input with TimePicker-style ▲/▼ steppers (used for hours)
 │   │   │   ├── PricingBreakdown.js # Proposal pricing display
 │   │   │   ├── PublicLayout.js    # Public-facing layout wrapper
 │   │   │   ├── RichTextEditor.js  # TipTap WYSIWYG editor (blog + email marketing)
