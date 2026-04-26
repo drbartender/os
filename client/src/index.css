@@ -6557,9 +6557,10 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   width: 100%;
 }
 
-.time-picker-input {
+.time-picker-input,
+html[data-app="admin-os"] .time-picker .time-picker-input {
   flex: 1 1 auto;
-  padding-right: 56px; /* room for stepper + chevron */
+  padding-right: 56px; /* room for stepper + chevron — extra specificity beats .input shorthand */
 }
 
 .time-picker-steppers {
@@ -6647,7 +6648,8 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 @media (max-width: 640px) {
   .time-picker-steppers { width: 28px; right: 32px; }
   .time-picker-chevron { width: 30px; }
-  .time-picker-input { padding-right: 68px; }
+  .time-picker-input,
+  html[data-app="admin-os"] .time-picker .time-picker-input { padding-right: 68px; }
   .time-picker-dropdown li { padding: 10px 12px; }
 }
 
@@ -6661,9 +6663,10 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   width: 100%;
 }
 
-.number-stepper-input {
+.number-stepper-input,
+html[data-app="admin-os"] .number-stepper .number-stepper-input {
   flex: 1 1 auto;
-  padding-right: 28px; /* room for stepper buttons */
+  padding-right: 28px; /* room for stepper buttons — extra specificity beats .input shorthand */
 }
 
 .number-stepper-steppers {
@@ -6705,7 +6708,8 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 
 @media (max-width: 640px) {
   .number-stepper-steppers { width: 28px; }
-  .number-stepper-input { padding-right: 34px; }
+  .number-stepper-input,
+  html[data-app="admin-os"] .number-stepper .number-stepper-input { padding-right: 34px; }
 }
 
 

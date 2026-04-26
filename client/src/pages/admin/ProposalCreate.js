@@ -524,83 +524,67 @@ function EventSection({ form, update, merge, fieldErrors }) {
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 0.8fr 0.6fr', gap: 6 }}>
-      <Lbl text="Type">
-        <div style={{ position: 'relative' }} ref={eventTypeRef}>
+    <div style={{ display: 'grid', gap: 8 }}>
+      {/* Row 1 — Type + Date */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(140px, 1fr)', gap: 8 }}>
+        <Lbl text="Type">
+          <div style={{ position: 'relative' }} ref={eventTypeRef}>
+            <input
+              className="input"
+              value={eventTypeQuery}
+              onChange={(e) => {
+                setEventTypeQuery(e.target.value);
+                setEventTypeOpen(true);
+                setEventTypeHighlight(-1);
+                if (form.event_type) merge({ event_type: '', event_type_category: '', event_type_custom: '' });
+              }}
+              onFocus={() => setEventTypeOpen(true)}
+              onKeyDown={handleEventTypeKeyDown}
+              placeholder="Wedding, Birthday…"
+              autoComplete="off"
+              style={{ width: '100%' }}
+            />
+            {eventTypeOpen && eventTypeFiltered.length > 0 && (
+              <ul style={{
+                position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
+                zIndex: 10, listStyle: 'none', margin: 0, padding: 4,
+                background: 'var(--bg-elev)', border: '1px solid var(--line-1)',
+                borderRadius: 4, boxShadow: 'var(--shadow-pop)',
+                maxHeight: 220, overflow: 'auto',
+              }}>
+                {eventTypeFiltered.map((et, i) => (
+                  <li
+                    key={et.id}
+                    onMouseDown={() => selectEventType(et)}
+                    onMouseEnter={() => setEventTypeHighlight(i)}
+                    style={{
+                      padding: '6px 8px', cursor: 'pointer', borderRadius: 3, fontSize: 12.5,
+                      background: i === eventTypeHighlight ? 'var(--row-hover)' : 'transparent',
+                    }}
+                  >
+                    {et.label}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <FieldError error={fieldErrors?.event_type} />
+        </Lbl>
+
+        <Lbl text="Date">
           <input
             className="input"
-            value={eventTypeQuery}
-            onChange={(e) => {
-              setEventTypeQuery(e.target.value);
-              setEventTypeOpen(true);
-              setEventTypeHighlight(-1);
-              if (form.event_type) merge({ event_type: '', event_type_category: '', event_type_custom: '' });
-            }}
-            onFocus={() => setEventTypeOpen(true)}
-            onKeyDown={handleEventTypeKeyDown}
-            placeholder="Wedding, Birthday…"
-            autoComplete="off"
+            type="date"
+            value={form.event_date}
+            onChange={(e) => update('event_date', e.target.value)}
+            placeholder="mm/dd/yyyy"
             style={{ width: '100%' }}
           />
-          {eventTypeOpen && eventTypeFiltered.length > 0 && (
-            <ul style={{
-              position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
-              zIndex: 10, listStyle: 'none', margin: 0, padding: 4,
-              background: 'var(--bg-elev)', border: '1px solid var(--line-1)',
-              borderRadius: 4, boxShadow: 'var(--shadow-pop)',
-              maxHeight: 220, overflow: 'auto',
-            }}>
-              {eventTypeFiltered.map((et, i) => (
-                <li
-                  key={et.id}
-                  onMouseDown={() => selectEventType(et)}
-                  onMouseEnter={() => setEventTypeHighlight(i)}
-                  style={{
-                    padding: '6px 8px', cursor: 'pointer', borderRadius: 3, fontSize: 12.5,
-                    background: i === eventTypeHighlight ? 'var(--row-hover)' : 'transparent',
-                  }}
-                >
-                  {et.label}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <FieldError error={fieldErrors?.event_type} />
-      </Lbl>
-
-      <Lbl text="Date">
-        <input
-          className="input"
-          type="date"
-          value={form.event_date}
-          onChange={(e) => update('event_date', e.target.value)}
-          style={{ width: '100%' }}
-        />
-      </Lbl>
-
-      <Lbl text="Start">
-        <TimePicker
-          value={form.event_start_time}
-          onChange={(v) => update('event_start_time', v)}
-          minHour={6}
-          maxHour={23}
-        />
-      </Lbl>
-
-      <Lbl text="Hrs">
-        <NumberStepper
-          className="input num"
-          min={1} max={12} step={0.5}
-          value={form.event_duration_hours}
-          onChange={(v) => update('event_duration_hours', v)}
-          style={{ width: '100%', textAlign: 'right' }}
-          ariaLabelIncrease="Increase duration" ariaLabelDecrease="Decrease duration"
-        />
-      </Lbl>
+        </Lbl>
+      </div>
 
       {form.event_type === 'Other' && (
-        <Lbl text="Custom event type" span={4}>
+        <Lbl text="Custom event type">
           <input
             className="input"
             value={form.event_type_custom}
@@ -611,32 +595,58 @@ function EventSection({ form, update, merge, fieldErrors }) {
         </Lbl>
       )}
 
-      <Lbl text="Venue / location" span={3}>
+      {/* Row 2 — Start / Hrs / Guests / Bars */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.5fr) minmax(64px, 0.7fr) minmax(72px, 0.8fr) minmax(72px, 0.8fr)', gap: 8 }}>
+        <Lbl text="Start">
+          <TimePicker
+            className="input"
+            value={form.event_start_time}
+            onChange={(v) => update('event_start_time', v)}
+            minHour={6}
+            maxHour={23}
+          />
+        </Lbl>
+
+        <Lbl text="Hrs">
+          <NumberStepper
+            className="input num"
+            min={1} max={12} step={0.5}
+            value={form.event_duration_hours}
+            onChange={(v) => update('event_duration_hours', v)}
+            style={{ width: '100%', textAlign: 'right' }}
+            ariaLabelIncrease="Increase duration" ariaLabelDecrease="Decrease duration"
+          />
+        </Lbl>
+
+        <Lbl text="Guests">
+          <input
+            className="input num"
+            type="number"
+            min="1" max="1000"
+            value={form.guest_count}
+            onChange={(e) => update('guest_count', e.target.value)}
+            style={{ width: '100%', textAlign: 'right' }}
+          />
+        </Lbl>
+
+        <Lbl text="Bars">
+          <input
+            className="input num"
+            type="number"
+            min="0" max="5"
+            value={form.num_bars}
+            onChange={(e) => update('num_bars', e.target.value)}
+            style={{ width: '100%', textAlign: 'right' }}
+          />
+        </Lbl>
+      </div>
+
+      {/* Row 3 — Venue full width */}
+      <Lbl text="Venue / location">
         <LocationInput
+          className="input"
           value={form.event_location}
           onChange={(val) => update('event_location', val)}
-        />
-      </Lbl>
-
-      <Lbl text="Guests">
-        <input
-          className="input num"
-          type="number"
-          min="1" max="1000"
-          value={form.guest_count}
-          onChange={(e) => update('guest_count', e.target.value)}
-          style={{ width: '100%', textAlign: 'right' }}
-        />
-      </Lbl>
-
-      <Lbl text="Portable bars" span={1}>
-        <input
-          className="input num"
-          type="number"
-          min="0" max="5"
-          value={form.num_bars}
-          onChange={(e) => update('num_bars', e.target.value)}
-          style={{ width: '100%', textAlign: 'right' }}
         />
       </Lbl>
     </div>
@@ -941,12 +951,13 @@ function SendSection() {
 
 // ─── Pricing dock ──────────────────────────────────────────────────────────
 
+const DEPOSIT_AMOUNT = 100;
+
 function PricingDock({ form, preview, packages, submitting, error, fieldErrors }) {
   const pkg = packages.find(p => p.id === Number(form.package_id));
-  const total = Number(preview?.total_price) || 0;
+  const total = Number(preview?.total) || 0;
   const subtotal = Number(preview?.subtotal) || 0;
-  const gratuity = Number(preview?.gratuity) || 0;
-  const deposit = total * 0.5;
+  const breakdown = preview?.breakdown || [];
 
   return (
     <aside style={{
@@ -983,21 +994,15 @@ function PricingDock({ form, preview, packages, submitting, error, fieldErrors }
         )}
         {preview && (
           <div>
-            <Row label={pkg?.name || 'Package'} value={preview.package_total ?? preview.base_total} primary />
-            {(preview.addons || []).map((a) => (
-              <Row key={a.id ?? a.slug} label={a.name} value={a.amount} sub />
+            {breakdown.map((item, i) => (
+              <Row key={i} label={item.label} value={item.amount} />
             ))}
-            {Number(preview.travel_total) > 0 && (
-              <Row label="Travel & setup" value={preview.travel_total} />
-            )}
             <div style={{ margin: '10px 0', borderTop: '1px solid var(--line-1)' }} />
-            <Row label="Subtotal" value={subtotal} />
-            {gratuity > 0 && (
-              <Row label={`Gratuity${preview.gratuity_pct ? ` (${preview.gratuity_pct}%)` : ''}`} value={gratuity} />
+            {subtotal !== total && (
+              <Row label="Subtotal" value={subtotal} />
             )}
-            <div style={{ margin: '10px 0', borderTop: '1px solid var(--line-1)' }} />
             <Row label="Total" value={total} primary big />
-            <Row label="Deposit (50%)" value={deposit} muted />
+            <Row label="Deposit" value={DEPOSIT_AMOUNT} muted />
           </div>
         )}
 

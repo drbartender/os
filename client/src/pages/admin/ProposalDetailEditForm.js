@@ -259,7 +259,7 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
           </div>
           <div>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Start time</label>
-            <TimePicker value={editForm.event_start_time || ''}
+            <TimePicker className="input" value={editForm.event_start_time || ''}
               onChange={(v) => update('event_start_time', v)}
               minHour={6} maxHour={23} />
           </div>

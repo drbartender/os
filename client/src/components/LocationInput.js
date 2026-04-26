@@ -105,6 +105,7 @@ export default function LocationInput({ value, onChange, onSelect, placeholder =
         aria-autocomplete="list"
         aria-controls="location-suggestions"
         aria-activedescendant={activeIdx >= 0 ? `location-suggestion-${activeIdx}` : undefined}
+        style={{ width: '100%' }}
       />
       {open && suggestions.length > 0 && (
         <ul id="location-suggestions" role="listbox" style={{
