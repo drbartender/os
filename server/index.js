@@ -92,11 +92,13 @@ const allowedOrigins = [
 
 // In development, allow any http://localhost:<port> so the dev server can run
 // on alternate ports (e.g. 3010 when 3000 is taken by another project) without
-// editing this allowlist each time.
-const isDev = process.env.NODE_ENV !== 'production';
+// editing this allowlist each time. Gate is an explicit positive match — a typo'd
+// NODE_ENV (e.g. 'staging', 'prod', or unset) closes the localhost door instead
+// of opening it. Restricted to http only — CRA/Vite dev servers don't serve https.
+const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test';
 const isAllowedOrigin = (origin) => {
   if (allowedOrigins.includes(origin)) return true;
-  if (isDev && /^https?:\/\/localhost(:\d+)?$/.test(origin)) return true;
+  if (isDev && /^http:\/\/localhost(:\d+)?$/.test(origin)) return true;
   return false;
 };
 

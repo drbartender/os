@@ -26,7 +26,9 @@ const EMAIL_SANITIZE_OPTIONS = {
 const sanitizeHtml = (html) =>
   html ? DOMPurify.sanitize(html, EMAIL_SANITIZE_OPTIONS) : html;
 
-const VALID_LEAD_SOURCES = ['manual', 'csv_import', 'website', 'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other'];
+// Must mirror the schema CHECK on email_leads.lead_source. If you add a new value
+// here, add it to client/src/utils/leadSources.js and the DDL in schema.sql.
+const VALID_LEAD_SOURCES = ['manual', 'csv_import', 'website', 'quote_wizard', 'potion_lab', 'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other'];
 
 // ─── Lead Management ──────────────────────────────────────────────
 

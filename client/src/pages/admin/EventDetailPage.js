@@ -6,24 +6,7 @@ import { getEventTypeLabel } from '../../utils/eventTypes';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmt$, fmt$cents, fmtDate, fmtDateFull, relDay } from '../../components/adminos/format';
-
-function eventStatusChip(p, paid) {
-  const total = Number(p.total_price || 0);
-  if (p.status === 'sent' || p.status === 'viewed' || p.status === 'modified') {
-    return <StatusChip kind="warn">Contract out</StatusChip>;
-  }
-  if (paid <= 0) return <StatusChip kind="warn">No payment</StatusChip>;
-  if (paid < total) return <StatusChip kind="info">Deposit paid</StatusChip>;
-  return <StatusChip kind="ok">Paid in full</StatusChip>;
-}
-
-function parsePositions(raw) {
-  if (Array.isArray(raw)) return raw;
-  if (typeof raw === 'string') {
-    try { return JSON.parse(raw); } catch { return []; }
-  }
-  return [];
-}
+import { eventStatusChip, parsePositionsCount, approvedCount } from '../../components/adminos/shifts';
 
 export default function EventDetailPage() {
   const { id } = useParams();
@@ -39,7 +22,7 @@ export default function EventDetailPage() {
     setLoading(true);
     Promise.all([
       api.get(`/proposals/${id}`).then(r => r.data),
-      api.get('/shifts').then(r => (r.data || []).filter(s => String(s.proposal_id) === String(id))).catch(() => []),
+      api.get(`/shifts/by-proposal/${id}`).then(r => Array.isArray(r.data) ? r.data : []).catch(() => []),
     ])
       .then(([pd, sd]) => {
         if (cancelled) return;
@@ -103,7 +86,7 @@ export default function EventDetailPage() {
               <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, margin: 0, lineHeight: 1.15 }}>
                 {proposal.client_name || 'Event'} · {eventTypeLabel}
               </h1>
-              {eventStatusChip(proposal, paid)}
+              {eventStatusChip(proposal)}
               {proposal.package_name && <span className="tag">{proposal.package_name}</span>}
             </div>
             <div className="muted" style={{ fontSize: 13 }}>
@@ -116,9 +99,18 @@ export default function EventDetailPage() {
             <button type="button" className="btn btn-ghost" onClick={() => navigate(`/admin/proposals/${proposal.id}`)}>
               <Icon name="external" size={12} />Open proposal
             </button>
-            {shifts[0] && (
+            {shifts.length === 1 && (
               <button type="button" className="btn btn-secondary" onClick={() => navigate(`/admin/events/shift/${shifts[0].id}`)}>
                 <Icon name="userplus" size={12} />Manage staffing
+              </button>
+            )}
+            {shifts.length > 1 && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => document.getElementById('event-staffing-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              >
+                <Icon name="userplus" size={12} />Manage staffing ({shifts.length})
               </button>
             )}
           </div>
@@ -152,10 +144,10 @@ export default function EventDetailPage() {
             </div>
           </div>
 
-          <div className="card">
+          <div className="card" id="event-staffing-card">
             <div className="card-head">
               <h3>Staffing</h3>
-              {shifts[0] && (
+              {shifts.length === 1 && (
                 <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate(`/admin/events/shift/${shifts[0].id}`)}>
                   <Icon name="external" size={11} />Manage
                 </button>
@@ -166,12 +158,21 @@ export default function EventDetailPage() {
                 <div className="muted tiny">No shifts created for this event yet.</div>
               )}
               {shifts.map(s => {
-                const positions = parsePositions(s.positions_needed);
-                const needed = positions.length || Number(s.bartenders_needed || 1);
-                const filled = Number(s.approved_count || 0);
+                const needed = parsePositionsCount(s);
+                const filled = approvedCount(s);
                 const requestCount = Number(s.request_count || 0);
+                const goToShift = () => navigate(`/admin/events/shift/${s.id}`);
                 return (
-                  <div key={s.id} style={{ marginBottom: 10 }}>
+                  <div
+                    key={s.id}
+                    onClick={goToShift}
+                    onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); goToShift(); } }}
+                    role="button"
+                    tabIndex={0}
+                    className="event-shift-row"
+                    style={{ marginBottom: 10, cursor: 'pointer', padding: '8px 10px', margin: '0 -10px 4px', borderRadius: 4 }}
+                    title="Open shift"
+                  >
                     <div className="hstack" style={{ marginBottom: 6 }}>
                       <strong>{s.event_date ? fmtDate(String(s.event_date).slice(0, 10)) : '—'}</strong>
                       <span className="tiny muted">{s.start_time || ''}{s.end_time ? ` – ${s.end_time}` : ''}</span>
@@ -179,6 +180,7 @@ export default function EventDetailPage() {
                       <StatusChip kind={filled >= needed ? 'ok' : filled > 0 ? 'warn' : 'danger'}>
                         {filled}/{needed} staffed
                       </StatusChip>
+                      <Icon name="right" size={10} />
                     </div>
                     {requestCount > 0 && (
                       <div className="tiny muted" style={{ marginLeft: 0 }}>
@@ -238,7 +240,7 @@ export default function EventDetailPage() {
                   {fmt$cents(bal)}
                 </dd>
                 <dt>Status</dt>
-                <dd>{eventStatusChip(proposal, paid)}</dd>
+                <dd>{eventStatusChip(proposal)}</dd>
               </dl>
               <div className="hstack" style={{ marginTop: 12, gap: 6 }}>
                 <button type="button" className="btn btn-secondary" style={{ flex: 1 }}

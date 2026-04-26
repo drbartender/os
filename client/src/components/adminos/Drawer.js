@@ -9,6 +9,15 @@ export default function Drawer({ open, onClose, crumb, children, onOpenPage, foo
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
+  // Lock body scroll while the drawer is open so wheel events don't bleed
+  // through the scrim onto the underlying list page.
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [open]);
+
   return (
     <>
       <div className={`drawer-scrim ${open ? 'open' : ''}`} onClick={onClose} aria-hidden={!open} />

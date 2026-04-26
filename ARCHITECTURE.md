@@ -213,7 +213,9 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 ### Proposals — `/api/proposals`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/` | Admin | List proposals with filters (status, search) |
+| GET | `/` | Admin | List proposals with filters (status, search). Default excludes paid + cancelled (those appear in Events / archive) |
+| GET | `/financials` | Admin | Aggregated revenue + payments for FinancialsDashboard |
+| GET | `/dashboard-stats` | Admin | Server-side aggregations (booked / collected / outstanding / pipeline / 12-month revenue) for the admin home — accurate past the 50-row /api/proposals LIMIT |
 | POST | `/` | Admin | Create proposal (auto-calculates pricing, creates client if needed) |
 | POST | `/calculate` | Admin | Preview pricing without saving |
 | GET | `/packages` | Admin | List service packages |
@@ -249,6 +251,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/` | Yes | List shifts (staff see open upcoming; admin see all) |
+| GET | `/unstaffed-upcoming` | Staffing | Pre-filtered upcoming + still-needs-staffing list (powers AssignToEventModal — replaces the full /shifts dump) |
 | GET | `/my-requests` | Yes | Current user's shift request history |
 | POST | `/` | Staffing | Create shift |
 | PUT | `/:id` | Staffing | Update shift |
@@ -258,7 +261,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/:id/requests` | Staffing | Get all requests for a shift |
 | PUT | `/requests/:requestId` | Staffing | Approve or deny a request (sends SMS on approve) |
 | POST | `/:id/auto-assign` | Staffing | Run auto-assign algorithm (dry_run for preview, or execute to approve top candidates) |
-| GET | `/by-proposal/:proposalId` | Staffing | Get shift for a specific proposal (used by event detail page) |
+| GET | `/by-proposal/:proposalId` | Staffing | All shifts for a proposal (array — supports multi-shift events on EventDetailPage) |
 
 ### Admin — `/api/admin` (continued)
 | Method | Path | Auth | Description |

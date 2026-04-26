@@ -4,67 +4,35 @@ import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import Icon from '../../components/adminos/Icon';
-import StatusChip from '../../components/adminos/StatusChip';
 import StaffPills from '../../components/adminos/StaffPills';
 import AreaChart from '../../components/adminos/AreaChart';
 import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
+import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip } from '../../components/adminos/shifts';
 
-// Map a proposal-y row to the event status chip used in handoff dashboard.jsx.
-function eventStatusChip(e) {
-  const total = Number(e.proposal_total || e.total_price || 0);
-  const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
-  if (e.proposal_status === 'sent' || e.proposal_status === 'viewed' || e.proposal_status === 'modified') {
-    return <StatusChip kind="warn">Contract out</StatusChip>;
-  }
-  if (paid <= 0) return <StatusChip kind="warn">No payment</StatusChip>;
-  if (paid < total) return <StatusChip kind="info">Deposit paid</StatusChip>;
-  return <StatusChip kind="ok">Paid in full</StatusChip>;
+const PIPELINE_COLORS = {
+  draft:    'var(--ink-3)',
+  sent:     'hsl(var(--info-h) var(--info-s) 62%)',
+  viewed:   'var(--accent)',
+  modified: 'hsl(var(--violet-h) var(--violet-s) 65%)',
+  accepted: 'hsl(var(--ok-h) var(--ok-s) 52%)',
+};
+
+// Route a shift row to its event detail (proposal-backed) or shift detail (manual).
+function eventRoute(e) {
+  return e?.proposal_id ? `/admin/events/${e.proposal_id}` : `/admin/events/shift/${e?.id}`;
 }
 
-// Convert shift rows into a positions[] shape that StaffPills expects.
-function shiftPositions(s) {
-  const needed = Number(s.bartenders_needed || s.positions_needed || 1);
-  const filled = Number(s.assignments_count || 0);
-  const pending = Math.min(needed - filled, Number(s.request_count || 0));
-  return Array.from({ length: needed }, (_, i) => {
-    if (i < filled) return { role: 'Bartender', name: 'Filled', status: 'approved' };
-    if (i < filled + pending) return { role: 'Bartender', name: null, status: 'pending' };
-    return { role: 'Bartender', name: null, status: null };
-  });
-}
-
-const SHORT_MONTH = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-// Group events by event_date month, last 12 months ending this month.
-// Returns [{ m: 'May', booked: <total>, collected: <paid> }, ...]
-function buildRevenueSeries(events) {
-  const now = new Date();
-  const buckets = [];
-  for (let i = 11; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    buckets.push({
-      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
-      m: SHORT_MONTH[d.getMonth()],
-      booked: 0,
-      collected: 0,
-    });
-  }
-  const byKey = Object.fromEntries(buckets.map(b => [b.key, b]));
-  events.forEach(e => {
-    if (!e.event_date) return;
-    const key = e.event_date.slice(0, 7);
-    const bucket = byKey[key];
-    if (!bucket) return;
-    bucket.booked += Number(e.proposal_total || e.total_price || 0);
-    bucket.collected += Number(e.proposal_amount_paid || e.amount_paid || 0);
-  });
-  return buckets;
-}
+const EMPTY_STATS = {
+  totals: { booked: 0, collected: 0, outstanding: 0, events_count: 0, events_owing_balance: 0 },
+  pipeline: [],
+  revenue: [],
+};
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const toast = useToast();
-  const [events, setEvents] = useState([]);
+  const [stats, setStats] = useState(EMPTY_STATS);
+  const [shifts, setShifts] = useState([]);
   const [proposals, setProposals] = useState([]);
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -73,12 +41,14 @@ export default function Dashboard() {
     let anyFailed = false;
     const trackFail = () => { anyFailed = true; };
     Promise.all([
+      api.get('/proposals/dashboard-stats').then(r => r.data).catch(() => { trackFail(); return EMPTY_STATS; }),
       api.get('/shifts').then(r => r.data).catch(() => { trackFail(); return []; }),
       api.get('/proposals').then(r => r.data).catch(() => { trackFail(); return []; }),
       api.get('/admin/applications').then(r => r.data).catch(() => { trackFail(); return { applications: [] }; }),
     ])
-      .then(([shiftsData, proposalsData, appsData]) => {
-        setEvents((shiftsData || []).filter(s => s.proposal_id));
+      .then(([statsData, shiftsData, proposalsData, appsData]) => {
+        setStats(statsData || EMPTY_STATS);
+        setShifts(shiftsData || []);
         setProposals(proposalsData || []);
         setApplications(appsData?.applications || appsData || []);
         if (anyFailed) toast.error('Some dashboard data failed to load. Try refreshing.');
@@ -92,43 +62,21 @@ export default function Dashboard() {
       });
   }, [toast]);
 
+  // All shifts (manual + proposal-backed) count for staffing-status views.
+  // Revenue stats come from the server-side aggregation, not this list.
   const upcoming = useMemo(() =>
-    events
+    shifts
       .filter(e => e.event_date && dayDiff(e.event_date.slice(0, 10)) >= 0)
       .sort((a, b) => a.event_date.localeCompare(b.event_date)),
-  [events]);
-
-  const totalBooked = useMemo(() =>
-    events.reduce((s, e) => s + Number(e.proposal_total || 0), 0),
-  [events]);
-
-  const totalCollected = useMemo(() =>
-    events.reduce((s, e) => s + Number(e.proposal_amount_paid || e.amount_paid || 0), 0),
-  [events]);
-
-  const outstanding = totalBooked - totalCollected;
-
-  const eventsOwingBalance = useMemo(() =>
-    events.filter(e => Number(e.proposal_total || 0) > Number(e.proposal_amount_paid || e.amount_paid || 0)).length,
-  [events]);
+  [shifts]);
 
   const unstaffed = useMemo(() =>
-    upcoming.filter(e => {
-      const needed = Number(e.bartenders_needed || e.positions_needed || 1);
-      const filled = Number(e.assignments_count || 0);
-      return filled < needed;
-    }),
+    upcoming.filter(e => approvedCount(e) < parsePositionsCount(e)),
   [upcoming]);
 
   const openShifts = useMemo(() =>
-    upcoming.reduce((sum, e) => {
-      const needed = Number(e.bartenders_needed || e.positions_needed || 1);
-      const filled = Number(e.assignments_count || 0);
-      return sum + Math.max(0, needed - filled);
-    }, 0),
+    upcoming.reduce((sum, e) => sum + Math.max(0, parsePositionsCount(e) - approvedCount(e)), 0),
   [upcoming]);
-
-  const revenueSeries = useMemo(() => buildRevenueSeries(events), [events]);
 
   const newApplications = useMemo(() =>
     Array.isArray(applications) ? applications.filter(a => a.onboarding_status === 'applied').length : 0,
@@ -137,8 +85,8 @@ export default function Dashboard() {
   const actionQueue = useMemo(() => {
     const items = [];
     unstaffed.slice(0, 3).forEach(e => {
-      const needed = Number(e.bartenders_needed || e.positions_needed || 1);
-      const filled = Number(e.assignments_count || 0);
+      const needed = parsePositionsCount(e);
+      const filled = approvedCount(e);
       const open = needed - filled;
       const days = dayDiff(e.event_date.slice(0, 10));
       items.push({
@@ -148,8 +96,8 @@ export default function Dashboard() {
         title: `${e.client_name || 'Event'} needs ${open} ${open === 1 ? 'bartender' : 'bartenders'}`,
         sub: `${getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })} · ${fmtDate(e.event_date.slice(0, 10))} · ${days}d out`,
         meta: `${open} open`,
-        target: 'event',
-        ref: e.proposal_id,
+        target: e.proposal_id ? 'event' : 'shift',
+        ref: e.proposal_id || e.id,
       });
     });
     proposals.filter(p => ['sent', 'viewed', 'modified'].includes(p.status)).slice(0, 2).forEach(p => {
@@ -179,25 +127,15 @@ export default function Dashboard() {
     return items;
   }, [unstaffed, proposals, newApplications]);
 
-  const pipeline = useMemo(() => {
-    const buckets = [
-      { key: 'draft',    label: 'Draft',    color: 'var(--ink-3)' },
-      { key: 'sent',     label: 'Sent',     color: 'hsl(var(--info-h) var(--info-s) 62%)' },
-      { key: 'viewed',   label: 'Viewed',   color: 'var(--accent)' },
-      { key: 'modified', label: 'Modified', color: 'hsl(var(--violet-h) var(--violet-s) 65%)' },
-      { key: 'accepted', label: 'Accepted', color: 'hsl(var(--ok-h) var(--ok-s) 52%)' },
-    ];
-    return buckets.map(b => {
-      const items = proposals.filter(p => p.status === b.key);
-      return {
-        ...b,
-        count: items.length,
-        value: items.reduce((s, p) => s + Number(p.total_price || 0), 0),
-      };
-    });
-  }, [proposals]);
+  const totals = stats.totals || EMPTY_STATS.totals;
+  const totalBooked = Number(totals.booked || 0);
+  const totalCollected = Number(totals.collected || 0);
+  const outstanding = Number(totals.outstanding || 0);
+  const eventsOwingBalance = Number(totals.events_owing_balance || 0);
+  const eventsCount = Number(totals.events_count || 0);
 
-  const maxPipelineValue = Math.max(1, ...pipeline.map(p => p.value));
+  const pipeline = stats.pipeline || [];
+  const maxPipelineValue = Math.max(1, ...pipeline.map(p => Number(p.value || 0)));
 
   if (loading) {
     return (
@@ -231,7 +169,7 @@ export default function Dashboard() {
         <div className="stat" onClick={() => navigate('/admin/financials')}>
           <div className="stat-label">Booked</div>
           <div className="stat-value">{fmt$(totalBooked)}</div>
-          <div className="stat-sub"><span>{events.length} events on record</span></div>
+          <div className="stat-sub"><span>{eventsCount} {eventsCount === 1 ? 'event' : 'events'} on record</span></div>
         </div>
         <div className="stat" onClick={() => navigate('/admin/financials')}>
           <div className="stat-label">Collected</div>
@@ -279,7 +217,7 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="card-body">
-              <AreaChart data={revenueSeries} />
+              <AreaChart data={stats.revenue || []} />
             </div>
           </div>
 
@@ -307,7 +245,7 @@ export default function Dashboard() {
                     const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
                     const bal = total - paid;
                     return (
-                      <tr key={e.id} onClick={() => navigate(`/admin/events/${e.proposal_id}`)}>
+                      <tr key={e.id} onClick={() => navigate(eventRoute(e))}>
                         <td>
                           <strong>{e.client_name || '—'}</strong>
                           <div className="sub">{getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })}</div>
@@ -318,7 +256,7 @@ export default function Dashboard() {
                         </td>
                         <td><StaffPills positions={shiftPositions(e)} /></td>
                         <td>{eventStatusChip(e)}</td>
-                        <td className="num">{fmt$(total)}</td>
+                        <td className="num">{total > 0 ? fmt$(total) : '—'}</td>
                         <td className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'var(--ink-3)' }}>
                           {bal > 0 ? fmt$(bal) : '—'}
                         </td>
@@ -347,6 +285,7 @@ export default function Dashboard() {
                   className="queue-item"
                   onClick={() => {
                     if (a.target === 'event') navigate(`/admin/events/${a.ref}`);
+                    else if (a.target === 'shift') navigate(`/admin/events/shift/${a.ref}`);
                     else if (a.target === 'proposal') navigate(`/admin/proposals/${a.ref}`);
                     else if (a.target === 'hiring') navigate('/admin/hiring');
                   }}
@@ -375,14 +314,20 @@ export default function Dashboard() {
           <div className="card">
             <div className="card-head"><h3>Pipeline</h3><span className="k">Proposals</span></div>
             <div className="card-body" style={{ padding: '0.75rem 1rem' }}>
-              {pipeline.map(row => (
-                <div key={row.key} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 50px 80px', alignItems: 'center', gap: 10, padding: '6px 0', fontSize: 12 }}>
-                  <span style={{ color: 'var(--ink-2)' }}>{row.label}</span>
-                  <div className="bar"><div className="bar-fill" style={{ width: `${Math.min(100, (row.value / maxPipelineValue) * 100)}%`, background: row.color }} /></div>
-                  <span className="num muted" style={{ textAlign: 'right' }}>{row.count}</span>
-                  <span className="num" style={{ textAlign: 'right', color: 'var(--ink-1)', fontWeight: 600 }}>{fmt$(row.value)}</span>
-                </div>
-              ))}
+              {pipeline.length === 0 && (
+                <div className="muted tiny">No active proposals.</div>
+              )}
+              {pipeline.map(row => {
+                const value = Number(row.value || 0);
+                return (
+                  <div key={row.key} style={{ display: 'grid', gridTemplateColumns: '80px 1fr 50px 80px', alignItems: 'center', gap: 10, padding: '6px 0', fontSize: 12 }}>
+                    <span style={{ color: 'var(--ink-2)' }}>{row.label}</span>
+                    <div className="bar"><div className="bar-fill" style={{ width: `${Math.min(100, (value / maxPipelineValue) * 100)}%`, background: PIPELINE_COLORS[row.key] || 'var(--ink-3)' }} /></div>
+                    <span className="num muted" style={{ textAlign: 'right' }}>{row.count}</span>
+                    <span className="num" style={{ textAlign: 'right', color: 'var(--ink-1)', fontWeight: 600 }}>{fmt$(value)}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

@@ -75,6 +75,33 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
+/** GET /shifts/unstaffed-upcoming — admin-facing list of upcoming shifts that
+ *  still need staffing. Smaller than the full /shifts dump and pre-filtered
+ *  server-side so the AssignToEventModal can render without fetching ~500 rows.
+ *  Uses the same `positions_needed::jsonb` pattern as admin.js badge-counts;
+ *  the schema migration normalized every row to a valid JSON array, so the
+ *  cast is safe in practice. */
+router.get('/unstaffed-upcoming', auth, requireStaffing, asyncHandler(async (req, res) => {
+  const result = await pool.query(`
+    SELECT s.id, s.event_date, s.start_time, s.end_time, s.location, s.guest_count,
+           s.event_type, s.event_type_custom, s.positions_needed, s.proposal_id,
+           COALESCE(c.name, s.client_name) AS client_name,
+           (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
+           (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count
+    FROM shifts s
+    LEFT JOIN proposals p ON p.id = s.proposal_id
+    LEFT JOIN clients c ON c.id = p.client_id
+    WHERE s.status = 'open'
+      AND s.event_date >= CURRENT_DATE
+      AND jsonb_typeof(s.positions_needed::jsonb) = 'array'
+      AND (SELECT COUNT(*) FROM shift_requests sr2 WHERE sr2.shift_id = s.id AND sr2.status = 'approved')
+          < jsonb_array_length(s.positions_needed::jsonb)
+    ORDER BY s.event_date ASC, s.start_time ASC
+    LIMIT 200
+  `);
+  res.json(result.rows);
+}));
+
 /** GET /shifts/user/:userId/events — event history for a user (staff or admin) */
 router.get('/user/:userId/events', auth, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
@@ -171,7 +198,10 @@ router.get('/my-requests', auth, asyncHandler(async (req, res) => {
   res.json(enriched);
 }));
 
-/** GET /shifts/by-proposal/:proposalId — fetch shift for a specific proposal */
+/** GET /shifts/by-proposal/:proposalId — return every shift attached to a
+ *  proposal as an array. A single proposal can spawn multiple shifts
+ *  (e.g. multi-day events). Avoids the EventDetailPage shipping the full
+ *  /shifts list to the browser just to filter for one proposal. */
 router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT s.*,
@@ -179,10 +209,9 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
       (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count
     FROM shifts s
     WHERE s.proposal_id = $1
-    LIMIT 1
+    ORDER BY s.event_date ASC, s.start_time ASC, s.id ASC
   `, [req.params.proposalId]);
-  if (!result.rows[0]) throw new NotFoundError('No shift found for this proposal.');
-  res.json(result.rows[0]);
+  res.json(result.rows);
 }));
 
 /** GET /shifts/detail/:id — single shift details (admin/manager only) */

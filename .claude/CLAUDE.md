@@ -88,14 +88,15 @@ dr-bartender/
 │   │   ├── context/
 │   │   │   ├── AuthContext.js      # Staff/admin auth state
 │   │   │   ├── ClientAuthContext.js # Client auth state
-│   │   │   └── ToastContext.js     # ToastProvider + useToast() hook
+│   │   │   ├── ToastContext.js     # ToastProvider + useToast() hook
+│   │   │   └── UserPrefsContext.js # Per-user admin OS prefs (skin/density/sidebar) — strips on logout
 │   │   ├── utils/
 │   │   │   ├── api.js             # Axios instance with JWT interceptor
 │   │   │   ├── constants.js       # App-wide constants
 │   │   │   ├── eventTypes.js      # Event type id→label resolver (mirrors server)
 │   │   │   ├── formatCurrency.js  # $ formatting with consistent precision
 │   │   │   ├── formatPhone.js     # Phone number formatting
-│   │   │   ├── statusMaps.js      # Status → label/color helpers (proposals, shifts, campaigns)
+│   │   │   ├── leadSources.js     # Single source of truth for email lead source enum (mirrors schema + server validator)
 │   │   │   └── timeOptions.js     # Time option generator + 12h formatter + input parser (TimePicker)
 │   │   ├── components/
 │   │   │   ├── AdminBreadcrumbs.js # Breadcrumb trail inside the admin layout header
@@ -128,6 +129,24 @@ dr-bartender/
 │   │   │   ├── CampaignMetricsBar.js # Campaign performance metrics bar
 │   │   │   ├── SyrupPicker.js    # Syrup add-on selection component
 │   │   │   ├── TimePicker.js     # Unified time input (type, 30-min arrows, dropdown)
+│   │   │   ├── adminos/          # Admin OS shell + primitives (scoped to [data-app="admin-os"])
+│   │   │   │   ├── AreaChart.js       # SVG area chart (Dashboard revenue series)
+│   │   │   │   ├── CommandPalette.js  # ⌘K palette — search + jump to admin pages
+│   │   │   │   ├── Drawer.js          # Right-slide peek panel — body-scroll-locked, Esc-closable
+│   │   │   │   ├── format.js          # fmt$, fmtDate, relDay, dayDiff helpers
+│   │   │   │   ├── Header.js          # Top bar — search trigger, quick-add, account menu
+│   │   │   │   ├── Icon.js            # Inline SVG icon set
+│   │   │   │   ├── nav.js             # Sidebar nav config (label, route, icon)
+│   │   │   │   ├── shifts.js          # Shared shiftPositions / parsePositionsCount / approvedCount / eventStatusChip
+│   │   │   │   ├── Sidebar.js         # Left rail — collapsible, badge counts
+│   │   │   │   ├── Sparkline.js       # Tiny SVG sparkline (per-row mini chart)
+│   │   │   │   ├── StaffPills.js      # Compact filled/pending/open position pills
+│   │   │   │   ├── StatusChip.js      # Standardized chip with kind + dot
+│   │   │   │   ├── Toolbar.js         # Toolbar wrapper (search + tabs + filters)
+│   │   │   │   └── drawers/           # Per-entity peek bodies
+│   │   │   │       ├── ClientDrawer.js
+│   │   │   │       ├── EventDrawer.js
+│   │   │   │       └── ProposalDrawer.js
 │   │   │   └── ShoppingList/     # Shopping list generator
 │   │   │       ├── ShoppingListButton.jsx
 │   │   │       ├── ShoppingListModal.jsx
@@ -143,6 +162,7 @@ dr-bartender/
 │   │   │   └── syrups.js          # Syrup product definitions
 │   │   ├── hooks/
 │   │   │   ├── useDebounce.js     # Debounced callback helper
+│   │   │   ├── useDrawerParam.js  # URL-synced drawer state (?drawer=event&drawerId=123)
 │   │   │   ├── useFormValidation.js # Form validation hook
 │   │   │   └── useWizardHistory.js # Wizard step ↔ browser history sync
 │   │   ├── pages/
@@ -160,6 +180,7 @@ dr-bartender/
 │   │   │   │   ├── Dashboard.js
 │   │   │   │   ├── DrinkPlanDetail.js
 │   │   │   │   ├── DrinkPlansDashboard.js
+│   │   │   │   ├── EventDetailPage.js               # Per-event admin page (proposal join + every shift on the event)
 │   │   │   │   ├── EventsDashboard.js
 │   │   │   │   ├── FinancialsDashboard.js
 │   │   │   │   ├── HiringDashboard.js
@@ -170,6 +191,7 @@ dr-bartender/
 │   │   │   │   ├── ProposalsDashboard.js
 │   │   │   │   ├── SettingsDashboard.js
 │   │   │   │   ├── ShiftDetail.js               # Admin shift detail view (requests, assignments, SMS)
+│   │   │   │   ├── StaffDashboard.js            # Staff list (replaces legacy AdminDashboard for /admin/staffing)
 │   │   │   │   ├── EmailMarketingDashboard.js  # Email marketing hub (tabs)
 │   │   │   │   ├── EmailLeadsDashboard.js      # Lead list + import
 │   │   │   │   ├── EmailLeadDetail.js          # Lead profile + history

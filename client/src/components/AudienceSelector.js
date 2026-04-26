@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../utils/api';
-
-const LEAD_SOURCES = ['manual', 'csv_import', 'website', 'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other'];
+import { LEAD_SOURCES } from '../utils/leadSources';
 
 export default function AudienceSelector({ targetSources, targetEventTypes, onChange, selectedLeadIds, onLeadIdsChange }) {
   const [leads, setLeads] = useState([]);

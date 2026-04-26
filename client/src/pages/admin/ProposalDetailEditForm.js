@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { unstable_usePrompt as usePrompt } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
@@ -95,6 +96,14 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
+
+  // In-app navigation guard (sidebar links, breadcrumbs, browser back/forward).
+  // Pairs with the beforeunload handler above — that one covers refresh/close,
+  // this one covers SPA navigation that wouldn't trigger beforeunload.
+  usePrompt({
+    when: isDirty,
+    message: 'You have unsaved changes. Leave anyway?',
+  });
 
   const update = (field, value) => setEditForm(f => ({ ...f, [field]: value }));
 

@@ -8,18 +8,36 @@ const router = express.Router();
 
 const VALID_SOURCES = ['direct', 'thumbtack', 'referral', 'website'];
 
-/** GET /api/clients — list all clients */
+/** GET /api/clients — list all clients with per-client aggregates.
+ *  `events_count` counts paid/confirmed/completed proposals; `lifetime_value`
+ *  sums their `amount_paid`. The aggregates feed the ClientsDashboard sort
+ *  options and the Lifetime value column. Explicit column allowlist on
+ *  clients excludes `notes` (potentially large free-text). */
 router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { search, page = 1, limit = 50 } = req.query;
-  let query = 'SELECT * FROM clients WHERE 1=1';
+  let query = `
+    SELECT
+      c.id, c.name, c.email, c.phone, c.source, c.created_at, c.updated_at,
+      COALESCE(agg.events_count, 0)::int    AS events_count,
+      COALESCE(agg.lifetime_value, 0)::float8 AS lifetime_value
+    FROM clients c
+    LEFT JOIN LATERAL (
+      SELECT
+        COUNT(*) FILTER (WHERE p.status IN ('deposit_paid','balance_paid','confirmed','completed')) AS events_count,
+        SUM(p.amount_paid) FILTER (WHERE p.status IN ('deposit_paid','balance_paid','confirmed','completed')) AS lifetime_value
+      FROM proposals p
+      WHERE p.client_id = c.id
+    ) agg ON true
+    WHERE 1=1
+  `;
   const params = [];
 
   if (search) {
     params.push(`%${search}%`);
-    query += ` AND (name ILIKE $${params.length} OR email ILIKE $${params.length} OR phone ILIKE $${params.length})`;
+    query += ` AND (c.name ILIKE $${params.length} OR c.email ILIKE $${params.length} OR c.phone ILIKE $${params.length})`;
   }
 
-  query += ' ORDER BY created_at DESC';
+  query += ' ORDER BY c.created_at DESC';
   params.push(Number(limit));
   query += ` LIMIT $${params.length}`;
   params.push((Number(page) - 1) * Number(limit));

@@ -89,18 +89,14 @@ export default function ProposalDetail() {
 
   useEffect(() => { loadProposal(); }, [id]); // eslint-disable-line
 
-  // Load drink plan + cocktails (used to resolve auto-added upgrade names)
+  // Load drink plan first. The cocktail catalog (large response, used only to
+  // resolve auto-added upgrade names) is fetched lazily in a second effect
+  // below — only when there's actually an auto-added upgrade to label.
   useEffect(() => {
     if (!id) return;
     setDrinkPlanLoading(true);
-    Promise.all([
-      api.get(`/drink-plans/by-proposal/${id}`),
-      api.get('/cocktails'),
-    ])
-      .then(([planRes, cocktailsRes]) => {
-        setDrinkPlan(planRes.data);
-        setPlanCocktails(cocktailsRes.data.cocktails || []);
-      })
+    api.get(`/drink-plans/by-proposal/${id}`)
+      .then(planRes => setDrinkPlan(planRes.data))
       .catch(() => setDrinkPlan(null))
       .finally(() => setDrinkPlanLoading(false));
   }, [id]);
@@ -116,6 +112,25 @@ export default function ProposalDetail() {
     }
     return out;
   }, [drinkPlan]);
+
+  // Lazy-load the cocktail catalog only when we actually need to resolve
+  // auto-added upgrade names. Most proposals don't have any, so this skips
+  // a sizable response on every detail-page navigation.
+  useEffect(() => {
+    if (Object.keys(autoAddedMap).length === 0) return;
+    if (planCocktails.length > 0) return;
+    api.get('/cocktails')
+      .then(res => setPlanCocktails(res.data.cocktails || []))
+      .catch(() => { /* badges fall back to raw IDs — not fatal */ });
+  }, [autoAddedMap, planCocktails.length]);
+
+  // Activity modal: Esc-to-close so behavior matches drawers and the assign-event modal.
+  useEffect(() => {
+    if (!showActivityPopup) return;
+    const onKey = (e) => { if (e.key === 'Escape') setShowActivityPopup(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showActivityPopup]);
 
   const cocktailNameById = useMemo(() => {
     const map = {};

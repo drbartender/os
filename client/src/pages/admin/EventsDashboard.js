@@ -13,6 +13,7 @@ import Toolbar from '../../components/adminos/Toolbar';
 import useDrawerParam from '../../hooks/useDrawerParam';
 import EventDrawer from '../../components/adminos/drawers/EventDrawer';
 import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
+import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip } from '../../components/adminos/shifts';
 
 const TIME_SLOTS = [];
 for (let h = 6; h < 24; h++) {
@@ -29,32 +30,6 @@ const EMPTY_FORM = {
   event_date: '', start_time: '', end_time: '', event_duration_hours: '',
   location: '', guest_count: '', positions_needed: 1,
 };
-
-function eventStatusChip(e) {
-  const total = Number(e.proposal_total || 0);
-  const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
-  if (e.proposal_status === 'sent' || e.proposal_status === 'viewed' || e.proposal_status === 'modified') {
-    return <StatusChip kind="warn">Contract out</StatusChip>;
-  }
-  if (paid <= 0) return <StatusChip kind="warn">No payment</StatusChip>;
-  if (paid < total) return <StatusChip kind="info">Deposit paid</StatusChip>;
-  return <StatusChip kind="ok">Paid in full</StatusChip>;
-}
-
-function shiftPositions(s) {
-  const needed = Number(s.bartenders_needed || s.positions_needed || 1);
-  const positionsCount = (() => {
-    try { return JSON.parse(s.positions_needed || '[]').length || needed; }
-    catch { return needed; }
-  })();
-  const filled = Number(s.approved_count || s.assignments_count || 0);
-  const pending = Math.min(positionsCount - filled, Number(s.request_count || 0));
-  return Array.from({ length: positionsCount }, (_, i) => {
-    if (i < filled) return { role: 'Bartender', name: 'Filled', status: 'approved' };
-    if (i < filled + pending) return { role: 'Bartender', name: null, status: 'pending' };
-    return { role: 'Bartender', name: null, status: null };
-  });
-}
 
 export default function EventsDashboard() {
   const navigate = useNavigate();
@@ -145,14 +120,11 @@ export default function EventsDashboard() {
         if (tab === 'past' && day != null && day >= 0) return false;
         if (tab === 'unstaffed') {
           if (day != null && day < 0) return false;
-          const positionsCount = (() => {
-            try { return JSON.parse(e.positions_needed || '[]').length || Number(e.bartenders_needed || 1); }
-            catch { return Number(e.bartenders_needed || 1); }
-          })();
-          const filled = Number(e.approved_count || e.assignments_count || 0);
-          if (filled >= positionsCount) return false;
+          if (approvedCount(e) >= parsePositionsCount(e)) return false;
         }
-        if (statusFilter === 'contract' && e.proposal_status === 'accepted') return false;
+        // "Contract pending" — proposal still out for signature (sent/viewed/modified).
+        // Manual events (no proposal) and paid/confirmed events (already signed) are excluded.
+        if (statusFilter === 'contract' && !['sent', 'viewed', 'modified'].includes(e.proposal_status)) return false;
         if (statusFilter === 'payment') {
           const total = Number(e.proposal_total || 0);
           const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
@@ -172,12 +144,7 @@ export default function EventsDashboard() {
     const upcomingCount = events.filter(e => e.event_date && dayDiff(e.event_date.slice(0, 10)) >= 0).length;
     const unstaffedCount = events.filter(e => {
       if (!e.event_date || dayDiff(e.event_date.slice(0, 10)) < 0) return false;
-      const positionsCount = (() => {
-        try { return JSON.parse(e.positions_needed || '[]').length || Number(e.bartenders_needed || 1); }
-        catch { return Number(e.bartenders_needed || 1); }
-      })();
-      const filled = Number(e.approved_count || e.assignments_count || 0);
-      return filled < positionsCount;
+      return approvedCount(e) < parsePositionsCount(e);
     }).length;
     return [
       { id: 'upcoming',  label: 'Upcoming',  count: upcomingCount },

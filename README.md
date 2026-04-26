@@ -162,29 +162,33 @@ dr-bartender/
 │   │   ├── context/
 │   │   │   ├── AuthContext.js       # Staff/admin auth state (login, logout, user)
 │   │   │   ├── ClientAuthContext.js # Client auth state
-│   │   │   └── ToastContext.js      # ToastProvider + useToast() hook
+│   │   │   ├── ToastContext.js      # ToastProvider + useToast() hook
+│   │   │   └── UserPrefsContext.js  # Per-user admin OS prefs (skin/density/sidebar) — strips on logout
 │   │   ├── utils/
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── constants.js    # App-wide constants
 │   │   │   ├── eventTypes.js   # Event type id→label resolver (mirrors server)
 │   │   │   ├── formatCurrency.js  # $ formatting with consistent precision
 │   │   │   ├── formatPhone.js  # Phone number formatting
-│   │   │   ├── statusMaps.js   # Status → label/color helpers
+│   │   │   ├── leadSources.js  # Lead source enum (mirrors schema CHECK + server validator)
 │   │   │   └── timeOptions.js  # Time option generator + 12h formatter + input parser
 │   │   ├── components/         # AdminBreadcrumbs, AdminLayout, StaffLayout, Layout, PublicLayout,
 │   │   │                       # InvoiceDropdown, SignaturePad, ClickableRow, FileUpload,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, MenuSamplesModal,
 │   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,
 │   │   │                       # TimePicker, NumberStepper, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler
+│   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
+│   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, format, nav,
+│   │   │   │                   # shifts; drawers/{ClientDrawer,EventDrawer,ProposalDrawer})
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
 │   │   ├── data/               # Shared data (addonCategories, eventTypes, menuSamples, packages, syrups)
-│   │   ├── hooks/              # Custom hooks (useDebounce, useFormValidation, useWizardHistory)
+│   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam, useFormValidation, useWizardHistory)
 │   │   ├── pages/
 │   │   │   ├── (auth)          # Login, Register, ForgotPassword, ResetPassword
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
 │   │   │   ├── (staff)         # Application, ApplicationStatus, HiringLanding
 │   │   │   ├── (admin)         # AdminDashboard, AdminApplicationDetail, AdminUserDetail
-│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, shifts, menus, hiring, blog, email marketing)
+│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing)
 │   │   │   ├── staff/          # Staff portal (StaffDashboard, StaffShifts, StaffSchedule, StaffEvents, StaffResources, StaffProfile)
 │   │   │   ├── plan/           # PotionPlanningLab — public event questionnaire (with steps/ and data/; steps/HostedGuestPrefsStep.js = compact hosted-refinement step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test)
 │   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment

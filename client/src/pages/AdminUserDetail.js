@@ -1530,17 +1530,8 @@ function AssignToEventModal({ userId, staffName, onClose, onAssigned, toast }) {
   const [positionByShift, setPositionByShift] = useState({});
 
   useEffect(() => {
-    api.get('/shifts')
-      .then(r => setShifts((r.data || []).filter(s => {
-        if (!s.event_date) return false;
-        const today = new Date(); today.setHours(0, 0, 0, 0);
-        const ev = new Date(String(s.event_date).slice(0, 10) + 'T12:00:00');
-        if (ev < today) return false;
-        const positions = parsePositions(s.positions_needed);
-        const needed = positions.length || Number(s.bartenders_needed || 1);
-        const filled = Number(s.approved_count || 0);
-        return filled < needed;
-      })))
+    api.get('/shifts/unstaffed-upcoming')
+      .then(r => setShifts(Array.isArray(r.data) ? r.data : []))
       .catch(() => toast.error('Failed to load shifts.'))
       .finally(() => setLoading(false));
   }, [toast]);

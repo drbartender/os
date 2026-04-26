@@ -6,9 +6,13 @@
     <meta name="theme-color" content="#2C1F0E" />
     <meta name="description" content="Dr. Bartender" />
     <title>Dr. Bartender</title>
+    <!-- Preconnects benefit the public-page IM Fell @import in index.css and -->
+    <!-- the admin-OS Inter / JetBrains / Libre Caslon font load that AdminLayout -->
+    <!-- injects on mount. Inter/JetBrains/Caslon are NOT loaded here so public -->
+    <!-- pages (homepage, blog, proposal view, invoice, quote wizard) skip ~80- -->
+    <!-- 200ms of font fetching they never need. -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>

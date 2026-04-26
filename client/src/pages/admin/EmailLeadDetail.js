@@ -4,8 +4,7 @@ import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
-
-const LEAD_SOURCES = ['manual', 'csv_import', 'website', 'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other'];
+import { LEAD_SOURCES } from '../../utils/leadSources';
 
 export default function EmailLeadDetail() {
   const { id } = useParams();

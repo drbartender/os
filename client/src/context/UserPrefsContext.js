@@ -73,8 +73,30 @@ export function UserPrefsProvider({ children }) {
   // Apply prefs to <html> as data attributes and HSL custom properties.
   // These only take effect when [data-app="admin-os"] is also set on <html>,
   // which AdminLayout toggles on mount/unmount.
+  // On logout (or before login), strip the dataset and vars so they don't leak
+  // across users sharing the same browser tab.
   useEffect(() => {
     const root = document.documentElement;
+    const PROPS = [
+      '--accent-h', '--accent-s', '--accent-l',
+      '--ok-h', '--ok-s', '--warn-h', '--warn-s',
+      '--danger-h', '--danger-s', '--info-h', '--info-s',
+      '--violet-h', '--violet-s',
+      '--font-ui', '--font-display', '--font-mono', '--font-numeric',
+    ];
+    const stripAll = () => {
+      delete root.dataset.skin;
+      delete root.dataset.density;
+      delete root.dataset.sidebar;
+      delete root.dataset.palette;
+      PROPS.forEach(k => root.style.removeProperty(k));
+    };
+
+    if (!user) {
+      stripAll();
+      return stripAll;
+    }
+
     root.dataset.skin = prefs.skin;
     root.dataset.density = prefs.density;
     root.dataset.sidebar = prefs.sidebar;
@@ -100,7 +122,9 @@ export function UserPrefsProvider({ children }) {
     root.style.setProperty('--font-display', f.display);
     root.style.setProperty('--font-mono', f.mono);
     root.style.setProperty('--font-numeric', f.numeric);
-  }, [prefs]);
+
+    return stripAll;
+  }, [prefs, user]);
 
   const setPref = useCallback((key, value) => {
     setPrefs(p => ({ ...p, [key]: value }));

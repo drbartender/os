@@ -20,17 +20,22 @@ const MAX_FORM_STATE_SIZE = 50 * 1024; // 50 KB
 
 // Status state machine — enforced on PATCH /:id/status unless ?force=true (admin only).
 // Transitions are one-way except for admin-backed corrections via force.
+// `cancelled` is terminal: archive endpoint for duplicates/abandoned proposals before payment.
+// Not reachable from paid statuses (deposit_paid/balance_paid/confirmed/completed) — those
+// reflect real money and cancelling them via a state transition would desync the ledger.
+// Admins can ?force=true to bypass for ledger-corrected refunds.
 const STATUS_TRANSITIONS = {
-  draft: ['sent', 'archived'],
-  sent: ['viewed', 'accepted', 'modified', 'draft'],
-  viewed: ['accepted', 'modified', 'sent'],
-  modified: ['sent', 'accepted'],
-  accepted: ['deposit_paid', 'confirmed'],
+  draft:        ['sent', 'archived', 'cancelled'],
+  sent:         ['viewed', 'accepted', 'modified', 'draft', 'cancelled'],
+  viewed:       ['accepted', 'modified', 'sent', 'cancelled'],
+  modified:     ['sent', 'accepted', 'cancelled'],
+  accepted:     ['deposit_paid', 'confirmed', 'cancelled'],
   deposit_paid: ['balance_paid', 'confirmed', 'completed'],
   balance_paid: ['completed'],
-  confirmed: ['completed', 'deposit_paid', 'balance_paid'],
-  completed: [],
-  archived: ['draft'],
+  confirmed:    ['completed', 'deposit_paid', 'balance_paid'],
+  completed:    [],
+  archived:     ['draft'],
+  cancelled:    [],
 };
 
 const TOTAL_PRICE_OVERRIDE_MAX = 1_000_000;
@@ -701,6 +706,77 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
   });
 }));
 
+/** GET /api/proposals/dashboard-stats — aggregates that the admin home dashboard renders.
+ *  Server-side so totals stay accurate past the 50-row default LIMIT on /api/proposals. */
+router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const PAID_STATUSES = "('deposit_paid', 'balance_paid', 'confirmed', 'completed')";
+  const PIPELINE_STATUSES = "('draft', 'sent', 'viewed', 'modified', 'accepted')";
+
+  const [totalsResult, pipelineResult, revenueResult] = await Promise.all([
+    pool.query(`
+      SELECT
+        COALESCE(SUM(total_price), 0)::float8 AS booked,
+        COALESCE(SUM(amount_paid), 0)::float8 AS collected,
+        COALESCE(SUM(GREATEST(total_price - COALESCE(amount_paid, 0), 0)), 0)::float8 AS outstanding,
+        COUNT(*)::int AS events_count,
+        COUNT(*) FILTER (WHERE total_price > COALESCE(amount_paid, 0))::int AS events_owing_balance
+      FROM proposals
+      WHERE status IN ${PAID_STATUSES}
+    `),
+    pool.query(`
+      SELECT status, COUNT(*)::int AS count, COALESCE(SUM(total_price), 0)::float8 AS value
+      FROM proposals
+      WHERE status IN ${PIPELINE_STATUSES}
+      GROUP BY status
+    `),
+    pool.query(`
+      WITH months AS (
+        SELECT generate_series(
+          date_trunc('month', NOW() - INTERVAL '11 months'),
+          date_trunc('month', NOW()),
+          INTERVAL '1 month'
+        )::date AS month_start
+      )
+      SELECT
+        to_char(m.month_start, 'YYYY-MM') AS key,
+        to_char(m.month_start, 'Mon')     AS m,
+        COALESCE(SUM(p.total_price), 0)::float8 AS booked,
+        COALESCE(SUM(p.amount_paid), 0)::float8 AS collected
+      FROM months m
+      LEFT JOIN proposals p
+        ON date_trunc('month', p.event_date)::date = m.month_start
+        AND p.status IN ${PAID_STATUSES}
+      GROUP BY m.month_start
+      ORDER BY m.month_start
+    `),
+  ]);
+
+  // Hydrate pipeline keys for any active status with no rows so the client always
+  // receives the full set in display order.
+  const PIPELINE_ORDER = [
+    { key: 'draft',    label: 'Draft' },
+    { key: 'sent',     label: 'Sent' },
+    { key: 'viewed',   label: 'Viewed' },
+    { key: 'modified', label: 'Modified' },
+    { key: 'accepted', label: 'Accepted' },
+  ];
+  const pipelineByStatus = Object.fromEntries(
+    pipelineResult.rows.map(r => [r.status, { count: r.count, value: r.value }])
+  );
+  const pipeline = PIPELINE_ORDER.map(b => ({
+    key: b.key,
+    label: b.label,
+    count: pipelineByStatus[b.key]?.count || 0,
+    value: pipelineByStatus[b.key]?.value || 0,
+  }));
+
+  res.json({
+    totals: totalsResult.rows[0],
+    pipeline,
+    revenue: revenueResult.rows,
+  });
+}));
+
 // ─── Admin CRUD ──────────────────────────────────────────────────
 
 /** GET /api/proposals — list all proposals. Explicit column list — do NOT ship
@@ -729,8 +805,9 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     params.push(status);
     query += ` AND p.status = $${params.length}`;
   } else {
-    // By default, exclude paid statuses — those appear in Events instead
-    query += ` AND p.status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')`;
+    // By default, exclude paid statuses (those appear in Events instead) and
+    // cancelled (the archive endpoint — only reachable when explicitly filtered).
+    query += ` AND p.status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'cancelled')`;
   }
   if (search) {
     params.push(`%${search}%`);

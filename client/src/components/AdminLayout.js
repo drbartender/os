@@ -23,13 +23,44 @@ export default function AdminLayout() {
     };
   }, []);
 
+  // Lazy-load the admin-OS font set (Inter / JetBrains Mono / Libre Caslon)
+  // from inside the admin shell so the public pages never pay the ~80-200ms
+  // first-paint cost. The link is appended once and persists across admin
+  // page navigations; we only remove it if/when this layout itself unmounts.
+  useEffect(() => {
+    const ID = 'admin-os-fonts';
+    let link = document.getElementById(ID);
+    let createdHere = false;
+    if (!link) {
+      link = document.createElement('link');
+      link.id = ID;
+      link.rel = 'stylesheet';
+      link.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&display=swap';
+      document.head.appendChild(link);
+      createdHere = true;
+    }
+    return () => {
+      // Only remove if this mount created it — guards against rapid remount
+      // races (StrictMode or hot reload) yanking fonts mid-render.
+      if (createdHere && link.parentNode) link.parentNode.removeChild(link);
+    };
+  }, []);
+
   useEffect(() => {
     const fetchBadges = () => {
+      if (document.visibilityState !== 'visible') return;
       api.get('/admin/badge-counts').then(r => setBadges(r.data || {})).catch(() => {});
     };
     fetchBadges();
     const interval = setInterval(fetchBadges, 60000);
-    return () => clearInterval(interval);
+    // Refresh immediately when the tab becomes visible again after being hidden,
+    // so the admin doesn't see stale counts the moment they return.
+    const onVisibility = () => { if (document.visibilityState === 'visible') fetchBadges(); };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, []);
 
   const onKey = useCallback((e) => {

@@ -145,11 +145,13 @@ export default function ProposalCreate() {
     });
   }, [toast]);
 
-  // Live pricing preview
-  const fetchPreview = useCallback(async () => {
+  // Live pricing preview — debounced 400ms so typing a guest count from
+  // "5" → "50" is one round-trip, not five. Mirrors the pattern in
+  // ProposalDetailEditForm.
+  useEffect(() => {
     if (!form.package_id) { setPreview(null); return; }
-    try {
-      const res = await api.post('/proposals/calculate', {
+    const timer = setTimeout(() => {
+      api.post('/proposals/calculate', {
         package_id: Number(form.package_id),
         guest_count: Number(form.guest_count) || 50,
         duration_hours: Number(form.event_duration_hours) || 4,
@@ -157,19 +159,21 @@ export default function ProposalCreate() {
         num_bartenders: form.num_bartenders != null ? Number(form.num_bartenders) : undefined,
         addon_ids: form.addon_ids.map(Number),
         addon_variants: form.addon_variants,
-      });
-      setPreview(res.data);
-      previewErrorShownRef.current = false;
-    } catch (err) {
-      setPreview(null);
-      if (!previewErrorShownRef.current) {
-        previewErrorShownRef.current = true;
-        toast.error(err?.message || 'Could not calculate preview pricing.');
-      }
-    }
+      })
+        .then(res => {
+          setPreview(res.data);
+          previewErrorShownRef.current = false;
+        })
+        .catch(err => {
+          setPreview(null);
+          if (!previewErrorShownRef.current) {
+            previewErrorShownRef.current = true;
+            toast.error(err?.message || 'Could not calculate preview pricing.');
+          }
+        });
+    }, 400);
+    return () => clearTimeout(timer);
   }, [form.package_id, form.guest_count, form.event_duration_hours, form.num_bars, form.num_bartenders, form.addon_ids, form.addon_variants, toast]);
-
-  useEffect(() => { fetchPreview(); }, [fetchPreview]);
 
   // Saved indicator (cosmetic only — no autosave backend)
   useEffect(() => {
