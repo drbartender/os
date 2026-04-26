@@ -1003,9 +1003,10 @@ router.get('/badge-counts', auth, adminOnly, asyncHandler(async (req, res) => {
       (SELECT COUNT(*) FROM proposals WHERE status IN ('sent', 'viewed', 'modified'))::int AS pending_proposals,
       (SELECT COUNT(*) FROM shifts
        WHERE event_date >= CURRENT_DATE AND status = 'open'
-         AND positions_needed IS NOT NULL AND positions_needed != '[]'
+         AND jsonb_typeof(positions_needed::jsonb) = 'array'
+         AND jsonb_array_length(positions_needed::jsonb) > 0
          AND (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = shifts.id AND sr.status = 'approved')
-             < json_array_length(positions_needed::json)
+             < jsonb_array_length(positions_needed::jsonb)
       )::int AS unstaffed_events,
       (SELECT COUNT(*) FROM applications a
          JOIN users u ON u.id = a.user_id
