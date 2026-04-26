@@ -41,10 +41,21 @@ router.get('/publishable-key', (_req, res) => {
 // ─── Helper: get or create Stripe Customer for a proposal ────────
 
 async function getOrCreateCustomer(proposal) {
-  if (proposal.stripe_customer_id) {
-    return proposal.stripe_customer_id;
-  }
   const stripe = getStripe();
+  // Validate the cached id against the active Stripe mode (live vs test).
+  // STRIPE_TEST_MODE_UNTIL toggles between modes; a customer created in one
+  // mode is not retrievable from the other and Stripe will reject the
+  // PaymentIntent with "No such customer". Verify before reuse.
+  if (proposal.stripe_customer_id) {
+    try {
+      const existing = await stripe.customers.retrieve(proposal.stripe_customer_id);
+      if (existing && !existing.deleted) {
+        return proposal.stripe_customer_id;
+      }
+    } catch (err) {
+      console.warn(`[Stripe] Cached customer ${proposal.stripe_customer_id} not retrievable in current mode for proposal ${proposal.id}; creating new`);
+    }
+  }
   const customer = await stripe.customers.create({
     email: proposal.client_email || undefined,
     name: proposal.client_name || undefined,
