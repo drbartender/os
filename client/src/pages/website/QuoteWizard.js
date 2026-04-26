@@ -11,6 +11,7 @@ import useWizardHistory from '../../hooks/useWizardHistory';
 import EVENT_TYPES from '../../data/eventTypes';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import TimePicker from '../../components/TimePicker';
+import NumberStepper from '../../components/NumberStepper';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 const DRAFT_KEY = 'drb_quote_draft';
@@ -769,9 +770,11 @@ export default function QuoteWizard() {
                 </div>
                 <div className={`form-group${fieldClass('event_duration_hours')}`}>
                   <label htmlFor="wz-event_duration_hours" className="form-label">Duration (hours) *</label>
-                  <input id="wz-event_duration_hours" className={`form-input${inputClass('event_duration_hours')}`} type="number" min="1" max="12" step="0.5"
-                    value={form.event_duration_hours} onChange={e => update('event_duration_hours', e.target.value)}
-                    aria-invalid={!!fieldErrors?.event_duration_hours} />
+                  <NumberStepper id="wz-event_duration_hours" className={`form-input${inputClass('event_duration_hours')}`}
+                    min={1} max={12} step={0.5}
+                    value={form.event_duration_hours} onChange={v => update('event_duration_hours', v)}
+                    aria-invalid={!!fieldErrors?.event_duration_hours}
+                    ariaLabelIncrease="Increase duration" ariaLabelDecrease="Decrease duration" />
                   <FieldError error={fieldErrors?.event_duration_hours} />
                 </div>
                 <div className={`form-group${fieldClass('event_date')}`}>

@@ -6651,6 +6651,63 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   .time-picker-dropdown li { padding: 10px 12px; }
 }
 
+/* =========================================================
+   NumberStepper — mirrors TimePicker stepper styling
+   ========================================================= */
+.number-stepper {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  width: 100%;
+}
+
+.number-stepper-input {
+  flex: 1 1 auto;
+  padding-right: 28px; /* room for stepper buttons */
+}
+
+.number-stepper-steppers {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  flex-direction: column;
+  width: 22px;
+  border-left: 1px solid #d1d5db;
+}
+
+.number-stepper-steppers button {
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 0;
+  font-size: 9px;
+  line-height: 1;
+  background: #f9fafb;
+  color: #374151;
+  border: none;
+  border-bottom: 1px solid #e5e7eb;
+  cursor: pointer;
+}
+.number-stepper-steppers button:last-child { border-bottom: none; }
+.number-stepper-steppers button:hover:not(:disabled) { background: #f3f4f6; }
+.number-stepper-steppers button:disabled { color: #d1d5db; cursor: not-allowed; }
+
+.number-stepper-flash .number-stepper-input {
+  animation: number-stepper-flash 0.4s ease-out;
+}
+@keyframes number-stepper-flash {
+  0%   { background: #fee2e2; border-color: #f87171; }
+  100% { background: transparent; border-color: inherit; }
+}
+
+.number-stepper-disabled { opacity: 0.6; }
+
+@media (max-width: 640px) {
+  .number-stepper-steppers { width: 28px; }
+  .number-stepper-input { padding-right: 34px; }
+}
+
 
 /* ==========================================================================
    ADMIN OS — Dr. Bartender admin design system

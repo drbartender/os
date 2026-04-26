@@ -8,6 +8,7 @@ import ConfirmModal from '../../components/ConfirmModal';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import TimePicker from '../../components/TimePicker';
+import NumberStepper from '../../components/NumberStepper';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import Icon from '../../components/adminos/Icon';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
@@ -259,9 +260,10 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
           </div>
           <div>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Duration (hours)</label>
-            <input className="input" type="number" min="1" max="12" step="0.5" style={{ width: '100%' }}
+            <NumberStepper className="input" min={1} max={12} step={0.5} style={{ width: '100%' }}
               value={editForm.event_duration_hours}
-              onChange={e => update('event_duration_hours', e.target.value)} />
+              onChange={v => update('event_duration_hours', v)}
+              ariaLabelIncrease="Increase duration" ariaLabelDecrease="Decrease duration" />
           </div>
           <div>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Guest count</label>

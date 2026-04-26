@@ -5,6 +5,7 @@ import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
+import NumberStepper from '../../components/NumberStepper';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import StaffPills from '../../components/adminos/StaffPills';
@@ -243,7 +244,10 @@ export default function EventsDashboard() {
               </div>
               <div>
                 <div className="meta-k" style={{ marginBottom: 4 }}>Duration (hours)</div>
-                <input className="input" type="number" step="0.5" min="0.5" value={form.event_duration_hours} onChange={e => handleField('event_duration_hours', e.target.value)} />
+                <NumberStepper className="input" step={0.5} min={0.5}
+                  value={form.event_duration_hours}
+                  onChange={v => handleField('event_duration_hours', v)}
+                  ariaLabelIncrease="Increase duration" ariaLabelDecrease="Decrease duration" />
                 <FieldError error={fieldErrors?.event_duration_hours} />
               </div>
               <div>

@@ -9,6 +9,7 @@ import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 import { useToast } from '../../context/ToastContext';
 import FieldError from '../../components/FieldError';
 import TimePicker from '../../components/TimePicker';
+import NumberStepper from '../../components/NumberStepper';
 import Icon from '../../components/adminos/Icon';
 import { fmt$, fmt$cents, fmtDateFull } from '../../components/adminos/format';
 
@@ -584,13 +585,13 @@ function EventSection({ form, update, merge, fieldErrors }) {
       </Lbl>
 
       <Lbl text="Hrs">
-        <input
+        <NumberStepper
           className="input num"
-          type="number"
-          min="1" max="12" step="0.5"
+          min={1} max={12} step={0.5}
           value={form.event_duration_hours}
-          onChange={(e) => update('event_duration_hours', e.target.value)}
+          onChange={(v) => update('event_duration_hours', v)}
           style={{ width: '100%', textAlign: 'right' }}
+          ariaLabelIncrease="Increase duration" ariaLabelDecrease="Decrease duration"
         />
       </Lbl>
 
