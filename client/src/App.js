@@ -27,7 +27,7 @@ import ClientDashboard from './pages/public/ClientDashboard';
 import HiringLanding from './pages/HiringLanding';
 
 // Lazy-loaded: public token-gated pages (Stripe SDK stays out of main bundle)
-const ProposalView = lazy(() => import('./pages/proposal/ProposalView'));
+const ProposalView = lazy(() => import('./pages/proposal/proposalView/ProposalView'));
 const InvoicePage = lazy(() => import('./pages/invoice/InvoicePage'));
 
 // Lazy-loaded: onboarding, staff portal, admin shell — not needed on public marketing site

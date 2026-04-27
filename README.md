@@ -207,7 +207,7 @@ dr-bartender/
 │   │   │   ├── staff/          # Staff portal (StaffDashboard, StaffShifts, StaffSchedule, StaffEvents, StaffResources, StaffProfile)
 │   │   │   ├── plan/           # PotionPlanningLab — public event questionnaire (with steps/ and data/; steps/HostedGuestPrefsStep.js = compact hosted-refinement step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test)
 │   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment
-│   │   │   ├── proposal/       # ProposalView — public client-facing proposal
+│   │   │   ├── proposal/       # ProposalView (public client-facing) — split into proposalView/ folder (parent + ProposalHeader + ProposalPricingBreakdown + SignAndPaySection + PaymentForm + helpers + styles)
 │   │   │   ├── public/         # Client portal (ClientLogin, ClientDashboard, ClientShoppingList, Blog, BlogPost)
 │   │   │   └── website/        # Public website (Website, HomePage, QuotePage, FaqPage, ClassWizard, quoteWizard/ — split QuoteWizard)
 │   │   ├── images/             # Brand assets

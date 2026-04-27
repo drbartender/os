@@ -225,6 +225,14 @@ dr-bartender/
 │   │   │   ├── invoice/
 │   │   │   │   └── InvoicePage.js     # Public token-gated invoice view + payment
 │   │   │   ├── proposal/         # ProposalView (public client-facing)
+│   │   │   │   └── proposalView/      # Split into parent + 4 components + helpers + styles
+│   │   │   │       ├── ProposalView.js            # Parent — fetch, payment intent orchestration
+│   │   │   │       ├── ProposalHeader.js          # Brand + event details
+│   │   │   │       ├── ProposalPricingBreakdown.js # Package + pricing + terms + payment summary
+│   │   │   │       ├── SignAndPaySection.js       # Sign-and-pay AND pay-only modes (signature + payment options)
+│   │   │   │       ├── PaymentForm.js             # Stripe Elements wrapper (sign-then-pay sequencing)
+│   │   │   │       ├── helpers.js                 # fmt, formatTime, calcEndTime, formatDateShort, DEPOSIT_DOLLARS
+│   │   │   │       └── styles.js                  # Inline-style objects (was const styles in original)
 │   │   │   ├── public/           # Client portal pages
 │   │   │   │   ├── Blog.js, BlogPost.js
 │   │   │   │   ├── ClientDashboard.js
