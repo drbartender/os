@@ -8,7 +8,7 @@ import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import { fmt$, fmt$cents, fmtDate, fmtDateFull } from '../../components/adminos/format';
+import { fmt$, fmt$2dp, fmtDate, fmtDateFull } from '../../components/adminos/format';
 
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
@@ -266,11 +266,11 @@ export default function ClientDetail() {
             <div className="card-body">
               <dl className="dl">
                 <dt>Events</dt><dd className="num">{proposals.length}</dd>
-                <dt>Booked</dt><dd className="num">{fmt$cents(totalBooked)}</dd>
-                <dt>Collected</dt><dd className="num">{fmt$cents(ltv)}</dd>
+                <dt>Booked</dt><dd className="num">{fmt$2dp(totalBooked)}</dd>
+                <dt>Collected</dt><dd className="num">{fmt$2dp(ltv)}</dd>
                 <dt>Outstanding</dt>
                 <dd className="num" style={{ color: totalBooked - ltv > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
-                  {fmt$cents(totalBooked - ltv)}
+                  {fmt$2dp(totalBooked - ltv)}
                 </dd>
               </dl>
             </div>

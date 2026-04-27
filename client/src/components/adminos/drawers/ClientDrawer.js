@@ -6,7 +6,7 @@ import { getEventTypeLabel } from '../../../utils/eventTypes';
 import Drawer from '../Drawer';
 import Icon from '../Icon';
 import StatusChip from '../StatusChip';
-import { fmt$, fmt$cents, fmtDate } from '../format';
+import { fmt$, fmt$2dp, fmtDate } from '../format';
 
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
@@ -102,7 +102,7 @@ function ClientDrawerBody({ client, navigate, onClose }) {
           </div>
           <div className="meta-item">
             <div className="meta-k">Lifetime value</div>
-            <div className="meta-v num">{fmt$cents(ltv)}</div>
+            <div className="meta-v num">{fmt$2dp(ltv)}</div>
           </div>
           <div className="meta-item">
             <div className="meta-k">Added</div>

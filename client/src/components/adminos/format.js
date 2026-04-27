@@ -1,9 +1,20 @@
 // Formatting helpers shared across Admin OS components.
-// Mirrors the handoff bundle's data.jsx helpers (lines 157–179).
+// Money convention (per server/db/schema.sql:478-487):
+//   - NUMERIC(10,2) DOLLARS:  proposals.total_price/amount_paid/deposit_amount,
+//                             service_packages.*_rate/*_fee, service_addons.rate,
+//                             proposal_addons.rate, etc.
+//   - INTEGER CENTS:          stripe_sessions.amount, proposal_payments.amount,
+//                             invoices.amount_due/amount_paid
+// Use fmt$2dp for dollar fields, fmt$fromCents for cents fields.
 
-export const fmt$ = (n) => n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+export const fmt$ = (n) =>
+  n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
-export const fmt$cents = (n) => n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const fmt$2dp = (n) =>
+  n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+export const fmt$fromCents = (n) =>
+  n == null ? '—' : '$' + (Number(n) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export const fmtDate = (iso, opts = {}) => {
   if (!iso) return '—';

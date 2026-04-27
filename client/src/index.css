@@ -6716,23 +6716,23 @@ html[data-app="admin-os"] .number-stepper .number-stepper-input {
 /* ==========================================================================
    ADMIN OS — Dr. Bartender admin design system
    --------------------------------------------------------------------------
-   Ported from handoff bundle 2 (2026-04-24). Two skins (dark Darkroom, light
-   Atelier) + three density modes + full/rail sidebar. Every rule is scoped
+   Ported from handoff bundle 2 (2026-04-24). Two skins (dark After Hours, light
+   House Lights) + three density modes + full/rail sidebar. Every rule is scoped
    under `html[data-app="admin-os"]` so it activates only when AdminLayout
    is mounted — zero leakage onto public/staff/auth surfaces.
    Scoping done by client/scripts/scope-admin-os-css.js.
    ========================================================================== */
 
 /* ==========================================================================
-   Dr. Bartender Admin OS — Darkroom
+   Dr. Bartender Admin OS — After Hours
    A dense, multi-surface admin theme. Two skins (dark/light), one accent.
    ========================================================================== */
 
 html[data-app="admin-os"] {
-  /* ── Accent (tweakable) ── */
-  --accent-h: 218;
-  --accent-s: 35%;
-  --accent-l: 40%;
+  /* ── Accent (tweakable; UserPrefsContext also writes these inline at runtime) ── */
+  --accent-h: 212;
+  --accent-s: 78%;
+  --accent-l: 44%;
   --accent: hsl(var(--accent-h) var(--accent-s) var(--accent-l));
   --accent-soft: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.12);
   --accent-line: hsl(var(--accent-h) var(--accent-s) var(--accent-l) / 0.32);
@@ -6804,7 +6804,7 @@ html[data-app="admin-os"][data-skin="dark"] {
 
 
 /* ============================================================================
-   LIGHT SKIN: "MAISON"
+   LIGHT SKIN: "House Lights"
    ----------------------------------------------------------------------------
    Contemporary luxury. Cool white, stark black, one jewel-tone accent
    threaded through the UI with discipline. Body is a clean grotesk; numerals
@@ -6814,8 +6814,8 @@ html[data-app="admin-os"][data-skin="dark"] {
    ============================================================================ */
 
 html[data-app="admin-os"][data-skin="light"] {
-  /* Atelier — warm paper + deep green, serif display, sans body.
-     Lifted from the Wildlight admin Atelier skin. */
+  /* House Lights — warm paper + deep green, serif display, sans body.
+     Lifted from the Wildlight admin skin. */
   --bg-0: #f7f4ec;           /* warm paper */
   --bg-1: #fcfaf4;           /* card */
   --bg-2: #efeae0;           /* paper-alt / shaded */
@@ -6831,14 +6831,14 @@ html[data-app="admin-os"][data-skin="light"] {
   --ink-3: #7a7468;          /* muted */
   --ink-4: #b4ac9b;          /* dim */
 
-  /* Atelier accent = deep green; support amber / bordeaux / blue */
+  /* House Lights accent = deep green; support amber / bordeaux / blue */
   --ms-navy:    #3a5d7a;     /* atelier blue */
   --ms-bordeaux:#9e3a2a;     /* atelier red */
   --ms-emerald: #2a3a2a;     /* atelier deep green (primary accent) */
   --ms-camel:   #b8832a;     /* atelier amber */
   --ms-ink:     #1a1a1a;
 
-  /* Override the global rainbow accent: Atelier is green-only. */
+  /* Override the global rainbow accent: House Lights is green-only. */
   --accent-h: 120;
   --accent-s: 16%;
   --accent-l: 20%;
@@ -6851,7 +6851,7 @@ html[data-app="admin-os"][data-skin="light"] {
   --row-hover: #f1ede3;
   --row-active: #d6dfd0;
 
-  /* Atelier type: serif display (Libre Caslon), sans body (Inter), mono (JetBrains). */
+  /* House Lights type: serif display (Libre Caslon), sans body (Inter), mono (JetBrains). */
   --font-ui: 'Inter', 'Helvetica Neue', Arial, sans-serif;
   --font-display: 'Libre Caslon Text', 'Caslon', Georgia, serif;
   --font-numeric: 'Libre Caslon Text', 'Caslon', Georgia, serif;
@@ -7450,7 +7450,7 @@ html[data-app="admin-os"][data-skin="light"] .palette-item {
 }
 html[data-app="admin-os"][data-skin="light"] .palette-item:hover, html[data-app="admin-os"][data-skin="light"] .palette-item.active { background: rgba(10,10,10,0.04); }
 
-/* -- Avatars: Atelier — green monogram circles, serif ------------------- */
+/* -- Avatars: House Lights — green monogram circles, serif ------------------- */
 html[data-app="admin-os"][data-skin="light"] .avatar {
   background: var(--ms-emerald);
   color: var(--bg-0);

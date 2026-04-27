@@ -81,14 +81,14 @@ export default function Sidebar({ badges = {} }) {
             aria-checked={prefs.skin === 'light'}
             className={`mode-opt ${prefs.skin === 'light' ? 'active' : ''}`}
             onClick={() => prefs.skin !== 'light' && setPref('skin', 'light')}
-          >Sterile</button>
+          >House Lights</button>
           <button
             type="button"
             role="radio"
             aria-checked={prefs.skin === 'dark'}
             className={`mode-opt ${prefs.skin === 'dark' ? 'active' : ''}`}
             onClick={() => prefs.skin !== 'dark' && setPref('skin', 'dark')}
-          >Experimental</button>
+          >After Hours</button>
         </div>
       </div>
 

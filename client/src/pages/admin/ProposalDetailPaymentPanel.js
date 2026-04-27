@@ -4,7 +4,7 @@ import { useToast } from '../../context/ToastContext';
 import InvoiceDropdown from '../../components/InvoiceDropdown';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import { fmt$cents } from '../../components/adminos/format';
+import { fmt$2dp } from '../../components/adminos/format';
 
 // Self-contained payment panel for ProposalDetail's right rail.
 // Owns: balance due date editor, charge-balance button, payment-link generation,
@@ -71,7 +71,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
     setChargeResult('');
     try {
       const res = await api.post(`/stripe/charge-balance/${proposal.id}`);
-      setChargeResult(`Charged ${fmt$cents(res.data.amount / 100)} successfully.`);
+      setChargeResult(`Charged ${fmt$2dp(res.data.amount / 100)} successfully.`);
       onUpdate?.();
     } catch (err) {
       setChargeResult(err.message || 'Failed to charge balance.');
@@ -112,7 +112,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
         paid_in_full: paymentPaidInFull,
         method: paymentMethod,
       });
-      const amountStr = fmt$cents(paymentPaidInFull ? balanceDue : Number(paymentAmount));
+      const amountStr = fmt$2dp(paymentPaidInFull ? balanceDue : Number(paymentAmount));
       toast.success(`Payment of ${amountStr} recorded.`);
       setShowRecordPayment(false);
       setPaymentAmount('');
@@ -161,11 +161,11 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
       </div>
       <div className="card-body">
         <dl className="dl" style={{ gridTemplateColumns: '120px 1fr', margin: 0 }}>
-          <dt>Total</dt><dd className="num">{fmt$cents(totalPrice)}</dd>
-          <dt>Paid</dt><dd className="num">{fmt$cents(amountPaid)}</dd>
+          <dt>Total</dt><dd className="num">{fmt$2dp(totalPrice)}</dd>
+          <dt>Paid</dt><dd className="num">{fmt$2dp(amountPaid)}</dd>
           <dt>Balance</dt>
           <dd className="num" style={{ color: balanceDue > 0 ? 'var(--ms-camel, hsl(38 60% 50%))' : '' }}>
-            {fmt$cents(balanceDue)}
+            {fmt$2dp(balanceDue)}
           </dd>
           {proposal.payment_type && (
             <>
@@ -235,7 +235,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
             <button type="button" className="btn btn-primary btn-sm"
               onClick={chargeBalance} disabled={chargingBalance}>
               <Icon name="dollar" size={11} />
-              {chargingBalance ? 'Charging…' : `Charge balance (${fmt$cents(balanceDue)})`}
+              {chargingBalance ? 'Charging…' : `Charge balance (${fmt$2dp(balanceDue)})`}
             </button>
             {chargeResult && (
               <div className="tiny" style={{
@@ -299,7 +299,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
                         setPaymentPaidInFull(e.target.checked);
                         if (e.target.checked) setPaymentAmount('');
                       }} />
-                    Paid in full ({fmt$cents(balanceDue)} remaining)
+                    Paid in full ({fmt$2dp(balanceDue)} remaining)
                   </label>
                   {!paymentPaidInFull && (
                     <input type="number" className="input" placeholder="Amount ($)"

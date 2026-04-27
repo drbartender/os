@@ -22,17 +22,6 @@ const PALETTES = {
   },
 };
 
-const FONTS = {
-  dark:  { ui: "'Inter', system-ui, sans-serif",
-           display: "'Inter', system-ui, sans-serif",
-           mono: "'JetBrains Mono', ui-monospace, monospace",
-           numeric: "'JetBrains Mono', ui-monospace, monospace" },
-  light: { ui: "'Inter', system-ui, sans-serif",
-           display: "'Libre Caslon Text', Georgia, serif",
-           mono: "'JetBrains Mono', ui-monospace, monospace",
-           numeric: "'Libre Caslon Text', Georgia, serif" },
-};
-
 const UserPrefsContext = createContext(null);
 
 function storageKey(user) {
@@ -83,7 +72,6 @@ export function UserPrefsProvider({ children }) {
       '--ok-h', '--ok-s', '--warn-h', '--warn-s',
       '--danger-h', '--danger-s', '--info-h', '--info-s',
       '--violet-h', '--violet-s',
-      '--font-ui', '--font-display', '--font-mono', '--font-numeric',
     ];
     const stripAll = () => {
       delete root.dataset.skin;
@@ -117,12 +105,6 @@ export function UserPrefsProvider({ children }) {
     root.style.setProperty('--info-s', p.info.s + '%');
     root.style.setProperty('--violet-h', p.violet.h);
     root.style.setProperty('--violet-s', p.violet.s + '%');
-
-    const f = FONTS[prefs.skin] || FONTS.dark;
-    root.style.setProperty('--font-ui', f.ui);
-    root.style.setProperty('--font-display', f.display);
-    root.style.setProperty('--font-mono', f.mono);
-    root.style.setProperty('--font-numeric', f.numeric);
 
     return stripAll;
   }, [prefs, userId]);

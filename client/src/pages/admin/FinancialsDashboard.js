@@ -5,7 +5,7 @@ import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import { fmt$, fmt$cents, fmtDate } from '../../components/adminos/format';
+import { fmt$, fmt$2dp, fmtDate } from '../../components/adminos/format';
 
 const STATUS = {
   draft: 'neutral', sent: 'info', viewed: 'accent', modified: 'violet',
@@ -139,7 +139,7 @@ export default function FinancialsDashboard() {
                   <td><strong>{pp.client_name || '—'}</strong></td>
                   <td>{getEventTypeLabel({ event_type: pp.event_type, event_type_custom: pp.event_type_custom })}</td>
                   <td className="muted" style={{ textTransform: 'capitalize' }}>{pp.payment_type}</td>
-                  <td className="num">{fmt$cents(pp.amount / 100)}</td>
+                  <td className="num">{fmt$2dp(pp.amount / 100)}</td>
                   <td className="muted">{fmtDate(pp.created_at && String(pp.created_at).slice(0, 10), { year: 'numeric' })}</td>
                 </tr>
               ))}

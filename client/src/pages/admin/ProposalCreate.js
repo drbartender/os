@@ -11,7 +11,7 @@ import FieldError from '../../components/FieldError';
 import TimePicker from '../../components/TimePicker';
 import NumberStepper from '../../components/NumberStepper';
 import Icon from '../../components/adminos/Icon';
-import { fmt$, fmt$cents, fmtDateFull } from '../../components/adminos/format';
+import { fmt$, fmt$2dp, fmtDateFull } from '../../components/adminos/format';
 
 const SOURCES = [
   { value: 'direct',    label: 'Direct' },
@@ -976,7 +976,7 @@ function PricingDock({ form, preview, packages, submitting, error, fieldErrors }
           Live pricing
         </div>
         <div className="num" style={{ fontSize: 32, color: 'var(--ink-1)', marginTop: 4, fontWeight: 500 }}>
-          {fmt$cents(total)}
+          {fmt$2dp(total)}
         </div>
         <div className="tiny" style={{ color: 'var(--ink-3)' }}>
           {pkg?.name || 'Choose a package'}
@@ -1062,7 +1062,7 @@ const Row = ({ label, value, primary, sub, muted, big }) => (
   }}>
     <span style={{ fontWeight: primary && big ? 600 : 400 }}>{label}</span>
     <span className="num" style={{ fontWeight: primary && big ? 600 : 400, fontSize: big ? 18 : undefined }}>
-      {fmt$cents(value || 0)}
+      {fmt$2dp(value || 0)}
     </span>
   </div>
 );

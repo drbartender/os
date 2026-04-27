@@ -5,7 +5,7 @@ import { useToast } from '../../context/ToastContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
-import { fmt$, fmt$cents, fmtDate, fmtDateFull, relDay } from '../../components/adminos/format';
+import { fmt$, fmt$2dp, fmtDate, fmtDateFull, relDay } from '../../components/adminos/format';
 import { eventStatusChip, parsePositionsCount, approvedCount } from '../../components/adminos/shifts';
 
 export default function EventDetailPage() {
@@ -234,10 +234,10 @@ export default function EventDetailPage() {
               </div>
               <div style={{ height: 12 }} />
               <dl className="dl">
-                <dt>Paid</dt><dd className="num">{fmt$cents(paid)}</dd>
+                <dt>Paid</dt><dd className="num">{fmt$2dp(paid)}</dd>
                 <dt>Balance</dt>
                 <dd className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
-                  {fmt$cents(bal)}
+                  {fmt$2dp(bal)}
                 </dd>
                 <dt>Status</dt>
                 <dd>{eventStatusChip(proposal)}</dd>

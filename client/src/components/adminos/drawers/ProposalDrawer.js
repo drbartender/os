@@ -7,7 +7,7 @@ import { PUBLIC_SITE_URL } from '../../../utils/constants';
 import Drawer from '../Drawer';
 import Icon from '../Icon';
 import StatusChip from '../StatusChip';
-import { fmt$cents, fmtDate, fmtDateFull, relDay } from '../format';
+import { fmt$2dp, fmtDate, fmtDateFull, relDay } from '../format';
 
 const STATUS_KIND = {
   draft: 'neutral', sent: 'info', viewed: 'accent', modified: 'violet',
@@ -105,13 +105,13 @@ function ProposalDrawerBody({ proposal, onCopyLink, copied }) {
           </div>
           <div className="meta-item">
             <div className="meta-k">Total</div>
-            <div className="meta-v num">{fmt$cents(total)}</div>
+            <div className="meta-v num">{fmt$2dp(total)}</div>
           </div>
           {paid > 0 && (
             <div className="meta-item">
               <div className="meta-k">Balance</div>
               <div className="meta-v num" style={{ color: balance > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'hsl(var(--ok-h) var(--ok-s) 55%)' }}>
-                {balance > 0 ? fmt$cents(balance) : 'Paid in full'}
+                {balance > 0 ? fmt$2dp(balance) : 'Paid in full'}
               </div>
             </div>
           )}
@@ -140,11 +140,11 @@ function ProposalDrawerBody({ proposal, onCopyLink, copied }) {
         {proposal.package_name && <><dt>Package</dt><dd>{proposal.package_name}</dd></>}
         {proposal.num_bartenders != null && <><dt>Bartenders</dt><dd className="num">{proposal.num_bartenders}</dd></>}
         {proposal.num_bars != null && <><dt>Bars</dt><dd className="num">{proposal.num_bars}</dd></>}
-        <dt>Total</dt><dd className="num">{fmt$cents(total)}</dd>
-        <dt>Paid</dt><dd className="num">{fmt$cents(paid)}</dd>
+        <dt>Total</dt><dd className="num">{fmt$2dp(total)}</dd>
+        <dt>Paid</dt><dd className="num">{fmt$2dp(paid)}</dd>
         <dt>Balance</dt>
         <dd className="num" style={{ color: balance > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
-          {fmt$cents(balance)}
+          {fmt$2dp(balance)}
         </dd>
       </dl>
 

@@ -4,7 +4,7 @@ import api from '../../../utils/api';
 import Drawer from '../Drawer';
 import Icon from '../Icon';
 import StatusChip from '../StatusChip';
-import { fmt$cents, fmtDateFull } from '../format';
+import { fmt$2dp, fmtDateFull } from '../format';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 import { eventStatusChip, parsePositionsArray, approvedCount } from '../shifts';
 
@@ -111,14 +111,14 @@ function EventDrawerBody({ shift, requests }) {
           {total > 0 && (
             <div className="meta-item">
               <div className="meta-k">Total</div>
-              <div className="meta-v num">{fmt$cents(total)}</div>
+              <div className="meta-v num">{fmt$2dp(total)}</div>
             </div>
           )}
           {total > 0 && (
             <div className="meta-item">
               <div className="meta-k">Balance</div>
               <div className="meta-v num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'hsl(var(--ok-h) var(--ok-s) 55%)' }}>
-                {bal > 0 ? fmt$cents(bal) : 'Paid in full'}
+                {bal > 0 ? fmt$2dp(bal) : 'Paid in full'}
               </div>
             </div>
           )}
@@ -166,9 +166,9 @@ function EventDrawerBody({ shift, requests }) {
           <div className="section-title">Financial</div>
           <dl className="dl">
             {shift.proposal_package_name && <><dt>Package</dt><dd>{shift.proposal_package_name}</dd></>}
-            <dt>Total</dt><dd className="num">{fmt$cents(total)}</dd>
-            <dt>Paid</dt><dd className="num">{fmt$cents(paid)}</dd>
-            <dt>Balance</dt><dd className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>{fmt$cents(bal)}</dd>
+            <dt>Total</dt><dd className="num">{fmt$2dp(total)}</dd>
+            <dt>Paid</dt><dd className="num">{fmt$2dp(paid)}</dd>
+            <dt>Balance</dt><dd className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>{fmt$2dp(bal)}</dd>
             <dt>Status</dt><dd>{shift.proposal_status || '—'}</dd>
           </dl>
         </>
