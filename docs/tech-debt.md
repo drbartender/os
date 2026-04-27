@@ -4,6 +4,8 @@
 
 Each item is eligible to be re-opened as its own spec when priorities align. Sorted by risk/effort category.
 
+> **Note (2026-04-27):** File paths and line numbers below were captured before the structural cleanup pass that split `server/routes/admin.js` → `server/routes/admin/`, `server/routes/proposals.js` → `server/routes/proposals/`, `client/src/pages/AdminUserDetail.js` → `pages/admin/userDetail/`, `client/src/pages/website/QuoteWizard.js` → `pages/website/quoteWizard/`, and `client/src/pages/proposal/ProposalView.js` → `pages/proposal/proposalView/`. **File paths updated below; line numbers may be approximate** — re-grep for exact line if doing surgery.
+
 ---
 
 ## Schema migrations — need backup + verification plan
@@ -13,7 +15,7 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 **Source:** audit log, "Follow-up pass" item L; schema-drift scan section 5.
 **What:** Both columns currently store JSON text (default `'[]'`) and require `JSON.stringify`/`JSON.parse` at every callsite and `::json` casts at query time. The 2026-04-15 plan doc flagged this for migration; never executed.
 **Why deferred:** Requires a production data migration (TEXT → JSONB with content coercion) and a sweep of every callsite removing the stringify/parse boilerplate. Belongs in its own spec with a rollback plan.
-**Callsites to update after migration:** `server/utils/autoAssign.js:128-129`, `server/routes/admin.js:989-991` (remove `::json` cast), `client/src/pages/admin/AdminDashboard.js:400`, `client/src/pages/staff/StaffShifts.js:97`, `client/src/pages/admin/ProposalDetail.js:156`.
+**Callsites to update after migration:** `server/utils/autoAssign.js:128-129`, `server/routes/admin/settings.js:129-132` (badge-counts `::jsonb` casts in the unstaffed-events sub-select; remove after migration), `client/src/pages/admin/AdminDashboard.js:400`, `client/src/pages/staff/StaffShifts.js:97`, `client/src/pages/admin/ProposalDetail.js:156`.
 **Next step:** Brainstorm migration script → coordinate with a deploy window → roll codebase sweep.
 
 ### Dead column drops
@@ -35,7 +37,7 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 ### pricing_snapshot shape validator
 
 **Source:** audit log, item K.
-**What:** `proposals.pricing_snapshot` JSONB is written by `server/utils/pricingEngine.js:343` and read by 6+ distinct files: `server/routes/stripe.js`, `server/utils/invoiceHelpers.js` (twice), `server/routes/clientPortal.js`, `server/routes/proposals.js` (twice), `server/routes/drinkPlans.js` (twice). Any key rename in the pricing engine silently breaks all downstream consumers at runtime.
+**What:** `proposals.pricing_snapshot` JSONB is written by `server/utils/pricingEngine.js:343` and read by 6+ distinct files: `server/routes/stripe.js`, `server/utils/invoiceHelpers.js` (twice), `server/routes/clientPortal.js`, `server/routes/proposals/publicToken.js` (GET /t/:token), `server/routes/proposals/crud.js` (PATCH /:id reads `old.pricing_snapshot`), `server/routes/drinkPlans.js` (twice). Any key rename in the pricing engine silently breaks all downstream consumers at runtime.
 **Why deferred:** Requires a `PRICING_SNAPSHOT_VERSION` constant, a validator function, a consumer-side assert on read, and a write-time version stamp. Cross-cutting refactor — not trivial.
 **Next step:** Design the validator contract → add version field → wrap all 6 read sites in version-aware parsing.
 
@@ -95,7 +97,7 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 ### QuoteWizard ↔ ProposalCreate policy dedup
 
 **Source:** Codex client `[P2]`.
-**What:** `client/src/pages/website/QuoteWizard.js:123-302` and `client/src/pages/admin/ProposalCreate.js` both own package/add-on eligibility, draft persistence, pricing preview, event-type lookup, and submission rules. They have already drifted (`filteredAddons`, event-type search, preview payloads/endpoints).
+**What:** `client/src/pages/website/quoteWizard/QuoteWizard.js` (parent + step components in `quoteWizard/steps/`) and `client/src/pages/admin/ProposalCreate.js` both own package/add-on eligibility, draft persistence, pricing preview, event-type lookup, and submission rules. They have already drifted (`filteredAddons`, event-type search, preview payloads/endpoints).
 **Why deferred:** Large refactor.
 **Next step:** Centralize policy + preview/draft adapters in shared modules consumed by both flows.
 
@@ -106,14 +108,14 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 ### Geocode backfill bulk UPDATE
 
 **Source:** audit follow-up item D.
-**What:** `server/routes/admin.js:696-720` — per-profile and per-shift geocode backfill loops do sequential 1.1s Nominatim + per-row `UPDATE`. Admin one-off endpoints, rarely hit.
+**What:** `server/routes/admin/settings.js:68-100` (POST /backfill-geocodes) — per-profile and per-shift geocode backfill loops do sequential 1.1s Nominatim + per-row `UPDATE`. Admin one-off endpoints, rarely hit.
 **Why deferred:** Low frequency; replacing the per-row UPDATE with a bulk `unnest()` CTE is straightforward but not urgent.
 **Next step:** Keep the 1.1s Nominatim throttle, collect successes, bulk UPDATE at end.
 
 ### Blog import parallel uploads + batch INSERT
 
 **Source:** audit follow-up item E.
-**What:** `server/routes/admin.js:800-849` — sequential image uploads + single-row INSERTs per blog post. Used once every few months at most.
+**What:** `server/routes/admin/blog.js` (POST /blog/import) — sequential image uploads + single-row INSERTs per blog post. Used once every few months at most.
 **Why deferred:** Low frequency.
 **Next step:** Parallelize image uploads with `Promise.all`; single multi-row VALUES INSERT.
 
@@ -150,7 +152,7 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 ### admin.js applications filter CASE expression blocks index
 
 **Source:** 2026-04-24 push pre-review (database-review agent).
-**What:** `server/routes/admin.js:354-385` uses `CASE WHEN $1 THEN u.onboarding_status = 'rejected' ELSE u.onboarding_status IN ('applied','interviewing') END`. The parameterized CASE prevents Postgres from using `idx_users_onboarding_status` — predicate pushdown doesn't apply to parameterized branches.
+**What:** `server/routes/admin/applications.js:22-50` (the `ARCHIVED_FILTER` const + its callsite in GET /applications) uses `CASE WHEN $1 THEN u.onboarding_status = 'rejected' ELSE u.onboarding_status IN ('applied','interviewing') END`. The parameterized CASE prevents Postgres from using `idx_users_onboarding_status` — predicate pushdown doesn't apply to parameterized branches.
 **Why deferred:** At current scale (~100s of applicants) seq-scan is faster than index anyway. Parameterization was chosen over string-concat specifically to remove the SQL-injection-adjacent pattern flagged by the audit.
 **Next step:** When application volume exceeds 10k rows, rewrite as two branches selected in JS with const string literals (no user input = no injection surface):
 ```js

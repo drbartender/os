@@ -63,7 +63,7 @@ Client bundle:
 Public-facing pages (priority — these are user-seen):
 - `client/src/pages/website/HomePage.js`
 - `client/src/pages/plan/PotionPlanningLab.js` (+ its steps/ subdirectory)
-- `client/src/pages/proposal/ProposalView.js`
+- `client/src/pages/proposal/proposalView/` (split into ProposalView, ProposalHeader, ProposalPricingBreakdown, SignAndPaySection, PaymentForm)
 - `client/src/pages/public/Blog.js` + `BlogPost.js`
 - `client/src/pages/invoice/InvoicePage.js`
 
@@ -131,7 +131,7 @@ Sentry issues pulled: <count>
 ## Top 20 findings (read these first)
 1. [BLOCKER] [CONVERGENCE] server/routes/invoices.js:247 — <finding> — <remediation>
    Flagged by: @security-review, codex-server
-2. [BLOCKER] [SENTRY: DRBARTENDER-SERVER-4A2] server/routes/proposals.js:891 — <finding> — <remediation>
+2. [BLOCKER] [SENTRY: DRBARTENDER-SERVER-4A2] server/routes/proposals/crud.js:891 — <finding> — <remediation>
    Flagged by: @consistency-check
 ...
 

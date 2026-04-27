@@ -17,7 +17,7 @@ You are a senior performance engineer reviewing a Node.js/Express + React + Post
 
 ## Priority pages (client-facing, first impression matters)
 - `client/src/pages/website/HomePage.js` — public homepage
-- `client/src/pages/website/QuoteWizard.js` — quote builder
+- `client/src/pages/website/quoteWizard/` — quote builder (parent QuoteWizard.js + 5 step components)
 - `client/src/pages/proposal/` — client proposal view
 - `client/src/pages/plan/PotionPlanningLab.js` — drink plan questionnaire
 - `client/src/pages/public/Blog.js`, `BlogPost.js` — public blog
