@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import BrandLogo from './BrandLogo';
 
-const NAV_ITEMS = [
+const STAFF_NAV = [
   { label: 'Dashboard',   path: '/portal/dashboard',  icon: '📊' },
   { label: 'Shifts',      path: '/portal/shifts',     icon: '📅' },
   { label: 'My Schedule', path: '/portal/schedule',   icon: '🗓' },
@@ -13,10 +13,19 @@ const NAV_ITEMS = [
   { label: 'Profile',     path: '/portal/profile',    icon: '👤' },
 ];
 
+// Admin/manager users see an extra entry to jump back to the admin shell.
+// Role flips (staff → manager) propagate via the AuthContext tab-focus refresh.
+const ADMIN_LINK = { label: 'Admin Portal', path: '/admin/dashboard', icon: '🛠' };
+
 export default function StaffLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const NAV_ITEMS = useMemo(() => {
+    const isAdminOrManager = user?.role === 'admin' || user?.role === 'manager';
+    return isAdminOrManager ? [ADMIN_LINK, 'divider', ...STAFF_NAV] : STAFF_NAV;
+  }, [user?.role]);
 
   const handleLogout = () => { logout(); navigate('/login'); };
 

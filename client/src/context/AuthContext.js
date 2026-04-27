@@ -52,6 +52,21 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  // Pick up role/status changes the moment the user returns to the tab.
+  // Auth middleware already reads role from the DB per-request, so server-side
+  // permission checks are always fresh — this just keeps the *UI* in sync
+  // (sidebar links, route guards) without forcing the user to manually refresh
+  // after an admin promotes/deactivates them in another window.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!localStorage.getItem('token')) return;
+      refreshUser().catch(() => { /* swallow — refreshUser already handles 401 */ });
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [refreshUser]);
+
   return (
     <AuthContext.Provider value={{ user, loading, login, logout, refreshUser }}>
       {children}
