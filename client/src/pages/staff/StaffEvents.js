@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 
@@ -11,6 +12,7 @@ function fmtDate(iso) {
 
 export default function StaffEvents() {
   const { user } = useAuth();
+  const toast = useToast();
   const [events, setEvents] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -19,7 +21,10 @@ export default function StaffEvents() {
     setLoading(true);
     api.get(`/shifts/user/${user.id}/events`)
       .then(r => setEvents(r.data))
-      .catch(console.error)
+      .catch(err => {
+        console.error(err);
+        toast.error("Couldn't load events. Try refreshing.");
+      })
       .finally(() => setLoading(false));
   }, [user?.id]);
 

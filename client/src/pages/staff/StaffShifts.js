@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import api from '../../utils/api';
 import { WHATSAPP_GROUP_URL } from '../../utils/constants';
 import { getEventTypeLabel } from '../../utils/eventTypes';
@@ -28,6 +29,7 @@ function fmtDate(iso) {
 
 export default function StaffShifts() {
   const { user } = useAuth();
+  const toast = useToast();
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [requestingId, setRequestingId] = useState(null);
@@ -44,6 +46,7 @@ export default function StaffShifts() {
       setShifts(res.data);
     } catch (e) {
       console.error(e);
+      toast.error("Couldn't load shifts. Try refreshing.");
     } finally {
       setLoading(false);
     }
@@ -59,6 +62,7 @@ export default function StaffShifts() {
       await fetchData();
     } catch (e) {
       console.error(e);
+      toast.error(e.response?.data?.error || e.message || 'Something went wrong.');
     } finally {
       setRequestingId(null);
     }
@@ -70,6 +74,7 @@ export default function StaffShifts() {
       await fetchData();
     } catch (e) {
       console.error(e);
+      toast.error(e.response?.data?.error || e.message || 'Something went wrong.');
     }
   }
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import api from '../../utils/api';
 import { WHATSAPP_GROUP_URL } from '../../utils/constants';
 import { getEventTypeLabel } from '../../utils/eventTypes';
@@ -13,6 +14,7 @@ function fmtDate(iso) {
 
 export default function StaffDashboard() {
   const { user } = useAuth();
+  const toast = useToast();
   const [stats, setStats] = useState(null);
 
   // Staff can view and request shifts as soon as onboarding is submitted —
@@ -37,7 +39,10 @@ export default function StaffDashboard() {
           nextEvent: eventsRes.data.upcoming?.[0] || null,
         });
       })
-      .catch(console.error);
+      .catch(err => {
+        console.error(err);
+        toast.error("Couldn't load dashboard. Try refreshing.");
+      });
   }, [isOnboarded, user?.id]);
 
   return (

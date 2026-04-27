@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 
@@ -27,6 +28,7 @@ function fmtDate(iso) {
 
 export default function StaffSchedule() {
   const { user } = useAuth();
+  const toast = useToast();
   const [myRequests, setMyRequests] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -37,6 +39,7 @@ export default function StaffSchedule() {
       setMyRequests(res.data);
     } catch (e) {
       console.error(e);
+      toast.error("Couldn't load schedule. Try refreshing.");
     } finally {
       setLoading(false);
     }
@@ -50,6 +53,7 @@ export default function StaffSchedule() {
       await fetchData();
     } catch (e) {
       console.error(e);
+      toast.error(e.response?.data?.error || e.message || 'Something went wrong.');
     }
   }
 
@@ -66,6 +70,7 @@ export default function StaffSchedule() {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Failed to download calendar event:', err);
+      toast.error(err.response?.data?.error || err.message || 'Something went wrong.');
     }
   }
 

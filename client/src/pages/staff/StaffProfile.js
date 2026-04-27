@@ -1,17 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
 import api from '../../utils/api';
 
 export default function StaffProfile() {
   const { user } = useAuth();
+  const toast = useToast();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api.get('/contractor')
       .then(r => setProfile(r.data))
-      .catch(console.error)
+      .catch(err => {
+        console.error(err);
+        toast.error("Couldn't load profile. Try refreshing.");
+      })
       .finally(() => setLoading(false));
   }, []);
 

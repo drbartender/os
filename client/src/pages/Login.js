@@ -38,7 +38,17 @@ export default function Login() {
       const u = res.data.user;
       if (u.role === 'admin') navigate('/admin');
       else if (['applied','interviewing','rejected'].includes(u.onboarding_status)) navigate('/application-status');
-      else if (u.onboarding_status === 'in_progress' && !u.has_application) navigate('/apply');
+      else if (u.onboarding_status === 'in_progress' && !u.has_application) {
+        if (window.location.hostname.startsWith('staff.')) {
+          const params = new URLSearchParams();
+          if (u.email) params.set('email', u.email);
+          const qs = params.toString();
+          window.location.assign('https://hiring.drbartender.com/apply' + (qs ? '?' + qs : ''));
+          return;
+        }
+        navigate('/apply');
+        return;
+      }
       else navigate('/welcome');
     } catch (err) {
       // Login intentionally surfaces a generic message (no field-level errors)
