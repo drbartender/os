@@ -1,4 +1,4 @@
-// Formatting helpers shared across Admin OS components.
+// Formatters used app-wide; the adminos/ path is historical, not a scope restriction.
 // Money convention (per server/db/schema.sql:478-487):
 //   - NUMERIC(10,2) DOLLARS:  proposals.total_price/amount_paid/deposit_amount,
 //                             service_packages.*_rate/*_fee, service_addons.rate,

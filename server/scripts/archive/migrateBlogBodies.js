@@ -1,3 +1,6 @@
+// ARCHIVED 2026-04-27. One-time migration; do not re-run without reading.
+// Original purpose: convert blog post bodies from JSON block arrays to semantic HTML.
+
 /**
  * One-time migration: Convert blog post bodies from JSON blocks to HTML.
  *

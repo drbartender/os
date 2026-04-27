@@ -1,3 +1,6 @@
+// ARCHIVED 2026-04-27. One-time migration; do not re-run without reading.
+// Original purpose: upload local files from server/uploads/ to GCS (pre-R2 era).
+
 /**
  * One-time migration: upload existing local files to Google Cloud Storage.
  * Run from the project root: node server/scripts/migrate-to-gcs.js

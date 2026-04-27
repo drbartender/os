@@ -2,12 +2,14 @@ import React, { useState, lazy, Suspense } from 'react';
 import api from '../../utils/api';
 import { generateShoppingList } from './generateShoppingList';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { useToast } from '../../context/ToastContext';
 
 // Lazy-load the modal so @dnd-kit and the PDF/jspdf graph stay out of the
 // admin bundle for sessions where the Shopping List button is never clicked.
 const ShoppingListModal = lazy(() => import('./ShoppingListModal'));
 
 export default function ShoppingListButton({ planId, planToken }) {
+  const toast = useToast();
   const [loading, setLoading] = useState(false);
   const [guestCountPrompt, setGuestCountPrompt] = useState(false);
   const [manualGuests, setManualGuests] = useState('');
@@ -72,7 +74,7 @@ export default function ShoppingListButton({ planId, planToken }) {
       }
     } catch (err) {
       console.error('Failed to load shopping list data:', err);
-      alert('Failed to load shopping list. Please try again.');
+      toast.error('Failed to load shopping list. Please try again.');
     } finally {
       setLoading(false);
     }

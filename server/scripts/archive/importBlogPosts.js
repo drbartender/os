@@ -1,3 +1,6 @@
+// ARCHIVED 2026-04-27. One-time migration; do not re-run without reading.
+// Original purpose: import blog posts from blog_posts.json + upload images to R2 (block-format era, pre-HTML).
+
 /**
  * Import blog posts from blog_posts.json into the database.
  *

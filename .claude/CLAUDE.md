@@ -81,9 +81,10 @@ dr-bartender/
 │   │   ├── stripeClient.js    # Central Stripe client factory (test-mode toggle, fail-closed)
 │   │   └── urls.js            # Canonical PUBLIC_SITE_URL / ADMIN_URL / STAFF_URL / API_URL resolvers
 │   └── scripts/
-│       ├── importBlogPosts.js     # Blog post import script (legacy)
-│       ├── migrateBlogBodies.js  # One-time: convert blog blocks → HTML
-│       └── migrate-to-gcs.js    # Storage migration script
+│       └── archive/               # One-time migrations (already run, kept for history)
+│           ├── importBlogPosts.js
+│           ├── migrateBlogBodies.js
+│           └── migrate-to-gcs.js
 ├── client/
 │   ├── src/
 │   │   ├── App.js            # All routes + auth guards
@@ -96,7 +97,6 @@ dr-bartender/
 │   │   │   ├── api.js             # Axios instance with JWT interceptor
 │   │   │   ├── constants.js       # App-wide constants
 │   │   │   ├── eventTypes.js      # Event type id→label resolver (mirrors server)
-│   │   │   ├── formatCurrency.js  # $ formatting with consistent precision
 │   │   │   ├── formatPhone.js     # Phone number formatting
 │   │   │   ├── leadSources.js     # Single source of truth for email lead source enum (mirrors schema + server validator)
 │   │   │   └── timeOptions.js     # Time option generator + 12h formatter + input parser (TimePicker)
