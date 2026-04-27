@@ -62,6 +62,7 @@ Copy `.env.example` and fill in values. All variables:
 | `RUN_SCHEDULERS` | No | Set to `false` on additional web instances to prevent duplicate scheduler runs. Default runs schedulers — single-instance deploys unaffected. |
 | `CLIENT_URL` | Yes | Admin/staff frontend URL for CORS + admin dashboard links in emails (e.g., `http://localhost:3000` in dev, `https://admin.drbartender.com` in prod) |
 | `PUBLIC_SITE_URL` | Yes | Public marketing site URL used in client-facing token links — proposals, drink plans, invoices, shopping lists (e.g., `http://localhost:3000` in dev, `https://drbartender.com` in prod) |
+| `STAFF_URL` | No | Staff portal origin used in hire-confirmation emails (e.g., `http://localhost:3000` in dev, `https://staff.drbartender.com` in prod). Falls back to the prod URL if unset. |
 | `API_URL` | No | Backend origin for server-rendered email links (unsubscribe). Defaults to `RENDER_EXTERNAL_URL` in prod, `http://localhost:5000` in dev. |
 | `MAX_FILE_SIZE` | No | Upload limit in bytes (default: 10MB) |
 | `R2_ACCOUNT_ID` | For uploads | Cloudflare R2 account ID |
@@ -153,7 +154,7 @@ dr-bartender/
 │   │   ├── sms.js              # Twilio SMS wrapper
 │   │   ├── storage.js          # Cloudflare R2 upload + signed URL helpers
 │   │   ├── stripeClient.js     # Central Stripe client factory (test-mode toggle, fail-closed)
-│   │   └── urls.js             # Canonical PUBLIC_SITE_URL / ADMIN_URL / API_URL resolvers
+│   │   └── urls.js             # Canonical PUBLIC_SITE_URL / ADMIN_URL / STAFF_URL / API_URL resolvers
 │   └── scripts/
 │       ├── importBlogPosts.js     # Blog post import script (legacy)
 │       ├── migrateBlogBodies.js  # One-time: convert blog blocks → HTML

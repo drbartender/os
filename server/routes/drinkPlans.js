@@ -13,14 +13,35 @@ const { ValidationError, ConflictError, NotFoundError } = require('../utils/erro
 const { ADMIN_URL, PUBLIC_SITE_URL } = require('../utils/urls');
 const { generateShoppingList } = require('../utils/shoppingList');
 
+// Mirror of client/src/data/syrups.js SYRUPS — id → display name. Keep in sync
+// when adding new flavors. Only used for shopping-list rendering of the
+// self-provided syrup line items, so a missing entry just drops that flavor
+// from the list (no crash).
+const SYRUP_NAME_LOOKUP = {
+  'mixed-berry': 'Mixed Berry', 'blackberry': 'Blackberry', 'strawberry': 'Strawberry',
+  'mango': 'Mango', 'passion-fruit': 'Passion Fruit', 'pineapple': 'Pineapple',
+  'peach': 'Peach', 'watermelon': 'Watermelon', 'grenadine': 'Grenadine (Pomegranate)',
+  'cherry': 'Cherry (Dark/Tart)',
+  'jalapeno': 'Jalapeño', 'habanero': 'Habanero', 'cherry-habanero': 'Cherry Habanero',
+  'reaper-ghost': 'Carolina Reaper / Ghost Pepper',
+  'lavender': 'Lavender', 'rosemary': 'Rosemary', 'thyme': 'Thyme', 'basil': 'Basil',
+  'mint': 'Mint', 'ginger': 'Ginger', 'cardamom': 'Cardamom', 'cinnamon': 'Cinnamon',
+  'vanilla': 'Vanilla', 'lemongrass': 'Lemongrass', 'hibiscus': 'Hibiscus',
+  'rose': 'Rose', 'elderflower': 'Elderflower',
+  'honey': 'Honey', 'maple': 'Maple', 'salted-caramel': 'Salted Caramel',
+  'brown-butter': 'Brown Butter', 'espresso': 'Espresso', 'chocolate': 'Chocolate',
+};
+
 // Auto-generate a shopping list for a submitted drink plan and stage it as
-// `pending_review`. Skips if the plan was already approved (admin-edited list
-// is the source of truth once approved). Failures are non-fatal — admin can
+// `pending_review`. Strict no-overwrite semantics: only generates when no list
+// exists yet — the WHERE-clause `shopping_list IS NULL` guard keeps an admin's
+// concurrent manual save (or already-approved list) from being clobbered by a
+// late-firing auto-gen after submit COMMIT. Failures are non-fatal — admin can
 // still trigger the manual generator from the modal as a fallback.
 async function autoGenerateShoppingList(planId, dbClient) {
   const planRes = await dbClient.query(
     `SELECT dp.id, dp.serving_type, dp.selections, dp.client_name, dp.event_date,
-            dp.shopping_list_status, dp.admin_notes,
+            dp.admin_notes, dp.shopping_list IS NOT NULL AS has_list,
             p.guest_count
      FROM drink_plans dp
      LEFT JOIN proposals p ON p.id = dp.proposal_id
@@ -29,8 +50,10 @@ async function autoGenerateShoppingList(planId, dbClient) {
   );
   const plan = planRes.rows[0];
   if (!plan || !plan.guest_count) return null;
-  // Don't overwrite an admin-approved list — they own the edits at that point.
-  if (plan.shopping_list_status === 'approved') return null;
+  // Skip the cocktail/JSON work entirely when a list already exists. The
+  // UPDATE below is also gated on `shopping_list IS NULL` for atomicity, so
+  // this is just an early-out optimization.
+  if (plan.has_list) return null;
 
   const sel = plan.selections || {};
   const sigDrinkIds = Array.isArray(sel.signatureDrinks) ? sel.signatureDrinks : [];
@@ -47,13 +70,7 @@ async function autoGenerateShoppingList(planId, dbClient) {
   }
 
   const syrupSelfProvided = Array.isArray(sel.syrupSelfProvided) ? sel.syrupSelfProvided : [];
-  let syrupNamesById = {};
-  if (syrupSelfProvided.length > 0) {
-    // Names live in the syrups data file on the client; the server keeps a
-    // small lookup table here so the auto-gen can render flavor labels without
-    // duplicating the full SYRUPS catalog.
-    syrupNamesById = SYRUP_NAME_LOOKUP;
-  }
+  const syrupNamesById = syrupSelfProvided.length > 0 ? SYRUP_NAME_LOOKUP : {};
 
   const isFullBar = (plan.serving_type || 'full_bar') === 'full_bar';
   const beerSelections = isFullBar ? (sel.beerFromFullBar || []) : (sel.beerFromBeerWine || []);
@@ -73,35 +90,21 @@ async function autoGenerateShoppingList(planId, dbClient) {
     mixersForSignatureDrinks: sel.mixersForSignatureDrinks ?? null,
   });
 
+  // Atomic guard: only fill the list when it's still NULL. If admin saved an
+  // edit (PUT /shopping-list) or approved a different list during the race
+  // window between submit COMMIT and this UPDATE, the row already has a value
+  // and this UPDATE matches zero rows — admin's edit wins.
   await dbClient.query(
     `UPDATE drink_plans
        SET shopping_list = $1::jsonb,
            shopping_list_status = 'pending_review',
            updated_at = NOW()
-     WHERE id = $2`,
+     WHERE id = $2
+       AND shopping_list IS NULL`,
     [JSON.stringify(list), planId]
   );
   return list;
 }
-
-// Mirror of client/src/data/syrups.js SYRUPS — id → display name. Keep in sync
-// when adding new flavors. Only used for shopping-list rendering of the
-// self-provided syrup line items, so a missing entry just drops that flavor
-// from the list (no crash).
-const SYRUP_NAME_LOOKUP = {
-  'mixed-berry': 'Mixed Berry', 'blackberry': 'Blackberry', 'strawberry': 'Strawberry',
-  'mango': 'Mango', 'passion-fruit': 'Passion Fruit', 'pineapple': 'Pineapple',
-  'peach': 'Peach', 'watermelon': 'Watermelon', 'grenadine': 'Grenadine (Pomegranate)',
-  'cherry': 'Cherry (Dark/Tart)',
-  'jalapeno': 'Jalapeño', 'habanero': 'Habanero', 'cherry-habanero': 'Cherry Habanero',
-  'reaper-ghost': 'Carolina Reaper / Ghost Pepper',
-  'lavender': 'Lavender', 'rosemary': 'Rosemary', 'thyme': 'Thyme', 'basil': 'Basil',
-  'mint': 'Mint', 'ginger': 'Ginger', 'cardamom': 'Cardamom', 'cinnamon': 'Cinnamon',
-  'vanilla': 'Vanilla', 'lemongrass': 'Lemongrass', 'hibiscus': 'Hibiscus',
-  'rose': 'Rose', 'elderflower': 'Elderflower',
-  'honey': 'Honey', 'maple': 'Maple', 'salted-caramel': 'Salted Caramel',
-  'brown-butter': 'Brown Butter', 'espresso': 'Espresso', 'chocolate': 'Chocolate',
-};
 
 const router = express.Router();
 
@@ -780,6 +783,10 @@ router.put('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async
  *  flipping it from pending_review → approved. Public client view starts
  *  serving the list now; client gets an email with the link. */
 router.patch('/:id/shopping-list/approve', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Atomic UPDATE: matches at most once. Concurrent admin clicks both pass
+  // the auth check, but only the first transitions pending_review → approved
+  // and gets the row back. Subsequent clicks fall through to the idempotent
+  // success path below — no double-emails to the client.
   const upd = await pool.query(
     `UPDATE drink_plans
        SET shopping_list_status = 'approved',
@@ -787,12 +794,32 @@ router.patch('/:id/shopping-list/approve', auth, requireAdminOrManager, asyncHan
            updated_at = NOW()
      WHERE id = $1
        AND shopping_list IS NOT NULL
+       AND shopping_list_status IS DISTINCT FROM 'approved'
      RETURNING id, token, client_name, client_email, event_type, event_type_custom, event_date`,
     [req.params.id]
   );
+
   if (!upd.rows[0]) {
-    throw new ConflictError('Cannot approve: this plan has no shopping list yet. Generate one first.');
+    // Either the row doesn't exist, the list is missing, or it was already
+    // approved by another admin click. Distinguish so we surface a useful
+    // error for the no-list case but stay idempotent for the already-approved
+    // case (don't re-email the client).
+    const check = await pool.query(
+      `SELECT shopping_list IS NOT NULL AS has_list, shopping_list_status, shopping_list_approved_at
+       FROM drink_plans WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!check.rows[0]) throw new NotFoundError('Plan not found.');
+    if (!check.rows[0].has_list) {
+      throw new ConflictError('Cannot approve: this plan has no shopping list yet. Generate one first.');
+    }
+    return res.json({
+      success: true,
+      approved_at: check.rows[0].shopping_list_approved_at,
+      alreadyApproved: true,
+    });
   }
+
   const plan = upd.rows[0];
 
   // Notify the client. Best-effort — never fail the approval if email blows up.

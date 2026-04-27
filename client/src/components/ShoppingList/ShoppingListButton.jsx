@@ -13,6 +13,9 @@ export default function ShoppingListButton({ planId, planToken }) {
   const [manualGuests, setManualGuests] = useState('');
   const [pendingData, setPendingData] = useState(null);
   const [modalData, setModalData] = useState(null);
+  // Initial Approve & Send button state — passed to modal so it doesn't have
+  // to re-fetch the same /shopping-list endpoint on mount.
+  const [initialApproveStatus, setInitialApproveStatus] = useState('idle');
 
   const openModal = (apiData, guestCount, savedList) => {
     if (savedList) {
@@ -52,6 +55,9 @@ export default function ShoppingListButton({ planId, planToken }) {
       ]);
       const data = dataRes.data;
       const saved = savedRes.data.shopping_list;
+      // Snapshot the approve state up front so the modal can render the
+      // correct button label without an extra round-trip.
+      setInitialApproveStatus(savedRes.data.shopping_list_status === 'approved' ? 'approved' : 'idle');
 
       if (saved) {
         // Use saved list directly
@@ -132,6 +138,7 @@ export default function ShoppingListButton({ planId, planToken }) {
             onClose={() => setModalData(null)}
             planId={planId}
             planToken={planToken}
+            initialApproveStatus={initialApproveStatus}
           />
         </Suspense>
       )}

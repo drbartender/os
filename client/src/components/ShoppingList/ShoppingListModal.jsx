@@ -18,7 +18,7 @@ import { CSS } from '@dnd-kit/utilities';
 import api from '../../utils/api';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
 
-export default function ShoppingListModal({ listData, onClose, planId, planToken }) {
+export default function ShoppingListModal({ listData, onClose, planId, planToken, initialApproveStatus = 'idle' }) {
   const [edited, setEdited] = useState(() => deepClone(listData));
   const [guestCount, setGuestCount] = useState(listData.guestCount);
   const [downloading, setDownloading] = useState(false);
@@ -26,25 +26,13 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   const [undoStack, setUndoStack] = useState([]);
   const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'saving' | 'unsaved'
   const [linkCopied, setLinkCopied] = useState(false);
-  const [approveStatus, setApproveStatus] = useState('idle'); // 'idle' | 'approving' | 'approved'
+  // Approve state is seeded by the parent (ShoppingListButton already fetched
+  // /shopping-list to load the saved list — it passes status here so we don't
+  // duplicate the request on mount).
+  const [approveStatus, setApproveStatus] = useState(initialApproveStatus); // 'idle' | 'approving' | 'approved'
   const [approveError, setApproveError] = useState('');
   const isFirstRender = useRef(true);
   const saveTimer = useRef(null);
-
-  // Fetch current shopping_list_status so the Approve button reflects whether
-  // admin has already sent the list to the client.
-  useEffect(() => {
-    if (!planId) return;
-    let cancelled = false;
-    api.get(`/drink-plans/${planId}/shopping-list`)
-      .then(r => {
-        if (!cancelled && r.data?.shopping_list_status === 'approved') {
-          setApproveStatus('approved');
-        }
-      })
-      .catch(() => { /* non-fatal — leave Approve enabled */ });
-    return () => { cancelled = true; };
-  }, [planId]);
 
   function deepClone(d) {
     const uid = () => typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);

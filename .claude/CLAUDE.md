@@ -79,7 +79,7 @@ dr-bartender/
 │   │   ├── sms.js             # Twilio wrapper
 │   │   ├── storage.js         # R2 upload/signed-URL helpers
 │   │   ├── stripeClient.js    # Central Stripe client factory (test-mode toggle, fail-closed)
-│   │   └── urls.js            # Canonical PUBLIC_SITE_URL / ADMIN_URL / API_URL resolvers
+│   │   └── urls.js            # Canonical PUBLIC_SITE_URL / ADMIN_URL / STAFF_URL / API_URL resolvers
 │   └── scripts/
 │       ├── importBlogPosts.js     # Blog post import script (legacy)
 │       ├── migrateBlogBodies.js  # One-time: convert blog blocks → HTML
@@ -261,6 +261,7 @@ See `.env.example` for the full list. Key ones:
 | `RUN_SCHEDULERS` | Set to `false` on additional web instances to prevent duplicate scheduler runs. Default (unset) runs schedulers — single-instance deploys unaffected. |
 | `CLIENT_URL` | Admin/staff frontend origin (CORS + admin dashboard links in emails). In prod: `https://admin.drbartender.com` |
 | `PUBLIC_SITE_URL` | Public marketing site origin used in client-facing token URLs (proposal, drink plan, invoice, shopping list). In prod: `https://drbartender.com` |
+| `STAFF_URL` | Staff portal origin in hire-confirmation emails. Optional — defaults to `https://staff.drbartender.com`. |
 | `API_URL` | Backend origin for server-rendered email links (unsubscribe). Optional — defaults to `RENDER_EXTERNAL_URL` in prod, `localhost:5000` in dev. |
 | `R2_*` | Cloudflare R2 credentials |
 | `RESEND_API_KEY` | Resend email |

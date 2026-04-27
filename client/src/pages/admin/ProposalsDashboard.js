@@ -53,26 +53,31 @@ export default function ProposalsDashboard() {
     all:    '?view=all',
   }), []);
 
-  const fetchProposals = useCallback(async (currentTab) => {
-    setLoading(true);
-    try {
-      const qs = tabToQuery[currentTab] || tabToQuery.active;
-      const [list, statsRes] = await Promise.all([
-        api.get(`/proposals${qs}`),
-        api.get('/proposals/dashboard-stats').catch(() => ({ data: null })),
-      ]);
-      setProposals(list.data || []);
-      // Derive tab counts from /dashboard-stats so they reflect *all* proposals,
-      // not just the current bucket the list endpoint returned.
-      if (statsRes.data) {
-        const pipeByKey = Object.fromEntries((statsRes.data.pipeline || []).map(p => [p.key, p.count]));
+  // Tab counts come from /dashboard-stats. Fetched once on mount because the
+  // pipeline aggregates don't change between tab switches — only mutations
+  // (create/sign/pay) move proposals between buckets, and those force a page
+  // reload anyway. Failing the stats request leaves counts at zero (graceful
+  // degradation — tabs still work, just without the count badge).
+  useEffect(() => {
+    api.get('/proposals/dashboard-stats')
+      .then(r => {
+        const pipeByKey = Object.fromEntries((r.data?.pipeline || []).map(p => [p.key, p.count]));
         setCounts({
           active:   (pipeByKey.sent || 0) + (pipeByKey.viewed || 0) + (pipeByKey.modified || 0),
           draft:    pipeByKey.draft || 0,
           accepted: pipeByKey.accepted || 0,
-          paid:     statsRes.data.totals?.events_count || 0,
+          paid:     r.data?.totals?.events_count || 0,
         });
-      }
+      })
+      .catch(() => { /* leave counts at zero — graceful degradation */ });
+  }, []);
+
+  const fetchProposals = useCallback(async (currentTab) => {
+    setLoading(true);
+    try {
+      const qs = tabToQuery[currentTab] || tabToQuery.active;
+      const list = await api.get(`/proposals${qs}`);
+      setProposals(list.data || []);
     } catch (err) {
       console.error('Failed to fetch proposals:', err);
       toast.error('Failed to load proposals. Try refreshing.');

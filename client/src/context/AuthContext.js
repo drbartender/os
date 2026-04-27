@@ -7,6 +7,23 @@ const AuthContext = createContext(null);
 // otherwise trigger /auth/me on every focus event.
 const TAB_FOCUS_REFRESH_COOLDOWN_MS = 30_000;
 
+// Shallow-compare auth-relevant fields. /auth/me always returns a fresh
+// object, so a literal setUser would re-render every useAuth() consumer
+// (sidebar, route guards, layout) on every refresh — even when nothing the
+// app cares about changed. Comparing the relevant fields lets us preserve
+// the previous reference and skip the cascade.
+function isSameUser(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.id === b.id
+    && a.email === b.email
+    && a.role === b.role
+    && a.onboarding_status === b.onboarding_status
+    && a.has_application === b.has_application
+    && a.can_hire === b.can_hire
+    && a.can_staff === b.can_staff;
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -43,8 +60,9 @@ export function AuthProvider({ children }) {
     if (!token) return null;
     try {
       const res = await api.get('/auth/me');
-      setUser(res.data.user);
-      return res.data.user;
+      const next = res.data.user;
+      setUser(prev => (isSameUser(prev, next) ? prev : next));
+      return next;
     } catch (err) {
       // Mirror the bootstrap behavior: a dead JWT should sign the user out
       // instead of lingering as a stale token.
