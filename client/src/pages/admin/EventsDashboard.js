@@ -310,10 +310,7 @@ export default function EventsDashboard() {
                     label: 'Edit Event',
                     icon: 'pen',
                     disabled: !e.proposal_id,
-                    onClick: () => {
-                      if (e.proposal_id) navigate(`/admin/events/${e.proposal_id}?edit=1`);
-                      else navigate(`/admin/events/shift/${e.id}?edit=1`);
-                    },
+                    onClick: () => navigate(`/admin/proposals/${e.proposal_id}?edit=1`),
                   },
                   {
                     label: 'Assign Staff',

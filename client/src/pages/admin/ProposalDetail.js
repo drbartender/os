@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
@@ -52,10 +52,12 @@ export default function ProposalDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [proposal, setProposal] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(false);
+  // Honor ?edit=1 deep-link from EventsDashboard kebab "Edit Event" action.
+  const [editing, setEditing] = useState(searchParams.get('edit') === '1');
 
   // Notes
   const [notes, setNotes] = useState('');
@@ -88,6 +90,16 @@ export default function ProposalDetail() {
   };
 
   useEffect(() => { loadProposal(); }, [id]); // eslint-disable-line
+
+  // After honoring ?edit=1, strip the query param so the URL stays clean
+  // (and a future reload doesn't auto-reopen edit if the user has navigated away).
+  useEffect(() => {
+    if (searchParams.get('edit') === '1') {
+      const next = new URLSearchParams(searchParams);
+      next.delete('edit');
+      setSearchParams(next, { replace: true });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load drink plan first. The cocktail catalog (large response, used only to
   // resolve auto-added upgrade names) is fetched lazily in a second effect

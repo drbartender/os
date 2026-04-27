@@ -7869,6 +7869,8 @@ html[data-app="admin-os"] .sidebar-footer-main { flex: 1; min-width: 0; }
 html[data-app="admin-os"] .sidebar-footer-name { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 html[data-app="admin-os"] .sidebar-footer-role { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 html[data-app="admin-os"][data-sidebar="rail"] .sidebar-footer-main, html[data-app="admin-os"][data-sidebar="rail"] .sidebar-footer-action { display: none; }
+/* Keep the user-row sign-out visible in rail mode so users can log out without expanding */
+html[data-app="admin-os"][data-sidebar="rail"] .sidebar-footer--user .sidebar-footer-action { display: grid; place-items: center; }
 html[data-app="admin-os"] .sidebar-footer-action {
   color: var(--ink-3);
   padding: 4px;
@@ -8457,14 +8459,9 @@ html[data-app="admin-os"] .chip {
 html[data-app="admin-os"] .chip-dot { width: 6px; height: 6px; border-radius: 50%; }
 html[data-app="admin-os"] .chip.neutral { background: var(--bg-3); color: var(--ink-2); }
 html[data-app="admin-os"] .chip.neutral .chip-dot { background: var(--ink-3); }
-html[data-app="admin-os"] .chip.ok { background: hsl(var(--ok-h) var(--ok-s) 50% / 0.14); color: hsl(var(--ok-h) var(--ok-s) 58%); }
-html[data-app="admin-os"] .chip.ok .chip-dot { background: hsl(var(--ok-h) var(--ok-s) 55%); }
-html[data-app="admin-os"] .chip.warn { background: hsl(var(--warn-h) var(--warn-s) 50% / 0.16); color: hsl(var(--warn-h) var(--warn-s) 58%); }
-html[data-app="admin-os"] .chip.warn .chip-dot { background: hsl(var(--warn-h) var(--warn-s) 58%); }
-html[data-app="admin-os"] .chip.danger { background: hsl(var(--danger-h) var(--danger-s) 55% / 0.16); color: hsl(var(--danger-h) var(--danger-s) 65%); }
-html[data-app="admin-os"] .chip.danger .chip-dot { background: hsl(var(--danger-h) var(--danger-s) 62%); }
-html[data-app="admin-os"] .chip.info { background: hsl(var(--info-h) var(--info-s) 55% / 0.15); color: hsl(var(--info-h) var(--info-s) 65%); }
-html[data-app="admin-os"] .chip.info .chip-dot { background: hsl(var(--info-h) var(--info-s) 62%); }
+/* Note: .chip.{ok,warn,danger,info} use fixed hues defined later in this file
+   (see "Status chip semantics — fixed hues" block) so the Cool palette doesn't
+   collapse them all into shades of blue. Only .violet and .accent use palette vars. */
 html[data-app="admin-os"] .chip.violet { background: hsl(var(--violet-h) var(--violet-s) 55% / 0.16); color: hsl(var(--violet-h) var(--violet-s) 70%); }
 html[data-app="admin-os"] .chip.violet .chip-dot { background: hsl(var(--violet-h) var(--violet-s) 65%); }
 html[data-app="admin-os"] .chip.accent { background: var(--accent-soft); color: var(--accent); }
