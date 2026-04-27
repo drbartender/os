@@ -110,8 +110,10 @@ export default function EventsDashboard() {
       } else {
         // Manual events have no dedicated page (ShiftDetail.js retired) — open
         // the ShiftDrawer so admin can immediately review/staff the new event.
-        await fetchEvents();
+        // ShiftDrawer fetches its own /shifts/detail/:id, so the events-list
+        // refresh runs in the background to avoid delaying the drawer open.
         drawer.open('shift', newShift.id);
+        fetchEvents();
       }
     } catch (err) {
       setCreateError(err.message || 'Failed to create event.');
