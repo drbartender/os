@@ -43,7 +43,7 @@ export default function StaffDashboard() {
         console.error(err);
         toast.error("Couldn't load dashboard. Try refreshing.");
       });
-  }, [isOnboarded, user?.id]);
+  }, [isOnboarded, user?.id, toast]);
 
   return (
     <div className="page-container" style={{ maxWidth: 860 }}>

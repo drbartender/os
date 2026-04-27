@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import api from '../../utils/api';
@@ -39,7 +39,7 @@ export default function StaffShifts() {
   // so staff can request shifts as soon as they finish onboarding.
   const canRequestShifts = ['submitted', 'reviewed', 'approved'].includes(user?.onboarding_status);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const res = await api.get('/shifts');
@@ -50,9 +50,9 @@ export default function StaffShifts() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast]);
 
-  useEffect(() => { if (canRequestShifts) fetchData(); }, [canRequestShifts]);
+  useEffect(() => { if (canRequestShifts) fetchData(); }, [canRequestShifts, fetchData]);
 
   async function requestShift(shiftId) {
     const position = selectedPositions[shiftId] || '';

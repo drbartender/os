@@ -4,7 +4,7 @@ import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
 import StatusChip from '../../components/adminos/StatusChip';
-import { fmt$, fmt$2dp, fmt$fromCents, fmtDate } from '../../components/adminos/format';
+import { fmt$, fmt$fromCents, fmtDate } from '../../components/adminos/format';
 
 const STATUS = {
   draft: 'neutral', sent: 'info', viewed: 'accent', modified: 'violet',

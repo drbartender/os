@@ -26,7 +26,7 @@ export default function StaffEvents() {
         toast.error("Couldn't load events. Try refreshing.");
       })
       .finally(() => setLoading(false));
-  }, [user?.id]);
+  }, [user?.id, toast]);
 
   return (
     <div className="page-container" style={{ maxWidth: 860 }}>

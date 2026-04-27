@@ -18,7 +18,7 @@ export default function StaffProfile() {
         toast.error("Couldn't load profile. Try refreshing.");
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [toast]);
 
   if (loading) return <div className="page-container"><div className="loading"><div className="spinner" />Loading...</div></div>;
 
