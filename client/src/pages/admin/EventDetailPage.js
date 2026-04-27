@@ -3,8 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import useDrawerParam from '../../hooks/useDrawerParam';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
+import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import { fmt$, fmt$2dp, fmtDate, fmtDateFull, relDay } from '../../components/adminos/format';
 import { eventStatusChip, parsePositionsCount, approvedCount } from '../../components/adminos/shifts';
 
@@ -12,6 +14,7 @@ export default function EventDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
+  const drawer = useDrawerParam();
   const [proposal, setProposal] = useState(null);
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -100,7 +103,7 @@ export default function EventDetailPage() {
               <Icon name="external" size={12} />Open proposal
             </button>
             {shifts.length === 1 && (
-              <button type="button" className="btn btn-secondary" onClick={() => navigate(`/admin/events/shift/${shifts[0].id}`)}>
+              <button type="button" className="btn btn-secondary" onClick={() => drawer.open('shift', shifts[0].id)}>
                 <Icon name="userplus" size={12} />Manage staffing
               </button>
             )}
@@ -148,8 +151,8 @@ export default function EventDetailPage() {
             <div className="card-head">
               <h3>Staffing</h3>
               {shifts.length === 1 && (
-                <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate(`/admin/events/shift/${shifts[0].id}`)}>
-                  <Icon name="external" size={11} />Manage
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => drawer.open('shift', shifts[0].id)}>
+                  <Icon name="userplus" size={11} />Manage
                 </button>
               )}
             </div>
@@ -161,17 +164,17 @@ export default function EventDetailPage() {
                 const needed = parsePositionsCount(s);
                 const filled = approvedCount(s);
                 const requestCount = Number(s.request_count || 0);
-                const goToShift = () => navigate(`/admin/events/shift/${s.id}`);
+                const openShift = () => drawer.open('shift', s.id);
                 return (
                   <div
                     key={s.id}
-                    onClick={goToShift}
-                    onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); goToShift(); } }}
+                    onClick={openShift}
+                    onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openShift(); } }}
                     role="button"
                     tabIndex={0}
                     className="event-shift-row"
                     style={{ marginBottom: 10, cursor: 'pointer', padding: '8px 10px', margin: '0 -10px 4px', borderRadius: 4 }}
-                    title="Open shift"
+                    title="Manage shift"
                   >
                     <div className="hstack" style={{ marginBottom: 6 }}>
                       <strong>{s.event_date ? fmtDate(String(s.event_date).slice(0, 10)) : '—'}</strong>
@@ -180,7 +183,13 @@ export default function EventDetailPage() {
                       <StatusChip kind={filled >= needed ? 'ok' : filled > 0 ? 'warn' : 'danger'}>
                         {filled}/{needed} staffed
                       </StatusChip>
-                      <Icon name="right" size={10} />
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={(ev) => { ev.stopPropagation(); openShift(); }}
+                      >
+                        <Icon name="userplus" size={11} />Manage
+                      </button>
                     </div>
                     {requestCount > 0 && (
                       <div className="tiny muted" style={{ marginLeft: 0 }}>
@@ -273,6 +282,12 @@ export default function EventDetailPage() {
           )}
         </div>
       </div>
+
+      <ShiftDrawer
+        open={drawer.kind === 'shift' && !!drawer.id}
+        shiftId={drawer.id ? Number(drawer.id) : null}
+        onClose={drawer.close}
+      />
     </div>
   );
 }

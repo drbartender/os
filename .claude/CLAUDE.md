@@ -145,7 +145,8 @@ dr-bartender/
 │   │   │   │   └── drawers/           # Per-entity peek bodies
 │   │   │   │       ├── ClientDrawer.js
 │   │   │   │       ├── EventDrawer.js
-│   │   │   │       └── ProposalDrawer.js
+│   │   │   │       ├── ProposalDrawer.js
+│   │   │   │       └── ShiftDrawer.js
 │   │   │   └── ShoppingList/     # Shopping list generator
 │   │   │       ├── ShoppingListButton.jsx
 │   │   │       ├── ShoppingListModal.jsx
@@ -189,7 +190,6 @@ dr-bartender/
 │   │   │   │   ├── ProposalDetailPaymentPanel.js  # Payment sibling: invoices, balance due date, charge balance, payment link, record payment
 │   │   │   │   ├── ProposalsDashboard.js
 │   │   │   │   ├── SettingsDashboard.js
-│   │   │   │   ├── ShiftDetail.js               # Admin shift detail view (requests, assignments, SMS)
 │   │   │   │   ├── StaffDashboard.js            # Staff list (replaces legacy AdminDashboard for /admin/staffing)
 │   │   │   │   ├── EmailMarketingDashboard.js  # Email marketing hub (tabs)
 │   │   │   │   ├── EmailLeadsDashboard.js      # Lead list + import

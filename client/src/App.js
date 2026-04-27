@@ -1,5 +1,6 @@
-import React, { Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import React, { Suspense, lazy, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate } from 'react-router-dom';
+import api from './utils/api';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ClientAuthProvider } from './context/ClientAuthContext';
 import { ToastProvider } from './context/ToastContext';
@@ -50,7 +51,6 @@ const AdminUserDetail = lazy(() => import('./pages/AdminUserDetail'));
 const AdminApplicationDetail = lazy(() => import('./pages/AdminApplicationDetail'));
 const EventsDashboard = lazy(() => import('./pages/admin/EventsDashboard'));
 const EventDetailPage = lazy(() => import('./pages/admin/EventDetailPage'));
-const ShiftDetail = lazy(() => import('./pages/admin/ShiftDetail'));
 const ClientsDashboard = lazy(() => import('./pages/admin/ClientsDashboard'));
 const FinancialsDashboard = lazy(() => import('./pages/admin/FinancialsDashboard'));
 const HiringDashboard = lazy(() => import('./pages/admin/HiringDashboard'));
@@ -83,6 +83,43 @@ const SuspenseFallback = (
     <div className="spinner" aria-hidden="true" />
   </div>
 );
+
+/**
+ * /admin/events/shift/:id → /admin/events/:eventId?drawer=shift&drawerId=:id
+ * The legacy ShiftDetail page was retired in favor of ShiftDrawer mounted on
+ * EventDetailPage. Old bookmarks and email links land here, look up the
+ * shift's parent proposal/event, and forward to the canonical URL with the
+ * drawer pre-opened. Falls back to the events list when the shift is gone.
+ */
+function ShiftDetailRedirect() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  useEffect(() => {
+    let cancelled = false;
+    api.get(`/shifts/detail/${id}`)
+      .then(r => {
+        if (cancelled) return;
+        const eventId = r.data?.shift?.proposal_id;
+        if (eventId) {
+          navigate(`/admin/events/${eventId}?drawer=shift&drawerId=${id}`, { replace: true });
+        } else {
+          navigate('/admin/events', { replace: true });
+        }
+      })
+      .catch(() => { if (!cancelled) navigate('/admin/events', { replace: true }); });
+    return () => { cancelled = true; };
+  }, [id, navigate]);
+  return (
+    <div
+      className="loading"
+      style={{ minHeight: '50vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="spinner" aria-hidden="true" />
+    </div>
+  );
+}
 
 /**
  * Detect which domain context we're on:
@@ -343,7 +380,7 @@ function AppRoutes() {
         <Route path="proposals/:id" element={<ProposalDetail />} />
         <Route path="events" element={<EventsDashboard />} />
         <Route path="events/:id" element={<EventDetailPage />} />
-        <Route path="events/shift/:id" element={<ShiftDetail />} />
+        <Route path="events/shift/:id" element={<ShiftDetailRedirect />} />
         <Route path="clients" element={<ClientsDashboard />} />
         <Route path="clients/:id" element={<ClientDetail />} />
         <Route path="financials" element={<FinancialsDashboard />} />

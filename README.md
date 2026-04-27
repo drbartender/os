@@ -179,7 +179,7 @@ dr-bartender/
 │   │   │                       # TimePicker, NumberStepper, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
 │   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, format, nav,
-│   │   │   │                   # shifts; drawers/{ClientDrawer,EventDrawer,ProposalDrawer})
+│   │   │   │                   # shifts; drawers/{ClientDrawer,EventDrawer,ProposalDrawer,ShiftDrawer})
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
 │   │   ├── data/               # Shared data (addonCategories, eventTypes, menuSamples, packages, syrups)
 │   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam, useFormValidation, useWizardHistory)
