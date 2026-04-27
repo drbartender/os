@@ -27,8 +27,25 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   const [undoStack, setUndoStack] = useState([]);
   const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'saving' | 'unsaved'
   const [linkCopied, setLinkCopied] = useState(false);
+  const [approveStatus, setApproveStatus] = useState('idle'); // 'idle' | 'approving' | 'approved'
+  const [approveError, setApproveError] = useState('');
   const isFirstRender = useRef(true);
   const saveTimer = useRef(null);
+
+  // Fetch current shopping_list_status so the Approve button reflects whether
+  // admin has already sent the list to the client.
+  useEffect(() => {
+    if (!planId) return;
+    let cancelled = false;
+    api.get(`/drink-plans/${planId}/shopping-list`)
+      .then(r => {
+        if (!cancelled && r.data?.shopping_list_status === 'approved') {
+          setApproveStatus('approved');
+        }
+      })
+      .catch(() => { /* non-fatal — leave Approve enabled */ });
+    return () => { cancelled = true; };
+  }, [planId]);
 
   function deepClone(d) {
     const uid = () => typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -192,6 +209,36 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
     });
   };
 
+  const handleApproveAndSend = async () => {
+    if (!planId) return;
+    // Flush any pending auto-save before approving so the version that goes
+    // out matches what admin sees on screen.
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    setApproveStatus('approving');
+    setApproveError('');
+    try {
+      // First save current state synchronously (in case admin edited and
+      // hasn't waited 1.5s for the debounce to fire).
+      await api.put(`/drink-plans/${planId}/shopping-list`, {
+        shopping_list: {
+          ...edited,
+          guestCount: parseInt(guestCount, 10) || edited.guestCount,
+        },
+      });
+      setSaveStatus('saved');
+      // Now flip the status to approved + email the client.
+      await api.patch(`/drink-plans/${planId}/shopping-list/approve`);
+      setApproveStatus('approved');
+    } catch (err) {
+      console.error('Approve failed:', err);
+      setApproveStatus('idle');
+      setApproveError(err?.message || 'Failed to approve. Try again.');
+    }
+  };
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor)
@@ -348,6 +395,9 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           {pdfError && (
             <span style={{ color: '#d32f2f', fontSize: '0.82rem', marginRight: 'auto' }}>{pdfError}</span>
           )}
+          {approveError && (
+            <span style={{ color: '#d32f2f', fontSize: '0.82rem', marginRight: 'auto' }}>{approveError}</span>
+          )}
           {planToken && (
             <button className="btn btn-sm btn-secondary" onClick={handleShareLink}>
               {linkCopied ? 'Link Copied!' : 'Share Client Link'}
@@ -357,6 +407,20 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           <button className="btn" onClick={handleDownload} disabled={downloading}>
             {downloading ? 'Generating PDF...' : 'Download PDF'}
           </button>
+          {planId && (
+            <button
+              className="btn btn-success"
+              onClick={handleApproveAndSend}
+              disabled={approveStatus !== 'idle'}
+              title={approveStatus === 'approved'
+                ? 'Already approved — client can now see this list'
+                : 'Save current edits, mark approved, and email the client a link'}
+            >
+              {approveStatus === 'approving' ? 'Approving…'
+                : approveStatus === 'approved' ? '✓ Approved & Sent'
+                : 'Approve & Send to Client'}
+            </button>
+          )}
         </div>
       </div>
     </div>

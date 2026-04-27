@@ -75,6 +75,7 @@ dr-bartender/
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
 │   │   ├── phone.js           # Save-time phone validation (10 digits, strips country code 1)
 │   │   ├── pricingEngine.js   # Pure pricing calculation functions
+│   │   ├── shoppingList.js    # Shopping-list generator (mirrors client/src/components/ShoppingList/generateShoppingList.js)
 │   │   ├── sms.js             # Twilio wrapper
 │   │   ├── storage.js         # R2 upload/signed-URL helpers
 │   │   ├── stripeClient.js    # Central Stripe client factory (test-mode toggle, fail-closed)

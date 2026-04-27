@@ -10,22 +10,119 @@ const emailTemplates = require('../utils/emailTemplates');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
-const { ADMIN_URL } = require('../utils/urls');
+const { ADMIN_URL, PUBLIC_SITE_URL } = require('../utils/urls');
+const { generateShoppingList } = require('../utils/shoppingList');
+
+// Auto-generate a shopping list for a submitted drink plan and stage it as
+// `pending_review`. Skips if the plan was already approved (admin-edited list
+// is the source of truth once approved). Failures are non-fatal — admin can
+// still trigger the manual generator from the modal as a fallback.
+async function autoGenerateShoppingList(planId, dbClient) {
+  const planRes = await dbClient.query(
+    `SELECT dp.id, dp.serving_type, dp.selections, dp.client_name, dp.event_date,
+            dp.shopping_list_status, dp.admin_notes,
+            p.guest_count
+     FROM drink_plans dp
+     LEFT JOIN proposals p ON p.id = dp.proposal_id
+     WHERE dp.id = $1`,
+    [planId]
+  );
+  const plan = planRes.rows[0];
+  if (!plan || !plan.guest_count) return null;
+  // Don't overwrite an admin-approved list — they own the edits at that point.
+  if (plan.shopping_list_status === 'approved') return null;
+
+  const sel = plan.selections || {};
+  const sigDrinkIds = Array.isArray(sel.signatureDrinks) ? sel.signatureDrinks : [];
+  let signatureCocktails = [];
+  if (sigDrinkIds.length > 0) {
+    const cocktailRes = await dbClient.query(
+      'SELECT id, name, ingredients FROM cocktails WHERE id = ANY($1::text[])',
+      [sigDrinkIds]
+    );
+    const byId = Object.fromEntries(cocktailRes.rows.map(c => [c.id, c]));
+    signatureCocktails = sigDrinkIds
+      .filter(id => byId[id])
+      .map(id => ({ name: byId[id].name, ingredients: byId[id].ingredients || [] }));
+  }
+
+  const syrupSelfProvided = Array.isArray(sel.syrupSelfProvided) ? sel.syrupSelfProvided : [];
+  let syrupNamesById = {};
+  if (syrupSelfProvided.length > 0) {
+    // Names live in the syrups data file on the client; the server keeps a
+    // small lookup table here so the auto-gen can render flavor labels without
+    // duplicating the full SYRUPS catalog.
+    syrupNamesById = SYRUP_NAME_LOOKUP;
+  }
+
+  const isFullBar = (plan.serving_type || 'full_bar') === 'full_bar';
+  const beerSelections = isFullBar ? (sel.beerFromFullBar || []) : (sel.beerFromBeerWine || []);
+  const wineSelections = isFullBar ? (sel.wineFromFullBar || []) : (sel.wineFromBeerWine || []);
+
+  const list = generateShoppingList({
+    clientName: plan.client_name,
+    guestCount: plan.guest_count,
+    signatureCocktails,
+    syrupSelfProvided,
+    syrupNamesById,
+    eventDate: plan.event_date,
+    notes: plan.admin_notes || '',
+    serviceStyle: plan.serving_type || 'full_bar',
+    beerSelections,
+    wineSelections,
+    mixersForSignatureDrinks: sel.mixersForSignatureDrinks ?? null,
+  });
+
+  await dbClient.query(
+    `UPDATE drink_plans
+       SET shopping_list = $1::jsonb,
+           shopping_list_status = 'pending_review',
+           updated_at = NOW()
+     WHERE id = $2`,
+    [JSON.stringify(list), planId]
+  );
+  return list;
+}
+
+// Mirror of client/src/data/syrups.js SYRUPS — id → display name. Keep in sync
+// when adding new flavors. Only used for shopping-list rendering of the
+// self-provided syrup line items, so a missing entry just drops that flavor
+// from the list (no crash).
+const SYRUP_NAME_LOOKUP = {
+  'mixed-berry': 'Mixed Berry', 'blackberry': 'Blackberry', 'strawberry': 'Strawberry',
+  'mango': 'Mango', 'passion-fruit': 'Passion Fruit', 'pineapple': 'Pineapple',
+  'peach': 'Peach', 'watermelon': 'Watermelon', 'grenadine': 'Grenadine (Pomegranate)',
+  'cherry': 'Cherry (Dark/Tart)',
+  'jalapeno': 'Jalapeño', 'habanero': 'Habanero', 'cherry-habanero': 'Cherry Habanero',
+  'reaper-ghost': 'Carolina Reaper / Ghost Pepper',
+  'lavender': 'Lavender', 'rosemary': 'Rosemary', 'thyme': 'Thyme', 'basil': 'Basil',
+  'mint': 'Mint', 'ginger': 'Ginger', 'cardamom': 'Cardamom', 'cinnamon': 'Cinnamon',
+  'vanilla': 'Vanilla', 'lemongrass': 'Lemongrass', 'hibiscus': 'Hibiscus',
+  'rose': 'Rose', 'elderflower': 'Elderflower',
+  'honey': 'Honey', 'maple': 'Maple', 'salted-caramel': 'Salted Caramel',
+  'brown-butter': 'Brown Butter', 'espresso': 'Espresso', 'chocolate': 'Chocolate',
+};
 
 const router = express.Router();
 
 // ─── Public routes (token-based) ─────────────────────────────────
 
-/** GET /api/drink-plans/t/:token/shopping-list — public shopping list for clients */
+/** GET /api/drink-plans/t/:token/shopping-list — public shopping list for clients.
+ *  Returns the list only when admin has explicitly approved it. While the list
+ *  is auto-generated and waiting for review (status='pending_review'), or no
+ *  list exists yet, the response stays in the "being prepared" placeholder
+ *  state so clients don't see unreviewed quantities. */
 router.get('/t/:token/shopping-list', publicReadLimiter, asyncHandler(async (req, res) => {
   const result = await pool.query(
-    `SELECT dp.shopping_list, dp.client_name, dp.event_type, dp.event_type_custom, dp.event_date, dp.status
+    `SELECT dp.shopping_list, dp.shopping_list_status,
+            dp.client_name, dp.event_type, dp.event_type_custom, dp.event_date, dp.status
      FROM drink_plans dp WHERE dp.token = $1`,
     [req.params.token]
   );
   if (!result.rows[0]) throw new NotFoundError('This drink plan link is no longer valid');
   const plan = result.rows[0];
-  if (!plan.shopping_list) {
+  const isApproved = plan.shopping_list && plan.shopping_list_status === 'approved';
+  if (!isApproved) {
     return res.json({
       ready: false,
       client_name: plan.client_name,
@@ -358,6 +455,21 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
       }
     }
 
+    // Auto-generate the shopping list now that the plan is submitted. Runs
+    // outside the transaction (best-effort, non-fatal) — admin can still
+    // generate manually from the modal if this misses.
+    if (newStatus === 'submitted' && updatedPlan?.id) {
+      autoGenerateShoppingList(updatedPlan.id, pool).catch(genErr => {
+        console.error('Shopping list auto-gen failed:', genErr);
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(genErr, {
+            tags: { route: 'drinkPlans/putToken', op: 'auto_gen_shopping_list' },
+            extra: { planId: updatedPlan.id },
+          });
+        }
+      });
+    }
+
     return res.json(updatedPlan);
   }
 
@@ -391,6 +503,21 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
   // Draft save silently skipped if plan was already submitted
   if (!result.rows[0] && newStatus === 'draft') {
     return res.json({ status: 'submitted', skipped: true });
+  }
+
+  // Fast-path submit (no add-ons) also auto-generates the shopping list draft
+  // for admin review. Best-effort — same fail-open contract as the financial
+  // branch above.
+  if (newStatus === 'submitted' && result.rows[0]?.id) {
+    autoGenerateShoppingList(result.rows[0].id, pool).catch(genErr => {
+      console.error('Shopping list auto-gen failed:', genErr);
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(genErr, {
+          tags: { route: 'drinkPlans/putToken', op: 'auto_gen_shopping_list' },
+          extra: { planId: result.rows[0].id },
+        });
+      }
+    });
   }
 
   res.json(result.rows[0]);
@@ -615,25 +742,87 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
 /** GET /api/drink-plans/:id/shopping-list — load saved shopping list */
 router.get('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const result = await pool.query(
-    'SELECT shopping_list FROM drink_plans WHERE id = $1',
+    'SELECT shopping_list, shopping_list_status, shopping_list_approved_at FROM drink_plans WHERE id = $1',
     [req.params.id]
   );
   if (!result.rows[0]) throw new NotFoundError('Plan not found.');
-  res.json({ shopping_list: result.rows[0].shopping_list || null });
+  res.json({
+    shopping_list: result.rows[0].shopping_list || null,
+    shopping_list_status: result.rows[0].shopping_list_status || null,
+    shopping_list_approved_at: result.rows[0].shopping_list_approved_at || null,
+  });
 }));
 
-/** PUT /api/drink-plans/:id/shopping-list — save/update shopping list */
+/** PUT /api/drink-plans/:id/shopping-list — save/update shopping list. Keeps
+ *  the list in `pending_review` until the admin explicitly approves; an admin
+ *  re-edit of an already-approved list reverts it to pending so the client
+ *  doesn't keep reading stale numbers. */
 router.put('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { shopping_list } = req.body;
   if (!shopping_list || typeof shopping_list !== 'object') {
     throw new ValidationError({ shopping_list: 'Invalid shopping list data.' });
   }
   const result = await pool.query(
-    'UPDATE drink_plans SET shopping_list = $1, updated_at = NOW() WHERE id = $2 RETURNING id',
+    `UPDATE drink_plans
+       SET shopping_list = $1,
+           shopping_list_status = 'pending_review',
+           shopping_list_approved_at = NULL,
+           updated_at = NOW()
+     WHERE id = $2
+     RETURNING id`,
     [JSON.stringify(shopping_list), req.params.id]
   );
   if (!result.rows[0]) throw new NotFoundError('Plan not found.');
   res.json({ success: true });
+}));
+
+/** PATCH /api/drink-plans/:id/shopping-list/approve — admin approves the list,
+ *  flipping it from pending_review → approved. Public client view starts
+ *  serving the list now; client gets an email with the link. */
+router.patch('/:id/shopping-list/approve', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const upd = await pool.query(
+    `UPDATE drink_plans
+       SET shopping_list_status = 'approved',
+           shopping_list_approved_at = NOW(),
+           updated_at = NOW()
+     WHERE id = $1
+       AND shopping_list IS NOT NULL
+     RETURNING id, token, client_name, client_email, event_type, event_type_custom, event_date`,
+    [req.params.id]
+  );
+  if (!upd.rows[0]) {
+    throw new ConflictError('Cannot approve: this plan has no shopping list yet. Generate one first.');
+  }
+  const plan = upd.rows[0];
+
+  // Notify the client. Best-effort — never fail the approval if email blows up.
+  if (plan.client_email && plan.token) {
+    const shoppingListUrl = `${PUBLIC_SITE_URL}/shopping-list/${plan.token}`;
+    const eventTypeLabel = getEventTypeLabel({
+      event_type: plan.event_type,
+      event_type_custom: plan.event_type_custom,
+    });
+    const tpl = emailTemplates.shoppingListReady
+      ? emailTemplates.shoppingListReady({
+          clientName: plan.client_name,
+          eventTypeLabel,
+          shoppingListUrl,
+        })
+      : null;
+    if (tpl) {
+      sendEmail({ to: plan.client_email, ...tpl }).catch(emailErr => {
+        console.error('Shopping-list-ready email failed:', emailErr);
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(emailErr, {
+            tags: { route: 'drinkPlans/approveShoppingList', step: 'email' },
+            extra: { planId: plan.id },
+          });
+        }
+      });
+    }
+  }
+
+  res.json({ success: true, approved_at: new Date().toISOString() });
 }));
 
 /** DELETE /api/drink-plans/:id — delete a plan */

@@ -1284,6 +1284,22 @@ CREATE INDEX IF NOT EXISTS idx_contractor_profiles_hire_date ON contractor_profi
 -- ─── Shopping List persistence ─────────────────────────────────────
 ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS shopping_list JSONB;
 
+-- Admin-review gate for shopping lists. The list is auto-generated server-side
+-- when the plan is submitted (status='pending_review'); admin reviews/edits in
+-- the existing modal then approves (PATCH /shopping-list/approve flips to
+-- 'approved') which is when the public client view starts returning the list.
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS shopping_list_status VARCHAR(20);
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS shopping_list_approved_at TIMESTAMPTZ;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.constraint_column_usage
+    WHERE table_name = 'drink_plans' AND constraint_name = 'drink_plans_shopping_list_status_check'
+  ) THEN
+    ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_shopping_list_status_check
+      CHECK (shopping_list_status IS NULL OR shopping_list_status IN ('pending_review', 'approved'));
+  END IF;
+END $$;
+
 -- ─── Manual Event Creation (shifts without proposals) ────────────
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS client_name VARCHAR(255);
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS client_email VARCHAR(255);

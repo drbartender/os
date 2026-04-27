@@ -14,7 +14,7 @@ const NAV = [
     { id: 'marketing',   label: 'Marketing',  icon: 'mail',     path: '/admin/email-marketing' },
   ]},
   { section: 'Content', items: [
-    { id: 'drink-plans', label: 'Drink Plans',   icon: 'flask', path: '/admin/drink-plans' },
+    { id: 'drink-plans', label: 'Drink Plans',   icon: 'flask', path: '/admin/drink-plans', badgeKey: 'pending_shopping_lists' },
     { id: 'menu',        label: 'Cocktail Menu', icon: 'book',  path: '/admin/cocktail-menu' },
     { id: 'blog',        label: 'Lab Notes',     icon: 'pen',   path: '/admin/blog' },
     { id: 'settings',    label: 'Settings',      icon: 'gear',  path: '/admin/settings' },
