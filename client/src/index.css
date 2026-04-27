@@ -7703,8 +7703,7 @@ html[data-app="admin-os"] .sidebar-footer--user {
   border-top: 1px solid var(--line-1);
 }
 
-/* Sterile / Experimental mode toggle */
-/* Sterile / Experimental mode toggle (two buttons inside a div) */
+/* House Lights / After Hours mode toggle */
 html[data-app="admin-os"] .mode-toggle {
   width: 100%;
   display: grid;
@@ -7735,7 +7734,7 @@ html[data-app="admin-os"] .mode-toggle .mode-opt + .mode-opt { border-left: 1px 
 html[data-app="admin-os"] .mode-toggle .mode-opt.active { color: var(--ink-1); background: var(--bg-2); }
 html[data-app="admin-os"][data-sidebar="rail"] .mode-toggle { display: none; }
 
-/* Light / Sterile: editorial squared, thin hairline, uppercase */
+/* Light / House Lights: editorial squared, thin hairline, uppercase */
 html[data-app="admin-os"][data-skin="light"] .mode-toggle {
   border-radius: 0;
   border: 1px solid var(--ink-1);
@@ -7757,7 +7756,7 @@ html[data-app="admin-os"][data-skin="light"] .mode-toggle .mode-opt.active {
   background: var(--ink-1);
 }
 
-/* Dark / Experimental: rounded pill, glowing accent active chip */
+/* Dark / After Hours: rounded pill, glowing accent active chip */
 html[data-app="admin-os"][data-skin="dark"] .mode-toggle {
   border-radius: 999px;
   background: color-mix(in oklab, var(--bg-0) 60%, transparent);
