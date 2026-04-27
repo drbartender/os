@@ -147,6 +147,7 @@ dr-bartender/
 │   │   ├── fileValidation.js   # Magic-byte file type validation
 │   │   ├── geocode.js          # Nominatim geocoding (address → lat/lng)
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
+│   │   ├── phone.js            # Save-time phone validation (10 digits, strips country code 1)
 │   │   ├── pricingEngine.js    # Pure pricing calculation engine
 │   │   ├── sms.js              # Twilio SMS wrapper
 │   │   ├── storage.js          # Cloudflare R2 upload + signed URL helpers
@@ -172,7 +173,7 @@ dr-bartender/
 │   │   │   ├── formatPhone.js  # Phone number formatting
 │   │   │   ├── leadSources.js  # Lead source enum (mirrors schema CHECK + server validator)
 │   │   │   └── timeOptions.js  # Time option generator + 12h formatter + input parser
-│   │   ├── components/         # AdminBreadcrumbs, AdminLayout, StaffLayout, Layout, PublicLayout,
+│   │   ├── components/         # AdminLayout, StaffLayout, Layout, PublicLayout,
 │   │   │                       # InvoiceDropdown, SignaturePad, FileUpload,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, MenuSamplesModal,
 │   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,

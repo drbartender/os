@@ -73,6 +73,7 @@ dr-bartender/
 │   │   ├── fileValidation.js  # Magic-byte validation
 │   │   ├── geocode.js         # Nominatim geocoding (address → lat/lng)
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
+│   │   ├── phone.js           # Save-time phone validation (10 digits, strips country code 1)
 │   │   ├── pricingEngine.js   # Pure pricing calculation functions
 │   │   ├── sms.js             # Twilio wrapper
 │   │   ├── storage.js         # R2 upload/signed-URL helpers
@@ -99,7 +100,6 @@ dr-bartender/
 │   │   │   ├── leadSources.js     # Single source of truth for email lead source enum (mirrors schema + server validator)
 │   │   │   └── timeOptions.js     # Time option generator + 12h formatter + input parser (TimePicker)
 │   │   ├── components/
-│   │   │   ├── AdminBreadcrumbs.js # Breadcrumb trail inside the admin layout header
 │   │   │   ├── AdminLayout.js     # Admin sidebar + header layout
 │   │   │   ├── BrandLogo.js       # Dr. Bartender logo component
 │   │   │   ├── ConfirmModal.js    # Confirmation dialog component

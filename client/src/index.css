@@ -6946,7 +6946,7 @@ html[data-app="admin-os"] {
 }
 
 /* ==========================================================================
-   Skins — dark (darkroom) + light (paper lab)
+   Skins — dark (After Hours) + light (House Lights)
    ========================================================================== */
 
 html[data-app="admin-os"][data-skin="dark"] {
@@ -7009,10 +7009,10 @@ html[data-app="admin-os"][data-skin="light"] {
   --ink-4: #b4ac9b;          /* dim */
 
   /* House Lights accent = deep green; support amber / bordeaux / blue */
-  --ms-navy:    #3a5d7a;     /* atelier blue */
-  --ms-bordeaux:#9e3a2a;     /* atelier red */
-  --ms-emerald: #2a3a2a;     /* atelier deep green (primary accent) */
-  --ms-camel:   #b8832a;     /* atelier amber */
+  --ms-navy:    #3a5d7a;     /* House Lights blue */
+  --ms-bordeaux:#9e3a2a;     /* House Lights red */
+  --ms-emerald: #2a3a2a;     /* House Lights deep green (primary accent) */
+  --ms-camel:   #b8832a;     /* House Lights amber */
   --ms-ink:     #1a1a1a;
 
   /* Override the global rainbow accent: House Lights is green-only. */
