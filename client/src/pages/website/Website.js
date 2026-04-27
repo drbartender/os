@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import BrandLogo from '../../components/BrandLogo';
-import QuoteWizard from './QuoteWizard';
+import QuoteWizard from './quoteWizard/QuoteWizard';
 
 const SERVICE_IMAGES = [
   { src: 'https://i.imgur.com/iHkv9dI.png', alt: 'Consultation + Menu Planning' },

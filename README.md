@@ -209,7 +209,7 @@ dr-bartender/
 │   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment
 │   │   │   ├── proposal/       # ProposalView — public client-facing proposal
 │   │   │   ├── public/         # Client portal (ClientLogin, ClientDashboard, ClientShoppingList, Blog, BlogPost)
-│   │   │   └── website/        # Public website (Website, HomePage, QuoteWizard, QuotePage, FaqPage, ClassWizard)
+│   │   │   └── website/        # Public website (Website, HomePage, QuotePage, FaqPage, ClassWizard, quoteWizard/ — split QuoteWizard)
 │   │   ├── images/             # Brand assets
 │   │   └── index.css           # Global styles
 │   ├── vercel.json             # SPA rewrite rule for Vercel

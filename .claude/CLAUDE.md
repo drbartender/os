@@ -240,7 +240,11 @@ dr-bartender/
 │   │   │   └── website/          # Public website pages
 │   │   │       ├── Website.js
 │   │   │       ├── HomePage.js       # Public homepage
-│   │   │       ├── QuoteWizard.js    # Multi-step quote builder
+│   │   │       ├── quoteWizard/      # Multi-step quote builder (split into 5 step files)
+│   │   │       │   ├── QuoteWizard.js    # Parent — wizard shell, state, draft persistence, submit
+│   │   │       │   ├── bundleConfig.js   # BYOB bundle constants
+│   │   │       │   ├── helpers.js        # getSteps, ADDON_TAGLINES, formatCurrency
+│   │   │       │   └── steps/            # EventDetailsStep, YourInfoStep, PackageStep, ExtrasStep, ReviewStep
 │   │   │       ├── QuotePage.js      # Quote page wrapper
 │   │   │       ├── FaqPage.js        # FAQ page
 │   │   │       └── ClassWizard.js    # Cocktail class booking wizard
