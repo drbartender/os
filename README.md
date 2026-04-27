@@ -108,7 +108,13 @@ dr-bartender/
 │   │   ├── asyncHandler.js     # 3-line wrapper that funnels async-handler rejections to the global error middleware
 │   │   └── auth.js             # JWT verification + role guards (auth, adminOnly)
 │   ├── routes/
-│   │   ├── admin.js            # Admin user management, status changes
+│   │   ├── admin/              # Admin endpoints (users/applications/managers/blog/settings sub-routers)
+│   │   │   ├── index.js        # Composition router
+│   │   │   ├── users.js        # /users CRUD + status + profile + permissions + seniority + /active-staff
+│   │   │   ├── applications.js # /applications + interview notes
+│   │   │   ├── managers.js     # /managers CRUD
+│   │   │   ├── blog.js         # /blog admin endpoints
+│   │   │   └── settings.js     # /settings + /test-email + /backfill-geocodes + /badge-counts
 │   │   ├── agreement.js        # Contractor agreement + digital signature
 │   │   ├── application.js      # Contractor application form
 │   │   ├── auth.js             # POST /register, POST /login, GET /me
