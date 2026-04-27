@@ -6,12 +6,16 @@ import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import NumberStepper from '../../components/NumberStepper';
+import ConfirmModal from '../../components/ConfirmModal';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import StaffPills from '../../components/adminos/StaffPills';
 import Toolbar from '../../components/adminos/Toolbar';
+import KebabMenu from '../../components/adminos/KebabMenu';
 import useDrawerParam from '../../hooks/useDrawerParam';
 import EventDrawer from '../../components/adminos/drawers/EventDrawer';
+import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
+import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
 import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
 import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip } from '../../components/adminos/shifts';
 
@@ -46,6 +50,8 @@ export default function EventsDashboard() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
+  const [reminderTarget, setReminderTarget] = useState(null);
+  const [sendingReminder, setSendingReminder] = useState(false);
 
   const fetchEvents = useCallback(async () => {
     try {
@@ -289,6 +295,50 @@ export default function EventsDashboard() {
                 const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
                 const bal = total - paid;
                 const guestCount = e.guest_count || e.proposal_guest_count;
+                const fullyPaid = total > 0 && paid >= total;
+                const kebabItems = [
+                  {
+                    label: 'View Event',
+                    icon: 'eye',
+                    disabled: !e.proposal_id,
+                    onClick: () => {
+                      if (e.proposal_id) navigate(`/admin/events/${e.proposal_id}`);
+                      else navigate(`/admin/events/shift/${e.id}`);
+                    },
+                  },
+                  {
+                    label: 'Edit Event',
+                    icon: 'pen',
+                    disabled: !e.proposal_id,
+                    onClick: () => {
+                      if (e.proposal_id) navigate(`/admin/events/${e.proposal_id}?edit=1`);
+                      else navigate(`/admin/events/shift/${e.id}?edit=1`);
+                    },
+                  },
+                  {
+                    label: 'Assign Staff',
+                    icon: 'users',
+                    onClick: () => {
+                      if (!e.id) {
+                        toast.error('No shift on this event yet.');
+                        return;
+                      }
+                      drawer.open('shift', e.id);
+                    },
+                  },
+                  {
+                    label: 'Send Payment Reminder',
+                    icon: 'mail',
+                    disabled: !e.proposal_id || fullyPaid,
+                    onClick: () => setReminderTarget(e),
+                  },
+                  {
+                    label: 'View Invoices/Payments',
+                    icon: 'card',
+                    disabled: !e.proposal_id,
+                    onClick: () => drawer.open('invoices', e.proposal_id),
+                  },
+                ];
                 return (
                   <tr key={e.id} onClick={() => drawer.open('event', e.id)}>
                     <td>
@@ -307,7 +357,9 @@ export default function EventsDashboard() {
                     <td className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'var(--ink-3)' }}>
                       {bal > 0 ? fmt$(bal) : '—'}
                     </td>
-                    <td className="shrink"><button type="button" className="icon-btn" onClick={(ev) => ev.stopPropagation()} title="More"><Icon name="kebab" size={14} /></button></td>
+                    <td className="shrink" onClick={(ev) => ev.stopPropagation()}>
+                      <KebabMenu items={kebabItems} />
+                    </td>
                   </tr>
                 );
               })}
@@ -326,6 +378,41 @@ export default function EventsDashboard() {
         id={drawer.kind === 'event' ? drawer.id : null}
         open={drawer.kind === 'event'}
         onClose={drawer.close}
+      />
+
+      <ShiftDrawer
+        open={drawer.kind === 'shift' && !!drawer.id}
+        shiftId={drawer.kind === 'shift' && drawer.id ? Number(drawer.id) : null}
+        onClose={drawer.close}
+      />
+
+      <InvoicesDrawer
+        open={drawer.kind === 'invoices' && !!drawer.id}
+        proposalId={drawer.kind === 'invoices' && drawer.id ? Number(drawer.id) : null}
+        onClose={drawer.close}
+      />
+
+      <ConfirmModal
+        isOpen={!!reminderTarget}
+        title="Send payment reminder?"
+        message={`Send a payment reminder to ${reminderTarget?.client_name || 'the client'}? They'll get an email with a link to pay the balance.`}
+        onCancel={() => { if (!sendingReminder) setReminderTarget(null); }}
+        onConfirm={async () => {
+          if (!reminderTarget?.proposal_id) {
+            setReminderTarget(null);
+            return;
+          }
+          setSendingReminder(true);
+          try {
+            await api.post(`/proposals/${reminderTarget.proposal_id}/send-reminder`);
+            toast.success('Reminder sent.');
+            setReminderTarget(null);
+          } catch (err) {
+            toast.error(err?.message || 'Failed to send reminder.');
+          } finally {
+            setSendingReminder(false);
+          }
+        }}
       />
     </div>
   );

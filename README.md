@@ -178,8 +178,9 @@ dr-bartender/
 │   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,
 │   │   │                       # TimePicker, NumberStepper, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
-│   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, format, nav,
-│   │   │   │                   # shifts; drawers/{ClientDrawer,EventDrawer,ProposalDrawer,ShiftDrawer})
+│   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, KebabMenu,
+│   │   │   │                   # format, nav, shifts; drawers/{ClientDrawer,EventDrawer,InvoicesDrawer,
+│   │   │   │                   # ProposalDrawer,ShiftDrawer})
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
 │   │   ├── data/               # Shared data (addonCategories, eventTypes, menuSamples, packages, syrups)
 │   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam, useFormValidation, useWizardHistory)

@@ -155,6 +155,29 @@ function clientOtp({ name, otp }) {
   };
 }
 
+function paymentReminderClient({ clientName, eventTypeLabel = 'event', balanceDue, balanceDueDate, proposalUrl }) {
+  const name = clientName || 'there';
+  const dueDate = balanceDueDate
+    ? new Date(balanceDueDate).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' })
+    : 'before your event';
+  return {
+    subject: `Friendly reminder — balance due for your ${eventTypeLabel}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Balance Reminder</h2>
+      <p>Hi ${name},</p>
+      <p>Just a friendly reminder that the balance for your <strong>${eventTypeLabel}</strong> is still outstanding. You can review your event details and pay the balance directly from your proposal page.</p>
+      <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
+        <tr><td style="padding:8px 12px;color:${BRAND.primary};font-weight:bold;">Balance Due</td><td style="padding:8px 12px;text-align:right;font-weight:bold;color:${BRAND.primary};">$${Number(balanceDue).toFixed(2)}</td></tr>
+        <tr><td style="padding:8px 12px;color:${BRAND.secondary};">Due By</td><td style="padding:8px 12px;text-align:right;">${dueDate}</td></tr>
+      </table>
+      ${ctaButton(proposalUrl, 'View &amp; Pay Balance')}
+      <p style="font-size:14px;color:${BRAND.secondary};">If you've already taken care of this or have any questions, just reply to this email.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, just a friendly reminder that your balance of $${Number(balanceDue).toFixed(2)} for your ${eventTypeLabel} is due by ${dueDate}. View and pay here: ${proposalUrl} — The Dr. Bartender Team`,
+  };
+}
+
 function drinkPlanBalanceUpdate({ clientName, eventTypeLabel = 'event', extrasAmount, newTotal, amountPaid, balanceDue, balanceDueDate }) {
   const name = clientName || 'there';
   const dueDate = balanceDueDate
@@ -438,6 +461,7 @@ module.exports = {
   signedAndPaidClient,
   drinkPlanLink,
   drinkPlanBalanceUpdate,
+  paymentReminderClient,
   clientSignedAdmin,
   paymentReceivedAdmin,
   signedAndPaidAdmin,

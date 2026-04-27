@@ -135,6 +135,7 @@ dr-bartender/
 │   │   │   │   ├── format.js          # fmt$, fmtDate, relDay, dayDiff helpers
 │   │   │   │   ├── Header.js          # Top bar — search trigger, quick-add, account menu
 │   │   │   │   ├── Icon.js            # Inline SVG icon set
+│   │   │   │   ├── KebabMenu.js       # Portal-anchored 3-dots-vertical row action menu
 │   │   │   │   ├── nav.js             # Sidebar nav config (label, route, icon)
 │   │   │   │   ├── shifts.js          # Shared shiftPositions / parsePositionsCount / approvedCount / eventStatusChip
 │   │   │   │   ├── Sidebar.js         # Left rail — collapsible, badge counts
@@ -145,6 +146,7 @@ dr-bartender/
 │   │   │   │   └── drawers/           # Per-entity peek bodies
 │   │   │   │       ├── ClientDrawer.js
 │   │   │   │       ├── EventDrawer.js
+│   │   │   │       ├── InvoicesDrawer.js   # Read-only invoice list for a proposal (link → public invoice page)
 │   │   │   │       ├── ProposalDrawer.js
 │   │   │   │       └── ShiftDrawer.js
 │   │   │   └── ShoppingList/     # Shopping list generator

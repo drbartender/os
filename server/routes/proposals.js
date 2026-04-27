@@ -9,7 +9,7 @@ const emailTemplates = require('../utils/emailTemplates');
 const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, linkPaymentToInvoice } = require('../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
+const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../utils/errors');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../utils/urls');
 const Sentry = require('@sentry/node');
 
@@ -1261,6 +1261,61 @@ router.patch('/:id/balance-due-date', auth, requireAdminOrManager, asyncHandler(
   );
 
   res.json(result.rows[0]);
+}));
+
+/** POST /api/proposals/:id/send-reminder — admin sends a balance reminder email to the client */
+router.post('/:id/send-reminder', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const proposalId = req.params.id;
+  const { rows } = await pool.query(`
+    SELECT p.id, p.token, p.total_price, p.amount_paid, p.balance_due_date,
+           p.event_type, p.event_type_custom,
+           c.email AS client_email, c.name AS client_name
+    FROM proposals p
+    LEFT JOIN clients c ON c.id = p.client_id
+    WHERE p.id = $1
+  `, [proposalId]);
+
+  if (!rows[0]) throw new NotFoundError('Proposal not found');
+  const proposal = rows[0];
+
+  if (!proposal.client_email) {
+    throw new ValidationError({ client: 'Client has no email on file.' });
+  }
+
+  const total = Number(proposal.total_price || 0);
+  const paid = Number(proposal.amount_paid || 0);
+  const balanceDue = total - paid;
+  if (balanceDue <= 0) {
+    throw new ConflictError('Proposal has no outstanding balance.', 'NO_BALANCE_DUE');
+  }
+
+  const eventTypeLabel = getEventTypeLabel({
+    event_type: proposal.event_type,
+    event_type_custom: proposal.event_type_custom,
+  });
+  const proposalUrl = `${PUBLIC_SITE_URL}/proposal/${proposal.token}`;
+  const tpl = emailTemplates.paymentReminderClient({
+    clientName: proposal.client_name,
+    eventTypeLabel,
+    balanceDue: balanceDue.toFixed(2),
+    balanceDueDate: proposal.balance_due_date,
+    proposalUrl,
+  });
+
+  try {
+    await sendEmail({ to: proposal.client_email, ...tpl });
+  } catch (emailErr) {
+    Sentry.captureException(emailErr, { tags: { route: 'proposals/send-reminder' }, extra: { proposalId } });
+    throw new ExternalServiceError('email', emailErr, 'Failed to send reminder email.');
+  }
+
+  await pool.query(
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+     VALUES ($1, 'reminder_sent', 'admin', $2, $3)`,
+    [proposalId, req.user.id, JSON.stringify({ to: proposal.client_email, balance_due: balanceDue })]
+  );
+
+  res.json({ ok: true });
 }));
 
 /** POST /api/proposals/:id/record-payment — manually record an outside payment (cash, Venmo, etc.) */

@@ -8034,6 +8034,88 @@ html[data-app="admin-os"] .icon-btn .dot {
   border: 1.5px solid var(--bg-1);
 }
 
+/* Kebab menu (portal-anchored dropdown for table-row actions) */
+html[data-app="admin-os"] .kebab-menu {
+  background: var(--bg-elev);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  min-width: 180px;
+  padding: 4px 0;
+  z-index: 1000;
+}
+html[data-app="admin-os"] .kebab-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--ink-2);
+  font-size: 13px;
+  padding: 8px 12px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+html[data-app="admin-os"] .kebab-item:hover:not(:disabled) {
+  background: var(--row-hover);
+  color: var(--ink-1);
+}
+html[data-app="admin-os"] .kebab-item.danger {
+  color: hsl(var(--danger-h) var(--danger-s) 60%);
+}
+html[data-app="admin-os"] .kebab-item:disabled {
+  color: var(--ink-4);
+  cursor: not-allowed;
+}
+
+/* Drawer rows (InvoicesDrawer list entries — and any future list-style drawer) */
+html[data-app="admin-os"] .drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+html[data-app="admin-os"] .drawer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+}
+html[data-app="admin-os"] .drawer-row-link {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+html[data-app="admin-os"] .drawer-row-link:hover {
+  border-color: var(--line-2);
+  background: var(--row-hover);
+}
+html[data-app="admin-os"] .drawer-row-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-1);
+}
+html[data-app="admin-os"] .drawer-row-meta {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  margin-top: 2px;
+}
+html[data-app="admin-os"] .drawer-loading {
+  color: var(--ink-3);
+  font-size: 13px;
+  padding: 6px 0;
+}
+html[data-app="admin-os"] .drawer-body .empty {
+  color: var(--ink-3);
+  font-size: 13px;
+  font-style: italic;
+}
+
 /* ==========================================================================
    Main / page
    ========================================================================== */
