@@ -411,6 +411,35 @@ When modifying any entity, always check and update **all** related entities too.
 
 The rule: **if you change X, search the codebase for everything that depends on X and update it too.**
 
+## File Size Discipline
+
+After the 2026-04-27 cleanup pass split five 1000+ line mega-files, the codebase enforces line-count limits to prevent backsliding. The pre-commit hook (`.husky/check-file-size.sh`) runs on staged source files (`server/**/*.js`, `client/src/**/*.{js,jsx}`, excluding tests) and:
+
+- **Warns at 700 lines** — "plan a split, this is getting big." Doesn't block.
+- **Fails at 1000 lines** — hard floor. Either split the file or add an explicit opt-out.
+
+When you write a new file or add to an existing one, aim for the soft sweet spot:
+- **<300 lines** — comfortable. Holds in your head, fits on a screen, easy to review.
+- **300–600 lines** — fine for a focused page or route file with one clear concern.
+- **600–700 lines** — yellow zone. Ask: is this one concern, or two?
+- **>700 lines** — actively plan a split (per-tab, per-section, per-endpoint-group, helpers extracted to a sibling file).
+
+When a file genuinely needs to be big (rare — usually the right answer is to split), opt out by adding this in the first 5 lines:
+
+```js
+// claude-allow-large-file
+// Reason: <one-line justification — what's special about this file>
+```
+
+The marker is intentional friction. If you're reaching for it, double-check that the file isn't actually two files mashed together.
+
+**Known debt** (files currently over 1000 lines, untouched by the 2026-04-27 cleanup — split when you next touch them):
+- `client/src/pages/plan/PotionPlanningLab.js` (~1,095 lines) — multi-step public questionnaire; split candidate is per-step files like quoteWizard already does.
+- `client/src/pages/admin/ProposalCreate.js` (~1,068 lines) — admin proposal builder; split candidate is by section (event/package/addons/staffing/pricing).
+- `server/routes/stripe.js` (~1,039 lines) — Stripe checkout + webhooks; split candidate is webhook handlers separated from request endpoints.
+
+These won't block commits unless you modify them. When you do, the hook surfaces them — that's the right time to do the split.
+
 ## Mandatory Documentation Updates
 
 **This is not optional.** When you add, rename, or remove files, update ALL THREE docs in the same change. The pre-commit hook will warn if you don't.

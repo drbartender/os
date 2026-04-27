@@ -216,7 +216,8 @@ dr-bartender/
 │   └── package.json            # React deps, proxy: localhost:5000
 ├── scripts/                    # Build scripts (build-testing-guide.js, testing-guide-template.html)
 ├── .claude/agents/             # Claude Code review agents (7 agents)
-├── .husky/pre-commit           # Pre-commit hook (lint-staged)
+├── .husky/pre-commit           # Pre-commit hook (docs-drift check + file-size guard + lint-staged)
+├── .husky/check-file-size.sh   # Pre-commit guard — warns at 700 lines, blocks at 1000
 ├── .env.example                # Environment variable template
 ├── eslint.config.mjs           # ESLint flat config + security plugin
 ├── package.json                # Server deps + npm scripts

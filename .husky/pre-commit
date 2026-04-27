@@ -1,3 +1,4 @@
 #!/usr/bin/env sh
 bash scripts/check-docs-drift.sh
+sh .husky/check-file-size.sh
 npx lint-staged
