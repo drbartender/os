@@ -327,6 +327,109 @@ function applicationReceivedConfirmation({ applicantName }) {
   };
 }
 
+// ─── Application Status Progression ─────────────────────────────
+// Sent automatically by PUT /admin/users/:id/status when the admin transitions
+// an applicant through the hiring pipeline. Internal-only states (in_progress,
+// reviewed, approved) skip emails by design.
+
+function customMessageBlock(customMessage) {
+  if (!customMessage) return '';
+  // Preserve line breaks while escaping HTML to prevent injection.
+  const safe = esc(customMessage).replace(/\n/g, '<br/>');
+  return `<div style="background:${BRAND.bg};border-left:3px solid ${BRAND.secondary};padding:12px 16px;margin:1rem 0;font-style:italic;">${safe}</div>`;
+}
+
+function applicationInterviewInvite({ applicantName, customMessage }) {
+  const name = applicantName || 'there';
+  const note = customMessageBlock(customMessage);
+  return {
+    subject: `We'd like to interview you — Dr. Bartender`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Let's Chat!</h2>
+      <p>Hi ${name},</p>
+      <p>Thanks for applying to Dr. Bartender — we liked what we saw and we'd like to set up a quick interview.</p>
+      ${note}
+      <p>Our team will reach out shortly with scheduling details. Feel free to reply to this email with any times that work for you.</p>
+      <p>Talk soon,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, we'd like to interview you. Our team will reach out with scheduling details. ${customMessage ? `Note from the team: ${customMessage}` : ''} — The Dr. Bartender Team`,
+  };
+}
+
+function applicationHired({ applicantName, customMessage, staffPortalUrl }) {
+  const name = applicantName || 'there';
+  const note = customMessageBlock(customMessage);
+  const cta = staffPortalUrl ? ctaButton(staffPortalUrl, 'Open Staff Portal') : '';
+  return {
+    subject: `Welcome to the Dr. Bartender team!`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">You're Hired!</h2>
+      <p>Hi ${name},</p>
+      <p>Welcome to the team! We're excited to have you. Here's what to do next:</p>
+      <ol style="color:${BRAND.primary};line-height:1.6;">
+        <li>Log into the staff portal to review your contractor agreement</li>
+        <li>Complete your contractor profile (payment info, equipment, emergency contact)</li>
+        <li>Browse upcoming events and request shifts you'd like to work</li>
+      </ol>
+      ${cta}
+      ${note}
+      <p>If you have any questions getting set up, just reply to this email — we're here to help.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, welcome to the Dr. Bartender team! Log into the staff portal to complete your onboarding: ${staffPortalUrl || 'https://staff.drbartender.com'}${customMessage ? ` Note: ${customMessage}` : ''} — The Dr. Bartender Team`,
+  };
+}
+
+function applicationRejected({ applicantName, customMessage }) {
+  const name = applicantName || 'there';
+  const note = customMessageBlock(customMessage);
+  return {
+    subject: `About your application — Dr. Bartender`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Thank You for Applying</h2>
+      <p>Hi ${name},</p>
+      <p>Thank you for your interest in joining the Dr. Bartender team and for taking the time to apply. After careful review, we've decided to move forward with other candidates at this time.</p>
+      ${note}
+      <p>We genuinely appreciate the effort you put into your application, and we wish you the best in your search.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, thank you for applying to Dr. Bartender. After review, we've decided to move forward with other candidates at this time. ${customMessage ? `Note: ${customMessage}` : ''} We wish you the best. — The Dr. Bartender Team`,
+  };
+}
+
+function shoppingListReady({ clientName, eventTypeLabel = 'event', shoppingListUrl }) {
+  const name = clientName || 'there';
+  return {
+    subject: `Your shopping list is ready — Dr. Bartender`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Your Shopping List is Ready</h2>
+      <p>Hi ${name},</p>
+      <p>We've finalized the shopping list for your <strong>${eventTypeLabel}</strong>. Bring this with you when you stock up — quantities are scaled to your guest count.</p>
+      ${ctaButton(shoppingListUrl, 'View Shopping List')}
+      <p style="font-size:14px;color:${BRAND.secondary};">Have questions or need to adjust anything? Just reply to this email.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, your shopping list for your ${eventTypeLabel} is ready. View it here: ${shoppingListUrl}`,
+  };
+}
+
+function applicationDeactivated({ applicantName, customMessage }) {
+  const name = applicantName || 'there';
+  const note = customMessageBlock(customMessage);
+  return {
+    subject: `Your Dr. Bartender account has been deactivated`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Account Deactivated</h2>
+      <p>Hi ${name},</p>
+      <p>This is a notice that your Dr. Bartender staff account has been deactivated. You will no longer receive shift requests or be able to log into the staff portal.</p>
+      ${note}
+      <p>If you believe this was done in error, or if you have questions, please reply to this email.</p>
+      <p>Best,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, your Dr. Bartender staff account has been deactivated. ${customMessage ? `Note: ${customMessage}` : ''} If this was in error, please reply to this email. — The Dr. Bartender Team`,
+  };
+}
+
 // ─── Abandoned Quote Email ──────────────────────────────────────────
 
 /**
@@ -470,6 +573,11 @@ module.exports = {
   shiftRequestAdmin,
   shiftRequestApproved,
   applicationReceivedConfirmation,
+  applicationInterviewInvite,
+  applicationHired,
+  applicationRejected,
+  applicationDeactivated,
+  shoppingListReady,
   abandonedQuote,
   newThumbtackLeadAdmin,
   newThumbtackMessageAdmin,

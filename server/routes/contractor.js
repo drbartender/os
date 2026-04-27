@@ -8,6 +8,7 @@ const { uploadFile } = require('../utils/storage');
 const { geocodeAddress, buildAddressString } = require('../utils/geocode');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError } = require('../utils/errors');
+const { validatePhone } = require('../utils/phone');
 
 const router = express.Router();
 
@@ -82,6 +83,13 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     emergency_contact_name, emergency_contact_phone, emergency_contact_relationship
   } = req.body;
 
+  const fieldErrors = {};
+  const phoneCheck = validatePhone(phone);
+  if (phoneCheck.error) fieldErrors.phone = phoneCheck.error;
+  const ecPhoneCheck = validatePhone(emergency_contact_phone);
+  if (ecPhoneCheck.error) fieldErrors.emergency_contact_phone = ecPhoneCheck.error;
+  if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
+
   let alcohol_cert_url = null, alcohol_cert_name = null;
   let resume_url = null, resume_name = null;
   let headshot_url = null, headshot_name = null;
@@ -151,12 +159,12 @@ router.post('/', auth, asyncHandler(async (req, res) => {
          resume_file_url=$24, resume_filename=$25,
          headshot_file_url=$26, headshot_filename=$27
          WHERE user_id=$28`,
-        [preferred_name, phone, email, birth_month, birth_day, birth_year,
+        [preferred_name, phoneCheck.value, email, birth_month, birth_day, birth_year,
          street_address, city, state, zip_code,
          travel_distance, reliable_transportation,
          toBool(equipment_portable_bar), toBool(equipment_cooler), toBool(equipment_table_with_spandex),
          toBool(equipment_none_but_open), toBool(equipment_no_space), toBool(equipment_will_pickup),
-         emergency_contact_name || null, emergency_contact_phone || null, emergency_contact_relationship || null,
+         emergency_contact_name || null, ecPhoneCheck.value, emergency_contact_relationship || null,
          alcohol_cert_url, alcohol_cert_name, resume_url, resume_name,
          headshot_url, headshot_name, req.user.id]
       );
@@ -172,12 +180,12 @@ router.post('/', auth, asyncHandler(async (req, res) => {
          resume_file_url, resume_filename,
          headshot_file_url, headshot_filename)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
-        [req.user.id, preferred_name, phone, email, birth_month, birth_day, birth_year,
+        [req.user.id, preferred_name, phoneCheck.value, email, birth_month, birth_day, birth_year,
          street_address, city, state, zip_code,
          travel_distance, reliable_transportation,
          toBool(equipment_portable_bar), toBool(equipment_cooler), toBool(equipment_table_with_spandex),
          toBool(equipment_none_but_open), toBool(equipment_no_space), toBool(equipment_will_pickup),
-         emergency_contact_name || null, emergency_contact_phone || null, emergency_contact_relationship || null,
+         emergency_contact_name || null, ecPhoneCheck.value, emergency_contact_relationship || null,
          alcohol_cert_url, alcohol_cert_name, resume_url, resume_name,
          headshot_url, headshot_name]
       );

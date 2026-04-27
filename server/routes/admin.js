@@ -1,7 +1,10 @@
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, adminOnly } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
+const emailTemplates = require('../utils/emailTemplates');
+const { STAFF_URL } = require('../utils/urls');
 const { geocodeAddress, buildAddressString, delay } = require('../utils/geocode');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
@@ -12,6 +15,7 @@ const createDOMPurify = require('dompurify');
 const { JSDOM } = require('jsdom');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, PermissionError } = require('../utils/errors');
+const { validatePhone } = require('../utils/phone');
 const DOMPurify = createDOMPurify(new JSDOM('').window);
 
 const BLOG_SANITIZE_OPTIONS = {
@@ -91,7 +95,7 @@ router.get('/users/:id', auth, adminOnly, asyncHandler(async (req, res) => {
 
 // Update user status (expanded for application + onboarding statuses)
 router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) => {
-  const { status } = req.body;
+  const { status, customMessage } = req.body;
   const validStatuses = ['in_progress', 'applied', 'interviewing', 'hired', 'rejected', 'submitted', 'reviewed', 'approved', 'deactivated'];
   if (!validStatuses.includes(status)) {
     throw new ValidationError({ status: 'Invalid status' });
@@ -103,6 +107,7 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
   const client = await pool.connect();
   let result;
   let oldStatus;
+  let applicantName = null;
   try {
     await client.query('BEGIN');
 
@@ -232,6 +237,18 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
       } catch (logErr) {
         console.error('Status change log failed:', logErr);
       }
+
+      // Look up applicant display name for the status-change email (sent after COMMIT).
+      // Prefer the contractor's chosen preferred_name; fall back to the application full_name.
+      const nameRes = await client.query(
+        `SELECT cp.preferred_name AS profile_name, a.full_name AS app_name
+         FROM users u
+         LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+         LEFT JOIN applications a ON a.user_id = u.id
+         WHERE u.id = $1`,
+        [req.params.id]
+      );
+      applicantName = nameRes.rows[0]?.profile_name || nameRes.rows[0]?.app_name || null;
     }
 
     await client.query('COMMIT');
@@ -242,8 +259,37 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
     client.release();
   }
 
+  // Send status-change email after COMMIT so a send failure can't roll back the
+  // primary status change. Internal-only states (in_progress, reviewed, approved)
+  // skip email by design — no entry in pickStatusEmail returns null.
+  if (oldStatus !== status) {
+    const tpl = pickStatusEmail(status, { applicantName, customMessage, staffPortalUrl: STAFF_URL });
+    if (tpl) {
+      try {
+        await sendEmail({ to: result.rows[0].email, subject: tpl.subject, html: tpl.html, text: tpl.text });
+      } catch (emailErr) {
+        console.error('Status-change email failed:', emailErr);
+        Sentry.captureException(emailErr, {
+          tags: { route: 'PUT /admin/users/:id/status', step: 'email' },
+          extra: { userId: req.params.id, oldStatus, newStatus: status },
+        });
+      }
+    }
+  }
+
   res.json(result.rows[0]);
 }));
+
+// Map a status value to an email template factory. Returns null for internal
+// states (in_progress, reviewed, approved) that should not notify the applicant.
+function pickStatusEmail(status, ctx) {
+  if (status === 'applied' || status === 'submitted') return emailTemplates.applicationReceivedConfirmation(ctx);
+  if (status === 'interviewing') return emailTemplates.applicationInterviewInvite(ctx);
+  if (status === 'hired') return emailTemplates.applicationHired(ctx);
+  if (status === 'rejected') return emailTemplates.applicationRejected(ctx);
+  if (status === 'deactivated') return emailTemplates.applicationDeactivated(ctx);
+  return null;
+}
 
 // Update user profile (admin editing contractor info)
 router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) => {
@@ -269,6 +315,13 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
     rate = n;
   }
 
+  const fieldErrors = {};
+  const phoneCheck = validatePhone(phone);
+  if (phoneCheck.error) fieldErrors.phone = phoneCheck.error;
+  const ecPhoneCheck = validatePhone(emergency_contact_phone);
+  if (ecPhoneCheck.error) fieldErrors.emergency_contact_phone = ecPhoneCheck.error;
+  if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
+
   // Upsert contractor profile
   await pool.query(`
     INSERT INTO contractor_profiles (
@@ -287,13 +340,13 @@ router.put('/users/:id/profile', auth, adminOnly, asyncHandler(async (req, res) 
       emergency_contact_name=$20, emergency_contact_phone=$21, emergency_contact_relationship=$22,
       hourly_rate=COALESCE($23, contractor_profiles.hourly_rate)
   `, [
-    userId, preferred_name || null, phone || null, profileEmail || null,
+    userId, preferred_name || null, phoneCheck.value, profileEmail || null,
     birth_month || null, birth_day || null, birth_year || null,
     city || null, state || null, street_address || null, zip_code || null,
     travel_distance || null, reliable_transportation || null,
     equipment_portable_bar || false, equipment_cooler || false, equipment_table_with_spandex || false,
     equipment_none_but_open || false, equipment_no_space || false, equipment_will_pickup || false,
-    emergency_contact_name || null, emergency_contact_phone || null, emergency_contact_relationship || null,
+    emergency_contact_name || null, ecPhoneCheck.value, emergency_contact_relationship || null,
     rate,
   ]);
 
@@ -1010,7 +1063,9 @@ router.get('/badge-counts', auth, adminOnly, asyncHandler(async (req, res) => {
       )::int AS unstaffed_events,
       (SELECT COUNT(*) FROM applications a
          JOIN users u ON u.id = a.user_id
-         WHERE u.onboarding_status = 'applied')::int AS new_applications
+         WHERE u.onboarding_status = 'applied')::int AS new_applications,
+      (SELECT COUNT(*) FROM drink_plans
+         WHERE shopping_list_status = 'pending_review')::int AS pending_shopping_lists
   `);
   res.json(result.rows[0]);
 }));

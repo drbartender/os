@@ -148,6 +148,7 @@ export default function AdminApplicationDetail() {
   const [noteText, setNoteText] = useState('');
   const [noteLoading, setNoteLoading] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
+  const [customMessage, setCustomMessage] = useState('');
 
   useEffect(() => {
     api.get(`/admin/applications/${id}`)
@@ -157,11 +158,15 @@ export default function AdminApplicationDetail() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  async function updateStatus(newStatus) {
+  async function updateStatus(newStatus, message) {
     setConfirmAction(null);
+    setCustomMessage('');
     setStatusLoading(true);
     try {
-      await api.put(`/admin/users/${id}/status`, { status: newStatus });
+      const payload = { status: newStatus };
+      const trimmed = (message || '').trim();
+      if (trimmed) payload.customMessage = trimmed;
+      await api.put(`/admin/users/${id}/status`, payload);
       // Refetch to get fresh data + auto-logged status change note
       const fresh = await api.get(`/admin/applications/${id}`);
       setData(fresh.data);
@@ -536,14 +541,25 @@ export default function AdminApplicationDetail() {
       {/* ── Confirmation Modal ── */}
       {confirmAction && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '1rem' }}>
-          <div className="card" style={{ maxWidth: 400, width: '100%', margin: 0 }}>
+          <div className="card" style={{ maxWidth: 480, width: '100%', margin: 0 }}>
             <h3 style={{ marginBottom: '0.5rem' }}>{confirmAction.label}</h3>
-            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>{confirmAction.description}</p>
+            <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>{confirmAction.description}</p>
+            <label style={{ display: 'block', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>
+              Personal note (optional — included in the email to {app.full_name})
+            </label>
+            <textarea
+              className="form-input"
+              rows={3}
+              value={customMessage}
+              onChange={e => setCustomMessage(e.target.value)}
+              placeholder="e.g. We were impressed by your experience with cocktail menus — looking forward to chatting."
+              style={{ marginBottom: '1.5rem', resize: 'vertical' }}
+            />
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-              <button className="btn btn-secondary" onClick={() => setConfirmAction(null)}>Cancel</button>
+              <button className="btn btn-secondary" onClick={() => { setConfirmAction(null); setCustomMessage(''); }}>Cancel</button>
               <button
                 className={`btn ${confirmAction.status === 'rejected' ? 'btn-danger' : 'btn-success'}`}
-                onClick={() => updateStatus(confirmAction.status)}>
+                onClick={() => updateStatus(confirmAction.status, customMessage)}>
                 Confirm
               </button>
             </div>

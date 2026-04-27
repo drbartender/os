@@ -98,6 +98,7 @@ export default function AdminUserDetail() {
 
   const [statusLoading, setStatusLoading] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
+  const [customMessage, setCustomMessage] = useState('');
   const [permsSaving, setPermsSaving] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
 
@@ -189,11 +190,15 @@ export default function AdminUserDetail() {
   const displayName = profile?.preferred_name || user.email;
 
   // ── Saved actions ─────────────────────────────────────────────
-  const updateStatus = async (status) => {
+  const updateStatus = async (status, message) => {
     setConfirmAction(null);
+    setCustomMessage('');
     setStatusLoading(true);
     try {
-      await api.put(`/admin/users/${id}/status`, { status });
+      const payload = { status };
+      const trimmed = (message || '').trim();
+      if (trimmed) payload.customMessage = trimmed;
+      await api.put(`/admin/users/${id}/status`, payload);
       setData(d => ({ ...d, user: { ...d.user, onboarding_status: status } }));
       toast.success(
         status === 'deactivated' ? 'Account deactivated.' :
@@ -561,22 +566,33 @@ export default function AdminUserDetail() {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             zIndex: 1000, padding: '1rem',
           }}
-          onClick={() => setConfirmAction(null)}
+          onClick={() => { setConfirmAction(null); setCustomMessage(''); }}
         >
           <div
             className="card"
-            style={{ maxWidth: 420, width: '100%', padding: '1.25rem 1.5rem' }}
+            style={{ maxWidth: 480, width: '100%', padding: '1.25rem 1.5rem' }}
             onClick={(e) => e.stopPropagation()}
           >
             <h3 style={{ marginBottom: 8, fontSize: 16 }}>{confirmAction.label}</h3>
-            <p style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 16 }}>{confirmAction.description}</p>
+            <p style={{ fontSize: 13, color: 'var(--ink-3)', marginBottom: 12 }}>{confirmAction.description}</p>
+            <label style={{ display: 'block', fontSize: 12, color: 'var(--ink-3)', marginBottom: 6 }}>
+              Personal note (optional — included in the email to {displayName})
+            </label>
+            <textarea
+              className="form-input"
+              rows={3}
+              value={customMessage}
+              onChange={e => setCustomMessage(e.target.value)}
+              placeholder="Add a brief explanation or next steps."
+              style={{ marginBottom: 16, resize: 'vertical' }}
+            />
             <div className="hstack" style={{ justifyContent: 'flex-end', gap: 8 }}>
-              <button type="button" className="btn btn-ghost" onClick={() => setConfirmAction(null)}>Cancel</button>
+              <button type="button" className="btn btn-ghost" onClick={() => { setConfirmAction(null); setCustomMessage(''); }}>Cancel</button>
               <button
                 type="button"
                 className="btn btn-primary"
                 style={confirmAction.status === 'deactivated' ? { background: 'hsl(var(--danger-h) var(--danger-s) 50%)', borderColor: 'hsl(var(--danger-h) var(--danger-s) 50%)' } : {}}
-                onClick={() => updateStatus(confirmAction.status)}
+                onClick={() => updateStatus(confirmAction.status, customMessage)}
               >
                 Confirm
               </button>

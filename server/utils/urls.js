@@ -7,6 +7,7 @@
 
 const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://drbartender.com';
 const ADMIN_URL = process.env.CLIENT_URL || 'https://admin.drbartender.com';
+const STAFF_URL = process.env.STAFF_URL || 'https://staff.drbartender.com';
 // Render auto-sets RENDER_EXTERNAL_URL in prod; in dev the local Express server
 // is on PORT. API_URL lets ops override if the backend ever moves behind a CDN.
 const API_URL = process.env.API_URL
@@ -17,4 +18,4 @@ if (process.env.NODE_ENV === 'production' && !process.env.PUBLIC_SITE_URL) {
   console.warn('[urls] PUBLIC_SITE_URL is not set — falling back to https://drbartender.com. Set it explicitly to avoid surprises in preview/staging.');
 }
 
-module.exports = { PUBLIC_SITE_URL, ADMIN_URL, API_URL };
+module.exports = { PUBLIC_SITE_URL, ADMIN_URL, STAFF_URL, API_URL };

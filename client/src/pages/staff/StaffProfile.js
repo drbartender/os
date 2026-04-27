@@ -74,13 +74,16 @@ export default function StaffProfile() {
           </div>
 
           <div className="card" style={{ gridColumn: '1 / -1' }}>
-            <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Equipment & Skills</h3>
+            <h3 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Equipment</h3>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-              {profile.has_vehicle && <span className="badge badge-approved">Has Vehicle</span>}
-              {profile.has_bar_kit && <span className="badge badge-approved">Bar Kit</span>}
-              {profile.has_ice_luge && <span className="badge badge-approved">Ice Luge</span>}
-              {profile.has_mobile_bar && <span className="badge badge-approved">Mobile Bar</span>}
-              {!profile.has_vehicle && !profile.has_bar_kit && !profile.has_ice_luge && !profile.has_mobile_bar && (
+              {profile.equipment_portable_bar && <span className="badge badge-approved">Portable Bar</span>}
+              {profile.equipment_cooler && <span className="badge badge-approved">Cooler</span>}
+              {profile.equipment_table_with_spandex && <span className="badge badge-approved">Table + Spandex</span>}
+              {profile.equipment_will_pickup && <span className="badge badge-approved">Can Pick Up</span>}
+              {profile.equipment_none_but_open && <span className="badge badge-approved">Open to Providing</span>}
+              {profile.equipment_no_space && <span className="badge badge-approved">No Storage Space</span>}
+              {!profile.equipment_portable_bar && !profile.equipment_cooler && !profile.equipment_table_with_spandex
+                && !profile.equipment_will_pickup && !profile.equipment_none_but_open && !profile.equipment_no_space && (
                 <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No equipment listed</span>
               )}
             </div>

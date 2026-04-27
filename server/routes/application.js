@@ -9,6 +9,7 @@ const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError } = require('../utils/errors');
+const { validatePhone } = require('../utils/phone');
 
 const router = express.Router();
 
@@ -41,7 +42,10 @@ router.post('/', auth, asyncHandler(async (req, res) => {
   // Validation — collect all required-field errors at once
   const fieldErrors = {};
   if (!full_name) fieldErrors.full_name = 'Full name is required';
-  if (!phone) fieldErrors.phone = 'Phone number is required';
+  const phoneCheck = validatePhone(phone, { required: true });
+  if (phoneCheck.error) fieldErrors.phone = phoneCheck.error;
+  const ecPhoneCheck = validatePhone(emergency_contact_phone);
+  if (ecPhoneCheck.error) fieldErrors.emergency_contact_phone = ecPhoneCheck.error;
   if (!city) fieldErrors.city = 'City is required';
   if (!state) fieldErrors.state = 'State is required';
   if (!travel_distance) fieldErrors.travel_distance = 'Travel distance is required';
@@ -151,7 +155,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       $40,$41,$42,$43,$44,$45,$46,$47,$48,$49
     )`,
     [
-      req.user.id, full_name, phone, favorite_color,
+      req.user.id, full_name, phoneCheck.value, favorite_color,
       street_address, city, state, zip_code,
       parseInt(birth_month), parseInt(birth_day), parseInt(birth_year),
       travel_distance, reliable_transportation,
@@ -165,7 +169,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       toBool(equipment_none_but_open), toBool(equipment_no_space),
       parseInt(setup_confidence) || null, comfortable_working_alone || null,
       customer_service_approach || null, why_dr_bartender, additional_info || null,
-      emergency_contact_name || null, emergency_contact_phone || null, emergency_contact_relationship || null,
+      emergency_contact_name || null, ecPhoneCheck.value, emergency_contact_relationship || null,
       resume_url, resume_name,
       headshot_url, headshot_name,
       basset_url, basset_name
