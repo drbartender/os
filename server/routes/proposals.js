@@ -792,7 +792,7 @@ router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (
  *  pricing_snapshot / admin_notes / questionnaire_data / signature_data / stripe_*
  *  to list responses (blobs, PII, can each be 10-50 KB × 50 rows = 2.5 MB). */
 router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { status, search, page = 1, limit = 50 } = req.query;
+  const { status, view = 'active', search, page = 1, limit = 50 } = req.query;
   let query = `
     SELECT p.id, p.token, p.client_id, p.event_type, p.event_type_custom,
            p.event_type_category, p.event_date, p.event_start_time,
@@ -810,13 +810,22 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   `;
   const params = [];
 
+  // An explicit `status` param overrides `view` — used by drill-downs that
+  // pin a specific status. Otherwise `view` selects a status bucket so paid
+  // proposals (which "graduate" to the Events tab) are still discoverable
+  // here under the Paid tab without requiring callers to enumerate statuses.
   if (status) {
     params.push(status);
     query += ` AND p.status = $${params.length}`;
+  } else if (view === 'paid') {
+    query += ` AND p.status IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed')`;
+  } else if (view === 'archive') {
+    query += ` AND p.status = 'cancelled'`;
+  } else if (view === 'all') {
+    query += ` AND p.status != 'cancelled'`;
   } else {
-    // By default, exclude paid statuses (those appear in Events instead) and
-    // cancelled (the archive endpoint — only reachable when explicitly filtered).
-    query += ` AND p.status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'cancelled')`;
+    // Default 'active' bucket — exclude paid (moved to Events) and cancelled (archive).
+    query += ` AND p.status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed', 'cancelled')`;
   }
   if (search) {
     params.push(`%${search}%`);

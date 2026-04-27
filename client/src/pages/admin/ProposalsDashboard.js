@@ -36,24 +36,52 @@ export default function ProposalsDashboard() {
   const drawer = useDrawerParam();
 
   const [proposals, setProposals] = useState([]);
+  const [counts, setCounts] = useState({ active: 0, draft: 0, accepted: 0, paid: 0 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('active');
   const [copyMessage, setCopyMessage] = useState('');
 
-  const fetchProposals = useCallback(async () => {
+  // Map UI tab → server query string. Each tab fetches a server-side bucket so
+  // paid proposals (which migrate to Events) stay reachable via the Paid tab
+  // without client-side post-filtering of a giant payload.
+  const tabToQuery = useMemo(() => ({
+    active: '?view=active',
+    draft:  '?status=draft',
+    won:    '?status=accepted',
+    paid:   '?view=paid',
+    all:    '?view=all',
+  }), []);
+
+  const fetchProposals = useCallback(async (currentTab) => {
+    setLoading(true);
     try {
-      const res = await api.get('/proposals');
-      setProposals(res.data || []);
+      const qs = tabToQuery[currentTab] || tabToQuery.active;
+      const [list, statsRes] = await Promise.all([
+        api.get(`/proposals${qs}`),
+        api.get('/proposals/dashboard-stats').catch(() => ({ data: null })),
+      ]);
+      setProposals(list.data || []);
+      // Derive tab counts from /dashboard-stats so they reflect *all* proposals,
+      // not just the current bucket the list endpoint returned.
+      if (statsRes.data) {
+        const pipeByKey = Object.fromEntries((statsRes.data.pipeline || []).map(p => [p.key, p.count]));
+        setCounts({
+          active:   (pipeByKey.sent || 0) + (pipeByKey.viewed || 0) + (pipeByKey.modified || 0),
+          draft:    pipeByKey.draft || 0,
+          accepted: pipeByKey.accepted || 0,
+          paid:     statsRes.data.totals?.events_count || 0,
+        });
+      }
     } catch (err) {
       console.error('Failed to fetch proposals:', err);
       toast.error('Failed to load proposals. Try refreshing.');
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, tabToQuery]);
 
-  useEffect(() => { fetchProposals(); }, [fetchProposals]);
+  useEffect(() => { fetchProposals(tab); }, [fetchProposals, tab]);
 
   const copyLink = (e, token) => {
     e.stopPropagation();
@@ -65,24 +93,28 @@ export default function ProposalsDashboard() {
     });
   };
 
-  const filtered = useMemo(() => proposals.filter(p => {
-    if (tab === 'active' && !['sent', 'viewed', 'modified'].includes(p.status)) return false;
-    if (tab === 'draft' && p.status !== 'draft') return false;
-    if (tab === 'won' && p.status !== 'accepted') return false;
-    if (search) {
-      const q = search.toLowerCase();
+  // Client-side filter is now only for the free-text search box — server already
+  // returned the right status bucket based on the active tab.
+  const filtered = useMemo(() => {
+    if (!search) return proposals;
+    const q = search.toLowerCase();
+    return proposals.filter(p => {
       const fields = [p.client_name, p.client_email, p.event_type, p.event_type_custom].filter(Boolean).join(' ').toLowerCase();
-      if (!fields.includes(q)) return false;
-    }
-    return true;
-  }), [proposals, tab, search]);
+      return fields.includes(q);
+    });
+  }, [proposals, search]);
 
   const tabs = useMemo(() => ([
-    { id: 'active', label: 'Active', count: proposals.filter(p => ['sent', 'viewed', 'modified'].includes(p.status)).length },
-    { id: 'draft',  label: 'Draft',  count: proposals.filter(p => p.status === 'draft').length },
-    { id: 'won',    label: 'Accepted', count: proposals.filter(p => p.status === 'accepted').length },
+    { id: 'active', label: 'Active',   count: counts.active },
+    { id: 'draft',  label: 'Draft',    count: counts.draft },
+    { id: 'won',    label: 'Accepted', count: counts.accepted },
+    { id: 'paid',   label: 'Paid',     count: counts.paid },
     { id: 'all',    label: 'All' },
-  ]), [proposals]);
+  ]), [counts]);
+
+  // Paid statuses surface a "View event" jump-link so admins can move from a
+  // paid proposal straight into its EventDetailPage (where shifts/staffing live).
+  const isPaidStatus = (status) => ['deposit_paid', 'balance_paid', 'confirmed', 'completed'].includes(status);
 
   return (
     <div className="page">
@@ -145,6 +177,16 @@ export default function ProposalsDashboard() {
                     <td className="num"><strong>{fmt$(p.total_price)}</strong></td>
                     <td className="shrink">
                       <div className="hstack" onClick={(e) => e.stopPropagation()}>
+                        {isPaidStatus(p.status) && (
+                          <button
+                            type="button"
+                            className="icon-btn"
+                            title="View event"
+                            onClick={(e) => { e.stopPropagation(); navigate(`/admin/events/${p.id}`); }}
+                          >
+                            <Icon name="calendar" size={13} />
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="icon-btn"
