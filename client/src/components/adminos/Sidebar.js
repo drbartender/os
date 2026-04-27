@@ -64,13 +64,12 @@ export default function Sidebar({ badges = {} }) {
         ))}
       </nav>
 
-      <div className="sidebar-footer">
+      <div className="sidebar-footer sidebar-footer-controls">
         <button
           type="button"
           className="sidebar-footer-action"
           title={prefs.sidebar === 'rail' ? 'Expand sidebar' : 'Collapse to rail'}
           onClick={() => setPref('sidebar', prefs.sidebar === 'rail' ? 'full' : 'rail')}
-          style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '6px 0' }}
         >
           <Icon name={prefs.sidebar === 'rail' ? 'right' : 'left'} size={13} />
         </button>
@@ -89,6 +88,22 @@ export default function Sidebar({ badges = {} }) {
             className={`mode-opt ${prefs.skin === 'dark' ? 'active' : ''}`}
             onClick={() => prefs.skin !== 'dark' && setPref('skin', 'dark')}
           >After Hours</button>
+        </div>
+        <div className="mode-toggle" role="radiogroup" aria-label="Density">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={prefs.density === 'comfy'}
+            className={`mode-opt ${prefs.density === 'comfy' ? 'active' : ''}`}
+            onClick={() => prefs.density !== 'comfy' && setPref('density', 'comfy')}
+          >Comfy</button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={prefs.density === 'compact'}
+            className={`mode-opt ${prefs.density === 'compact' ? 'active' : ''}`}
+            onClick={() => prefs.density !== 'compact' && setPref('density', 'compact')}
+          >Compact</button>
         </div>
       </div>
 

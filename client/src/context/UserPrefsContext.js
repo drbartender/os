@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
 import { useAuth } from './AuthContext';
 
-const DEFAULT_PREFS = { skin: 'dark', density: 'normal', sidebar: 'full' };
+const DEFAULT_PREFS = { skin: 'dark', density: 'comfy', sidebar: 'full' };
 
 const PALETTES = {
   dark: {
@@ -36,6 +36,8 @@ function load(user) {
     const raw = localStorage.getItem(key);
     if (!raw) return DEFAULT_PREFS;
     const parsed = JSON.parse(raw);
+    // Migrate legacy 'normal' density values to the new 2-state system.
+    if (parsed.density === 'normal') parsed.density = 'comfy';
     return { ...DEFAULT_PREFS, ...parsed };
   } catch {
     return DEFAULT_PREFS;
