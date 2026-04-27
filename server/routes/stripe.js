@@ -652,7 +652,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
       }
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
-        const adminUrl = `${ADMIN_URL}/admin/proposals/${proposalId}`;
+        const adminUrl = `${ADMIN_URL}/proposals/${proposalId}`;
         const tpl = isCoupledSigning
           ? emailTemplates.signedAndPaidAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl })
           : emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
@@ -928,7 +928,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             subject: `Payment Failed — ${pi?.client_name || 'Unknown'} (${eventLabelFor(pi)})`,
             html: `<p>A ${paymentType} payment of $${(intent.amount / 100).toFixed(2)} failed for <strong>${pi?.client_name || 'Unknown'}</strong>.</p>
                    <p><strong>Reason:</strong> ${intent.last_payment_error?.message || 'Unknown error'}</p>
-                   <p><a href="${ADMIN_URL}/admin/proposals/${proposalId}">View Proposal</a></p>`,
+                   <p><a href="${ADMIN_URL}/proposals/${proposalId}">View Proposal</a></p>`,
           }).catch(e => console.error('Failed payment notification email error:', e));
         }
       } catch (err) {

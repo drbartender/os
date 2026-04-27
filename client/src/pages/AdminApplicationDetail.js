@@ -265,7 +265,7 @@ export default function AdminApplicationDetail() {
   return (
     <>
       <div style={{ padding: '1rem 1.5rem 0' }}>
-        <button className="btn btn-secondary btn-sm" onClick={() => navigate('/admin/staffing')}>← Staff</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => navigate('/staffing')}>← Staff</button>
       </div>
 
       {/* ══ ZONE 1 — Profile Header Bar (sticky) ══ */}

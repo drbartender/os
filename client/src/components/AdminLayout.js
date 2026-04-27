@@ -88,7 +88,7 @@ export default function AdminLayout() {
         <Sidebar badges={badges} />
         <Header
           onOpenPalette={() => setPaletteOpen(true)}
-          onQuickAdd={() => navigate('/admin/proposals/new')}
+          onQuickAdd={() => navigate('/proposals/new')}
         />
         <main className="main scroll-thin" id="main-content">
           <Outlet />

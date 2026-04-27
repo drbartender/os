@@ -190,7 +190,7 @@ router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
       }
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail && pd) {
-        const adminUrl = `${ADMIN_URL}/admin/proposals/${pd.id}`;
+        const adminUrl = `${ADMIN_URL}/proposals/${pd.id}`;
         const tpl = emailTemplates.clientSignedAdmin({ clientName: pd.client_name, eventTypeLabel, proposalId: pd.id, adminUrl });
         await sendEmail({ to: adminEmail, ...tpl });
       }
@@ -555,7 +555,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     // Send email notifications (non-blocking)
     try {
       const adminEmail = process.env.ADMIN_EMAIL;
-      const adminUrl = `${ADMIN_URL}/admin/proposals/${proposal.id}`;
+      const adminUrl = `${ADMIN_URL}/proposals/${proposal.id}`;
 
       if (isTopShelfClass) {
         // Top Shelf: admin-only alert (pricing is TBD). Client already saw
@@ -1430,7 +1430,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     }
     const adminEmail = process.env.ADMIN_EMAIL;
     if (adminEmail) {
-      const adminUrl = `${ADMIN_URL}/admin/proposals/${proposal.id}`;
+      const adminUrl = `${ADMIN_URL}/proposals/${proposal.id}`;
       const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pd?.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType, proposalId: proposal.id, adminUrl });
       await sendEmail({ to: adminEmail, ...tpl });
     }

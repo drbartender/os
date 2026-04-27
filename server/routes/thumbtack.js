@@ -288,7 +288,7 @@ router.post('/leads', asyncHandler(async (req, res) => {
     try {
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
-        const adminUrl = clientId ? `${ADMIN_URL}/admin/clients/${clientId}` : null;
+        const adminUrl = clientId ? `${ADMIN_URL}/clients/${clientId}` : null;
         const tpl = newThumbtackLeadAdmin({
           customerName: lead.customerName,
           customerPhone: lead.customerPhone,
@@ -369,7 +369,7 @@ router.post('/messages', asyncHandler(async (req, res) => {
             [msg.negotiationId]
           );
           const clientId = lead.rows[0]?.client_id;
-          const adminUrl = clientId ? `${ADMIN_URL}/admin/clients/${clientId}` : null;
+          const adminUrl = clientId ? `${ADMIN_URL}/clients/${clientId}` : null;
           const tpl = newThumbtackMessageAdmin({
             customerName: lead.rows[0]?.customer_name || msg.senderName || 'Unknown',
             text: msg.text,

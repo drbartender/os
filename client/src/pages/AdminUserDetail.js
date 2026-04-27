@@ -176,7 +176,7 @@ export default function AdminUserDetail() {
   if (!data) return (
     <div className="page">
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/staffing')}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/staffing')}>
           <Icon name="left" size={11} />Staff
         </button>
       </div>
@@ -347,7 +347,7 @@ export default function AdminUserDetail() {
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/staffing')}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/staffing')}>
           <Icon name="left" size={11} />Staff
         </button>
       </div>
@@ -655,7 +655,7 @@ function OverviewTab(props) {
                   {upcoming.slice(0, 6).map(ev => (
                     <tr
                       key={`${ev.id}-up`}
-                      onClick={() => ev.proposal_id ? navigate(`/admin/events/${ev.proposal_id}`) : navigate(`/admin/events/shift/${ev.id}`)}
+                      onClick={() => ev.proposal_id ? navigate(`/events/${ev.proposal_id}`) : navigate(`/events/shift/${ev.id}`)}
                     >
                       <td>
                         <strong>{ev.client_name || 'Event'}</strong>
@@ -974,7 +974,7 @@ function ShiftsTab({ upcoming, past, eventsLoading, navigate }) {
                 {upcoming.map(ev => (
                   <tr
                     key={`${ev.id}-up`}
-                    onClick={() => ev.proposal_id ? navigate(`/admin/events/${ev.proposal_id}`) : navigate(`/admin/events/shift/${ev.id}`)}
+                    onClick={() => ev.proposal_id ? navigate(`/events/${ev.proposal_id}`) : navigate(`/events/shift/${ev.id}`)}
                   >
                     <td>
                       <div>{ev.event_date ? fmtDate(String(ev.event_date).slice(0, 10), { year: 'numeric' }) : '—'}</div>

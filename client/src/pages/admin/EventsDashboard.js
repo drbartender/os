@@ -106,7 +106,7 @@ export default function EventsDashboard() {
       setShowCreateForm(false);
       const newShift = res.data;
       if (newShift.proposal_id) {
-        navigate(`/admin/events/${newShift.proposal_id}`);
+        navigate(`/events/${newShift.proposal_id}`);
       } else {
         // Manual events have no dedicated page (ShiftDetail.js retired) — open
         // the ShiftDrawer so admin can immediately review/staff the new event.
@@ -132,11 +132,11 @@ export default function EventsDashboard() {
   handlersRef.current = {
     rowClick: (e) => drawer.open('event', e.id),
     view: (e) => {
-      if (e.proposal_id) navigate(`/admin/events/${e.proposal_id}`);
+      if (e.proposal_id) navigate(`/events/${e.proposal_id}`);
       else drawer.open('shift', e.id);
     },
     edit: (e) => {
-      if (e.proposal_id) navigate(`/admin/proposals/${e.proposal_id}?edit=1`);
+      if (e.proposal_id) navigate(`/proposals/${e.proposal_id}?edit=1`);
     },
     assign: (e) => {
       if (!e.id) { toast.error('No shift on this event yet.'); return; }

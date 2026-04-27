@@ -19,7 +19,7 @@ const PIPELINE_COLORS = {
 
 // Route a shift row to its event detail (proposal-backed) or shift detail (manual).
 function eventRoute(e) {
-  return e?.proposal_id ? `/admin/events/${e.proposal_id}` : `/admin/events/shift/${e?.id}`;
+  return e?.proposal_id ? `/events/${e.proposal_id}` : `/events/shift/${e?.id}`;
 }
 
 const EMPTY_STATS = {
@@ -156,41 +156,41 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="page-actions">
-          <button type="button" className="btn btn-secondary" onClick={() => navigate('/admin/financials')}>
+          <button type="button" className="btn btn-secondary" onClick={() => navigate('/financials')}>
             <Icon name="external" />Financials
           </button>
-          <button type="button" className="btn btn-primary" onClick={() => navigate('/admin/proposals/new')}>
+          <button type="button" className="btn btn-primary" onClick={() => navigate('/proposals/new')}>
             <Icon name="plus" />New proposal
           </button>
         </div>
       </div>
 
       <div className="stat-row" style={{ marginBottom: 'var(--gap)' }}>
-        <div className="stat" onClick={() => navigate('/admin/financials')}>
+        <div className="stat" onClick={() => navigate('/financials')}>
           <div className="stat-label">Booked</div>
           <div className="stat-value">{fmt$(totalBooked)}</div>
           <div className="stat-sub"><span>{eventsCount} {eventsCount === 1 ? 'event' : 'events'} on record</span></div>
         </div>
-        <div className="stat" onClick={() => navigate('/admin/financials')}>
+        <div className="stat" onClick={() => navigate('/financials')}>
           <div className="stat-label">Collected</div>
           <div className="stat-value">{fmt$(totalCollected)}</div>
           <div className="stat-sub"><span>{totalBooked > 0 ? Math.round((totalCollected / totalBooked) * 100) : 0}% of booked</span></div>
         </div>
-        <div className="stat" onClick={() => navigate('/admin/financials')}>
+        <div className="stat" onClick={() => navigate('/financials')}>
           <div className="stat-label">Outstanding</div>
           <div className="stat-value" style={{ color: outstanding > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
             {fmt$(outstanding)}
           </div>
           <div className="stat-sub"><span>{eventsOwingBalance} {eventsOwingBalance === 1 ? 'event' : 'events'} owe balance</span></div>
         </div>
-        <div className="stat" onClick={() => navigate('/admin/events')}>
+        <div className="stat" onClick={() => navigate('/events')}>
           <div className="stat-label">Upcoming events</div>
           <div className="stat-value">{upcoming.length}</div>
           <div className="stat-sub">
             <span>{upcoming[0] ? `Next: ${fmtDate(upcoming[0].event_date.slice(0, 10))}` : 'No upcoming'}</span>
           </div>
         </div>
-        <div className="stat" onClick={() => navigate('/admin/events')}>
+        <div className="stat" onClick={() => navigate('/events')}>
           <div className="stat-label">Unstaffed</div>
           <div className="stat-value" style={{ color: unstaffed.length > 0 ? 'hsl(var(--danger-h) var(--danger-s) 65%)' : '' }}>
             {unstaffed.length}
@@ -224,7 +224,7 @@ export default function Dashboard() {
           <div className="card">
             <div className="card-head">
               <h3>Upcoming events</h3>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/events')}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/events')}>
                 View all <Icon name="right" size={11} />
               </button>
             </div>
@@ -284,10 +284,10 @@ export default function Dashboard() {
                   key={a.id}
                   className="queue-item"
                   onClick={() => {
-                    if (a.target === 'event') navigate(`/admin/events/${a.ref}`);
-                    else if (a.target === 'shift') navigate(`/admin/events/shift/${a.ref}`);
-                    else if (a.target === 'proposal') navigate(`/admin/proposals/${a.ref}`);
-                    else if (a.target === 'hiring') navigate('/admin/hiring');
+                    if (a.target === 'event') navigate(`/events/${a.ref}`);
+                    else if (a.target === 'shift') navigate(`/events/shift/${a.ref}`);
+                    else if (a.target === 'proposal') navigate(`/proposals/${a.ref}`);
+                    else if (a.target === 'hiring') navigate('/hiring');
                   }}
                   role="button"
                   tabIndex={0}

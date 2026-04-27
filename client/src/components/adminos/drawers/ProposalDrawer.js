@@ -34,7 +34,7 @@ export default function ProposalDrawer({ id, open, onClose }) {
     return () => { cancelled = true; };
   }, [id, open]);
 
-  const goPage = () => { onClose(); if (proposal?.id) navigate(`/admin/proposals/${proposal.id}`); };
+  const goPage = () => { onClose(); if (proposal?.id) navigate(`/proposals/${proposal.id}`); };
 
   const copyLink = () => {
     if (!proposal?.token) return;

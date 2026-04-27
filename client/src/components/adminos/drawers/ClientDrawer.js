@@ -45,7 +45,7 @@ export default function ClientDrawer({ id, open, onClose }) {
     return () => { cancelled = true; };
   }, [id, open]);
 
-  const goPage = () => { onClose(); if (client?.id) navigate(`/admin/clients/${client.id}`); };
+  const goPage = () => { onClose(); if (client?.id) navigate(`/clients/${client.id}`); };
 
   const crumb = (
     <div className="crumb" style={{ flex: 1 }}>
@@ -74,7 +74,7 @@ function ClientDrawerBody({ client, navigate, onClose }) {
 
   const goNewProposal = () => {
     onClose();
-    navigate(`/admin/proposals/new?client_id=${client.id}`);
+    navigate(`/proposals/new?client_id=${client.id}`);
   };
 
   return (
@@ -143,7 +143,7 @@ function ClientDrawerBody({ client, navigate, onClose }) {
             </thead>
             <tbody>
               {proposals.map(p => (
-                <tr key={p.id} onClick={() => { onClose(); navigate(`/admin/proposals/${p.id}`); }}>
+                <tr key={p.id} onClick={() => { onClose(); navigate(`/proposals/${p.id}`); }}>
                   <td>
                     <strong>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</strong>
                     {p.package_name && <div className="sub">{p.package_name}</div>}

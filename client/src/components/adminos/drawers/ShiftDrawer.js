@@ -9,7 +9,7 @@ import { fmtDateFull } from '../format';
 import { parsePositionsArray, approvedCount } from '../shifts';
 
 // ShiftDrawer — focused per-shift management surface launched from EventDetailPage.
-// Replaces the legacy /admin/events/shift/:id page.
+// Replaces the legacy /events/shift/:id page.
 //
 // Data: GET /shifts/detail/:id returns { shift, requests } in one round-trip.
 // Actions all hit existing endpoints (no new server routes):

@@ -150,7 +150,7 @@ export default function EmailLeadsDashboard() {
             </thead>
             <tbody>
               {leads.map(lead => (
-                <tr key={lead.id} onClick={() => navigate(`/admin/email-marketing/leads/${lead.id}`)} className="em-row-clickable">
+                <tr key={lead.id} onClick={() => navigate(`/email-marketing/leads/${lead.id}`)} className="em-row-clickable">
                   <td>{lead.name}</td>
                   <td>{lead.email}</td>
                   <td>{lead.company || '—'}</td>

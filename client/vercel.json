@@ -1,3 +1,28 @@
 {
+  "redirects": [
+    { "source": "/admin",            "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "/",          "permanent": true },
+    { "source": "/admin/:path*",     "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "/:path*",    "permanent": true },
+
+    { "source": "/portal",           "has": [{ "type": "host", "value": "staff.drbartender.com" }], "destination": "/",          "permanent": true },
+    { "source": "/portal/:path*",    "has": [{ "type": "host", "value": "staff.drbartender.com" }], "destination": "/:path*",    "permanent": true },
+
+    { "source": "/proposal/:token",      "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://drbartender.com/proposal/:token",      "permanent": true },
+    { "source": "/invoice/:token",       "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://drbartender.com/invoice/:token",       "permanent": true },
+    { "source": "/plan/:token",          "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://drbartender.com/plan/:token",          "permanent": true },
+    { "source": "/shopping-list/:token", "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://drbartender.com/shopping-list/:token", "permanent": true },
+
+    { "source": "/client-login",     "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://drbartender.com/login",            "permanent": true },
+    { "source": "/my-proposals",     "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://drbartender.com/my-proposals",     "permanent": true },
+
+    { "source": "/website",          "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://drbartender.com",                   "permanent": true },
+    { "source": "/quote",            "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://drbartender.com/quote",             "permanent": true },
+    { "source": "/faq",              "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://drbartender.com/faq",               "permanent": true },
+    { "source": "/classes",          "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://drbartender.com/classes",           "permanent": true },
+    { "source": "/labnotes",         "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://drbartender.com/labnotes",          "permanent": true },
+    { "source": "/labnotes/:slug",   "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://drbartender.com/labnotes/:slug",    "permanent": true },
+
+    { "source": "/portal",           "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://staff.drbartender.com",          "permanent": true },
+    { "source": "/portal/:path*",    "has": [{ "type": "host", "value": "admin.drbartender.com" }], "destination": "https://staff.drbartender.com/:path*",   "permanent": true }
+  ],
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }

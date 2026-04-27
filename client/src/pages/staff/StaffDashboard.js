@@ -78,19 +78,19 @@ export default function StaffDashboard() {
         <>
           {/* Quick Stats */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginTop: '1.25rem' }}>
-            <Link to="/portal/shifts" className="card" style={{ padding: '1.25rem', textDecoration: 'none', textAlign: 'center' }}>
+            <Link to="/shifts" className="card" style={{ padding: '1.25rem', textDecoration: 'none', textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--amber)' }}>{stats.openShifts}</div>
               <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>Open Shifts</div>
             </Link>
-            <Link to="/portal/schedule" className="card" style={{ padding: '1.25rem', textDecoration: 'none', textAlign: 'center' }}>
+            <Link to="/schedule" className="card" style={{ padding: '1.25rem', textDecoration: 'none', textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--amber)' }}>{stats.pendingRequests}</div>
               <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>Pending Requests</div>
             </Link>
-            <Link to="/portal/schedule" className="card" style={{ padding: '1.25rem', textDecoration: 'none', textAlign: 'center' }}>
+            <Link to="/schedule" className="card" style={{ padding: '1.25rem', textDecoration: 'none', textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--success)' }}>{stats.confirmedRequests}</div>
               <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>Confirmed</div>
             </Link>
-            <Link to="/portal/events" className="card" style={{ padding: '1.25rem', textDecoration: 'none', textAlign: 'center' }}>
+            <Link to="/events" className="card" style={{ padding: '1.25rem', textDecoration: 'none', textAlign: 'center' }}>
               <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--deep-brown)' }}>{stats.pastEvents}</div>
               <div style={{ fontSize: '0.82rem', color: 'var(--warm-brown)' }}>Events Worked</div>
             </Link>

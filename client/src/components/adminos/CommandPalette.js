@@ -14,22 +14,22 @@ export default function CommandPalette({ open, onClose }) {
 
   const groups = [
     { group: 'Jump to', items: [
-      { label: 'Dashboard',   icon: 'home',      onClick: go('/admin/dashboard') },
-      { label: 'Events',      icon: 'calendar',  onClick: go('/admin/events') },
-      { label: 'Proposals',   icon: 'clipboard', onClick: go('/admin/proposals') },
-      { label: 'Clients',     icon: 'users',     onClick: go('/admin/clients') },
-      { label: 'Staff',       icon: 'userplus',  onClick: go('/admin/staffing') },
-      { label: 'Hiring',      icon: 'pen',       onClick: go('/admin/hiring') },
-      { label: 'Financials',  icon: 'dollar',    onClick: go('/admin/financials') },
-      { label: 'Marketing',   icon: 'mail',      onClick: go('/admin/email-marketing') },
-      { label: 'Drink Plans', icon: 'flask',     onClick: go('/admin/drink-plans') },
-      { label: 'Cocktail Menu', icon: 'book',    onClick: go('/admin/cocktail-menu') },
-      { label: 'Lab Notes',   icon: 'pen',       onClick: go('/admin/blog') },
-      { label: 'Settings',    icon: 'gear',      onClick: go('/admin/settings') },
+      { label: 'Dashboard',   icon: 'home',      onClick: go('/dashboard') },
+      { label: 'Events',      icon: 'calendar',  onClick: go('/events') },
+      { label: 'Proposals',   icon: 'clipboard', onClick: go('/proposals') },
+      { label: 'Clients',     icon: 'users',     onClick: go('/clients') },
+      { label: 'Staff',       icon: 'userplus',  onClick: go('/staffing') },
+      { label: 'Hiring',      icon: 'pen',       onClick: go('/hiring') },
+      { label: 'Financials',  icon: 'dollar',    onClick: go('/financials') },
+      { label: 'Marketing',   icon: 'mail',      onClick: go('/email-marketing') },
+      { label: 'Drink Plans', icon: 'flask',     onClick: go('/drink-plans') },
+      { label: 'Cocktail Menu', icon: 'book',    onClick: go('/cocktail-menu') },
+      { label: 'Lab Notes',   icon: 'pen',       onClick: go('/blog') },
+      { label: 'Settings',    icon: 'gear',      onClick: go('/settings') },
     ]},
     { group: 'Create', items: [
-      { label: 'New proposal', icon: 'plus', onClick: go('/admin/proposals/new') },
-      { label: 'New campaign', icon: 'plus', onClick: go('/admin/email-marketing/campaigns/new') },
+      { label: 'New proposal', icon: 'plus', onClick: go('/proposals/new') },
+      { label: 'New campaign', icon: 'plus', onClick: go('/email-marketing/campaigns/new') },
     ]},
     // TODO: hook up /api/admin/search in a follow-up PR to populate a live Records group.
   ];

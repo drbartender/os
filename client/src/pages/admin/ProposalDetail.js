@@ -82,7 +82,7 @@ export default function ProposalDetail() {
     }).catch(err => {
       if (err.status === 404) {
         toast.error('Proposal not found.');
-        navigate('/admin/proposals');
+        navigate('/proposals');
       } else {
         toast.error(err.message || 'Failed to load proposal. Try refreshing.');
       }
@@ -247,7 +247,7 @@ export default function ProposalDetail() {
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/proposals')}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/proposals')}>
           <Icon name="left" size={11} />Proposals
         </button>
       </div>
@@ -328,7 +328,7 @@ export default function ProposalDetail() {
                   <h3>Client</h3>
                   {proposal.client_id && (
                     <button type="button" className="btn btn-ghost btn-sm"
-                      onClick={() => navigate(`/admin/clients/${proposal.client_id}`)}>
+                      onClick={() => navigate(`/clients/${proposal.client_id}`)}>
                       <Icon name="external" size={11} />Open client
                     </button>
                   )}
@@ -550,7 +550,7 @@ export default function ProposalDetail() {
                   </dl>
                   <div className="vstack" style={{ gap: 6, marginTop: 12 }}>
                     <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }}
-                      onClick={() => navigate(`/admin/drink-plans/${drinkPlan.id}`)}>
+                      onClick={() => navigate(`/drink-plans/${drinkPlan.id}`)}>
                       <Icon name="external" size={11} />View details
                     </button>
                     <button type="button" className="btn btn-ghost btn-sm" style={{ justifyContent: 'center' }}
@@ -588,7 +588,7 @@ export default function ProposalDetail() {
                   Staffing, equipment, and shifts live on the event page.
                 </div>
                 <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }}
-                  onClick={() => navigate(`/admin/events/${proposal.id}`)}>
+                  onClick={() => navigate(`/events/${proposal.id}`)}>
                   <Icon name="calendar" size={11} />Open event
                 </button>
               </div>

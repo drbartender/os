@@ -2,16 +2,16 @@ import React from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 
 const TABS = [
-  { label: 'Leads', path: '/admin/email-marketing/leads' },
-  { label: 'Campaigns', path: '/admin/email-marketing/campaigns' },
-  { label: 'Analytics', path: '/admin/email-marketing/analytics' },
-  { label: 'Conversations', path: '/admin/email-marketing/conversations' },
+  { label: 'Leads', path: '/email-marketing/leads' },
+  { label: 'Campaigns', path: '/email-marketing/campaigns' },
+  { label: 'Analytics', path: '/email-marketing/analytics' },
+  { label: 'Conversations', path: '/email-marketing/conversations' },
 ];
 
 export default function EmailMarketingDashboard() {
   const location = useLocation();
-  // If we're at the root /admin/email-marketing, we render leads by default
-  const isRoot = location.pathname === '/admin/email-marketing';
+  // If we're at the root /email-marketing, we render leads by default
+  const isRoot = location.pathname === '/email-marketing';
 
   return (
     <div className="em-dashboard card">

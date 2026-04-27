@@ -38,7 +38,7 @@ export default function EmailCampaignsDashboard() {
     <div className="em-campaigns">
       <div className="em-section-header">
         <div className="em-actions">
-          <button className="btn btn-primary" onClick={() => navigate('/admin/email-marketing/campaigns/new')}>
+          <button className="btn btn-primary" onClick={() => navigate('/email-marketing/campaigns/new')}>
             + New Campaign
           </button>
         </div>
@@ -76,7 +76,7 @@ export default function EmailCampaignsDashboard() {
               const clickRate = sends > 0 ? (clicks / sends * 100).toFixed(1) : '—';
 
               return (
-                <tr key={c.id} onClick={() => navigate(`/admin/email-marketing/campaigns/${c.id}`)} className="em-row-clickable">
+                <tr key={c.id} onClick={() => navigate(`/email-marketing/campaigns/${c.id}`)} className="em-row-clickable">
                   <td><strong>{c.name}</strong></td>
                   <td><span className="em-badge em-badge-type">{c.type}</span></td>
                   <td><span className="em-badge" style={{ background: getStatusColor(c.status), color: '#fff' }}>{c.status}</span></td>

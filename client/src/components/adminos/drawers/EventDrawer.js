@@ -33,7 +33,7 @@ export default function EventDrawer({ id, open, onClose }) {
 
   const goPage = () => {
     onClose();
-    if (shift?.proposal_id) navigate(`/admin/events/${shift.proposal_id}`);
+    if (shift?.proposal_id) navigate(`/events/${shift.proposal_id}`);
   };
 
   const crumb = (

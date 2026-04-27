@@ -439,7 +439,7 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
                  <p><strong>Amount paid:</strong> $${amountPaid.toFixed(2)}</p>
                  <p><strong>Balance due:</strong> $${(snapshot.total - amountPaid).toFixed(2)}</p>
                  ${isUrgent ? `<p style="color: red;"><strong>Event is in ${daysUntil} days!</strong></p>` : ''}
-                 <p><a href="${ADMIN_URL}/admin/proposals/${pn.id}">View Proposal</a></p>`,
+                 <p><a href="${ADMIN_URL}/proposals/${pn.id}">View Proposal</a></p>`,
         }).catch(emailErr => console.error('Admin notification email failed:', emailErr));
       }
       if (clientEmail) {

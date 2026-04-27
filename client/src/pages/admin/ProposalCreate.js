@@ -244,7 +244,7 @@ export default function ProposalCreate() {
       };
       const res = await api.post('/proposals', payload);
       toast.success('Proposal created!');
-      navigate(`/admin/proposals/${res.data.id}`);
+      navigate(`/proposals/${res.data.id}`);
     } catch (err) {
       setError(err.message || 'Failed to create proposal.');
       setFieldErrors(err.fieldErrors || {});
@@ -277,7 +277,7 @@ export default function ProposalCreate() {
             flexWrap: 'wrap',
             background: 'var(--bg-1)',
           }}>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/proposals')}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/proposals')}>
               <Icon name="left" size={11} />Cancel
             </button>
             <div style={{ width: 1, height: 18, background: 'var(--line-1)' }} />

@@ -88,7 +88,7 @@ export default function DrinkPlanDetail() {
     try {
       await api.delete(`/drink-plans/${id}`);
       toast.success('Drink plan deleted.');
-      navigate('/admin/drink-plans');
+      navigate('/drink-plans');
     } catch (err) {
       toast.error(err.message || 'Failed to delete plan.');
     }
@@ -108,7 +108,7 @@ export default function DrinkPlanDetail() {
     return (
       <div className="page">
         <div className="hstack" style={{ marginBottom: 8 }}>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/drink-plans')}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/drink-plans')}>
             <Icon name="left" size={11} />Drink Plans
           </button>
         </div>
@@ -123,7 +123,7 @@ export default function DrinkPlanDetail() {
   return (
     <div className="page" style={{ maxWidth: 1200 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/drink-plans')}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/drink-plans')}>
           <Icon name="left" size={11} />Drink Plans
         </button>
       </div>

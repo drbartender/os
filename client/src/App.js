@@ -85,7 +85,7 @@ const SuspenseFallback = (
 );
 
 /**
- * /admin/events/shift/:id → /admin/events/:eventId?drawer=shift&drawerId=:id
+ * /events/shift/:id → /events/:eventId?drawer=shift&drawerId=:id
  * The legacy ShiftDetail page was retired in favor of ShiftDrawer mounted on
  * EventDetailPage. Old bookmarks and email links land here, look up the
  * shift's parent proposal/event, and forward to the canonical URL with the
@@ -101,12 +101,12 @@ function ShiftDetailRedirect() {
         if (cancelled) return;
         const eventId = r.data?.shift?.proposal_id;
         if (eventId) {
-          navigate(`/admin/events/${eventId}?drawer=shift&drawerId=${id}`, { replace: true });
+          navigate(`/events/${eventId}?drawer=shift&drawerId=${id}`, { replace: true });
         } else {
-          navigate('/admin/events', { replace: true });
+          navigate('/events', { replace: true });
         }
       })
-      .catch(() => { if (!cancelled) navigate('/admin/events', { replace: true }); });
+      .catch(() => { if (!cancelled) navigate('/events', { replace: true }); });
     return () => { cancelled = true; };
   }, [id, navigate]);
   return (
@@ -141,7 +141,7 @@ function getSiteContext() {
 function getHomePath(user) {
   if (!user) return '/login';
   // Admins and managers always land on the dashboard
-  if (user.role === 'admin' || user.role === 'manager') return '/admin';
+  if (user.role === 'admin' || user.role === 'manager') return '/dashboard';
   switch (user.onboarding_status) {
     case 'applied':
     case 'interviewing':
@@ -150,7 +150,15 @@ function getHomePath(user) {
     case 'submitted':
     case 'reviewed':
     case 'approved':
-      return '/portal';
+      // Portal-status users belong on staff.drbartender.com. If they end up on
+      // admin.drbartender.com (rare — bookmark, copy-paste, etc.), kick them
+      // cross-domain. Vercel cross-subdomain redirects only fire on full page
+      // loads, not client-side React Router navs, so use window.location here.
+      if (typeof window !== 'undefined' && window.location.hostname === 'admin.drbartender.com') {
+        window.location.replace('https://staff.drbartender.com/dashboard');
+        return '/login';
+      }
+      return '/dashboard';
     // Actively going through onboarding
     case 'hired':
       return '/welcome';
@@ -247,14 +255,13 @@ function HiringRoutes() {
           <Route path="/complete" element={<Completion />} />
         </Route>
         {/* Staff portal — kept here so fully-onboarded users who bookmarked hiring.drb.com don't hit a blank page */}
-        <Route path="/portal" element={<RequirePortal><StaffLayout /></RequirePortal>}>
-          <Route index element={<Navigate to="dashboard" replace />} />
-          <Route path="dashboard" element={<StaffDashboard />} />
-          <Route path="shifts" element={<StaffShifts />} />
-          <Route path="schedule" element={<StaffSchedule />} />
-          <Route path="events" element={<StaffEvents />} />
-          <Route path="resources" element={<StaffResources />} />
-          <Route path="profile" element={<StaffProfile />} />
+        <Route element={<RequirePortal><StaffLayout /></RequirePortal>}>
+          <Route path="/dashboard" element={<StaffDashboard />} />
+          <Route path="/shifts" element={<StaffShifts />} />
+          <Route path="/schedule" element={<StaffSchedule />} />
+          <Route path="/events" element={<StaffEvents />} />
+          <Route path="/resources" element={<StaffResources />} />
+          <Route path="/profile" element={<StaffProfile />} />
         </Route>
         {/* Public token routes still work */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
@@ -285,15 +292,14 @@ function StaffSiteRoutes() {
           <Route path="/payday-protocols" element={<PaydayProtocols />} />
           <Route path="/complete" element={<Completion />} />
         </Route>
-        {/* Staff portal */}
-        <Route path="/portal" element={<RequirePortal><StaffLayout /></RequirePortal>}>
-          <Route index element={<Navigate to="dashboard" replace />} />
-          <Route path="dashboard" element={<StaffDashboard />} />
-          <Route path="shifts" element={<StaffShifts />} />
-          <Route path="schedule" element={<StaffSchedule />} />
-          <Route path="events" element={<StaffEvents />} />
-          <Route path="resources" element={<StaffResources />} />
-          <Route path="profile" element={<StaffProfile />} />
+        {/* Staff portal — mounted at root on staff.drbartender.com */}
+        <Route element={<RequirePortal><StaffLayout /></RequirePortal>}>
+          <Route path="/dashboard" element={<StaffDashboard />} />
+          <Route path="/shifts" element={<StaffShifts />} />
+          <Route path="/schedule" element={<StaffSchedule />} />
+          <Route path="/events" element={<StaffEvents />} />
+          <Route path="/resources" element={<StaffResources />} />
+          <Route path="/profile" element={<StaffProfile />} />
         </Route>
         {/* Public token routes */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
@@ -352,41 +358,30 @@ function AppRoutes() {
         <Route path="/complete" element={<Completion />} />
       </Route>
 
-      {/* Portal (onboarding completed) — sidebar layout with child routes */}
-      <Route path="/portal" element={<RequirePortal><StaffLayout /></RequirePortal>}>
-        <Route index element={<Navigate to="dashboard" replace />} />
-        <Route path="dashboard" element={<StaffDashboard />} />
-        <Route path="shifts" element={<StaffShifts />} />
-        <Route path="schedule" element={<StaffSchedule />} />
-        <Route path="events" element={<StaffEvents />} />
-        <Route path="resources" element={<StaffResources />} />
-        <Route path="profile" element={<StaffProfile />} />
-      </Route>
-      {/* Admin + Manager shell */}
-      <Route path="/admin" element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}>
-        <Route index element={<Navigate to="dashboard" replace />} />
-        <Route path="dashboard" element={<Dashboard />} />
-        <Route path="staffing" element={<AdminStaffDashboard />} />
-        <Route path="staffing/legacy" element={<AdminDashboard />} />
-        <Route path="staffing/users/:id" element={<AdminUserDetail />} />
-        <Route path="staffing/applications/:id" element={<AdminApplicationDetail />} />
-        <Route path="hiring" element={<HiringDashboard />} />
-        <Route path="drink-plans" element={<DrinkPlansDashboard />} />
-        <Route path="drink-plans/:id" element={<DrinkPlanDetail />} />
-        <Route path="cocktail-menu" element={<Navigate to="/admin/settings" replace />} />
-        <Route path="drink-menu" element={<Navigate to="/admin/settings" replace />} />
-        <Route path="proposals" element={<ProposalsDashboard />} />
-        <Route path="proposals/new" element={<ProposalCreate />} />
-        <Route path="proposals/:id" element={<ProposalDetail />} />
-        <Route path="events" element={<EventsDashboard />} />
-        <Route path="events/:id" element={<EventDetailPage />} />
-        <Route path="events/shift/:id" element={<ShiftDetailRedirect />} />
-        <Route path="clients" element={<ClientsDashboard />} />
-        <Route path="clients/:id" element={<ClientDetail />} />
-        <Route path="financials" element={<FinancialsDashboard />} />
-        <Route path="settings" element={<SettingsDashboard />} />
-        <Route path="blog" element={<BlogDashboard />} />
-        <Route path="email-marketing" element={<EmailMarketingDashboard />}>
+      {/* Admin + Manager shell — mounted at root on admin.drbartender.com */}
+      <Route element={<ProtectedRoute adminOnly><AdminLayout /></ProtectedRoute>}>
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/staffing" element={<AdminStaffDashboard />} />
+        <Route path="/staffing/legacy" element={<AdminDashboard />} />
+        <Route path="/staffing/users/:id" element={<AdminUserDetail />} />
+        <Route path="/staffing/applications/:id" element={<AdminApplicationDetail />} />
+        <Route path="/hiring" element={<HiringDashboard />} />
+        <Route path="/drink-plans" element={<DrinkPlansDashboard />} />
+        <Route path="/drink-plans/:id" element={<DrinkPlanDetail />} />
+        <Route path="/cocktail-menu" element={<Navigate to="/settings" replace />} />
+        <Route path="/drink-menu" element={<Navigate to="/settings" replace />} />
+        <Route path="/proposals" element={<ProposalsDashboard />} />
+        <Route path="/proposals/new" element={<ProposalCreate />} />
+        <Route path="/proposals/:id" element={<ProposalDetail />} />
+        <Route path="/events" element={<EventsDashboard />} />
+        <Route path="/events/:id" element={<EventDetailPage />} />
+        <Route path="/events/shift/:id" element={<ShiftDetailRedirect />} />
+        <Route path="/clients" element={<ClientsDashboard />} />
+        <Route path="/clients/:id" element={<ClientDetail />} />
+        <Route path="/financials" element={<FinancialsDashboard />} />
+        <Route path="/settings" element={<SettingsDashboard />} />
+        <Route path="/blog" element={<BlogDashboard />} />
+        <Route path="/email-marketing" element={<EmailMarketingDashboard />}>
           <Route index element={<EmailLeadsDashboard />} />
           <Route path="leads" element={<EmailLeadsDashboard />} />
           <Route path="leads/:id" element={<EmailLeadDetail />} />

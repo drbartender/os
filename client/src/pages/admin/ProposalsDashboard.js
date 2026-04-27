@@ -129,7 +129,7 @@ export default function ProposalsDashboard() {
           <div className="page-subtitle">Quotes out the door — track which are sent, viewed, and accepted.</div>
         </div>
         <div className="page-actions">
-          <button type="button" className="btn btn-primary" onClick={() => navigate('/admin/proposals/new')}>
+          <button type="button" className="btn btn-primary" onClick={() => navigate('/proposals/new')}>
             <Icon name="plus" />New proposal
           </button>
         </div>
@@ -187,7 +187,7 @@ export default function ProposalsDashboard() {
                             type="button"
                             className="icon-btn"
                             title="View event"
-                            onClick={(e) => { e.stopPropagation(); navigate(`/admin/events/${p.id}`); }}
+                            onClick={(e) => { e.stopPropagation(); navigate(`/events/${p.id}`); }}
                           >
                             <Icon name="calendar" size={13} />
                           </button>

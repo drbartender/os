@@ -55,7 +55,7 @@ export default function ClientDetail() {
       })
       .catch(() => {
         toast.error('Failed to load client. Try refreshing.');
-        navigate('/admin/clients');
+        navigate('/clients');
       })
       .finally(() => setLoading(false));
   }, [id, navigate, toast]);
@@ -113,7 +113,7 @@ export default function ClientDetail() {
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/clients')}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/clients')}>
           <Icon name="left" size={11} />Clients
         </button>
       </div>
@@ -150,7 +150,7 @@ export default function ClientDetail() {
                 <Icon name="phone" size={12} />Call
               </a>
             )}
-            <button type="button" className="btn btn-primary" onClick={() => navigate(`/admin/proposals/new?client_id=${client.id}`)}>
+            <button type="button" className="btn btn-primary" onClick={() => navigate(`/proposals/new?client_id=${client.id}`)}>
               <Icon name="plus" size={12} />New proposal
             </button>
           </div>
@@ -181,7 +181,7 @@ export default function ClientDetail() {
                   </thead>
                   <tbody>
                     {proposals.map(p => (
-                      <tr key={p.id} onClick={() => navigate(`/admin/proposals/${p.id}`)}>
+                      <tr key={p.id} onClick={() => navigate(`/proposals/${p.id}`)}>
                         <td>
                           <strong>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</strong>
                         </td>

@@ -4,18 +4,21 @@ import { useAuth } from '../context/AuthContext';
 import BrandLogo from './BrandLogo';
 
 const STAFF_NAV = [
-  { label: 'Dashboard',   path: '/portal/dashboard',  icon: '📊' },
-  { label: 'Shifts',      path: '/portal/shifts',     icon: '📅' },
-  { label: 'My Schedule', path: '/portal/schedule',   icon: '🗓' },
-  { label: 'My Events',   path: '/portal/events',     icon: '📋' },
+  { label: 'Dashboard',   path: '/dashboard',  icon: '📊' },
+  { label: 'Shifts',      path: '/shifts',     icon: '📅' },
+  { label: 'My Schedule', path: '/schedule',   icon: '🗓' },
+  { label: 'My Events',   path: '/events',     icon: '📋' },
   'divider',
-  { label: 'Resources',   path: '/portal/resources',  icon: '📖' },
-  { label: 'Profile',     path: '/portal/profile',    icon: '👤' },
+  { label: 'Resources',   path: '/resources',  icon: '📖' },
+  { label: 'Profile',     path: '/profile',    icon: '👤' },
 ];
 
 // Admin/manager users see an extra entry to jump back to the admin shell.
+// Cross-subdomain hop (staff.drbartender.com → admin.drbartender.com), so this
+// renders as an <a href> anchor rather than a NavLink — React Router can't
+// navigate across origins.
 // Role flips (staff → manager) propagate via the AuthContext tab-focus refresh.
-const ADMIN_LINK = { label: 'Admin Portal', path: '/admin/dashboard', icon: '🛠' };
+const ADMIN_LINK = { label: 'Admin Portal', href: 'https://admin.drbartender.com/dashboard', icon: '🛠', external: true };
 
 export default function StaffLayout() {
   const { user, logout } = useAuth();
@@ -55,6 +58,16 @@ export default function StaffLayout() {
             {NAV_ITEMS.map((item, i) =>
               item === 'divider' ? (
                 <div key={i} className="admin-sidebar-divider" />
+              ) : item.external ? (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  className="admin-nav-item"
+                  onClick={() => setSidebarOpen(false)}
+                >
+                  <span className="admin-nav-icon">{item.icon}</span>
+                  {item.label}
+                </a>
               ) : (
                 <NavLink
                   key={item.path}

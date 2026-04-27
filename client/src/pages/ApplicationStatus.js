@@ -13,7 +13,7 @@ export default function ApplicationStatus() {
   // flipped them to 'hired' after they applied), forward them to the correct
   // destination instead of stranding them on the "application received" card.
   if (status === 'hired') return <Navigate to="/welcome" replace />;
-  if (['submitted', 'reviewed', 'approved'].includes(status)) return <Navigate to="/portal" replace />;
+  if (['submitted', 'reviewed', 'approved'].includes(status)) return <Navigate to="/dashboard" replace />;
   if (status === 'in_progress' && !user?.has_application) return <Navigate to="/apply" replace />;
 
   return (

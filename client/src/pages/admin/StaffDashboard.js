@@ -53,10 +53,10 @@ export default function StaffDashboard() {
           <div className="page-subtitle">Active roster — hiring pipeline lives next door.</div>
         </div>
         <div className="page-actions">
-          <button type="button" className="btn btn-secondary" onClick={() => navigate('/admin/hiring')}>
+          <button type="button" className="btn btn-secondary" onClick={() => navigate('/hiring')}>
             <Icon name="external" />Open hiring
           </button>
-          <button type="button" className="btn btn-primary" onClick={() => navigate('/admin/staffing/legacy')}>
+          <button type="button" className="btn btn-primary" onClick={() => navigate('/staffing/legacy')}>
             <Icon name="send" />Send SMS
           </button>
         </div>
@@ -90,7 +90,7 @@ export default function StaffDashboard() {
                   s.equipment_table_with_spandex && 'Table',
                 ].filter(Boolean);
                 return (
-                  <tr key={s.id} onClick={() => navigate(`/admin/staffing/users/${s.id}`)}>
+                  <tr key={s.id} onClick={() => navigate(`/staffing/users/${s.id}`)}>
                     <td>
                       <div className="hstack">
                         <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{initialsOf(s)}</div>

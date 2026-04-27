@@ -288,7 +288,7 @@ router.post('/:id/request', auth, requireOnboarded, asyncHandler(async (req, res
         eventTypeLabel: getEventTypeLabel({ event_type: si?.event_type, event_type_custom: si?.event_type_custom }),
         eventDate,
         position: position || 'Bartender',
-        adminUrl: `${ADMIN_URL}/admin/shifts`,
+        adminUrl: `${ADMIN_URL}/staffing`,
       });
       await sendEmail({ to: adminEmail, ...tpl });
     }

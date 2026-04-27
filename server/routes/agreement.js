@@ -9,7 +9,7 @@ const { getCurrentAgreement, CURRENT_VERSION } = require('../data/contractorAgre
 const { renderAgreementPdf } = require('../utils/agreementPdf');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { sendEmail } = require('../utils/email');
-const { ADMIN_URL } = require('../utils/urls');
+const { STAFF_URL } = require('../utils/urls');
 
 const router = express.Router();
 
@@ -209,7 +209,7 @@ router.post('/', signLimiter, auth, asyncHandler(async (req, res) => {
 
     // Background the email send — fire-and-forget with error capture.
     const safeName = escapeHtml(saved.full_name) || 'there';
-    const portalUrl = escapeHtml(`${ADMIN_URL}/portal`);
+    const portalUrl = escapeHtml(`${STAFF_URL}/dashboard`);
     sendEmail({
       to: saved.email,
       subject: 'Your signed Dr. Bartender Contractor Agreement',

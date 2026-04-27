@@ -297,7 +297,7 @@ export default function HiringDashboard() {
                       const isEditing = editingStatus === a.id;
 
                       return (
-                        <tr key={a.id} onClick={() => navigate(`/admin/staffing/applications/${a.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/staffing/applications/${a.id}`)} tabIndex={0} role="link">
+                        <tr key={a.id} onClick={() => navigate(`/staffing/applications/${a.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/staffing/applications/${a.id}`)} tabIndex={0} role="link">
                           <td>
                             <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{a.full_name}</div>
                             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{a.email}</div>
@@ -348,7 +348,7 @@ export default function HiringDashboard() {
                           </td>
                           <td>
                             <button className="btn btn-secondary btn-sm"
-                              onClick={e => { e.stopPropagation(); navigate(`/admin/staffing/applications/${a.id}`); }}>
+                              onClick={e => { e.stopPropagation(); navigate(`/staffing/applications/${a.id}`); }}>
                               View →
                             </button>
                           </td>
@@ -407,7 +407,7 @@ export default function HiringDashboard() {
                     {filteredUsers.map(u => {
                       const pct = calcPct(u);
                       return (
-                        <tr key={u.id} onClick={() => navigate(`/admin/staffing/users/${u.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/admin/staffing/users/${u.id}`)} tabIndex={0} role="link">
+                        <tr key={u.id} onClick={() => navigate(`/staffing/users/${u.id}`)} onKeyDown={(e) => e.key === 'Enter' && navigate(`/staffing/users/${u.id}`)} tabIndex={0} role="link">
                           <td>
                             <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{u.preferred_name || '—'}</div>
                             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{u.email}</div>
@@ -428,7 +428,7 @@ export default function HiringDashboard() {
                           <td style={{ fontSize: '0.82rem' }}>{new Date(u.created_at).toLocaleDateString()}</td>
                           <td>
                             <button className="btn btn-secondary btn-sm"
-                              onClick={e => { e.stopPropagation(); navigate(`/admin/staffing/users/${u.id}`); }}>
+                              onClick={e => { e.stopPropagation(); navigate(`/staffing/users/${u.id}`); }}>
                               View →
                             </button>
                           </td>

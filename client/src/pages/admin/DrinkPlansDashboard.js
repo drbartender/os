@@ -174,7 +174,7 @@ export default function DrinkPlansDashboard() {
               {!loading && filtered.map(p => {
                 const st = STATUS[p.status] || { label: p.status || '—', kind: 'neutral' };
                 return (
-                  <tr key={p.id} onClick={() => navigate(`/admin/drink-plans/${p.id}`)}>
+                  <tr key={p.id} onClick={() => navigate(`/drink-plans/${p.id}`)}>
                     <td>
                       <strong>{p.client_name || '—'}</strong>
                       {p.client_email && <div className="sub">{p.client_email}</div>}

@@ -261,7 +261,7 @@ export default function AdminDashboard() {
                             s.equipment_table_with_spandex && 'Table',
                           ].filter(Boolean);
                           return (
-                            <tr key={s.id} onClick={() => navigate(`/admin/staffing/users/${s.id}`)}>
+                            <tr key={s.id} onClick={() => navigate(`/staffing/users/${s.id}`)}>
                               <td>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                                   <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{s.preferred_name || '—'}</span>
@@ -281,7 +281,7 @@ export default function AdminDashboard() {
                               </td>
                               <td>
                                 <button className="btn btn-secondary btn-sm"
-                                  onClick={e => { e.stopPropagation(); navigate(`/admin/staffing/users/${s.id}`); }}>
+                                  onClick={e => { e.stopPropagation(); navigate(`/staffing/users/${s.id}`); }}>
                                   View →
                                 </button>
                               </td>
@@ -562,7 +562,7 @@ export default function AdminDashboard() {
                             : 'TBD';
                           const time = shift.start_time && shift.end_time
                             ? `${shift.start_time}\u2013${shift.end_time}` : shift.start_time || 'TBD';
-                          setMsgBody(`Hey! We have an event coming up: ${shift.event_type_label || 'event'} at ${shift.client_name || 'TBD'} on ${date} at ${time} \u2014 ${shift.location || 'TBD'}. Interested in working it? Request the shift in your portal: https://admin.drbartender.com/portal - Dr. Bartender`);
+                          setMsgBody(`Hey! We have an event coming up: ${shift.event_type_label || 'event'} at ${shift.client_name || 'TBD'} on ${date} at ${time} \u2014 ${shift.location || 'TBD'}. Interested in working it? Request the shift in your portal: https://staff.drbartender.com/dashboard - Dr. Bartender`);
                         }
                       }}>
                       <option value="">Select a shift…</option>

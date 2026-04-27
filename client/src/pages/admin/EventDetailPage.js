@@ -46,7 +46,7 @@ export default function EventDetailPage() {
     return (
       <div className="page">
         <div className="hstack" style={{ marginBottom: 8 }}>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/events')}>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/events')}>
             <Icon name="left" size={11} />Events
           </button>
         </div>
@@ -66,7 +66,7 @@ export default function EventDetailPage() {
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/events')}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/events')}>
           <Icon name="left" size={11} />Events
         </button>
       </div>
@@ -99,7 +99,7 @@ export default function EventDetailPage() {
             </div>
           </div>
           <div className="page-actions" style={{ flexShrink: 0 }}>
-            <button type="button" className="btn btn-ghost" onClick={() => navigate(`/admin/proposals/${proposal.id}`)}>
+            <button type="button" className="btn btn-ghost" onClick={() => navigate(`/proposals/${proposal.id}`)}>
               <Icon name="external" size={12} />Open proposal
             </button>
             {shifts.length === 1 && (
@@ -253,7 +253,7 @@ export default function EventDetailPage() {
               </dl>
               <div className="hstack" style={{ marginTop: 12, gap: 6 }}>
                 <button type="button" className="btn btn-secondary" style={{ flex: 1 }}
-                  onClick={() => navigate(`/admin/proposals/${proposal.id}`)}>
+                  onClick={() => navigate(`/proposals/${proposal.id}`)}>
                   <Icon name="external" size={11} />Edit proposal
                 </button>
               </div>
@@ -272,7 +272,7 @@ export default function EventDetailPage() {
                 </dl>
                 {proposal.client_id && (
                   <div className="hstack" style={{ marginTop: 12 }}>
-                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate(`/admin/clients/${proposal.client_id}`)}>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate(`/clients/${proposal.client_id}`)}>
                       <Icon name="external" size={11} />Open client
                     </button>
                   </div>

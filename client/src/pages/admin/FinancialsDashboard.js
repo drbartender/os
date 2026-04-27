@@ -93,7 +93,7 @@ export default function FinancialsDashboard() {
                 const paid = Number(p.amount_paid || 0);
                 const bal = total - paid;
                 return (
-                  <tr key={p.id} onClick={() => navigate(`/admin/proposals/${p.id}`)}>
+                  <tr key={p.id} onClick={() => navigate(`/proposals/${p.id}`)}>
                     <td><strong>{p.client_name || '—'}</strong></td>
                     <td>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</td>
                     <td>{p.event_date ? fmtDate(String(p.event_date).slice(0, 10), { year: 'numeric' }) : '—'}</td>

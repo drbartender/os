@@ -45,7 +45,7 @@ export default function EmailCampaignCreate() {
       };
       const res = await api.post('/email-marketing/campaigns', payload);
       toast.success('Draft saved.');
-      navigate(`/admin/email-marketing/campaigns/${res.data.id}`);
+      navigate(`/email-marketing/campaigns/${res.data.id}`);
     } catch (err) {
       setError(err.message || 'Failed to create campaign.');
       setFieldErrors(err.fieldErrors || {});
@@ -117,7 +117,7 @@ export default function EmailCampaignCreate() {
         <FormBanner error={error} fieldErrors={fieldErrors} />
 
         <div className="em-form-actions">
-          <button type="button" className="btn btn-secondary" onClick={() => navigate('/admin/email-marketing/campaigns')}>Cancel</button>
+          <button type="button" className="btn btn-secondary" onClick={() => navigate('/email-marketing/campaigns')}>Cancel</button>
           <button type="submit" className="btn btn-primary" disabled={saving}>
             {saving ? 'Creating...' : 'Create Campaign'}
           </button>

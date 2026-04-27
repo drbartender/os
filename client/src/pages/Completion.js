@@ -29,14 +29,14 @@ export default function Completion() {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => navigate('/portal/shifts')}
+            onClick={() => navigate('/shifts')}
           >
             See Open Shifts →
           </button>
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => navigate('/portal/dashboard')}
+            onClick={() => navigate('/dashboard')}
           >
             Go to Dashboard
           </button>
