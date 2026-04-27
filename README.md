@@ -130,7 +130,12 @@ dr-bartender/
 │   │   ├── mocktails.js        # Mocktail menu CRUD
 │   │   ├── payment.js          # Payment method + W-9 upload
 │   │   ├── progress.js         # Onboarding step tracking
-│   │   ├── proposals.js        # Service proposals + pricing calculator
+│   │   ├── proposals/          # Service proposals (publicToken/public/metadata/crud sub-routers)
+│   │   │   ├── index.js        # Composition router
+│   │   │   ├── publicToken.js  # /t/:token view + sign
+│   │   │   ├── public.js       # /public/* — packages, addons, calculate, capture-lead, quote-draft, submit
+│   │   │   ├── metadata.js     # /packages, /addons, /calculate, /financials, /dashboard-stats
+│   │   │   └── crud.js         # admin CRUD + status/notes/create-shift/balance-due-date/send-reminder/record-payment
 │   │   ├── shifts.js           # Shift scheduling
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
 │   │   ├── emailMarketing.js   # Email marketing leads, campaigns, sequences, conversations

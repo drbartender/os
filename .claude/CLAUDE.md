@@ -55,7 +55,12 @@ dr-bartender/
 │   │   ├── mocktails.js       # Mocktail menu management
 │   │   ├── payment.js         # Payment tracking
 │   │   ├── progress.js        # Onboarding progress tracking
-│   │   ├── proposals.js       # Proposal CRUD + public token view
+│   │   ├── proposals/         # Proposal endpoints (split by concern; mount order: publicToken → public → metadata → crud)
+│   │   │   ├── index.js       # Composition router
+│   │   │   ├── publicToken.js # /t/:token (view + sign)
+│   │   │   ├── public.js      # /public/* (packages, addons, calculate, capture-lead, quote-draft, submit)
+│   │   │   ├── metadata.js    # /packages, /addons, /calculate (admin), /financials, /dashboard-stats
+│   │   │   └── crud.js        # /, /:id, /:id/status, /:id/notes, /:id/create-shift, /:id/balance-due-date, /:id/send-reminder, /:id/record-payment
 │   │   ├── shifts.js          # Shift management
 │   │   ├── stripe.js          # Stripe checkout + webhooks
 │   │   ├── emailMarketing.js  # Email marketing (leads, campaigns, sequences, conversations)
