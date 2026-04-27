@@ -12,6 +12,7 @@
     "lint:fix": "eslint server/ --fix",
     "audit:check": "npm audit --omit=dev || true",
     "build:testing-guide": "node scripts/build-testing-guide.js",
+    "bugs:list": "node server/scripts/bugsList.js",
     "prepare": "husky"
   },
   "dependencies": {

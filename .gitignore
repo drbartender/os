@@ -18,3 +18,8 @@ client/.claude/
 
 # Loose screenshots at repo root (intentional assets live under client/public/ or client/src/)
 /*.png
+
+# Lab Rat runtime data — never committed
+server/data/tester-bugs/*.jsonl
+server/data/tester-bugs/status.json
+server/data/mission-completions.jsonl
