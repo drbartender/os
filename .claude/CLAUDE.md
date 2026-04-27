@@ -179,11 +179,16 @@ dr-bartender/
 │   │   │   ├── Welcome.js, FieldGuide.js, Agreement.js
 │   │   │   ├── ContractorProfile.js, PaydayProtocols.js, Completion.js
 │   │   │   ├── Application.js, ApplicationStatus.js
-│   │   │   ├── AdminDashboard.js, AdminApplicationDetail.js, AdminUserDetail.js
+│   │   │   ├── AdminDashboard.js, AdminApplicationDetail.js
 │   │   │   ├── HiringLanding.js           # Public hiring site (hiring.drbartender.com)
 │   │   │   ├── admin/
 │   │   │   │   ├── BlogDashboard.js
 │   │   │   │   ├── ClientDetail.js
+│   │   │   │   ├── userDetail/        # Staff detail page (was AdminUserDetail.js, 1803 lines)
+│   │   │   │   │   ├── AdminUserDetail.js     # Parent — page shell, identity bar, tab routing, modals
+│   │   │   │   │   ├── helpers.js             # rateOf, ytdShiftCount, computeYtdEstEarnings, initialsOf, parsePositions, PAYMENT_METHODS
+│   │   │   │   │   ├── components/            # TabButton, Sparkbars, EquipmentDisplay, AssignToEventModal
+│   │   │   │   │   └── tabs/                  # OverviewTab, ShiftsTab, CertificationsTab, PayoutsTab, DocumentsTab, MessagesTab, ApplicationTab
 │   │   │   │   ├── ClientsDashboard.js
 │   │   │   │   ├── CocktailMenuDashboard.js
 │   │   │   │   ├── Dashboard.js
