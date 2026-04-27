@@ -302,7 +302,7 @@ router.post('/', publicLimiter, asyncHandler(async (req, res) => {
       errs.testerEmail = 'Invalid email format';
     }
   }
-  if (Object.keys(errs).length) throw new ValidationError('Invalid feedback', errs);
+  if (Object.keys(errs).length) throw new ValidationError(errs, 'Invalid feedback');
 
   const { id } = await appendBug({
     kind, missionId: missionId || null, stepIndex,
@@ -1305,7 +1305,7 @@ router.post('/shortlist', publicLimiter, asyncHandler(async (req, res) => {
     errs.adminComfort = `adminComfort must be one of ${VALID_COMFORT.join(',')}`;
   }
   if (!['desktop', 'mobile'].includes(device)) errs.device = 'device must be desktop or mobile';
-  if (Object.keys(errs).length) throw new ValidationError('Invalid shortlist input', errs);
+  if (Object.keys(errs).length) throw new ValidationError(errs, 'Invalid shortlist input');
 
   const [counts, openBugCounts] = await Promise.all([
     getCompletionCounts(),
@@ -1325,7 +1325,7 @@ router.post('/shortlist', publicLimiter, asyncHandler(async (req, res) => {
 router.post('/seed', publicLimiter, asyncHandler(async (req, res) => {
   const { recipe } = req.body || {};
   if (!recipe || typeof recipe !== 'string') {
-    throw new ValidationError('recipe required', { recipe: 'required' });
+    throw new ValidationError({ recipe: 'required' }, 'recipe required');
   }
   const result = await runSeedRecipe(recipe);
   res.json({ ok: true, ...result });
@@ -1334,7 +1334,7 @@ router.post('/seed', publicLimiter, asyncHandler(async (req, res) => {
 router.post('/complete', publicLimiter, asyncHandler(async (req, res) => {
   const { missionId, testerName } = req.body || {};
   if (!missionId || !catalog.byId[missionId]) {
-    throw new ValidationError('Unknown mission', { missionId: 'unknown' });
+    throw new ValidationError({ missionId: 'unknown' }, 'Unknown mission');
   }
   await logCompletion(missionId, testerName || null);
   res.json({ ok: true });

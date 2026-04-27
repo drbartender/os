@@ -20,7 +20,7 @@ router.post('/', publicLimiter, asyncHandler(async (req, res) => {
       errs.testerEmail = 'Invalid email format';
     }
   }
-  if (Object.keys(errs).length) throw new ValidationError('Invalid feedback', errs);
+  if (Object.keys(errs).length) throw new ValidationError(errs, 'Invalid feedback');
 
   const { id } = await appendBug({
     kind, missionId: missionId || null, stepIndex,
