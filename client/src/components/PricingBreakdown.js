@@ -15,8 +15,8 @@ export default function PricingBreakdown({ snapshot, compact = false }) {
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <tbody>
           {snapshot.breakdown.map((item, i) => (
-            <tr key={i} style={{ borderBottom: '1px solid var(--cream-dark, #e8e0d4)' }}>
-              <td style={{ padding: compact ? '0.4rem 0' : '0.6rem 0', color: 'var(--deep-brown, #3a2218)' }}>
+            <tr key={i} style={{ borderBottom: '1px solid var(--line-1)' }}>
+              <td style={{ padding: compact ? '0.4rem 0' : '0.6rem 0', color: 'var(--ink-1)' }}>
                 {item.label}
               </td>
               <td style={{
@@ -24,7 +24,7 @@ export default function PricingBreakdown({ snapshot, compact = false }) {
                 textAlign: 'right',
                 fontWeight: 500,
                 whiteSpace: 'nowrap',
-                color: Number(item.amount) < 0 ? '#2d6a4f' : 'var(--deep-brown, #3a2218)'
+                color: Number(item.amount) < 0 ? 'hsl(var(--ok-h) var(--ok-s) 38%)' : 'var(--ink-1)'
               }}>
                 {formatCurrency(item.amount)}
               </td>
@@ -32,12 +32,12 @@ export default function PricingBreakdown({ snapshot, compact = false }) {
           ))}
         </tbody>
         <tfoot>
-          <tr style={{ borderTop: '2px solid var(--deep-brown, #3a2218)' }}>
+          <tr style={{ borderTop: '2px solid var(--line-3)' }}>
             <td style={{
               padding: compact ? '0.6rem 0' : '0.8rem 0',
               fontWeight: 700,
               fontSize: compact ? '1rem' : '1.1rem',
-              color: 'var(--deep-brown, #3a2218)'
+              color: 'var(--ink-1)'
             }}>
               Total
             </td>
@@ -46,7 +46,7 @@ export default function PricingBreakdown({ snapshot, compact = false }) {
               textAlign: 'right',
               fontWeight: 700,
               fontSize: compact ? '1rem' : '1.1rem',
-              color: 'var(--deep-brown, #3a2218)'
+              color: 'var(--ink-1)'
             }}>
               {formatCurrency(snapshot.total)}
             </td>

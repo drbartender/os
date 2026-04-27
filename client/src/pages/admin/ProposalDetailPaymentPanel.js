@@ -164,7 +164,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
           <dt>Total</dt><dd className="num">{fmt$2dp(totalPrice)}</dd>
           <dt>Paid</dt><dd className="num">{fmt$2dp(amountPaid)}</dd>
           <dt>Balance</dt>
-          <dd className="num" style={{ color: balanceDue > 0 ? 'var(--ms-camel, hsl(38 60% 50%))' : '' }}>
+          <dd className="num" style={{ color: balanceDue > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
             {fmt$2dp(balanceDue)}
           </dd>
           {proposal.payment_type && (
@@ -240,7 +240,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
             {chargeResult && (
               <div className="tiny" style={{
                 marginTop: 6,
-                color: chargeResult.includes('success') ? 'var(--ms-emerald, #15803d)' : 'var(--ms-bordeaux, #b91c1c)',
+                color: chargeResult.includes('success') ? 'hsl(var(--ok-h) var(--ok-s) 38%)' : 'hsl(var(--danger-h) var(--danger-s) 50%)',
               }}>
                 {chargeResult}
               </div>
@@ -259,7 +259,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
               <Icon name="external" size={11} />
               {generatingLink ? 'Generating…' : 'Generate payment link'}
             </button>
-            {linkError && <div className="tiny" style={{ color: 'var(--ms-bordeaux, #b91c1c)', marginTop: 6 }}>{linkError}</div>}
+            {linkError && <div className="tiny" style={{ color: 'hsl(var(--danger-h) var(--danger-s) 50%)', marginTop: 6 }}>{linkError}</div>}
             {paymentLinkUrl && (
               <div className="hstack" style={{ marginTop: 8, gap: 6 }}>
                 <input className="input" readOnly value={paymentLinkUrl}

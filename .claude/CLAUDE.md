@@ -102,7 +102,6 @@ dr-bartender/
 │   │   │   ├── AdminBreadcrumbs.js # Breadcrumb trail inside the admin layout header
 │   │   │   ├── AdminLayout.js     # Admin sidebar + header layout
 │   │   │   ├── BrandLogo.js       # Dr. Bartender logo component
-│   │   │   ├── ClickableRow.js    # <tr> wrapper: click navigates, drag selects text
 │   │   │   ├── ConfirmModal.js    # Confirmation dialog component
 │   │   │   ├── DrinkPlanSelections.js # Drink plan selection display
 │   │   │   ├── ErrorBoundary.js   # React error boundary

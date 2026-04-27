@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
-import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmt$, fmt$2dp, fmtDate } from '../../components/adminos/format';
 
@@ -46,9 +45,6 @@ export default function FinancialsDashboard() {
         <div>
           <div className="page-title">Financials</div>
           <div className="page-subtitle">Revenue, outstanding balances, and recent payments.</div>
-        </div>
-        <div className="page-actions">
-          <button type="button" className="btn btn-secondary"><Icon name="external" />Export CSV</button>
         </div>
       </div>
 

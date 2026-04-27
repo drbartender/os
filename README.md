@@ -173,7 +173,7 @@ dr-bartender/
 │   │   │   ├── leadSources.js  # Lead source enum (mirrors schema CHECK + server validator)
 │   │   │   └── timeOptions.js  # Time option generator + 12h formatter + input parser
 │   │   ├── components/         # AdminBreadcrumbs, AdminLayout, StaffLayout, Layout, PublicLayout,
-│   │   │                       # InvoiceDropdown, SignaturePad, ClickableRow, FileUpload,
+│   │   │                       # InvoiceDropdown, SignaturePad, FileUpload,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, MenuSamplesModal,
 │   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,
 │   │   │                       # TimePicker, NumberStepper, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler

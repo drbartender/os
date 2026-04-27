@@ -59,7 +59,7 @@ export default function InvoiceDropdown({ proposalId, proposalToken, isClient = 
           {invoices.map(inv => {
             const isPaid = inv.status === 'paid';
             const isPartial = inv.status === 'partially_paid';
-            const color = isPaid ? 'var(--sage)' : 'var(--rust)';
+            const color = isPaid ? 'hsl(var(--ok-h) var(--ok-s) 52%)' : 'hsl(var(--danger-h) var(--danger-s) 65%)';
             const statusLabel = isPaid ? 'Paid' : isPartial ? 'Partial' : 'Due';
             const displayAmount = isPaid ? inv.amount_paid : inv.amount_due;
 
