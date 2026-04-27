@@ -106,6 +106,10 @@ export default function ProposalDetail() {
   // below — only when there's actually an auto-added upgrade to label.
   useEffect(() => {
     if (!id) return;
+    // Clear stale data when navigating between proposals so the previous
+    // proposal's drink plan can't briefly flash before the new one resolves.
+    setDrinkPlan(null);
+    setPlanCocktails([]);
     setDrinkPlanLoading(true);
     api.get(`/drink-plans/by-proposal/${id}`)
       .then(planRes => setDrinkPlan(planRes.data))

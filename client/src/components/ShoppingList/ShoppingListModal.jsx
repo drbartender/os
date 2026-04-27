@@ -1,5 +1,4 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { generateShoppingListPDF } from './ShoppingListPDF';
 import { generateShoppingList } from './generateShoppingList';
 import {
   DndContext,
@@ -181,6 +180,9 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
         guestCount: parseInt(guestCount, 10) || edited.guestCount,
         eventTypeLabel: edited.eventTypeLabel || listData.eventTypeLabel,
       };
+      // Dynamic-import the PDF generator (which carries the 129KB embedded logo
+      // + jspdf) so admins who never download a PDF don't pay that cost.
+      const { generateShoppingListPDF } = await import('./ShoppingListPDF');
       const blob = await generateShoppingListPDF(finalData);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

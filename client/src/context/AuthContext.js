@@ -1,7 +1,11 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import api from '../utils/api';
 
 const AuthContext = createContext(null);
+
+// Throttle visibilitychange refreshes — admins who tab-flip heavily would
+// otherwise trigger /auth/me on every focus event.
+const TAB_FOCUS_REFRESH_COOLDOWN_MS = 30_000;
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -57,11 +61,21 @@ export function AuthProvider({ children }) {
   // permission checks are always fresh — this just keeps the *UI* in sync
   // (sidebar links, route guards) without forcing the user to manually refresh
   // after an admin promotes/deactivates them in another window.
+  const lastRefreshAt = useRef(0);
+  const refreshInflight = useRef(false);
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState !== 'visible') return;
       if (!localStorage.getItem('token')) return;
-      refreshUser().catch(() => { /* swallow — refreshUser already handles 401 */ });
+      if (refreshInflight.current) return;
+      if (Date.now() - lastRefreshAt.current < TAB_FOCUS_REFRESH_COOLDOWN_MS) return;
+      refreshInflight.current = true;
+      refreshUser()
+        .catch(() => { /* swallow — refreshUser already handles 401 */ })
+        .finally(() => {
+          refreshInflight.current = false;
+          lastRefreshAt.current = Date.now();
+        });
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);

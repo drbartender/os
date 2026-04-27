@@ -1300,6 +1300,14 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Partial index supporting the admin badge-count query that filters drink_plans
+-- by shopping_list_status='pending_review'. Kept partial because the only state
+-- queried by index is the small "needs review" subset; approved/null rows are
+-- the bulk and never filtered by this column.
+CREATE INDEX IF NOT EXISTS idx_drink_plans_shopping_list_pending
+  ON drink_plans(shopping_list_status)
+  WHERE shopping_list_status = 'pending_review';
+
 -- ─── Manual Event Creation (shifts without proposals) ────────────
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS client_name VARCHAR(255);
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS client_email VARCHAR(255);

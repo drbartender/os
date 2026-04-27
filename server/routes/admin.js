@@ -101,6 +101,17 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
     throw new ValidationError({ status: 'Invalid status' });
   }
 
+  // Defense-in-depth cap on the admin-supplied personal note so the email body
+  // (and the customMessageBlock that gets esc()'d into HTML) can't grow without bound.
+  if (customMessage !== undefined && customMessage !== null) {
+    if (typeof customMessage !== 'string') {
+      throw new ValidationError({ customMessage: 'Personal note must be a string.' });
+    }
+    if (customMessage.length > 2000) {
+      throw new ValidationError({ customMessage: 'Personal note must be 2000 characters or fewer.' });
+    }
+  }
+
   // All writes in this handler (users status + onboarding_progress seed + contractor_profiles
   // seed from application + audit log) share one transaction so a partial failure can't leave
   // a user flipped to 'hired' with a half-seeded profile.
@@ -281,9 +292,13 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
 }));
 
 // Map a status value to an email template factory. Returns null for internal
-// states (in_progress, reviewed, approved) that should not notify the applicant.
+// states (in_progress, reviewed, approved, applied, submitted) that should not
+// notify the applicant. 'applied' is auto-set on application submission and
+// already triggers applicationReceivedConfirmation from POST /application —
+// re-firing it here on an admin status revert would send the user a duplicate
+// "we received your application" email. 'submitted' is an onboarding-progress
+// state, not an application state, so no email applies.
 function pickStatusEmail(status, ctx) {
-  if (status === 'applied' || status === 'submitted') return emailTemplates.applicationReceivedConfirmation(ctx);
   if (status === 'interviewing') return emailTemplates.applicationInterviewInvite(ctx);
   if (status === 'hired') return emailTemplates.applicationHired(ctx);
   if (status === 'rejected') return emailTemplates.applicationRejected(ctx);

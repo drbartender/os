@@ -34,7 +34,6 @@ export default function EventDrawer({ id, open, onClose }) {
   const goPage = () => {
     onClose();
     if (shift?.proposal_id) navigate(`/admin/events/${shift.proposal_id}`);
-    else if (shift?.id) navigate(`/admin/events/shift/${shift.id}`);
   };
 
   const crumb = (
@@ -46,8 +45,10 @@ export default function EventDrawer({ id, open, onClose }) {
     </div>
   );
 
+  // Manual events have no full event page (ShiftDetail.js was retired); the drawer
+  // is the canonical view, so suppress the "Open page" affordance for them.
   return (
-    <Drawer open={open} onClose={onClose} crumb={crumb} onOpenPage={shift ? goPage : undefined}>
+    <Drawer open={open} onClose={onClose} crumb={crumb} onOpenPage={shift?.proposal_id ? goPage : undefined}>
       {loading && <div className="muted">Loading…</div>}
       {err && <div className="chip danger">{err}</div>}
       {!loading && !err && !shift && open && <div className="muted">Event not found.</div>}

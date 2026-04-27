@@ -191,12 +191,16 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | POST | `/` | Admin | Create new plan (generates UUID token) |
 | GET | `/by-proposal/:proposalId` | Admin | Fetch plan linked to a proposal |
 | GET | `/:id/shopping-list-data` | Admin | Shaped data for shopping list generation (joins proposal for guest_count, resolves cocktail ingredients) |
+| GET | `/:id/shopping-list` | Admin | Fetch persisted shopping list + `shopping_list_status` |
+| PUT | `/:id/shopping-list` | Admin | Save shopping list edits (auto-saved by the modal while admin edits) |
+| PATCH | `/:id/shopping-list/approve` | Admin | Approve list (flips `shopping_list_status` to `'approved'`) and emails client a link |
 | GET | `/:id` | Admin | Fetch single plan by ID |
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | PATCH | `/:id/status` | Admin | Update plan status |
 | DELETE | `/:id` | Admin | Delete a plan |
 | GET | `/t/:token` | Public | Fetch questionnaire by token (JOINs proposal for guest_count, num_bartenders, pricing_snapshot) |
-| PUT | `/t/:token` | Public | Save draft or submit selections (on submit: processes addOns into proposal_addons, recalculates pricing, sends admin email) |
+| PUT | `/t/:token` | Public | Save draft or submit selections (on submit: processes addOns into proposal_addons, recalculates pricing, sends admin email, auto-generates pending_review shopping list) |
+| GET | `/t/:token/shopping-list` | Public | Client read-only view — returns the list only once admin has approved it |
 
 ### Cocktails — `/api/cocktails`
 | Method | Path | Auth | Description |
@@ -228,6 +232,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/t/:token` | Public | Fetch proposal by token (tracks views + geolocation) |
 | POST | `/t/:token/sign` | Public | Client signature + acceptance |
 | PATCH | `/:id/balance-due-date` | Admin | Override balance due date for a proposal |
+| POST | `/:id/send-reminder` | Admin | Email the client a balance-due reminder (logged to proposal_activity_log) |
 | POST | `/:id/record-payment` | Admin | Record an outside payment (cash, Venmo, etc.) — triggers shift creation |
 | POST | `/:id/create-shift` | Admin | Manually create event shift from a paid proposal |
 
@@ -466,7 +471,11 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `serving_type`, `selections` (JSONB — chosen cocktails/mocktails, syrupSelections, addOns)
 - `selections.addOns` — object keyed by addon slug with metadata (e.g., champagne-toast servingStyle)
 - `status`: pending | draft | submitted | reviewed
-- On submit: addOns flow into proposal_addons, pricing is recalculated, admin notified
+- `shopping_list` (JSONB) — auto-generated at submission, admin-editable, persisted across modal opens
+- `shopping_list_status` VARCHAR(20) CHECK (NULL | `'pending_review'` | `'approved'`) — gates the public `/t/:token/shopping-list` endpoint
+- `shopping_list_approved_at` TIMESTAMPTZ — set when admin approves and sends the list
+- Partial index `idx_drink_plans_shopping_list_pending` covers the admin badge-count "pending review" filter
+- On submit: addOns flow into proposal_addons, pricing is recalculated, admin notified, `shopping_list` auto-generated server-side as `pending_review`
 - Auto-emails the drink plan link to client on creation
 
 ### Proposals & Pricing
@@ -592,16 +601,20 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 
 ### Shopping List Generator
 
-Located in `client/src/components/ShoppingList/`. Fully client-side PDF generation (no backend persistence).
+Located in `client/src/components/ShoppingList/` (frontend) and `server/utils/shoppingList.js` (backend mirror).
 
-- **`shoppingListPars.js`** — 100-guest baseline quantities (single source of truth for standard bar pars)
-- **`generateShoppingList.js`** — Scales pars by `guestCount / 100`, merges signature cocktail ingredients, boosts shared ingredients
-- **`ShoppingListPDF.jsx`** — jsPDF implementation for branded shopping list PDF generation with Dr. Bartender brand colors
-- **`ShoppingListButton.jsx`** — Fetches `GET /api/drink-plans/:id/shopping-list-data`, handles missing guest count prompt, opens the modal
-- **`ShoppingListModal.jsx`** — Full-screen editable modal: add/remove/rename items, edit quantities, change guest count with recalculate prompt, then Download PDF
-- **`logoBase64.js`** — Logo embedded as base64 data URI for use in PDFs
+**Pipeline:** drink plan submission → server auto-generates a `pending_review` list and stores it on `drink_plans.shopping_list` (JSONB). Admin reviews/edits in the modal (auto-save every 1.5s) then clicks "Approve & Send to Client" which flips `shopping_list_status` to `'approved'` and emails the client a link. Public `GET /t/:token/shopping-list` returns the list only once approved.
 
-Accessible via the "Shopping List" button on Drink Plan Detail (admin), visible when plan status is `submitted` or `reviewed`.
+- **`shoppingListPars.js`** (client) — 100-guest baseline quantities (single source of truth for standard bar pars)
+- **`generateShoppingList.js`** (client) — Scales pars by `guestCount / 100`, merges signature cocktail ingredients, boosts shared ingredients
+- **`server/utils/shoppingList.js`** — Server-side mirror of `generateShoppingList.js`, used to auto-generate the initial list at submission time. Must be kept in sync with the client implementation.
+- **`ShoppingListPDF.jsx`** — jsPDF implementation for branded shopping list PDF generation with Dr. Bartender brand colors. Dynamic-imported by the modal so jspdf + the embedded logo only load when an admin clicks "Download PDF".
+- **`ShoppingListButton.jsx`** — Lazy-loads `ShoppingListModal` via `React.lazy` so @dnd-kit + the PDF graph stay out of the admin bundle for sessions where the button is never clicked.
+- **`ShoppingListModal.jsx`** — Full-screen editable modal: add/remove/rename/reorder items (drag-and-drop), edit quantities, change guest count with recalculate prompt, share client link, Download PDF, Approve & Send to Client.
+- **`logoBase64.js`** — Logo embedded as base64 data URI for use in PDFs (~129KB; lazy-loaded via `ShoppingListPDF.jsx`)
+- **Public client view**: `client/src/pages/public/ClientShoppingList.js` — token-gated read-only display rendered at `/shopping-list/:token`
+
+Admin entry points: "Shopping List" button on Drink Plan Detail (visible when plan status is `submitted` or `reviewed`) and on Proposal Detail when a drink plan exists.
 
 ### Blog
 
@@ -740,11 +753,11 @@ model is `service_packages.covered_addon_slugs` and `cocktails.upgrade_addon_slu
 ### Resend (Email)
 - **Wrapper**: `server/utils/email.js` (single send + batch)
 - **From**: `Dr. Bartender <no-reply@drbartender.com>`
-- **Used for**: Transactional notifications (proposals, OTPs, shifts) + email marketing (blasts, drip sequences)
+- **Used for**: Transactional notifications (proposals, OTPs, shifts, application status, balance reminders, shopping list) + email marketing (blasts, drip sequences)
 - **Marketing**: `server/routes/emailMarketing.js` — leads, campaigns, sequences, conversations, analytics
 - **Webhooks**: `server/routes/emailMarketingWebhook.js` — receives tracking events (sent/delivered/opened/clicked/bounced/complained), verified via `svix`
 - **Scheduler**: `server/utils/emailSequenceScheduler.js` — processes drip sequence steps every 15 minutes
-- **Templates**: `server/utils/emailTemplates.js` — `wrapEmail()` for transactional, `wrapMarketingEmail()` for marketing (includes unsubscribe link)
+- **Templates**: `server/utils/emailTemplates.js` — `wrapEmail()` for transactional, `wrapMarketingEmail()` for marketing (includes unsubscribe link). Application status progression sends `applicationInterviewInvite`, `applicationHired`, `applicationRejected`, `applicationDeactivated` (admin's optional personal note is `esc()`-d into a styled block; user-supplied names are also `esc()`-d in HTML bodies). `applicationReceivedConfirmation` is sent only at submission time, not on admin status reverts.
 
 ### Twilio (SMS)
 - **Wrapper**: `server/utils/sms.js` (includes `normalizePhone()` for E.164 formatting)

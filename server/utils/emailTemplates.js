@@ -164,8 +164,8 @@ function paymentReminderClient({ clientName, eventTypeLabel = 'event', balanceDu
     subject: `Friendly reminder — balance due for your ${eventTypeLabel}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Balance Reminder</h2>
-      <p>Hi ${name},</p>
-      <p>Just a friendly reminder that the balance for your <strong>${eventTypeLabel}</strong> is still outstanding. You can review your event details and pay the balance directly from your proposal page.</p>
+      <p>Hi ${esc(name)},</p>
+      <p>Just a friendly reminder that the balance for your <strong>${esc(eventTypeLabel)}</strong> is still outstanding. You can review your event details and pay the balance directly from your proposal page.</p>
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
         <tr><td style="padding:8px 12px;color:${BRAND.primary};font-weight:bold;">Balance Due</td><td style="padding:8px 12px;text-align:right;font-weight:bold;color:${BRAND.primary};">$${Number(balanceDue).toFixed(2)}</td></tr>
         <tr><td style="padding:8px 12px;color:${BRAND.secondary};">Due By</td><td style="padding:8px 12px;text-align:right;">${dueDate}</td></tr>
@@ -318,7 +318,7 @@ function applicationReceivedConfirmation({ applicantName }) {
     subject: `Application Received — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Application Received!</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${esc(name)},</p>
       <p>Thank you for applying to join the Dr. Bartender team! We've received your application and will review it shortly.</p>
       <p>We'll reach out with next steps once our team has had a chance to go over your information.</p>
       <p>Cheers,<br/>The Dr. Bartender Team</p>
@@ -346,7 +346,7 @@ function applicationInterviewInvite({ applicantName, customMessage }) {
     subject: `We'd like to interview you — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Let's Chat!</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${esc(name)},</p>
       <p>Thanks for applying to Dr. Bartender — we liked what we saw and we'd like to set up a quick interview.</p>
       ${note}
       <p>Our team will reach out shortly with scheduling details. Feel free to reply to this email with any times that work for you.</p>
@@ -364,7 +364,7 @@ function applicationHired({ applicantName, customMessage, staffPortalUrl }) {
     subject: `Welcome to the Dr. Bartender team!`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">You're Hired!</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${esc(name)},</p>
       <p>Welcome to the team! We're excited to have you. Here's what to do next:</p>
       <ol style="color:${BRAND.primary};line-height:1.6;">
         <li>Log into the staff portal to review your contractor agreement</li>
@@ -387,7 +387,7 @@ function applicationRejected({ applicantName, customMessage }) {
     subject: `About your application — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Thank You for Applying</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${esc(name)},</p>
       <p>Thank you for your interest in joining the Dr. Bartender team and for taking the time to apply. After careful review, we've decided to move forward with other candidates at this time.</p>
       ${note}
       <p>We genuinely appreciate the effort you put into your application, and we wish you the best in your search.</p>
@@ -403,8 +403,8 @@ function shoppingListReady({ clientName, eventTypeLabel = 'event', shoppingListU
     subject: `Your shopping list is ready — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Shopping List is Ready</h2>
-      <p>Hi ${name},</p>
-      <p>We've finalized the shopping list for your <strong>${eventTypeLabel}</strong>. Bring this with you when you stock up — quantities are scaled to your guest count.</p>
+      <p>Hi ${esc(name)},</p>
+      <p>We've finalized the shopping list for your <strong>${esc(eventTypeLabel)}</strong>. Bring this with you when you stock up — quantities are scaled to your guest count.</p>
       ${ctaButton(shoppingListUrl, 'View Shopping List')}
       <p style="font-size:14px;color:${BRAND.secondary};">Have questions or need to adjust anything? Just reply to this email.</p>
       <p>Cheers,<br/>The Dr. Bartender Team</p>
@@ -420,7 +420,7 @@ function applicationDeactivated({ applicantName, customMessage }) {
     subject: `Your Dr. Bartender account has been deactivated`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Account Deactivated</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${esc(name)},</p>
       <p>This is a notice that your Dr. Bartender staff account has been deactivated. You will no longer receive shift requests or be able to log into the staff portal.</p>
       ${note}
       <p>If you believe this was done in error, or if you have questions, please reply to this email.</p>

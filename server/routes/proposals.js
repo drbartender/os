@@ -1318,11 +1318,21 @@ router.post('/:id/send-reminder', auth, requireAdminOrManager, asyncHandler(asyn
     throw new ExternalServiceError('email', emailErr, 'Failed to send reminder email.');
   }
 
-  await pool.query(
-    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
-     VALUES ($1, 'reminder_sent', 'admin', $2, $3)`,
-    [proposalId, req.user.id, JSON.stringify({ to: proposal.client_email, balance_due: balanceDue })]
-  );
+  // Activity log is best-effort — the email already went out, so a transient
+  // INSERT failure must not surface as a 5xx to the admin (which would prompt
+  // a retry and double-send the reminder).
+  try {
+    await pool.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+       VALUES ($1, 'reminder_sent', 'admin', $2, $3)`,
+      [proposalId, req.user.id, JSON.stringify({ to: proposal.client_email, balance_due: balanceDue })]
+    );
+  } catch (logErr) {
+    Sentry.captureException(logErr, {
+      tags: { route: 'proposals/send-reminder', step: 'activity-log' },
+      extra: { proposalId },
+    });
+  }
 
   res.json({ ok: true });
 }));

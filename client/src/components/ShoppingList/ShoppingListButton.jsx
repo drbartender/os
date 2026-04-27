@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import api from '../../utils/api';
 import { generateShoppingList } from './generateShoppingList';
-import ShoppingListModal from './ShoppingListModal';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+
+// Lazy-load the modal so @dnd-kit and the PDF/jspdf graph stay out of the
+// admin bundle for sessions where the Shopping List button is never clicked.
+const ShoppingListModal = lazy(() => import('./ShoppingListModal'));
 
 export default function ShoppingListButton({ planId, planToken }) {
   const [loading, setLoading] = useState(false);
@@ -123,12 +126,14 @@ export default function ShoppingListButton({ planId, planToken }) {
 
       {/* Shopping list editor modal */}
       {modalData && (
-        <ShoppingListModal
-          listData={modalData}
-          onClose={() => setModalData(null)}
-          planId={planId}
-          planToken={planToken}
-        />
+        <Suspense fallback={null}>
+          <ShoppingListModal
+            listData={modalData}
+            onClose={() => setModalData(null)}
+            planId={planId}
+            planToken={planToken}
+          />
+        </Suspense>
       )}
     </>
   );

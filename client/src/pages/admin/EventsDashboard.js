@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
@@ -108,7 +108,10 @@ export default function EventsDashboard() {
       if (newShift.proposal_id) {
         navigate(`/admin/events/${newShift.proposal_id}`);
       } else {
-        navigate(`/admin/events/shift/${newShift.id}`);
+        // Manual events have no dedicated page (ShiftDetail.js retired) — open
+        // the ShiftDrawer so admin can immediately review/staff the new event.
+        await fetchEvents();
+        drawer.open('shift', newShift.id);
       }
     } catch (err) {
       setCreateError(err.message || 'Failed to create event.');
@@ -117,6 +120,34 @@ export default function EventsDashboard() {
       setCreating(false);
     }
   };
+
+  // Ref-backed dispatcher: row/kebab callbacks need access to the latest
+  // navigate / drawer / toast / setReminderTarget closures, but EventRow only
+  // re-renders when its props change. Storing the closures in a ref and exposing
+  // a single stable `dispatch` lets us memoize EventRow without re-binding on
+  // every parent render (e.g. typing into the search box).
+  const handlersRef = useRef(null);
+  handlersRef.current = {
+    rowClick: (e) => drawer.open('event', e.id),
+    view: (e) => {
+      if (e.proposal_id) navigate(`/admin/events/${e.proposal_id}`);
+      else drawer.open('shift', e.id);
+    },
+    edit: (e) => {
+      if (e.proposal_id) navigate(`/admin/proposals/${e.proposal_id}?edit=1`);
+    },
+    assign: (e) => {
+      if (!e.id) { toast.error('No shift on this event yet.'); return; }
+      drawer.open('shift', e.id);
+    },
+    remind: (e) => setReminderTarget(e),
+    invoices: (e) => {
+      if (e.proposal_id) drawer.open('invoices', e.proposal_id);
+    },
+  };
+  const dispatch = useCallback((action, e) => {
+    handlersRef.current?.[action]?.(e);
+  }, []);
 
   const filtered = useMemo(() => {
     return events
@@ -146,19 +177,28 @@ export default function EventsDashboard() {
       .sort((a, b) => (a.event_date || '').localeCompare(b.event_date || ''));
   }, [events, tab, statusFilter, search]);
 
-  const tabs = useMemo(() => {
-    const upcomingCount = events.filter(e => e.event_date && dayDiff(e.event_date.slice(0, 10)) >= 0).length;
-    const unstaffedCount = events.filter(e => {
-      if (!e.event_date || dayDiff(e.event_date.slice(0, 10)) < 0) return false;
-      return approvedCount(e) < parsePositionsCount(e);
-    }).length;
-    return [
-      { id: 'upcoming',  label: 'Upcoming',  count: upcomingCount },
-      { id: 'unstaffed', label: 'Unstaffed', count: unstaffedCount },
-      { id: 'past',      label: 'Past' },
-      { id: 'all',       label: 'All' },
-    ];
+  // Tab badge counts are independent of the active tab/filter/search — keying
+  // them only on `events` keeps them from recomputing on every keystroke.
+  const { upcomingCount, unstaffedCount } = useMemo(() => {
+    let upcoming = 0;
+    let unstaffed = 0;
+    for (const e of events) {
+      const dayKey = e.event_date ? e.event_date.slice(0, 10) : null;
+      if (!dayKey) continue;
+      const day = dayDiff(dayKey);
+      if (day < 0) continue;
+      upcoming++;
+      if (approvedCount(e) < parsePositionsCount(e)) unstaffed++;
+    }
+    return { upcomingCount: upcoming, unstaffedCount: unstaffed };
   }, [events]);
+
+  const tabs = useMemo(() => [
+    { id: 'upcoming',  label: 'Upcoming',  count: upcomingCount },
+    { id: 'unstaffed', label: 'Unstaffed', count: unstaffedCount },
+    { id: 'past',      label: 'Past' },
+    { id: 'all',       label: 'All' },
+  ], [upcomingCount, unstaffedCount]);
 
   return (
     <div className="page">
@@ -290,76 +330,9 @@ export default function EventsDashboard() {
               {!loading && filtered.length === 0 && (
                 <tr><td colSpan={9} className="muted">No events match these filters.</td></tr>
               )}
-              {!loading && filtered.map(e => {
-                const total = Number(e.proposal_total || 0);
-                const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
-                const bal = total - paid;
-                const guestCount = e.guest_count || e.proposal_guest_count;
-                const fullyPaid = total > 0 && paid >= total;
-                const kebabItems = [
-                  {
-                    label: 'View Event',
-                    icon: 'eye',
-                    disabled: !e.proposal_id,
-                    onClick: () => {
-                      if (e.proposal_id) navigate(`/admin/events/${e.proposal_id}`);
-                      else navigate(`/admin/events/shift/${e.id}`);
-                    },
-                  },
-                  {
-                    label: 'Edit Event',
-                    icon: 'pen',
-                    disabled: !e.proposal_id,
-                    onClick: () => navigate(`/admin/proposals/${e.proposal_id}?edit=1`),
-                  },
-                  {
-                    label: 'Assign Staff',
-                    icon: 'users',
-                    onClick: () => {
-                      if (!e.id) {
-                        toast.error('No shift on this event yet.');
-                        return;
-                      }
-                      drawer.open('shift', e.id);
-                    },
-                  },
-                  {
-                    label: 'Send Payment Reminder',
-                    icon: 'mail',
-                    disabled: !e.proposal_id || fullyPaid,
-                    onClick: () => setReminderTarget(e),
-                  },
-                  {
-                    label: 'View Invoices/Payments',
-                    icon: 'card',
-                    disabled: !e.proposal_id,
-                    onClick: () => drawer.open('invoices', e.proposal_id),
-                  },
-                ];
-                return (
-                  <tr key={e.id} onClick={() => drawer.open('event', e.id)}>
-                    <td>
-                      <strong>{e.client_name || 'Event'}</strong>
-                      <div className="sub">{getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })}{!e.proposal_id && ' · Manual'}</div>
-                    </td>
-                    <td>
-                      <div>{fmtDate(e.event_date && e.event_date.slice(0, 10))}</div>
-                      <div className="sub">{e.event_date ? `${relDay(e.event_date.slice(0, 10))}${e.start_time ? ' · ' + e.start_time : ''}` : '—'}</div>
-                    </td>
-                    <td className="muted">{e.location || '—'}</td>
-                    <td className="num">{guestCount || '—'}</td>
-                    <td><StaffPills positions={shiftPositions(e)} /></td>
-                    <td>{e.proposal_id ? eventStatusChip(e) : <StatusChip kind="neutral">Manual</StatusChip>}</td>
-                    <td className="num">{total > 0 ? <strong>{fmt$(total)}</strong> : '—'}</td>
-                    <td className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'var(--ink-3)' }}>
-                      {bal > 0 ? fmt$(bal) : '—'}
-                    </td>
-                    <td className="shrink" onClick={(ev) => ev.stopPropagation()}>
-                      <KebabMenu items={kebabItems} />
-                    </td>
-                  </tr>
-                );
-              })}
+              {!loading && filtered.map(e => (
+                <EventRow key={e.id} event={e} dispatch={dispatch} />
+              ))}
             </tbody>
           </table>
         </div>
@@ -414,3 +387,69 @@ export default function EventsDashboard() {
     </div>
   );
 }
+
+// Memoized row — only re-renders when its event reference changes. Dispatch is
+// a stable callback from the parent, so typing into the search box no longer
+// rebuilds 5 closures × N rows on every keystroke.
+const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
+  const total = Number(e.proposal_total || 0);
+  const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
+  const bal = total - paid;
+  const guestCount = e.guest_count || e.proposal_guest_count;
+  const fullyPaid = total > 0 && paid >= total;
+
+  const kebabItems = useMemo(() => [
+    {
+      label: 'View Event',
+      icon: 'eye',
+      onClick: () => dispatch('view', e),
+    },
+    {
+      label: 'Edit Event',
+      icon: 'pen',
+      disabled: !e.proposal_id,
+      onClick: () => dispatch('edit', e),
+    },
+    {
+      label: 'Assign Staff',
+      icon: 'users',
+      onClick: () => dispatch('assign', e),
+    },
+    {
+      label: 'Send Payment Reminder',
+      icon: 'mail',
+      disabled: !e.proposal_id || fullyPaid,
+      onClick: () => dispatch('remind', e),
+    },
+    {
+      label: 'View Invoices/Payments',
+      icon: 'card',
+      disabled: !e.proposal_id,
+      onClick: () => dispatch('invoices', e),
+    },
+  ], [e, dispatch, fullyPaid]);
+
+  return (
+    <tr onClick={() => dispatch('rowClick', e)}>
+      <td>
+        <strong>{e.client_name || 'Event'}</strong>
+        <div className="sub">{getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })}{!e.proposal_id && ' · Manual'}</div>
+      </td>
+      <td>
+        <div>{fmtDate(e.event_date && e.event_date.slice(0, 10))}</div>
+        <div className="sub">{e.event_date ? `${relDay(e.event_date.slice(0, 10))}${e.start_time ? ' · ' + e.start_time : ''}` : '—'}</div>
+      </td>
+      <td className="muted">{e.location || '—'}</td>
+      <td className="num">{guestCount || '—'}</td>
+      <td><StaffPills positions={shiftPositions(e)} /></td>
+      <td>{e.proposal_id ? eventStatusChip(e) : <StatusChip kind="neutral">Manual</StatusChip>}</td>
+      <td className="num">{total > 0 ? <strong>{fmt$(total)}</strong> : '—'}</td>
+      <td className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'var(--ink-3)' }}>
+        {bal > 0 ? fmt$(bal) : '—'}
+      </td>
+      <td className="shrink" onClick={(ev) => ev.stopPropagation()}>
+        <KebabMenu items={kebabItems} />
+      </td>
+    </tr>
+  );
+});
