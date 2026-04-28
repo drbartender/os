@@ -1169,7 +1169,7 @@ Read `server/db/schema.sql` to identify the required NOT NULL columns on `client
 ```js
 // server/utils/qaSeed.js
 const crypto = require('node:crypto');
-const pool = require('../db');
+const { pool } = require('../db');
 
 function fakeName() {
   const f = ['Lab', 'Test', 'QA', 'Demo', 'Mock'][crypto.randomInt(0, 5)];
@@ -1189,28 +1189,28 @@ async function recipeProposalInSent(client) {
     RETURNING id
   `, [fakeName(), fakeEmail()]);
 
-  // 2. Test proposal already in Sent state
+  // 2. Test proposal already in Sent state.
+  // NOTE: actual schema columns differ from earlier draft. Verified against
+  // server/db/schema.sql (proposals table) and server/routes/proposals/public.js
+  // (canonical INSERT pattern): use `event_location` not city/state, `total_price`
+  // numeric not cents, lowercase status enum, `token` (auto-generated UUID).
   const eventDate = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
-  // NOTE: column list MUST match what the live quote submit handler in
-  // server/routes/proposals/public.js inserts. If schema requires more
-  // NOT NULL columns, add them here using sensible defaults.
   const prop = await client.query(`
     INSERT INTO proposals (
-      client_id, status, event_type, event_date, event_start_time,
-      event_duration_hours, guest_count, location_city, location_state,
-      alcohol_provider, bar_type, total_cents, public_token
+      client_id, status, event_date, event_start_time,
+      event_duration_hours, event_location, guest_count,
+      total_price, num_bartenders, event_type, pricing_snapshot
     )
-    VALUES ($1, 'Sent', 'Wedding', $2, '17:00', 4, 50,
-            'Chicago', 'IL', 'BYOB', 'Full Bar', 50000,
-            gen_random_uuid()::text)
-    RETURNING id, public_token
+    VALUES ($1, 'sent', $2, '17:00', 4, 'Chicago, IL', 50,
+            500.00, 1, 'Wedding', '{}'::jsonb)
+    RETURNING id, token
   `, [cli.rows[0].id, eventDate]);
 
   return {
     clientId: cli.rows[0].id,
     proposalId: prop.rows[0].id,
-    token: prop.rows[0].public_token,
-    proposalUrl: `/proposal/${prop.rows[0].public_token}`,
+    token: prop.rows[0].token,
+    proposalUrl: `/proposal/${prop.rows[0].token}`,
   };
 }
 
