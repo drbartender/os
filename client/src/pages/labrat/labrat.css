@@ -90,15 +90,16 @@
   text-shadow: var(--lr-glow);
 }
 
-/* Auto-linked URLs in step text */
-[data-app="labrat"] a {
+/* Auto-linked URLs in step text — scoped so it doesn't bleed onto card anchors
+   (.labrat-card, .labrat-button) or the dedicated .labrat-link buttons. */
+[data-app="labrat"] a:not(.labrat-card):not(.labrat-button):not(.labrat-link) {
   color: var(--lr-accent);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
   word-break: break-all;
 }
-[data-app="labrat"] a:hover {
+[data-app="labrat"] a:not(.labrat-card):not(.labrat-button):not(.labrat-link):hover {
   color: var(--lr-accent-hover);
   text-shadow: var(--lr-glow-accent);
 }
