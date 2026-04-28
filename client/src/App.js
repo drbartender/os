@@ -26,6 +26,12 @@ import ClientLogin from './pages/public/ClientLogin';
 import ClientDashboard from './pages/public/ClientDashboard';
 import HiringLanding from './pages/HiringLanding';
 
+// Lazy-loaded: Lab Rat tester program (kept out of main bundle for non-tester visitors)
+const LabRatLanding = lazy(() => import('./pages/labrat/LabRatLanding'));
+const LabRatQuiz = lazy(() => import('./pages/labrat/LabRatQuiz'));
+const LabRatMissions = lazy(() => import('./pages/labrat/LabRatMissions'));
+const LabRatMission = lazy(() => import('./pages/labrat/LabRatMission'));
+
 // Lazy-loaded: public token-gated pages (Stripe SDK stays out of main bundle)
 const ProposalView = lazy(() => import('./pages/proposal/proposalView/ProposalView'));
 const InvoicePage = lazy(() => import('./pages/invoice/InvoicePage'));
@@ -227,6 +233,11 @@ function PublicWebsiteRoutes() {
         <Route path="/labnotes/:slug" element={<BlogPost />} />
         <Route path="/login" element={<ClientLogin />} />
         <Route path="/my-proposals" element={<ClientDashboard />} />
+        {/* Lab Rat tester program */}
+        <Route path="/labrat" element={<LabRatLanding />} />
+        <Route path="/labrat/quiz" element={<LabRatQuiz />} />
+        <Route path="/labrat/missions" element={<LabRatMissions />} />
+        <Route path="/labrat/m/:id" element={<LabRatMission />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
