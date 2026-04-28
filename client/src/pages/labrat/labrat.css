@@ -90,6 +90,19 @@
   text-shadow: var(--lr-glow);
 }
 
+/* Auto-linked URLs in step text */
+[data-app="labrat"] a {
+  color: var(--lr-accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  word-break: break-all;
+}
+[data-app="labrat"] a:hover {
+  color: var(--lr-accent-hover);
+  text-shadow: var(--lr-glow-accent);
+}
+
 /* ---- Bug dialog ---- */
 dialog.labrat-dialog {
   border: 1.5px solid var(--lr-border-bright);

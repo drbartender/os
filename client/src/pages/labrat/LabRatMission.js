@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import api from '../../utils/api';
 import BugDialog from './BugDialog';
+import { linkify } from './linkify';
 import './labrat.css';
 
 const COMPLETED_KEY = 'labrat-completed-ids';
@@ -69,7 +70,7 @@ export default function LabRatMission() {
           <span>⏱ ~{mission.estMinutes} min</span>
           <span className={`labrat-diff ${mission.difficulty}`}>● {mission.difficulty}</span>
         </div>
-        <p className="labrat-mission-blurb">{mission.blurb}</p>
+        <p className="labrat-mission-blurb">{linkify(mission.blurb)}</p>
 
         {mission.seedRecipe && (
           <section className="labrat-setup">
@@ -96,8 +97,8 @@ export default function LabRatMission() {
                 <label>
                   <input type="checkbox" checked={!!checked[i]} onChange={() => toggle(i)} />
                   <span>
-                    <strong>{s.text}</strong>
-                    {s.expect && <em> — {s.expect}</em>}
+                    <strong>{linkify(s.text)}</strong>
+                    {s.expect && <em> {linkify(s.expect)}</em>}
                   </span>
                 </label>
                 <button className="labrat-bug-btn" onClick={() => openBug(i, s.text)}>report bug</button>
