@@ -1,1 +1,91 @@
-module.exports = [];
+const ADMIN_LOGIN_STEP = {
+  text: 'Open admin.drbartender.com in a private/incognito window. Log in as admin@drbartender.com / DrBartender2024!.',
+  expect: 'Admin dashboard loads.',
+};
+
+module.exports = [
+  {
+    id: 'send-a-proposal',
+    title: 'Send a draft proposal',
+    blurb: 'Find a Draft proposal in the admin Proposals list and send it. The fake client should receive the email.',
+    area: 'admin',
+    estMinutes: 4,
+    difficulty: 'easy',
+    device: ['desktop'],
+    needsAdminComfort: true,
+    priority: 'p0',
+    seedRecipe: null,
+    steps: [
+      ADMIN_LOGIN_STEP,
+      { text: 'In the left sidebar, click Proposals.', expect: 'Proposals list loads.' },
+      { text: 'Filter by status Draft. Pick any draft proposal (or create a new one via "New Proposal" if none exist).', expect: 'A draft proposal opens.' },
+      { text: 'Click the Send button (or whatever moves status from Draft → Sent).', expect: 'Status badge flips to "Sent".' },
+      { text: 'Check the client email address on the proposal — if it\'s a real test address you control, look in that inbox.', expect: 'Proposal email arrives within 60 seconds.' },
+    ],
+    successMessage: 'Proposal-send is the chokepoint customer testers always hit. Helping us validate it = huge.',
+  },
+
+  {
+    id: 'record-cash-payment',
+    title: 'Record a cash/check payment on a proposal',
+    blurb: 'Manually log a cash payment for a proposal. Verify it shows up in the financials and updates status.',
+    area: 'admin',
+    estMinutes: 5,
+    difficulty: 'easy',
+    device: ['desktop'],
+    needsAdminComfort: true,
+    priority: 'p0',
+    seedRecipe: null,
+    steps: [
+      ADMIN_LOGIN_STEP,
+      { text: 'Open any proposal that has an unpaid balance.', expect: 'Proposal detail page loads.' },
+      { text: 'Click "Record Payment".', expect: 'Modal opens with amount + method + paid-in-full checkbox.' },
+      { text: 'Enter an amount, method = Cash, optionally check "Paid in Full". Save.', expect: 'Modal closes.' },
+      { text: 'Refresh the proposal page.', expect: 'Status updates; amount paid increments; new payment appears in any payment list.' },
+      { text: 'Click Financials in the sidebar. Verify the payment appears in Recent Payments.', expect: 'Payment is listed with correct amount and method.' },
+    ],
+    successMessage: 'Manual payment tracking is touchy money math. Thanks.',
+  },
+
+  {
+    id: 'charge-balance-via-autopay',
+    title: 'Trigger an autopay balance charge',
+    blurb: 'Find a proposal where the client enrolled in autopay during deposit. Trigger the balance charge and confirm Stripe runs it.',
+    area: 'admin',
+    estMinutes: 5,
+    difficulty: 'medium',
+    device: ['desktop'],
+    needsAdminComfort: true,
+    priority: 'p0',
+    seedRecipe: null,
+    steps: [
+      ADMIN_LOGIN_STEP,
+      { text: 'Find a proposal where the client paid the deposit AND checked the autopay box. (You may need to set this up first via the customer-side missions.)', expect: 'Proposal detail loads showing autopay enabled and a saved card.' },
+      { text: 'Click "Charge Balance".', expect: 'Confirmation modal appears.' },
+      { text: 'Confirm.', expect: 'Charge succeeds (test card always succeeds). Status flips to "Paid in Full".' },
+      { text: 'Verify the new charge in the payment list and in Financials → Recent Payments.', expect: 'Charge appears with the right amount.' },
+    ],
+    successMessage: 'Autopay touches real Stripe charges — testing this before live mode is critical.',
+  },
+
+  {
+    id: 'approve-shift-request',
+    title: 'Approve a staff shift request',
+    blurb: 'A staff member has requested a shift. Approve it and confirm the SMS goes out.',
+    area: 'admin',
+    estMinutes: 4,
+    difficulty: 'easy',
+    device: ['desktop'],
+    needsAdminComfort: true,
+    priority: 'p0',
+    seedRecipe: null,
+    steps: [
+      ADMIN_LOGIN_STEP,
+      { text: 'Click Events in the sidebar. Find an event with pending shift requests.', expect: 'Event opens with shift list and request indicators.' },
+      { text: 'Open the event detail. Find the pending shift request.', expect: 'Request shows the staff name and requested position.' },
+      { text: 'Click Approve.', expect: 'Request status changes to Approved/Confirmed.' },
+      { text: 'If the staff member has a phone number on file, ask them (or check your own if testing with your number) for an SMS.', expect: 'SMS arrives within 60 seconds.' },
+    ],
+    successMessage: 'Staffing notifications are how we move fast. Thanks for testing.',
+  },
+];
