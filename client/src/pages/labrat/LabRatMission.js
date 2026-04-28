@@ -7,6 +7,7 @@ import './labrat.css';
 
 const COMPLETED_KEY = 'labrat-completed-ids';
 const NAME_KEY = 'labrat-tester-name';
+const LAST_QUIZ_KEY = 'labrat-last-quiz';
 
 export default function LabRatMission() {
   const { id } = useParams();
@@ -18,6 +19,11 @@ export default function LabRatMission() {
   const [checked, setChecked] = useState({});
   const [dialog, setDialog] = useState(null);
   const testerName = localStorage.getItem(NAME_KEY) || '';
+  const savedQuiz = (() => {
+    try { return localStorage.getItem(LAST_QUIZ_KEY) || ''; } catch { return ''; }
+  })();
+  const missionsHref = savedQuiz ? `/labrat/missions?${savedQuiz}` : '/labrat/missions';
+  const backLabel = savedQuiz ? '← Back to my missions' : '← All missions';
 
   useEffect(() => {
     setChecked({}); setSeedResult(null); setSeedError(null);
@@ -53,7 +59,7 @@ export default function LabRatMission() {
       list.push(id);
       localStorage.setItem(COMPLETED_KEY, JSON.stringify(list));
     }
-    navigate('/labrat/missions');
+    navigate(missionsHref);
   }
 
   if (error) return <div data-app="labrat" className="labrat-error">{error}</div>;
@@ -64,7 +70,7 @@ export default function LabRatMission() {
   return (
     <div data-app="labrat" className="labrat-mission">
       <main>
-        <Link to="/labrat/missions" className="labrat-link">← All missions</Link>
+        <Link to={missionsHref} className="labrat-link">{backLabel}</Link>
         <h1>{mission.title}</h1>
         <div className="labrat-mission-meta">
           <span>⏱ ~{mission.estMinutes} min</span>

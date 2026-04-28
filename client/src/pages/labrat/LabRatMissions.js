@@ -4,6 +4,7 @@ import api from '../../utils/api';
 import './labrat.css';
 
 const COMPLETED_KEY = 'labrat-completed-ids';
+const LAST_QUIZ_KEY = 'labrat-last-quiz';
 
 const AREA_LABELS = {
   customer: 'Customer Booking',
@@ -40,6 +41,9 @@ export default function LabRatMissions() {
       const areas = (params.get('areas') || '').split(',').filter(Boolean);
       const timeBudget = Number(params.get('timeBudget')) || 60;
       const adminComfort = params.get('adminComfort') || 'skip';
+      // Remember the latest quiz so the mission page (and "Back to my missions"
+      // button) can return to this filtered view.
+      try { localStorage.setItem(LAST_QUIZ_KEY, params.toString()); } catch { /* ignore */ }
       api.post('/qa/shortlist', {
         areas, timeBudget, adminComfort,
         device: detectDevice(),
@@ -55,6 +59,10 @@ export default function LabRatMissions() {
       });
     }
   }, [params, showAll, completedIds]);
+
+  const savedQuiz = (() => {
+    try { return localStorage.getItem(LAST_QUIZ_KEY) || ''; } catch { return ''; }
+  })();
 
   if (!missions) return <div data-app="labrat" className="labrat-loading">Loading missions…</div>;
 
@@ -73,6 +81,16 @@ export default function LabRatMissions() {
             <p className="labrat-quiz-hint">
               {relaxed && 'We loosened your filters a bit. '}
               <button className="labrat-link" onClick={() => setShowAll(true)}>Show all instead</button>
+            </p>
+          )}
+          {showAll && savedQuiz && (
+            <p className="labrat-quiz-hint">
+              <Link className="labrat-link" to={`/labrat/missions?${savedQuiz}`}>← Back to my missions</Link>
+            </p>
+          )}
+          {!params.has('areas') && !showAll && savedQuiz && (
+            <p className="labrat-quiz-hint">
+              <Link className="labrat-link" to={`/labrat/missions?${savedQuiz}`}>← Back to my missions</Link>
             </p>
           )}
           <div className="labrat-group-toggle">
