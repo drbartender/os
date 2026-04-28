@@ -184,6 +184,7 @@ app.use('/api/public/reviews', require('./routes/publicReviews'));
 app.use('/api/thumbtack', require('./routes/thumbtack'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/test-feedback', require('./routes/testFeedback'));
+app.use('/api/qa', require('./routes/labrat'));
 
 // Health check — must be registered BEFORE the React catch-all below
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
