@@ -23,4 +23,43 @@ module.exports = [
     ],
     successMessage: 'Hiring pipeline tested. Cheers.',
   },
+
+  {
+    id: 'browse-hiring-landing',
+    title: 'Check out the bartender-hiring landing page',
+    blurb: 'You\'re a bartender thinking about applying. Visit the hiring site and see if it makes sense.',
+    area: 'applicant',
+    estMinutes: 3,
+    difficulty: 'easy',
+    device: ['desktop', 'mobile'],
+    needsAdminComfort: false,
+    priority: 'p2',
+    seedRecipe: null,
+    steps: [
+      { text: 'Go to hiring.drbartender.com.', expect: 'Landing page loads with the 4-step explainer (Create Account → Apply → Interview → Start Working).' },
+      { text: 'Read the page. Flag anything confusing, broken, or off-tone.', expect: 'Copy reads clearly. Nothing visually broken.' },
+      { text: 'Click "Create Account" but stop on the register page.', expect: 'Register page loads. Don\'t actually submit unless you want to test the apply flow too.' },
+    ],
+    successMessage: 'Landing-page polish — bartenders judge us in 5 seconds. Thanks.',
+  },
+
+  {
+    id: 'reset-bartender-password',
+    title: 'Try the "forgot password" flow',
+    blurb: 'Pretend you\'re a bartender who forgot their password. Walk through the reset flow and see if you can get back in.',
+    area: 'applicant',
+    estMinutes: 5,
+    difficulty: 'easy',
+    device: ['desktop', 'mobile'],
+    needsAdminComfort: false,
+    priority: 'p2',
+    seedRecipe: null,
+    steps: [
+      { text: 'Go to hiring.drbartender.com/login.', expect: 'Login form loads.' },
+      { text: 'Click "Forgot password".', expect: 'Forgot-password form loads.' },
+      { text: 'Enter your real email address (or any email — it\'ll generate a generic "if account exists" message either way).', expect: 'Friendly success message; no error even if the email doesn\'t exist.' },
+      { text: 'If you have a real bartender account, check your inbox for a reset email. If not, skip this step.', expect: 'Reset email arrives within 60 seconds when the account exists.' },
+    ],
+    successMessage: 'Password resets are unsexy but critical. Thanks.',
+  },
 ];

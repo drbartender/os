@@ -20,4 +20,24 @@ module.exports = [
     ],
     successMessage: 'Staff portal exercised — thanks.',
   },
+
+  {
+    id: 'staff-login-page-loads',
+    title: 'Check that the staff login page loads cleanly',
+    blurb: 'Just confirm staff.drbartender.com/login loads, the form looks right, and "Forgot password" works.',
+    area: 'staff',
+    estMinutes: 3,
+    difficulty: 'easy',
+    device: ['desktop', 'mobile'],
+    needsAdminComfort: false,
+    priority: 'p2',
+    seedRecipe: null,
+    steps: [
+      { text: 'Go to staff.drbartender.com/login.', expect: 'Login form loads cleanly. No errors, no broken layout.' },
+      { text: 'Click "Forgot password".', expect: 'Forgot-password form loads.' },
+      { text: 'Enter any email (real or fake) and submit.', expect: 'Friendly "if account exists" message appears.' },
+      { text: 'Click the back link or "Login" to return to the login form.', expect: 'Returns cleanly.' },
+    ],
+    successMessage: 'Staff login is the front door for our bartenders. Thanks for the spot-check.',
+  },
 ];

@@ -19,4 +19,22 @@ module.exports = [
     ],
     successMessage: 'Edge cases catch bugs nobody else looks for. Thanks for going hunting.',
   },
+
+  {
+    id: 'unknown-page-redirect',
+    title: 'Visit a URL that does not exist',
+    blurb: 'Type in a random URL and see what happens. The site should land you somewhere sensible — not a stack trace.',
+    area: 'edge',
+    estMinutes: 2,
+    difficulty: 'easy',
+    device: ['desktop', 'mobile'],
+    needsAdminComfort: false,
+    priority: 'p2',
+    seedRecipe: null,
+    steps: [
+      { text: 'Visit drbartender.com/this-page-does-not-exist.', expect: 'Either a 404 page or a redirect back to the homepage. NOT a white screen, NOT a stack trace.' },
+      { text: 'Try a few more nonsense URLs: drbartender.com/xyz, drbartender.com/foo/bar.', expect: 'Same friendly behavior.' },
+    ],
+    successMessage: 'Catch-all behavior matters when people typo URLs.',
+  },
 ];
