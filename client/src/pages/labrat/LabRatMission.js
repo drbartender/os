@@ -25,9 +25,9 @@ export default function LabRatMission() {
       if (r.data.mission.seedRecipe) {
         api.post('/qa/seed', { recipe: r.data.mission.seedRecipe })
           .then(s => setSeedResult(s.data))
-          .catch(e => setSeedError(e?.response?.data?.error || 'Could not set up the test data — flag this as a bug.'));
+          .catch(e => setSeedError(e?.message || 'Could not set up the test data — flag this as a bug.'));
       }
-    }).catch(e => setError(e?.response?.data?.error || 'Mission not found'));
+    }).catch(e => setError(e?.message || 'Mission not found'));
   }, [id]);
 
   const toggle = useCallback((i) => {

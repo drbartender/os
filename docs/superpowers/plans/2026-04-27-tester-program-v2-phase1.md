@@ -1425,7 +1425,7 @@ export default function BugDialog({ open, onClose, kind, missionId, stepIndex, w
       });
       onClose({ ok: true });
     } catch (err) {
-      setError(err?.response?.data?.error || 'Could not send. Try again.');
+      setError(err?.message || 'Could not send. Try again.');
     } finally {
       setSubmitting(false);
     }
