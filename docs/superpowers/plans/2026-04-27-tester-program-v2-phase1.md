@@ -1127,20 +1127,17 @@ function buildShortlist({ missions, areas, timeBudget, adminComfort, device, com
 
   if (result.length >= 3) return { missions: result, relaxed: false };
 
-  // Fallback: widen time budget by 50%
-  const widened = applyHardFilters(missions, {
+  // Widen the time budget and see if it adds in-tier missions. Only relax if
+  // widening actually surfaces new options — never abandon the chosen tier
+  // (that would surface p1/p2 to a tester who should be focused on p0).
+  const widenedInTier = applyHardFilters(missions, {
     areas, timeBudget: Math.ceil(timeBudget * 1.5),
     adminComfort, device, completedIds, openBugCounts,
   }).filter(m => tiers.includes(m.priority));
-  if (widened.length >= 3) {
-    return { missions: sortMissions(widened, counts).slice(0, limit), relaxed: true };
+  if (widenedInTier.length > inTier.length) {
+    return { missions: sortMissions(widenedInTier, counts).slice(0, limit), relaxed: true };
   }
-  // Last resort: anything in the area, ignore time
-  const areaOnly = missions.filter(m =>
-    areas.includes(m.area) && !completedIds.includes(m.id)
-    && (openBugCounts[m.id] || 0) < BUG_SATURATION_THRESHOLD
-  );
-  return { missions: sortMissions(areaOnly, counts).slice(0, limit), relaxed: true };
+  return { missions: result, relaxed: false };
 }
 
 module.exports = { buildShortlist, COVERAGE_THRESHOLD, BUG_SATURATION_THRESHOLD };
