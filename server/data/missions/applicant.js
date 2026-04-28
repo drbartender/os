@@ -1,1 +1,26 @@
-module.exports = [];
+module.exports = [
+  {
+    id: 'apply-as-bartender',
+    title: 'Apply to work as a bartender',
+    blurb: 'Pretend you\'re looking for bartending work. Submit a full application with fake info.',
+    area: 'applicant',
+    estMinutes: 12,
+    difficulty: 'medium',
+    device: ['desktop'],
+    needsAdminComfort: false,
+    priority: 'p1',
+    seedRecipe: null,
+    steps: [
+      { text: 'Go to hiring.drbartender.com.', expect: 'Hiring landing page loads with the 4-step explainer.' },
+      { text: 'Click Create Account, enter a fresh email (use yours+labrat@... if needed) and a password (8+ chars, upper, lower, digit). Submit.', expect: 'Redirects to the Application form.' },
+      { text: 'Fill Basic Info: name, phone, favorite color, DOB (must be 21+).', expect: 'All fields accept input.' },
+      { text: 'Location & Travel: street address, city, pick state IL/IN/MI/MN/WI (others are blocked).', expect: 'State dropdown only allows the 5.' },
+      { text: 'Experience: check Bartender, prior experience Yes, fill the follow-up fields.', expect: 'Conditional fields appear.' },
+      { text: 'Availability + Tools/Equipment + Skills sections — fill each.', expect: 'No validation errors.' },
+      { text: 'Upload any PDF/image as Resume (required) and BASSET (required). Headshot optional.', expect: 'Files upload.' },
+      { text: 'Emergency contact: name, phone, relationship.', expect: 'Fields accept.' },
+      { text: 'Submit.', expect: 'Redirects to the Application Status page showing "Application Received".' },
+    ],
+    successMessage: 'Hiring pipeline tested. Cheers.',
+  },
+];
