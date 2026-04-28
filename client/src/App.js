@@ -326,6 +326,12 @@ function StaffSiteRoutes() {
 function AppRoutes() {
   const context = getSiteContext();
 
+  // Lab Rat lives on the public domain, but we want it reachable on localhost too
+  // (no subdomain in dev). Route by path before context dispatch.
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/labrat')) {
+    return <PublicWebsiteRoutes />;
+  }
+
   if (context === 'public') return <PublicWebsiteRoutes />;
   if (context === 'hiring') return <HiringRoutes />;
   if (context === 'staff') return <StaffSiteRoutes />;
