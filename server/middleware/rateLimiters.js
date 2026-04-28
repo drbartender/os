@@ -36,4 +36,15 @@ const drinkPlanWriteLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter };
+// Lab Rat seed endpoint creates real DB rows on every call. Keep it tighter
+// than publicLimiter so a flood from a leaked URL can't pile up @labrat.test
+// records faster than the manual cleanup script can drain them.
+const labratSeedLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+  message: { error: 'Too many seed requests. Try again in an hour.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, labratSeedLimiter };

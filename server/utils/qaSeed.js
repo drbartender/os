@@ -26,7 +26,7 @@ async function recipeProposalInSent(client) {
       total_price, num_bartenders, event_type, pricing_snapshot
     )
     VALUES ($1, 'sent', $2, '17:00', 4, 'Chicago, IL', 50,
-            500.00, 1, 'Wedding', '{}'::jsonb)
+            500.00, 1, 'wedding-reception', '{}'::jsonb)
     RETURNING id, token
   `, [cli.rows[0].id, eventDate]);
 

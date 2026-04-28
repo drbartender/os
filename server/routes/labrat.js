@@ -1,6 +1,6 @@
 const express = require('express');
 const asyncHandler = require('../middleware/asyncHandler');
-const { publicLimiter } = require('../middleware/rateLimiters');
+const { publicLimiter, labratSeedLimiter } = require('../middleware/rateLimiters');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 const catalog = require('../data/missions');
 const { buildShortlist } = require('../utils/shortlist');
@@ -52,7 +52,7 @@ router.post('/shortlist', publicLimiter, asyncHandler(async (req, res) => {
   res.json(result);
 }));
 
-router.post('/seed', publicLimiter, asyncHandler(async (req, res) => {
+router.post('/seed', labratSeedLimiter, asyncHandler(async (req, res) => {
   const { recipe } = req.body || {};
   if (!recipe || typeof recipe !== 'string') {
     throw new ValidationError({ recipe: 'required' }, 'recipe required');

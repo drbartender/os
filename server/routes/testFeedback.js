@@ -9,8 +9,19 @@ const router = express.Router();
 const ALLOWED_KINDS = ['bug', 'confusion', 'mission-stale'];
 
 router.post('/', publicLimiter, asyncHandler(async (req, res) => {
-  const { kind, missionId, stepIndex, testerName, testerEmail,
-          where, didWhat, happened, expected, browser, screenshotUrl } = req.body || {};
+  const body = req.body || {};
+  const { missionId, stepIndex, testerName, testerEmail, expected, browser, screenshotUrl } = body;
+  let { kind, where, didWhat, happened } = body;
+
+  // Back-compat shim for the legacy /testing-guide.html which posts the old
+  // shape: { testerName, testerEmail, progressSummary, bugCount, reportText }.
+  // Keep this until the legacy guide is removed.
+  if (!kind && req.body && typeof req.body.reportText === 'string') {
+    kind = 'bug';
+    happened = req.body.reportText;
+    didWhat = req.body.progressSummary || '';
+    where = 'Legacy /testing-guide.html submission';
+  }
 
   const errs = {};
   if (!ALLOWED_KINDS.includes(kind)) errs.kind = `must be one of ${ALLOWED_KINDS.join(', ')}`;

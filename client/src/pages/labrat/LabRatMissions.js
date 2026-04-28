@@ -27,38 +27,49 @@ function detectDevice() {
 export default function LabRatMissions() {
   const [params] = useSearchParams();
   const [missions, setMissions] = useState(null);
+  const [loadError, setLoadError] = useState(null);
   const [relaxed, setRelaxed] = useState(false);
   const [groupBy, setGroupBy] = useState('area');
   const [showAll, setShowAll] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
 
   const completedIds = useMemo(() => {
     try { return JSON.parse(localStorage.getItem(COMPLETED_KEY) || '[]'); } catch { return []; }
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    setLoadError(null);
+    setMissions(null);
     const fromQuiz = params.has('areas');
+    const onError = (e) => {
+      if (cancelled) return;
+      setLoadError(e?.message || 'Could not load missions. Check your connection and try again.');
+      setMissions([]);
+    };
     if (fromQuiz && !showAll) {
       const areas = (params.get('areas') || '').split(',').filter(Boolean);
       const timeBudget = Number(params.get('timeBudget')) || 60;
       const adminComfort = params.get('adminComfort') || 'skip';
-      // Remember the latest quiz so the mission page (and "Back to my missions"
-      // button) can return to this filtered view.
       try { localStorage.setItem(LAST_QUIZ_KEY, params.toString()); } catch { /* ignore */ }
       api.post('/qa/shortlist', {
         areas, timeBudget, adminComfort,
         device: detectDevice(),
         completedIds,
       }).then(r => {
+        if (cancelled) return;
         setMissions(r.data.missions);
         setRelaxed(!!r.data.relaxed);
-      });
+      }).catch(onError);
     } else {
       api.get('/qa/missions').then(r => {
+        if (cancelled) return;
         setMissions(r.data.missions);
         setRelaxed(false);
-      });
+      }).catch(onError);
     }
-  }, [params, showAll, completedIds]);
+    return () => { cancelled = true; };
+  }, [params, showAll, completedIds, reloadTick]);
 
   const savedQuiz = (() => {
     try { return localStorage.getItem(LAST_QUIZ_KEY) || ''; } catch { return ''; }
@@ -120,7 +131,13 @@ export default function LabRatMissions() {
           </section>
         ))}
         {missions.length === 0 && (
-          <p className="labrat-loading">No missions match those filters. <button className="labrat-link" onClick={() => setShowAll(true)}>Show all</button></p>
+          loadError ? (
+            <p className="labrat-error">
+              {loadError} <button className="labrat-link" onClick={() => setReloadTick(t => t + 1)}>Retry</button>
+            </p>
+          ) : (
+            <p className="labrat-loading">No missions match those filters. <button className="labrat-link" onClick={() => setShowAll(true)}>Show all</button></p>
+          )
         )}
       </main>
     </div>

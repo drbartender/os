@@ -26,15 +26,18 @@ export default function LabRatMission() {
   const backLabel = savedQuiz ? '← Back to my missions' : '← All missions';
 
   useEffect(() => {
-    setChecked({}); setSeedResult(null); setSeedError(null);
+    let cancelled = false;
+    setChecked({}); setSeedResult(null); setSeedError(null); setError(null); setMission(null);
     api.get(`/qa/missions/${id}`).then(r => {
+      if (cancelled) return;
       setMission(r.data.mission);
       if (r.data.mission.seedRecipe) {
         api.post('/qa/seed', { recipe: r.data.mission.seedRecipe })
-          .then(s => setSeedResult(s.data))
-          .catch(e => setSeedError(e?.message || 'Could not set up the test data — flag this as a bug.'));
+          .then(s => { if (!cancelled) setSeedResult(s.data); })
+          .catch(e => { if (!cancelled) setSeedError(e?.message || 'Could not set up the test data — flag this as a bug.'); });
       }
-    }).catch(e => setError(e?.message || 'Mission not found'));
+    }).catch(e => { if (!cancelled) setError(e?.message || 'Mission not found'); });
+    return () => { cancelled = true; };
   }, [id]);
 
   const toggle = useCallback((i) => {
@@ -52,12 +55,13 @@ export default function LabRatMission() {
   }
 
   async function done() {
-    await api.post('/qa/complete', { missionId: id, testerName });
+    // Best-effort completion log; never block the tester on a flaky network.
+    try { await api.post('/qa/complete', { missionId: id, testerName }); } catch { /* logged below */ }
     let list = [];
     try { list = JSON.parse(localStorage.getItem(COMPLETED_KEY) || '[]'); } catch { /* ignore */ }
     if (!list.includes(id)) {
       list.push(id);
-      localStorage.setItem(COMPLETED_KEY, JSON.stringify(list));
+      try { localStorage.setItem(COMPLETED_KEY, JSON.stringify(list)); } catch { /* ignore */ }
     }
     navigate(missionsHref);
   }
