@@ -1,5 +1,7 @@
 # Dr. Bartender — Claude Code Instructions
 
+CLAUDE.md is the **rules doc**. Structural reference (folder tree, route table) lives in `README.md` and `ARCHITECTURE.md`. Read those when you need to know where a file lives.
+
 ## Tech Stack
 
 - **Backend**: Node.js 18+ / Express 4.18
@@ -13,278 +15,12 @@
 - **Rich Text Editor**: TipTap (ProseMirror-based WYSIWYG) for blog admin
 - **HTML Sanitization**: DOMPurify + jsdom (server-side, for blog post bodies)
 - **Styling**: Vanilla CSS (no Tailwind, no preprocessors)
-- **Error Tracking**: `@sentry/node` (server error tracking), `@sentry/react` (client error tracking)
+- **Error Tracking**: `@sentry/node` (server), `@sentry/react` (client)
 - **Dev tools**: nodemon, concurrently, ESLint + eslint-plugin-security, husky + lint-staged
 
-## Folder Structure
-
-```
-dr-bartender/
-├── server/
-│   ├── index.js              # Express entry point, middleware, route mounting
-│   ├── data/
-│   │   └── contractorAgreement.js # Versioned v2 legal text (clauses, acknowledgments, effective date)
-│   ├── db/
-│   │   ├── index.js          # PostgreSQL pool + schema init
-│   │   ├── schema.sql        # Full DDL (tables, triggers, seed data)
-│   │   ├── seed.js           # Admin account seeder
-│   │   └── seedTestData.js   # Test data seeder (staff, clients, proposals)
-│   ├── middleware/
-│   │   ├── asyncHandler.js  # 3-line wrapper that funnels async-handler rejections to the global error middleware
-│   │   └── auth.js           # JWT verification, role guards
-│   ├── routes/
-│   │   ├── admin/             # Admin management endpoints (split by concern)
-│   │   │   ├── index.js       # Composition router
-│   │   │   ├── users.js       # /users CRUD + status + profile + permissions + seniority + /active-staff
-│   │   │   ├── applications.js # /applications + /notes + /interview + /scorecard + /move + /reject + /restore + /reminder
-│   │   │   ├── hiring.js      # /hiring/summary (KPI strip) + /hiring/search (cross-state applicant search)
-│   │   │   ├── managers.js    # /managers CRUD
-│   │   │   ├── blog.js        # /blog admin endpoints
-│   │   │   └── settings.js    # /settings + /test-email + /backfill-geocodes + /badge-counts
-│   │   ├── agreement.js       # Staff agreement/contract signing
-│   │   ├── application.js     # Staff application submission
-│   │   ├── auth.js            # Login, register, JWT refresh
-│   │   ├── blog.js            # Blog post endpoints
-│   │   ├── calendar.js        # Calendar/scheduling endpoints
-│   │   ├── clientAuth.js      # Client authentication (separate from staff auth)
-│   │   ├── clientPortal.js    # Client portal endpoints
-│   │   ├── clients.js         # Client CRM endpoints
-│   │   ├── cocktails.js       # Cocktail menu management
-│   │   ├── contractor.js      # Contractor profile endpoints
-│   │   ├── drinkPlans.js      # Public drink plan (Potion Planning Lab)
-│   │   ├── messages.js        # SMS messaging to staff
-│   │   ├── mocktails.js       # Mocktail menu management
-│   │   ├── payment.js         # Payment tracking
-│   │   ├── progress.js        # Onboarding progress tracking
-│   │   ├── proposals/         # Proposal endpoints (split by concern; mount order: publicToken → public → metadata → crud)
-│   │   │   ├── index.js       # Composition router
-│   │   │   ├── publicToken.js # /t/:token (view + sign)
-│   │   │   ├── public.js      # /public/* (packages, addons, calculate, capture-lead, quote-draft, submit)
-│   │   │   ├── metadata.js    # /packages, /addons, /calculate (admin), /financials, /dashboard-stats
-│   │   │   └── crud.js        # /, /:id, /:id/status, /:id/notes, /:id/create-shift, /:id/balance-due-date, /:id/send-reminder, /:id/record-payment
-│   │   ├── shifts.js          # Shift management
-│   │   ├── stripe.js          # Stripe checkout + webhooks
-│   │   ├── emailMarketing.js  # Email marketing (leads, campaigns, sequences, conversations)
-│   │   ├── emailMarketingWebhook.js # Resend webhook receiver (tracking events)
-│   │   ├── publicReviews.js   # Public cached endpoint for Thumbtack reviews (homepage)
-│   │   ├── invoices.js        # Invoice CRUD, public token view, client portal
-│   │   ├── testFeedback.js    # Receives tester bug/checklist submissions from /testing-guide.html and emails contact@drbartender.com
-│   │   └── thumbtack.js       # Thumbtack webhook endpoints (leads, messages, reviews)
-│   ├── utils/
-│   │   ├── agreementPdf.js    # PDFKit renderer for signed contractor agreements
-│   │   ├── autoAssign.js      # Auto-assign algorithm (seniority + geo + equipment)
-│   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
-│   │   ├── balanceScheduler.js # Scheduled balance/payment tasks
-│   │   ├── email.js           # Resend wrapper (send + batch)
-│   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
-│   │   ├── emailTemplates.js  # Email template helpers (transactional + marketing)
-│   │   ├── encryption.js      # AES-256-GCM wrapper for bank PII at rest (fails closed in prod)
-│   │   ├── errors.js          # AppError class hierarchy (ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError, PaymentError)
-│   │   ├── eventCreation.js   # Event creation helpers
-│   │   ├── eventTypes.js      # Event type id→label resolver (mirrors client)
-│   │   ├── fileValidation.js  # Magic-byte validation
-│   │   ├── geocode.js         # Nominatim geocoding (address → lat/lng)
-│   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
-│   │   ├── phone.js           # Save-time phone validation (10 digits, strips country code 1)
-│   │   ├── pricingEngine.js   # Pure pricing calculation functions
-│   │   ├── shoppingList.js    # Shopping-list generator (mirrors client/src/components/ShoppingList/generateShoppingList.js)
-│   │   ├── sms.js             # Twilio wrapper
-│   │   ├── storage.js         # R2 upload/signed-URL helpers
-│   │   ├── stripeClient.js    # Central Stripe client factory (test-mode toggle, fail-closed)
-│   │   └── urls.js            # Canonical PUBLIC_SITE_URL / ADMIN_URL / STAFF_URL / API_URL resolvers
-│   └── scripts/
-│       └── archive/               # One-time migrations (already run, kept for history)
-│           ├── importBlogPosts.js
-│           ├── migrateBlogBodies.js
-│           └── migrate-to-gcs.js
-├── client/
-│   ├── src/
-│   │   ├── App.js            # All routes + auth guards
-│   │   ├── context/
-│   │   │   ├── AuthContext.js      # Staff/admin auth state
-│   │   │   ├── ClientAuthContext.js # Client auth state
-│   │   │   ├── ToastContext.js     # ToastProvider + useToast() hook
-│   │   │   └── UserPrefsContext.js # Per-user admin OS prefs (skin/density/sidebar) — strips on logout
-│   │   ├── utils/
-│   │   │   ├── api.js             # Axios instance with JWT interceptor
-│   │   │   ├── constants.js       # App-wide constants
-│   │   │   ├── eventTypes.js      # Event type id→label resolver (mirrors server)
-│   │   │   ├── formatPhone.js     # Phone number formatting
-│   │   │   ├── leadSources.js     # Single source of truth for email lead source enum (mirrors schema + server validator)
-│   │   │   └── timeOptions.js     # Time option generator + 12h formatter + input parser (TimePicker)
-│   │   ├── components/
-│   │   │   ├── AdminLayout.js     # Admin sidebar + header layout
-│   │   │   ├── BrandLogo.js       # Dr. Bartender logo component
-│   │   │   ├── ConfirmModal.js    # Confirmation dialog component
-│   │   │   ├── DrinkPlanSelections.js # Drink plan selection display
-│   │   │   ├── ErrorBoundary.js   # React error boundary
-│   │   │   ├── FieldError.js  # Inline red text under an input
-│   │   │   ├── FileUpload.js      # Drag-and-drop file upload
-│   │   │   ├── FormBanner.js  # Error banner above submit button (auto-scrolls into view)
-│   │   │   ├── Layout.js          # Staff-facing layout wrapper
-│   │   │   ├── LocationInput.js   # Nominatim address autocomplete
-│   │   │   ├── NumberStepper.js   # Numeric input with TimePicker-style ▲/▼ steppers (used for hours)
-│   │   │   ├── PricingBreakdown.js # Proposal pricing display
-│   │   │   ├── PublicLayout.js    # Public-facing layout wrapper
-│   │   │   ├── RichTextEditor.js  # TipTap WYSIWYG editor (blog + email marketing)
-│   │   │   ├── InvoiceDropdown.js # Invoice list dropdown (admin + client)
-│   │   │   ├── ScrollToTop.js     # Router-level scroll reset on pathname change (skips hash nav)
-│   │   │   ├── SessionExpiryHandler.js  # Listens for session-expired event, shows toast, redirects
-│   │   │   ├── SignaturePad.js    # E-signature canvas
-│   │   │   ├── StaffLayout.js     # Staff-facing layout wrapper (sidebar nav for staff.drbartender.com)
-│   │   │   ├── Toast.js  # Toast container (top-right, dismissible, auto-fade)
-│   │   │   ├── W9Form.js         # W-9 tax form component
-│   │   │   ├── LeadImportModal.js # CSV lead import modal
-│   │   │   ├── MenuSamplesModal.js # Sample menu designs lightbox (Potion Planning Lab)
-│   │   │   ├── AudienceSelector.js # Campaign audience filter/selector
-│   │   │   ├── SequenceStepEditor.js # Drip sequence step editor
-│   │   │   ├── CampaignMetricsBar.js # Campaign performance metrics bar
-│   │   │   ├── SyrupPicker.js    # Syrup add-on selection component
-│   │   │   ├── TimePicker.js     # Unified time input (type, 30-min arrows, dropdown)
-│   │   │   ├── adminos/          # Admin OS shell + primitives (scoped to [data-app="admin-os"])
-│   │   │   │   ├── AreaChart.js       # SVG area chart (Dashboard revenue series)
-│   │   │   │   ├── CommandPalette.js  # ⌘K palette — search + jump to admin pages
-│   │   │   │   ├── Drawer.js          # Right-slide peek panel — body-scroll-locked, Esc-closable
-│   │   │   │   ├── format.js          # fmt$, fmtDate, relDay, dayDiff helpers
-│   │   │   │   ├── Header.js          # Top bar — search trigger, quick-add, account menu
-│   │   │   │   ├── Icon.js            # Inline SVG icon set
-│   │   │   │   ├── InterviewScheduleModal.js # Date/time + notes + send-confirmation modal (kanban + detail page)
-│   │   │   │   ├── KebabMenu.js       # Portal-anchored 3-dots-vertical row action menu
-│   │   │   │   ├── nav.js             # Sidebar nav config (label, route, icon)
-│   │   │   │   ├── shifts.js          # Shared shiftPositions / parsePositionsCount / approvedCount / eventStatusChip
-│   │   │   │   ├── Sidebar.js         # Left rail — collapsible, badge counts
-│   │   │   │   ├── Sparkline.js       # Tiny SVG sparkline (per-row mini chart)
-│   │   │   │   ├── StaffPills.js      # Compact filled/pending/open position pills
-│   │   │   │   ├── StatusChip.js      # Standardized chip with kind + dot
-│   │   │   │   ├── Toolbar.js         # Toolbar wrapper (search + tabs + filters)
-│   │   │   │   └── drawers/           # Per-entity peek bodies
-│   │   │   │       ├── ClientDrawer.js
-│   │   │   │       ├── EventDrawer.js
-│   │   │   │       ├── InvoicesDrawer.js   # Read-only invoice list for a proposal (link → public invoice page)
-│   │   │   │       ├── ProposalDrawer.js
-│   │   │   │       └── ShiftDrawer.js
-│   │   │   └── ShoppingList/     # Shopping list generator
-│   │   │       ├── ShoppingListButton.jsx
-│   │   │       ├── ShoppingListModal.jsx
-│   │   │       ├── ShoppingListPDF.jsx
-│   │   │       ├── generateShoppingList.js
-│   │   │       ├── logoBase64.js
-│   │   │       └── shoppingListPars.js
-│   │   ├── data/
-│   │   │   ├── addonCategories.js # Add-on category definitions
-│   │   │   ├── eventTypes.js      # Event type definitions
-│   │   │   ├── menuSamples.js     # Curated menu design samples (Menu Design step popup)
-│   │   │   ├── packages.js        # Service package definitions
-│   │   │   └── syrups.js          # Syrup product definitions
-│   │   ├── hooks/
-│   │   │   ├── useDebounce.js     # Debounced callback helper
-│   │   │   ├── useDrawerParam.js  # URL-synced drawer state (?drawer=event&drawerId=123)
-│   │   │   ├── useFormValidation.js # Form validation hook
-│   │   │   └── useWizardHistory.js # Wizard step ↔ browser history sync
-│   │   ├── pages/
-│   │   │   ├── Login.js, Register.js, ForgotPassword.js, ResetPassword.js
-│   │   │   ├── Welcome.js, FieldGuide.js, Agreement.js
-│   │   │   ├── ContractorProfile.js, PaydayProtocols.js, Completion.js
-│   │   │   ├── Application.js, ApplicationStatus.js
-│   │   │   ├── AdminDashboard.js
-│   │   │   ├── HiringLanding.js           # Public hiring site (hiring.drbartender.com)
-│   │   │   ├── admin/
-│   │   │   │   ├── applicationDetail/    # Application detail page (rebuilt 2026-04-28)
-│   │   │   │   │   ├── AdminApplicationDetail.js  # Parent — shell, identity bar, pipeline, two-col layout
-│   │   │   │   │   ├── helpers.js                  # AD_FLOW, SCORECARD_DIMS, ONBOARDING_ITEMS, initialsOf, relDay, dayDiff, chipKindFor
-│   │   │   │   │   ├── components/                 # PipelineStrip, ScorecardCard, TimelineCard, OnboardingCard, ActionsCard, StatsCard, FilesBlock, FlagsCard, ViabilityCard, RejectModal
-│   │   │   │   │   └── sections/                   # SectionWords, SectionExperience, SectionGear, SectionContact
-│   │   │   │   ├── BlogDashboard.js
-│   │   │   │   ├── ClientDetail.js
-│   │   │   │   ├── userDetail/        # Staff detail page (was AdminUserDetail.js, 1803 lines)
-│   │   │   │   │   ├── AdminUserDetail.js     # Parent — page shell, identity bar, tab routing, modals
-│   │   │   │   │   ├── helpers.js             # rateOf, ytdShiftCount, computeYtdEstEarnings, initialsOf, parsePositions, PAYMENT_METHODS
-│   │   │   │   │   ├── components/            # TabButton, Sparkbars, EquipmentDisplay, AssignToEventModal
-│   │   │   │   │   └── tabs/                  # OverviewTab, ShiftsTab, CertificationsTab, PayoutsTab, DocumentsTab, MessagesTab, ApplicationTab
-│   │   │   │   ├── ClientsDashboard.js
-│   │   │   │   ├── CocktailMenuDashboard.js
-│   │   │   │   ├── Dashboard.js
-│   │   │   │   ├── DrinkPlanDetail.js
-│   │   │   │   ├── DrinkPlansDashboard.js
-│   │   │   │   ├── EventDetailPage.js               # Per-event admin page (proposal join + every shift on the event)
-│   │   │   │   ├── EventsDashboard.js
-│   │   │   │   ├── FinancialsDashboard.js
-│   │   │   │   ├── HiringDashboard.js            # Hiring kanban (rebuilt 2026-04-28 — kanban + KPIs + search + scheduling)
-│   │   │   │   ├── ProposalCreate.js
-│   │   │   │   ├── ProposalDetail.js              # Lean container (identity bar, two-col layout, drink plan, notes, activity)
-│   │   │   │   ├── ProposalDetailEditForm.js      # Edit-mode sibling: client/event/package/addons/syrups/adjustments/override + dirty guard
-│   │   │   │   ├── ProposalDetailPaymentPanel.js  # Payment sibling: invoices, balance due date, charge balance, payment link, record payment
-│   │   │   │   ├── ProposalsDashboard.js
-│   │   │   │   ├── SettingsDashboard.js
-│   │   │   │   ├── StaffDashboard.js            # Staff list (replaces legacy AdminDashboard for /admin/staffing)
-│   │   │   │   ├── EmailMarketingDashboard.js  # Email marketing hub (tabs)
-│   │   │   │   ├── EmailLeadsDashboard.js      # Lead list + import
-│   │   │   │   ├── EmailLeadDetail.js          # Lead profile + history
-│   │   │   │   ├── EmailCampaignsDashboard.js  # Campaign list
-│   │   │   │   ├── EmailCampaignCreate.js      # Campaign builder
-│   │   │   │   ├── EmailCampaignDetail.js      # Campaign detail + metrics
-│   │   │   │   ├── EmailAnalyticsDashboard.js  # Analytics overview
-│   │   │   │   └── EmailConversations.js       # Conversation inbox
-│   │   │   ├── plan/             # PotionPlanningLab (public questionnaire)
-│   │   │   │   ├── PotionPlanningLab.js
-│   │   │   │   ├── data/         # cocktailMenu.js, servingTypes.js, drinkUpgrades.js, packageGaps.js (hosted-package gap helpers; packageGaps.test.js is the Jest test)
-│   │   │   │   └── steps/        # WelcomeStep, LogisticsStep, FullBarStep, SyrupUpsellStep, HostedGuestPrefsStep (compact guest-prefs step for hosted refinement), etc.
-│   │   │   ├── invoice/
-│   │   │   │   └── InvoicePage.js     # Public token-gated invoice view + payment
-│   │   │   ├── proposal/         # ProposalView (public client-facing)
-│   │   │   │   └── proposalView/      # Split into parent + 4 components + helpers + styles
-│   │   │   │       ├── ProposalView.js            # Parent — fetch, payment intent orchestration
-│   │   │   │       ├── ProposalHeader.js          # Brand + event details
-│   │   │   │       ├── ProposalPricingBreakdown.js # Package + pricing + terms + payment summary
-│   │   │   │       ├── SignAndPaySection.js       # Sign-and-pay AND pay-only modes (signature + payment options)
-│   │   │   │       ├── PaymentForm.js             # Stripe Elements wrapper (sign-then-pay sequencing)
-│   │   │   │       ├── helpers.js                 # fmt, formatTime, calcEndTime, formatDateShort, DEPOSIT_DOLLARS
-│   │   │   │       └── styles.js                  # Inline-style objects (was const styles in original)
-│   │   │   ├── public/           # Client portal pages
-│   │   │   │   ├── Blog.js, BlogPost.js
-│   │   │   │   ├── ClientDashboard.js
-│   │   │   │   ├── ClientLogin.js
-│   │   │   │   └── ClientShoppingList.js  # Client-facing read-only shopping list
-│   │   │   ├── staff/            # Staff portal (staff.drbartender.com)
-│   │   │   │   ├── StaffDashboard.js
-│   │   │   │   ├── StaffEvents.js
-│   │   │   │   ├── StaffProfile.js
-│   │   │   │   ├── StaffResources.js
-│   │   │   │   ├── StaffSchedule.js
-│   │   │   │   └── StaffShifts.js
-│   │   │   └── website/          # Public website pages
-│   │   │       ├── Website.js
-│   │   │       ├── HomePage.js       # Public homepage
-│   │   │       ├── quoteWizard/      # Multi-step quote builder (split into 5 step files)
-│   │   │       │   ├── QuoteWizard.js    # Parent — wizard shell, state, draft persistence, submit
-│   │   │       │   ├── bundleConfig.js   # BYOB bundle constants
-│   │   │       │   ├── helpers.js        # getSteps, ADDON_TAGLINES, formatCurrency
-│   │   │       │   └── steps/            # EventDetailsStep, YourInfoStep, PackageStep, ExtrasStep, ReviewStep
-│   │   │       ├── QuotePage.js      # Quote page wrapper
-│   │   │       ├── FaqPage.js        # FAQ page
-│   │   │       └── ClassWizard.js    # Cocktail class booking wizard
-│   │   └── index.css         # Global styles
-│   ├── package.json          # proxy: localhost:5000
-│   └── vercel.json           # SPA rewrite for Vercel deployment
-├── .claude/
-│   └── agents/               # Claude Code review agents (all opus)
-│       ├── security-review.md     # OWASP security audit
-│       ├── code-review.md         # Code quality + error handling
-│       ├── consistency-check.md   # Cross-file synchronization
-│       ├── database-review.md     # Schema + query analysis
-│       ├── performance-review.md  # Frontend, API, and bundle performance
-│       └── ui-ux-review.md        # Playwright visual + accessibility review
-├── scripts/
-│   ├── build-testing-guide.js   # Builds client/public/testing-guide.html from TESTING.md
-│   └── testing-guide-template.html
-├── .env / .env.example
-├── .husky/pre-commit         # Pre-commit hook (runs lint-staged)
-├── eslint.config.mjs         # ESLint flat config + security plugin
-├── package.json              # Root (server deps + scripts)
-└── render.yaml               # Render blueprint
-```
-
 ## Environment Variables
+
+**Env-var debug discipline.** Production env vars live in Render (server) and Vercel (client) dashboards — I cannot read those. Local `.env` is gitignored. If a bug looks env-related, I will NEVER assert *"X isn't set"* — phrase it as *"Can you confirm `X` is set in [Render | Vercel]?"* My inability to see a value ≠ the value being absent.
 
 See `.env.example` for the full list. Key ones:
 
@@ -311,22 +47,6 @@ See `.env.example` for the full list. Key ones:
 | `SENTRY_DSN_SERVER` | Server-side Sentry DSN (optional in dev; required in prod) |
 | `REACT_APP_SENTRY_DSN_CLIENT` | Client-side Sentry DSN (optional in dev; required in prod) |
 
-## Running Locally
-
-```bash
-npm run install:all   # Install server + client deps
-cp .env.example .env  # Fill in DATABASE_URL (Neon connection string) + other values
-npm run seed          # Seed admin account
-npm run dev           # Express on :5000, React on :3000
-```
-
-## Deployment
-
-- **Backend**: Render (auto-deploys from `main` via render.yaml)
-- **Frontend**: Vercel (SPA rewrite in client/vercel.json)
-- **Database**: Neon PostgreSQL (connection string in Render env vars)
-- Push to `main` triggers automatic deployment. No manual deploy step needed.
-
 ## Git Workflow
 
 Solo developer, trunk-based, vibe-coded. Code preservation is the #1 priority. Push to `main` = deploy to production via Render + Vercel.
@@ -341,7 +61,7 @@ Solo developer, trunk-based, vibe-coded. Code preservation is the #1 priority. P
    - **Push cue:** explicit only — "push", "deploy", "ship it", "send it". Claude never auto-pushes on commit cues. **Claude NEVER volunteers a "ready to push?" prompt.** Pushes are user-initiated only. The user coordinates push timing across multiple parallel Claude sessions / terminals and decides when the full batch is ready. After a commit, Claude stands down — silence is correct. No "ready to push?" question, no "want me to push these now?" nudge, nothing.
    - **Agent-run confirmation.** When the user issues a push cue, Claude's FIRST response is a one-line batch summary + confirmation — BEFORE any agent launch: *"N commits / M files pending. Run agents + push?"* Agents fire only on an explicit yes. If the user says *wait / one more thing / defer*, Claude stands down — no agent run, no push. Re-ask on the next push cue. **Never pre-run agents.** Not at end of feature, not to "verify," not on commit cues, not as prep. The confirmation prompt is the single entry point to the agent fleet. This guards against burning a review on a batch the user is about to amend, and lets the user consolidate commits across multiple terminals into ONE review pass.
 5. **Push = deploy.** Every push to `main` ships to Render + Vercel. Treat with gravity.
-6. **Review agents run automatically before every code-touching push.** Claude launches all 5 non-UI agents in parallel (`consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`). Skip agents only when (a) the push contains exclusively `*.md` or `.gitignore` changes, or (b) a fresh `.claude/overnight-review.log` records the current `HEAD` as CLEAN or FIXED with zero flags (see Pre-Push Procedure step 4.5). Clean results → push proceeds silently. Any flag → stop, report findings, wait. **Agents run exactly once per logical push, gated by the Pre-Push Procedure step 0.5 confirmation. Claude does NOT pre-run agents at feature completion, task completion, "let me verify," or any point outside the confirmed push flow.**
+6. **Review agents run automatically before every code-touching push.** Claude launches all 5 non-UI agents in parallel (`consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`). Skip agents only when (a) the push contains exclusively `*.md` or `.gitignore` changes, or (b) a fresh `.claude/overnight-review.log` records the current `HEAD` as CLEAN or FIXED with zero flags (see Pre-Push Procedure step 4.5). Clean results → push proceeds silently. Any flag → stop, report findings, wait. **Agents run exactly once per logical push, gated by the Pre-Push Procedure step 0.5 confirmation. Claude does NOT pre-run agents at feature completion, task completion, "let me verify," or any point outside the confirmed push flow.** Agent specs live in `.claude/agents/`.
 7. **Explicit staging only.** `git add <specific-path>` always. Never `git add .`, `-A`, or `-u`. Prevents sweeping in screenshots, `.playwright-mcp/`, `.env`, etc.
 8. **Branches and stashes require approval with a one-line reason.** Claude may propose but never creates silently.
 9. **Undo rules (safe recipes).**
@@ -396,11 +116,14 @@ When the user gives a push cue, Claude runs this checklist exactly. No steps ski
 - **No ORM** — use raw SQL via `pool.query()` with parameterized queries (`$1`, `$2`, etc.). Never concatenate user input into SQL.
 - **Route files** export an Express Router. One file per resource under `server/routes/`.
 - **Auth middleware** — import `{ auth }` for protected routes; check `req.user.role` for admin/manager guards.
-- **File uploads** use `express-fileupload` → validated with magic bytes → uploaded to R2 → URL stored in DB.
-- **Public token-gated routes** (drink plans, proposals) use UUID tokens in the URL instead of auth.
-- **Frontend API calls** go through `client/src/utils/api.js` (axios with auto-attached JWT).
+- **Async route handlers** — wrap with `asyncHandler` so rejections funnel to the global error middleware. Throw `AppError` subclasses (`ValidationError`, `NotFoundError`, `PermissionError`, `ConflictError`, `ExternalServiceError`, `PaymentError`) for client-visible errors instead of `res.status(400).json({error: '...'})`. Hierarchy lives in `server/utils/errors.js`.
+- **File uploads** use `express-fileupload` → validated with magic bytes via `server/utils/fileValidation.js` → uploaded to R2 → URL stored in DB.
+- **Public token-gated routes** (drink plans, proposals, invoices) use UUID tokens in the URL instead of auth.
+- **Frontend API calls** go through `client/src/utils/api.js` (axios with auto-attached JWT). Never raw `fetch`/`axios`.
 - **Schema changes** go in `schema.sql` using idempotent statements (`IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`).
-- **Pricing logic** lives in `server/utils/pricingEngine.js` — pure functions, no DB calls.
+- **Pricing logic** lives in `server/utils/pricingEngine.js` — pure functions, no DB calls. Money stored as integer cents, never floats.
+- **Stripe** — all Stripe API calls go through `server/utils/stripeClient.js`, never `require('stripe')` directly. The factory honors `STRIPE_TEST_MODE_UNTIL` and fails closed if creds are missing.
+- **Bank PII** — banking fields on `users` / `payouts` route through `server/utils/encryption.js` (AES-256-GCM, fails closed in prod). Never store plaintext.
 - **CSS** — vanilla CSS in `index.css`. No CSS modules, no utility frameworks.
 - **Naming**: camelCase for JS variables/functions, snake_case for DB columns and API JSON keys.
 
@@ -415,6 +138,7 @@ When modifying any entity, always check and update **all** related entities too.
 - **New feature data shape** → ensure every consumer of that data (backend endpoints, frontend components, PDF templates) is updated in the same PR.
 - **Event identity** — client name and event type are separate, independent data points. Never concatenate them into a single "title" string or prompt for an `event_name`. Display uses `getEventTypeLabel({ event_type, event_type_custom })` with `'event'` as the graceful fallback. Available in `client/src/utils/eventTypes.js` (ESM) and `server/utils/eventTypes.js` (CJS — kept in sync manually).
 - **Hosted-package bartender rule** — Hosted (per_guest) packages include bartender staffing in the per-guest rate. Any additional bartenders — via the `num_bartenders` override OR the `additional-bartender` add-on — are **$0 line items with $0 gratuity** on hosted packages. Use `isHostedPackage(pkg)` from `server/utils/pricingEngine.js`. Grep for `isHostedPackage` before adding any new bartender-cost code path; replicate the zero-out. This rule has been re-lost multiple times — treat as load-bearing.
+- **Drink plans: event-side is canonical, proposal-side is preview.** Bartender prep, shopping-list approval, and client communication all use the EVENT's drink plan (post-conversion). Verify drink-plan / shopping-list UI changes on the event path. Pricing logic still verifies on the proposal side (that's where money math runs).
 
 The rule: **if you change X, search the codebase for everything that depends on X and update it too.**
 
@@ -440,24 +164,19 @@ When a file genuinely needs to be big (rare — usually the right answer is to s
 
 The marker is intentional friction. If you're reaching for it, double-check that the file isn't actually two files mashed together.
 
-**Known debt** (files currently over 1000 lines, untouched by the 2026-04-27 cleanup — split when you next touch them):
-- `client/src/pages/plan/PotionPlanningLab.js` (~1,095 lines) — multi-step public questionnaire; split candidate is per-step files like quoteWizard already does.
-- `client/src/pages/admin/ProposalCreate.js` (~1,068 lines) — admin proposal builder; split candidate is by section (event/package/addons/staffing/pricing).
-- `server/routes/stripe.js` (~1,039 lines) — Stripe checkout + webhooks; split candidate is webhook handlers separated from request endpoints.
-
-These won't block commits unless you modify them. When you do, the hook surfaces them — that's the right time to do the split.
-
 ## Mandatory Documentation Updates
 
-**This is not optional.** When you add, rename, or remove files, update ALL THREE docs in the same change. The pre-commit hook will warn if you don't.
+**This is not optional.** When you add, rename, or remove anything that touches the codebase shape, update the relevant docs in the same change. The pre-commit hook will warn if you don't.
 
-| What changed | Update in CLAUDE.md | Update in README.md | Update in ARCHITECTURE.md |
+CLAUDE.md is the rules doc — most structural updates land in `README.md` (folder tree, npm scripts, key features) and `ARCHITECTURE.md` (route table, schema, third-party integrations). Only env vars and integrations also touch CLAUDE.md.
+
+| What changed | CLAUDE.md | README.md | ARCHITECTURE.md |
 |---|---|---|---|
-| New/removed route file | Folder structure tree | Folder structure tree | Add/remove API route table |
-| New/removed util file | Folder structure tree | Folder structure tree | Mention in relevant section |
-| New/removed component | Folder structure tree | Folder structure tree | — |
-| New/removed page | Folder structure tree | Folder structure tree | — |
-| New/removed context | Folder structure tree | Folder structure tree | — |
+| New/removed route file | — | Folder structure tree | Add/remove API route table |
+| New/removed util file | — | Folder structure tree | Mention in relevant section |
+| New/removed component | — | Folder structure tree | — |
+| New/removed page | — | Folder structure tree | — |
+| New/removed context | — | Folder structure tree | — |
 | Schema column/table change | — | — | Database Schema section |
 | New env variable | Environment Variables table | Environment Variables table | — |
 | New npm script | — | NPM Scripts table | — |
@@ -468,7 +187,7 @@ These won't block commits unless you modify them. When you do, the hook surfaces
 
 ## Code Verification System
 
-This project is vibe-coded — the author relies on Claude to catch issues. Verification has two layers: an inline self-check on every change, and opus-powered review agents for thorough analysis.
+This project is vibe-coded — the author relies on Claude to catch issues. Verification has two layers: an inline self-check on every change (below), and opus-powered review agents triggered automatically before code-touching pushes (see Git Workflow Rule 6 + Pre-Push Procedure). Agent specs live in `.claude/agents/` — what each agent checks is documented there, not duplicated here.
 
 ### Inline Self-Check (Every Change — Free)
 
@@ -499,75 +218,3 @@ Before presenting ANY code change, silently verify:
 - Null/undefined handled for DB results, API responses, optional fields
 - Date ranges and pagination boundaries correct
 - No race conditions on payment/mutation endpoints
-
-### Review Agents (All Opus)
-
-Six review agents live in `.claude/agents/`, all running on opus. Triggered automatically per the Git Workflow rules above (see Rule 6 + Pre-Push Procedure) or explicitly via the `/review-before-deploy` slash command. A complementary `/codex-review` command runs OpenAI Codex (GPT) as a cross-LLM second-opinion reviewer — see its subsection below.
-
-**Auto-run in parallel before every code-touching push to `main`:**
-
-- **@security-review** — Full OWASP Top 10:2025 audit:
-  - A01 Broken Access Control: missing `auth` middleware, IDOR (missing `req.user.id` ownership checks), SSRF (consolidated into A01 in 2025 — user-controlled URLs in Nominatim/webhooks)
-  - A02 Security Misconfiguration: CORS, Helmet, error leakage, debug endpoints, `STRIPE_TEST_MODE_UNTIL` in prod
-  - A03 Software Supply Chain Failures (NEW/expanded): `npm audit`, lockfile integrity, pinned security packages, suspicious postinstall scripts, Render/Vercel pipeline pinning
-  - A04 Cryptographic Failures: bcryptjs, JWT_SECRET from env, secret keys never in client bundle
-  - A05 Injection: SQL string concat, XSS (`dangerouslySetInnerHTML`), command injection, path traversal
-  - A06 Insecure Design: rate limiting, file upload magic bytes, server-side payment/state-machine validation
-  - A07 Authentication Failures: JWT impl, password requirements, user enumeration
-  - A08 Data Integrity: Stripe/Resend/Thumbtack webhook signature verification, BEGIN/COMMIT/ROLLBACK
-  - A09 Logging & Monitoring: Sentry init, failed-login and payment-event logging, no PII in logs
-  - A10 Mishandling of Exceptional Conditions (NEW): `asyncHandler` coverage, `AppError` hierarchy usage, fail-closed on Stripe/webhook paths, ROLLBACK on error branches, scheduler resilience
-
-- **@code-review** — Code quality + error handling:
-  - Missing try/catch on async handlers, missing ROLLBACK after BEGIN, unhandled promises
-  - Missing loading/error/empty states in React components
-  - Dead code, duplication, function complexity (>50 lines), naming conventions
-  - React anti-patterns: useEffect deps, component size (>200 lines), props drilling
-  - API consistency: response shapes, HTTP status codes, snake_case keys
-
-- **@consistency-check** — Cross-file synchronization:
-  - Schema column changes reflected in all routes (SELECT, INSERT, UPDATE)
-  - New routes mounted in `index.js` with matching `App.js` frontend routes
-  - Pricing logic changes reflected in all consumers (ProposalCreate, ProposalDetail, PricingBreakdown)
-  - API response shape changes handled by all frontend consumers
-  - Doc updates: CLAUDE.md, README.md, ARCHITECTURE.md folder trees
-
-- **@performance-review** — Frontend, API, and bundle performance:
-  - Unnecessary React re-renders (missing memo/useMemo/useCallback)
-  - Heavy imports, missing lazy loading, unused code shipped to client
-  - Sequential DB queries that could use Promise.all, missing pagination
-  - Oversized API responses, `SELECT *` instead of specific columns
-  - Prioritizes public-facing pages (HomePage, ProposalView, PotionPlanningLab, Blog)
-
-**Auto-run additionally when `server/db/schema.sql` is modified:**
-
-- **@database-review** — Schema + query analysis:
-  - Missing indexes, foreign keys, NOT NULL constraints
-  - N+1 query patterns, `SELECT *`, missing LIMIT on list queries
-  - Transaction integrity (BEGIN/COMMIT/ROLLBACK)
-  - Migration safety (idempotent DDL, nullable new columns)
-
-**Explicit-only (requires `npm run dev` running):**
-
-- **@ui-ux-review** — Playwright visual + accessibility review:
-  - Screenshots at desktop, tablet, and mobile viewports
-  - Color contrast, form labels, heading hierarchy, keyboard navigation
-  - Loading states, error messages, empty states, form validation feedback
-  - Responsive layout, touch targets, admin sidebar behavior
-
-**Slash Command — `/review-before-deploy`:**
-
-Runs ALL six agents in parallel (the five auto-runners plus `ui-ux-review`). Reserved for heavier gates: end of a major feature, before quarterly deploy, after adding a new third-party integration. Will warn if `npm run dev` isn't running and ask whether to start it or skip the UI agent.
-
-**Slash Command — `/codex-review`:**
-
-Runs OpenAI Codex (GPT) as a second-opinion reviewer over uncommitted changes, a diff range, or a focused sweep. GPT and Claude have different priors, so Codex catches what Claude-style checklist agents miss — logic correctness, business-intent alignment, architectural smell, and test-gap reasoning.
-
-Argument presets (see `.claude/commands/codex-review.md` for the full table):
-- *(empty)* — holistic "anything look off?" on uncommitted changes
-- `tests` — identify missing unit/integration/edge-case tests
-- `pricing` — verify money math (integer cents, hosted-bartender rule, rounding)
-- `intent` — check diff matches the stated commit message / branch intent
-- `architecture` — leaky abstractions, module boundaries, coupling
-
-Read-only by design: the slash command runs exclusively `codex review ...`. All write-capable Codex subcommands (`apply`, `exec`, `cloud`, `resume`, `fork`, `mcp-server`, `app`, `app-server`) are blocked by deny rules in `.claude/settings.local.json`. If Codex suggests a patch, it's presented as text — the user decides what lands.
