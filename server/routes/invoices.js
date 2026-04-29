@@ -10,6 +10,8 @@ const { ValidationError, ConflictError, NotFoundError } = require('../utils/erro
 
 const router = express.Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // ─── Public ──────────────────────────────────────────────────────────────────
 
 /**
@@ -18,6 +20,9 @@ const router = express.Router();
  * Excludes voided invoices. Returns line items and payments in parallel.
  */
 router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
+  if (!UUID_RE.test(req.params.token)) {
+    throw new NotFoundError('This invoice is no longer available');
+  }
   const result = await pool.query(
     `SELECT
        i.id, i.token, i.proposal_id, i.invoice_number, i.label,

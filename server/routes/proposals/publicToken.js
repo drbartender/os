@@ -11,10 +11,15 @@ const { ValidationError, ConflictError, NotFoundError } = require('../../utils/e
 
 const router = express.Router();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // ─── Public routes (token-based) ─────────────────────────────────
 
 /** GET /api/proposals/t/:token — fetch proposal by token (public) */
 router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
+  if (!UUID_RE.test(req.params.token)) {
+    throw new NotFoundError('This proposal is no longer available');
+  }
   // Public-safe column allowlist — do NOT expose admin_notes, stripe_customer_id,
   // stripe_payment_method_id, client_signature_ip, client_signature_user_agent,
   // created_by, or other internal fields.

@@ -1859,3 +1859,11 @@ DO $$ BEGIN
        OR positions_needed !~ '^\s*\[';
   END IF;
 END $$;
+
+-- ─── Sentry hardening: payment_profiles encrypted column widths ────
+-- routing_number and account_number store AES-256-GCM ciphertext as
+-- 'enc:{iv}:{tag}:{ct}' (~80+ chars). The original VARCHAR(20)/(30)
+-- sized for cleartext digits caused INSERT 500s once encryption shipped.
+-- ALTER TYPE is idempotent at the same target type.
+ALTER TABLE payment_profiles ALTER COLUMN routing_number TYPE VARCHAR(255);
+ALTER TABLE payment_profiles ALTER COLUMN account_number TYPE VARCHAR(255);

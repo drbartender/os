@@ -225,7 +225,7 @@ export default function ProposalView() {
   }
 
   const lineItems = [];
-  if (snapshot) {
+  if (snapshot && snapshot.package) {
     const packageTotal = (snapshot.package.base_cost || 0) + (snapshot.staffing?.total || 0);
     lineItems.push({ label: proposal.package_name, amount: packageTotal });
     if (snapshot.bar_rental?.total > 0) {

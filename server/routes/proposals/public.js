@@ -15,6 +15,14 @@ const router = express.Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_FORM_STATE_SIZE = 50 * 1024; // 50 KB
 
+// Mirrors schema CHECK on email_leads.lead_source and emailMarketing.js
+// VALID_LEAD_SOURCES. Untrusted public input — anything outside this set
+// must be coerced to 'website' or the INSERT 500s on the constraint.
+const VALID_LEAD_SOURCES = new Set([
+  'manual', 'csv_import', 'website', 'quote_wizard', 'potion_lab',
+  'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other',
+]);
+
 // ─── Public website endpoints (no auth) ─────────────────────────
 
 /** GET /api/proposals/public/packages — list active packages (public, limited fields) */
@@ -93,6 +101,7 @@ router.post('/public/capture-lead', publicLimiter, asyncHandler(async (req, res)
     await dbClient.query('BEGIN');
 
     // Upsert into email_leads — prefer existing name over new submission to prevent overwrite
+    const safeSource = VALID_LEAD_SOURCES.has(source) ? source : 'website';
     const leadResult = await dbClient.query(
       `INSERT INTO email_leads (email, name, lead_source, notes, status)
        VALUES ($1, $2, $3, $4, 'active')
@@ -104,7 +113,7 @@ router.post('/public/capture-lead', publicLimiter, asyncHandler(async (req, res)
       [
         cleanEmail,
         cleanName || 'Unknown',
-        source || 'website',
+        safeSource,
         notes,
       ]
     );
