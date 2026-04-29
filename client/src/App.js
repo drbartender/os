@@ -54,7 +54,7 @@ const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
 const AdminUserDetail = lazy(() => import('./pages/admin/userDetail/AdminUserDetail'));
-const AdminApplicationDetail = lazy(() => import('./pages/AdminApplicationDetail'));
+const AdminApplicationDetail = lazy(() => import('./pages/admin/applicationDetail/AdminApplicationDetail'));
 const EventsDashboard = lazy(() => import('./pages/admin/EventsDashboard'));
 const EventDetailPage = lazy(() => import('./pages/admin/EventDetailPage'));
 const ClientsDashboard = lazy(() => import('./pages/admin/ClientsDashboard'));
