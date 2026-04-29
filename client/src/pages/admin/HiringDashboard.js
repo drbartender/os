@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
-import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import InterviewScheduleModal from '../../components/adminos/InterviewScheduleModal';
 
@@ -64,7 +63,7 @@ export default function HiringDashboard() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // Deep-link: /admin/hiring?schedule=<id> opens the schedule modal for that
+  // Deep-link: /hiring?schedule=<id> opens the schedule modal for that
   // applicant. Used by the application detail page's "Schedule interview" CTA
   // so admins land on the kanban with the modal already open.
   useEffect(() => {
@@ -80,6 +79,7 @@ export default function HiringDashboard() {
     if (!searchQ.trim() || searchQ.trim().length < 2) {
       setSearchResults([]);
       setSearchOpen(false);
+      setSearchLoading(false);
       return;
     }
     setSearchLoading(true);
@@ -121,7 +121,7 @@ export default function HiringDashboard() {
         : 'unknown';
       toast.info(`${r.email} registered ${ago} but never submitted an application.`);
     } else {
-      navigate(`/admin/staffing/applications/${r.id}`);
+      navigate(`/staffing/applications/${r.id}`);
     }
   };
 
@@ -167,7 +167,6 @@ export default function HiringDashboard() {
                 <div
                   key={r.id}
                   onMouseDown={() => handleSelectResult(r)}
-                  className="hover-bg"
                   style={{ padding: '8px 10px', cursor: 'pointer', borderRadius: 3 }}
                 >
                   <div className="hstack" style={{ gap: 8, justifyContent: 'space-between' }}>
@@ -246,7 +245,7 @@ export default function HiringDashboard() {
                   <InterviewColumnBody
                     unscheduled={cols.interviewing_unsched}
                     scheduled={cols.interviewing_sched}
-                    onOpen={(a) => navigate(`/admin/staffing/applications/${a.id}`)}
+                    onOpen={(a) => navigate(`/staffing/applications/${a.id}`)}
                     onSchedule={setScheduleFor}
                   />
                 ) : (
@@ -255,7 +254,7 @@ export default function HiringDashboard() {
                       <ApplicantCard
                         key={a.id}
                         a={a}
-                        onOpen={() => navigate(`/admin/staffing/applications/${a.id}`)}
+                        onOpen={() => navigate(`/staffing/applications/${a.id}`)}
                         onSchedule={() => setScheduleFor(a)}
                       />
                     ))}
@@ -320,7 +319,6 @@ function ApplicantCard({ a, onOpen, onSchedule }) {
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
       role="button"
       tabIndex={0}
-      className="hover-lift"
       style={{
         padding: '10px 11px',
         background: isUnscheduled ? 'hsl(var(--warn-h) var(--warn-s) 50% / 0.06)' : 'var(--bg-1)',

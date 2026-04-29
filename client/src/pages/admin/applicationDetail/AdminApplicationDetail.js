@@ -98,7 +98,7 @@ export default function AdminApplicationDetail() {
   return (
     <div className="page" data-app="admin-os" style={{ maxWidth: 1280 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button className="btn btn-ghost btn-sm" onClick={() => navigate('/admin/hiring')}>
+        <button className="btn btn-ghost btn-sm" onClick={() => navigate('/hiring')}>
           <Icon name="arrow_right" size={11} style={{ transform: 'rotate(180deg)' }} />
           Hiring pipeline
         </button>
@@ -165,7 +165,7 @@ export default function AdminApplicationDetail() {
             a={a}
             acting={acting}
             onMove={(to) => handle(() => api.post(`/admin/applications/${a.id}/move`, { to }), 'Moved.')}
-            onSchedule={() => navigate(`/admin/hiring?schedule=${a.id}`)}
+            onSchedule={() => navigate(`/hiring?schedule=${a.id}`)}
             onReject={() => setRejectOpen(true)}
             onRestore={() => handle(() => api.post(`/admin/applications/${a.id}/restore`), 'Restored to Applied.')}
             onReminder={handleReminder}

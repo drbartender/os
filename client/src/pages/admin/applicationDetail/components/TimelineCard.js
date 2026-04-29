@@ -95,7 +95,7 @@ export default function TimelineCard({ userId, timeline, onPosted }) {
             const title = EVENT_LABELS[e.event_type] || e.event_type;
             const sub = describe(e);
             return (
-              <div key={i} style={{
+              <div key={`${e.event_type}-${e.created_at}`} style={{
                 display: 'grid', gridTemplateColumns: '14px 1fr 110px', gap: 14,
                 padding: '10px 0',
                 borderBottom: i < items.length - 1 ? '1px solid var(--line-1)' : 0,
