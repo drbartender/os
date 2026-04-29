@@ -151,7 +151,10 @@
       "Bash(xargs -I{} bash -c 'echo \"=== {} ===\" && grep \"Object.assign\" \"{}\"')",
       "mcp__sentry__whoami",
       "mcp__sentry__find_projects",
-      "mcp__sentry__list_issue_events"
+      "mcp__sentry__list_issue_events",
+      "Bash(unzip -l \"/c/Users/dalla/Downloads/Wild Light Admin-handoff.zip\")",
+      "mcp__sentry__get_sentry_resource",
+      "Bash(npx jest *)"
     ],
     "deny": [
       "Bash(codex apply *)",

@@ -16,6 +16,9 @@ server/uploads/*
 .claude/scheduled_tasks.lock
 client/.claude/
 
+# UI / pre-deploy review run output
+.review-screenshots/
+
 # Loose screenshots at repo root (intentional assets live under client/public/ or client/src/)
 /*.png
 
