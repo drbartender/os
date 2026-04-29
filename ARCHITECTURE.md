@@ -173,9 +173,18 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | PUT | `/users/:id/status` | Admin | Change onboarding status (hire, approve, reject, deactivate) |
 | PUT | `/users/:id/profile` | Admin | Edit contractor profile + payment info |
 | PUT | `/users/:id/permissions` | Admin | Update user role and permission flags |
-| GET | `/applications` | Admin | Paginated application list with status filters |
-| GET | `/applications/:userId` | Admin | Application detail with interview notes |
-| POST | `/applications/:userId/notes` | Admin | Add interview note |
+| GET | `/applications` | Admin | Paginated application list — derived `onboarding_progress`, `onboarding_blocker`, `flags` per row |
+| GET | `/applications/:userId` | Admin | Application detail + scorecard + unified activity timeline |
+| POST | `/applications/:userId/notes` | Admin | Add interview note (also writes to activity timeline) |
+| PUT | `/applications/:userId/interview` | Admin | Schedule/reschedule interview (optional confirmation email) |
+| DELETE | `/applications/:userId/interview` | Admin | Clear scheduled interview time |
+| PUT | `/applications/:userId/scorecard` | Admin | Upsert interview scorecard (5 dimensions, 1-5 each) |
+| POST | `/applications/:userId/move` | Admin | Stage transition (applied → interviewing → in_progress) |
+| POST | `/applications/:userId/reject` | Admin | Reject with reason (rate-limit: cannot re-reject already-rejected) |
+| POST | `/applications/:userId/restore` | Admin | Restore rejected applicant to Applied |
+| POST | `/applications/:userId/reminder` | Admin | Send paperwork-reminder email (24h cooldown per applicant) |
+| GET | `/hiring/summary` | Admin | KPI strip: new apps 7d / need-to-schedule / stalled / in-pipeline |
+| GET | `/hiring/search` | Admin | Cross-state applicant search (Applied/Interview/Onboarding/Active/Rejected/Unfinished) |
 | DELETE | `/notes/:noteId` | Admin | Delete interview note |
 | GET | `/active-staff` | Staffing | Paginated list of onboarded staff |
 | GET | `/managers` | Admin | List all managers |
@@ -457,10 +466,24 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - Full personal info, experience, tools, equipment, availability
 - File URLs: resume, headshot, BASSET cert
 - `birth_month/day/year` for 21+ validation
+- `referral_source` — optional "Who referred you?" answer
+- `interview_at` — scheduled interview time (TIMESTAMPTZ, nullable)
+- `rejection_reason` — set when admin rejects; surfaced on rejected banner
 
-**interview_notes** — Admin notes on applicants
+**interview_notes** — Admin notes on applicants (legacy; new notes also write to `application_activity`)
 - `user_id` FK → users, `admin_id` FK → users
 - `note`, `note_type` (default: 'note')
+
+**interview_scores** — Five-dimension hiring scorecard (one row per applicant, upserted)
+- `user_id` UNIQUE FK → users (CASCADE on delete)
+- `personality`, `customer_service`, `problem_solving`, `speed_mindset`, `hire_instinct` — INTEGER 1-5 each
+- `scored_by` FK → users (refreshes on each upsert to track latest scorer)
+
+**application_activity** — Append-only timeline of pipeline events
+- `user_id` FK → users (CASCADE), `actor_id` FK → users (SET NULL — preserve history when admins leave)
+- `event_type` — one of: application_submitted, status_changed, interview_scheduled, interview_rescheduled, reminder_sent, note_added, onboarding_step_completed
+- `metadata` JSONB — event-specific payload (from/to status, interview_at, rejection reason, note text)
+- Index on `(user_id, created_at DESC)` for fast timeline rendering
 
 ### Event Planning
 

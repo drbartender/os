@@ -108,10 +108,11 @@ dr-bartender/
 │   │   ├── asyncHandler.js     # 3-line wrapper that funnels async-handler rejections to the global error middleware
 │   │   └── auth.js             # JWT verification + role guards (auth, adminOnly)
 │   ├── routes/
-│   │   ├── admin/              # Admin endpoints (users/applications/managers/blog/settings sub-routers)
+│   │   ├── admin/              # Admin endpoints (users/applications/hiring/managers/blog/settings sub-routers)
 │   │   │   ├── index.js        # Composition router
 │   │   │   ├── users.js        # /users CRUD + status + profile + permissions + seniority + /active-staff
-│   │   │   ├── applications.js # /applications + interview notes
+│   │   │   ├── applications.js # /applications + /notes + interview scheduling + scorecard + reject/restore/move/reminder
+│   │   │   ├── hiring.js       # /hiring/summary (KPIs) + /hiring/search (cross-state applicant search)
 │   │   │   ├── managers.js     # /managers CRUD
 │   │   │   ├── blog.js         # /blog admin endpoints
 │   │   │   └── settings.js     # /settings + /test-email + /backfill-geocodes + /badge-counts
@@ -193,6 +194,7 @@ dr-bartender/
 │   │   │                       # TimePicker, NumberStepper, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
 │   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, KebabMenu,
+│   │   │   │                   # InterviewScheduleModal,
 │   │   │   │                   # format, nav, shifts; drawers/{ClientDrawer,EventDrawer,InvoicesDrawer,
 │   │   │   │                   # ProposalDrawer,ShiftDrawer})
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
@@ -202,8 +204,8 @@ dr-bartender/
 │   │   │   ├── (auth)          # Login, Register, ForgotPassword, ResetPassword
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
 │   │   │   ├── (staff)         # Application, ApplicationStatus, HiringLanding
-│   │   │   ├── (admin)         # AdminDashboard, AdminApplicationDetail (AdminUserDetail moved into admin/userDetail/)
-│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing)
+│   │   │   ├── (admin)         # AdminDashboard (AdminUserDetail moved into admin/userDetail/, AdminApplicationDetail moved into admin/applicationDetail/)
+│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, applicationDetail/)
 │   │   │   ├── staff/          # Staff portal (StaffDashboard, StaffShifts, StaffSchedule, StaffEvents, StaffResources, StaffProfile)
 │   │   │   ├── plan/           # PotionPlanningLab — public event questionnaire (with steps/ and data/; steps/HostedGuestPrefsStep.js = compact hosted-refinement step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test)
 │   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment

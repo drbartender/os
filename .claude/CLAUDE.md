@@ -36,7 +36,8 @@ dr-bartender/
 │   │   ├── admin/             # Admin management endpoints (split by concern)
 │   │   │   ├── index.js       # Composition router
 │   │   │   ├── users.js       # /users CRUD + status + profile + permissions + seniority + /active-staff
-│   │   │   ├── applications.js # /applications + /notes
+│   │   │   ├── applications.js # /applications + /notes + /interview + /scorecard + /move + /reject + /restore + /reminder
+│   │   │   ├── hiring.js      # /hiring/summary (KPI strip) + /hiring/search (cross-state applicant search)
 │   │   │   ├── managers.js    # /managers CRUD
 │   │   │   ├── blog.js        # /blog admin endpoints
 │   │   │   └── settings.js    # /settings + /test-email + /backfill-geocodes + /badge-counts
@@ -147,6 +148,7 @@ dr-bartender/
 │   │   │   │   ├── format.js          # fmt$, fmtDate, relDay, dayDiff helpers
 │   │   │   │   ├── Header.js          # Top bar — search trigger, quick-add, account menu
 │   │   │   │   ├── Icon.js            # Inline SVG icon set
+│   │   │   │   ├── InterviewScheduleModal.js # Date/time + notes + send-confirmation modal (kanban + detail page)
 │   │   │   │   ├── KebabMenu.js       # Portal-anchored 3-dots-vertical row action menu
 │   │   │   │   ├── nav.js             # Sidebar nav config (label, route, icon)
 │   │   │   │   ├── shifts.js          # Shared shiftPositions / parsePositionsCount / approvedCount / eventStatusChip
@@ -184,9 +186,14 @@ dr-bartender/
 │   │   │   ├── Welcome.js, FieldGuide.js, Agreement.js
 │   │   │   ├── ContractorProfile.js, PaydayProtocols.js, Completion.js
 │   │   │   ├── Application.js, ApplicationStatus.js
-│   │   │   ├── AdminDashboard.js, AdminApplicationDetail.js
+│   │   │   ├── AdminDashboard.js
 │   │   │   ├── HiringLanding.js           # Public hiring site (hiring.drbartender.com)
 │   │   │   ├── admin/
+│   │   │   │   ├── applicationDetail/    # Application detail page (rebuilt 2026-04-28)
+│   │   │   │   │   ├── AdminApplicationDetail.js  # Parent — shell, identity bar, pipeline, two-col layout
+│   │   │   │   │   ├── helpers.js                  # AD_FLOW, SCORECARD_DIMS, ONBOARDING_ITEMS, initialsOf, relDay, dayDiff, chipKindFor
+│   │   │   │   │   ├── components/                 # PipelineStrip, ScorecardCard, TimelineCard, OnboardingCard, ActionsCard, StatsCard, FilesBlock, FlagsCard, ViabilityCard, RejectModal
+│   │   │   │   │   └── sections/                   # SectionWords, SectionExperience, SectionGear, SectionContact
 │   │   │   │   ├── BlogDashboard.js
 │   │   │   │   ├── ClientDetail.js
 │   │   │   │   ├── userDetail/        # Staff detail page (was AdminUserDetail.js, 1803 lines)
@@ -202,7 +209,7 @@ dr-bartender/
 │   │   │   │   ├── EventDetailPage.js               # Per-event admin page (proposal join + every shift on the event)
 │   │   │   │   ├── EventsDashboard.js
 │   │   │   │   ├── FinancialsDashboard.js
-│   │   │   │   ├── HiringDashboard.js
+│   │   │   │   ├── HiringDashboard.js            # Hiring kanban (rebuilt 2026-04-28 — kanban + KPIs + search + scheduling)
 │   │   │   │   ├── ProposalCreate.js
 │   │   │   │   ├── ProposalDetail.js              # Lean container (identity bar, two-col layout, drink plan, notes, activity)
 │   │   │   │   ├── ProposalDetailEditForm.js      # Edit-mode sibling: client/event/package/addons/syrups/adjustments/override + dirty guard
