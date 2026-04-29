@@ -64,7 +64,7 @@ export default function InvoicePage() {
   const toast = useToast();
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(null);
   // Form-level error banner (payment section). Stripe Elements handles its
   // own card-validation messaging inside <PaymentForm/>.
   const [formError, setFormError] = useState('');
@@ -82,7 +82,7 @@ export default function InvoicePage() {
         const { data } = await api.get(`/invoices/t/${token}`);
         if (!cancelled) setInvoice(data.invoice);
       } catch (err) {
-        if (!cancelled) setError(err.message || 'Invoice not found or no longer available.');
+        if (!cancelled) setError({ status: err.status || 0, message: err.message });
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -133,7 +133,26 @@ export default function InvoicePage() {
   }, [invoice]);
 
   if (loading) return <div className="invoice-page"><div className="loading"><div className="spinner" />Loading...</div></div>;
-  if (error) return <div className="invoice-page"><div className="card"><p className="text-error">{error}</p></div></div>;
+  if (error) {
+    const isNotFound = error.status === 404;
+    return (
+      <div className="invoice-page">
+        <div className="public-error">
+          <p className="public-error-eyebrow">Invoice</p>
+          <h1>{isNotFound ? "We couldn't find that invoice." : "We couldn't load this invoice."}</h1>
+          <p className="public-error-body">
+            {isNotFound
+              ? 'The link may have been mistyped, expired, or the invoice was voided. Double-check the URL — and if you got it from us by email, the latest version is in your inbox.'
+              : "Something went wrong on our end. Please try again in a moment, or reach out and we'll send you a fresh link."}
+          </p>
+          <div className="public-error-actions">
+            <a href="mailto:contact@drbartender.com" className="btn btn-primary">Email contact@drbartender.com</a>
+            <a href="https://drbartender.com" className="public-error-link">Back to drbartender.com</a>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (!invoice) return null;
 
   const isPaid = invoice.status === 'paid' || paymentSuccess;

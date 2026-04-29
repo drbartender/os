@@ -49,13 +49,18 @@ export default function BlogPost() {
   if (notFound || !post) {
     return (
       <PublicLayout>
-        <section className="ws-section lab-notebook">
-          <div className="blog-post-not-found">
-            <h1>Post Not Found</h1>
-            <p>The post you're looking for doesn't exist or has been removed.</p>
-            <Link to="/labnotes" className="btn btn-primary">Back to Lab Notes</Link>
+        <div className="public-error">
+          <p className="public-error-eyebrow">Lab Notes</p>
+          <h1>We couldn't find that lab note.</h1>
+          <p className="public-error-body">
+            The link may have been mistyped, or the post might have been moved or removed.
+            Try the index — there's plenty more in the archive.
+          </p>
+          <div className="public-error-actions">
+            <Link to="/labnotes" className="btn btn-primary">Browse all Lab Notes</Link>
+            <Link to="/" className="public-error-link">Back to drbartender.com</Link>
           </div>
-        </section>
+        </div>
       </PublicLayout>
     );
   }
