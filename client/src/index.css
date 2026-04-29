@@ -5291,6 +5291,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 }
 
 .public-error-eyebrow {
+  display: block;
   font-family: var(--font-display);
   font-size: 0.85rem;
   letter-spacing: 0.18em;
@@ -5333,6 +5334,12 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 
 .public-error-link:hover {
   color: var(--amber-light);
+}
+
+.public-error-link:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 
 /* ─── Admin Blog Editor ──────────────────────────────────────────── */

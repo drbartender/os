@@ -82,7 +82,7 @@ export default function InvoicePage() {
         const { data } = await api.get(`/invoices/t/${token}`);
         if (!cancelled) setInvoice(data.invoice);
       } catch (err) {
-        if (!cancelled) setError({ status: err.status || 0, message: err.message });
+        if (!cancelled) setError({ status: err.status, message: err.message });
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -136,9 +136,9 @@ export default function InvoicePage() {
   if (error) {
     const isNotFound = error.status === 404;
     return (
-      <div className="invoice-page">
+      <main className="invoice-page">
         <div className="public-error">
-          <p className="public-error-eyebrow">Invoice</p>
+          <span className="public-error-eyebrow">Invoice</span>
           <h1>{isNotFound ? "We couldn't find that invoice." : "We couldn't load this invoice."}</h1>
           <p className="public-error-body">
             {isNotFound
@@ -150,7 +150,7 @@ export default function InvoicePage() {
             <a href="https://drbartender.com" className="public-error-link">Back to drbartender.com</a>
           </div>
         </div>
-      </div>
+      </main>
     );
   }
   if (!invoice) return null;

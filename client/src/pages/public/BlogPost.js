@@ -50,7 +50,7 @@ export default function BlogPost() {
     return (
       <PublicLayout>
         <div className="public-error">
-          <p className="public-error-eyebrow">Lab Notes</p>
+          <span className="public-error-eyebrow">Lab Notes</span>
           <h1>We couldn't find that lab note.</h1>
           <p className="public-error-body">
             The link may have been mistyped, or the post might have been moved or removed.
