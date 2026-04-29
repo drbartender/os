@@ -154,7 +154,8 @@
       "mcp__sentry__list_issue_events",
       "Bash(unzip -l \"/c/Users/dalla/Downloads/Wild Light Admin-handoff.zip\")",
       "mcp__sentry__get_sentry_resource",
-      "Bash(npx jest *)"
+      "Bash(npx jest *)",
+      "mcp__sentry__update_issue"
     ],
     "deny": [
       "Bash(codex apply *)",
