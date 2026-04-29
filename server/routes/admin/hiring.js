@@ -66,7 +66,11 @@ router.get('/hiring/summary', auth, adminOnly, asyncHandler(async (_req, res) =>
 router.get('/hiring/search', auth, adminOnly, asyncHandler(async (req, res) => {
   const q = (req.query.q || '').trim();
   if (q.length < 2) return res.json({ results: [] });
-  const term = '%' + q.toLowerCase() + '%';
+
+  // Escape LIKE metachars (% and _) and the escape char itself so a typed `%`
+  // matches a literal percent rather than expanding into a wildcard scan.
+  const escaped = q.toLowerCase().replace(/[\\%_]/g, ch => '\\' + ch);
+  const term = '%' + escaped + '%';
 
   const result = await pool.query(`
     SELECT
@@ -81,8 +85,8 @@ router.get('/hiring/search', auth, adminOnly, asyncHandler(async (req, res) => {
     LEFT JOIN applications a ON a.user_id = u.id
     WHERE u.role IN ('staff', 'manager')
       AND (
-        LOWER(u.email)        LIKE $1 OR
-        LOWER(a.full_name)    LIKE $1
+        LOWER(u.email)        LIKE $1 ESCAPE '\\' OR
+        LOWER(a.full_name)    LIKE $1 ESCAPE '\\'
       )
     ORDER BY (a.created_at IS NOT NULL) DESC, COALESCE(a.created_at, u.created_at) DESC
     LIMIT 20

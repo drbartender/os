@@ -6,8 +6,9 @@ const { ValidationError, NotFoundError } = require('../../utils/errors');
 
 const router = express.Router();
 
-// Onboarding step booleans on `users` — order matters; first incomplete step is
-// surfaced as the "blocker" on the application detail page.
+// Onboarding step booleans live on `onboarding_progress` (one row per user,
+// LEFT JOINed via op). Order matters: first incomplete step is the "blocker"
+// surfaced on the application detail page.
 const ONBOARDING_STEPS = [
   'welcome_viewed',
   'field_guide_completed',
@@ -16,6 +17,16 @@ const ONBOARDING_STEPS = [
   'payday_protocols_completed',
   'onboarding_completed',
 ];
+
+// Helper for endpoint userId guards — paramless GET/DELETE handlers used to
+// pass req.params.userId straight to pg, which 500s on garbage input.
+function parseUserId(raw) {
+  const id = parseInt(raw, 10);
+  if (!Number.isFinite(id)) {
+    throw new ValidationError({ user_id: 'Invalid user id' });
+  }
+  return id;
+}
 
 // Append-only activity event writer. Pass either the pool or a transaction
 // client; both expose `.query`.
@@ -66,8 +77,8 @@ router.get('/applications', auth, adminOnly, asyncHandler(async (req, res) => {
     pool.query(`
       SELECT
         u.id, u.email, u.onboarding_status, u.created_at,
-        u.welcome_viewed, u.field_guide_completed, u.agreement_completed,
-        u.contractor_profile_completed, u.payday_protocols_completed, u.onboarding_completed,
+        op.welcome_viewed, op.field_guide_completed, op.agreement_completed,
+        op.contractor_profile_completed, op.payday_protocols_completed, op.onboarding_completed,
         a.full_name, a.phone, a.city, a.state, a.positions_interested,
         a.has_bartending_experience, a.bartending_years, a.setup_confidence,
         a.headshot_file_url, a.basset_file_url, a.resume_file_url,
@@ -78,6 +89,7 @@ router.get('/applications', auth, adminOnly, asyncHandler(async (req, res) => {
         a.last_bartending_time
       FROM users u
       INNER JOIN applications a ON a.user_id = u.id
+      LEFT JOIN onboarding_progress op ON op.user_id = u.id
       WHERE u.role IN ('staff', 'manager') ${ARCHIVED_FILTER}
       ORDER BY a.created_at DESC
       LIMIT $2 OFFSET $3
@@ -126,18 +138,19 @@ router.get('/applications', auth, adminOnly, asyncHandler(async (req, res) => {
 // soon-to-retire AdminApplicationDetail.js) and adds scorecard + timeline used
 // by the rebuilt detail page.
 router.get('/applications/:userId', auth, adminOnly, asyncHandler(async (req, res) => {
-  const userId = req.params.userId;
+  const userId = parseUserId(req.params.userId);
 
   const [appRes, userRes, notesRes, scoresRes, activityRes] = await Promise.all([
     pool.query(`
       SELECT
         u.id, u.email, u.onboarding_status, u.created_at,
-        u.welcome_viewed, u.field_guide_completed, u.agreement_completed,
-        u.contractor_profile_completed, u.payday_protocols_completed, u.onboarding_completed,
+        op.welcome_viewed, op.field_guide_completed, op.agreement_completed,
+        op.contractor_profile_completed, op.payday_protocols_completed, op.onboarding_completed,
         a.*,
         a.created_at AS applied_at
       FROM users u
       INNER JOIN applications a ON a.user_id = u.id
+      LEFT JOIN onboarding_progress op ON op.user_id = u.id
       WHERE u.id = $1
     `, [userId]),
     pool.query('SELECT id, email, role, onboarding_status, created_at FROM users WHERE id = $1', [userId]),
@@ -201,23 +214,32 @@ router.get('/applications/:userId', auth, adminOnly, asyncHandler(async (req, re
 
 // Add interview note. Writes to BOTH interview_notes (legacy reads still
 // work) AND application_activity (so the new timeline picks it up live without
-// waiting on a refetch).
+// waiting on a refetch). Both writes share a transaction — symmetric with the
+// other multi-write endpoints below.
 router.post('/applications/:userId/notes', auth, adminOnly, asyncHandler(async (req, res) => {
+  const userId = parseUserId(req.params.userId);
   const { note } = req.body;
   if (!note || !note.trim()) {
     throw new ValidationError({ note: 'Note cannot be empty.' });
   }
+  const trimmed = note.trim();
 
-  await pool.query(
-    'INSERT INTO interview_notes (user_id, admin_id, note) VALUES ($1, $2, $3)',
-    [req.params.userId, req.user.id, note.trim()]
-  );
-  await writeActivity(pool, {
-    user_id: req.params.userId,
-    actor_id: req.user.id,
-    event_type: 'note_added',
-    metadata: { note: note.trim() },
-  });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      'INSERT INTO interview_notes (user_id, admin_id, note) VALUES ($1, $2, $3)',
+      [userId, req.user.id, trimmed]
+    );
+    await writeActivity(client, {
+      user_id: userId,
+      actor_id: req.user.id,
+      event_type: 'note_added',
+      metadata: { note: trimmed },
+    });
+    await client.query('COMMIT');
+  } catch (e) { await client.query('ROLLBACK'); throw e; }
+  finally { client.release(); }
 
   const notesRes = await pool.query(`
     SELECT n.*, u.email as admin_email
@@ -225,14 +247,16 @@ router.post('/applications/:userId/notes', auth, adminOnly, asyncHandler(async (
     LEFT JOIN users u ON u.id = n.admin_id
     WHERE n.user_id = $1
     ORDER BY n.created_at DESC
-  `, [req.params.userId]);
+  `, [userId]);
 
   res.status(201).json(notesRes.rows);
 }));
 
 // Delete interview note
 router.delete('/notes/:noteId', auth, adminOnly, asyncHandler(async (req, res) => {
-  const result = await pool.query('DELETE FROM interview_notes WHERE id = $1 RETURNING id', [req.params.noteId]);
+  const noteId = parseInt(req.params.noteId, 10);
+  if (!Number.isFinite(noteId)) throw new ValidationError({ note_id: 'Invalid note id' });
+  const result = await pool.query('DELETE FROM interview_notes WHERE id = $1 RETURNING id', [noteId]);
   if (!result.rows[0]) throw new NotFoundError('Note not found');
   res.json({ success: true });
 }));
@@ -242,12 +266,11 @@ router.delete('/notes/:noteId', auth, adminOnly, asyncHandler(async (req, res) =
 // Schedule (or reschedule) an interview. Body: { interview_at, notes?, send_email? }.
 // `interview_at` is an ISO 8601 timestamp.
 router.put('/applications/:userId/interview', auth, adminOnly, asyncHandler(async (req, res) => {
-  const userId = parseInt(req.params.userId, 10);
-  if (!Number.isFinite(userId)) throw new ValidationError('userId invalid');
+  const userId = parseUserId(req.params.userId);
   const { interview_at, notes, send_email } = req.body;
-  if (!interview_at) throw new ValidationError('interview_at required');
+  if (!interview_at) throw new ValidationError({ interview_at: 'Interview time required' });
   const dt = new Date(interview_at);
-  if (isNaN(dt.getTime())) throw new ValidationError('interview_at invalid');
+  if (isNaN(dt.getTime())) throw new ValidationError({ interview_at: 'Invalid interview time' });
 
   const client = await pool.connect();
   try {
@@ -289,8 +312,7 @@ router.put('/applications/:userId/interview', auth, adminOnly, asyncHandler(asyn
 
 // Clear a scheduled interview (returns applicant to "unscheduled" state).
 router.delete('/applications/:userId/interview', auth, adminOnly, asyncHandler(async (req, res) => {
-  const userId = parseInt(req.params.userId, 10);
-  if (!Number.isFinite(userId)) throw new ValidationError('userId invalid');
+  const userId = parseUserId(req.params.userId);
 
   const client = await pool.connect();
   try {
@@ -317,8 +339,7 @@ router.delete('/applications/:userId/interview', auth, adminOnly, asyncHandler(a
 // Upsert any subset of the 5 scorecard dimensions for an applicant.
 // Each dimension is 1..5 or null. Dot-clicks call this with a single field.
 router.put('/applications/:userId/scorecard', auth, adminOnly, asyncHandler(async (req, res) => {
-  const userId = parseInt(req.params.userId, 10);
-  if (!Number.isFinite(userId)) throw new ValidationError('userId invalid');
+  const userId = parseUserId(req.params.userId);
 
   const DIMS = ['personality', 'customer_service', 'problem_solving', 'speed_mindset', 'hire_instinct'];
   const updates = {};
@@ -326,17 +347,19 @@ router.put('/applications/:userId/scorecard', auth, adminOnly, asyncHandler(asyn
     if (k in req.body) {
       const v = req.body[k];
       if (v !== null && (!Number.isInteger(v) || v < 1 || v > 5)) {
-        throw new ValidationError(`${k} must be an integer 1-5 or null`);
+        throw new ValidationError({ [k]: 'Must be 1–5 or null' });
       }
       updates[k] = v;
     }
   }
   if (Object.keys(updates).length === 0) {
-    throw new ValidationError('No scorecard fields provided');
+    throw new ValidationError(null, 'No scorecard fields provided.');
   }
 
+  // SET clause refreshes scored_by so the column reflects the LAST scorer, not
+  // the first. Column names come from the DIMS allowlist — never user input.
   const cols = Object.keys(updates);
-  const setClause = cols.map((c, i) => `${c} = $${i + 3}`).join(', ');
+  const setClause = [...cols.map((c, i) => `${c} = $${i + 3}`), 'scored_by = $2'].join(', ');
   const insertCols = ['user_id', 'scored_by', ...cols].join(', ');
   const insertVals = ['$1', '$2', ...cols.map((_, i) => `$${i + 3}`)].join(', ');
   const params = [userId, req.user.id, ...cols.map(c => updates[c])];
@@ -358,8 +381,7 @@ router.put('/applications/:userId/scorecard', auth, adminOnly, asyncHandler(asyn
 //   interviewing -> in_progress (== onboarding)
 // Onboarding -> active is automatic when paperwork completes (handled elsewhere).
 router.post('/applications/:userId/move', auth, adminOnly, asyncHandler(async (req, res) => {
-  const userId = parseInt(req.params.userId, 10);
-  if (!Number.isFinite(userId)) throw new ValidationError('userId invalid');
+  const userId = parseUserId(req.params.userId);
   const { to } = req.body;
   const allowed = { applied: ['interviewing'], interviewing: ['in_progress'] };
 
@@ -370,7 +392,7 @@ router.post('/applications/:userId/move', auth, adminOnly, asyncHandler(async (r
     if (prev.rowCount === 0) throw new NotFoundError('User not found');
     const from = prev.rows[0].onboarding_status;
     if (!allowed[from] || !allowed[from].includes(to)) {
-      throw new ValidationError(`Transition ${from} -> ${to} not allowed`);
+      throw new ValidationError(null, `Transition ${from} → ${to} not allowed.`);
     }
     await client.query(
       'UPDATE users SET onboarding_status = $1, updated_at = NOW() WHERE id = $2',
@@ -390,10 +412,9 @@ router.post('/applications/:userId/move', auth, adminOnly, asyncHandler(async (r
 
 // Reject an applicant. Body: { rejection_reason }.
 router.post('/applications/:userId/reject', auth, adminOnly, asyncHandler(async (req, res) => {
-  const userId = parseInt(req.params.userId, 10);
-  if (!Number.isFinite(userId)) throw new ValidationError('userId invalid');
+  const userId = parseUserId(req.params.userId);
   const reason = (req.body.rejection_reason || '').trim();
-  if (!reason) throw new ValidationError('rejection_reason required');
+  if (!reason) throw new ValidationError({ rejection_reason: 'Reason required' });
 
   const client = await pool.connect();
   try {
@@ -401,6 +422,9 @@ router.post('/applications/:userId/reject', auth, adminOnly, asyncHandler(async 
     const prev = await client.query('SELECT onboarding_status FROM users WHERE id = $1', [userId]);
     if (prev.rowCount === 0) throw new NotFoundError('User not found');
     const from = prev.rows[0].onboarding_status;
+    if (from === 'rejected') {
+      throw new ValidationError(null, 'Already rejected.');
+    }
 
     await client.query(
       `UPDATE users SET onboarding_status = 'rejected', updated_at = NOW() WHERE id = $1`,
@@ -424,8 +448,7 @@ router.post('/applications/:userId/reject', auth, adminOnly, asyncHandler(async 
 
 // Restore a rejected applicant back to Applied.
 router.post('/applications/:userId/restore', auth, adminOnly, asyncHandler(async (req, res) => {
-  const userId = parseInt(req.params.userId, 10);
-  if (!Number.isFinite(userId)) throw new ValidationError('userId invalid');
+  const userId = parseUserId(req.params.userId);
 
   const client = await pool.connect();
   try {
@@ -433,7 +456,7 @@ router.post('/applications/:userId/restore', auth, adminOnly, asyncHandler(async
     const prev = await client.query('SELECT onboarding_status FROM users WHERE id = $1', [userId]);
     if (prev.rowCount === 0) throw new NotFoundError('User not found');
     if (prev.rows[0].onboarding_status !== 'rejected') {
-      throw new ValidationError('Only rejected applicants can be restored');
+      throw new ValidationError(null, 'Only rejected applicants can be restored.');
     }
     await client.query(
       `UPDATE users SET onboarding_status = 'applied', updated_at = NOW() WHERE id = $1`, [userId]
@@ -451,9 +474,22 @@ router.post('/applications/:userId/restore', auth, adminOnly, asyncHandler(async
 }));
 
 // Send a paperwork-reminder email to an applicant in onboarding.
+// Throttled to one send per 24h per applicant to protect Resend deliverability
+// and prevent admin click-bug spam.
 router.post('/applications/:userId/reminder', auth, adminOnly, asyncHandler(async (req, res) => {
-  const userId = parseInt(req.params.userId, 10);
-  if (!Number.isFinite(userId)) throw new ValidationError('userId invalid');
+  const userId = parseUserId(req.params.userId);
+
+  const recent = await pool.query(
+    `SELECT created_at FROM application_activity
+     WHERE user_id = $1 AND event_type = 'reminder_sent'
+       AND created_at > NOW() - INTERVAL '24 hours'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [userId]
+  );
+  if (recent.rowCount > 0) {
+    throw new ValidationError(null, 'Reminder already sent in the last 24 hours.');
+  }
 
   const { sendPaperworkReminderEmail } = require('../../utils/emailTemplates');
   await sendPaperworkReminderEmail({ userId });
