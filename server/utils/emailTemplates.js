@@ -553,6 +553,85 @@ function newThumbtackReviewAdmin({ reviewerName, rating, reviewText }) {
   };
 }
 
+// ─── Hiring redesign (2026-04-28) ───────────────────────────────
+// Two new templates plus DB-lookup wrappers used by the application detail
+// page's interview-scheduling and paperwork-reminder flows.
+
+function interviewConfirmation({ applicantName, interviewAt }) {
+  const name = applicantName || 'there';
+  const dt = new Date(interviewAt);
+  const dateStr = dt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  const timeStr = dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return {
+    subject: `Interview confirmed — ${dateStr}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Interview confirmed</h2>
+      <p>Hi ${esc(name)},</p>
+      <p>Your interview with Dr. Bartender is confirmed for <strong>${esc(dateStr)} at ${esc(timeStr)}</strong>.</p>
+      <p>If anything changes on your end, just reply to this email.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, your interview with Dr. Bartender is confirmed for ${dateStr} at ${timeStr}. If anything changes, reply to this email. — Dr. Bartender`,
+  };
+}
+
+function paperworkReminder({ applicantName, staffUrl }) {
+  const name = applicantName || 'there';
+  const url = staffUrl || 'https://staff.drbartender.com';
+  return {
+    subject: 'Quick nudge — finish your onboarding',
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Just a friendly nudge</h2>
+      <p>Hi ${esc(name)},</p>
+      <p>This is a quick reminder to finish your Dr. Bartender onboarding paperwork. The portal saves your progress so you can pick up where you left off:</p>
+      <p>${ctaButton(url, 'Continue onboarding →')}</p>
+      <p>Reply if you hit a snag — happy to help.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, just a friendly nudge to finish your Dr. Bartender onboarding paperwork: ${url} — Dr. Bartender`,
+  };
+}
+
+// Wrapper: looks up applicant email + name, builds the template, sends via
+// Resend. Used by PUT /admin/applications/:id/interview when send_email=true.
+async function sendInterviewConfirmationEmail({ userId, interview_at }) {
+  const { pool } = require('../db');
+  const { sendEmail } = require('./email');
+  const r = await pool.query(`
+    SELECT u.email, a.full_name
+    FROM users u
+    INNER JOIN applications a ON a.user_id = u.id
+    WHERE u.id = $1
+  `, [userId]);
+  if (r.rowCount === 0) return;
+  const { email, full_name } = r.rows[0];
+  const tpl = interviewConfirmation({ applicantName: full_name, interviewAt: interview_at });
+  return sendEmail({ to: email, ...tpl });
+}
+
+// Wrapper: looks up applicant email + preferred name, sends paperwork-reminder
+// email pointing them at the staff portal.
+async function sendPaperworkReminderEmail({ userId }) {
+  const { pool } = require('../db');
+  const { sendEmail } = require('./email');
+  const { STAFF_URL } = require('./urls');
+  const r = await pool.query(`
+    SELECT u.email,
+           COALESCE(cp.preferred_name, a.full_name) AS display_name
+    FROM users u
+    LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+    LEFT JOIN applications a ON a.user_id = u.id
+    WHERE u.id = $1
+  `, [userId]);
+  if (r.rowCount === 0) return;
+  const { email, display_name } = r.rows[0];
+  const tpl = paperworkReminder({
+    applicantName: display_name,
+    staffUrl: typeof STAFF_URL === 'function' ? STAFF_URL() : STAFF_URL,
+  });
+  return sendEmail({ to: email, ...tpl });
+}
+
 module.exports = {
   wrapEmail,
   wrapMarketingEmail,
@@ -582,4 +661,9 @@ module.exports = {
   newThumbtackLeadAdmin,
   newThumbtackMessageAdmin,
   newThumbtackReviewAdmin,
+  // Hiring redesign
+  interviewConfirmation,
+  paperworkReminder,
+  sendInterviewConfirmationEmail,
+  sendPaperworkReminderEmail,
 };

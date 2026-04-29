@@ -10,5 +10,6 @@ router.use('/', require('./applications'));
 router.use('/', require('./managers'));
 router.use('/', require('./blog'));
 router.use('/', require('./settings'));
+router.use('/', require('./hiring'));
 
 module.exports = router;

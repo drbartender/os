@@ -107,6 +107,7 @@ export default function Application() {
     setup_confidence: '', comfortable_working_alone: '',
     customer_service_approach: '', why_dr_bartender: '', additional_info: '',
     emergency_contact_name: '', emergency_contact_phone: '', emergency_contact_relationship: '',
+    referral_source: '',
   });
 
   const [positions, setPositions] = useState({ Bartender: false, Barback: false, 'Banquet Server': false });
@@ -565,6 +566,20 @@ export default function Application() {
                 value={form.why_dr_bartender} onChange={handle}
                 placeholder="Tell us what drew you to apply..." aria-invalid={!!fieldErrors?.why_dr_bartender} />
               <FieldError error={fieldErrors?.why_dr_bartender} />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="app-referral_source" className="form-label">Who referred you? <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>(optional)</span></label>
+              <input
+                id="app-referral_source"
+                name="referral_source"
+                type="text"
+                className="form-input"
+                value={form.referral_source}
+                onChange={handle}
+                placeholder="Name of the person who told you about us"
+                maxLength={200}
+              />
             </div>
 
             <div className="form-group">

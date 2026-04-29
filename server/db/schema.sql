@@ -206,6 +206,44 @@ ALTER TABLE interview_notes ADD COLUMN IF NOT EXISTS note_type VARCHAR(20) DEFAU
 -- Add bartending years to applications
 ALTER TABLE applications ADD COLUMN IF NOT EXISTS bartending_years VARCHAR(50);
 
+-- ─── 2026-04-28 hiring redesign ─────────────────────────────────
+-- Referral source — captured on the application form ("Who referred you?")
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS referral_source TEXT;
+-- Interview scheduling — single timestamp. A future slot-picker grows into
+-- a side table without touching this column.
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS interview_at TIMESTAMPTZ;
+-- Reason captured when admin rejects an applicant.
+ALTER TABLE applications ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+
+-- Five-dimension interview scorecard. One row per applicant.
+CREATE TABLE IF NOT EXISTS interview_scores (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  personality       INTEGER CHECK (personality       BETWEEN 1 AND 5),
+  customer_service  INTEGER CHECK (customer_service  BETWEEN 1 AND 5),
+  problem_solving   INTEGER CHECK (problem_solving   BETWEEN 1 AND 5),
+  speed_mindset     INTEGER CHECK (speed_mindset     BETWEEN 1 AND 5),
+  hire_instinct     INTEGER CHECK (hire_instinct     BETWEEN 1 AND 5),
+  scored_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at        TIMESTAMPTZ DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Activity timeline for the application detail page. Append-only event log.
+-- event_type is one of: application_submitted, status_changed,
+-- interview_scheduled, interview_rescheduled, reminder_sent, note_added,
+-- onboarding_step_completed.
+CREATE TABLE IF NOT EXISTS application_activity (
+  id          SERIAL PRIMARY KEY,
+  user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  actor_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  event_type  VARCHAR(40) NOT NULL,
+  metadata    JSONB,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_application_activity_user_id_created_at
+  ON application_activity (user_id, created_at DESC);
+
 -- ─── Manager / Permissions support ───────────────────────────────
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check

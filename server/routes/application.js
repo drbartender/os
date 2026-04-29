@@ -36,7 +36,8 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     equipment_none_but_open, equipment_no_space,
     setup_confidence, comfortable_working_alone,
     customer_service_approach, why_dr_bartender, additional_info,
-    emergency_contact_name, emergency_contact_phone, emergency_contact_relationship
+    emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
+    referral_source,
   } = req.body;
 
   // Validation — collect all required-field errors at once
@@ -148,11 +149,12 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
       resume_file_url, resume_filename,
       headshot_file_url, headshot_filename,
-      basset_file_url, basset_filename
+      basset_file_url, basset_filename,
+      referral_source
     ) VALUES (
       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
       $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,
-      $40,$41,$42,$43,$44,$45,$46,$47,$48,$49
+      $40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50
     )`,
     [
       req.user.id, full_name, phoneCheck.value, favorite_color,
@@ -172,12 +174,21 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       emergency_contact_name || null, ecPhoneCheck.value, emergency_contact_relationship || null,
       resume_url, resume_name,
       headshot_url, headshot_name,
-      basset_url, basset_name
+      basset_url, basset_name,
+      (referral_source || '').trim() || null
     ]
   );
 
     // Update user status to 'applied'
     await client.query("UPDATE users SET onboarding_status = 'applied' WHERE id = $1", [req.user.id]);
+
+    // Seed the activity timeline so the application detail page shows the
+    // submission event without a separate backfill query.
+    await client.query(
+      `INSERT INTO application_activity (user_id, actor_id, event_type, metadata)
+       VALUES ($1, $1, 'application_submitted', $2)`,
+      [req.user.id, JSON.stringify({ via: 'self' })]
+    );
 
     await client.query('COMMIT');
   } catch (txErr) {
