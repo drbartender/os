@@ -395,8 +395,8 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
   const result = await pool.query(
     `UPDATE proposals SET
        status = $1,
-       sent_at     = CASE WHEN $1 = 'sent'     THEN COALESCE(sent_at, NOW())     ELSE sent_at END,
-       accepted_at = CASE WHEN $1 = 'accepted' THEN COALESCE(accepted_at, NOW()) ELSE accepted_at END
+       sent_at     = CASE WHEN $1::text = 'sent'     THEN COALESCE(sent_at, NOW())     ELSE sent_at END,
+       accepted_at = CASE WHEN $1::text = 'accepted' THEN COALESCE(accepted_at, NOW()) ELSE accepted_at END
      WHERE id = $2 RETURNING *`,
     [status, req.params.id]
   );

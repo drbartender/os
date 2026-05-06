@@ -1,3 +1,5 @@
+// claude-allow-large-file
+// Reason: single Stripe surface — customer/intent helpers, deposit/full-pay, drink-plan extras, invoice payments, webhook handler. Splitting deferred; not justified by a 2-line bugfix.
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
@@ -60,14 +62,9 @@ async function getOrCreateCustomer(proposal) {
       // with a brand-new customer; a future autopay charge against a stale
       // payment_method would fail loudly instead.
       if (err && err.code === 'resource_missing') {
+        // Self-healing during STRIPE_TEST_MODE_UNTIL cutovers — stale customer
+        // from the other mode. Logged locally only; not Sentry-worthy noise.
         console.warn(`[Stripe] Cached customer ${proposal.stripe_customer_id} not retrievable in current mode for proposal ${proposal.id}; creating new`);
-        if (process.env.SENTRY_DSN_SERVER) {
-          const Sentry = require('@sentry/node');
-          Sentry.captureMessage(`Stripe customer mode mismatch for proposal ${proposal.id}; recreating`, {
-            level: 'warning',
-            tags: { area: 'stripe', op: 'getOrCreateCustomer' },
-          });
-        }
         // fall through to create
       } else {
         throw err;
