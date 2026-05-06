@@ -8,7 +8,7 @@ export default function Completion() {
   const { refreshUser } = useAuth();
 
   // Safety net: if the user landed here without a fresh session (e.g. hard refresh),
-  // reload /auth/me so RequirePortal sees the 'submitted' status set by payment.js.
+  // reload /auth/me so RequirePortal sees the 'approved' status set by payment.js.
   useEffect(() => {
     refreshUser().catch(() => {});
   }, [refreshUser]);

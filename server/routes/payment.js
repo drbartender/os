@@ -109,7 +109,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       );
 
       step = 'update_user_status';
-      await client.query("UPDATE users SET onboarding_status='submitted' WHERE id=$1", [req.user.id]);
+      await client.query("UPDATE users SET onboarding_status='approved' WHERE id=$1", [req.user.id]);
 
       step = 'commit_tx';
       await client.query('COMMIT');
