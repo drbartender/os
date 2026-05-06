@@ -12,27 +12,13 @@ router.get('/', auth, asyncHandler(async (req, res) => {
   res.json(result.rows[0] || {});
 }));
 
-// Update a step
+// Update a step. Note: 'onboarding_completed' is owned by POST /payment, which
+// flips the boolean and the user's onboarding_status atomically inside its
+// transaction. This route handles the 5 user-driven progress steps only.
 router.put('/step', auth, asyncHandler(async (req, res) => {
   const { step } = req.body;
-  const validSteps = ['welcome_viewed', 'field_guide_completed', 'agreement_completed', 'contractor_profile_completed', 'payday_protocols_completed', 'onboarding_completed'];
+  const validSteps = ['welcome_viewed', 'field_guide_completed', 'agreement_completed', 'contractor_profile_completed', 'payday_protocols_completed'];
   if (!validSteps.includes(step)) throw new ValidationError({ step: 'Invalid step' });
-
-  if (step === 'onboarding_completed') {
-    // Verify user is in a valid onboarding state before allowing completion
-    const userRes = await pool.query('SELECT onboarding_status FROM users WHERE id = $1', [req.user.id]);
-    const currentStatus = userRes.rows[0]?.onboarding_status;
-    if (!['hired', 'in_progress'].includes(currentStatus)) {
-      throw new ValidationError({ step: 'Invalid onboarding state.' });
-    }
-
-    const prog = await pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]);
-    const p = prog.rows[0];
-    if (!p || !p.welcome_viewed || !p.field_guide_completed || !p.agreement_completed ||
-        !p.contractor_profile_completed || !p.payday_protocols_completed) {
-      throw new ValidationError({ step: 'Complete all prior steps first.' });
-    }
-  }
 
   await pool.query(`
     UPDATE onboarding_progress SET
@@ -41,15 +27,9 @@ router.put('/step', auth, asyncHandler(async (req, res) => {
       agreement_completed = CASE WHEN $1::text = 'agreement_completed' THEN true ELSE agreement_completed END,
       contractor_profile_completed = CASE WHEN $1::text = 'contractor_profile_completed' THEN true ELSE contractor_profile_completed END,
       payday_protocols_completed = CASE WHEN $1::text = 'payday_protocols_completed' THEN true ELSE payday_protocols_completed END,
-      onboarding_completed = CASE WHEN $1::text = 'onboarding_completed' THEN true ELSE onboarding_completed END,
       last_completed_step = $1
     WHERE user_id = $2
   `, [step, req.user.id]);
-
-  // If onboarding_completed, update user status
-  if (step === 'onboarding_completed') {
-    await pool.query("UPDATE users SET onboarding_status = 'approved' WHERE id = $1", [req.user.id]);
-  }
 
   const result = await pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]);
   res.json(result.rows[0]);

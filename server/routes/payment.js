@@ -109,7 +109,15 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       );
 
       step = 'update_user_status';
-      await client.query("UPDATE users SET onboarding_status='approved' WHERE id=$1", [req.user.id]);
+      // Gate the flip on prior status: only promote users who are currently
+      // mid-onboarding. Already-approved → no-op (idempotent re-submit).
+      // Rejected/deactivated → blocked at the auth middleware before reaching here.
+      // Prevents a user from re-elevating themselves after an admin demotion to
+      // an off-funnel state.
+      await client.query(
+        "UPDATE users SET onboarding_status='approved' WHERE id=$1 AND onboarding_status IN ('hired','in_progress','submitted','reviewed')",
+        [req.user.id]
+      );
 
       step = 'commit_tx';
       await client.query('COMMIT');

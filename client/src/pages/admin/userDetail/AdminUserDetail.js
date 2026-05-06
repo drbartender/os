@@ -138,7 +138,7 @@ export default function AdminUserDetail() {
       setData(d => ({ ...d, user: { ...d.user, onboarding_status: status } }));
       toast.success(
         status === 'deactivated' ? 'Account deactivated.' :
-        status === 'submitted' ? 'Account reactivated.' :
+        status === 'approved' || status === 'in_progress' ? 'Account reactivated.' :
         `Status changed to ${status}.`
       );
     } catch (e) {
@@ -329,7 +329,7 @@ export default function AdminUserDetail() {
                 type="button"
                 className="btn btn-secondary"
                 disabled={statusLoading}
-                onClick={() => updateStatus('submitted')}
+                onClick={() => updateStatus(progress?.onboarding_completed ? 'approved' : 'in_progress')}
               >
                 <Icon name="check" size={12} />Reactivate
               </button>

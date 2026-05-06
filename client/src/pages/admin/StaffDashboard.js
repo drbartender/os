@@ -30,7 +30,6 @@ export default function StaffDashboard() {
 
   const filtered = useMemo(() => staff.filter(s => {
     if (tab === 'active' && s.onboarding_status !== 'approved') return false;
-    if (tab === 'onboarding' && !['submitted', 'reviewed'].includes(s.onboarding_status)) return false;
     if (search) {
       const q = search.toLowerCase();
       const fields = [s.preferred_name, s.email, s.phone, s.city, s.state].filter(Boolean).join(' ').toLowerCase();
@@ -41,7 +40,6 @@ export default function StaffDashboard() {
 
   const tabs = useMemo(() => ([
     { id: 'active', label: 'Active', count: staff.filter(s => s.onboarding_status === 'approved').length },
-    { id: 'onboarding', label: 'Onboarding', count: staff.filter(s => ['submitted', 'reviewed'].includes(s.onboarding_status)).length },
     { id: 'all', label: 'All' },
   ]), [staff]);
 
