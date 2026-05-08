@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { isValidUpload } = require('../utils/fileValidation');
@@ -119,6 +120,66 @@ router.post('/', auth, asyncHandler(async (req, res) => {
         [req.user.id]
       );
 
+      // New for tip page (2026-05-08): persist payment handles + payroll preference
+      step = 'upsert_tip_handles';
+      const {
+        venmo_handle,
+        cashapp_handle,
+        paypal_url,
+      } = req.body;
+
+      // Validate payroll method matches handle requirement (per spec 7.3)
+      const methodToHandleField = {
+        venmo: { value: venmo_handle, name: 'Venmo handle' },
+        cashapp: { value: cashapp_handle, name: 'Cash App handle' },
+        paypal: { value: paypal_url, name: 'PayPal URL' },
+      };
+      const reqHandle = methodToHandleField[preferred_payment_method];
+      if (reqHandle && !reqHandle.value) {
+        throw new ValidationError(
+          `${reqHandle.name} is required when "${preferred_payment_method}" is your payroll preference.`
+        );
+      }
+      // (direct_deposit/check/other require no specific handle here)
+
+      // Persist preferred_name on contractor_profiles (existing column)
+      const preferredNameForTip = String(req.body.preferred_name || '').trim() || null;
+      if (preferredNameForTip) {
+        await client.query(
+          'UPDATE contractor_profiles SET preferred_name = $1, updated_at = NOW() WHERE user_id = $2',
+          [preferredNameForTip, req.user.id]
+        );
+      }
+
+      // Upsert tip handles onto payment_profiles (row already exists from above)
+      await client.query(`
+        UPDATE payment_profiles
+        SET venmo_handle = $1,
+            cashapp_handle = $2,
+            paypal_url = $3,
+            tip_page_active = TRUE,
+            updated_at = NOW()
+        WHERE user_id = $4
+      `, [
+        venmo_handle || null,
+        cashapp_handle || null,
+        paypal_url || null,
+        req.user.id,
+      ]);
+
+      // Generate tip_page_token if missing
+      const tokenCheck = await client.query(
+        'SELECT tip_page_token FROM payment_profiles WHERE user_id = $1',
+        [req.user.id]
+      );
+      if (!tokenCheck.rows[0]?.tip_page_token) {
+        const tipToken = uuidv4();
+        await client.query(
+          'UPDATE payment_profiles SET tip_page_token = $1 WHERE user_id = $2',
+          [tipToken, req.user.id]
+        );
+      }
+
       step = 'commit_tx';
       await client.query('COMMIT');
     } catch (err) {
@@ -126,6 +187,30 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       throw err;
     } finally {
       client.release();
+    }
+
+    // Create the Stripe Payment Link (best-effort; never block onboarding submit)
+    step = 'stripe_payment_link';
+    try {
+      const { rows: ppRows } = await pool.query(
+        'SELECT tip_page_token FROM payment_profiles WHERE user_id = $1',
+        [req.user.id]
+      );
+      const token = ppRows[0]?.tip_page_token;
+      const { createTipPaymentLink } = require('../utils/tipPaymentLinks');
+      const { url, id: linkId } = await createTipPaymentLink({
+        userId: req.user.id,
+        displayName: req.body.preferred_name,
+        token,
+      });
+      await pool.query(
+        'UPDATE payment_profiles SET stripe_payment_link_url = $1, stripe_payment_link_id = $2 WHERE user_id = $3',
+        [url, linkId, req.user.id]
+      );
+    } catch (err) {
+      console.error('[tip] failed to auto-generate Stripe Payment Link at onboarding-submit', err.message);
+      Sentry.captureException(err, { extra: { userId: req.user.id, op: 'onboarding-submit-stripe-link' } });
+      // Admin can hit "Generate Stripe link" later from the contractor record.
     }
 
     step = 'hydrate_response';
