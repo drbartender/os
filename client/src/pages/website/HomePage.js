@@ -135,15 +135,17 @@ export default function HomePage() {
   }, []);
 
   const useRealReviews = reviewsState.status === 'loaded' && reviewsState.reviews.length >= 1;
-  const featuredReview = useRealReviews
-    ? {
-        id: reviewsState.reviews[0].id,
-        text: reviewsState.reviews[0].text,
-        name: reviewsState.reviews[0].reviewerName,
-        rating: reviewsState.reviews[0].rating,
+  const normalizedReviews = useRealReviews
+    ? reviewsState.reviews.map((r) => ({
+        id: r.id,
+        text: r.text,
+        name: r.reviewerName,
+        rating: r.rating,
         role: 'Thumbtack review',
-      }
-    : FALLBACK_TESTIMONIALS[0];
+      }))
+    : FALLBACK_TESTIMONIALS;
+  const featuredReview = normalizedReviews[0];
+  const secondaryReviews = normalizedReviews.slice(1, 4);
   const showRatingBadge = useRealReviews && reviewsState.averageRating != null && reviewsState.count >= 3;
 
   return (
@@ -344,6 +346,20 @@ export default function HomePage() {
               </div>
             </div>
           </FadeUp>
+
+          {secondaryReviews.length > 0 && (
+            <div className="ws-press-testimonial-secondary">
+              {secondaryReviews.map((r, i) => (
+                <FadeUp key={r.id || r.name} delay={i * 0.08}>
+                  <article className="card ws-press-testimonial-mini">
+                    <div className="ws-press-testimonial-mini-stars" aria-hidden="true">{renderStars(r.rating)}</div>
+                    <p>"{r.text}"</p>
+                    <div className="ws-press-testimonial-mini-attr">— {r.name}</div>
+                  </article>
+                </FadeUp>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
