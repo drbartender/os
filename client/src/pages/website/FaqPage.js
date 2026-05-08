@@ -5,6 +5,7 @@ import PublicLayout from '../../components/PublicLayout';
 const FAQ_CATEGORIES = [
   {
     title: 'Booking & Pricing',
+    roman: 'I',
     items: [
       {
         q: 'How much does it cost to hire a bartender?',
@@ -53,6 +54,7 @@ const FAQ_CATEGORIES = [
   },
   {
     title: 'Services & Packages',
+    roman: 'II',
     items: [
       {
         q: 'What types of events do you handle?',
@@ -88,6 +90,7 @@ const FAQ_CATEGORIES = [
   },
   {
     title: 'Logistics & Coverage',
+    roman: 'III',
     items: [
       {
         q: 'What areas do you serve?',
@@ -113,12 +116,13 @@ const FAQ_CATEGORIES = [
       },
       {
         q: 'Are your bartenders licensed and insured?',
-        a: 'Every bartender is vetted and trained. We carry $2 million in liquor liability insurance for your peace of mind.',
+        a: 'Every bartender is BASSET-trained and vetted. We carry both general liability and liquor liability insurance — certificate of insurance available on request.',
       },
     ],
   },
   {
     title: 'Event Day',
+    roman: 'IV',
     items: [
       {
         q: 'What time do bartenders arrive?',
@@ -137,55 +141,80 @@ const FAQ_CATEGORIES = [
 ];
 
 export default function FaqPage() {
-  const [openFaq, setOpenFaq] = useState(null);
-
-  const toggleFaq = (key) => {
-    setOpenFaq((prev) => (prev === key ? null : key));
-  };
+  const [openKey, setOpenKey] = useState('0-0');
+  const toggle = (k) => setOpenKey((p) => (p === k ? null : k));
 
   return (
     <PublicLayout>
-      <section className="ws-section">
-        <div className="ws-section-heading">
-          <span className="ws-kicker">FAQ</span>
-          <h2>Frequently Asked Questions</h2>
-          <div className="ws-divider ws-divider-center" />
-          <p style={{ maxWidth: 600, margin: '0 auto', opacity: 0.85 }}>
-            Can't find your answer?{' '}
-            <Link to="/quote">Get a personalized quote</Link> and we'll walk you
-            through everything.
+      {/* Page hero */}
+      <section className="ws-press-pagehero">
+        <div className="ws-wrap">
+          <div className="ornament" aria-hidden="true">⚗</div>
+          <div className="ws-press-eyebrow">No. 05 · The Field Guide</div>
+          <h1 className="ws-press-pagehero-title">Frequently asked.</h1>
+          <p className="ws-press-pagehero-sub">
+            Everything we wish every host knew before the first sip. Can't find your answer?{' '}
+            <Link to="/quote">Get a personalized quote</Link> and we'll walk you through everything.
           </p>
         </div>
+      </section>
 
-        {FAQ_CATEGORIES.map((category, catIdx) => (
-          <div key={catIdx} className="ws-faq-category">
-            <h3>{category.title}</h3>
-            <div className="ws-faq-list">
-              {category.items.map((item, itemIdx) => {
-                const key = `${catIdx}-${itemIdx}`;
-                const isOpen = openFaq === key;
-                return (
-                  <div
-                    key={key}
-                    className={`ws-faq-item${isOpen ? ' open' : ''}`}
-                  >
-                    <button className="ws-faq-q" onClick={() => toggleFaq(key)}>
-                      <h4>{item.q}</h4>
-                      <span className="ws-faq-toggle">{isOpen ? '−' : '+'}</span>
-                    </button>
-                    <p className="ws-faq-a">{item.a}</p>
-                  </div>
-                );
-              })}
+      <section className="ws-press-faq">
+        <div className="ws-wrap narrow">
+          {FAQ_CATEGORIES.map((category, catIdx) => (
+            <div key={catIdx} className="ws-faq-section">
+              <div className="ws-faq-cat-head">
+                <span className="ws-faq-cat-roman">{category.roman}.</span>
+                <h2 className="ws-faq-cat-title">{category.title}</h2>
+                <span className="ws-faq-cat-count">{category.items.length} entries</span>
+              </div>
+
+              <div className="card ws-faq-card">
+                {category.items.map((item, itemIdx) => {
+                  const key = `${catIdx}-${itemIdx}`;
+                  const isOpen = openKey === key;
+                  const isLast = itemIdx === category.items.length - 1;
+                  return (
+                    <div
+                      key={key}
+                      className={`ws-faq-item ${isOpen ? 'open' : ''} ${isLast ? 'last' : ''}`}
+                    >
+                      <button
+                        className="ws-faq-q"
+                        onClick={() => toggle(key)}
+                        aria-expanded={isOpen}
+                      >
+                        <span className="ws-faq-q-inner">
+                          <span className="ws-faq-num">
+                            {category.roman}.{String(itemIdx + 1).padStart(2, '0')}
+                          </span>
+                          <span className="ws-faq-text">{item.q}</span>
+                        </span>
+                        <span
+                          className="ws-faq-toggle"
+                          aria-hidden="true"
+                        >+</span>
+                      </button>
+                      {isOpen && (
+                        <div className="ws-faq-a">
+                          <p>{item.a}</p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+
+          <div className="ws-faq-footer">
+            <span className="kicker center">Still curious?</span>
+            <h2 className="ws-press-h2 ws-faq-footer-h">Send a note. We answer ourselves.</h2>
+            <div className="ws-faq-footer-cta">
+              <Link to="/quote" className="btn btn-primary">Get Your Free Quote</Link>
+              <a href="mailto:contact@drbartender.com" className="btn btn-secondary">Email the Doctor</a>
             </div>
           </div>
-        ))}
-
-        <div className="ws-cta-banner">
-          <h2>Ready to get started?</h2>
-          <Link to="/quote" className="btn btn-primary">
-            Get Your Free Quote
-          </Link>
         </div>
       </section>
     </PublicLayout>

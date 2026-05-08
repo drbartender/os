@@ -13,7 +13,7 @@ function resolveImageUrl(url) {
 
 function formatDate(d) {
   if (!d) return '';
-  return new Date(d).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 }
 
 export default function Blog() {
@@ -23,58 +23,110 @@ export default function Blog() {
 
   useEffect(() => {
     fetch(`${API_BASE}/api/blog`)
-      .then(r => {
+      .then((r) => {
         if (!r.ok) throw new Error('Failed to load');
         return r.json();
       })
-      .then(data => setPosts(data))
+      .then((data) => setPosts(Array.isArray(data) ? data : []))
       .catch(() => toast.error('Failed to load. Try refreshing.'))
       .finally(() => setLoading(false));
   }, [toast]);
 
+  const featured = posts[0];
+  const rest = posts.slice(1);
+
   return (
     <PublicLayout>
-      <section className="ws-section lab-index-section">
-        <div className="lab-index-header">
-          <span className="lab-index-kicker">Field Notes &amp; Findings</span>
-          <h1 className="lab-index-title">Lab Notes</h1>
-          <p className="lab-index-subtitle">
-            Experiments, observations, and dispatches from behind the bar.
+      <section className="ws-press-pagehero">
+        <div className="ws-wrap">
+          <div className="ornament" aria-hidden="true">⚗</div>
+          <div className="ws-press-eyebrow">No. 06 · Lab Notes</div>
+          <h1 className="ws-press-pagehero-title">Lab Notes.</h1>
+          <p className="ws-press-pagehero-sub">
+            Dispatches from behind the stick. Recipes, field reports, and the occasional rant about bad ice.
           </p>
         </div>
-
-        {loading ? (
-          <div className="loading"><div className="spinner" />Loading...</div>
-        ) : posts.length === 0 ? (
-          <div className="lab-index-empty">
-            <p>The lab notebook is empty — experiments in progress. Check back soon!</p>
-          </div>
-        ) : (
-          <div className="lab-index-grid">
-            {posts.map(post => (
-              <Link to={`/labnotes/${post.slug}`} key={post.id} className="lab-card">
-                <div className="lab-card-image-wrap">
-                  {post.cover_image_url ? (
-                    <img src={resolveImageUrl(post.cover_image_url)} alt={post.title} className="lab-card-image" />
-                  ) : (
-                    <div className="lab-card-placeholder">
-                      <span>Dr. B</span>
-                    </div>
-                  )}
-                </div>
-                <div className="lab-card-body">
-                  {post.chapter_number && (
-                    <span className="lab-card-chapter">No. {post.chapter_number}</span>
-                  )}
-                  <h3 className="lab-card-title">{post.title}</h3>
-                  {post.excerpt && <p className="lab-card-excerpt">{post.excerpt}</p>}
-                  <span className="lab-card-date">{formatDate(post.published_at)}</span>
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
       </section>
+
+      {loading && (
+        <section className="ws-press-labnotes">
+          <div className="ws-wrap">
+            <div className="loading" role="status" aria-live="polite">
+              <div className="spinner" aria-hidden="true" />Loading the notebook...
+            </div>
+          </div>
+        </section>
+      )}
+
+      {!loading && posts.length === 0 && (
+        <section className="ws-press-labnotes">
+          <div className="ws-wrap">
+            <div className="card on-paper" style={{ textAlign: 'center', padding: '40px 24px' }}>
+              <p>The lab notebook is empty — experiments in progress. Check back soon!</p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {!loading && featured && (
+        <section className="ws-press-labnotes-featured">
+          <div className="ws-wrap">
+            <Link to={`/labnotes/${featured.slug}`} className="card ws-labnotes-featured">
+              <div className="ws-labnotes-featured-img">
+                {featured.cover_image_url ? (
+                  <img src={resolveImageUrl(featured.cover_image_url)} alt={featured.title} />
+                ) : (
+                  <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 3', height: '100%' }}>
+                    <span>{'PHOTO\nfeature post hero'}</span>
+                  </div>
+                )}
+              </div>
+              <div className="ws-labnotes-featured-body">
+                <div className="kicker no-rule" style={{ color: 'var(--text-muted)' }}>
+                  Featured{featured.chapter_number ? ` · No. ${featured.chapter_number}` : ''}
+                </div>
+                <h2 className="ws-labnotes-featured-title">{featured.title}</h2>
+                {featured.excerpt && <p>{featured.excerpt}</p>}
+                <div className="ws-labnotes-featured-meta">
+                  <span>{formatDate(featured.published_at)}</span>
+                </div>
+                <span className="btn btn-secondary" style={{ marginTop: 22, alignSelf: 'flex-start' }}>Read the entry →</span>
+              </div>
+            </Link>
+          </div>
+        </section>
+      )}
+
+      {!loading && rest.length > 0 && (
+        <section className="ws-press-labnotes-index">
+          <div className="ws-wrap">
+            <div className="divider-ornate ws-press-divider"><span>the index</span></div>
+            <div className="ws-labnotes-grid">
+              {rest.map((post) => (
+                <Link key={post.id} to={`/labnotes/${post.slug}`} className="card ws-labnotes-card">
+                  <div className="ws-labnotes-card-img">
+                    {post.cover_image_url ? (
+                      <img src={resolveImageUrl(post.cover_image_url)} alt={post.title} />
+                    ) : (
+                      <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 3' }}>
+                        <span>{`PHOTO\npost ${post.chapter_number || ''}\nstill life`}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="ws-labnotes-card-body">
+                    <div className="ws-labnotes-card-meta">
+                      <span>{post.chapter_number ? `No. ${post.chapter_number}` : 'Field Notes'}</span>
+                    </div>
+                    <h3 className="ws-labnotes-card-title">{post.title}</h3>
+                    {post.excerpt && <p className="ws-labnotes-card-excerpt">{post.excerpt}</p>}
+                    <div className="ws-labnotes-card-date">{formatDate(post.published_at)}</div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
     </PublicLayout>
   );
 }
