@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import PublicLayout from '../../components/PublicLayout';
 import api from '../../utils/api';
 
-/* ── FadeUp animation (reused from Website.js) ── */
+/* ── FadeUp animation (preserved IntersectionObserver) ── */
 function useFadeUp() {
   const ref = useRef(null);
   useEffect(() => {
@@ -34,41 +34,46 @@ function FadeUp({ children, className = '', delay = 0, ...props }) {
   );
 }
 
-/* ── Smooth scroll helper ── */
-const scrollTo = (id) => {
-  const el = document.getElementById(id);
-  if (el) el.scrollIntoView({ behavior: 'smooth' });
-};
-
 /* ── Data ── */
-const services = [
-  { src: 'https://i.imgur.com/iHkv9dI.png', alt: 'Consultation + Menu Planning' },
-  { src: 'https://i.imgur.com/K5vxw25.png', alt: 'Bespoke Menu Graphic' },
-  { src: 'https://i.imgur.com/0Q1UMdE.png', alt: 'Licensed + Insured' },
+const STATS = [
+  { k: 'Liability', v: 'Gen + Liq', sub: 'fully insured' },
+  { k: 'Years', v: '20+', sub: 'behind the stick' },
+  { k: 'Coverage', v: 'IL · IN · MI', sub: 'travels regional' },
+  { k: 'Avg. Quote', v: '5 min', sub: 'live pricing' },
 ];
 
-const steps = [
+const SERVICES = [
   {
-    number: '01',
-    title: 'The Prescription',
-    body: 'We craft a custom proposal tailored to your event. Once you approve it, a $100 deposit secures your date.',
-    img: 'https://i.imgur.com/RtN224c.png',
-    reverse: false,
+    n: 'Formula I',
+    t: 'BYOB Bar',
+    body: "You supply the spirits, mixers, ice, and bar. We bring the tools, the cups, the garnish prep, and the BASSET-trained professionals to pour it all. Most popular.",
+    img: "PHOTO\nbar setup\nclient's bottles",
   },
   {
-    number: '02',
-    title: 'The Potion Planner',
-    body: 'Next, we have a quick consultation and design your drink menu with a personalized shopping list.',
-    img: 'https://i.imgur.com/uJ1JrvN.png',
-    reverse: true,
+    n: 'Formula II',
+    t: 'Hosted Bar',
+    body: 'Booze, ice, garnish, mixers, cups, and BASSET-trained bartenders — plus a built-out menu and the staff to run it. Bespoke menu included.',
+    img: 'PHOTO\nbuilt bar\nat an event',
   },
   {
-    number: '03',
-    title: 'The Big Experiment',
-    body: 'Event day arrives. We run the bar, mix the drinks, and keep the good times flowing — you relax and enjoy.',
-    img: 'https://i.imgur.com/DlX1bdI.png',
-    reverse: false,
+    n: 'Formula III',
+    t: 'Cocktail Classes',
+    body: 'Private classes — kits, syrups, garnishes, and a host with twenty-five years behind the stick. Two hours, eight guests.',
+    img: 'PHOTO\nclass tasting\nfour glass flight',
   },
+];
+
+const METHOD_STEPS = [
+  { n: 'I', kicker: 'Step One', t: 'The Prescription', body: 'Build an instant quote. Live pricing. We send a real proposal — sign and pay in one breath.' },
+  { n: 'II', kicker: 'Step Two', t: 'The Potion Planner', body: 'A short questionnaire builds a menu around your taste. Browse cocktails. Add a smoke bubble.' },
+  { n: 'III', kicker: 'Step Three', t: 'The Big Experiment', body: 'On the day, we arrive early, build the bar, and run a tight, smiling shift. You meet guests; we pour.' },
+];
+
+const CREDENTIALS = [
+  ['Certified', 'BASSET-trained bartenders'],
+  ['Insured', 'General + Liquor Liability'],
+  ['Trained', 'Front of house → econ degree → culinary school'],
+  ['Based', 'North Side, Chicago — travels'],
 ];
 
 const FALLBACK_TESTIMONIALS = [
@@ -77,18 +82,21 @@ const FALLBACK_TESTIMONIALS = [
     name: 'Eleanor V.',
     text: 'They transformed our garden party into a Victorian speakeasy. The smoked rosemary gin fizz was nothing short of sorcery.',
     rating: 5,
+    role: 'Wedding · 120 guests',
   },
   {
     id: 'fallback-2',
     name: 'James & Sarah K.',
     text: 'The attention to detail was extraordinary — from the hand-labelled bottles to the copper jiggers. Our wedding guests are still talking about it.',
     rating: 5,
+    role: 'Wedding · 180 guests',
   },
   {
     id: 'fallback-3',
     name: 'Marcus T.',
     text: 'Hired them for a corporate holiday party and it was exactly what we needed — professional, well-paced, and the menu was dialed in.',
     rating: 5,
+    role: 'Corporate · 80 guests',
   },
 ];
 
@@ -96,12 +104,6 @@ function renderStars(rating) {
   const filled = Math.max(0, Math.min(5, Math.round(rating || 5)));
   return '★'.repeat(filled) + '☆'.repeat(5 - filled);
 }
-
-const stats = [
-  { value: '20+', label: 'Years Experience' },
-  { value: '$2M', label: 'Liquor Liability' },
-  { value: 'IL, IN, & MI', label: 'Service Area' },
-];
 
 /* ── Component ── */
 export default function HomePage() {
@@ -132,151 +134,243 @@ export default function HomePage() {
     return () => { cancelled = true; };
   }, []);
 
-  const useRealReviews = reviewsState.status === 'loaded' && reviewsState.reviews.length >= 3;
-  const displayedTestimonials = useRealReviews
-    ? reviewsState.reviews.map((r) => ({ id: r.id, name: r.reviewerName, text: r.text, rating: r.rating }))
-    : FALLBACK_TESTIMONIALS;
+  const useRealReviews = reviewsState.status === 'loaded' && reviewsState.reviews.length >= 1;
+  const featuredReview = useRealReviews
+    ? {
+        id: reviewsState.reviews[0].id,
+        text: reviewsState.reviews[0].text,
+        name: reviewsState.reviews[0].reviewerName,
+        rating: reviewsState.reviews[0].rating,
+        role: 'Thumbtack review',
+      }
+    : FALLBACK_TESTIMONIALS[0];
   const showRatingBadge = useRealReviews && reviewsState.averageRating != null && reviewsState.count >= 3;
-
-  const handleHashScroll = (e) => {
-    e.preventDefault();
-    scrollTo('process');
-  };
 
   return (
     <PublicLayout>
-      {/* ───── Hero ───── */}
-      <section className="ws-hero">
-        <div className="ws-hero-inner">
-          <div className="ws-hero-copy">
-            <FadeUp>
-              <span className="ws-kicker">Mixing Science with Celebration</span>
-              <h1>Your event's bar, engineered.</h1>
-              <p className="ws-hero-subtitle">Mobile Bar &middot; Cocktail Lab</p>
-              <p>Professional mobile bar service for weddings, corporate events, and private parties in Chicagoland.</p>
-              <div className="ws-hero-btns">
+      {/* ── Hero ─────────────────────────────────────────── */}
+      <section className="ws-press-hero">
+        <div className="ws-wrap">
+          <FadeUp>
+            <div className="ws-press-hero-center">
+              <div className="ornament" aria-hidden="true">⚗</div>
+              <div className="ws-press-eyebrow">No. 04 · The Prescription</div>
+              <h1 className="ws-press-h1">
+                Mixing Science<br />
+                <em>with</em> Celebration.
+              </h1>
+              <div className="ws-press-tagline">
+                <span className="ws-press-tagline-rule" aria-hidden="true" />
+                <span>Mobile Bar · Cocktail Lab</span>
+                <span className="ws-press-tagline-rule" aria-hidden="true" />
+              </div>
+              <p className="ws-press-lede">
+                An apothecary running a contemporary cocktail program. Twenty years behind the
+                stick, distilled into a calm, instant proposal — for weddings and events across{' '}
+                <em>Illinois, Indiana,</em> and <em>Michigan.</em>
+              </p>
+              <div className="ws-press-hero-cta">
                 <Link to="/quote" className="btn btn-primary">Get an Instant Quote</Link>
-                <a href="#process" onClick={handleHashScroll}>See how it works &darr;</a>
+                <Link to="/method" className="btn btn-secondary">View the Method</Link>
               </div>
-              <img src="https://i.imgur.com/rl26NX2.png" alt="Dr. Bartender accent" className="ws-hero-accent" />
-            </FadeUp>
-          </div>
-          <div className="ws-hero-image">
-            <div className="ws-hero-image-stack">
-              <img src="https://i.imgur.com/Plqd51Z.png" alt="Dr. Bartender mobile bar" />
-              <img src="https://i.imgur.com/buVhsQH.png" alt="Dr. Bartender cocktails" />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ───── Services ───── */}
-      <section id="services" className="ws-section">
-        <FadeUp>
-          <div className="ws-section-heading">
-            <h2>What's Included</h2>
-            <p className="ws-section-sub">Consultation, custom menus, and professional bar service — fully licensed and insured.</p>
-          </div>
-        </FadeUp>
-        <div className="ws-services-grid">
-          {services.map((s, i) => (
-            <FadeUp key={s.alt} delay={i * 0.15}>
-              <div className="ws-service-image-card">
-                <img src={s.src} alt={s.alt} />
-              </div>
-            </FadeUp>
-          ))}
-        </div>
-        <FadeUp>
-          <Link to="/quote" className="ws-section-cta">See packages &amp; pricing &rarr;</Link>
-        </FadeUp>
-      </section>
-
-      {/* ───── How It Works ───── */}
-      <section id="process" className="ws-section ws-protocol-section">
-        <FadeUp>
-          <div className="ws-section-heading">
-            <h2>How It Works</h2>
-          </div>
-        </FadeUp>
-        <div className="ws-protocol-steps">
-          {steps.map((step, i) => (
-            <FadeUp key={step.number} delay={i * 0.15}>
-              <div className={`ws-protocol-row${step.reverse ? ' ws-protocol-row-reverse' : ''}`}>
-                <div className="ws-protocol-text">
-                  <span className="ws-step-number">{step.number}</span>
-                  <h3>{step.title}</h3>
-                  <p>{step.body}</p>
-                </div>
-                <div className="ws-protocol-image">
-                  <img src={step.img} alt={step.title} />
-                </div>
-              </div>
-            </FadeUp>
-          ))}
-        </div>
-        <FadeUp>
-          <Link to="/quote" className="ws-section-cta">It starts with a quick quote &rarr;</Link>
-        </FadeUp>
-      </section>
-
-      {/* ───── Social Proof ───── */}
-      <section id="about" className="ws-section">
-        <FadeUp>
-          <div className="ws-about-intro">
-            <span className="ws-kicker">About Us</span>
-            <h2>Why Dr. Bartender?</h2>
-            <p>
-              Dr. Bartender was born from equal parts passion, precision, and a dash of rebellion
-              — bartending is as much a science as it is an art. We don't just mix drinks, we engineer experiences.
-            </p>
-          </div>
-        </FadeUp>
-
-        <FadeUp delay={0.1}>
-          <div className="ws-stats-row">
-            {stats.map((s) => (
-              <div key={s.label} className="ws-stat">
-                <span className="ws-stat-value">{s.value}</span>
-                <span className="ws-stat-label">{s.label}</span>
-              </div>
-            ))}
-          </div>
-        </FadeUp>
-
-        {showRatingBadge && (
-          <FadeUp delay={0.15}>
-            <div className="ws-rating-badge">
-              <span className="ws-review-stars" aria-hidden="true">{renderStars(reviewsState.averageRating)}</span>
-              <span>
-                <strong>{reviewsState.averageRating.toFixed(1)}</strong>
-                {' · '}
-                {reviewsState.count} reviews on Thumbtack
-              </span>
             </div>
           </FadeUp>
-        )}
 
-        <div className="ws-testimonials-grid">
-          {displayedTestimonials.map((t, i) => (
-            <FadeUp key={t.id || t.name} delay={i * 0.15}>
-              <div className="ws-testimonial-card">
-                <div className="ws-review-stars">{renderStars(t.rating)}</div>
-                <p>"{t.text}"</p>
-                <span className="ws-testimonial-author">— {t.name}</span>
-              </div>
-            </FadeUp>
-          ))}
+          <FadeUp delay={0.1}>
+            <div className="ws-press-stats">
+              {STATS.map((s) => (
+                <div key={s.k} className="card on-paper ws-press-stat">
+                  <div className="kicker no-rule ws-press-stat-label">{s.k}</div>
+                  <div className="ws-press-stat-value">{s.v}</div>
+                  <div className="ws-press-stat-sub">{s.sub}</div>
+                </div>
+              ))}
+            </div>
+          </FadeUp>
         </div>
       </section>
 
-      {/* ───── CTA Banner ───── */}
-      <FadeUp>
-        <section className="ws-cta-banner">
-          <h2>Your event deserves a real bar.</h2>
-          <Link to="/quote" className="btn btn-primary ws-cta-pulse">Get an Instant Quote</Link>
-        </section>
-      </FadeUp>
+      {/* ── Proprietor (id=about for hash compatibility) ── */}
+      <section id="about" className="ws-press-proprietor">
+        <div className="ws-wrap ws-press-proprietor-grid">
+          <FadeUp>
+            <div className="card ws-press-specimen">
+              <div className="ws-press-specimen-head">
+                <span className="pill">Specimen No. I</span>
+                <span className="ws-press-specimen-meta">The Proprietor</span>
+              </div>
+              <div className="ws-press-specimen-stage">
+                <span className="ws-bracket tl" aria-hidden="true" />
+                <span className="ws-bracket tr" aria-hidden="true" />
+                <span className="ws-bracket bl" aria-hidden="true" />
+                <span className="ws-bracket br" aria-hidden="true" />
+                <div className="specimen-card-plate">
+                  <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 5' }}>
+                    <span>{'PORTRAIT\nOF THE PROPRIETOR\ncandid · b&w · half-smirk'}</span>
+                  </div>
+                </div>
+                <div className="specimen-card-tag">
+                  <div style={{ fontSize: 9, letterSpacing: '0.32em', color: 'var(--paper)', textTransform: 'uppercase' }}>Catalogued</div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, color: 'var(--paper)', marginTop: 2 }}>D.R.</div>
+                </div>
+              </div>
+              <div className="ws-press-specimen-foot">
+                <div className="ws-press-specimen-name">Dallas Raby — D.R.</div>
+                <div className="ws-press-specimen-quote">"I'm the Dr. — the Doctor — in Dr. Bartender."</div>
+              </div>
+            </div>
+          </FadeUp>
+
+          <FadeUp delay={0.1}>
+            <div>
+              <span className="kicker">No. 02 · About The Doctor</span>
+              <h2 className="ws-press-h2">
+                Twenty-five years in service.<br />
+                <em>I'm the Dr. in Dr. Bartender.</em>
+              </h2>
+              <p>
+                I'm <strong>Dallas Raby</strong> — D.R. — and I came up the long way. Roughly{' '}
+                <em>ten years working the front of the house</em> while I held down a day job at a{' '}
+                <em>video game company</em> and finished a <em>bachelor's in economics</em>.{' '}
+                <em>Then</em> I went to culinary school and ended up back where I started — behind the bar.
+              </p>
+              <p>
+                Corporate rooms, high-craft cocktail programs, and a stretch on the national event
+                circuit — the <em>NFL Draft</em>, <em>F1 Las Vegas</em>, <em>Lollapalooza</em>,{' '}
+                <em>Electric Forest</em>, <em>Oceans Calling</em>, <em>EDC Orlando</em>.
+              </p>
+              <div className="divider-ornate ws-press-divider"><span>credentials</span></div>
+              <div className="ws-press-credentials">
+                {CREDENTIALS.map(([k, v]) => (
+                  <div key={k}>
+                    <div className="ws-press-cred-label">{k}</div>
+                    <div className="ws-press-cred-value">{v}</div>
+                  </div>
+                ))}
+              </div>
+              <Link to="/about" className="btn btn-secondary ws-press-bio-link">Read the full bio →</Link>
+            </div>
+          </FadeUp>
+        </div>
+      </section>
+
+      {/* ── Services / Catalogue (id=services preserved) ── */}
+      <section id="services" className="ws-press-services">
+        <div className="ws-wrap">
+          <FadeUp>
+            <div className="ws-press-section-head">
+              <span className="kicker center">No. 03 · Catalogue of Services</span>
+              <h2 className="ws-press-h2">Three formulations. One laboratory.</h2>
+              <p className="ws-press-section-italic">
+                Every bar package includes a <strong>bespoke menu</strong> — two signature drinks built around your story, your colors, and what your guests actually want to drink. No upcharge.
+              </p>
+            </div>
+          </FadeUp>
+          <div className="ws-press-services-grid">
+            {SERVICES.map((s, i) => (
+              <FadeUp key={s.t} delay={i * 0.1}>
+                <article className="card ws-press-service">
+                  <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 3' }}>
+                    <span>{s.img}</span>
+                  </div>
+                  <div className="ws-press-service-body">
+                    <div className="ws-press-service-formula">{s.n}</div>
+                    <h3 className="ws-press-service-title">{s.t}</h3>
+                    <p>{s.body}</p>
+                    <Link to="/quote" className="btn btn-secondary">Build a Quote</Link>
+                  </div>
+                </article>
+              </FadeUp>
+            ))}
+          </div>
+          <FadeUp>
+            <div className="ws-press-services-link">
+              <Link to="/services" className="ws-press-arrow-link">See full catalogue →</Link>
+            </div>
+          </FadeUp>
+        </div>
+      </section>
+
+      {/* ── Method (id=process preserved) ── */}
+      <section id="process" className="ws-press-method">
+        <div className="ws-wrap">
+          <FadeUp>
+            <div className="ws-press-section-head">
+              <span className="kicker center">No. 04 · The Method</span>
+              <h2 className="ws-press-h2">From "interested" to <em>open bar</em>, in three.</h2>
+            </div>
+          </FadeUp>
+          <div className="ws-press-method-grid">
+            {METHOD_STEPS.map((s, i) => (
+              <FadeUp key={s.n} delay={i * 0.1}>
+                <div className={`ws-press-method-col ${i < METHOD_STEPS.length - 1 ? 'has-divider' : ''}`}>
+                  <div className="ws-press-method-numeral" aria-hidden="true">{s.n}</div>
+                  <div className="ws-press-method-kicker">{s.kicker}</div>
+                  <h3 className="ws-press-method-title">{s.t}</h3>
+                  <p>{s.body}</p>
+                  <div className="ws-press-method-ornament" aria-hidden="true">⚗</div>
+                </div>
+              </FadeUp>
+            ))}
+          </div>
+          <FadeUp>
+            <div className="ws-press-services-link">
+              <Link to="/method" className="ws-press-arrow-link">See the full method →</Link>
+            </div>
+          </FadeUp>
+        </div>
+      </section>
+
+      {/* ── Testimonial ── */}
+      <section className="ws-press-testimonial">
+        <div className="ws-wrap">
+          <FadeUp>
+            <div className="card ws-press-testimonial-card">
+              <div className="ws-press-brass-frame" aria-hidden="true" />
+              <div className="ws-press-testimonial-inner">
+                <div className="kicker no-rule ws-press-testimonial-meta">
+                  Field Report · {featuredReview.name}
+                </div>
+                <p className="ws-press-testimonial-quote">"{featuredReview.text}"</p>
+                <div className="divider-ornate ws-press-divider"><span aria-label={`${renderStars(featuredReview.rating)} stars`}>{renderStars(featuredReview.rating)}</span></div>
+                <div className="ws-press-testimonial-attribution">
+                  {featuredReview.role || 'Wedding · Chicago'}
+                </div>
+                {showRatingBadge && (
+                  <div className="ws-press-rating-badge">
+                    <strong>{reviewsState.averageRating.toFixed(1)}</strong> · {reviewsState.count} reviews on Thumbtack
+                  </div>
+                )}
+              </div>
+            </div>
+          </FadeUp>
+        </div>
+      </section>
+
+      {/* ── Shimmer divider (rainbow placement #3) ── */}
+      <div className="ws-wrap ws-shimmer-row">
+        <hr className="divider-shimmer" />
+      </div>
+
+      {/* ── Closing CTA ── */}
+      <section className="ws-press-cta-section">
+        <div className="ws-wrap">
+          <FadeUp>
+            <div className="card ws-press-cta-card">
+              <div className="ws-press-brass-frame" aria-hidden="true" />
+              <div className="ws-press-cta-inner">
+                <span className="kicker no-rule" style={{ color: 'var(--text-muted)' }}>Rx · The Prescription</span>
+                <h2 className="ws-press-h2">
+                  Tell us about the night.<br />
+                  <em>We'll send a proposal before dinner.</em>
+                </h2>
+                <p>Five minutes. Live pricing. No phone tag — just the bar your event needs, costed out clearly.</p>
+                <Link to="/quote" className="btn btn-primary ws-press-cta-btn">Get an Instant Quote</Link>
+              </div>
+            </div>
+          </FadeUp>
+        </div>
+      </section>
     </PublicLayout>
   );
 }
