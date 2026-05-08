@@ -4716,6 +4716,243 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   .ws-labnotes-grid { grid-template-columns: 1fr; }
 }
 
+/* ═══════════════════════════════════════════════════════════
+   SERVICES — alternating Formula cards + add-ons strip
+   ═══════════════════════════════════════════════════════════ */
+
+.ws-press-services-detail { padding: 40px 0 20px; }
+.ws-press-services-detail .ws-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+}
+
+.ws-press-formula {
+  padding: 0 !important;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  margin-bottom: 0 !important;
+}
+.ws-press-formula::before { content: none; }
+.ws-press-formula.reverse {
+  grid-template-columns: 1fr 1.1fr;
+}
+.ws-press-formula .img-placeholder {
+  height: 100%;
+}
+
+.ws-press-service-details {
+  padding: 32px 36px;
+  background: linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%);
+}
+.ws-press-service-details-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+}
+.ws-press-service-h {
+  margin-top: 8px;
+  font-family: var(--font-display);
+  font-size: clamp(1.8rem, 2.8vw, 2.4rem);
+  color: var(--deep-brown);
+  font-weight: 400;
+}
+.ws-press-service-price {
+  margin-top: 6px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--warm-brown);
+}
+.ws-press-service-details p {
+  margin-top: 14px;
+  font-size: 15px;
+  color: var(--deep-brown);
+}
+.ws-press-service-leaders {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 22px;
+}
+.ws-press-service-cta {
+  display: flex;
+  gap: 10px;
+  margin-top: 22px;
+  flex-wrap: wrap;
+}
+
+/* Add-ons strip */
+.ws-press-addons { padding: 70px 0; }
+.ws-press-addons-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+}
+.ws-press-addon {
+  padding: 22px !important;
+  margin-bottom: 0 !important;
+}
+.ws-press-addon-title {
+  margin-top: 10px;
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  color: var(--deep-brown);
+  font-weight: 400;
+}
+.ws-press-addon p {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--deep-brown);
+}
+
+@media (max-width: 960px) {
+  .ws-press-formula,
+  .ws-press-formula.reverse {
+    grid-template-columns: 1fr;
+  }
+  .ws-press-formula .img-placeholder {
+    aspect-ratio: 16 / 9 !important;
+    height: auto;
+  }
+  .ws-press-addons-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 520px) {
+  .ws-press-addons-grid { grid-template-columns: 1fr; }
+  .ws-press-service-leaders { grid-template-columns: 1fr; }
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   METHOD — alternating step blocks + timeline card
+   ═══════════════════════════════════════════════════════════ */
+
+.ws-press-method-detail { padding: 60px 0; }
+.ws-press-method-detail .ws-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 70px;
+}
+.ws-press-method-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  gap: 50px;
+  align-items: center;
+}
+.ws-press-method-row.reverse {
+  grid-template-columns: 1fr 1.1fr;
+}
+
+.ws-press-method-step-head {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+}
+.ws-press-method-step-head .ws-press-method-numeral {
+  font-size: 5rem;
+}
+.ws-press-method-step-kicker {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--brass);
+}
+.ws-press-method-step-h {
+  margin-top: 14px;
+  font-size: clamp(1.8rem, 2.8vw, 2.6rem);
+}
+.ws-press-method-step-body {
+  margin-top: 14px;
+  font-size: 1.05rem;
+  max-width: 480px;
+}
+
+.ws-press-method-bullets {
+  list-style: none;
+  padding: 0;
+  margin: 20px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ws-press-method-bullets li {
+  display: flex;
+  gap: 12px;
+  font-size: 14px;
+  color: rgba(240, 232, 214, 0.86);
+}
+.ws-press-method-bullet-glyph { color: var(--brass); }
+
+.ws-press-method-img {
+  padding: 8px !important;
+  margin-bottom: 0 !important;
+}
+
+/* Timeline card */
+.ws-press-timeline { padding: 40px 0 70px; }
+.ws-press-timeline-card {
+  padding: 32px 36px !important;
+  margin-bottom: 0 !important;
+}
+.ws-press-timeline-row { font-size: 14px; }
+.ws-press-timeline-when {
+  font-family: var(--font-display) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 13px !important;
+  color: var(--warm-brown) !important;
+}
+.ws-press-timeline-what {
+  color: var(--deep-brown);
+  text-align: right;
+  max-width: 520px;
+}
+
+@media (max-width: 960px) {
+  .ws-press-method-row,
+  .ws-press-method-row.reverse {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .ws-press-method-detail .ws-wrap { gap: 50px; }
+  .ws-press-timeline-card { padding: 22px 22px !important; }
+  .ws-press-timeline-what { text-align: left; max-width: none; }
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   ABOUT — long-form bio + career timeline
+   ═══════════════════════════════════════════════════════════ */
+
+.ws-press-about-bio { padding: 60px 0; }
+.ws-press-career { padding: 40px 0 80px; }
+.ws-press-career-card {
+  padding: 32px 40px !important;
+  margin-bottom: 0 !important;
+}
+.ws-press-career-row {
+  font-size: 14px;
+  padding: 8px 0;
+}
+.ws-press-career-when {
+  font-family: var(--font-display) !important;
+  font-size: 16px !important;
+  color: var(--warm-brown) !important;
+}
+.ws-press-career-what {
+  color: var(--deep-brown);
+  text-align: right;
+  max-width: 540px;
+}
+
+@media (max-width: 960px) {
+  .ws-press-career-card { padding: 22px !important; }
+  .ws-press-career-what { text-align: left; max-width: none; }
+}
+
 
 /* ═══════════════════════════════════════════════════════════
    QUOTE WIZARD

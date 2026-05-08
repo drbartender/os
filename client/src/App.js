@@ -12,6 +12,9 @@ import Layout from './components/Layout';
 import HomePage from './pages/website/HomePage';
 import QuotePage from './pages/website/QuotePage';
 import FaqPage from './pages/website/FaqPage';
+import ServicesPage from './pages/website/ServicesPage';
+import MethodPage from './pages/website/MethodPage';
+import AboutPage from './pages/website/AboutPage';
 import Register from './pages/Register';
 import Login from './pages/Login';
 import ForgotPassword from './pages/ForgotPassword';
@@ -221,6 +224,9 @@ function PublicWebsiteRoutes() {
     <Suspense fallback={SuspenseFallback}>
       <Routes>
         <Route path="/" element={<HomePage />} />
+        <Route path="/services" element={<ServicesPage />} />
+        <Route path="/method" element={<MethodPage />} />
+        <Route path="/about" element={<AboutPage />} />
         <Route path="/quote" element={<QuotePage />} />
         <Route path="/faq" element={<FaqPage />} />
         <Route path="/classes" element={<ClassWizard />} />
@@ -347,6 +353,9 @@ function AppRoutes() {
       <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
       {/* Website accessible on admin domain for preview */}
       <Route path="/website" element={<HomePage />} />
+      <Route path="/services" element={<ServicesPage />} />
+      <Route path="/method" element={<MethodPage />} />
+      <Route path="/about" element={<AboutPage />} />
       <Route path="/quote" element={<QuotePage />} />
       <Route path="/faq" element={<FaqPage />} />
       <Route path="/classes" element={<ClassWizard />} />
