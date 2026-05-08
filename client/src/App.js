@@ -9,25 +9,32 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ScrollToTop from './components/ScrollToTop';
 import SessionExpiryHandler from './components/SessionExpiryHandler';
 import Layout from './components/Layout';
+// HomePage stays eager — LCP-critical for the marketing site root.
 import HomePage from './pages/website/HomePage';
-import QuotePage from './pages/website/QuotePage';
-import FaqPage from './pages/website/FaqPage';
-import ServicesPage from './pages/website/ServicesPage';
-import MethodPage from './pages/website/MethodPage';
-import AboutPage from './pages/website/AboutPage';
-import Register from './pages/Register';
-import Login from './pages/Login';
-import ForgotPassword from './pages/ForgotPassword';
-import ResetPassword from './pages/ResetPassword';
-import Application from './pages/Application';
-import ApplicationStatus from './pages/ApplicationStatus';
-import PotionPlanningLab from './pages/plan/PotionPlanningLab';
-import ClientShoppingList from './pages/public/ClientShoppingList';
-import Blog from './pages/public/Blog';
-import BlogPost from './pages/public/BlogPost';
-import ClientLogin from './pages/public/ClientLogin';
-import ClientDashboard from './pages/public/ClientDashboard';
-import HiringLanding from './pages/HiringLanding';
+
+// Secondary public marketing routes — lazy so they don't bloat the initial bundle.
+const QuotePage = lazy(() => import('./pages/website/QuotePage'));
+const FaqPage = lazy(() => import('./pages/website/FaqPage'));
+const ServicesPage = lazy(() => import('./pages/website/ServicesPage'));
+const MethodPage = lazy(() => import('./pages/website/MethodPage'));
+const AboutPage = lazy(() => import('./pages/website/AboutPage'));
+const Blog = lazy(() => import('./pages/public/Blog'));
+const BlogPost = lazy(() => import('./pages/public/BlogPost'));
+const HiringLanding = lazy(() => import('./pages/HiringLanding'));
+
+// Auth entry points — chunked once, cached after first login.
+const Register = lazy(() => import('./pages/Register'));
+const Login = lazy(() => import('./pages/Login'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const ClientLogin = lazy(() => import('./pages/public/ClientLogin'));
+
+// Application + token-gated client surfaces.
+const Application = lazy(() => import('./pages/Application'));
+const ApplicationStatus = lazy(() => import('./pages/ApplicationStatus'));
+const PotionPlanningLab = lazy(() => import('./pages/plan/PotionPlanningLab'));
+const ClientShoppingList = lazy(() => import('./pages/public/ClientShoppingList'));
+const ClientDashboard = lazy(() => import('./pages/public/ClientDashboard'));
 
 // Lazy-loaded: Lab Rat tester program (kept out of main bundle for non-tester visitors)
 const LabRatLanding = lazy(() => import('./pages/labrat/LabRatLanding'));

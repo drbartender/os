@@ -1,5 +1,7 @@
-@import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&display=swap');
-
+/* Local IM Fell English fonts only — the Google Fonts @import that used to live
+ * here was render-blocking on every public page (TLS handshake to fonts.googleapis,
+ * remote CSS parse, then redundant TTF fetch on top of the local @font-face below).
+ * font-display: swap keeps text visible while the local files load. */
 @font-face {
   font-family: 'IM Fell English SC';
   src: url('./fonts/IMFellEnglishSC-Regular.ttf') format('truetype');

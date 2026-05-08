@@ -6,11 +6,10 @@
     <meta name="theme-color" content="#2C1F0E" />
     <meta name="description" content="Dr. Bartender" />
     <title>Dr. Bartender</title>
-    <!-- Preconnects benefit the public-page IM Fell @import in index.css and -->
-    <!-- the admin-OS Inter / JetBrains / Libre Caslon font load that AdminLayout -->
-    <!-- injects on mount. Inter/JetBrains/Caslon are NOT loaded here so public -->
-    <!-- pages (homepage, blog, proposal view, invoice, quote wizard) skip ~80- -->
-    <!-- 200ms of font fetching they never need. -->
+    <!-- Preconnect for the admin-OS font load (Inter / JetBrains / Libre Caslon) -->
+    <!-- that AdminLayout injects on mount. Public pages use local IM Fell English -->
+    <!-- (no Google Fonts request) so the preconnect's only cost there is a DNS+TLS -->
+    <!-- warm-up never used — accepted to keep admin/staff first paint fast. -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   </head>
