@@ -945,29 +945,46 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     // Tip page handler — only for sessions tagged kind=tip in metadata.
     // Non-tip sessions fall through to the proposal deposit logic below.
     if (session.metadata && session.metadata.kind === 'tip') {
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const targetUserId = parseInt(session.metadata.bartender_user_id, 10);
       const token = session.metadata.tip_page_token;
       const piId = session.payment_intent;
 
-      if (!Number.isInteger(targetUserId) || !token || !piId) {
+      if (!Number.isInteger(targetUserId) || !token || !UUID_RE.test(token) || !piId) {
         console.error('[tip-webhook] malformed tip session metadata', session.id);
-      } else {
-        await pool.query(`
-          INSERT INTO tips (tip_page_token, target_user_id, amount_cents,
-                            stripe_payment_intent_id, stripe_session_id,
-                            customer_email, tipped_at)
-          VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7))
-          ON CONFLICT (stripe_payment_intent_id) DO NOTHING
-        `, [
-          token,
-          targetUserId,
-          session.amount_total,
-          piId,
-          session.id,
-          session.customer_details && session.customer_details.email ? session.customer_details.email : null,
-          session.created,
-        ]);
+        Sentry.captureMessage('Malformed tip session metadata', {
+          level: 'warning',
+          tags: { webhook: 'stripe', kind: 'tip' },
+          extra: { sessionId: session.id, metadata: session.metadata },
+        });
+        return res.json({ received: true });
       }
+
+      if (!session.amount_total || session.amount_total <= 0) {
+        console.error('[tip-webhook] non-positive amount_total', session.id);
+        Sentry.captureMessage('Non-positive tip amount_total', {
+          level: 'warning',
+          tags: { webhook: 'stripe', kind: 'tip' },
+          extra: { sessionId: session.id, amount_total: session.amount_total },
+        });
+        return res.json({ received: true });
+      }
+
+      await pool.query(`
+        INSERT INTO tips (tip_page_token, target_user_id, amount_cents,
+                          stripe_payment_intent_id, stripe_session_id,
+                          customer_email, tipped_at)
+        VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7))
+        ON CONFLICT (stripe_payment_intent_id) DO NOTHING
+      `, [
+        token,
+        targetUserId,
+        session.amount_total,
+        piId,
+        session.id,
+        session.customer_details && session.customer_details.email ? session.customer_details.email : null,
+        session.created,
+      ]);
       // Tip session handled — do NOT fall through to proposal deposit logic.
       return res.json({ received: true });
     }
