@@ -1,7 +1,8 @@
 const express = require('express');
 const Sentry = require('@sentry/node');
+const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../../db');
-const { auth, adminOnly } = require('../../middleware/auth');
+const { auth, adminOnly, requireAdminOrManager } = require('../../middleware/auth');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { STAFF_URL } = require('../../utils/urls');
@@ -10,6 +11,11 @@ const { encrypt, decrypt } = require('../../utils/encryption');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, PermissionError } = require('../../utils/errors');
 const { validatePhone } = require('../../utils/phone');
+const {
+  createTipPaymentLink,
+  deactivateTipPaymentLink,
+} = require('../../utils/tipPaymentLinks');
+const { activateTipPage, deactivateTipPage } = require('../../utils/tipPageLifecycle');
 
 const router = express.Router();
 
@@ -514,6 +520,132 @@ router.put('/users/:id/seniority', auth, adminOnly, asyncHandler(async (req, res
   ]);
 
   res.json({ success: true });
+}));
+
+// ─── Per-Contractor Tip Page Actions ─────────────────────────────
+// Admin/manager surface for managing a contractor's tip page: edit handles,
+// rotate or generate the Stripe Payment Link, and toggle the page on/off.
+// `regenerate-stripe` preserves tip_page_token so existing printed QRs keep
+// working — only the Stripe link rotates.
+
+const ALLOWED_PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'check', 'direct_deposit', 'other'];
+
+// PATCH — admin override of handles + payroll preference + preferred_name
+router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+  if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
+
+  const fields = {};
+  for (const k of ['venmo_handle', 'cashapp_handle', 'paypal_url', 'preferred_payment_method']) {
+    if (k in req.body) fields[k] = req.body[k];
+  }
+
+  if ('preferred_payment_method' in fields && fields.preferred_payment_method
+      && !ALLOWED_PAYMENT_METHODS.includes(fields.preferred_payment_method)) {
+    throw new ValidationError('invalid preferred_payment_method');
+  }
+
+  if ('preferred_name' in req.body) {
+    await pool.query(
+      'UPDATE contractor_profiles SET preferred_name = $1, updated_at = NOW() WHERE user_id = $2',
+      [String(req.body.preferred_name || '').trim() || null, userId]
+    );
+  }
+
+  if (Object.keys(fields).length > 0) {
+    const cols = Object.keys(fields);
+    const setClause = cols.map((c, i) => `${c} = $${i + 2}`).join(', ');
+    await pool.query(`
+      INSERT INTO payment_profiles (user_id, ${cols.join(', ')})
+      VALUES ($1, ${cols.map((_, i) => `$${i + 2}`).join(', ')})
+      ON CONFLICT (user_id) DO UPDATE SET ${setClause}, updated_at = NOW()
+    `, [userId, ...cols.map(c => fields[c] || null)]);
+  }
+  res.json({ ok: true });
+}));
+
+// POST — rotate the Stripe Payment Link (deactivate old, create new). Token unchanged.
+router.post('/contractors/:userId/tip-page/regenerate-stripe', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+  if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
+
+  const { rows } = await pool.query(`
+    SELECT pp.tip_page_token, pp.stripe_payment_link_id, cp.preferred_name
+    FROM payment_profiles pp
+    LEFT JOIN contractor_profiles cp ON cp.user_id = pp.user_id
+    WHERE pp.user_id = $1
+  `, [userId]);
+  const row = rows[0];
+  if (!row || !row.tip_page_token) throw new NotFoundError('contractor has no tip page');
+
+  if (row.stripe_payment_link_id) {
+    try { await deactivateTipPaymentLink(row.stripe_payment_link_id); }
+    catch (err) { console.error('[tip-admin] deactivate old link failed', err.message); }
+  }
+
+  const { url, id } = await createTipPaymentLink({
+    userId,
+    displayName: row.preferred_name,
+    token: row.tip_page_token,
+  });
+  await pool.query(
+    'UPDATE payment_profiles SET stripe_payment_link_url = $1, stripe_payment_link_id = $2 WHERE user_id = $3',
+    [url, id, userId]
+  );
+  res.json({ ok: true, url });
+}));
+
+// POST — create a Stripe link when one is missing (and ensure a token exists).
+// Fails 400 if a link already exists — forces an explicit regenerate call.
+router.post('/contractors/:userId/tip-page/generate-stripe', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+  if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
+
+  const { rows } = await pool.query(`
+    SELECT pp.tip_page_token, pp.stripe_payment_link_url, cp.preferred_name
+    FROM payment_profiles pp
+    LEFT JOIN contractor_profiles cp ON cp.user_id = pp.user_id
+    WHERE pp.user_id = $1
+  `, [userId]);
+  const row = rows[0];
+
+  if (row && row.stripe_payment_link_url) {
+    return res.status(400).json({ error: 'Stripe link already exists; use regenerate' });
+  }
+
+  let token = row && row.tip_page_token;
+  if (!token) {
+    token = uuidv4();
+    await pool.query(`
+      INSERT INTO payment_profiles (user_id, tip_page_token, tip_page_active)
+      VALUES ($1, $2, TRUE)
+      ON CONFLICT (user_id) DO UPDATE SET tip_page_token = COALESCE(payment_profiles.tip_page_token, $2)
+    `, [userId, token]);
+  }
+
+  const displayName = (row && row.preferred_name) || 'your bartender';
+  const { url, id } = await createTipPaymentLink({ userId, displayName, token });
+  await pool.query(
+    'UPDATE payment_profiles SET stripe_payment_link_url = $1, stripe_payment_link_id = $2 WHERE user_id = $3',
+    [url, id, userId]
+  );
+  res.json({ ok: true, url });
+}));
+
+// POST — disable the page + deactivate Stripe link
+router.post('/contractors/:userId/tip-page/deactivate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+  if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
+  await deactivateTipPage(userId);
+  res.json({ ok: true });
+}));
+
+// POST — re-enable the page + reactivate Stripe link
+router.post('/contractors/:userId/tip-page/activate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+  if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
+  await activateTipPage(userId);
+  res.json({ ok: true });
 }));
 
 module.exports = router;
