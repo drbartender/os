@@ -8,6 +8,7 @@ const STAFF_NAV = [
   { label: 'Shifts',      path: '/shifts',     icon: '📅' },
   { label: 'My Schedule', path: '/schedule',   icon: '🗓' },
   { label: 'My Events',   path: '/events',     icon: '📋' },
+  { label: 'My Tip Page', path: '/my-tip-page', icon: '💸' },
   'divider',
   { label: 'Resources',   path: '/resources',  icon: '📖' },
   { label: 'Profile',     path: '/profile',    icon: '👤' },

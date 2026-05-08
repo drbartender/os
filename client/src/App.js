@@ -55,6 +55,8 @@ const StaffSchedule = lazy(() => import('./pages/staff/StaffSchedule'));
 const StaffEvents = lazy(() => import('./pages/staff/StaffEvents'));
 const StaffResources = lazy(() => import('./pages/staff/StaffResources'));
 const StaffProfile = lazy(() => import('./pages/staff/StaffProfile'));
+const MyTipPage = lazy(() => import('./pages/staff/MyTipPage'));
+const PrintTipCard = lazy(() => import('./pages/staff/PrintTipCard'));
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
@@ -283,6 +285,8 @@ function HiringRoutes() {
           <Route path="/events" element={<StaffEvents />} />
           <Route path="/resources" element={<StaffResources />} />
           <Route path="/profile" element={<StaffProfile />} />
+          <Route path="/my-tip-page" element={<MyTipPage />} />
+          <Route path="/my-tip-page/print" element={<PrintTipCard />} />
         </Route>
         {/* Public token routes still work */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
@@ -323,6 +327,8 @@ function StaffSiteRoutes() {
           <Route path="/events" element={<StaffEvents />} />
           <Route path="/resources" element={<StaffResources />} />
           <Route path="/profile" element={<StaffProfile />} />
+          <Route path="/my-tip-page" element={<MyTipPage />} />
+          <Route path="/my-tip-page/print" element={<PrintTipCard />} />
         </Route>
         {/* Public token routes */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
