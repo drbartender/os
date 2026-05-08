@@ -99,4 +99,23 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+router.get('/tips', asyncHandler(async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+  const cursor = parseInt(req.query.cursor, 10) || null;
+
+  const { rows } = await pool.query(`
+    SELECT id, amount_cents, tipped_at
+    FROM tips
+    WHERE target_user_id = $1
+      ${cursor ? 'AND id < $3' : ''}
+    ORDER BY id DESC
+    LIMIT $2
+  `, cursor ? [req.user.id, limit, cursor] : [req.user.id, limit]);
+
+  res.json({
+    tips: rows,
+    next_cursor: rows.length === limit ? rows[rows.length - 1].id : null,
+  });
+}));
+
 module.exports = router;
