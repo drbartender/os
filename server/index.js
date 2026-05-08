@@ -163,6 +163,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/progress', require('./routes/progress'));
 app.use('/api/agreement', require('./routes/agreement'));
 app.use('/api/contractor', require('./routes/contractor'));
+app.use('/api/me', require('./routes/me'));
 app.use('/api/payment', require('./routes/payment'));
 app.use('/api/application', require('./routes/application'));
 app.use('/api/admin', require('./routes/admin'));
