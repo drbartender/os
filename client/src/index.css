@@ -1,5 +1,21 @@
 @import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=IM+Fell+English+SC&display=swap');
 
+@font-face {
+  font-family: 'IM Fell English SC';
+  src: url('/fonts/IMFellEnglishSC-Regular.ttf') format('truetype');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'IM Fell English';
+  src: url('/fonts/IMFellEnglish-Regular.ttf') format('truetype');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'IM Fell English';
+  src: url('/fonts/IMFellEnglish-Italic.ttf') format('truetype');
+  font-weight: 400; font-style: italic; font-display: swap;
+}
+
 :root {
   /* Apothecary Press — values per redesign brief §3.1.
    * Variable NAMES are stable (--amber etc.) even though values shifted from amber to teal:
