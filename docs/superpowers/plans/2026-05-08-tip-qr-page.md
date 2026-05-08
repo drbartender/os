@@ -28,14 +28,11 @@
 | `server/routes/contractor.js` | modify | Onboarding submit handler upserts new payment_profile fields and triggers `createTipPaymentLink` on submitted-state transition. |
 | `server/routes/publicTip.js` | create | `GET /:token` (public payload, allowlisted), `POST /:token/feedback`. Rate-limited via `publicLimiter`. |
 | `server/routes/stripe.js` | modify | Add `checkout.session.completed` branch where `metadata.kind === 'tip'` → `INSERT INTO tips ... ON CONFLICT DO NOTHING`. |
-| `server/routes/me.js` | create | Staff-portal endpoints: `GET /tip-page`, `PATCH /tip-page`, `GET /tips`, `GET /tip-page/qr.png`. |
+| `server/routes/me.js` | create | Staff-portal endpoints: `GET /tip-page`, `PATCH /tip-page`, `GET /tips`. (No server-side QR generation — print is client-side.) |
 | `server/routes/admin.js` | modify | Tip-page admin actions per contractor (regenerate link, deactivate, edit handles), admin tip activity, admin feedback queue. |
-| `server/utils/qrCard.js` | create | Render 4x6 / 5x7 print PNG (qrcode + sharp). |
 | `server/utils/emailTemplates.js` | modify | Add `tipFeedbackAdminNotification(...)` template. |
 | `server/scripts/backfillTipPages.js` | create | One-time script: tokenize + Stripe-link existing approved contractors. |
 | `server/index.js` | modify | Register `/api/public/tip` and `/api/me` routes. |
-| `server/assets/tip-card-4x6.svg` | create (placeholder) | SVG print template, 1200×1800 @ 300dpi. Real one to be Claude-Design-produced; ship a placeholder so endpoint works. |
-| `server/assets/tip-card-5x7.svg` | create (placeholder) | Same, 1500×2100. |
 | `.env.example` | modify | Add three new env vars. |
 
 ### Frontend (`client/`)
@@ -45,15 +42,21 @@
 | `client/public/fonts/IMFellEnglish-Regular.ttf` | create (copy) | From design output. |
 | `client/public/fonts/IMFellEnglish-Italic.ttf` | create (copy) | From design output. |
 | `client/public/fonts/IMFellEnglishSC-Regular.ttf` | create (copy) | From design output. |
-| `client/public/tip-page/logo.png` | create (copy) | DRB logo for tip-page footer. |
+| `client/public/tip-page/logo.png` | create (copy) | DRB logo for tip-page footer (default). |
+| `client/public/tip-page/logo-gold.png` | create (copy) | Gold-medallion logo used by print-card layouts. |
+| `client/public/tip-page/logo-teal.png` | create (copy) | Apothecary-Teal logo variant. |
+| `client/public/tip-page/logo-character.png` | create (copy) | Flask-character mascot. |
 | `client/public/tip-page/parchment-bg.png` | create (copy) | Page bg texture. |
 | `client/public/tip-page/chalkboard-bg.png` | create (copy) | Hero band texture. |
+| `client/src/styles/drb-tokens.css` | create | Namespaced design tokens (`--drb-*`) used by the print-card layouts. Imported by the print page only; does not pollute the rest of the app. |
 | `client/src/index.css` | modify | Add `@font-face` declarations for IM Fell English (if not already present). |
 | `client/src/pages/public/TipPage.jsx` | create | Main public tip page component (port of `tip-page.jsx` from design). |
 | `client/src/pages/public/TipPage.atoms.jsx` | create | PayButton, StarIcon, HeroDecor, Sparkle, Chevron, payment-platform marks (port of `tip-atoms.jsx`). |
 | `client/src/pages/public/TipPage.css` | create | Port of `styles.css` from design (with paths rewritten to `/tip-page/*`). |
 | `client/src/pages/public/TipPageThanks.jsx` | create | Post-tip thanks screen (Stripe redirect target). |
 | `client/src/pages/staff/MyTipPage.js` | create | Staff portal "My Tip Page" view. |
+| `client/src/pages/staff/PrintTipCard.js` | create | Client-side print page — three sizes (business card, 4×6, 5×7), bartender picks one, browser print-to-PDF. Ports `qr-print.jsx` from design. |
+| `client/src/pages/staff/PrintTipCard.css` | create | `@page` rules + size-specific layout CSS. |
 | `client/src/pages/admin/TipsAdmin.js` | create | Admin tips activity + feedback queue. |
 | `client/src/pages/admin/userDetail/tabs/TipPageTab.js` | create | Per-contractor tip-page panel (new tab). |
 | `client/src/pages/admin/userDetail/AdminUserDetail.js` | modify | Register the new TipPageTab. |
@@ -101,11 +104,27 @@ cp "$HOME/Downloads/QR Tips Page/fonts/IMFellEnglishSC-Regular.ttf" client/publi
 
 - [ ] **Step 3: Copy images from design output (rename chalkboard_background → chalkboard-bg)**
 
+> Note: the user's working design folder is `~/Downloads/QR Tips Page (1)/` (the most recent one with print files). If older `~/Downloads/QR Tips Page/` exists, prefer the `(1)` version for the print assets.
+
 ```bash
-cp "$HOME/Downloads/QR Tips Page/assets/logo.png" client/public/tip-page/logo.png
-cp "$HOME/Downloads/QR Tips Page/assets/parchment-bg.png" client/public/tip-page/parchment-bg.png
-cp "$HOME/Downloads/QR Tips Page/assets/chalkboard_background.png" client/public/tip-page/chalkboard-bg.png
+SRC="$HOME/Downloads/QR Tips Page (1)"
+[ -d "$SRC" ] || SRC="$HOME/Downloads/QR Tips Page"
+cp "$SRC/assets/logo.png" client/public/tip-page/logo.png
+cp "$SRC/assets/logo-gold.png" client/public/tip-page/logo-gold.png
+cp "$SRC/assets/logo-teal.png" client/public/tip-page/logo-teal.png
+cp "$SRC/assets/logo-character.png" client/public/tip-page/logo-character.png
+cp "$SRC/assets/parchment-bg.png" client/public/tip-page/parchment-bg.png
+cp "$SRC/assets/chalkboard_background.png" client/public/tip-page/chalkboard-bg.png
 ```
+
+- [ ] **Step 3b: Copy `drb-tokens.css` into `client/src/styles/` and rewrite font paths**
+
+```bash
+mkdir -p client/src/styles
+cp "$SRC/drb-tokens.css" client/src/styles/drb-tokens.css
+```
+
+Edit `client/src/styles/drb-tokens.css` and replace `url('./fonts/IM...')` paths with `url('/fonts/IM...')` (project-root absolute paths, since the file lives in `src/styles/` not next to the fonts).
 
 - [ ] **Step 4: Add `@font-face` to `client/src/index.css` if not already present**
 
@@ -143,8 +162,8 @@ Open `http://localhost:3000/tip-page/logo.png` — should render the DRB logo.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add client/public/fonts client/public/tip-page client/src/index.css
-git commit -m "feat(tip): add IM Fell English fonts and tip-page brand assets"
+git add client/public/fonts client/public/tip-page client/src/index.css client/src/styles/drb-tokens.css
+git commit -m "feat(tip): add IM Fell English fonts, brand assets, and drb-tokens.css"
 ```
 
 ---
@@ -1781,161 +1800,228 @@ git commit -m "feat(tip): /api/me/tips paginated history"
 
 ---
 
-### Task 16: Backend — QR card generator
+### Task 16: Frontend — Print Tip Card page (client-side, three sizes)
+
+**Approach change:** the previous draft of this task did server-side QR card PNG generation. Switched to **client-side print** because (a) the design (`qr-print.jsx`) uses sophisticated React + CSS layouts that don't translate cleanly to server-side SVG/PNG, and (b) browser print-to-PDF is what photo counters consume anyway. The bartender opens the print page in their staff portal, picks a size, the page renders the design, browser print dialog opens with `@page` rules sized correctly, they save as PDF or send to printer. Photo counters print PDFs fine.
+
+**Three sizes available:**
+
+| Size | Trim | Use |
+|---|---|---|
+| Business card (two-sided) | 3.5″ × 2″ | Drop in pocket / wallet, hand to customers, pin on bar caddy |
+| 4×6 | 4″ × 6″ portrait | Easel frame on the bar |
+| 5×7 | 5″ × 7″ portrait | Acrylic block / table tent display piece |
 
 **Files:**
-- Create: `server/utils/qrCard.js`
-- Create: `server/assets/tip-card-4x6.svg` (placeholder)
-- Create: `server/assets/tip-card-5x7.svg` (placeholder)
-- Modify: `server/routes/me.js`
+- Create: `client/src/pages/staff/PrintTipCard.js`
+- Create: `client/src/pages/staff/PrintTipCard.css`
+- Modify: `client/src/App.js` (add route inside the staff layout)
+- Modify: `client/package.json` (add `qrcode.react`)
 
-- [ ] **Step 1: Verify which image library is available**
+- [ ] **Step 1: Install client-side QR library**
 
 ```bash
-grep -E '"sharp"|"@napi-rs/canvas"' server/package.json client/package.json
+cd client && npm install qrcode.react
 ```
 
-If `sharp` is present in `server/package.json`, use it. If not, install: `cd server && npm install sharp` (commit lockfile changes in step 5).
+- [ ] **Step 2: Port the print components from `qr-print.jsx`**
 
-Also install qrcode: `cd server && npm install qrcode`.
+Open `~/Downloads/QR Tips Page (1)/qr-print.jsx`. It exports:
+- `BizCardFrontA`, `BizCardFrontB` — front variants
+- `BizCardBackA`, `BizCardBackB` — back variants
+- `FourBySixA` (and possibly `FourBySixB`)
+- `FiveBySevenA` (and possibly `FiveBySevenB`)
+- Helpers: `FakeQR`, `BrassRule`, `PayMark`, `PaymentRow`, `FlaskGlyph`, `PrintSheet`, `LogoMedallion`, `HeadshotFrame`, `PaperBg`, `ChalkBg`
 
-- [ ] **Step 2: Create placeholder SVG templates**
+Port these to `client/src/pages/staff/PrintTipCard.js` with these adaptations:
 
-`server/assets/tip-card-4x6.svg`:
+1. **Replace `FakeQR` with a real QR.** Use `QRCodeSVG` from `qrcode.react`:
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1800" viewBox="0 0 1200 1800">
-  <rect width="1200" height="1800" fill="#F5EDE0"/>
-  <rect x="0" y="0" width="1200" height="240" fill="#2A2A2A"/>
-  <text x="600" y="155" font-family="Georgia,serif" font-size="48" fill="#F5F0E8" text-anchor="middle" letter-spacing="6">DR. BARTENDER</text>
-  <text x="600" y="700" font-family="Georgia,serif" font-size="64" fill="#2C1F0E" text-anchor="middle">Tip {{display_name}}</text>
-  <rect x="350" y="800" width="500" height="500" fill="#fff" stroke="#7A6B4F" stroke-width="2"/>
-  <image x="350" y="800" width="500" height="500" href="{{qr}}"/>
-  <text x="600" y="1500" font-family="Georgia,serif" font-size="32" fill="#6B5A42" text-anchor="middle" font-style="italic">Scan to leave a tip</text>
-  <text x="600" y="1700" font-family="Georgia,serif" font-size="24" fill="#6B5A42" text-anchor="middle">drbartender.com</text>
-</svg>
-```
+   ```jsx
+   import { QRCodeSVG } from 'qrcode.react';
+   // ...
+   <QRCodeSVG value={tipUrl} size={size} bgColor="#FFFFFF" fgColor="#12161C" level="M" includeMargin={false} />
+   ```
 
-Same shape at 1500×2100 for `tip-card-5x7.svg` (proportional positions; easiest is to scale: 5x7 = 4x6 × 1.25).
+2. **Use real bartender data** instead of the design's hardcoded "Kaitlyn / Kaitlyn Reyes":
+   ```jsx
+   <BizCardFrontA name={data.preferred_name} tipUrl={data.url} />
+   ```
 
-These are *placeholders* — Claude Design produces the final templates separately. Replace later by overwriting these files.
+3. **Logo paths** — design references `./assets/logo-gold.png`. Rewrite to `/tip-page/logo-gold.png` (matching where Task 1 copied them).
 
-- [ ] **Step 3: Create `qrCard.js`**
+4. **Drop the `PrintSheet` crop ticks** (they're for canvas preview, not actual print).
 
-```js
-// server/utils/qrCard.js
-const fs = require('fs');
-const path = require('path');
-const QRCode = require('qrcode');
-const sharp = require('sharp');
+5. **Drop the second variant (B)** for MVP — keep only the A variants for each size, plus the BizCard back A. Variant choice is a future enhancement.
+
+- [ ] **Step 3: Create the page component that ties them together**
+
+```jsx
+// client/src/pages/staff/PrintTipCard.js
+import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import api from '../../utils/api';
+import '../../styles/drb-tokens.css';
+import './PrintTipCard.css';
+
+import {
+  BizCardFrontA, BizCardBackA,
+  FourBySixA, FiveBySevenA,
+} from './PrintTipCard.layouts'; // suggest splitting layouts to a sibling file
 
 const SIZES = {
-  '4x6': { w: 1200, h: 1800, file: 'tip-card-4x6.svg' },
-  '5x7': { w: 1500, h: 2100, file: 'tip-card-5x7.svg' },
+  bizcard: { label: 'Business card (3.5×2", 2-sided)', renderFront: BizCardFrontA, renderBack: BizCardBackA },
+  '4x6':   { label: '4×6 photo (1-sided)',  renderFront: FourBySixA,  renderBack: null },
+  '5x7':   { label: '5×7 photo (1-sided)',  renderFront: FiveBySevenA, renderBack: null },
 };
 
-const CACHE = new Map();         // key: `${userId}:${size}:${tokenSha}` → { png, expires }
-const CACHE_TTL_MS = 60 * 60 * 1000;
+export default function PrintTipCard() {
+  const [data, setData] = useState(null);
+  const [params, setParams] = useSearchParams();
+  const size = params.get('size') || 'bizcard';
 
-function cacheKey(userId, size, displayName, tipUrl) {
-  return `${userId}:${size}:${displayName}:${tipUrl}`;
+  useEffect(() => {
+    api.get('/me/tip-page').then(r => setData(r.data));
+  }, []);
+
+  if (!data) return <p style={{ padding: 24 }}>Loading…</p>;
+  if (!data.url) return <p style={{ padding: 24 }}>Your tip page isn't active yet.</p>;
+
+  const { label, renderFront: Front, renderBack: Back } = SIZES[size] || SIZES.bizcard;
+
+  return (
+    <div className="print-tip-card-root drb">
+      {/* ─ controls (hidden on print) ─ */}
+      <div className="print-controls" data-no-print>
+        <h1>Print your tip card</h1>
+        <p className="helper">
+          Choose a size, then click "Print" — your browser will open its print dialog.
+          Save as PDF and take it to a photo counter, or print at home.
+        </p>
+        <div className="size-picker">
+          {Object.entries(SIZES).map(([key, s]) => (
+            <label key={key} className={size === key ? 'selected' : ''}>
+              <input type="radio" name="size" value={key}
+                checked={size === key}
+                onChange={() => setParams({ size: key })} />
+              {s.label}
+            </label>
+          ))}
+        </div>
+        <button className="btn-primary" onClick={() => window.print()}>Print</button>
+      </div>
+
+      {/* ─ printable area ─ */}
+      <div className={`print-stage size-${size}`} data-print-area>
+        <Front name={data.preferred_name} tipUrl={data.url} />
+        {Back && (
+          <div className="page-break">
+            <Back name={data.preferred_name} tipUrl={data.url} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
-
-function readTemplate(size) {
-  const p = path.join(__dirname, '..', 'assets', SIZES[size].file);
-  return fs.readFileSync(p, 'utf8');
-}
-
-async function renderQrCard({ userId, size, displayName, tipUrl }) {
-  const k = cacheKey(userId, size, displayName, tipUrl);
-  const cached = CACHE.get(k);
-  if (cached && cached.expires > Date.now()) return cached.png;
-
-  if (!SIZES[size]) throw new Error(`unsupported size: ${size}`);
-
-  // 1. Render QR as a data URL
-  const qrDataUrl = await QRCode.toDataURL(tipUrl, {
-    margin: 1,
-    width: 600,                  // generated at 600px; scaled inside SVG
-    color: { dark: '#1A1410', light: '#FFFFFF' },
-  });
-
-  // 2. Substitute placeholders in the SVG template
-  const svg = readTemplate(size)
-    .replace(/{{qr}}/g, qrDataUrl)
-    .replace(/{{display_name}}/g, escapeXml(displayName || 'your bartender'));
-
-  // 3. Render SVG → PNG via sharp
-  const png = await sharp(Buffer.from(svg))
-    .resize(SIZES[size].w, SIZES[size].h)
-    .png({ quality: 90 })
-    .toBuffer();
-
-  CACHE.set(k, { png, expires: Date.now() + CACHE_TTL_MS });
-  return png;
-}
-
-function escapeXml(s) {
-  return String(s).replace(/[<>&'"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;',"'":'&apos;','"':'&quot;'})[c]);
-}
-
-module.exports = { renderQrCard };
 ```
 
-- [ ] **Step 4: Add the QR endpoint to `me.js`**
+Split the ported layouts into `client/src/pages/staff/PrintTipCard.layouts.js` (kept separate so the layouts don't bloat the page component file).
 
-```js
-const { renderQrCard } = require('../utils/qrCard');
+- [ ] **Step 4: Create `PrintTipCard.css` with `@page` rules per size**
 
-router.get('/tip-page/qr.png', asyncHandler(async (req, res) => {
-  const size = req.query.size === '5x7' ? '5x7' : '4x6';
+```css
+/* Hide controls when printing */
+@media print {
+  [data-no-print] { display: none !important; }
+}
 
-  const { rows } = await pool.query(`
-    SELECT cp.preferred_name, pp.tip_page_token, pp.tip_page_active
-    FROM users u
-    LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
-    LEFT JOIN payment_profiles pp ON pp.user_id = u.id
-    WHERE u.id = $1
-  `, [req.user.id]);
+/* Default screen — frame the print stage so the bartender can preview */
+.print-tip-card-root {
+  background: #444;
+  min-height: 100vh;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
 
-  const row = rows[0];
-  if (!row || !row.tip_page_token || !row.tip_page_active) {
-    return res.status(404).json({ error: 'tip page not active' });
-  }
+.print-controls {
+  background: #fff;
+  padding: 24px;
+  border-radius: 8px;
+  max-width: 520px;
+}
 
-  const tipUrl = `${PUBLIC_SITE_URL}/tip/${row.tip_page_token}`;
-  const png = await renderQrCard({
-    userId: req.user.id,
-    size,
-    displayName: row.preferred_name || 'your bartender',
-    tipUrl,
-  });
+.print-stage {
+  background: #fff;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  display: inline-block;
+}
 
-  const slug = String(row.preferred_name || 'bartender').toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  res.setHeader('Content-Type', 'image/png');
-  res.setHeader('Cache-Control', 'private, max-age=3600');
-  res.setHeader('Content-Disposition', `attachment; filename="drb-tip-card-${slug}-${size}.png"`);
-  res.send(png);
-}));
+/* On-screen sizes match the print sizes (CSS pixels = inches × 96 for screen) */
+.print-stage.size-bizcard { width: 3.5in; height: 2in; }
+.print-stage.size-4x6     { width: 4in;   height: 6in; }
+.print-stage.size-5x7     { width: 5in;   height: 7in; }
+
+.page-break { page-break-before: always; }
+
+/* ── Print sizes ──────────────────────────────────────────── */
+
+/* Business card sheet — 3.5×2 portrait + back side on next page */
+@page bizcard { size: 3.5in 2in; margin: 0; }
+.print-stage.size-bizcard, .print-stage.size-bizcard * { box-sizing: border-box; }
+
+@media print {
+  .print-stage.size-bizcard { page: bizcard; }
+  @page { size: 3.5in 2in; margin: 0; }
+}
+
+/* 4×6 */
+@media print {
+  .print-stage.size-4x6 { page: photo46; }
+  @page photo46 { size: 4in 6in; margin: 0; }
+}
+
+/* 5×7 */
+@media print {
+  .print-stage.size-5x7 { page: photo57; }
+  @page photo57 { size: 5in 7in; margin: 0; }
+}
 ```
 
-- [ ] **Step 5: Smoke test**
+(Note: CSS named pages have spotty browser support — fallback is the bare `@page { size: ... }` which Chromium honors at print time when the size is consistent across the document. For a single-size print job, the simple `@page { size: 4in 6in; }` works in practice. The named-page approach is for the rare case where the user prints multiple sizes from one document.)
+
+- [ ] **Step 5: Register the route inside the staff layout in `App.js`**
+
+```jsx
+import PrintTipCard from './pages/staff/PrintTipCard';
+// inside the StaffLayout block:
+<Route path="/my-tip-page/print" element={<PrintTipCard />} />
+```
+
+- [ ] **Step 6: Smoke test in browser**
 
 ```bash
-curl -OJ http://localhost:5000/api/me/tip-page/qr.png?size=4x6 \
-  -H "Authorization: Bearer YOUR_DEV_JWT"
+npm run dev
 ```
 
-Open the resulting `drb-tip-card-...-4x6.png` and verify the QR is scannable + the bartender's name renders.
+1. Log in as a contractor with a tip page.
+2. Navigate to `/my-tip-page/print` (or click "Print Card" from MyTipPage in next task).
+3. Verify all three size radio buttons preview the right layout on screen.
+4. Click "Print" — browser print dialog opens with the right page size.
+5. "Save as PDF" — the resulting PDF should be exactly 3.5×2 / 4×6 / 5×7 inches.
+6. Open the PDF, scan the QR with your phone — confirms it routes to the bartender's tip page.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add server/utils/qrCard.js server/assets/ server/routes/me.js
-# also stage package changes if you installed sharp/qrcode:
-git add server/package.json server/package-lock.json
-git commit -m "feat(tip): photo-print QR card endpoint (4x6 + 5x7 PNG)"
+git add client/src/pages/staff/PrintTipCard.js \
+        client/src/pages/staff/PrintTipCard.layouts.js \
+        client/src/pages/staff/PrintTipCard.css \
+        client/src/App.js \
+        client/package.json client/package-lock.json
+git commit -m "feat(tip): client-side print tip card (business card + 4x6 + 5x7)"
 ```
 
 ---
@@ -2020,18 +2106,16 @@ export default function MyTipPage() {
         <p><em>Your tip page is not yet active. Complete onboarding first.</em></p>
       )}
 
-      {/* QR downloads */}
+      {/* Print card */}
       {data.has_stripe_link && data.url && (
         <section style={{ marginBottom: 24 }}>
           <h2>Print your QR card</h2>
           <p>
-            Take this PNG to any photo counter (Walmart, CVS, Walgreens) — same-day printing,
-            ~$0.30. Stick it in a 4x6 frame at events.
+            Choose business card, 4×6, or 5×7 — your browser will open the print dialog
+            with the right page size. Save as PDF and take it to any photo counter
+            (Walmart, CVS, Walgreens) for same-day printing, ~$0.30. Or print at home.
           </p>
-          <a href="/api/me/tip-page/qr.png?size=4x6" download className="btn">Download 4×6</a>
-          <a href="/api/me/tip-page/qr.png?size=5x7" download className="btn" style={{ marginLeft: 12 }}>
-            Download 5×7
-          </a>
+          <a href="/my-tip-page/print" className="btn-primary">Print my tip card</a>
         </section>
       )}
 
@@ -2703,7 +2787,6 @@ Per `CLAUDE.md` mandatory documentation table:
   - `POST /api/public/tip/:token/feedback`
   - `GET /api/me/tip-page` / `PATCH /api/me/tip-page`
   - `GET /api/me/tips`
-  - `GET /api/me/tip-page/qr.png`
   - `PATCH /api/admin/contractors/:userId/tip-page`
   - `POST /api/admin/contractors/:userId/tip-page/regenerate-stripe`
   - `POST /api/admin/contractors/:userId/tip-page/generate-stripe`
@@ -2768,7 +2851,7 @@ Download the PNG from `/api/me/tip-page/qr.png?size=4x6`, take it to Walmart Pho
   - §6 (Stripe link integration) → Tasks 3, 10. Lifecycle (§6.3) → Tasks 4, 22.
   - §7 (onboarding integration) → Task 5 (backend), Task 6 (frontend), Task 7 (backfill).
   - §8 (public tip page + feedback) → Tasks 8, 9, 11, 12, 13.
-  - §9 (staff portal) → Tasks 14, 15, 16 (QR), 17 (UI).
+  - §9 (staff portal) → Tasks 14, 15, 16 (client-side print page — three sizes), 17 (UI).
   - §10 (admin surfaces) → Tasks 18, 19, 20, 21.
   - §11 (lifecycle) → Task 22.
   - §13 (env vars) + §14 (prerequisites) + §15 (operational checklist) → Tasks 1, 23, 24.
