@@ -13,6 +13,7 @@
     "audit:check": "npm audit --omit=dev || true",
     "build:testing-guide": "node scripts/build-testing-guide.js",
     "bugs:list": "node server/scripts/bugsList.js",
+    "optimize:assets": "node scripts/optimize-assets.js",
     "prepare": "husky"
   },
   "dependencies": {
@@ -45,7 +46,9 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "marked": "^18.0.0",
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "sharp": "^0.34.5",
+    "wawoff2": "^2.0.1"
   },
   "lint-staged": {
     "server/**/*.js": [

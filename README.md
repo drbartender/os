@@ -251,6 +251,7 @@ dr-bartender/
 | `npm run lint:fix` | Run ESLint with auto-fix on server code |
 | `npm run audit:check` | Check for known dependency vulnerabilities |
 | `npm run build:testing-guide` | Build `client/public/testing-guide.html` from `TESTING.md` via `scripts/build-testing-guide.js` |
+| `npm run optimize:assets` | One-shot asset optimization (PNG→WebP at tile size, TTF→WOFF2). Idempotent — skips already-converted outputs. |
 
 ## Key Features
 
