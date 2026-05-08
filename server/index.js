@@ -182,6 +182,7 @@ app.use('/api/client-portal', require('./routes/clientPortal'));
 app.use('/api/email-marketing', require('./routes/emailMarketing'));
 app.use('/api/email-marketing/webhook', require('./routes/emailMarketingWebhook'));
 app.use('/api/public/reviews', require('./routes/publicReviews'));
+app.use('/api/public/tip', require('./routes/publicTip'));
 app.use('/api/thumbtack', require('./routes/thumbtack'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/test-feedback', require('./routes/testFeedback'));
