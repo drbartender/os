@@ -4833,8 +4833,12 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 .ws-press-formula.reverse {
   grid-template-columns: 1fr 1.1fr;
 }
+/* Image column fills its row height — overrides the inline aspect-ratio that
+ * was locking the placeholder shorter than the text column. */
 .ws-press-formula .img-placeholder {
+  aspect-ratio: auto !important;
   height: 100%;
+  min-height: 320px;
 }
 
 .ws-press-service-details {
