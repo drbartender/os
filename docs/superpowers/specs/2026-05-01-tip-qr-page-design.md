@@ -613,6 +613,69 @@ The legal-name capture (`applications.full_name`) is already in place — confir
 
 ---
 
+## Appendix Z — Design output addendum (2026-05-08)
+
+Claude Design returned `~/Downloads/QR Tips Page/` containing the full mobile UI: `tip-page.jsx`, `tip-atoms.jsx`, `styles.css`, `colors_and_type.css`, brand assets (`logo.png`, `parchment-bg.png`, `chalkboard_background.png`, `hero-bartender.png`), and IM Fell English fonts. The implementation plan ports this directly. Three notable additions to the original spec:
+
+### Z.1. Amount picker
+
+The customer picks a preset tip amount ($5 / $10 / $20 / Custom) **before** tapping a payment method. Helper text: *"Pick an amount, then tap how you'd like to send it."*
+
+Behavior per payment method (deep-link amount pre-fill):
+
+| Method | URL pattern with amount | Pre-fills? |
+|---|---|---|
+| Venmo | `venmo.com/u/<handle>` | No (Venmo deep links don't support amount) — amount is informational |
+| Cash App | `cash.app/$<handle>/<amount>` | Yes |
+| PayPal | `paypal.me/<handle>/<amount>` | Yes |
+| Stripe | Payment Link URL (no params) | No (custom_unit_amount on the link; customer types on Stripe's checkout) |
+
+When **Custom** is selected, no amount is appended to deep links — customer types in the payment app.
+
+### Z.2. Post-tip thanks screen
+
+The Stripe `after_completion.redirect` lands at `/tip/<token>/thanks?amount=<n>`. The page shows:
+
+- "Tip received" check-mark mark
+- *"Thanks for taking care of {Display Name} tonight."*
+- Amount-sent pill: `$<amount>.00 · sent`
+- **Primary CTA: Google Reviews** ("Tell Google how it went · Two taps. Helps us book more events.")
+- **Secondary CTA: Instagram** ("Follow @drbartender · Cocktail recipes, behind-the-bar.")
+- Skip link: *"No thanks, I'm done"*
+
+For non-Stripe payment methods (Venmo / Cash App / PayPal), there is no callback. The page does **not** transition to the thanks state for those — the customer just stays on the original tip page after closing the payment app.
+
+### Z.3. Inline SVG payment marks (replaces asset gathering)
+
+The design provides inline-SVG approximations of Venmo / Cash App / PayPal / card-network marks in `tip-atoms.jsx` (`VenmoMark`, `CashAppMark`, `PaypalMark`, `CardNetworkRow`). These ship with the implementation; no separate logo asset gathering needed.
+
+Brand-compliance note: the inline SVGs are visually faithful but are not the platforms' official lockups. Phase 2 if needed: replace with brand-supplied SVGs from each platform's brand guidelines.
+
+### Z.4. Brand assets to add to the repo
+
+Copied from the design output into `client/public/tip-page/`:
+
+| Source | Destination | Use |
+|---|---|---|
+| `assets/logo.png` | `client/public/tip-page/logo.png` | Footer DRB logo |
+| `assets/parchment-bg.png` | `client/public/tip-page/parchment-bg.png` | Page background texture |
+| `assets/chalkboard_background.png` | `client/public/tip-page/chalkboard-bg.png` | Hero band texture |
+| `fonts/IMFellEnglish-Regular.ttf` | `client/public/fonts/IMFellEnglish-Regular.ttf` | Body text |
+| `fonts/IMFellEnglish-Italic.ttf` | `client/public/fonts/IMFellEnglish-Italic.ttf` | Italic accents |
+| `fonts/IMFellEnglishSC-Regular.ttf` | `client/public/fonts/IMFellEnglishSC-Regular.ttf` | Display headings |
+
+The `colors_and_type.css` file says its source of truth is `client/src/index.css` — design tokens (paper, ink, amber, etc.) are confirmed to already exist there. Implementation reuses existing tokens; new tip-page-specific styles import from a new `client/src/pages/public/TipPage.css`.
+
+### Z.5. Spec updates implied by the design
+
+- Section 8.3 now includes an **Amount picker** between "Tip [Display Name]" and "Choose a Payment Method."
+- Section 8.7 button-click logic now constructs deep-link URLs with selected amount for Cash App and PayPal (Venmo and Stripe ignore the amount in URLs).
+- Section 6.1 Stripe `after_completion.redirect` URL must include `?amount={amount_total/100}` so the thanks screen shows the actual paid amount: e.g., `${PUBLIC_SITE_URL}/tip/${token}/thanks?amount={CHECKOUT_SESSION_AMOUNT_TOTAL}`. (Stripe substitutes the placeholder server-side.) The thanks screen reads `amount` from query params.
+- The "Logos to gather" prerequisite (Section 14) is **dropped** — inline SVGs replace it.
+- The "SVG print-card templates" prerequisite (Section 14) remains — those are different (the printable QR card, not the page payment buttons).
+
+---
+
 ## Appendix A — Mapping from Wix script to DRB OS
 
 | Wix concept | DRB OS equivalent |
