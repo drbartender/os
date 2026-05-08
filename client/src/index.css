@@ -3537,10 +3537,10 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 /* ── Kicker / Section Heading ───────────────────────────── */
 .ws-kicker {
   font-family: var(--font-display);
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   text-transform: uppercase;
-  letter-spacing: 0.15em;
-  color: var(--amber-light);
+  letter-spacing: 0.32em;
+  color: var(--brass);
   margin-bottom: 0.5rem;
 }
 .ws-section-heading {
@@ -5201,29 +5201,39 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   line-height: 28px;
 }
 
-/* Pricing sidebar — cream */
+/* Pricing sidebar — Apothecary Press parchment with brass frame inset */
 .wz-sidebar { position: sticky; top: 5rem; }
 .wz-price-card {
-  background: var(--parchment);
-  border: 1px solid var(--parchment-dark);
+  position: relative;
+  background: linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%);
+  border: 2px solid var(--brass);
   border-radius: var(--radius-lg);
-  padding: 1.5rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  padding: 28px 30px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(184, 146, 74, 0.22);
   color: var(--deep-brown);
 }
+.wz-price-card::before {
+  content: "";
+  position: absolute;
+  inset: 10px;
+  border: 1px solid rgba(184, 146, 74, 0.35);
+  pointer-events: none;
+}
+.wz-price-card > * { position: relative; }
 .wz-price-card h4 {
   font-family: var(--font-display);
-  font-size: 0.85rem;
-  letter-spacing: 0.12em;
+  font-size: 0.78rem;
+  letter-spacing: 0.32em;
   text-transform: uppercase;
-  color: var(--warm-brown);
-  margin-bottom: 1rem;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
 }
 .wz-price-total {
   font-family: var(--font-display);
-  font-size: 2.2rem;
+  font-size: 3rem;
   color: var(--deep-brown);
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
+  line-height: 1;
 }
 .wz-price-breakdown {
   display: flex;
@@ -5368,11 +5378,13 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   background: var(--parchment, #f5f0e1);
 }
 
-/* Nav buttons — cream theme */
+/* Nav buttons — brass dotted divider above */
 .wz-nav {
   display: flex;
   gap: 1rem;
   margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px dotted rgba(184, 146, 74, 0.5);
   max-width: calc(100% - 320px - 2rem);
 }
 .wz-nav .btn-primary {
