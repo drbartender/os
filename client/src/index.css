@@ -3445,7 +3445,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 }
 .ws-nav-right { justify-content: flex-end; }
 .ws-nav-left a,
-.ws-nav-right a {
+.ws-nav-right a:not(.ws-nav-cta) {
   color: var(--cream-text);
   text-decoration: none;
   font-family: var(--font-display);
