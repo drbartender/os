@@ -140,6 +140,35 @@ const INGREDIENT_MAP = {
   "cranberry":          { item: "Cranberry Juice",      size: "64oz",    section: "everythingElse" },
 };
 
+// House defaults for spirits the consult form can pick. Keys are the slugs the
+// admin chip grid emits; values mirror the PARS_100 baseline rows so consult
+// mode and full-bar mode produce identical line items for the same spirit.
+const SPIRIT_PARS = {
+  vodka:   { item: "Tito's Vodka",        size: '1.75L', qty: 5 },
+  gin:     { item: 'Tanqueray Gin',       size: '1.75L', qty: 1 },
+  rum:     { item: 'Bacardi Rum',         size: '1.75L', qty: 2 },
+  tequila: { item: '1800 Blanco Tequila', size: '1.75L', qty: 4 },
+  bourbon: { item: 'Bulleit Bourbon',     size: '1.75L', qty: 4 },
+  whiskey: { item: 'Bulleit Bourbon',     size: '1.75L', qty: 4 },
+  scotch:  { item: 'Scotch Whiskey',      size: '1.75L', qty: 1 },
+  mezcal:  { item: 'Mezcal',              size: '750mL', qty: 1 },
+};
+
+// Mixer pairings used when the consult form picks `mixers: 'matching'`. For each
+// selected spirit, the union of its paired mixer item names is included from
+// BASIC_MIXERS + GARNISHES (matched by exact `item` name). Sig drink ingredients
+// are added independently via mergeSignatureIngredients — these are additive.
+const SPIRIT_MIXER_PAIRINGS = {
+  vodka:   ['Cranberry Juice', 'Orange Juice', 'Tonic Water', 'Club Soda', 'Lime Juice (UNSWEET)', 'Limes'],
+  gin:     ['Tonic Water', 'Club Soda', 'Lemon Juice', 'Simple Syrup', 'Lemons'],
+  rum:     ['Coca Cola', 'Pineapple Juice', 'Orange Juice', 'Lime Juice (UNSWEET)', 'Limes'],
+  tequila: ['Lime Juice (UNSWEET)', 'Sour Mix', 'Simple Syrup', 'Club Soda', 'Limes'],
+  bourbon: ['Coca Cola', 'Club Soda', 'Ginger Ale', 'Angostura Bitters', 'Premium Cherries'],
+  whiskey: ['Coca Cola', 'Club Soda', 'Ginger Ale', 'Angostura Bitters', 'Premium Cherries'],
+  scotch:  ['Club Soda'],
+  mezcal:  ['Lime Juice (UNSWEET)', 'Simple Syrup', 'Limes'],
+};
+
 // Mirrors getBottlesPerSyrup from client/src/data/syrups.js. 1 bottle / 50 guests.
 function getBottlesPerSyrup(guestCount) {
   if (!guestCount || guestCount <= 50) return 1;
@@ -226,6 +255,34 @@ function mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythin
   });
 }
 
+function addSpiritsByKey(spiritKeys, liquorBeerWine, guestCount, bottles) {
+  for (const raw of spiritKeys) {
+    if (!raw) continue;
+    const par = SPIRIT_PARS[String(raw).toLowerCase()];
+    if (!par) continue;
+    if (liquorBeerWine.some(i => i.item.toLowerCase() === par.item.toLowerCase())) continue;
+    liquorBeerWine.push(...scaleItems([par], guestCount, bottles));
+  }
+}
+
+function addMatchingMixers(spiritKeys, everythingElse, guestCount, bottles) {
+  const wantedNames = new Set();
+  for (const raw of spiritKeys) {
+    if (!raw) continue;
+    const list = SPIRIT_MIXER_PAIRINGS[String(raw).toLowerCase()];
+    if (!list) continue;
+    for (const name of list) wantedNames.add(name);
+  }
+  if (wantedNames.size === 0) return;
+  const lookup = [...BASIC_MIXERS, ...GARNISHES];
+  for (const name of wantedNames) {
+    const found = lookup.find(m => m.item === name);
+    if (!found) continue;
+    if (everythingElse.some(i => i.item.toLowerCase() === name.toLowerCase())) continue;
+    everythingElse.push(...scaleItems([found], guestCount, bottles));
+  }
+}
+
 function addSelfProvidedSyrups(syrupSelfProvided, syrupNamesById, everythingElse, guestCount) {
   if (!syrupSelfProvided || syrupSelfProvided.length === 0) return;
   const bottlesPerFlavor = getBottlesPerSyrup(guestCount);
@@ -256,6 +313,8 @@ function addSelfProvidedSyrups(syrupSelfProvided, syrupNamesById, everythingElse
  * @param {string[]} [eventData.beerSelections]
  * @param {string[]} [eventData.wineSelections]
  * @param {boolean|null} [eventData.mixersForSignatureDrinks]
+ * @param {string[]} [eventData.additionalSpirits]   Consult mode: spirit slugs picked in chip grid
+ * @param {'full'|'matching'|'none'|null} [eventData.mixerMode]  Consult mode: 3-state mixer override
  */
 function generateShoppingList(eventData) {
   const {
@@ -270,13 +329,38 @@ function generateShoppingList(eventData) {
     beerSelections = [],
     wineSelections = [],
     mixersForSignatureDrinks = null,
+    additionalSpirits = null,
+    mixerMode = null,
   } = eventData;
   const bottles = needsBottles(guestCount);
 
   let liquorBeerWine = [];
   let everythingElse = [];
 
-  if (serviceStyle === 'full_bar') {
+  // Consult-mode path: distinguished by `mixerMode` being explicitly set.
+  // The admin's chip-grid spirit picks become the source of truth (instead of
+  // the PARS_100 full-bar baseline), beer/wine flow through the existing
+  // builders, and the mixer mode controls whether the additional bar mixers
+  // are full / spirit-paired / none. Sig ingredients are merged regardless.
+  if (mixerMode) {
+    if (Array.isArray(additionalSpirits) && additionalSpirits.length > 0) {
+      addSpiritsByKey(additionalSpirits, liquorBeerWine, guestCount, bottles);
+    }
+    if (Array.isArray(beerSelections) && beerSelections.length > 0) {
+      liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles));
+    }
+    if (Array.isArray(wineSelections) && wineSelections.length > 0) {
+      liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles));
+    }
+    mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythingElse, guestCount);
+    if (mixerMode === 'full') {
+      everythingElse.push(...scaleItems(BASIC_MIXERS, guestCount, bottles));
+      everythingElse.push(...scaleItems(GARNISHES, guestCount, bottles));
+    } else if (mixerMode === 'matching') {
+      addMatchingMixers(additionalSpirits || [], everythingElse, guestCount, bottles);
+    }
+    everythingElse.push(...scaleItems(ALWAYS_INCLUDE, guestCount, bottles));
+  } else if (serviceStyle === 'full_bar') {
     liquorBeerWine = scaleItems(PARS_100.liquorBeerWine, guestCount, bottles);
     everythingElse = scaleItems(PARS_100.everythingElse, guestCount, bottles);
     mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythingElse, guestCount);
@@ -317,4 +401,61 @@ function generateShoppingList(eventData) {
   };
 }
 
-module.exports = { generateShoppingList, getBottlesPerSyrup };
+// Translate a consult-form payload into the eventData shape generateShoppingList
+// expects. Pure function — caller resolves cocktail IDs to {name, ingredients}
+// rows beforehand (DB lookup) and passes them as `resolvedSigs`/`resolvedMocktails`.
+// Custom drinks from the form are merged in here so the generator sees a flat
+// signatureCocktails list.
+function buildGeneratorInputFromConsult(consult, eventCtx, resolvedSigs = [], resolvedMocktails = []) {
+  const safe = consult || {};
+  const customSigs = (safe.customCocktails || []).map(c => ({
+    name: String(c.name || '').trim(),
+    ingredients: Array.isArray(c.ingredients)
+      ? c.ingredients.map(i => String(i).trim()).filter(Boolean)
+      : [],
+  })).filter(c => c.name);
+  const customMocktails = (safe.customMocktails || []).map(c => ({
+    name: String(c.name || '').trim(),
+    ingredients: Array.isArray(c.ingredients)
+      ? c.ingredients.map(i => String(i).trim()).filter(Boolean)
+      : [],
+  })).filter(c => c.name);
+
+  const signatureCocktails = [
+    ...resolvedSigs,
+    ...customSigs,
+    ...(safe.mocktailsEnabled ? [...resolvedMocktails, ...customMocktails] : []),
+  ];
+
+  // Beer y/n → default house mix when "yes". Admin tweaks specifics in the
+  // existing edit modal post-generation.
+  const beerSelections = safe.beer === true
+    ? ['Light / Easy Drinking', 'Craft / Local', 'IPA']
+    : [];
+
+  // Wine multi-cat → existing wine style keys.
+  const wineCatToStyle = { red: 'Red', white: 'White', sparkling: 'Sparkling' };
+  const wineSelections = Array.isArray(safe.wine)
+    ? safe.wine.map(c => wineCatToStyle[String(c).toLowerCase()]).filter(Boolean)
+    : [];
+
+  const mixerMode = ['full', 'matching', 'none'].includes(safe.mixers) ? safe.mixers : 'full';
+
+  return {
+    clientName: eventCtx.clientName || '',
+    guestCount: Number(safe.guestCountOverride) || eventCtx.guestCount || 0,
+    eventDate: safe.eventDateOverride || eventCtx.eventDate || null,
+    notes: String(safe.notes || ''),
+    signatureCocktails,
+    syrupSelfProvided: [],
+    syrupNamesById: {},
+    serviceStyle: safe.barType || 'sig_beer_wine',
+    beerSelections,
+    wineSelections,
+    mixersForSignatureDrinks: mixerMode !== 'none',
+    additionalSpirits: Array.isArray(safe.spirits) ? safe.spirits : [],
+    mixerMode,
+  };
+}
+
+module.exports = { generateShoppingList, getBottlesPerSyrup, buildGeneratorInputFromConsult };

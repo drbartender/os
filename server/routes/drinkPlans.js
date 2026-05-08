@@ -11,100 +11,7 @@ const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
 const { ADMIN_URL, PUBLIC_SITE_URL } = require('../utils/urls');
-const { generateShoppingList } = require('../utils/shoppingList');
-
-// Mirror of client/src/data/syrups.js SYRUPS — id → display name. Keep in sync
-// when adding new flavors. Only used for shopping-list rendering of the
-// self-provided syrup line items, so a missing entry just drops that flavor
-// from the list (no crash).
-const SYRUP_NAME_LOOKUP = {
-  'mixed-berry': 'Mixed Berry', 'blackberry': 'Blackberry', 'strawberry': 'Strawberry',
-  'mango': 'Mango', 'passion-fruit': 'Passion Fruit', 'pineapple': 'Pineapple',
-  'peach': 'Peach', 'watermelon': 'Watermelon', 'grenadine': 'Grenadine (Pomegranate)',
-  'cherry': 'Cherry (Dark/Tart)',
-  'jalapeno': 'Jalapeño', 'habanero': 'Habanero', 'cherry-habanero': 'Cherry Habanero',
-  'reaper-ghost': 'Carolina Reaper / Ghost Pepper',
-  'lavender': 'Lavender', 'rosemary': 'Rosemary', 'thyme': 'Thyme', 'basil': 'Basil',
-  'mint': 'Mint', 'ginger': 'Ginger', 'cardamom': 'Cardamom', 'cinnamon': 'Cinnamon',
-  'vanilla': 'Vanilla', 'lemongrass': 'Lemongrass', 'hibiscus': 'Hibiscus',
-  'rose': 'Rose', 'elderflower': 'Elderflower',
-  'honey': 'Honey', 'maple': 'Maple', 'salted-caramel': 'Salted Caramel',
-  'brown-butter': 'Brown Butter', 'espresso': 'Espresso', 'chocolate': 'Chocolate',
-};
-
-// Auto-generate a shopping list for a submitted drink plan and stage it as
-// `pending_review`. Strict no-overwrite semantics: only generates when no list
-// exists yet — the WHERE-clause `shopping_list IS NULL` guard keeps an admin's
-// concurrent manual save (or already-approved list) from being clobbered by a
-// late-firing auto-gen after submit COMMIT. Failures are non-fatal — admin can
-// still trigger the manual generator from the modal as a fallback.
-async function autoGenerateShoppingList(planId, dbClient) {
-  const planRes = await dbClient.query(
-    `SELECT dp.id, dp.serving_type, dp.selections, dp.client_name, dp.event_date,
-            dp.admin_notes, dp.shopping_list IS NOT NULL AS has_list,
-            p.guest_count
-     FROM drink_plans dp
-     LEFT JOIN proposals p ON p.id = dp.proposal_id
-     WHERE dp.id = $1`,
-    [planId]
-  );
-  const plan = planRes.rows[0];
-  if (!plan || !plan.guest_count) return null;
-  // Skip the cocktail/JSON work entirely when a list already exists. The
-  // UPDATE below is also gated on `shopping_list IS NULL` for atomicity, so
-  // this is just an early-out optimization.
-  if (plan.has_list) return null;
-
-  const sel = plan.selections || {};
-  const sigDrinkIds = Array.isArray(sel.signatureDrinks) ? sel.signatureDrinks : [];
-  let signatureCocktails = [];
-  if (sigDrinkIds.length > 0) {
-    const cocktailRes = await dbClient.query(
-      'SELECT id, name, ingredients FROM cocktails WHERE id = ANY($1::text[])',
-      [sigDrinkIds]
-    );
-    const byId = Object.fromEntries(cocktailRes.rows.map(c => [c.id, c]));
-    signatureCocktails = sigDrinkIds
-      .filter(id => byId[id])
-      .map(id => ({ name: byId[id].name, ingredients: byId[id].ingredients || [] }));
-  }
-
-  const syrupSelfProvided = Array.isArray(sel.syrupSelfProvided) ? sel.syrupSelfProvided : [];
-  const syrupNamesById = syrupSelfProvided.length > 0 ? SYRUP_NAME_LOOKUP : {};
-
-  const isFullBar = (plan.serving_type || 'full_bar') === 'full_bar';
-  const beerSelections = isFullBar ? (sel.beerFromFullBar || []) : (sel.beerFromBeerWine || []);
-  const wineSelections = isFullBar ? (sel.wineFromFullBar || []) : (sel.wineFromBeerWine || []);
-
-  const list = generateShoppingList({
-    clientName: plan.client_name,
-    guestCount: plan.guest_count,
-    signatureCocktails,
-    syrupSelfProvided,
-    syrupNamesById,
-    eventDate: plan.event_date,
-    notes: plan.admin_notes || '',
-    serviceStyle: plan.serving_type || 'full_bar',
-    beerSelections,
-    wineSelections,
-    mixersForSignatureDrinks: sel.mixersForSignatureDrinks ?? null,
-  });
-
-  // Atomic guard: only fill the list when it's still NULL. If admin saved an
-  // edit (PUT /shopping-list) or approved a different list during the race
-  // window between submit COMMIT and this UPDATE, the row already has a value
-  // and this UPDATE matches zero rows — admin's edit wins.
-  await dbClient.query(
-    `UPDATE drink_plans
-       SET shopping_list = $1::jsonb,
-           shopping_list_status = 'pending_review',
-           updated_at = NOW()
-     WHERE id = $2
-       AND shopping_list IS NULL`,
-    [JSON.stringify(list), planId]
-  );
-  return list;
-}
+const { autoGenerateShoppingList } = require('../utils/shoppingListGen');
 
 const router = express.Router();
 
@@ -700,16 +607,28 @@ router.get('/:id/shopping-list-data', auth, requireAdminOrManager, asyncHandler(
 }));
 
 /** GET /api/drink-plans/:id — fetch single plan by id. Exclude shopping_list
- *  (has its own endpoint); keep selections for detail rendering. */
+ *  (has its own endpoint); keep selections for detail rendering. Booleans
+ *  (`has_consult_selections`, `has_shopping_list`) keep the JSONB blobs off
+ *  the wire — the consult payload itself is only fetched on demand from
+ *  GET /:id/consult when the form is opened. */
 router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
             dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
             dp.selections, dp.status, dp.admin_notes, dp.exploration_submitted_at,
             dp.submitted_at, dp.created_at, dp.updated_at, dp.created_by,
-            u.email AS created_by_email
+            u.email AS created_by_email,
+            dp.consult_selections IS NOT NULL AS has_consult_selections,
+            dp.consult_filled_at, dp.consult_filled_by_user_id,
+            cu.email AS consult_filled_by_email,
+            dp.shopping_list_source,
+            dp.shopping_list IS NOT NULL AS has_shopping_list,
+            dp.shopping_list_status, dp.shopping_list_approved_at,
+            p.guest_count
      FROM drink_plans dp
      LEFT JOIN users u ON u.id = dp.created_by
+     LEFT JOIN users cu ON cu.id = dp.consult_filled_by_user_id
+     LEFT JOIN proposals p ON p.id = dp.proposal_id
      WHERE dp.id = $1`,
     [req.params.id]
   );

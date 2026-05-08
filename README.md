@@ -127,6 +127,7 @@ dr-bartender/
 │   │   ├── cocktails.js        # Cocktail menu CRUD
 │   │   ├── contractor.js       # Contractor profile + file uploads
 │   │   ├── drinkPlans.js       # Client event planning questionnaire
+│   │   ├── drinkPlanConsult.js # Admin consult-form routes (alternate input source for shopping lists)
 │   │   ├── messages.js         # SMS messaging to staff
 │   │   ├── mocktails.js        # Mocktail menu CRUD
 │   │   ├── payment.js          # Payment method + W-9 upload
@@ -162,7 +163,8 @@ dr-bartender/
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
 │   │   ├── phone.js            # Save-time phone validation (10 digits, strips country code 1)
 │   │   ├── pricingEngine.js    # Pure pricing calculation engine
-│   │   ├── shoppingList.js     # Shopping-list generator (mirrors client generateShoppingList.js)
+│   │   ├── shoppingList.js     # Shopping-list generator (mirrors client generateShoppingList.js); also includes consult-mode branch + buildGeneratorInputFromConsult translator
+│   │   ├── shoppingListGen.js  # Shared helpers: resolveCocktailIds, buildPlannerGeneratorInput, buildConsultGeneratorInput, autoGenerateShoppingList
 │   │   ├── sms.js              # Twilio SMS wrapper
 │   │   ├── storage.js          # Cloudflare R2 upload + signed URL helpers
 │   │   ├── stripeClient.js     # Central Stripe client factory (test-mode toggle, fail-closed)
@@ -188,7 +190,7 @@ dr-bartender/
 │   │   │   ├── leadSources.js  # Lead source enum (mirrors schema CHECK + server validator)
 │   │   │   └── timeOptions.js  # Time option generator + 12h formatter + input parser
 │   │   ├── components/         # AdminLayout, StaffLayout, Layout, PublicLayout,
-│   │   │                       # InvoiceDropdown, SignaturePad, FileUpload,
+│   │   │                       # InvoiceDropdown, SignaturePad, FileUpload, DrinkPlanCard,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, MenuSamplesModal,
 │   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,
 │   │   │                       # TimePicker, NumberStepper, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler
@@ -197,7 +199,7 @@ dr-bartender/
 │   │   │   │                   # InterviewScheduleModal,
 │   │   │   │                   # format, nav, shifts; drawers/{ClientDrawer,EventDrawer,InvoicesDrawer,
 │   │   │   │                   # ProposalDrawer,ShiftDrawer})
-│   │   │   └── ShoppingList/   # Shopping list generator (PDF export)
+│   │   │   └── ShoppingList/   # Shopping list generator (PDF export, ConsultationForm admin-input modal)
 │   │   ├── data/               # Shared data (addonCategories, eventTypes, menuSamples, packages, syrups)
 │   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam, useFormValidation, useWizardHistory)
 │   │   ├── pages/
@@ -263,7 +265,8 @@ dr-bartender/
 - Public questionnaire sent to clients via unique token link
 - Clients select cocktails, mocktails, and serving preferences
 - Admin review dashboard
-- **Shopping List Generator**: On any submitted/reviewed drink plan, admin clicks "Shopping List" to open an editable modal pre-populated with scaled quantities (100-guest pars × actual guest count). Add/remove items, change quantities, then download a branded PDF. Signature cocktail ingredients are automatically merged into the list. Cocktail ingredients are managed in the Drink Menu admin.
+- **Shopping List Generator**: On any drink plan with a generated list, admin clicks "Shopping List" to open an editable modal pre-populated with scaled quantities (100-guest pars × actual guest count). Add/remove items, change quantities, then download a branded PDF. Signature cocktail ingredients are automatically merged into the list. Cocktail ingredients are managed in the Drink Menu admin.
+- **Consultation Form (admin input path)**: When a client gives drink-plan info via phone or email instead of filling out the planner, admin clicks "Input from consult" on the drink plan detail page to open an abbreviated form: bar type, spirits chip grid, sigs picker + custom drinks, optional mocktails, beer y/n, wine red/white/sparkling, mixers (full / matching / none), notes. Submitting generates a real shopping list — same approve+email+public-token flow as a planner submission. When both planner and consult data exist on the same plan, a source toggle on the detail page picks which one feeds the generator.
 
 ### Proposal → Event Pipeline
 - When a client signs the contract and pays (deposit or full), a shift is automatically created

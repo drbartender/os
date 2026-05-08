@@ -168,6 +168,7 @@ app.use('/api/application', require('./routes/application'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/shifts', require('./routes/shifts'));
 app.use('/api/drink-plans', require('./routes/drinkPlans'));
+app.use('/api/drink-plans', require('./routes/drinkPlanConsult'));
 app.use('/api/cocktails', require('./routes/cocktails'));
 app.use('/api/mocktails', require('./routes/mocktails'));
 app.use('/api/proposals', require('./routes/proposals'));

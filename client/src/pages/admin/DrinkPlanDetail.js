@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import DrinkPlanSelections from '../../components/DrinkPlanSelections';
@@ -11,6 +11,8 @@ import FieldError from '../../components/FieldError';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmtDateFull } from '../../components/adminos/format';
+
+const ConsultationForm = lazy(() => import('../../components/ShoppingList/ConsultationForm'));
 
 const STATUS = {
   pending:   { label: 'Pending',   kind: 'warn' },
@@ -32,6 +34,8 @@ export default function DrinkPlanDetail() {
   const [notesError, setNotesError] = useState('');
   const [notesFieldErrors, setNotesFieldErrors] = useState({});
   const [copyMessage, setCopyMessage] = useState('');
+  const [consultOpen, setConsultOpen] = useState(false);
+  const [sourceSwitching, setSourceSwitching] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +61,29 @@ export default function DrinkPlanDetail() {
     fetchData();
     return () => { cancelled = true; };
   }, [id, toast]);
+
+  const refetchPlan = async () => {
+    try {
+      const res = await api.get(`/drink-plans/${id}`);
+      setPlan(res.data);
+    } catch (err) {
+      // Surfaced via toast in the calling action; silent here.
+    }
+  };
+
+  const switchSource = async (nextSource) => {
+    if (sourceSwitching || plan?.shopping_list_source === nextSource) return;
+    setSourceSwitching(true);
+    try {
+      await api.patch(`/drink-plans/${id}/shopping-list-source`, { source: nextSource });
+      toast.success(`Switched to ${nextSource === 'planner' ? 'client planner' : 'consult form'} as source.`);
+      await refetchPlan();
+    } catch (err) {
+      toast.error(err?.message || 'Failed to switch source.');
+    } finally {
+      setSourceSwitching(false);
+    }
+  };
 
   const saveNotes = async () => {
     setNotesError('');
@@ -154,9 +181,12 @@ export default function DrinkPlanDetail() {
             </div>
           </div>
           <div className="page-actions" style={{ flexShrink: 0 }}>
-            {(plan.status === 'submitted' || plan.status === 'reviewed') && (
+            {(plan.status === 'submitted' || plan.status === 'reviewed' || plan.has_shopping_list) && (
               <ShoppingListButton planId={id} planToken={plan.token} />
             )}
+            <button type="button" className="btn btn-secondary" onClick={() => setConsultOpen(true)}>
+              <Icon name="flask" size={12} />{plan.has_consult_selections ? 'Edit consult input' : 'Input from consult'}
+            </button>
             <button type="button" className="btn btn-secondary" onClick={copyLink}>
               <Icon name={copyMessage ? 'check' : 'copy'} size={12} />{copyMessage || 'Copy link'}
             </button>
@@ -171,6 +201,40 @@ export default function DrinkPlanDetail() {
           </div>
         </div>
       </div>
+
+      {plan.selections && plan.has_consult_selections && (
+        <div className="card" style={{ padding: '0.75rem 1.25rem', marginBottom: 'var(--gap)', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted, #888)' }}>
+            Shopping list source
+          </div>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: sourceSwitching ? 'wait' : 'pointer' }}>
+            <input
+              type="radio"
+              name="shopping-list-source"
+              checked={plan.shopping_list_source === 'planner'}
+              disabled={sourceSwitching}
+              onChange={() => switchSource('planner')}
+            />
+            <span style={{ fontSize: 13 }}>
+              Client planner{plan.submitted_at ? ` — submitted ${fmtDateFull(String(plan.submitted_at).slice(0, 10))}` : ''}
+            </span>
+          </label>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: sourceSwitching ? 'wait' : 'pointer' }}>
+            <input
+              type="radio"
+              name="shopping-list-source"
+              checked={plan.shopping_list_source === 'consult'}
+              disabled={sourceSwitching}
+              onChange={() => switchSource('consult')}
+            />
+            <span style={{ fontSize: 13 }}>
+              Consultation form{plan.consult_filled_at ? ` — ${fmtDateFull(String(plan.consult_filled_at).slice(0, 10))}` : ''}
+              {plan.consult_filled_by_email ? ` (${plan.consult_filled_by_email})` : ''}
+            </span>
+          </label>
+          {sourceSwitching && <span className="muted" style={{ fontSize: 12 }}>Regenerating…</span>}
+        </div>
+      )}
 
       {plan.status !== 'pending' && (
         <div className="card" style={{ marginBottom: 'var(--gap)' }}>
@@ -202,6 +266,24 @@ export default function DrinkPlanDetail() {
           </div>
         </div>
       </div>
+
+      {consultOpen && (
+        <Suspense fallback={null}>
+          <ConsultationForm
+            planId={id}
+            isOpen={consultOpen}
+            onClose={() => setConsultOpen(false)}
+            onSaved={refetchPlan}
+            cocktails={cocktails}
+            mocktails={mocktailItems}
+            planContext={{
+              client_name: plan.client_name,
+              event_date: plan.event_date,
+              guest_count: plan.guest_count,
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

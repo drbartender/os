@@ -1346,6 +1346,33 @@ CREATE INDEX IF NOT EXISTS idx_drink_plans_shopping_list_pending
   ON drink_plans(shopping_list_status)
   WHERE shopping_list_status = 'pending_review';
 
+-- ─── Consultation Form (admin-input source for shopping lists) ────
+-- Alternate input path for shopping lists: admin captures phone/email-consult
+-- info directly instead of waiting on the client to submit the planner.
+-- `selections` continues to hold planner output; `consult_selections` holds
+-- the parallel admin-form output. `shopping_list_source` flags which one is
+-- currently feeding the generator. Both can co-exist; the UI exposes a toggle.
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS consult_selections JSONB;
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS shopping_list_source VARCHAR(20);
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS consult_filled_by_user_id INTEGER;
+ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS consult_filled_at TIMESTAMPTZ;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.constraint_column_usage
+    WHERE table_name = 'drink_plans' AND constraint_name = 'drink_plans_shopping_list_source_check'
+  ) THEN
+    ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_shopping_list_source_check
+      CHECK (shopping_list_source IS NULL OR shopping_list_source IN ('planner', 'consult'));
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'drink_plans' AND constraint_name = 'drink_plans_consult_filled_by_user_id_fkey'
+  ) THEN
+    ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_consult_filled_by_user_id_fkey
+      FOREIGN KEY (consult_filled_by_user_id) REFERENCES users(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
 -- ─── Manual Event Creation (shifts without proposals) ────────────
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS client_name VARCHAR(255);
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS client_email VARCHAR(255);

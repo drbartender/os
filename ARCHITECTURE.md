@@ -203,7 +203,10 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/:id/shopping-list` | Admin | Fetch persisted shopping list + `shopping_list_status` |
 | PUT | `/:id/shopping-list` | Admin | Save shopping list edits (auto-saved by the modal while admin edits) |
 | PATCH | `/:id/shopping-list/approve` | Admin | Approve list (flips `shopping_list_status` to `'approved'`) and emails client a link |
-| GET | `/:id` | Admin | Fetch single plan by ID |
+| GET | `/:id` | Admin | Fetch single plan by ID (includes `has_consult_selections`, `shopping_list_source`, audit fields) |
+| GET | `/:id/consult` | Admin | Fetch admin-side consult-form payload for re-populating the form |
+| PUT | `/:id/consult` | Admin | Save consult-form payload, regenerate shopping list as `pending_review` (via `drinkPlanConsult.js`) |
+| PATCH | `/:id/shopping-list-source` | Admin | Flip active source between `planner` and `consult`, regenerate from chosen source (via `drinkPlanConsult.js`) |
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | PATCH | `/:id/status` | Admin | Update plan status |
 | DELETE | `/:id` | Admin | Delete a plan |
@@ -497,6 +500,10 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `shopping_list` (JSONB) — auto-generated at submission, admin-editable, persisted across modal opens
 - `shopping_list_status` VARCHAR(20) CHECK (NULL | `'pending_review'` | `'approved'`) — gates the public `/t/:token/shopping-list` endpoint
 - `shopping_list_approved_at` TIMESTAMPTZ — set when admin approves and sends the list
+- `consult_selections` (JSONB) — admin-side consult-form input (parallel to client-side `selections`)
+- `shopping_list_source` VARCHAR(20) CHECK (NULL | `'planner'` | `'consult'`) — flags which input source currently feeds the generator
+- `consult_filled_by_user_id` INTEGER FK → users (admin who saved the consult; SET NULL on user delete)
+- `consult_filled_at` TIMESTAMPTZ
 - Partial index `idx_drink_plans_shopping_list_pending` covers the admin badge-count "pending review" filter
 - On submit: addOns flow into proposal_addons, pricing is recalculated, admin notified, `shopping_list` auto-generated server-side as `pending_review`
 - Auto-emails the drink plan link to client on creation
@@ -628,16 +635,25 @@ Located in `client/src/components/ShoppingList/` (frontend) and `server/utils/sh
 
 **Pipeline:** drink plan submission → server auto-generates a `pending_review` list and stores it on `drink_plans.shopping_list` (JSONB). Admin reviews/edits in the modal (auto-save every 1.5s) then clicks "Approve & Send to Client" which flips `shopping_list_status` to `'approved'` and emails the client a link. Public `GET /t/:token/shopping-list` returns the list only once approved.
 
+**Two input sources.** The same generator can run from either:
+- **Planner submission** (client-facing wizard) → stored in `drink_plans.selections` JSONB
+- **Consultation form** (admin-facing form on the drink plan detail page) → stored in `drink_plans.consult_selections` JSONB
+
+`drink_plans.shopping_list_source` (`'planner' | 'consult'`) flags which one currently feeds the generator. When both exist, a radio toggle on the detail page lets the admin flip between them — flipping regenerates from the new source and resets `shopping_list_status` to `pending_review`. The consult form is "abbreviated planner": one-screen form with bar type, spirit chip grid, sigs picker + custom drinks, optional mocktail add-on, beer y/n, wine red/white/sparkling, mixers (full / matching / none), and notes.
+
 - **`shoppingListPars.js`** (client) — 100-guest baseline quantities (single source of truth for standard bar pars)
 - **`generateShoppingList.js`** (client) — Scales pars by `guestCount / 100`, merges signature cocktail ingredients, boosts shared ingredients
-- **`server/utils/shoppingList.js`** — Server-side mirror of `generateShoppingList.js`, used to auto-generate the initial list at submission time. Must be kept in sync with the client implementation.
+- **`server/utils/shoppingList.js`** — Server-side mirror of `generateShoppingList.js`, used to auto-generate the initial list at submission time. Adds the consult-mode branch (3-state mixers + spirit chip grid) and the `buildGeneratorInputFromConsult()` translator. Must be kept in sync with the client implementation for planner-side fields.
+- **`server/utils/shoppingListGen.js`** — Shared helpers used by both the planner auto-gen path and the consult routes: `resolveCocktailIds()`, `buildPlannerGeneratorInput()`, `buildConsultGeneratorInput()`, and `autoGenerateShoppingList()` (with its strict no-overwrite guard).
+- **`server/routes/drinkPlanConsult.js`** — Admin consult-form routes (`GET/PUT /:id/consult`, `PATCH /:id/shopping-list-source`). Mounted under `/api/drink-plans` alongside the main router.
 - **`ShoppingListPDF.jsx`** — jsPDF implementation for branded shopping list PDF generation with Dr. Bartender brand colors. Dynamic-imported by the modal so jspdf + the embedded logo only load when an admin clicks "Download PDF".
 - **`ShoppingListButton.jsx`** — Lazy-loads `ShoppingListModal` via `React.lazy` so @dnd-kit + the PDF graph stay out of the admin bundle for sessions where the button is never clicked.
 - **`ShoppingListModal.jsx`** — Full-screen editable modal: add/remove/rename/reorder items (drag-and-drop), edit quantities, change guest count with recalculate prompt, share client link, Download PDF, Approve & Send to Client.
+- **`ConsultationForm.jsx`** — Lazy-loaded admin modal for the consult-form input path. Mounted on `DrinkPlanDetail.js` behind the "Input from consult" / "Edit consult input" button.
 - **`logoBase64.js`** — Logo embedded as base64 data URI for use in PDFs (~129KB; lazy-loaded via `ShoppingListPDF.jsx`)
 - **Public client view**: `client/src/pages/public/ClientShoppingList.js` — token-gated read-only display rendered at `/shopping-list/:token`
 
-Admin entry points: "Shopping List" button on Drink Plan Detail (visible when plan status is `submitted` or `reviewed`) and on Proposal Detail when a drink plan exists.
+Admin entry points: "Shopping List" button on Drink Plan Detail (visible whenever a list exists, regardless of plan status) and on Proposal Detail when a drink plan exists. The "Input from consult" button on Drink Plan Detail opens the consultation form for the admin-side input path.
 
 ### Blog
 
