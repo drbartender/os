@@ -160,126 +160,163 @@ export default function InvoicePage() {
 
   return (
     <div className="invoice-page">
-      <div className="invoice-document" ref={printRef}>
-        {/* Header */}
-        <div className="invoice-header">
-          <div>
-            <h1 className="invoice-title">INVOICE</h1>
-            <p className="invoice-number">{invoice.invoice_number}</p>
+      <div className="invoice-layout">
+        <div className="invoice-document" ref={printRef}>
+          {/* Header — brass eyebrow + INVOICE + mono number on left, brand block on right */}
+          <div className="invoice-header">
+            <div>
+              <span className="invoice-eyebrow">Receipt of Service</span>
+              <h1 className="invoice-title">INVOICE</h1>
+              <p className="invoice-number">{invoice.invoice_number}</p>
+            </div>
+            <div className="invoice-brand">
+              <div className="invoice-brand-mark" aria-hidden="true">D</div>
+              <p className="invoice-brand-name">Dr. Bartender, LLC</p>
+              <p className="invoice-brand-sub">Mobile Bar · Cocktail Lab</p>
+              <p className="invoice-brand-line">Chicago, IL · IL · IN · MI</p>
+              <p className="invoice-brand-line">contact@drbartender.com</p>
+            </div>
           </div>
-          <div className="invoice-brand">
-            <p className="invoice-brand-name">Dr. Bartender</p>
-            <p className="text-muted text-small">contact@drbartender.com</p>
+
+          {isPaid && (
+            <div className="invoice-paid-stamp" aria-hidden="true">PAID</div>
+          )}
+
+          {/* Meta row — 3 columns: Date Issued/Due / Bill To / Event */}
+          <div className="invoice-meta-row">
+            <div className="invoice-meta-block">
+              <p className="invoice-meta-label">Date Issued</p>
+              <p className="invoice-meta-value">{formatDate(invoice.created_at)}</p>
+              {invoice.due_date && (
+                <>
+                  <p className="invoice-meta-label" style={{ marginTop: '0.65rem' }}>Due Date</p>
+                  <p className="invoice-meta-value">{formatDateOnly(invoice.due_date)}</p>
+                </>
+              )}
+            </div>
+            <div className="invoice-meta-block">
+              <p className="invoice-meta-label">Bill To</p>
+              <p className="invoice-meta-value invoice-meta-strong">{invoice.client_name || '—'}</p>
+              {invoice.client_email && <p className="invoice-meta-line">{invoice.client_email}</p>}
+              {invoice.client_phone && <p className="invoice-meta-line">{invoice.client_phone}</p>}
+            </div>
+            <div className="invoice-meta-block">
+              <p className="invoice-meta-label">Event</p>
+              <p className="invoice-meta-value invoice-meta-strong">
+                {getEventTypeLabel({ event_type: invoice.event_type, event_type_custom: invoice.event_type_custom })}
+              </p>
+              <p className="invoice-meta-line">
+                {formatDateOnly(invoice.event_date)}
+                {invoice.event_location ? ` · ${invoice.event_location}` : ''}
+              </p>
+              {invoice.guest_count && (
+                <p className="invoice-meta-line">{invoice.guest_count} guests</p>
+              )}
+            </div>
           </div>
-        </div>
 
-        {isPaid && (
-          <div className="invoice-paid-stamp">PAID</div>
-        )}
-
-        <div className="invoice-meta-row">
-          <div className="invoice-meta-block">
-            <p className="text-muted text-small">Date Issued</p>
-            <p>{formatDate(invoice.created_at)}</p>
-            {invoice.due_date && (
-              <>
-                <p className="text-muted text-small" style={{ marginTop: '0.5rem' }}>Due Date</p>
-                <p>{formatDateOnly(invoice.due_date)}</p>
-              </>
-            )}
-          </div>
-          <div className="invoice-meta-block">
-            <p className="text-muted text-small">Bill To</p>
-            <p style={{ fontWeight: 600 }}>{invoice.client_name || '—'}</p>
-            {invoice.client_email && <p className="text-small">{invoice.client_email}</p>}
-            {invoice.client_phone && <p className="text-small">{invoice.client_phone}</p>}
-          </div>
-        </div>
-
-        <div className="invoice-event-block">
-          <p className="text-muted text-small">Event</p>
-          <p style={{ fontWeight: 600 }}>{getEventTypeLabel({ event_type: invoice.event_type, event_type_custom: invoice.event_type_custom })}</p>
-          <p className="text-small">{formatDateOnly(invoice.event_date)}{invoice.event_location ? ` · ${invoice.event_location}` : ''}{invoice.guest_count ? ` · ${invoice.guest_count} guests` : ''}</p>
-        </div>
-
-        <table className="invoice-table">
-          <thead>
-            <tr>
-              <th style={{ textAlign: 'left' }}>Description</th>
-              <th style={{ textAlign: 'center' }}>Qty</th>
-              <th style={{ textAlign: 'right' }}>Unit Price</th>
-              <th style={{ textAlign: 'right' }}>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(invoice.line_items || []).map(li => (
-              <tr key={li.id}>
-                <td>{li.description}</td>
-                <td style={{ textAlign: 'center' }}>{li.quantity}</td>
-                <td style={{ textAlign: 'right' }}>{formatCurrency(li.unit_price)}</td>
-                <td style={{ textAlign: 'right' }}>{formatCurrency(li.line_total)}</td>
+          <table className="invoice-table">
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left' }}>Description</th>
+                <th style={{ textAlign: 'center' }}>Qty</th>
+                <th style={{ textAlign: 'right' }}>Unit Price</th>
+                <th style={{ textAlign: 'right' }}>Line Total</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {(invoice.line_items || []).map(li => (
+                <tr key={li.id}>
+                  <td>{li.description}</td>
+                  <td style={{ textAlign: 'center' }}>{li.quantity}</td>
+                  <td style={{ textAlign: 'right' }}>{formatCurrency(li.unit_price)}</td>
+                  <td style={{ textAlign: 'right' }}>{formatCurrency(li.line_total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
 
-        <div className="invoice-totals">
-          <div className="invoice-totals-row">
-            <span>Invoice Total</span>
-            <span>{formatCurrency(invoice.amount_due)}</span>
-          </div>
-          {invoice.amount_paid > 0 && (
+          <div className="invoice-totals">
             <div className="invoice-totals-row">
-              <span>Amount Paid</span>
-              <span style={{ color: 'var(--sage)' }}>-{formatCurrency(invoice.amount_paid)}</span>
+              <span>Invoice Total</span>
+              <span>{formatCurrency(invoice.amount_due)}</span>
+            </div>
+            {invoice.amount_paid > 0 && (
+              <div className="invoice-totals-row">
+                <span>Amount Paid</span>
+                <span className="invoice-totals-paid">−{formatCurrency(invoice.amount_paid)}</span>
+              </div>
+            )}
+            <div className={`invoice-totals-row invoice-totals-balance ${isPaid ? 'is-paid' : 'is-due'}`}>
+              <span>Balance Due</span>
+              <span>{isPaid ? '$0.00' : formatCurrency(balanceDue)}</span>
+            </div>
+          </div>
+
+          {isPaid && invoice.payments && invoice.payments.length > 0 && (
+            <div className="invoice-payment-details">
+              <p className="invoice-meta-label" style={{ marginBottom: '0.5rem' }}>Payment Record</p>
+              {invoice.payments.map((pay, i) => (
+                <p key={i} className="invoice-payment-line">
+                  {formatDate(pay.created_at)} — {formatCurrency(pay.amount)} via {pay.payment_type || 'Stripe'}
+                </p>
+              ))}
             </div>
           )}
-          <div className="invoice-totals-row invoice-totals-balance">
-            <span>Balance Due</span>
-            <span style={{ color: isPaid ? 'var(--sage)' : 'var(--rust)' }}>
-              {isPaid ? '$0.00' : formatCurrency(balanceDue)}
-            </span>
-          </div>
+
+          <p className="invoice-notes">
+            Coverage includes $2 million general &amp; liquor liability insurance.
+            Service governed by the standard Dr. Bartender agreement signed with the proposal.
+            Questions about this invoice: contact@drbartender.com.
+          </p>
         </div>
 
-        {isPaid && invoice.payments && invoice.payments.length > 0 && (
-          <div className="invoice-payment-details">
-            <p className="text-muted text-small" style={{ marginBottom: '0.3rem' }}>Payment Details</p>
-            {invoice.payments.map((pay, i) => (
-              <p key={i} className="text-small">
-                {formatDate(pay.created_at)} — {formatCurrency(pay.amount)} via {pay.payment_type || 'Stripe'}
-              </p>
-            ))}
-          </div>
-        )}
-      </div>
+        {/* Actions — beneath document on mobile, sticky rail on desktop */}
+        <div className="invoice-actions">
+          <FormBanner error={formError} fieldErrors={fieldErrors} />
 
-      <div className="invoice-actions">
-        <FormBanner error={formError} fieldErrors={fieldErrors} />
+          {!isPaid && balanceDue > 0 && (
+            <div className="invoice-actions-summary">
+              <div className="invoice-actions-eyebrow">Balance Due</div>
+              <div className="invoice-actions-total">{formatCurrency(balanceDue)}</div>
+            </div>
+          )}
 
-        {!isPaid && balanceDue > 0 && !showPayment && (
-          <button className="btn" onClick={handlePayClick} style={{ width: '100%' }}>
-            Pay {formatCurrency(balanceDue)}
+          {isPaid && (
+            <div className="invoice-actions-summary is-paid">
+              <div className="invoice-actions-eyebrow">Paid in Full</div>
+              <div className="invoice-actions-total">{formatCurrency(invoice.amount_due)}</div>
+            </div>
+          )}
+
+          {!isPaid && balanceDue > 0 && !showPayment && (
+            <button className="btn btn-primary invoice-pay-btn" onClick={handlePayClick}>
+              Pay {formatCurrency(balanceDue)}
+            </button>
+          )}
+
+          {showPayment && clientSecret && stripePromise && (
+            <div className="invoice-payment-wrap">
+              <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
+                <PaymentForm onSuccess={handlePaymentSuccess} />
+              </Elements>
+            </div>
+          )}
+
+          {paymentSuccess && (
+            <div className="invoice-success-msg">
+              <p>Payment successful! Thank you.</p>
+            </div>
+          )}
+
+          <button className="btn btn-secondary invoice-pdf-btn" onClick={handleSavePdf}>
+            Save as PDF
           </button>
-        )}
 
-        {showPayment && clientSecret && stripePromise && (
-          <div style={{ marginTop: '1rem' }}>
-            <Elements stripe={stripePromise} options={{ clientSecret, appearance: { theme: 'stripe' } }}>
-              <PaymentForm onSuccess={handlePaymentSuccess} />
-            </Elements>
-          </div>
-        )}
-
-        {paymentSuccess && (
-          <div className="invoice-success-msg">
-            <p>Payment successful! Thank you.</p>
-          </div>
-        )}
-
-        <button className="btn btn-secondary" onClick={handleSavePdf} style={{ width: '100%', marginTop: '0.75rem' }}>
-          Save as PDF
-        </button>
+          <p className="invoice-actions-footnote">
+            Secured by Stripe · Receipt emailed automatically.
+          </p>
+        </div>
       </div>
     </div>
   );
