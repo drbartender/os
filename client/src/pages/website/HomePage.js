@@ -323,9 +323,22 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Testimonial ── */}
+      {/* ── Field Reports (live Thumbtack reviews in design's testimonial format) ── */}
       <section className="ws-press-testimonial">
         <div className="ws-wrap">
+          {showRatingBadge && (
+            <FadeUp>
+              <div className="ws-press-fieldreports-badge">
+                <span className="kicker center">Field Reports</span>
+                <div className="ws-press-fieldreports-rating">
+                  <strong>{reviewsState.averageRating.toFixed(1)}</strong>
+                  <span>·</span>
+                  <span>{reviewsState.count} reviews on Thumbtack</span>
+                </div>
+              </div>
+            </FadeUp>
+          )}
+
           <FadeUp>
             <div className="card ws-press-testimonial-card">
               <div className="ws-press-brass-frame" aria-hidden="true" />
@@ -336,26 +349,29 @@ export default function HomePage() {
                 <p className="ws-press-testimonial-quote">"{featuredReview.text}"</p>
                 <div className="divider-ornate ws-press-divider"><span aria-label={`${renderStars(featuredReview.rating)} stars`}>{renderStars(featuredReview.rating)}</span></div>
                 <div className="ws-press-testimonial-attribution">
-                  {featuredReview.role || 'Wedding · Chicago'}
+                  {featuredReview.role || 'Thumbtack review'}
                 </div>
-                {showRatingBadge && (
-                  <div className="ws-press-rating-badge">
-                    <strong>{reviewsState.averageRating.toFixed(1)}</strong> · {reviewsState.count} reviews on Thumbtack
-                  </div>
-                )}
               </div>
             </div>
           </FadeUp>
 
           {secondaryReviews.length > 0 && (
-            <div className="ws-press-testimonial-secondary">
+            <div className="ws-press-fieldreports-grid">
               {secondaryReviews.map((r, i) => (
                 <FadeUp key={r.id || r.name} delay={i * 0.08}>
-                  <article className="card ws-press-testimonial-mini">
-                    <div className="ws-press-testimonial-mini-stars" aria-hidden="true">{renderStars(r.rating)}</div>
-                    <p>"{r.text}"</p>
-                    <div className="ws-press-testimonial-mini-attr">— {r.name}</div>
-                  </article>
+                  <div className="card ws-press-fieldreport">
+                    <div className="ws-press-brass-frame" aria-hidden="true" />
+                    <div className="ws-press-fieldreport-inner">
+                      <div className="kicker no-rule ws-press-testimonial-meta">
+                        Field Report · {r.name}
+                      </div>
+                      <p className="ws-press-fieldreport-quote">"{r.text}"</p>
+                      <div className="divider-ornate ws-press-divider"><span aria-label={`${renderStars(r.rating)} stars`}>{renderStars(r.rating)}</span></div>
+                      <div className="ws-press-testimonial-attribution">
+                        {r.role || 'Thumbtack review'}
+                      </div>
+                    </div>
+                  </div>
                 </FadeUp>
               ))}
             </div>

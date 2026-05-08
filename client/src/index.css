@@ -4464,46 +4464,68 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   font-weight: 600;
 }
 
-/* Secondary review cards — smaller, sit below the featured quote */
-.ws-press-testimonial-secondary {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 18px;
-  margin-top: 28px;
+/* Field Reports header — overall rating badge above the featured quote */
+.ws-press-fieldreports-badge {
+  text-align: center;
+  margin-bottom: 28px;
 }
-.ws-press-testimonial-mini {
-  padding: 22px 24px !important;
-  margin-bottom: 0 !important;
-  display: flex;
-  flex-direction: column;
-}
-.ws-press-testimonial-mini-stars {
-  font-size: 0.95rem;
-  letter-spacing: 0.12em;
-  color: #B8924A;
-  margin-bottom: 10px;
-}
-.ws-press-testimonial-mini p {
-  font-family: var(--font-body);
-  font-style: italic;
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--deep-brown);
-  margin: 0 0 14px;
-  flex: 1;
-}
-.ws-press-testimonial-mini-attr {
+.ws-press-fieldreports-rating {
+  margin-top: 10px;
   font-family: var(--font-display);
-  font-size: 12px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--text-muted);
+  font-size: 1.05rem;
+  letter-spacing: 0.06em;
+  color: var(--cream-text);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.ws-press-fieldreports-rating strong {
+  font-size: 1.45rem;
+  color: var(--brass-bright);
+  font-weight: 400;
 }
 
+/* Secondary Field Reports — same format as the featured card, smaller container */
+.ws-press-fieldreports-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 22px;
+  margin-top: 30px;
+  align-items: stretch;
+}
+.ws-press-fieldreports-grid .ws-fade-up {
+  display: flex;
+  height: 100%;
+}
+.ws-press-fieldreport {
+  position: relative;
+  padding: 28px 30px !important;
+  margin-bottom: 0 !important;
+  flex: 1;
+  height: 100%;
+}
+.ws-press-fieldreport-inner {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  text-align: center;
+}
+.ws-press-fieldreport-quote {
+  margin-top: 14px;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 1.05rem;
+  line-height: 1.4;
+  color: var(--deep-brown);
+  flex: 1;
+}
+.ws-press-fieldreport .ws-press-divider { margin: 16px 0 10px; }
+
 @media (max-width: 960px) {
-  .ws-press-testimonial-secondary {
+  .ws-press-fieldreports-grid {
     grid-template-columns: 1fr;
-    gap: 14px;
+    gap: 16px;
   }
 }
 
