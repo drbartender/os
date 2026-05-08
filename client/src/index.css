@@ -314,6 +314,7 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   color: var(--cream-text);
   box-shadow: 0 2px 10px rgba(29, 140, 137, 0.32);
   position: relative;
+  isolation: isolate;
   /* overflow: visible — default — outer-glow halo extends past the button */
 }
 .btn-primary:hover:not(:disabled) {
@@ -323,37 +324,67 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
     0 0 0 2px rgba(240, 232, 214, 0.04);
   transform: translateY(-1px);
 }
-/* Iridescent outer-glow halo on hover (brief §2.5 rainbow placement #2) */
-.btn-primary::after,
-.ws-nav-cta::after {
+/* Iridescent outer-glow halo on hover (brief §2.5 rainbow placement #2)
+ * Two layers: ::before is the soft outer-glow halo behind the button,
+ * ::after is a brighter shimmer streak that scans across the button face. */
+.btn-primary::before,
+.ws-nav-cta::before {
   content: "";
   position: absolute;
-  inset: -2px;
-  border-radius: calc(var(--radius) + 2px);
+  inset: -6px;
+  border-radius: calc(var(--radius) + 6px);
   pointer-events: none;
   background: linear-gradient(
     110deg,
-    rgba(255, 150, 180, 0) 0%,
-    rgba(255, 150, 180, 0.55) 22%,
-    rgba(180, 210, 255, 0.55) 38%,
-    rgba(150, 255, 210, 0.55) 55%,
-    rgba(255, 230, 150, 0.55) 72%,
-    rgba(255, 150, 180, 0) 100%
+    rgba(255, 130, 175, 0) 0%,
+    rgba(255, 130, 175, 0.85) 22%,
+    rgba(160, 200, 255, 0.85) 38%,
+    rgba(140, 255, 210, 0.85) 55%,
+    rgba(255, 220, 130, 0.85) 72%,
+    rgba(255, 130, 175, 0) 100%
   );
   background-size: 220% 100%;
   background-position: 100% 0;
   opacity: 0;
   transition: opacity 0.25s ease;
   z-index: -1;
-  filter: blur(6px);
+  filter: blur(10px);
+}
+.btn-primary::after,
+.ws-nav-cta::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    110deg,
+    transparent 30%,
+    rgba(255, 240, 220, 0.45) 48%,
+    rgba(180, 220, 255, 0.45) 56%,
+    transparent 74%
+  );
+  background-size: 240% 100%;
+  background-position: 100% 0;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  mix-blend-mode: screen;
+}
+.btn-primary:hover:not(:disabled)::before,
+.ws-nav-cta:hover::before {
+  opacity: 1;
+  animation: drb-shimmer 1.8s linear infinite;
 }
 .btn-primary:hover:not(:disabled)::after,
 .ws-nav-cta:hover::after {
   opacity: 1;
-  animation: drb-shimmer 1.6s linear infinite;
+  animation: drb-shimmer-streak 1.8s linear infinite;
 }
 @keyframes drb-shimmer {
   to { background-position: -120% 0; }
+}
+@keyframes drb-shimmer-streak {
+  to { background-position: -140% 0; }
 }
 
 .btn-secondary {
@@ -747,7 +778,9 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   .specimen-card-tag,
   .flask-svg::before,
   .divider-shimmer,
+  .btn-primary::before,
   .btn-primary::after,
+  .ws-nav-cta::before,
   .ws-nav-cta::after {
     animation: none !important;
   }
@@ -3443,22 +3476,27 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   background: var(--brass);
 }
 
-/* CTA button in header — outer-glow halo shimmer matches .btn-primary */
+/* CTA button in header — same shimmer as .btn-primary, header-tuned proportions */
 .ws-nav-cta {
   background: var(--amber);
   color: var(--cream-text) !important;
   font-family: var(--font-display);
-  font-size: 13px;
-  letter-spacing: 0.05em;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
   font-weight: 500;
   text-transform: none;
-  padding: 12px 24px;
+  padding: 14px 28px;
   border-radius: 8px;
   text-decoration: none;
   transition: background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   position: relative;
+  isolation: isolate;
   box-shadow: 0 2px 10px rgba(29, 140, 137, 0.32);
+  white-space: nowrap;
+  line-height: 1;
 }
 .ws-nav-cta:hover {
   background: var(--warm-brown);

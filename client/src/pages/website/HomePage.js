@@ -277,7 +277,7 @@ export default function HomePage() {
                     <div className="ws-press-service-formula">{s.n}</div>
                     <h3 className="ws-press-service-title">{s.t}</h3>
                     <p>{s.body}</p>
-                    <Link to="/quote" className="btn btn-secondary">Build a Quote</Link>
+                    <Link to="/quote" className="btn btn-primary">Build a Quote</Link>
                   </div>
                 </article>
               </FadeUp>
