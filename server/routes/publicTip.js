@@ -1,20 +1,23 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const asyncHandler = require('../middleware/asyncHandler');
-const { publicLimiter } = require('../middleware/rateLimiters');
+const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters');
 const { NotFoundError, ValidationError } = require('../utils/errors');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { ADMIN_URL } = require('../utils/urls');
 
 const router = express.Router();
-router.use(publicLimiter);
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// GET uses publicReadLimiter (100/15min). publicLimiter's 20/15min budget gets
+// chewed through after ~7 customers at a venue NAT'd through one IP — and the
+// QR is printed on a card so there's no recovery for the 21st scanner.
 /** GET /api/public/tip/:token — fetch tip-page display data (public, token-gated) */
-router.get('/:token', asyncHandler(async (req, res) => {
+router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
   const { token } = req.params;
   if (!UUID_RE.test(token)) throw new NotFoundError('Tip page not found');
 
@@ -51,9 +54,9 @@ router.get('/:token', asyncHandler(async (req, res) => {
   });
 }));
 
-// Per-token+IP feedback limiter sits ON TOP of the router-wide publicLimiter.
-// publicLimiter is the broad anti-abuse cap; this one prevents trolling a single
-// bartender (max 3 negative-feedback submissions per hour from one IP+token).
+// Per-token+IP feedback limiter — pairs with the publicLimiter mounted on the
+// feedback POST below. publicLimiter is the broad anti-abuse cap; this one
+// prevents trolling a single bartender (max 3 submissions per hour per IP+token).
 const feedbackLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1h
   max: 3,
@@ -64,7 +67,7 @@ const feedbackLimiter = rateLimit({
 });
 
 /** POST /api/public/tip/:token/feedback — submit 1-3★ feedback (public, token-gated) */
-router.post('/:token/feedback', feedbackLimiter, asyncHandler(async (req, res) => {
+router.post('/:token/feedback', publicLimiter, feedbackLimiter, asyncHandler(async (req, res) => {
   const { token } = req.params;
   if (!UUID_RE.test(token)) throw new NotFoundError('Tip page not found');
 
@@ -112,6 +115,10 @@ router.post('/:token/feedback', feedbackLimiter, asyncHandler(async (req, res) =
     });
   } catch (err) {
     console.error('[tip] feedback admin email failed', err.message);
+    Sentry.captureException(err, {
+      tags: { route: 'publicTip.feedback', op: 'admin_email' },
+      extra: { tokenPrefix: token.slice(0, 8) },
+    });
   }
 
   res.json({ ok: true });

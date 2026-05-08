@@ -970,6 +970,35 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         return res.json({ received: true });
       }
 
+      // Cross-validate metadata against the DB. The token is the source of truth —
+      // if Stripe metadata's bartender_user_id disagrees with the user_id stored
+      // against this token (e.g. a Payment Link was hand-edited in the Stripe
+      // dashboard, or a backfill bug mis-mapped users), credit the DB user, not
+      // the metadata user. Token not in DB at all = stale link from a since-rotated
+      // token; ack and drop.
+      const verify = await pool.query(
+        'SELECT user_id FROM payment_profiles WHERE tip_page_token = $1',
+        [token]
+      );
+      if (!verify.rows[0]) {
+        console.error('[tip-webhook] tip_page_token not found in DB', session.id);
+        Sentry.captureMessage('Tip session token not found in payment_profiles', {
+          level: 'warning',
+          tags: { webhook: 'stripe', kind: 'tip' },
+          extra: { sessionId: session.id, tokenPrefix: token.slice(0, 8) },
+        });
+        return res.json({ received: true });
+      }
+      const dbUserId = verify.rows[0].user_id;
+      if (dbUserId !== targetUserId) {
+        console.warn('[tip-webhook] metadata bartender_user_id mismatch — using DB value', session.id);
+        Sentry.captureMessage('Tip metadata bartender_user_id mismatch', {
+          level: 'warning',
+          tags: { webhook: 'stripe', kind: 'tip' },
+          extra: { sessionId: session.id, metadataUserId: targetUserId, dbUserId },
+        });
+      }
+
       await pool.query(`
         INSERT INTO tips (tip_page_token, target_user_id, amount_cents,
                           stripe_payment_intent_id, stripe_session_id,
@@ -978,7 +1007,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         ON CONFLICT (stripe_payment_intent_id) DO NOTHING
       `, [
         token,
-        targetUserId,
+        dbUserId,
         session.amount_total,
         piId,
         session.id,

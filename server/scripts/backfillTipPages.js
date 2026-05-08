@@ -40,7 +40,9 @@ async function main() {
           tip_page_active = TRUE,
           updated_at = NOW()
       `, [row.user_id, token, url, id]);
-      console.log(`[backfill] user_id=${row.user_id} token=${token} link=${id}`);
+      // Token is the public URL secret — log only the prefix so Render log
+      // retention can't be mined for working tip URLs.
+      console.log(`[backfill] user_id=${row.user_id} provisioned (token ${token.slice(0, 8)}…, link ${id})`);
     } catch (err) {
       console.error(`[backfill] FAILED user_id=${row.user_id}:`, err.message);
     }

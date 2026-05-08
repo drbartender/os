@@ -16,6 +16,7 @@ const {
   deactivateTipPaymentLink,
 } = require('../../utils/tipPaymentLinks');
 const { activateTipPage, deactivateTipPage } = require('../../utils/tipPageLifecycle');
+const { normalizeTipHandlesInPlace } = require('../../utils/tipHandleValidation');
 
 const router = express.Router();
 
@@ -545,10 +546,21 @@ router.put('/users/:id/seniority', auth, adminOnly, asyncHandler(async (req, res
 
 const ALLOWED_PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'check', 'direct_deposit', 'other'];
 
+// Managers shouldn't be able to mutate an admin's tip page (rotate their Stripe
+// link, change their handles, or deactivate them). Admins can mutate anyone.
+async function ensureNonAdminTargetForManager(req, userId) {
+  if (req.user.role === 'admin') return;
+  const r = await pool.query('SELECT role FROM users WHERE id = $1', [userId]);
+  if (r.rows[0]?.role === 'admin') {
+    throw new PermissionError('Managers cannot modify an admin user tip page');
+  }
+}
+
 // PATCH — admin override of handles + payroll preference + preferred_name
 router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
+  await ensureNonAdminTargetForManager(req, userId);
 
   const fields = {};
   for (const k of ['venmo_handle', 'cashapp_handle', 'paypal_url', 'preferred_payment_method']) {
@@ -559,6 +571,10 @@ router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, async
       && !ALLOWED_PAYMENT_METHODS.includes(fields.preferred_payment_method)) {
     throw new ValidationError('invalid preferred_payment_method');
   }
+
+  // Validate + normalize handle formats (paypal_url especially — flows into an
+  // <a href> on the public tip page so anything off paypal.me is rejected).
+  normalizeTipHandlesInPlace(fields);
 
   if ('preferred_name' in req.body) {
     await pool.query(
@@ -583,6 +599,7 @@ router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, async
 router.post('/contractors/:userId/tip-page/regenerate-stripe', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
+  await ensureNonAdminTargetForManager(req, userId);
 
   const { rows } = await pool.query(`
     SELECT pp.tip_page_token, pp.stripe_payment_link_id, cp.preferred_name
@@ -615,6 +632,7 @@ router.post('/contractors/:userId/tip-page/regenerate-stripe', auth, requireAdmi
 router.post('/contractors/:userId/tip-page/generate-stripe', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
+  await ensureNonAdminTargetForManager(req, userId);
 
   const { rows } = await pool.query(`
     SELECT pp.tip_page_token, pp.stripe_payment_link_url, cp.preferred_name
@@ -651,6 +669,7 @@ router.post('/contractors/:userId/tip-page/generate-stripe', auth, requireAdminO
 router.post('/contractors/:userId/tip-page/deactivate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
+  await ensureNonAdminTargetForManager(req, userId);
   await deactivateTipPage(userId);
   res.json({ ok: true });
 }));
@@ -659,6 +678,7 @@ router.post('/contractors/:userId/tip-page/deactivate', auth, requireAdminOrMana
 router.post('/contractors/:userId/tip-page/activate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
+  await ensureNonAdminTargetForManager(req, userId);
   await activateTipPage(userId);
   res.json({ ok: true });
 }));

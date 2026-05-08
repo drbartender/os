@@ -4,6 +4,7 @@ const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError } = require('../utils/errors');
 const { PUBLIC_SITE_URL } = require('../utils/urls');
+const { normalizeTipHandlesInPlace } = require('../utils/tipHandleValidation');
 
 const router = express.Router();
 router.use(auth);
@@ -73,6 +74,10 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
       && !ALLOWED_PAYMENT_METHODS.includes(updates.preferred_payment_method)) {
     throw new ValidationError('invalid preferred_payment_method');
   }
+
+  // Validate + normalize handle formats so a malformed paypal_url can't land
+  // in the DB and end up as a phishing link target on the public tip page.
+  normalizeTipHandlesInPlace(updates);
 
   // preferred_name lives on contractor_profiles
   if ('preferred_name' in updates) {

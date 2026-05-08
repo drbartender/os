@@ -9,6 +9,11 @@ const { uploadFile } = require('../utils/storage');
 const { encrypt, decrypt } = require('../utils/encryption');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError } = require('../utils/errors');
+const {
+  normalizeVenmoHandle,
+  normalizeCashappHandle,
+  normalizePaypalUrl,
+} = require('../utils/tipHandleValidation');
 
 const router = express.Router();
 
@@ -49,11 +54,20 @@ router.post('/', auth, asyncHandler(async (req, res) => {
 
     const { venmo_handle, cashapp_handle, paypal_url, preferred_name } = req.body;
 
+    // Normalize handles BEFORE the method-vs-handle requirement check so
+    // (a) bad formats fail loudly with a clear message instead of being silently
+    // stored and then rendered into the public tip page's payment buttons, and
+    // (b) the "handle required" check sees the cleaned value (e.g. user typed
+    // "@bartender" — strip the @ first, then check non-empty).
+    const normalizedVenmoHandle = normalizeVenmoHandle(venmo_handle);
+    const normalizedCashappHandle = normalizeCashappHandle(cashapp_handle);
+    const normalizedPaypalUrl = normalizePaypalUrl(paypal_url);
+
     // Validate payroll method matches handle requirement (per Task 5 spec)
     const methodToHandleField = {
-      venmo: { value: venmo_handle, name: 'Venmo handle' },
-      cashapp: { value: cashapp_handle, name: 'Cash App handle' },
-      paypal: { value: paypal_url, name: 'PayPal URL' },
+      venmo: { value: normalizedVenmoHandle, name: 'Venmo handle' },
+      cashapp: { value: normalizedCashappHandle, name: 'Cash App handle' },
+      paypal: { value: normalizedPaypalUrl, name: 'PayPal URL' },
     };
     const reqHandle = methodToHandleField[preferred_payment_method];
     if (reqHandle && !reqHandle.value) {
@@ -158,9 +172,9 @@ router.post('/', auth, asyncHandler(async (req, res) => {
             updated_at = NOW()
         WHERE user_id = $4
       `, [
-        venmo_handle || null,
-        cashapp_handle || null,
-        paypal_url || null,
+        normalizedVenmoHandle,
+        normalizedCashappHandle,
+        normalizedPaypalUrl,
         req.user.id,
       ]);
 
