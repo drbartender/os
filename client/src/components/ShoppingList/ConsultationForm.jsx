@@ -148,7 +148,7 @@ export default function ConsultationForm({ planId, isOpen, onClose, onSaved, coc
       toast.error('Pick at least one signature drink (or switch to Beer + wine only).');
       return;
     }
-    if (isMocktailOnly && (!mocktailsEnabled || (mocktailIds.length === 0 && customMocktails.length === 0))) {
+    if (isMocktailOnly && mocktailIds.length === 0 && customMocktails.length === 0) {
       toast.error('Pick at least one mocktail.');
       return;
     }
