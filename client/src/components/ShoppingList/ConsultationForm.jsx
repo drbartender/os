@@ -54,13 +54,9 @@ export default function ConsultationForm({ planId, isOpen, onClose, onSaved, coc
   const [spirits, setSpirits] = useState(FULL_BAR_DEFAULT_SPIRITS);
   const [sigIds, setSigIds] = useState([]);
   const [customSigs, setCustomSigs] = useState([]);
-  const [customSigName, setCustomSigName] = useState('');
-  const [customSigIngredients, setCustomSigIngredients] = useState('');
   const [mocktailsEnabled, setMocktailsEnabled] = useState(false);
   const [mocktailIds, setMocktailIds] = useState([]);
   const [customMocktails, setCustomMocktails] = useState([]);
-  const [customMockName, setCustomMockName] = useState('');
-  const [customMockIngredients, setCustomMockIngredients] = useState('');
   const [beerYes, setBeerYes] = useState(true);
   const [wine, setWine] = useState(['red', 'white']);
   const [mixers, setMixers] = useState('full');
@@ -68,6 +64,7 @@ export default function ConsultationForm({ planId, isOpen, onClose, onSaved, coc
   const [guestCountOverride, setGuestCountOverride] = useState('');
 
   const cocktailGroups = useMemo(() => groupCocktailsBySpirit(cocktails), [cocktails]);
+  const mocktailGroups = useMemo(() => groupCocktailsBySpirit(mocktails), [mocktails]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -114,33 +111,6 @@ export default function ConsultationForm({ planId, isOpen, onClose, onSaved, coc
       setSpirits(FULL_BAR_DEFAULT_SPIRITS);
     }
   };
-
-  const addCustomSig = () => {
-    const name = customSigName.trim();
-    if (!name) return;
-    const ingredients = customSigIngredients
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
-    setCustomSigs(prev => [...prev, { name, ingredients }]);
-    setCustomSigName('');
-    setCustomSigIngredients('');
-  };
-
-  const addCustomMocktail = () => {
-    const name = customMockName.trim();
-    if (!name) return;
-    const ingredients = customMockIngredients
-      .split(',')
-      .map(s => s.trim())
-      .filter(Boolean);
-    setCustomMocktails(prev => [...prev, { name, ingredients }]);
-    setCustomMockName('');
-    setCustomMockIngredients('');
-  };
-
-  const removeCustomSig = (idx) => setCustomSigs(prev => prev.filter((_, i) => i !== idx));
-  const removeCustomMocktail = (idx) => setCustomMocktails(prev => prev.filter((_, i) => i !== idx));
 
   const handleSubmit = async () => {
     if (submitting) return;
@@ -249,23 +219,13 @@ export default function ConsultationForm({ planId, isOpen, onClose, onSaved, coc
           <div style={sectionStyle}>
             <label style={labelStyle}>Signature drinks</label>
             <CocktailPicker groups={cocktailGroups} selected={sigIds} onToggle={(id) => toggleArr(sigIds, id, setSigIds)} />
-
-            {customSigs.length > 0 && (
-              <div className="hstack" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                {customSigs.map((c, i) => (
-                  <span key={i} style={chipBtn(true)}>
-                    {c.name}{c.ingredients?.length ? ` (${c.ingredients.join(', ')})` : ''}
-                    <button type="button" onClick={() => removeCustomSig(i)} style={{ marginLeft: 6, background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer' }} aria-label="Remove">×</button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            <div className="hstack" style={{ gap: 6, marginTop: 8 }}>
-              <input className="input" style={{ flex: '0 0 200px' }} placeholder="Custom drink name" value={customSigName} onChange={e => setCustomSigName(e.target.value)} />
-              <input className="input" style={{ flex: 1 }} placeholder="Ingredients (comma-separated)" value={customSigIngredients} onChange={e => setCustomSigIngredients(e.target.value)} />
-              <button type="button" className="btn btn-secondary btn-sm" onClick={addCustomSig} disabled={!customSigName.trim()}>Add</button>
-            </div>
+            <CustomDrinkInput
+              items={customSigs}
+              onChange={setCustomSigs}
+              namePlaceholder="Custom drink name"
+              ingredientsPlaceholder="Ingredients (comma-separated)"
+              chipBtn={chipBtn}
+            />
           </div>
         )}
 
@@ -277,22 +237,14 @@ export default function ConsultationForm({ planId, isOpen, onClose, onSaved, coc
             </label>
             {mocktailsEnabled && (
               <>
-                <CocktailPicker groups={groupCocktailsBySpirit(mocktails)} selected={mocktailIds} onToggle={(id) => toggleArr(mocktailIds, id, setMocktailIds)} />
-                {customMocktails.length > 0 && (
-                  <div className="hstack" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                    {customMocktails.map((c, i) => (
-                      <span key={i} style={chipBtn(true)}>
-                        {c.name}{c.ingredients?.length ? ` (${c.ingredients.join(', ')})` : ''}
-                        <button type="button" onClick={() => removeCustomMocktail(i)} style={{ marginLeft: 6, background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer' }} aria-label="Remove">×</button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div className="hstack" style={{ gap: 6, marginTop: 8 }}>
-                  <input className="input" style={{ flex: '0 0 200px' }} placeholder="Custom mocktail name" value={customMockName} onChange={e => setCustomMockName(e.target.value)} />
-                  <input className="input" style={{ flex: 1 }} placeholder="Ingredients (comma-separated)" value={customMockIngredients} onChange={e => setCustomMockIngredients(e.target.value)} />
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={addCustomMocktail} disabled={!customMockName.trim()}>Add</button>
-                </div>
+                <CocktailPicker groups={mocktailGroups} selected={mocktailIds} onToggle={(id) => toggleArr(mocktailIds, id, setMocktailIds)} />
+                <CustomDrinkInput
+                  items={customMocktails}
+                  onChange={setCustomMocktails}
+                  namePlaceholder="Custom mocktail name"
+                  ingredientsPlaceholder="Ingredients (comma-separated)"
+                  chipBtn={chipBtn}
+                />
               </>
             )}
           </div>
@@ -301,22 +253,14 @@ export default function ConsultationForm({ planId, isOpen, onClose, onSaved, coc
         {/* Mocktail-only mode shows the mocktail picker as the primary input */}
         {isMocktailOnly && (
           <div style={sectionStyle}>
-            <CocktailPicker groups={groupCocktailsBySpirit(mocktails)} selected={mocktailIds} onToggle={(id) => toggleArr(mocktailIds, id, setMocktailIds)} />
-            {customMocktails.length > 0 && (
-              <div className="hstack" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                {customMocktails.map((c, i) => (
-                  <span key={i} style={chipBtn(true)}>
-                    {c.name}{c.ingredients?.length ? ` (${c.ingredients.join(', ')})` : ''}
-                    <button type="button" onClick={() => removeCustomMocktail(i)} style={{ marginLeft: 6, background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer' }} aria-label="Remove">×</button>
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="hstack" style={{ gap: 6, marginTop: 8 }}>
-              <input className="input" style={{ flex: '0 0 200px' }} placeholder="Custom mocktail name" value={customMockName} onChange={e => setCustomMockName(e.target.value)} />
-              <input className="input" style={{ flex: 1 }} placeholder="Ingredients (comma-separated)" value={customMockIngredients} onChange={e => setCustomMockIngredients(e.target.value)} />
-              <button type="button" className="btn btn-secondary btn-sm" onClick={addCustomMocktail} disabled={!customMockName.trim()}>Add</button>
-            </div>
+            <CocktailPicker groups={mocktailGroups} selected={mocktailIds} onToggle={(id) => toggleArr(mocktailIds, id, setMocktailIds)} />
+            <CustomDrinkInput
+              items={customMocktails}
+              onChange={setCustomMocktails}
+              namePlaceholder="Custom mocktail name"
+              ingredientsPlaceholder="Ingredients (comma-separated)"
+              chipBtn={chipBtn}
+            />
           </div>
         )}
 
@@ -400,6 +344,52 @@ export default function ConsultationForm({ planId, isOpen, onClose, onSaved, coc
         </div>
       </div>
     </div>
+  );
+}
+
+// Add-and-list-chips control used three times in the consult form (sig drinks,
+// mocktail addon, mocktail-only). Owns its own input state so the parent only
+// holds the canonical array.
+function CustomDrinkInput({ items, onChange, namePlaceholder, ingredientsPlaceholder, chipBtn }) {
+  const [name, setName] = useState('');
+  const [ingredients, setIngredients] = useState('');
+
+  const handleAdd = () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const parsed = ingredients.split(',').map(s => s.trim()).filter(Boolean);
+    onChange([...items, { name: trimmed, ingredients: parsed }]);
+    setName('');
+    setIngredients('');
+  };
+
+  const handleRemove = (idx) => {
+    onChange(items.filter((_, i) => i !== idx));
+  };
+
+  return (
+    <>
+      {items.length > 0 && (
+        <div className="hstack" style={{ gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+          {items.map((c, i) => (
+            <span key={i} style={chipBtn(true)}>
+              {c.name}{c.ingredients?.length ? ` (${c.ingredients.join(', ')})` : ''}
+              <button
+                type="button"
+                onClick={() => handleRemove(i)}
+                style={{ marginLeft: 6, background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer' }}
+                aria-label="Remove"
+              >×</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="hstack" style={{ gap: 6, marginTop: 8 }}>
+        <input className="input" style={{ flex: '0 0 200px' }} placeholder={namePlaceholder} value={name} onChange={e => setName(e.target.value)} />
+        <input className="input" style={{ flex: 1 }} placeholder={ingredientsPlaceholder} value={ingredients} onChange={e => setIngredients(e.target.value)} />
+        <button type="button" className="btn btn-secondary btn-sm" onClick={handleAdd} disabled={!name.trim()}>Add</button>
+      </div>
+    </>
   );
 }
 

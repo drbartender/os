@@ -105,10 +105,12 @@ export default function ProposalDetail() {
     setDrinkPlan(null);
     setPlanCocktails([]);
     setDrinkPlanLoading(true);
+    let cancelled = false;
     api.get(`/drink-plans/by-proposal/${id}`)
-      .then(planRes => setDrinkPlan(planRes.data))
-      .catch(() => setDrinkPlan(null))
-      .finally(() => setDrinkPlanLoading(false));
+      .then(planRes => { if (!cancelled) setDrinkPlan(planRes.data); })
+      .catch(() => { if (!cancelled) setDrinkPlan(null); })
+      .finally(() => { if (!cancelled) setDrinkPlanLoading(false); });
+    return () => { cancelled = true; };
   }, [id]);
 
   // Auto-added specialty upgrades (badges)

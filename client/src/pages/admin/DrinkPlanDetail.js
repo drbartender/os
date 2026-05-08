@@ -276,11 +276,7 @@ export default function DrinkPlanDetail() {
             onSaved={refetchPlan}
             cocktails={cocktails}
             mocktails={mocktailItems}
-            planContext={{
-              client_name: plan.client_name,
-              event_date: plan.event_date,
-              guest_count: plan.guest_count,
-            }}
+            planContext={{ guest_count: plan.guest_count }}
           />
         </Suspense>
       )}

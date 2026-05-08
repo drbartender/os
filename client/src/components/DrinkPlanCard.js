@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { memo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import { useToast } from '../context/ToastContext';
@@ -19,7 +19,7 @@ function formatDateTime(d) {
   return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-export default function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading }) {
+function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading }) {
   const navigate = useNavigate();
   const toast = useToast();
   const [copied, setCopied] = useState(false);
@@ -113,3 +113,5 @@ export default function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loa
     </div>
   );
 }
+
+export default memo(DrinkPlanCard);

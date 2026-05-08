@@ -316,51 +316,56 @@ function addSelfProvidedSyrups(syrupSelfProvided, syrupNamesById, everythingElse
  * @param {string[]} [eventData.additionalSpirits]   Consult mode: spirit slugs picked in chip grid
  * @param {'full'|'matching'|'none'|null} [eventData.mixerMode]  Consult mode: 3-state mixer override
  */
-function generateShoppingList(eventData) {
+// Consult-mode branch: admin's chip-grid spirit picks are the source of truth
+// (not PARS_100 full-bar baseline). Beer/wine flow through normal builders;
+// mixerMode controls whether additional bar mixers are full / paired / none.
+function buildConsultLists(eventData, bottles) {
   const {
-    clientName,
     guestCount,
     signatureCocktails = [],
-    syrupSelfProvided = [],
-    syrupNamesById = {},
-    eventDate,
-    notes,
+    beerSelections = [],
+    wineSelections = [],
+    additionalSpirits = null,
+    mixerMode,
+  } = eventData;
+  const liquorBeerWine = [];
+  const everythingElse = [];
+
+  if (Array.isArray(additionalSpirits) && additionalSpirits.length > 0) {
+    addSpiritsByKey(additionalSpirits, liquorBeerWine, guestCount, bottles);
+  }
+  if (Array.isArray(beerSelections) && beerSelections.length > 0) {
+    liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles));
+  }
+  if (Array.isArray(wineSelections) && wineSelections.length > 0) {
+    liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles));
+  }
+  mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythingElse, guestCount);
+  if (mixerMode === 'full') {
+    everythingElse.push(...scaleItems(BASIC_MIXERS, guestCount, bottles));
+    everythingElse.push(...scaleItems(GARNISHES, guestCount, bottles));
+  } else if (mixerMode === 'matching') {
+    addMatchingMixers(additionalSpirits || [], everythingElse, guestCount, bottles);
+  }
+  everythingElse.push(...scaleItems(ALWAYS_INCLUDE, guestCount, bottles));
+
+  return { liquorBeerWine, everythingElse };
+}
+
+// Planner-mode branch: client-submitted serviceStyle picks the recipe.
+function buildPlannerLists(eventData, bottles) {
+  const {
+    guestCount,
+    signatureCocktails = [],
     serviceStyle = 'full_bar',
     beerSelections = [],
     wineSelections = [],
     mixersForSignatureDrinks = null,
-    additionalSpirits = null,
-    mixerMode = null,
   } = eventData;
-  const bottles = needsBottles(guestCount);
-
   let liquorBeerWine = [];
   let everythingElse = [];
 
-  // Consult-mode path: distinguished by `mixerMode` being explicitly set.
-  // The admin's chip-grid spirit picks become the source of truth (instead of
-  // the PARS_100 full-bar baseline), beer/wine flow through the existing
-  // builders, and the mixer mode controls whether the additional bar mixers
-  // are full / spirit-paired / none. Sig ingredients are merged regardless.
-  if (mixerMode) {
-    if (Array.isArray(additionalSpirits) && additionalSpirits.length > 0) {
-      addSpiritsByKey(additionalSpirits, liquorBeerWine, guestCount, bottles);
-    }
-    if (Array.isArray(beerSelections) && beerSelections.length > 0) {
-      liquorBeerWine.push(...buildBeerItems(beerSelections, guestCount, bottles));
-    }
-    if (Array.isArray(wineSelections) && wineSelections.length > 0) {
-      liquorBeerWine.push(...buildWineItems(wineSelections, guestCount, bottles));
-    }
-    mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythingElse, guestCount);
-    if (mixerMode === 'full') {
-      everythingElse.push(...scaleItems(BASIC_MIXERS, guestCount, bottles));
-      everythingElse.push(...scaleItems(GARNISHES, guestCount, bottles));
-    } else if (mixerMode === 'matching') {
-      addMatchingMixers(additionalSpirits || [], everythingElse, guestCount, bottles);
-    }
-    everythingElse.push(...scaleItems(ALWAYS_INCLUDE, guestCount, bottles));
-  } else if (serviceStyle === 'full_bar') {
+  if (serviceStyle === 'full_bar') {
     liquorBeerWine = scaleItems(PARS_100.liquorBeerWine, guestCount, bottles);
     everythingElse = scaleItems(PARS_100.everythingElse, guestCount, bottles);
     mergeSignatureIngredients(signatureCocktails, liquorBeerWine, everythingElse, guestCount);
@@ -381,6 +386,31 @@ function generateShoppingList(eventData) {
     // mocktails / unknown — supplies only
     everythingElse.push(...scaleItems(ALWAYS_INCLUDE, guestCount, bottles));
   }
+
+  return { liquorBeerWine, everythingElse };
+}
+
+function generateShoppingList(eventData) {
+  const {
+    clientName,
+    guestCount,
+    signatureCocktails = [],
+    syrupSelfProvided = [],
+    syrupNamesById = {},
+    eventDate,
+    notes,
+    serviceStyle = 'full_bar',
+    beerSelections = [],
+    wineSelections = [],
+    mixersForSignatureDrinks = null,
+    mixerMode = null,
+  } = eventData;
+  const bottles = needsBottles(guestCount);
+
+  // mixerMode being explicitly set distinguishes consult mode from planner mode.
+  const { liquorBeerWine, everythingElse } = mixerMode
+    ? buildConsultLists(eventData, bottles)
+    : buildPlannerLists(eventData, bottles);
 
   addSelfProvidedSyrups(syrupSelfProvided, syrupNamesById, everythingElse, guestCount);
 

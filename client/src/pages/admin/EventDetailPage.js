@@ -27,16 +27,12 @@ export default function EventDetailPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
 
-  // Hoisted so payment-panel mutations can refetch (onUpdate prop).
-  const loadEvent = useCallback(() => {
-    return Promise.all([
-      api.get(`/proposals/${id}`).then(r => r.data),
-      api.get(`/shifts/by-proposal/${id}`).then(r => Array.isArray(r.data) ? r.data : []).catch(() => []),
-    ])
-      .then(([pd, sd]) => {
-        setProposal(pd);
-        setShifts(sd);
-      })
+  // Proposal-only refetch — passed to payment-panel `onUpdate` so post-payment
+  // mutations don't unnecessarily re-pull shifts (which the payment panel never
+  // touches). Initial mount uses the Promise.all below, which fetches both.
+  const loadProposal = useCallback(() => {
+    return api.get(`/proposals/${id}`)
+      .then(r => setProposal(r.data))
       .catch(e => {
         setErr(e?.message || 'Failed to load event');
         toast.error('Failed to load event.');
@@ -46,18 +42,34 @@ export default function EventDetailPage() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    loadEvent().finally(() => !cancelled && setLoading(false));
+    Promise.all([
+      api.get(`/proposals/${id}`).then(r => r.data),
+      api.get(`/shifts/by-proposal/${id}`).then(r => Array.isArray(r.data) ? r.data : []).catch(() => []),
+    ])
+      .then(([pd, sd]) => {
+        if (cancelled) return;
+        setProposal(pd);
+        setShifts(sd);
+      })
+      .catch(e => {
+        if (cancelled) return;
+        setErr(e?.message || 'Failed to load event');
+        toast.error('Failed to load event.');
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [loadEvent]);
+  }, [id, toast]);
 
   useEffect(() => {
     if (!id) return;
     setDrinkPlan(null);
     setDrinkPlanLoading(true);
+    let cancelled = false;
     api.get(`/drink-plans/by-proposal/${id}`)
-      .then(res => setDrinkPlan(res.data))
-      .catch(() => setDrinkPlan(null))
-      .finally(() => setDrinkPlanLoading(false));
+      .then(res => { if (!cancelled) setDrinkPlan(res.data); })
+      .catch(() => { if (!cancelled) setDrinkPlan(null); })
+      .finally(() => { if (!cancelled) setDrinkPlanLoading(false); });
+    return () => { cancelled = true; };
   }, [id]);
 
   if (loading) return <div className="page"><div className="muted">Loading event…</div></div>;
@@ -305,7 +317,7 @@ export default function EventDetailPage() {
         </div>
 
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
-          <ProposalDetailPaymentPanel proposal={proposal} onUpdate={loadEvent} />
+          <ProposalDetailPaymentPanel proposal={proposal} onUpdate={loadProposal} />
 
           <DrinkPlanCard
             proposalId={proposal.id}

@@ -1358,7 +1358,7 @@ ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS consult_filled_by_user_id INTEG
 ALTER TABLE drink_plans ADD COLUMN IF NOT EXISTS consult_filled_at TIMESTAMPTZ;
 DO $$ BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM information_schema.constraint_column_usage
+    SELECT 1 FROM information_schema.table_constraints
     WHERE table_name = 'drink_plans' AND constraint_name = 'drink_plans_shopping_list_source_check'
   ) THEN
     ALTER TABLE drink_plans ADD CONSTRAINT drink_plans_shopping_list_source_check

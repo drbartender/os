@@ -23,6 +23,84 @@ const router = express.Router();
 
 const VALID_BAR_TYPES = ['full_bar', 'sig_beer_wine', 'beer_wine', 'mocktails'];
 const VALID_MIXER_MODES = ['full', 'matching', 'none'];
+const MAX_LIST_ITEMS = 50;        // signatureDrinks, mocktails, customCocktails, customMocktails
+const MAX_NOTES_LEN = 2000;
+const MAX_INGREDIENTS_PER_DRINK = 30;
+const MAX_INGREDIENT_LEN = 200;
+const MAX_NAME_LEN = 200;
+
+// Allow-list and shape-validate the consult payload. Strips unknown keys so
+// JSONB only stores fields the rest of the system understands. Throws
+// ValidationError on shape/size violations; returns the cleaned object.
+function sanitizeConsult(raw) {
+  if (!raw || typeof raw !== 'object') {
+    throw new ValidationError({ consult: 'Invalid consult payload.' });
+  }
+  const out = {};
+  if (raw.barType !== undefined) {
+    if (!VALID_BAR_TYPES.includes(raw.barType)) {
+      throw new ValidationError({ barType: 'Invalid bar type.' });
+    }
+    out.barType = raw.barType;
+  }
+  if (raw.mixers !== undefined) {
+    if (!VALID_MIXER_MODES.includes(raw.mixers)) {
+      throw new ValidationError({ mixers: 'Invalid mixer mode.' });
+    }
+    out.mixers = raw.mixers;
+  }
+  const stringArrayField = (key, max = MAX_LIST_ITEMS) => {
+    if (raw[key] === undefined) return;
+    if (!Array.isArray(raw[key])) throw new ValidationError({ [key]: `${key} must be an array.` });
+    if (raw[key].length > max) throw new ValidationError({ [key]: `${key} exceeds ${max} items.` });
+    out[key] = raw[key].map(v => String(v));
+  };
+  stringArrayField('spirits', 20);
+  stringArrayField('signatureDrinks');
+  stringArrayField('mocktails');
+  stringArrayField('wine', 10);
+
+  const customDrinkArrayField = (key) => {
+    if (raw[key] === undefined) return;
+    if (!Array.isArray(raw[key])) throw new ValidationError({ [key]: `${key} must be an array.` });
+    if (raw[key].length > MAX_LIST_ITEMS) {
+      throw new ValidationError({ [key]: `${key} exceeds ${MAX_LIST_ITEMS} items.` });
+    }
+    out[key] = raw[key].map((item, i) => {
+      if (!item || typeof item !== 'object') {
+        throw new ValidationError({ [key]: `${key}[${i}] must be an object.` });
+      }
+      const name = String(item.name || '').slice(0, MAX_NAME_LEN);
+      if (!name) throw new ValidationError({ [key]: `${key}[${i}].name required.` });
+      const ingredientsRaw = Array.isArray(item.ingredients) ? item.ingredients : [];
+      if (ingredientsRaw.length > MAX_INGREDIENTS_PER_DRINK) {
+        throw new ValidationError({
+          [key]: `${key}[${i}].ingredients exceeds ${MAX_INGREDIENTS_PER_DRINK}.`,
+        });
+      }
+      const ingredients = ingredientsRaw.map(s => String(s).slice(0, MAX_INGREDIENT_LEN));
+      return { name, ingredients };
+    });
+  };
+  customDrinkArrayField('customCocktails');
+  customDrinkArrayField('customMocktails');
+
+  if (raw.beer !== undefined) out.beer = Boolean(raw.beer);
+  if (raw.mocktailsEnabled !== undefined) out.mocktailsEnabled = Boolean(raw.mocktailsEnabled);
+  if (raw.notes !== undefined) {
+    out.notes = String(raw.notes || '').slice(0, MAX_NOTES_LEN);
+  }
+  if (raw.guestCountOverride !== undefined && raw.guestCountOverride !== null) {
+    const gc = Number(raw.guestCountOverride);
+    if (!Number.isFinite(gc) || gc < 0 || !Number.isInteger(gc)) {
+      throw new ValidationError({ guestCountOverride: 'Must be a non-negative integer.' });
+    }
+    out.guestCountOverride = gc;
+  } else if (raw.guestCountOverride === null) {
+    out.guestCountOverride = null;
+  }
+  return out;
+}
 
 /** GET /api/drink-plans/:id/consult — fetch consult-form payload for pre-population.
  *  Returns the raw consult_selections so the form can re-open with the admin's
@@ -47,16 +125,7 @@ router.get('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
  *  and shopping_list all move together. Re-runnable — submitting again
  *  overwrites the prior consult and regenerates. */
 router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { consult } = req.body;
-  if (!consult || typeof consult !== 'object') {
-    throw new ValidationError({ consult: 'Invalid consult payload.' });
-  }
-  if (consult.barType && !VALID_BAR_TYPES.includes(consult.barType)) {
-    throw new ValidationError({ barType: 'Invalid bar type.' });
-  }
-  if (consult.mixers && !VALID_MIXER_MODES.includes(consult.mixers)) {
-    throw new ValidationError({ mixers: 'Invalid mixer mode.' });
-  }
+  const consult = sanitizeConsult(req.body?.consult);
 
   const client = await pool.connect();
   try {
