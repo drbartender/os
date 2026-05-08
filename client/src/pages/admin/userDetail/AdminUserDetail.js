@@ -22,6 +22,7 @@ import PayoutsTab from './tabs/PayoutsTab';
 import DocumentsTab from './tabs/DocumentsTab';
 import MessagesTab from './tabs/MessagesTab';
 import ApplicationTab from './tabs/ApplicationTab';
+import TipPageTab from './tabs/TipPageTab';
 
 export default function AdminUserDetail() {
   const { id } = useParams();
@@ -392,6 +393,7 @@ export default function AdminUserDetail() {
         <TabButton active={tab === 'shifts'} onClick={() => setTab('shifts')} count={totalShifts}>Shifts</TabButton>
         <TabButton active={tab === 'certifications'} onClick={() => setTab('certifications')}>Certifications</TabButton>
         <TabButton active={tab === 'payouts'} onClick={() => setTab('payouts')}>Payouts</TabButton>
+        <TabButton active={tab === 'tip-page'} onClick={() => setTab('tip-page')}>Tip Page</TabButton>
         <TabButton active={tab === 'documents'} onClick={() => setTab('documents')}>Documents</TabButton>
         <TabButton active={tab === 'messages'} onClick={() => setTab('messages')} count={userMessages.length || null}>Messages</TabButton>
         {application?.id && (
@@ -451,6 +453,22 @@ export default function AdminUserDetail() {
           saving={saving}
           profileError={profileError}
           profileFieldErrors={profileFieldErrors}
+        />
+      )}
+
+      {tab === 'tip-page' && (
+        <TipPageTab
+          userId={user.id}
+          payment={payment}
+          profile={profile}
+          onChanged={async () => {
+            try {
+              const r = await api.get(`/admin/users/${id}`);
+              setData(r.data);
+            } catch (e) {
+              toast.error(e.message || 'Failed to refresh tip page state.');
+            }
+          }}
         />
       )}
 
