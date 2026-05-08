@@ -398,6 +398,9 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | Path | Component | Description |
 |---|---|---|
 | `/` | `HomePage` | Public homepage with services, stats, CTA |
+| `/services` | `ServicesPage` | Detailed Formula I/II/III service cards + add-ons strip |
+| `/method` | `MethodPage` | Three-step method detail with bullets + typical timeline |
+| `/about` | `AboutPage` | Proprietor specimen card + long-form bio + 25-year career timeline |
 | `/quote` | `QuotePage` → `QuoteWizard` | Multi-step instant quote builder |
 | `/faq` | `FaqPage` | Frequently asked questions |
 | `/classes` | `ClassWizard` | Cocktail class booking wizard |
