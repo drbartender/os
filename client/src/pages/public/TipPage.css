@@ -1,0 +1,590 @@
+/* ═══════════════════════════════════════════════════════════
+   Tip Page — local styles
+   Brand whispers: cream paper background, chalkboard only as hero band,
+   IM Fell English SC reserved for H1 + "Tip {Name}".
+   ═══════════════════════════════════════════════════════════ */
+
+/* Override body — we want light parchment for the customer page,
+   not the dark chalkboard the rest of the brand uses. */
+.tip-page {
+  font-family: var(--font-body);
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100%;
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+}
+.tip-page, .tip-page *, .tip-page *::before, .tip-page *::after { box-sizing: border-box; }
+
+/* Subtle paper texture */
+.tip-page::before {
+  content: "";
+  position: absolute; inset: 0;
+  background-image: url("/tip-page/parchment-bg.png");
+  background-size: 600px;
+  background-repeat: repeat;
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.tip-page > * { position: relative; z-index: 1; }
+
+/* ── Hero — compressed ─────────────────────────────────────── */
+.tip-page .hero {
+  background: var(--chalkboard);
+  background-image: url("/tip-page/chalkboard-bg.png");
+  background-size: 800px;
+  background-blend-mode: multiply;
+  color: var(--cream-text);
+  padding: 14px 20px 48px;
+  text-align: center;
+  position: relative;
+  border-bottom: 3px solid var(--border-dark);
+  box-shadow: inset 0 -20px 40px rgba(0,0,0,0.25);
+}
+
+.tip-page .hero-kicker {
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--amber-light);
+  margin: 0 0 6px;
+  opacity: 0.8;
+}
+
+.tip-page .hero h1 {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  color: var(--cream-text);
+  margin: 0;
+  font-weight: 400;
+}
+.tip-page .hero h1 .heart {
+  color: var(--amber);
+  display: inline-block;
+  transform: translateY(1px);
+  margin: 0 2px;
+}
+
+/* Headshot block — pulled below hero, overlapping */
+.tip-page .headshot-mount {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: -36px 24px 0;
+  position: relative;
+}
+
+.tip-page .headshot-frame {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  background: var(--paper);
+  padding: 4px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.22), 0 0 0 1px rgba(212,201,168,0.4) inset;
+  position: relative;
+}
+.tip-page .headshot-frame::after {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--amber);
+  pointer-events: none;
+}
+.tip-page .headshot-frame img {
+  width: 100%; height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Sparkle flourishes around headshot */
+.tip-page .sparkle {
+  position: absolute;
+  pointer-events: none;
+}
+
+.tip-page .tip-name {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  margin: 8px 0 0;
+  font-weight: 400;
+}
+
+/* ── Section ──────────────────────────────────────────────── */
+.tip-page .section {
+  padding: 18px 20px 6px;
+}
+.tip-page .section.first { padding-top: 14px; }
+.tip-page .section-heading {
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--warm-brown);
+  text-align: center;
+  margin: 0 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.tip-page .section-heading::before, .tip-page .section-heading::after {
+  content: "";
+  flex: 0 1 38px;
+  height: 1px;
+  background: var(--border);
+  opacity: 0.5;
+}
+
+/* ── Pay buttons ──────────────────────────────────────────── */
+.tip-page .pay-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.tip-page .pay-btn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: none;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.06), 0 3px 10px rgba(0,0,0,0.10);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  position: relative;
+}
+.tip-page .pay-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 rgba(0,0,0,0.06), 0 2px 6px rgba(0,0,0,0.10);
+}
+.tip-page .pay-btn:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 3px;
+}
+
+.tip-page .pay-btn .pay-mark {
+  width: 32px; height: 32px;
+  flex: 0 0 32px;
+  border-radius: 7px;
+  background: rgba(255,255,255,0.16);
+  display: flex; align-items: center; justify-content: center;
+}
+.tip-page .pay-btn .pay-label {
+  flex: 1;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  min-width: 0;
+}
+.tip-page .pay-btn .pay-label small {
+  font-size: 0.66rem;
+  font-weight: 400;
+  opacity: 0.85;
+  letter-spacing: 0.03em;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tip-page .pay-btn .pay-chev {
+  opacity: 0.7;
+  flex: 0 0 auto;
+}
+
+/* Platform variants */
+.tip-page .pay-btn.venmo  { background: #008CFF; color: #fff; }
+.tip-page .pay-btn.cashapp{ background: #00D632; color: #00261A; }
+.tip-page .pay-btn.paypal { background: #003087; color: #fff; }
+.tip-page .pay-btn.card   {
+  background: var(--ink);
+  color: var(--cream-text);
+}
+.tip-page .pay-btn.card .pay-mark {
+  background: rgba(245,237,224,0.10);
+  padding: 0 6px;
+  width: auto;
+  flex: 0 0 auto;
+  min-width: 64px;
+  height: 32px;
+}
+.tip-page .pay-btn.card .pay-mark svg { width: 64px; height: 18px; }
+
+/* ── Stars ────────────────────────────────────────────────── */
+.tip-page .stars-wrap {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+.tip-page .star {
+  width: 44px;
+  height: 44px;
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--border);
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+.tip-page .star:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.tip-page .star.lit { color: var(--amber); }
+.tip-page .star.popped { transform: scale(1.15); }
+.tip-page .star svg { width: 100%; height: 100%; display: block; }
+
+.tip-page .stars-helper {
+  text-align: center;
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  margin: 0 0 18px;
+}
+
+/* ── Tip amount picker ────────────────────────────────────── */
+.tip-page .amount-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 4px 0 14px;
+}
+.tip-page .amount-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  background: var(--card-bg);
+  border: 2px solid var(--border-dark);
+  border-radius: 10px;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.1s ease;
+  box-shadow: inset 0 0 0 1px rgba(212,201,168,0.4);
+}
+.tip-page .amount-btn small {
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--warm-brown);
+  font-style: italic;
+}
+.tip-page .amount-btn:hover { background: var(--parchment); }
+.tip-page .amount-btn:active { transform: translateY(1px); }
+.tip-page .amount-btn.selected {
+  background: var(--amber);
+  color: #fff;
+  border-color: var(--warm-brown);
+  box-shadow: 0 2px 8px rgba(193,125,60,0.4);
+}
+.tip-page .amount-btn.selected small { color: rgba(255,255,255,0.85); }
+.tip-page .amount-tagline {
+  text-align: center;
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin: -8px 0 12px;
+  letter-spacing: 0.02em;
+}
+
+/* ── Thank-you (post-tip) — clear single CTA ──────────────── */
+.tip-page .posttip {
+  padding: 20px 20px 8px;
+  text-align: center;
+}
+.tip-page .posttip-mark {
+  width: 56px; height: 56px;
+  margin: 0 auto 10px;
+  border-radius: 50%;
+  background: var(--amber);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 14px rgba(193,125,60,0.4);
+}
+.tip-page .posttip h2 {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  margin: 0 0 4px;
+  font-weight: 400;
+}
+.tip-page .posttip p {
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  margin: 0 0 16px;
+}
+.tip-page .posttip .amount-pill {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  letter-spacing: 0.18em;
+  color: var(--warm-brown);
+  background: var(--card-bg);
+  border: 1.5px solid var(--border-dark);
+  padding: 4px 12px;
+  border-radius: 999px;
+  margin-bottom: 14px;
+}
+.tip-page .cta-card {
+  background: var(--card-bg);
+  border: 2px solid var(--border-dark);
+  border-radius: 12px;
+  padding: 18px 16px;
+  box-shadow: inset 0 0 0 1px rgba(212,201,168,0.4), 0 4px 14px rgba(0,0,0,0.08);
+  text-align: left;
+  margin: 0 20px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tip-page .cta-card .cta-icon {
+  width: 40px; height: 40px;
+  flex: 0 0 40px;
+  border-radius: 8px;
+  background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(122,107,79,0.3);
+}
+.tip-page .cta-card .cta-body {
+  flex: 1;
+  min-width: 0;
+}
+.tip-page .cta-card .cta-body h4 {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  margin: 0 0 2px;
+  text-transform: none;
+}
+.tip-page .cta-card .cta-body p {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 0;
+}
+.tip-page .cta-card .cta-go {
+  flex: 0 0 auto;
+  color: var(--amber);
+}
+.tip-page .cta-skip {
+  display: block;
+  text-align: center;
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  text-decoration: underline;
+  padding: 12px 0;
+  margin: 4px 0 8px;
+}
+
+/* ── Feedback form (1-3★) ─────────────────────────────────── */
+.tip-page .feedback-card {
+  background: var(--card-bg);
+  border: 2px solid var(--border-dark);
+  border-radius: 12px;
+  padding: 18px 16px 16px;
+  box-shadow: inset 0 0 0 1px rgba(212,201,168,0.4), 0 4px 16px rgba(0,0,0,0.08);
+  margin-top: 6px;
+}
+.tip-page .feedback-card h3 {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  color: var(--ink);
+  margin: 0 0 4px;
+  letter-spacing: 0.02em;
+}
+.tip-page .feedback-card p.intro {
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  margin: 0 0 14px;
+}
+.tip-page .field-label {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--warm-brown);
+  margin-bottom: 6px;
+}
+.tip-page .tx, .tip-page .input-text {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 1rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 2px solid var(--border-dark);
+  border-radius: 8px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+.tip-page .tx:focus, .tip-page .input-text:focus {
+  outline: none;
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px rgba(193,125,60,0.25);
+}
+.tip-page .tx { min-height: 96px; }
+.tip-page .helper {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+  font-style: italic;
+}
+.tip-page .submit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 52px;
+  margin-top: 14px;
+  background: var(--amber);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(193,125,60,0.4);
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+.tip-page .submit-btn:hover { background: var(--warm-brown); }
+.tip-page .submit-btn:active { transform: translateY(1px); }
+.tip-page .submit-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+
+/* ── Post-feedback thank-you ──────────────────────────────── */
+.tip-page .tx-thanks {
+  background: var(--card-bg);
+  border: 2px solid var(--border-dark);
+  border-radius: 12px;
+  padding: 28px 20px;
+  text-align: center;
+  box-shadow: inset 0 0 0 1px rgba(212,201,168,0.4), 0 4px 16px rgba(0,0,0,0.08);
+  margin: 0 20px;
+}
+.tip-page .tx-thanks .ornament {
+  color: var(--amber);
+  letter-spacing: 0.5em;
+  font-size: 1rem;
+  margin-bottom: 8px;
+}
+.tip-page .tx-thanks h3 {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  color: var(--ink);
+  margin: 0 0 8px;
+  letter-spacing: 0.03em;
+}
+.tip-page .tx-thanks p {
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* ── Footer ───────────────────────────────────────────────── */
+.tip-page .foot {
+  margin-top: 28px;
+  padding: 24px 24px 22px;
+  text-align: center;
+  border-top: 1px solid rgba(158,139,106,0.25);
+  background: rgba(232,223,196,0.35);
+}
+.tip-page .foot-logo {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  margin: 0 auto 8px;
+  display: block;
+  border: 1px solid rgba(122,107,79,0.4);
+}
+.tip-page .foot-name {
+  font-family: var(--font-display);
+  font-size: 0.92rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin: 0;
+}
+.tip-page .foot-name b { color: var(--amber); font-weight: 400; }
+.tip-page .foot-tag {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 4px 0 14px;
+  letter-spacing: 0.02em;
+}
+.tip-page .foot-socials {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.tip-page .foot-socials a {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(122,107,79,0.4);
+  color: var(--warm-brown);
+}
+.tip-page .foot-meta {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+}
+.tip-page .foot-meta .powered {
+  display: block;
+  margin-top: 4px;
+  font-style: italic;
+  opacity: 0.7;
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* ── Test Mode ribbon ─────────────────────────────────────── */
+.tip-page .test-ribbon {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  background: var(--rust);
+  color: #fff;
+  font-family: var(--font-display);
+  font-size: 0.6rem;
+  letter-spacing: 0.22em;
+  padding: 4px 10px;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  z-index: 2;
+}
