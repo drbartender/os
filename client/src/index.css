@@ -5099,6 +5099,88 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   background-size: 100% 100%;
 }
 
+/* ── Apothecary Press stepper (segmented brass-bordered cells) ── */
+.wz-stepper {
+  display: flex;
+  border: 1px solid rgba(184, 146, 74, 0.4);
+  margin: 0 auto 2rem;
+  max-width: 1240px;
+  background: rgba(18, 22, 28, 0.5);
+}
+.wz-stepper-cell {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 18px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid rgba(184, 146, 74, 0.4);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-body);
+  color: var(--cream-text);
+  transition: background 0.18s ease, color 0.18s ease;
+  min-width: 0;
+}
+.wz-stepper-cell:last-child { border-right: none; }
+.wz-stepper-cell:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.wz-stepper-cell:not(:disabled):hover {
+  background: rgba(184, 146, 74, 0.08);
+}
+.wz-stepper-cell.done {
+  background: rgba(29, 140, 137, 0.16);
+  color: var(--brass-bright);
+}
+.wz-stepper-cell.done:not(:disabled):hover {
+  background: rgba(29, 140, 137, 0.24);
+}
+.wz-stepper-cell.active {
+  background: var(--amber);
+  color: var(--cream-text);
+  cursor: default;
+}
+.wz-stepper-roman {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.wz-stepper-name {
+  margin-top: 2px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+
+/* Hide legacy step-dot stepper (still in CSS but not rendered) */
+.wz-steps { display: none; }
+
+/* Wizard page hero — tighten spacing to leave room for stepper + body below */
+.wz-pagehero {
+  padding: 56px 0 36px;
+  border-bottom: none;
+}
+
+@media (max-width: 720px) {
+  .wz-stepper {
+    grid-template-columns: 1fr;
+  }
+  .wz-stepper-cell {
+    border-right: none;
+    border-bottom: 1px solid rgba(184, 146, 74, 0.4);
+    flex-direction: row;
+    align-items: baseline;
+    gap: 12px;
+  }
+  .wz-stepper-cell:last-child { border-bottom: none; }
+  .wz-stepper-name { margin-top: 0; }
+}
+
 @keyframes wz-active-breathe {
   0%, 100% { transform: scale(1); }
   50%      { transform: scale(1.06); }

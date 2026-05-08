@@ -664,12 +664,20 @@ export default function QuoteWizard() {
     );
   }
 
+  const ROMANS = ['I', 'II', 'III', 'IV', 'V'];
+
   return (
     <section className="wz-section" id="quote">
-      <div className="ws-section-heading">
-        <p className="ws-kicker">Get Your Quote</p>
-        <h2>Instant pricing for your event</h2>
-        <p className="ws-section-sub">Answer a few questions and get a real quote — no waiting, no back-and-forth.</p>
+      {/* Page hero — Apothecary Press */}
+      <div className="ws-press-pagehero wz-pagehero">
+        <div className="ws-wrap">
+          <div className="ornament" aria-hidden="true">⚗</div>
+          <div className="ws-press-eyebrow">Rx · The Prescription</div>
+          <h1 className="ws-press-pagehero-title">The Instant Quote.</h1>
+          <p className="ws-press-pagehero-sub">
+            Five minutes. Live pricing as you go. We'll send a real proposal — sign and pay in one breath.
+          </p>
+        </div>
       </div>
 
       {/* Welcome back banner */}
@@ -683,19 +691,25 @@ export default function QuoteWizard() {
         </div>
       )}
 
-      {/* Step indicators */}
-      <div className="wz-steps">
-        {steps.map((s, i) => (
-          <button
-            key={s.key}
-            className={`wz-step-dot ${i === step ? 'active' : ''} ${i < step ? 'done' : ''}`}
-            onClick={() => i < step && replaceStep(i)}
-            disabled={i > step}
-          >
-            <span className="wz-step-num">{i < step ? '✓' : i + 1}</span>
-            <span className="wz-step-label">{s.label}</span>
-          </button>
-        ))}
+      {/* Stepper — segmented brass-bordered cells */}
+      <div className="wz-stepper" role="navigation" aria-label="Quote progress">
+        {steps.map((s, i) => {
+          const active = i === step;
+          const done = i < step;
+          return (
+            <button
+              key={s.key}
+              type="button"
+              className={`wz-stepper-cell ${active ? 'active' : ''} ${done ? 'done' : ''}`}
+              onClick={() => i < step && replaceStep(i)}
+              disabled={i > step}
+              aria-current={active ? 'step' : undefined}
+            >
+              <span className="wz-stepper-roman">Step {ROMANS[i] || (i + 1)}</span>
+              <span className="wz-stepper-name">{s.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="wz-body">
@@ -821,19 +835,19 @@ export default function QuoteWizard() {
               setStep(s => s - 1);
             }
           }}>
-            Back
+            ← Back
           </button>
         )}
         <div style={{ flex: 1 }} />
         {step < steps.length - 1 ? (
           <button className="btn btn-primary" type="button"
             onClick={tryAdvance}>
-            Next
+            Continue →
           </button>
         ) : (
           <button className="btn btn-primary" type="button" disabled={submitting}
             onClick={handleSubmit}>
-            {submitting ? 'Submitting...' : 'Submit & See My Proposal'}
+            {submitting ? 'Submitting...' : 'Send proposal · See my quote'}
           </button>
         )}
       </div>
