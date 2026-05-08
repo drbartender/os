@@ -1894,3 +1894,50 @@ END $$;
 -- ALTER TYPE is idempotent at the same target type.
 ALTER TABLE payment_profiles ALTER COLUMN routing_number TYPE VARCHAR(255);
 ALTER TABLE payment_profiles ALTER COLUMN account_number TYPE VARCHAR(255);
+
+-- ──────────────────────────────────────────────
+-- Tip QR page (2026-05-08)
+-- ──────────────────────────────────────────────
+
+-- Per-bartender payment handles + Stripe Payment Link + tip-page token.
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS venmo_handle TEXT;
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS cashapp_handle TEXT;
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS paypal_url TEXT;
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS stripe_payment_link_url TEXT;
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS stripe_payment_link_id TEXT;
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS tip_page_token UUID;
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS tip_page_active BOOLEAN DEFAULT TRUE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_profiles_tip_page_token
+  ON payment_profiles(tip_page_token) WHERE tip_page_token IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS tips (
+  id SERIAL PRIMARY KEY,
+  tip_page_token UUID NOT NULL,
+  target_user_id INTEGER NOT NULL REFERENCES users(id),
+  amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+  stripe_payment_intent_id TEXT UNIQUE NOT NULL,
+  stripe_session_id TEXT,
+  customer_email TEXT,
+  tipped_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tips_target_user_tipped_at
+  ON tips(target_user_id, tipped_at DESC);
+
+CREATE TABLE IF NOT EXISTS tip_page_feedback (
+  id SERIAL PRIMARY KEY,
+  target_user_id INTEGER NOT NULL REFERENCES users(id),
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 3),
+  comment TEXT,
+  submitter_email TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  reviewed_at TIMESTAMPTZ,
+  reviewed_by INTEGER REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tip_feedback_target_user_created_at
+  ON tip_page_feedback(target_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tip_feedback_unreviewed
+  ON tip_page_feedback(created_at DESC) WHERE reviewed_at IS NULL;
