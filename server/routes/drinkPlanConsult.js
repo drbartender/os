@@ -137,7 +137,7 @@ router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
        FROM drink_plans dp
        LEFT JOIN proposals p ON p.id = dp.proposal_id
        WHERE dp.id = $1
-       FOR UPDATE`,
+       FOR UPDATE OF dp`,
       [req.params.id]
     );
     if (!planRes.rows[0]) {
@@ -204,7 +204,7 @@ router.patch('/:id/shopping-list-source', auth, requireAdminOrManager, asyncHand
        FROM drink_plans dp
        LEFT JOIN proposals p ON p.id = dp.proposal_id
        WHERE dp.id = $1
-       FOR UPDATE`,
+       FOR UPDATE OF dp`,
       [req.params.id]
     );
     if (!planRes.rows[0]) {
