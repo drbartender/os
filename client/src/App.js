@@ -38,6 +38,8 @@ const LabRatMission = lazy(() => import('./pages/labrat/LabRatMission'));
 // Lazy-loaded: public token-gated pages (Stripe SDK stays out of main bundle)
 const ProposalView = lazy(() => import('./pages/proposal/proposalView/ProposalView'));
 const InvoicePage = lazy(() => import('./pages/invoice/InvoicePage'));
+const TipPage = lazy(() => import('./pages/public/TipPage'));
+const TipPageThanks = lazy(() => import('./pages/public/TipPageThanks'));
 
 // Lazy-loaded: onboarding, staff portal, admin shell — not needed on public marketing site
 const Welcome = lazy(() => import('./pages/Welcome'));
@@ -235,6 +237,8 @@ function PublicWebsiteRoutes() {
         <Route path="/proposal/:token" element={<ProposalView />} />
         <Route path="/invoice/:token" element={<InvoicePage />} />
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
+        <Route path="/tip/:token" element={<TipPage />} />
+        <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
         <Route path="/labnotes" element={<Blog />} />
         <Route path="/labnotes/:slug" element={<BlogPost />} />
         <Route path="/login" element={<ClientLogin />} />
@@ -285,6 +289,8 @@ function HiringRoutes() {
         <Route path="/proposal/:token" element={<ProposalView />} />
         <Route path="/invoice/:token" element={<InvoicePage />} />
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
+        <Route path="/tip/:token" element={<TipPage />} />
+        <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
@@ -323,6 +329,8 @@ function StaffSiteRoutes() {
         <Route path="/proposal/:token" element={<ProposalView />} />
         <Route path="/invoice/:token" element={<InvoicePage />} />
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
+        <Route path="/tip/:token" element={<TipPage />} />
+        <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
@@ -351,6 +359,8 @@ function AppRoutes() {
       <Route path="/proposal/:token" element={<ProposalView />} />
       <Route path="/invoice/:token" element={<InvoicePage />} />
       <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
+      <Route path="/tip/:token" element={<TipPage />} />
+      <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
       {/* Website accessible on admin domain for preview */}
       <Route path="/website" element={<HomePage />} />
       <Route path="/services" element={<ServicesPage />} />
