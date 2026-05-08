@@ -553,6 +553,29 @@ function newThumbtackReviewAdmin({ reviewerName, rating, reviewText }) {
   };
 }
 
+// ─── Tip-page feedback (1-3★ negative-rating notification) ──────
+
+function tipFeedbackAdminNotification({ displayName, rating, comment, submitterEmail, adminUrl }) {
+  const name = displayName || 'a bartender';
+  const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
+  const commentHtml = comment ? esc(comment).replace(/\n/g, '<br/>') : '<em>(no comment)</em>';
+  return {
+    subject: `${rating}-star tip-page feedback for ${esc(name)}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Tip-page feedback</h2>
+      <p style="font-size:24px;margin:0.5rem 0;">${stars}</p>
+      <p><strong>Bartender:</strong> ${esc(name)}</p>
+      <p><strong>Rating:</strong> ${rating} / 5</p>
+      <div style="background:${BRAND.bg};padding:16px;border-radius:6px;margin:1rem 0;border-left:4px solid ${BRAND.secondary};">
+        <strong>Comment:</strong><br/>${commentHtml}
+      </div>
+      ${submitterEmail ? `<p><strong>Submitter email:</strong> ${esc(submitterEmail)}</p>` : ''}
+      ${ctaButton(adminUrl, 'Review in admin')}
+    `),
+    text: `${rating}-star tip-page feedback for ${name}. Comment: ${comment || '(no comment)'}${submitterEmail ? ` Submitter: ${submitterEmail}` : ''}. Review: ${adminUrl}`,
+  };
+}
+
 // ─── Hiring redesign (2026-04-28) ───────────────────────────────
 // Two new templates plus DB-lookup wrappers used by the application detail
 // page's interview-scheduling and paperwork-reminder flows.
@@ -661,6 +684,8 @@ module.exports = {
   newThumbtackLeadAdmin,
   newThumbtackMessageAdmin,
   newThumbtackReviewAdmin,
+  // Tip-page feedback
+  tipFeedbackAdminNotification,
   // Hiring redesign
   interviewConfirmation,
   paperworkReminder,
