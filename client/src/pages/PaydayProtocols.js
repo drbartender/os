@@ -8,10 +8,53 @@ import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { COMPANY_PHONE } from '../utils/constants';
-import { formatPhoneInput, stripPhone } from '../utils/formatPhone';
 import useFormValidation from '../hooks/useFormValidation';
 
-const PAYMENT_METHODS = ['Venmo', 'Zelle', 'Cash App', 'PayPal', 'Direct Deposit / ACH', 'Check'];
+// New (Tip & Payroll Preferences) — values must match the backend enum.
+const PAYMENT_METHODS = [
+  { value: 'venmo', label: 'Venmo' },
+  { value: 'cashapp', label: 'Cash App' },
+  { value: 'paypal', label: 'PayPal' },
+  { value: 'check', label: 'Check' },
+  { value: 'direct_deposit', label: 'Direct deposit' },
+  { value: 'other', label: 'Other' },
+];
+
+// Map any legacy display-label values (saved by previous form revisions) to
+// the new lowercase enum so the form rehydrates correctly on re-entry.
+function migrateLegacyMethod(raw) {
+  const v = String(raw || '').trim();
+  if (!v) return '';
+  // Already in new enum
+  if (PAYMENT_METHODS.some(m => m.value === v)) return v;
+  switch (v.toLowerCase()) {
+    case 'venmo': return 'venmo';
+    case 'cash app':
+    case 'cashapp': return 'cashapp';
+    case 'paypal': return 'paypal';
+    case 'check': return 'check';
+    case 'direct deposit / ach':
+    case 'direct deposit':
+    case 'ach': return 'direct_deposit';
+    case 'zelle': return ''; // No longer offered — force re-pick
+    default: return 'other';
+  }
+}
+
+// Cleanup helpers — strip @, $, and full URL prefixes on input change so the
+// stored handle is just the username (server-side wants bare handles).
+function stripVenmo(s) {
+  return String(s || '')
+    .replace(/^@/, '')
+    .replace(/^https?:\/\/(?:www\.)?venmo\.com\/u?\/?/, '')
+    .trim();
+}
+function stripCashapp(s) {
+  return String(s || '')
+    .replace(/^\$/, '')
+    .replace(/^https?:\/\/(?:www\.)?cash\.app\/\$?/, '')
+    .trim();
+}
 
 export default function PaydayProtocols() {
   const navigate = useNavigate();
@@ -28,42 +71,47 @@ export default function PaydayProtocols() {
   const [w9Done, setW9Done] = useState(false);  // true after W9Form generates PDF
 
   const [form, setForm] = useState({
-    preferred_payment_method: '',
-    // Venmo
+    // Tip & Payroll Preferences (new — Tip QR page Phase 2)
+    preferred_name: '',
     venmo_handle: '',
-    // Zelle
-    zelle_email: '',
-    zelle_phone: '',
-    // Cash App
-    cashtag: '',
-    // PayPal
-    paypal_email: '',
-    // Direct Deposit
+    cashapp_handle: '',
+    paypal_url: '',
+    preferred_payment_method: '',
+    // Direct deposit (existing — kept)
     routing_number: '',
     account_number: '',
   });
 
   useEffect(() => {
-    api.get('/payment').then(r => {
-      if (r.data.preferred_payment_method) {
-        const method = r.data.preferred_payment_method;
-        const username = r.data.payment_username || '';
-        setForm({
-          preferred_payment_method: method,
-          venmo_handle:    method === 'Venmo'    ? username : '',
-          zelle_email:     method === 'Zelle'    && username.includes('@') ? username : '',
-          zelle_phone:     method === 'Zelle'    && !username.includes('@') ? username : '',
-          cashtag:         method === 'Cash App' ? username : '',
-          paypal_email:    method === 'PayPal'   ? username : '',
-          routing_number:  r.data.routing_number  || '',
-          account_number:  r.data.account_number  || '',
-        });
-        const existing = r.data.w9_filename || '';
-        setExistingW9(existing);
-        if (existing) {
-          setW9Mode('upload');
-          setW9Done(true);
-        }
+    // Load saved payment profile + the contractor profile so we can pre-fill
+    // preferred_name (which lives on contractor_profiles, not payment_profiles).
+    Promise.all([
+      api.get('/payment').catch(() => ({ data: {} })),
+      api.get('/contractor').catch(() => ({ data: {} })),
+    ]).then(([payRes, profRes]) => {
+      const pay = payRes.data || {};
+      const prof = profRes.data || {};
+      const method = migrateLegacyMethod(pay.preferred_payment_method);
+      const username = pay.payment_username || '';
+
+      setForm(f => ({
+        ...f,
+        preferred_name: prof.preferred_name || '',
+        // Prefer the explicit columns; fall back to the legacy single-field
+        // payment_username when the matching method was selected before.
+        venmo_handle: pay.venmo_handle || (method === 'venmo' ? username : ''),
+        cashapp_handle: pay.cashapp_handle || (method === 'cashapp' ? username : ''),
+        paypal_url: pay.paypal_url || (method === 'paypal' ? username : ''),
+        preferred_payment_method: method,
+        routing_number: pay.routing_number || '',
+        account_number: pay.account_number || '',
+      }));
+
+      const existing = pay.w9_filename || '';
+      setExistingW9(existing);
+      if (existing) {
+        setW9Mode('upload');
+        setW9Done(true);
       }
     }).catch(() => {
       setLoadError("We couldn't load your saved payment info. You can still complete the form below.");
@@ -76,6 +124,17 @@ export default function PaydayProtocols() {
     clearField(e.target.name);
   }
 
+  // Wrapped onChange handlers that strip prefixes so the stored value is just
+  // the bare handle.
+  function handleVenmoHandle(e) {
+    setForm(f => ({ ...f, venmo_handle: stripVenmo(e.target.value) }));
+    clearField('venmo_handle');
+  }
+  function handleCashappHandle(e) {
+    setForm(f => ({ ...f, cashapp_handle: stripCashapp(e.target.value) }));
+    clearField('cashapp_handle');
+  }
+
   async function submit(e) {
     e.preventDefault();
     setError('');
@@ -83,24 +142,19 @@ export default function PaydayProtocols() {
 
     const method = form.preferred_payment_method;
 
-    // Build rules dynamically based on selected payment method
+    // Build rules dynamically based on selected payment method.
     const rules = [
-      { field: 'preferred_payment_method', label: 'Payment Method' },
+      { field: 'preferred_name', label: 'Preferred Name' },
+      { field: 'preferred_payment_method', label: 'Pay me out via' },
     ];
 
-    if (method === 'Venmo')
-      rules.push({ field: 'venmo_handle', label: 'Venmo @Handle' });
-    if (method === 'Cash App')
-      rules.push({ field: 'cashtag', label: 'Cash App $Cashtag' });
-    if (method === 'Zelle')
-      rules.push({
-        field: 'zelle_email',
-        label: 'Zelle Email or Phone',
-        test: (val, data) => (val && val.trim()) || (data.zelle_phone && data.zelle_phone.trim()),
-      });
-    if (method === 'PayPal')
-      rules.push({ field: 'paypal_email', label: 'PayPal Email or @Username' });
-    if (method === 'Direct Deposit / ACH') {
+    if (method === 'venmo')
+      rules.push({ field: 'venmo_handle', label: 'Venmo handle' });
+    if (method === 'cashapp')
+      rules.push({ field: 'cashapp_handle', label: 'Cash App handle' });
+    if (method === 'paypal')
+      rules.push({ field: 'paypal_url', label: 'PayPal URL' });
+    if (method === 'direct_deposit') {
       rules.push({ field: 'routing_number', label: 'Routing Number' });
       rules.push({ field: 'account_number', label: 'Account Number' });
     }
@@ -117,17 +171,23 @@ export default function PaydayProtocols() {
     setLoading(true);
     try {
       const data = new FormData();
+
+      // New Tip & Payroll Preferences fields (snake_case to match backend).
+      data.append('preferred_name', String(form.preferred_name || '').trim());
+      data.append('venmo_handle', form.venmo_handle || '');
+      data.append('cashapp_handle', form.cashapp_handle || '');
+      data.append('paypal_url', form.paypal_url || '');
       data.append('preferred_payment_method', method);
 
-      // Pack method-specific identifier into payment_username for backend compat
+      // Legacy column kept for backward compat with admin UI / payouts —
+      // pack the chosen method's handle into payment_username.
       let payment_username = '';
-      if (method === 'Venmo')   payment_username = form.venmo_handle;
-      if (method === 'Cash App') payment_username = form.cashtag;
-      if (method === 'Zelle')    payment_username = form.zelle_email || form.zelle_phone;
-      if (method === 'PayPal')   payment_username = form.paypal_email;
+      if (method === 'venmo')   payment_username = form.venmo_handle;
+      if (method === 'cashapp') payment_username = form.cashapp_handle;
+      if (method === 'paypal')  payment_username = form.paypal_url;
       data.append('payment_username', payment_username);
 
-      if (method === 'Direct Deposit / ACH') {
+      if (method === 'direct_deposit') {
         data.append('routing_number', form.routing_number);
         data.append('account_number', form.account_number);
       }
@@ -214,83 +274,93 @@ export default function PaydayProtocols() {
         {loadError && <div className="alert alert-info">{loadError}</div>}
 
         <form onSubmit={submit}>
-          {/* ── Payment Method ── */}
-          <div className={`form-group${fieldClass('preferred_payment_method')}`}>
-            <label htmlFor="pp-preferred_payment_method" className="form-label">Preferred Method of Payment *</label>
-            <select id="pp-preferred_payment_method" name="preferred_payment_method" className={`form-select${inputClass('preferred_payment_method')}`} value={method} onChange={handle}>
-              <option value="">Select method</option>
-              {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
+          {/* ── Tip & Payroll Preferences ── */}
+          <fieldset className="tip-payroll-fieldset" style={{ border: 'none', padding: 0, margin: '0 0 1.5rem' }}>
+            <legend style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 700, color: 'var(--deep-brown)', padding: 0, marginBottom: '0.5rem' }}>
+              Tip & Payroll Preferences
+            </legend>
+            <p className="text-small text-muted" style={{ marginBottom: '0.5rem' }}>
+              Your tip page lives at <strong>drbartender.com/tip/your-name</strong>. We'll generate a QR you can print at any photo counter.
+              We pay you out via the handle you pick below — the others just show up on your tip page so customers can pick what they prefer.
+            </p>
+            <p className="text-small text-muted italic" style={{ marginBottom: '1.25rem' }}>
+              None of this is shared with anyone outside DRB.
+            </p>
 
-          {/* ── Method-specific fields ── */}
-          {method === 'Venmo' && (
-            <div className={`form-group${fieldClass('venmo_handle')}`}>
-              <label htmlFor="pp-venmo_handle" className="form-label">Venmo @Handle *</label>
+            <div className={`form-group${fieldClass('preferred_name')}`}>
+              <label htmlFor="pp-preferred_name" className="form-label">Preferred name *</label>
               <input
-                id="pp-venmo_handle" name="venmo_handle" className={`form-input${inputClass('venmo_handle')}`}
-                value={form.venmo_handle} onChange={handle}
-                placeholder="@yourname"
+                id="pp-preferred_name" name="preferred_name" type="text"
+                className={`form-input${inputClass('preferred_name')}`}
+                value={form.preferred_name} onChange={handle}
+                maxLength={80} required
+                placeholder="What customers see on your tip page"
               />
-              <p className="form-helper">Enter your Venmo username starting with @</p>
-            </div>
-          )}
-
-          {method === 'Cash App' && (
-            <div className={`form-group${fieldClass('cashtag')}`}>
-              <label htmlFor="pp-cashtag" className="form-label">Cash App $Cashtag *</label>
-              <input
-                id="pp-cashtag" name="cashtag" className={`form-input${inputClass('cashtag')}`}
-                value={form.cashtag} onChange={handle}
-                placeholder="$yourname"
-              />
-              <p className="form-helper">Enter your Cash App $cashtag (the $ is part of it)</p>
-            </div>
-          )}
-
-          {method === 'Zelle' && (
-            <div>
-              <div className={`form-group${fieldClass('zelle_email')}`}>
-                <label htmlFor="pp-zelle_email" className="form-label">Zelle Email Address</label>
-                <input
-                  id="pp-zelle_email" name="zelle_email" type="email" className={`form-input${inputClass('zelle_email')}`}
-                  value={form.zelle_email} onChange={handle}
-                  placeholder="you@email.com"
-                />
-              </div>
-              <div style={{ textAlign: 'center', margin: '-0.5rem 0 0.75rem', color: 'var(--text-muted)', fontSize: '0.85rem', fontStyle: 'italic' }}>
-                — or —
-              </div>
-              <div className={`form-group${fieldClass('zelle_email')}`}>
-                <label htmlFor="pp-zelle_phone" className="form-label">Zelle Phone Number</label>
-                <input
-                  id="pp-zelle_phone" name="zelle_phone" type="tel" className={`form-input${inputClass('zelle_email')}`}
-                  value={formatPhoneInput(form.zelle_phone)} onChange={e => { setForm(f => ({ ...f, zelle_phone: stripPhone(e.target.value) })); clearField('zelle_email'); }}
-                  placeholder="(555) 000-0000"
-                />
-              </div>
-              <p className="form-helper" style={{ marginTop: '-0.75rem', marginBottom: '1rem' }}>
-                Provide whichever is linked to your Zelle account — at least one is required.
+              <p className="form-helper">
+                The name customers see on your tip page. Use whatever you go by — your real name, a nickname, a stage name.
               </p>
             </div>
-          )}
 
-          {method === 'PayPal' && (
-            <div className={`form-group${fieldClass('paypal_email')}`}>
-              <label htmlFor="pp-paypal_email" className="form-label">PayPal Email or @Username *</label>
+            <div className={`form-group${fieldClass('venmo_handle')}`}>
+              <label htmlFor="pp-venmo_handle" className="form-label">Venmo handle</label>
               <input
-                id="pp-paypal_email" name="paypal_email" className={`form-input${inputClass('paypal_email')}`}
-                value={form.paypal_email} onChange={handle}
-                placeholder="you@email.com or @yourname"
+                id="pp-venmo_handle" name="venmo_handle" type="text"
+                className={`form-input${inputClass('venmo_handle')}`}
+                value={form.venmo_handle} onChange={handleVenmoHandle}
+                placeholder="yourname"
               />
-              <p className="form-helper">Enter the email address or @username on your PayPal account</p>
+              <p className="form-helper">Just the username — we'll strip the @ or venmo.com/u/ for you.</p>
             </div>
-          )}
 
-          {method === 'Direct Deposit / ACH' && (
+            <div className={`form-group${fieldClass('cashapp_handle')}`}>
+              <label htmlFor="pp-cashapp_handle" className="form-label">Cash App handle</label>
+              <input
+                id="pp-cashapp_handle" name="cashapp_handle" type="text"
+                className={`form-input${inputClass('cashapp_handle')}`}
+                value={form.cashapp_handle} onChange={handleCashappHandle}
+                placeholder="yourname"
+              />
+              <p className="form-helper">Just the cashtag — we'll strip the $ or cash.app/$ for you.</p>
+            </div>
+
+            <div className={`form-group${fieldClass('paypal_url')}`}>
+              <label htmlFor="pp-paypal_url" className="form-label">PayPal URL</label>
+              <input
+                id="pp-paypal_url" name="paypal_url" type="url"
+                className={`form-input${inputClass('paypal_url')}`}
+                value={form.paypal_url} onChange={handle}
+                placeholder="paypal.me/yourname"
+              />
+              <p className="form-helper">Either paypal.me/yourname or a full URL.</p>
+            </div>
+
+            <div className={`form-group${fieldClass('preferred_payment_method')}`} role="radiogroup" aria-labelledby="pp-payroll-legend">
+              <div id="pp-payroll-legend" className="form-label">Pay me out via *</div>
+              <div className="radio-group">
+                {PAYMENT_METHODS.map(opt => (
+                  <label
+                    key={opt.value}
+                    className={`radio-option${method === opt.value ? ' selected' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="preferred_payment_method"
+                      value={opt.value}
+                      checked={method === opt.value}
+                      onChange={handle}
+                    />
+                    <span className="radio-label">{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </fieldset>
+
+          {/* ── Direct Deposit details (only when method === direct_deposit) ── */}
+          {method === 'direct_deposit' && (
             <div style={{ background: 'var(--parchment)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '1.25rem', marginBottom: '1.25rem' }}>
               <div style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--warm-brown)', marginBottom: '0.85rem' }}>
-                🏦 Bank Account Details
+                Bank Account Details
               </div>
               <div className={`form-group${fieldClass('routing_number')}`}>
                 <label htmlFor="pp-routing_number" className="form-label">Routing Number *</label>
@@ -315,7 +385,7 @@ export default function PaydayProtocols() {
             </div>
           )}
 
-          {method === 'Check' && (
+          {method === 'check' && (
             <div className="alert alert-info" style={{ marginBottom: '1.25rem' }}>
               Checks will be mailed to the address on file. Make sure your mailing address in your Contractor Profile is current.
             </div>
@@ -335,21 +405,21 @@ export default function PaydayProtocols() {
                 className={`btn btn-sm ${w9Mode === 'fill' ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => { setW9Mode('fill'); setW9Done(false); }}
               >
-                📋 Fill Out Online
+                Fill Out Online
               </button>
               <button
                 type="button"
                 className={`btn btn-sm ${w9Mode === 'upload' ? 'btn-primary' : 'btn-secondary'}`}
                 onClick={() => setW9Mode('upload')}
               >
-                📎 Upload Existing W-9
+                Upload Existing W-9
               </button>
             </div>
 
             {w9Mode === 'fill' ? (
               w9Done ? (
                 <div className="alert alert-success" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span>✓ W-9 filled out and signed — PDF ready to submit.</span>
+                  <span>W-9 filled out and signed — PDF ready to submit.</span>
                   <button type="button" className="btn btn-secondary btn-sm" style={{ color: 'var(--success)', borderColor: 'var(--success)' }} onClick={() => { setW9Done(false); setW9File(null); }}>
                     Edit W-9
                   </button>
