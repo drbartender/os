@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
@@ -69,7 +69,7 @@ export default function ProposalDetail() {
   // Activity modal
   const [showActivityPopup, setShowActivityPopup] = useState(false);
 
-  const loadProposal = () => {
+  const loadProposal = useCallback(() => {
     return api.get(`/proposals/${id}`).then(res => {
       setProposal(res.data);
       setNotes(res.data.admin_notes || '');
@@ -81,9 +81,9 @@ export default function ProposalDetail() {
         toast.error(err.message || 'Failed to load proposal. Try refreshing.');
       }
     }).finally(() => setLoading(false));
-  };
+  }, [id, navigate, toast]);
 
-  useEffect(() => { loadProposal(); }, [id]); // eslint-disable-line
+  useEffect(() => { loadProposal(); }, [loadProposal]);
 
   // After honoring ?edit=1, strip the query param so the URL stays clean
   // (and a future reload doesn't auto-reopen edit if the user has navigated away).

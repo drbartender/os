@@ -451,10 +451,15 @@ function buildGeneratorInputFromConsult(consult, eventCtx, resolvedSigs = [], re
       : [],
   })).filter(c => c.name);
 
+  // mocktail-only mode always includes mocktails regardless of mocktailsEnabled
+  // — the consult form coerces the flag to true on submit, but a hand-crafted
+  // PUT could bypass that, so we treat barType==='mocktails' as the source of
+  // truth here. Defensive cross-field check.
+  const includeMocktails = safe.mocktailsEnabled || safe.barType === 'mocktails';
   const signatureCocktails = [
     ...resolvedSigs,
     ...customSigs,
-    ...(safe.mocktailsEnabled ? [...resolvedMocktails, ...customMocktails] : []),
+    ...(includeMocktails ? [...resolvedMocktails, ...customMocktails] : []),
   ];
 
   // Beer y/n → default house mix when "yes". Admin tweaks specifics in the
