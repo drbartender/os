@@ -1914,7 +1914,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_profiles_tip_page_token
 CREATE TABLE IF NOT EXISTS tips (
   id SERIAL PRIMARY KEY,
   tip_page_token UUID NOT NULL,
-  target_user_id INTEGER NOT NULL REFERENCES users(id),
+  target_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
   stripe_payment_intent_id TEXT UNIQUE NOT NULL,
   stripe_session_id TEXT,
@@ -1928,16 +1928,37 @@ CREATE INDEX IF NOT EXISTS idx_tips_target_user_tipped_at
 
 CREATE TABLE IF NOT EXISTS tip_page_feedback (
   id SERIAL PRIMARY KEY,
-  target_user_id INTEGER NOT NULL REFERENCES users(id),
+  target_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 3),
   comment TEXT,
   submitter_email TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   reviewed_at TIMESTAMPTZ,
-  reviewed_by INTEGER REFERENCES users(id)
+  reviewed_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_tip_feedback_target_user_created_at
   ON tip_page_feedback(target_user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tip_feedback_unreviewed
   ON tip_page_feedback(created_at DESC) WHERE reviewed_at IS NULL;
+
+-- Tighten FK ON DELETE on tip tables to match the inline definitions above so
+-- existing deployments (where the tables were created without ON DELETE clauses
+-- and so defaulted to NO ACTION) get the same behavior. Brief table lock per
+-- ALTER, but tips/tip_page_feedback stay small (rows-per-event scale).
+-- Idempotent: drop-if-exists then add — no-op cost on subsequent deploys is
+-- one ALTER round-trip per FK.
+ALTER TABLE tips DROP CONSTRAINT IF EXISTS tips_target_user_id_fkey;
+ALTER TABLE tips
+  ADD CONSTRAINT tips_target_user_id_fkey
+  FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE RESTRICT;
+
+ALTER TABLE tip_page_feedback DROP CONSTRAINT IF EXISTS tip_page_feedback_target_user_id_fkey;
+ALTER TABLE tip_page_feedback
+  ADD CONSTRAINT tip_page_feedback_target_user_id_fkey
+  FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE RESTRICT;
+
+ALTER TABLE tip_page_feedback DROP CONSTRAINT IF EXISTS tip_page_feedback_reviewed_by_fkey;
+ALTER TABLE tip_page_feedback
+  ADD CONSTRAINT tip_page_feedback_reviewed_by_fkey
+  FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL;

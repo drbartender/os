@@ -37,7 +37,9 @@ async function main() {
           tip_page_token = COALESCE(payment_profiles.tip_page_token, EXCLUDED.tip_page_token),
           stripe_payment_link_url = COALESCE(payment_profiles.stripe_payment_link_url, EXCLUDED.stripe_payment_link_url),
           stripe_payment_link_id = COALESCE(payment_profiles.stripe_payment_link_id, EXCLUDED.stripe_payment_link_id),
-          tip_page_active = TRUE,
+          -- Preserve any explicit FALSE an admin has set; only default to TRUE
+          -- when the column was NULL (fresh row from this backfill INSERT).
+          tip_page_active = COALESCE(payment_profiles.tip_page_active, TRUE),
           updated_at = NOW()
       `, [row.user_id, token, url, id]);
       // Token is the public URL secret — log only the prefix so Render log
