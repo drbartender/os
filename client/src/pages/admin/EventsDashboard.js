@@ -135,9 +135,6 @@ export default function EventsDashboard() {
       if (e.proposal_id) navigate(`/events/${e.proposal_id}`);
       else drawer.open('shift', e.id);
     },
-    edit: (e) => {
-      if (e.proposal_id) navigate(`/proposals/${e.proposal_id}?edit=1`);
-    },
     assign: (e) => {
       if (!e.id) { toast.error('No shift on this event yet.'); return; }
       drawer.open('shift', e.id);
@@ -405,12 +402,6 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
       label: 'View Event',
       icon: 'eye',
       onClick: () => dispatch('view', e),
-    },
-    {
-      label: 'Edit Event',
-      icon: 'pen',
-      disabled: !e.proposal_id,
-      onClick: () => dispatch('edit', e),
     },
     {
       label: 'Assign Staff',

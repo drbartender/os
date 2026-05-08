@@ -8,7 +8,7 @@ import { formatPhone } from '../../utils/formatPhone';
 import { getPackageItems } from '../../data/packages';
 import { SYRUPS } from '../../data/syrups';
 import PricingBreakdown from '../../components/PricingBreakdown';
-import ShoppingListButton from '../../components/ShoppingList/ShoppingListButton';
+import DrinkPlanCard from '../../components/DrinkPlanCard';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmtDateFull } from '../../components/adminos/format';
@@ -26,13 +26,6 @@ const STATUS = {
   confirmed: { label: 'Confirmed', kind: 'ok' },
   completed: { label: 'Completed', kind: 'ok' },
   declined: { label: 'Declined', kind: 'danger' },
-};
-
-const DRINK_PLAN_STATUS = {
-  pending: { label: 'Pending', kind: 'neutral' },
-  draft: { label: 'Draft', kind: 'neutral' },
-  submitted: { label: 'Submitted', kind: 'info' },
-  reviewed: { label: 'Reviewed', kind: 'ok' },
 };
 
 function formatDateTime(d) {
@@ -66,10 +59,11 @@ export default function ProposalDetail() {
   // Public link copy
   const [linkCopied, setLinkCopied] = useState(false);
 
-  // Drink plan
+  // Drink plan — state stays here because autoAddedMap/cocktailNameById on the
+  // Pricing card read drinkPlan.selections.addOns. The card itself is extracted
+  // into a shared component (consumed via prop).
   const [drinkPlan, setDrinkPlan] = useState(null);
   const [drinkPlanLoading, setDrinkPlanLoading] = useState(false);
-  const [drinkPlanCopied, setDrinkPlanCopied] = useState(false);
   const [planCocktails, setPlanCocktails] = useState([]);
 
   // Activity modal
@@ -189,34 +183,6 @@ export default function ProposalDetail() {
     } catch (err) {
       toast.error(err.message || 'Failed to update status.');
     }
-  };
-
-  const generateDrinkPlan = async () => {
-    try {
-      const res = await api.post(`/drink-plans/for-proposal/${id}`);
-      setDrinkPlan(res.data);
-      toast.success('Drink plan link generated.');
-    } catch (err) {
-      toast.error(err.message || 'Failed to generate drink plan.');
-    }
-  };
-
-  const markDrinkPlanReviewed = async () => {
-    try {
-      const res = await api.patch(`/drink-plans/${drinkPlan.id}/status`, { status: 'reviewed' });
-      setDrinkPlan(prev => ({ ...prev, status: res.data.status }));
-      toast.success('Drink plan marked as reviewed.');
-    } catch (err) {
-      toast.error(err.message || 'Failed to update status.');
-    }
-  };
-
-  const copyDrinkPlanLink = () => {
-    const url = `${PUBLIC_SITE_URL}/plan/${drinkPlan.token}`;
-    navigator.clipboard.writeText(url).then(() => {
-      setDrinkPlanCopied(true);
-      setTimeout(() => setDrinkPlanCopied(false), 2000);
-    });
   };
 
   if (loading) return <div className="page"><div className="muted">Loading proposal…</div></div>;
@@ -519,65 +485,12 @@ export default function ProposalDetail() {
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
           <ProposalDetailPaymentPanel proposal={proposal} onUpdate={loadProposal} />
 
-          {/* Drink plan */}
-          <div className="card">
-            <div className="card-head">
-              <h3>Drink plan</h3>
-              {drinkPlan && (
-                <StatusChip kind={(DRINK_PLAN_STATUS[drinkPlan.status] || {}).kind || 'neutral'}>
-                  {(DRINK_PLAN_STATUS[drinkPlan.status] || {}).label || drinkPlan.status}
-                </StatusChip>
-              )}
-            </div>
-            <div className="card-body">
-              {drinkPlanLoading ? (
-                <div className="muted tiny">Loading…</div>
-              ) : drinkPlan ? (
-                <>
-                  <dl className="dl" style={{ gridTemplateColumns: '120px 1fr', margin: 0 }}>
-                    {drinkPlan.submitted_at && (
-                      <>
-                        <dt>Submitted</dt>
-                        <dd>{formatDateTime(drinkPlan.submitted_at)}</dd>
-                      </>
-                    )}
-                    {drinkPlan.serving_type && (
-                      <>
-                        <dt>Serving</dt>
-                        <dd>{drinkPlan.serving_type.replace(/_/g, ' ')}</dd>
-                      </>
-                    )}
-                  </dl>
-                  <div className="vstack" style={{ gap: 6, marginTop: 12 }}>
-                    <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }}
-                      onClick={() => navigate(`/drink-plans/${drinkPlan.id}`)}>
-                      <Icon name="external" size={11} />View details
-                    </button>
-                    <button type="button" className="btn btn-ghost btn-sm" style={{ justifyContent: 'center' }}
-                      onClick={copyDrinkPlanLink}>
-                      <Icon name="copy" size={11} />{drinkPlanCopied ? 'Copied!' : 'Copy client link'}
-                    </button>
-                    {(drinkPlan.status === 'submitted' || drinkPlan.status === 'reviewed') && (
-                      <ShoppingListButton planId={drinkPlan.id} planToken={drinkPlan.token} />
-                    )}
-                    {drinkPlan.status === 'submitted' && (
-                      <button type="button" className="btn btn-primary btn-sm" style={{ justifyContent: 'center' }}
-                        onClick={markDrinkPlanReviewed}>
-                        <Icon name="check" size={11} />Mark reviewed
-                      </button>
-                    )}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="muted tiny" style={{ marginBottom: 8 }}>No drink plan yet.</div>
-                  <button type="button" className="btn btn-primary btn-sm" onClick={generateDrinkPlan}>
-                    <Icon name="plus" size={11} />Generate plan link
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
+          <DrinkPlanCard
+            proposalId={proposal.id}
+            drinkPlan={drinkPlan}
+            setDrinkPlan={setDrinkPlan}
+            loading={drinkPlanLoading}
+          />
 
           {/* Event shortcut once booking is confirmed */}
           {['deposit_paid', 'balance_paid', 'confirmed', 'completed'].includes(proposal.status) && (

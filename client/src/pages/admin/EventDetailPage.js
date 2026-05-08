@@ -1,14 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import useDrawerParam from '../../hooks/useDrawerParam';
+import { getPackageItems } from '../../data/packages';
+import { SYRUPS } from '../../data/syrups';
+import PricingBreakdown from '../../components/PricingBreakdown';
+import DrinkPlanCard from '../../components/DrinkPlanCard';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
-import { fmt$, fmt$2dp, fmtDate, fmtDateFull, relDay } from '../../components/adminos/format';
+import { fmtDate, fmtDateFull, relDay } from '../../components/adminos/format';
 import { eventStatusChip, parsePositionsCount, approvedCount } from '../../components/adminos/shifts';
+import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 
 export default function EventDetailPage() {
   const { id } = useParams();
@@ -17,29 +22,43 @@ export default function EventDetailPage() {
   const drawer = useDrawerParam();
   const [proposal, setProposal] = useState(null);
   const [shifts, setShifts] = useState([]);
+  const [drinkPlan, setDrinkPlan] = useState(null);
+  const [drinkPlanLoading, setDrinkPlanLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    Promise.all([
+  // Hoisted so payment-panel mutations can refetch (onUpdate prop).
+  const loadEvent = useCallback(() => {
+    return Promise.all([
       api.get(`/proposals/${id}`).then(r => r.data),
       api.get(`/shifts/by-proposal/${id}`).then(r => Array.isArray(r.data) ? r.data : []).catch(() => []),
     ])
       .then(([pd, sd]) => {
-        if (cancelled) return;
         setProposal(pd);
         setShifts(sd);
       })
       .catch(e => {
-        if (cancelled) return;
         setErr(e?.message || 'Failed to load event');
         toast.error('Failed to load event.');
-      })
-      .finally(() => !cancelled && setLoading(false));
-    return () => { cancelled = true; };
+      });
   }, [id, toast]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    loadEvent().finally(() => !cancelled && setLoading(false));
+    return () => { cancelled = true; };
+  }, [loadEvent]);
+
+  useEffect(() => {
+    if (!id) return;
+    setDrinkPlan(null);
+    setDrinkPlanLoading(true);
+    api.get(`/drink-plans/by-proposal/${id}`)
+      .then(res => setDrinkPlan(res.data))
+      .catch(() => setDrinkPlan(null))
+      .finally(() => setDrinkPlanLoading(false));
+  }, [id]);
 
   if (loading) return <div className="page"><div className="muted">Loading event…</div></div>;
   if (err || !proposal) {
@@ -55,13 +74,23 @@ export default function EventDetailPage() {
     );
   }
 
-  const total = Number(proposal.total_price || 0);
-  const paid = Number(proposal.amount_paid || 0);
-  const bal = total - paid;
   const eventTypeLabel = getEventTypeLabel({
     event_type: proposal.event_type,
     event_type_custom: proposal.event_type_custom,
   });
+  const snapshot = proposal.pricing_snapshot;
+  const bartenders = snapshot?.staffing?.actual;
+  const durationHours = snapshot?.inputs?.durationHours;
+  const includes = (proposal.package_includes || []).map(item => {
+    let text = item;
+    if (durationHours != null) text = text.replace(/\{hours\}/g, durationHours);
+    if (bartenders != null) {
+      text = text.replace(/\{bartenders\}/g, bartenders);
+      text = text.replace(/\{bartenders_s\}/g, bartenders !== 1 ? 's' : '');
+    }
+    return text;
+  });
+  const packageStructured = getPackageItems(proposal.package_slug);
 
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
@@ -99,9 +128,6 @@ export default function EventDetailPage() {
             </div>
           </div>
           <div className="page-actions" style={{ flexShrink: 0 }}>
-            <button type="button" className="btn btn-ghost" onClick={() => navigate(`/proposals/${proposal.id}`)}>
-              <Icon name="external" size={12} />Open proposal
-            </button>
             {shifts.length === 1 && (
               <button type="button" className="btn btn-secondary" onClick={() => drawer.open('shift', shifts[0].id)}>
                 <Icon name="userplus" size={12} />Manage staffing
@@ -146,6 +172,51 @@ export default function EventDetailPage() {
               </dl>
             </div>
           </div>
+
+          {snapshot?.breakdown && (
+            <div className="card">
+              <div className="card-head">
+                <h3>{proposal.package_name || 'Pricing'}</h3>
+                {proposal.guest_count != null && proposal.event_duration_hours != null && (
+                  <span className="k">
+                    {proposal.guest_count} guests · {Number(proposal.event_duration_hours)}hr
+                  </span>
+                )}
+              </div>
+              <div className="card-body">
+                <PricingBreakdown snapshot={snapshot} />
+
+                {snapshot?.syrups?.selections?.length > 0 && (
+                  <div className="tiny muted" style={{ marginTop: 10 }}>
+                    <strong>Syrups: </strong>
+                    {snapshot.syrups.selections.map(idVal => SYRUPS.find(s => s.id === idVal)?.name || idVal).join(', ')}
+                  </div>
+                )}
+
+                {(packageStructured || includes.length > 0) && (
+                  <details style={{ marginTop: 12 }}>
+                    <summary className="meta-k" style={{ cursor: 'pointer' }}>Package details</summary>
+                    <div style={{ marginTop: 8, fontSize: 12.5 }}>
+                      {packageStructured ? (
+                        packageStructured.map((section, si) => (
+                          <div key={si} style={{ marginBottom: 8 }}>
+                            <div style={{ fontWeight: 600, marginBottom: 2 }}>{section.heading}</div>
+                            <ul style={{ margin: 0, paddingLeft: 18 }}>
+                              {section.items.map((item, i) => <li key={i}>{item}</li>)}
+                            </ul>
+                          </div>
+                        ))
+                      ) : (
+                        <ul style={{ margin: 0, paddingLeft: 18 }}>
+                          {includes.map((item, i) => <li key={i}>{item}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  </details>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="card" id="event-staffing-card">
             <div className="card-head">
@@ -234,31 +305,14 @@ export default function EventDetailPage() {
         </div>
 
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
-          <div className="card">
-            <div className="card-head"><h3>Financial</h3></div>
-            <div className="card-body">
-              <div className="stat" style={{ padding: 0 }}>
-                <div className="stat-label">Total</div>
-                <div className="stat-value">{fmt$(total)}</div>
-              </div>
-              <div style={{ height: 12 }} />
-              <dl className="dl">
-                <dt>Paid</dt><dd className="num">{fmt$2dp(paid)}</dd>
-                <dt>Balance</dt>
-                <dd className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
-                  {fmt$2dp(bal)}
-                </dd>
-                <dt>Status</dt>
-                <dd>{eventStatusChip(proposal)}</dd>
-              </dl>
-              <div className="hstack" style={{ marginTop: 12, gap: 6 }}>
-                <button type="button" className="btn btn-secondary" style={{ flex: 1 }}
-                  onClick={() => navigate(`/proposals/${proposal.id}`)}>
-                  <Icon name="external" size={11} />Edit proposal
-                </button>
-              </div>
-            </div>
-          </div>
+          <ProposalDetailPaymentPanel proposal={proposal} onUpdate={loadEvent} />
+
+          <DrinkPlanCard
+            proposalId={proposal.id}
+            drinkPlan={drinkPlan}
+            setDrinkPlan={setDrinkPlan}
+            loading={drinkPlanLoading}
+          />
 
           {(proposal.client_email || proposal.client_phone) && (
             <div className="card">
