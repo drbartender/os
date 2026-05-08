@@ -37,7 +37,7 @@ function migrateLegacyMethod(raw) {
     case 'direct deposit':
     case 'ach': return 'direct_deposit';
     case 'zelle': return ''; // No longer offered — force re-pick
-    default: return 'other';
+    default: return '';
   }
 }
 
@@ -65,6 +65,7 @@ export default function PaydayProtocols() {
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [loadError, setLoadError] = useState('');
+  const [legacyNotice, setLegacyNotice] = useState('');
   const [w9File, setW9File] = useState(null);
   const [existingW9, setExistingW9] = useState('');
   const [w9Mode, setW9Mode] = useState('fill'); // 'fill' | 'upload'
@@ -91,7 +92,8 @@ export default function PaydayProtocols() {
     ]).then(([payRes, profRes]) => {
       const pay = payRes.data || {};
       const prof = profRes.data || {};
-      const method = migrateLegacyMethod(pay.preferred_payment_method);
+      const rawMethod = String(pay.preferred_payment_method || '').trim();
+      const method = migrateLegacyMethod(rawMethod);
       const username = pay.payment_username || '';
 
       setForm(f => ({
@@ -99,13 +101,18 @@ export default function PaydayProtocols() {
         preferred_name: prof.preferred_name || '',
         // Prefer the explicit columns; fall back to the legacy single-field
         // payment_username when the matching method was selected before.
-        venmo_handle: pay.venmo_handle || (method === 'venmo' ? username : ''),
-        cashapp_handle: pay.cashapp_handle || (method === 'cashapp' ? username : ''),
+        // Pass through strip helpers so legacy URL-shaped values render as bare handles.
+        venmo_handle: stripVenmo(pay.venmo_handle || (method === 'venmo' ? username : '')),
+        cashapp_handle: stripCashapp(pay.cashapp_handle || (method === 'cashapp' ? username : '')),
         paypal_url: pay.paypal_url || (method === 'paypal' ? username : ''),
         preferred_payment_method: method,
         routing_number: pay.routing_number || '',
         account_number: pay.account_number || '',
       }));
+
+      if (rawMethod.toLowerCase() === 'zelle') {
+        setLegacyNotice('Zelle is no longer offered. Please pick a new payroll method below.');
+      }
 
       const existing = pay.w9_filename || '';
       setExistingW9(existing);
@@ -272,6 +279,7 @@ export default function PaydayProtocols() {
         </p>
 
         {loadError && <div className="alert alert-info">{loadError}</div>}
+        {legacyNotice && <div className="alert alert-info">{legacyNotice}</div>}
 
         <form onSubmit={submit}>
           {/* ── Tip & Payroll Preferences ── */}
@@ -326,7 +334,7 @@ export default function PaydayProtocols() {
             <div className={`form-group${fieldClass('paypal_url')}`}>
               <label htmlFor="pp-paypal_url" className="form-label">PayPal URL</label>
               <input
-                id="pp-paypal_url" name="paypal_url" type="url"
+                id="pp-paypal_url" name="paypal_url" type="text"
                 className={`form-input${inputClass('paypal_url')}`}
                 value={form.paypal_url} onChange={handle}
                 placeholder="paypal.me/yourname"
