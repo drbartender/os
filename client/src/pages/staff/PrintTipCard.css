@@ -1,0 +1,149 @@
+/* PrintTipCard — bartender prints their QR card at a photo counter */
+
+/* Hide controls when printing */
+@media print {
+  [data-no-print] { display: none !important; }
+}
+
+/* Default screen — frame the print stage */
+.print-tip-card-root {
+  background: #444;
+  min-height: 100vh;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+
+.print-controls {
+  background: #fff;
+  padding: 24px;
+  border-radius: 8px;
+  max-width: 520px;
+  color: #1c1610;
+}
+
+.print-controls h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+.print-controls .helper {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: #5a5048;
+}
+
+.print-controls .size-picker {
+  margin-bottom: 16px;
+}
+
+.print-controls .size-picker label {
+  display: block;
+  padding: 8px 12px;
+  margin: 4px 0;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.print-controls .size-picker label.selected {
+  border-color: #000;
+  background: #f0f0f0;
+}
+
+.print-controls .size-picker input {
+  margin-right: 8px;
+}
+
+.print-controls .btn-primary {
+  background: #1D8C89;
+  color: #F0E8D6;
+  border: 0;
+  padding: 12px 22px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+}
+
+.print-controls .btn-primary:hover {
+  background: #134544;
+}
+
+/* ── Print stage ─────────────────────────────────────────────────
+   The layout components are sized in pixels at 150 DPI:
+     business card  525 × 300  → 3.5 × 2 in
+     4 × 6          600 × 900  → 4 × 6 in
+     5 × 7          750 × 1050 → 5 × 7 in
+   CSS pixels are at 96 DPI, so we scale the inner sheet by 96/150 = 0.64
+   to land on the actual print dimensions. */
+
+.print-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+
+.print-stage.size-bizcard { width: 3.5in; }
+.print-stage.size-4x6     { width: 4in; }
+.print-stage.size-5x7     { width: 5in; }
+
+/* The "sheet" is the immediate child rendered by the layout component
+   (a PrintSheet div) OR a .page-break wrapper for the back side.
+   Each one needs to clip + scale its 150-DPI inner content to the
+   actual print dimensions. */
+.print-stage > .sheet,
+.print-stage > .page-break {
+  background: #fff;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  position: relative;
+  overflow: hidden;
+}
+
+.print-stage > .sheet > div,
+.print-stage > .page-break > div {
+  transform: scale(0.64);
+  transform-origin: top left;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.print-stage.size-bizcard > .sheet,
+.print-stage.size-bizcard > .page-break { width: 3.5in; height: 2in; }
+.print-stage.size-4x6 > .sheet,
+.print-stage.size-4x6 > .page-break     { width: 4in;   height: 6in; }
+.print-stage.size-5x7 > .sheet,
+.print-stage.size-5x7 > .page-break     { width: 5in;   height: 7in; }
+
+/* ── Print rules ─────────────────────────────────────────────── */
+@media print {
+  html, body {
+    background: #fff;
+    margin: 0;
+    padding: 0;
+  }
+  .print-tip-card-root {
+    background: #fff;
+    padding: 0;
+    min-height: 0;
+    gap: 0;
+    display: block;
+  }
+  .print-stage {
+    box-shadow: none;
+    background: #fff;
+    margin: 0;
+    padding: 0;
+  }
+  .print-stage .page-break {
+    page-break-before: always;
+    margin-top: 0;
+  }
+  @page { margin: 0; }
+}
