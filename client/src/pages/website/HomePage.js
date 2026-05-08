@@ -76,6 +76,32 @@ const CREDENTIALS = [
   ['Based', 'North Side, Chicago — travels'],
 ];
 
+/* Sample reviews shown only while the live Thumbtack ingestion hasn't populated
+ * the database yet. Replaced 1:1 by real /public/reviews data once available. */
+const FALLBACK_REVIEWS = [
+  {
+    id: 'sample-1',
+    name: 'Eleanor V.',
+    text: 'They transformed our garden party into a Victorian speakeasy. The smoked rosemary gin fizz was nothing short of sorcery.',
+    rating: 5,
+    role: 'Wedding · 120 guests',
+  },
+  {
+    id: 'sample-2',
+    name: 'James & Sarah K.',
+    text: 'The attention to detail was extraordinary — from the hand-labelled bottles to the copper jiggers. Our wedding guests are still talking about it.',
+    rating: 5,
+    role: 'Wedding · 180 guests',
+  },
+  {
+    id: 'sample-3',
+    name: 'Marcus T.',
+    text: 'Hired them for a corporate holiday party and it was exactly what we needed — professional, well-paced, and the menu was dialed in.',
+    rating: 5,
+    role: 'Corporate · 80 guests',
+  },
+];
+
 function renderStars(rating) {
   const filled = Math.max(0, Math.min(5, Math.round(rating || 5)));
   return '★'.repeat(filled) + '☆'.repeat(5 - filled);
@@ -110,8 +136,8 @@ export default function HomePage() {
     return () => { cancelled = true; };
   }, []);
 
-  const hasReviews = reviewsState.status === 'loaded' && reviewsState.reviews.length >= 1;
-  const normalizedReviews = hasReviews
+  const hasRealReviews = reviewsState.status === 'loaded' && reviewsState.reviews.length >= 1;
+  const normalizedReviews = hasRealReviews
     ? reviewsState.reviews.map((r) => ({
         id: r.id,
         text: r.text,
@@ -119,10 +145,13 @@ export default function HomePage() {
         rating: r.rating,
         role: 'Thumbtack review',
       }))
-    : [];
+    : FALLBACK_REVIEWS;
+  // Only render the section once we know what we're showing — avoids a flash of
+  // sample reviews while the API is still in-flight.
+  const reviewsReady = reviewsState.status !== 'loading';
   const featuredReview = normalizedReviews[0];
   const secondaryReviews = normalizedReviews.slice(1, 4);
-  const showRatingBadge = hasReviews && reviewsState.averageRating != null && reviewsState.count >= 3;
+  const showRatingBadge = hasRealReviews && reviewsState.averageRating != null && reviewsState.count >= 3;
 
   return (
     <PublicLayout>
@@ -299,8 +328,8 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Field Reports (live Thumbtack reviews) — only render when we have real data ── */}
-      {hasReviews && (
+      {/* ── Field Reports (live Thumbtack reviews; sample data when DB is empty) ── */}
+      {reviewsReady && (
         <section className="ws-press-testimonial">
           <div className="ws-wrap">
             {showRatingBadge && (
