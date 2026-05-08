@@ -191,7 +191,7 @@ export default function ProposalView() {
         <div style={styles.container}>
           <div style={{ textAlign: 'center', padding: '4rem' }}>
             <h2 style={styles.heading}>Oops!</h2>
-            <p style={{ color: '#6b4226', marginTop: '0.5rem' }}>{error}</p>
+            <p style={{ color: 'var(--brass)', marginTop: '0.5rem' }}>{error}</p>
           </div>
         </div>
       </div>
@@ -273,109 +273,130 @@ export default function ProposalView() {
     ? `Pay ${fmt(totalPrice)}`
     : `Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`;
 
+  const isFullyPaid = proposal.status === 'balance_paid' ||
+    Number(proposal.amount_paid || 0) >= Number(proposal.total_price || 0) - 0.01;
+
   return (
     <div style={styles.page}>
-      <div style={styles.container}>
-        <ProposalHeader proposal={proposal} bartenders={bartenders} />
-
-        <ProposalPricingBreakdown
-          proposal={proposal}
-          includes={includes}
-          lineItems={lineItems}
-          snapshot={snapshot}
-          balanceAmount={balanceAmount}
-          balanceDueDate={balanceDueDate}
-          showSignAndPay={showSignAndPay}
-          showPayOnly={showPayOnly}
-        />
-
-        {showSignAndPay && (
-          <SignAndPaySection
-            mode="signAndPay"
-            sigName={sigName}
-            setSigName={setSigName}
-            sigData={sigData}
-            setSigData={setSigData}
-            setSigMethod={setSigMethod}
-            paymentOption={paymentOption}
-            setPaymentOption={setPaymentOption}
-            autopayChecked={autopayChecked}
-            setAutopayChecked={setAutopayChecked}
-            totalPrice={totalPrice}
-            balanceAmount={balanceAmount}
-            balanceDueDate={balanceDueDate}
-            loadingIntent={loadingIntent}
-            formError={formError}
-            fieldErrors={fieldErrors}
-            activeSecret={activeSecret}
-            stripePromise={stripePromise}
-            payLabel={payLabel}
-            payOnlyLabel={payOnlyLabel}
-            handleSign={handleSign}
-          />
-        )}
-
-        {showPayOnly && (
-          <SignAndPaySection
-            mode="payOnly"
-            paymentOption={paymentOption}
-            setPaymentOption={setPaymentOption}
-            autopayChecked={autopayChecked}
-            setAutopayChecked={setAutopayChecked}
-            totalPrice={totalPrice}
-            balanceAmount={balanceAmount}
-            balanceDueDate={balanceDueDate}
-            loadingIntent={loadingIntent}
-            formError={formError}
-            fieldErrors={fieldErrors}
-            activeSecret={activeSecret}
-            stripePromise={stripePromise}
-            payOnlyLabel={payOnlyLabel}
-          />
-        )}
-
-        {/* ── Payment Confirmed ── */}
-        {isPaid && (
-          <div style={styles.paidBanner}>
-            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>&#127881;</div>
-            {(proposal.status === 'balance_paid' || Number(proposal.amount_paid || 0) >= Number(proposal.total_price || 0) - 0.01) ? (
-              <>
-                <h3 style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#2d6a4f', margin: '0 0 0.5rem' }}>
-                  Fully Paid!
-                </h3>
-                <p style={{ color: '#40916c', margin: 0, fontSize: '0.95rem' }}>
-                  Your booking is confirmed. We'll be in touch with event details closer to the date.
-                </p>
-              </>
-            ) : proposal.autopay_enrolled ? (
-              <>
-                <h3 style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#2d6a4f', margin: '0 0 0.5rem' }}>
-                  Deposit Received!
-                </h3>
-                <p style={{ color: '#40916c', margin: 0, fontSize: '0.95rem' }}>
-                  Your remaining balance of {fmt(balanceAmount)} will be automatically charged on {formatDateShort(balanceDueDate)}.
-                  We'll be in touch with event details closer to the date.
-                </p>
-              </>
-            ) : (
-              <>
-                <h3 style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#2d6a4f', margin: '0 0 0.5rem' }}>
-                  Deposit Received!
-                </h3>
-                <p style={{ color: '#40916c', margin: 0, fontSize: '0.95rem' }}>
-                  Your remaining balance of {fmt(balanceAmount)} is due by {formatDateShort(balanceDueDate)}.
-                  We'll be in touch with event details closer to the date.
-                </p>
-              </>
-            )}
+      <div className="proposal-view-container" style={styles.container}>
+        {/* ── Hero — wax-seal medallion + brass kicker + display headline ── */}
+        <div className="proposal-hero">
+          <div className="wax-seal lg" aria-hidden="true">
+            <span className="wax-seal-rx">Rx</span>
           </div>
-        )}
+          <span className="kicker no-rule proposal-hero-kicker">
+            The Prescription{proposal.client_name ? ` · For ${proposal.client_name}` : ''}
+          </span>
+          <h1 className="proposal-hero-title">
+            Your event bar, <em>engineered</em>.
+          </h1>
+          <p className="proposal-hero-sub">
+            A reading of the night, costed out and held for your signature.
+          </p>
+        </div>
+
+        {/* ── Two-column on desktop: scroll left, sign-and-pay sticky right ── */}
+        <div className="proposal-layout">
+          <div className="card on-paper proposal-scroll">
+            <ProposalHeader proposal={proposal} bartenders={bartenders} />
+
+            <ProposalPricingBreakdown
+              proposal={proposal}
+              includes={includes}
+              lineItems={lineItems}
+              snapshot={snapshot}
+              balanceAmount={balanceAmount}
+              balanceDueDate={balanceDueDate}
+              showSignAndPay={showSignAndPay}
+              showPayOnly={showPayOnly}
+            />
+          </div>
+
+          <aside className="proposal-pay-rail">
+            {showSignAndPay && (
+              <SignAndPaySection
+                mode="signAndPay"
+                sigName={sigName}
+                setSigName={setSigName}
+                sigData={sigData}
+                setSigData={setSigData}
+                setSigMethod={setSigMethod}
+                paymentOption={paymentOption}
+                setPaymentOption={setPaymentOption}
+                autopayChecked={autopayChecked}
+                setAutopayChecked={setAutopayChecked}
+                totalPrice={totalPrice}
+                balanceAmount={balanceAmount}
+                balanceDueDate={balanceDueDate}
+                loadingIntent={loadingIntent}
+                formError={formError}
+                fieldErrors={fieldErrors}
+                activeSecret={activeSecret}
+                stripePromise={stripePromise}
+                payLabel={payLabel}
+                payOnlyLabel={payOnlyLabel}
+                handleSign={handleSign}
+              />
+            )}
+
+            {showPayOnly && (
+              <SignAndPaySection
+                mode="payOnly"
+                paymentOption={paymentOption}
+                setPaymentOption={setPaymentOption}
+                autopayChecked={autopayChecked}
+                setAutopayChecked={setAutopayChecked}
+                totalPrice={totalPrice}
+                balanceAmount={balanceAmount}
+                balanceDueDate={balanceDueDate}
+                loadingIntent={loadingIntent}
+                formError={formError}
+                fieldErrors={fieldErrors}
+                activeSecret={activeSecret}
+                stripePromise={stripePromise}
+                payOnlyLabel={payOnlyLabel}
+              />
+            )}
+
+            {/* ── Paid state success card (replaces sign-and-pay) ── */}
+            {isPaid && (
+              <div className="proposal-paid-card">
+                <div className="proposal-paid-check" aria-hidden="true">✓</div>
+                {isFullyPaid ? (
+                  <>
+                    <h3 className="proposal-paid-title">Fully paid.</h3>
+                    <p className="proposal-paid-sub">
+                      Your booking is confirmed. We'll be in touch with event details closer to the date.
+                    </p>
+                  </>
+                ) : proposal.autopay_enrolled ? (
+                  <>
+                    <h3 className="proposal-paid-title">Deposit received.</h3>
+                    <p className="proposal-paid-sub">
+                      Your remaining balance of {fmt(balanceAmount)} will be automatically charged on {formatDateShort(balanceDueDate)}.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <h3 className="proposal-paid-title">Deposit received.</h3>
+                    <p className="proposal-paid-sub">
+                      Your remaining balance of {fmt(balanceAmount)} is due by {formatDateShort(balanceDueDate)}.
+                    </p>
+                  </>
+                )}
+                {proposal.drink_plan_token && (
+                  <a href={`/plan/${proposal.drink_plan_token}`} className="proposal-paid-link">
+                    Open the Potion Planner →
+                  </a>
+                )}
+              </div>
+            )}
+          </aside>
+        </div>
 
         {/* Footer */}
         <div style={styles.footer}>
-          <p style={{ fontSize: '0.85rem', color: '#8b7355' }}>
-            Questions? Contact us at contact@drbartender.com or {COMPANY_PHONE}
-          </p>
+          <span>contact@drbartender.com · {COMPANY_PHONE}</span>
         </div>
       </div>
     </div>

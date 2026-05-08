@@ -3,13 +3,54 @@ import { Elements } from '@stripe/react-stripe-js';
 import SignaturePad from '../../../components/SignaturePad';
 import FormBanner from '../../../components/FormBanner';
 import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
-import styles from './styles';
 import PaymentForm from './PaymentForm';
 
 // Renders BOTH the sign-and-pay flow (status: sent/viewed, not yet signed)
 // AND the pay-only flow (status: accepted, already signed but not paid).
-// Toggle via `mode` prop. Shared payment-options UI is preserved verbatim
-// from the pre-refactor inline JSX.
+// Toggle via `mode` prop. Apothecary Press treatment: dark workshop-bench card,
+// payment-tablet radios, parchment-framed Stripe surface.
+
+function PaymentTablet({
+  selected,
+  onSelect,
+  label,
+  amount,
+  desc,
+  showAutopay,
+  autopayChecked,
+  setAutopayChecked,
+  autopayLabel,
+  value,
+}) {
+  return (
+    <label className={`payment-tablet ${selected ? 'is-selected' : ''}`}>
+      <div className="payment-tablet-row">
+        <input
+          type="radio"
+          name="paymentOption"
+          value={value}
+          checked={selected}
+          onChange={onSelect}
+        />
+        <div className="payment-tablet-text">
+          <div className="payment-tablet-label">{label}</div>
+          <div className="payment-tablet-desc">{desc}</div>
+        </div>
+        <span className="payment-tablet-amount">{amount}</span>
+      </div>
+      {showAutopay && (
+        <label className="payment-tablet-autopay">
+          <input
+            type="checkbox"
+            checked={autopayChecked}
+            onChange={(e) => setAutopayChecked(e.target.checked)}
+          />
+          <span>{autopayLabel}</span>
+        </label>
+      )}
+    </label>
+  );
+}
 
 export default function SignAndPaySection({
   mode, // 'signAndPay' | 'payOnly'
@@ -39,98 +80,73 @@ export default function SignAndPaySection({
   // Callbacks
   handleSign,
 }) {
+  const depositSelected = paymentOption === 'deposit';
+  const fullSelected = paymentOption === 'full';
+  const autopayLabel = `Automatically pay remaining ${fmt(balanceAmount)} on ${formatDateShort(balanceDueDate)}`;
+
   if (mode === 'signAndPay') {
     return (
-      <div id="sign-pay-section" style={styles.signPaySection}>
-        <h2 style={styles.signPayTitle}>Sign &amp; Secure Your Date</h2>
-        <p style={{ color: '#6b4226', fontSize: '0.95rem', marginTop: 0, marginBottom: '1.5rem' }}>
-          Complete the form below to accept the terms above and reserve your event.
-        </p>
-
-        {/* Signature */}
+      <div id="sign-pay-section" className="sign-pay-card">
         <div>
-          <label style={styles.label}>Full Legal Name</label>
+          <span className="sign-pay-eyebrow">Step Two · Sign &amp; Secure</span>
+          <h2 className="sign-pay-title">Set your seal.</h2>
+        </div>
+
+        {/* Full Legal Name */}
+        <div>
+          <label className="sign-pay-eyebrow" htmlFor="sig-name">Full Legal Name</label>
           <input
+            id="sig-name"
             type="text"
+            className="sign-pay-input"
             value={sigName}
-            onChange={e => setSigName(e.target.value)}
+            onChange={(e) => setSigName(e.target.value)}
             placeholder="Your full name"
-            style={styles.nameInput}
           />
         </div>
 
-        <div style={{ marginTop: '1rem' }}>
-          <label style={styles.label}>Signature</label>
-          <SignaturePad value={sigData} onChange={(data, method) => { setSigData(data); setSigMethod(method); }} />
+        {/* Signature */}
+        <div>
+          <label className="sign-pay-eyebrow">Signature</label>
+          <div className="sign-pay-sig-wrap">
+            <SignaturePad
+              value={sigData}
+              onChange={(data, method) => { setSigData(data); setSigMethod(method); }}
+            />
+          </div>
+          <p className="sign-pay-sig-caption">x · sign above</p>
         </div>
 
         {/* Payment Options */}
-        <div style={{ marginTop: '1.75rem' }}>
-          <label style={styles.label}>Payment Option</label>
+        <div>
+          <label className="sign-pay-eyebrow">How would you like to pay?</label>
 
-          {/* Option 1: Deposit */}
-          <label style={{
-            ...styles.radioCard,
-            border: paymentOption === 'deposit' ? '2px solid #3a2218' : '1px solid #d4c4b0',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input
-                type="radio"
-                name="paymentOption"
-                value="deposit"
-                checked={paymentOption === 'deposit'}
-                onChange={() => setPaymentOption('deposit')}
-                style={{ accentColor: '#3a2218' }}
-              />
-              <div>
-                <div style={styles.radioLabel}>Pay {fmt(DEPOSIT_DOLLARS)} Deposit</div>
-                <div style={styles.radioDesc}>Remaining balance of {fmt(balanceAmount)} due before your event</div>
-              </div>
-            </div>
-
-            {/* Autopay checkbox (nested under deposit) */}
-            {paymentOption === 'deposit' && balanceAmount > 0 && (
-              <label style={styles.autopayRow}>
-                <input
-                  type="checkbox"
-                  checked={autopayChecked}
-                  onChange={e => setAutopayChecked(e.target.checked)}
-                  style={{ accentColor: '#3a2218', marginTop: '2px' }}
-                />
-                <span style={styles.autopayText}>
-                  Automatically pay remaining {fmt(balanceAmount)} on {formatDateShort(balanceDueDate)}
-                </span>
-              </label>
-            )}
-          </label>
-
-          {/* Option 2: Pay in Full */}
-          <label style={{
-            ...styles.radioCard,
-            border: paymentOption === 'full' ? '2px solid #3a2218' : '1px solid #d4c4b0',
-            marginTop: '0.5rem',
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <input
-                type="radio"
-                name="paymentOption"
-                value="full"
-                checked={paymentOption === 'full'}
-                onChange={() => { setPaymentOption('full'); setAutopayChecked(false); }}
-                style={{ accentColor: '#3a2218' }}
-              />
-              <div>
-                <div style={styles.radioLabel}>Pay in Full — {fmt(totalPrice)}</div>
-                <div style={styles.radioDesc}>No remaining balance</div>
-              </div>
-            </div>
-          </label>
+          <PaymentTablet
+            selected={depositSelected}
+            onSelect={() => setPaymentOption('deposit')}
+            value="deposit"
+            label={`Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`}
+            amount={fmt(DEPOSIT_DOLLARS)}
+            desc={`Remaining ${fmt(balanceAmount)} due before your event`}
+            showAutopay={depositSelected && balanceAmount > 0}
+            autopayChecked={autopayChecked}
+            setAutopayChecked={setAutopayChecked}
+            autopayLabel={autopayLabel}
+          />
+          <PaymentTablet
+            selected={fullSelected}
+            onSelect={() => { setPaymentOption('full'); setAutopayChecked(false); }}
+            value="full"
+            label="Pay in Full"
+            amount={fmt(totalPrice)}
+            desc="No remaining balance"
+          />
         </div>
 
         {/* Stripe Payment Element */}
-        <div style={{ marginTop: '1.5rem' }}>
+        <div>
           {loadingIntent && (
-            <div style={{ textAlign: 'center', padding: '2rem' }}>
+            <div style={{ textAlign: 'center', padding: '2rem' }} role="status" aria-live="polite">
               <div className="spinner" />
             </div>
           )}
@@ -138,133 +154,110 @@ export default function SignAndPaySection({
           <FormBanner error={formError} fieldErrors={fieldErrors} />
 
           {activeSecret && stripePromise && !loadingIntent && (
-            <Elements
-              key={activeSecret}
-              stripe={stripePromise}
-              options={{ clientSecret: activeSecret, appearance: { theme: 'stripe' } }}
-            >
-              <PaymentForm
-                onSubmit={handleSign}
-                payLabel={payLabel}
-                disabled={!sigName.trim() || !sigData}
-              />
-            </Elements>
+            <div className="sign-pay-stripe-wrap">
+              <Elements
+                key={activeSecret}
+                stripe={stripePromise}
+                options={{ clientSecret: activeSecret, appearance: { theme: 'stripe' } }}
+              >
+                <PaymentForm
+                  onSubmit={handleSign}
+                  payLabel={payLabel}
+                  disabled={!sigName.trim() || !sigData}
+                />
+              </Elements>
+            </div>
           )}
 
           {activeSecret && !stripePromise && !loadingIntent && (
-            <div style={{ textAlign: 'center', padding: '1rem' }}>
+            <div style={{ textAlign: 'center', padding: '1rem' }} role="status" aria-live="polite">
               <div className="spinner" />
             </div>
           )}
 
           {!activeSecret && !loadingIntent && !formError && (
-            <p style={{ color: '#c0392b', fontSize: '0.875rem' }}>
+            <p style={{ color: 'var(--rust)', fontSize: '0.875rem' }}>
               Unable to load payment form. Please refresh the page or contact us at contact@drbartender.com.
             </p>
           )}
         </div>
+
+        <p className="sign-pay-footnote">Secured by Stripe · Your card is charged once you sign.</p>
       </div>
     );
   }
 
   // mode === 'payOnly' — backward-compat: already signed under old flow, not yet paid
   return (
-    <div id="sign-pay-section" style={styles.signPaySection}>
-      <h2 style={styles.signPayTitle}>Complete Your Payment</h2>
-      <p style={{ color: '#6b4226', marginBottom: '0.5rem', fontSize: '0.95rem' }}>
-        Your proposal has been accepted! Choose a payment option below to secure your booking.
-      </p>
-
-      {/* Payment Options */}
-      <div style={{ marginTop: '1rem', marginBottom: '1.5rem' }}>
-        <label style={{
-          ...styles.radioCard,
-          border: paymentOption === 'deposit' ? '2px solid #3a2218' : '1px solid #d4c4b0',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <input
-              type="radio"
-              name="paymentOption"
-              value="deposit"
-              checked={paymentOption === 'deposit'}
-              onChange={() => setPaymentOption('deposit')}
-              style={{ accentColor: '#3a2218' }}
-            />
-            <div>
-              <div style={styles.radioLabel}>Pay {fmt(DEPOSIT_DOLLARS)} Deposit</div>
-              <div style={styles.radioDesc}>Remaining balance of {fmt(balanceAmount)} due before your event</div>
-            </div>
-          </div>
-          {paymentOption === 'deposit' && balanceAmount > 0 && (
-            <label style={styles.autopayRow}>
-              <input
-                type="checkbox"
-                checked={autopayChecked}
-                onChange={e => setAutopayChecked(e.target.checked)}
-                style={{ accentColor: '#3a2218', marginTop: '2px' }}
-              />
-              <span style={styles.autopayText}>
-                Automatically pay remaining {fmt(balanceAmount)} on {formatDateShort(balanceDueDate)}
-              </span>
-            </label>
-          )}
-        </label>
-
-        <label style={{
-          ...styles.radioCard,
-          border: paymentOption === 'full' ? '2px solid #3a2218' : '1px solid #d4c4b0',
-          marginTop: '0.5rem',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <input
-              type="radio"
-              name="paymentOption"
-              value="full"
-              checked={paymentOption === 'full'}
-              onChange={() => { setPaymentOption('full'); setAutopayChecked(false); }}
-              style={{ accentColor: '#3a2218' }}
-            />
-            <div>
-              <div style={styles.radioLabel}>Pay in Full — {fmt(totalPrice)}</div>
-              <div style={styles.radioDesc}>No remaining balance</div>
-            </div>
-          </div>
-        </label>
+    <div id="sign-pay-section" className="sign-pay-card">
+      <div>
+        <span className="sign-pay-eyebrow">Final Step · Complete Payment</span>
+        <h2 className="sign-pay-title">Lock the date.</h2>
       </div>
 
-      {loadingIntent && (
-        <div style={{ textAlign: 'center', padding: '2rem' }}>
-          <div className="spinner" />
-        </div>
-      )}
+      <div>
+        <label className="sign-pay-eyebrow">How would you like to pay?</label>
+        <PaymentTablet
+          selected={depositSelected}
+          onSelect={() => setPaymentOption('deposit')}
+          value="deposit"
+          label={`Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`}
+          amount={fmt(DEPOSIT_DOLLARS)}
+          desc={`Remaining ${fmt(balanceAmount)} due before your event`}
+          showAutopay={depositSelected && balanceAmount > 0}
+          autopayChecked={autopayChecked}
+          setAutopayChecked={setAutopayChecked}
+          autopayLabel={autopayLabel}
+        />
+        <PaymentTablet
+          selected={fullSelected}
+          onSelect={() => { setPaymentOption('full'); setAutopayChecked(false); }}
+          value="full"
+          label="Pay in Full"
+          amount={fmt(totalPrice)}
+          desc="No remaining balance"
+        />
+      </div>
 
-      <FormBanner error={formError} fieldErrors={fieldErrors} />
+      <div>
+        {loadingIntent && (
+          <div style={{ textAlign: 'center', padding: '2rem' }} role="status" aria-live="polite">
+            <div className="spinner" />
+          </div>
+        )}
 
-      {activeSecret && stripePromise && !loadingIntent && (
-        <Elements
-          key={activeSecret}
-          stripe={stripePromise}
-          options={{ clientSecret: activeSecret, appearance: { theme: 'stripe' } }}
-        >
-          <PaymentForm
-            onSubmit={async () => {}} // Already signed, no-op
-            payLabel={payOnlyLabel}
-            disabled={false}
-          />
-        </Elements>
-      )}
+        <FormBanner error={formError} fieldErrors={fieldErrors} />
 
-      {activeSecret && !stripePromise && !loadingIntent && (
-        <div style={{ textAlign: 'center', padding: '1rem' }}>
-          <div className="spinner" />
-        </div>
-      )}
+        {activeSecret && stripePromise && !loadingIntent && (
+          <div className="sign-pay-stripe-wrap">
+            <Elements
+              key={activeSecret}
+              stripe={stripePromise}
+              options={{ clientSecret: activeSecret, appearance: { theme: 'stripe' } }}
+            >
+              <PaymentForm
+                onSubmit={async () => {}}
+                payLabel={payOnlyLabel}
+                disabled={false}
+              />
+            </Elements>
+          </div>
+        )}
 
-      {!activeSecret && !loadingIntent && !formError && (
-        <p style={{ color: '#c0392b', fontSize: '0.875rem' }}>
-          Unable to load payment form. Please refresh the page or contact us at contact@drbartender.com.
-        </p>
-      )}
+        {activeSecret && !stripePromise && !loadingIntent && (
+          <div style={{ textAlign: 'center', padding: '1rem' }} role="status" aria-live="polite">
+            <div className="spinner" />
+          </div>
+        )}
+
+        {!activeSecret && !loadingIntent && !formError && (
+          <p style={{ color: 'var(--rust)', fontSize: '0.875rem' }}>
+            Unable to load payment form. Please refresh the page or contact us at contact@drbartender.com.
+          </p>
+        )}
+      </div>
+
+      <p className="sign-pay-footnote">Secured by Stripe</p>
     </div>
   );
 }

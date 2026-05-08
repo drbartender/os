@@ -8742,6 +8742,319 @@ html[data-app="admin-os"] .location-suggest-item.active {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   PROPOSAL VIEW — Apothecary Press (money-flow handoff)
+   Sealed scroll on chalkboard, dark workshop-bench sign-and-pay card,
+   payment tablets, sticky desktop pay rail. Mobile-first.
+   ═══════════════════════════════════════════════════════════ */
+
+.proposal-view-container {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 clamp(8px, 3vw, 24px);
+}
+
+.proposal-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 24px 0 28px;
+  gap: 14px;
+}
+.proposal-hero-kicker { color: var(--brass) !important; }
+.proposal-hero-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(2rem, 8vw, 2.6rem);
+  line-height: 1.05;
+  letter-spacing: 0.005em;
+  color: var(--cream-text);
+  margin: 0;
+}
+.proposal-hero-title em { font-style: italic; color: var(--brass-bright); }
+.proposal-hero-sub {
+  max-width: 560px;
+  margin: 0;
+  font-size: 0.95rem;
+  color: rgba(240, 232, 214, 0.78);
+  line-height: 1.55;
+}
+
+.proposal-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+  align-items: start;
+}
+@media (min-width: 1024px) {
+  .proposal-layout {
+    grid-template-columns: 1fr 380px;
+    gap: 30px;
+  }
+  .proposal-pay-rail {
+    position: sticky;
+    top: 24px;
+    align-self: start;
+  }
+  .proposal-scroll-cta-button { display: none !important; }
+}
+
+.proposal-scroll {
+  padding: 0 !important;
+  margin-bottom: 0 !important;
+  overflow: hidden;
+}
+.proposal-scroll::before { content: none; }
+
+.proposal-terms-scroll {
+  position: relative;
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+.proposal-terms-scroll.is-collapsed { max-height: 200px; }
+.proposal-terms-scroll.is-collapsed::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 70px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(237,230,214,0) 0%, rgba(237,230,214,0.55) 40%, var(--card-bg) 100%);
+}
+.proposal-terms-scroll.is-expanded { max-height: 6000px; }
+.proposal-terms-toggle {
+  display: inline-block;
+  background: none;
+  border: none;
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--brass);
+  cursor: pointer;
+  padding: 12px 0 0;
+  margin-top: 6px;
+}
+.proposal-terms-toggle:hover { color: var(--brass-bright); }
+
+.proposal-pay-rail { margin-top: 0; }
+.sign-pay-card {
+  background: #0e1218;
+  border: 1.5px solid rgba(184, 146, 74, 0.4);
+  border-radius: 10px;
+  padding: 24px 20px;
+  color: var(--cream-text);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+@media (min-width: 1024px) { .sign-pay-card { padding: 22px; } }
+.sign-pay-eyebrow {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--brass);
+  margin: 0 0 4px;
+}
+.sign-pay-title {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  color: var(--cream-text);
+  font-weight: 400;
+  letter-spacing: 0.015em;
+  margin: 0 0 14px;
+}
+.sign-pay-card .sign-pay-input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid rgba(28, 22, 16, 0.22);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--deep-brown);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  box-sizing: border-box;
+}
+.sign-pay-card .sign-pay-input:focus {
+  outline: none;
+  border: 2px solid var(--amber);
+  padding: 11px 13px;
+  box-shadow: 0 0 0 3px rgba(29, 140, 137, 0.18);
+}
+.sign-pay-sig-wrap {
+  background: var(--paper);
+  border: 1px solid rgba(28, 22, 16, 0.22);
+  border-radius: 6px;
+  padding: 8px;
+  position: relative;
+}
+.sign-pay-sig-caption {
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+  text-align: center;
+}
+
+.payment-tablet {
+  display: block;
+  border: 2px solid rgba(184, 146, 74, 0.45);
+  border-radius: 8px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s;
+  background: transparent;
+  color: var(--cream-text);
+}
+.payment-tablet + .payment-tablet { margin-top: 10px; }
+.payment-tablet.is-selected {
+  border-color: var(--amber);
+  background: var(--paper);
+  color: var(--deep-brown);
+}
+.payment-tablet-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.payment-tablet-row > input[type="radio"] {
+  margin-top: 4px;
+  accent-color: var(--amber);
+  flex-shrink: 0;
+}
+.payment-tablet-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.payment-tablet-label {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  letter-spacing: 0.015em;
+  font-weight: 400;
+}
+.payment-tablet.is-selected .payment-tablet-label,
+.payment-tablet.is-selected .payment-tablet-amount {
+  color: var(--deep-brown);
+}
+.payment-tablet-amount {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  align-self: flex-end;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.payment-tablet-desc {
+  font-size: 0.82rem;
+  color: rgba(240, 232, 214, 0.7);
+  line-height: 1.45;
+}
+.payment-tablet.is-selected .payment-tablet-desc {
+  color: var(--text-muted);
+}
+.payment-tablet-autopay {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(29, 140, 137, 0.6);
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--deep-brown);
+}
+.payment-tablet-autopay > input[type="checkbox"] {
+  margin-top: 3px;
+  accent-color: var(--amber);
+  flex-shrink: 0;
+}
+
+.sign-pay-stripe-wrap {
+  background: var(--paper);
+  border: 1px solid rgba(28, 22, 16, 0.22);
+  border-radius: 6px;
+  padding: 14px 14px 4px;
+}
+.sign-pay-footnote {
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--brass);
+  text-align: center;
+  margin: 4px 0 0;
+}
+
+.proposal-paid-card {
+  background: rgba(45, 107, 90, 0.15);
+  border: 1px solid rgba(45, 107, 90, 0.5);
+  border-radius: 10px;
+  padding: 28px 22px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--cream-text);
+}
+.proposal-paid-check {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--sage);
+  color: var(--cream-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  line-height: 1;
+}
+.proposal-paid-title {
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  font-weight: 400;
+  margin: 0;
+  color: var(--sage);
+  letter-spacing: 0.015em;
+}
+.proposal-paid-sub {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: rgba(240, 232, 214, 0.86);
+  max-width: 320px;
+}
+.proposal-paid-link {
+  display: inline-block;
+  margin-top: 6px;
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--brass);
+  text-decoration: none;
+  padding: 8px 0;
+}
+.proposal-paid-link:hover { color: var(--brass-bright); }
+
+@media (max-width: 640px) {
+  .proposal-hero { padding: 16px 0 22px; gap: 10px; }
+  .wax-seal.lg { width: 92px; height: 92px; }
+  .wax-seal.lg .wax-seal-rx { font-size: 32px; }
+  .sign-pay-card { padding: 20px 16px; }
+  .sign-pay-title { font-size: 1.3rem; }
+  .payment-tablet { padding: 12px 14px; }
+  .payment-tablet-amount { font-size: 0.95rem; }
+}
+
+
+/* ═══════════════════════════════════════════════════════════
    PRINT VIEW — Letter, white background, Georgia, B&W ink
    Strips chalkboard chrome and actions rail; PAID stamp goes B&W too.
    ═══════════════════════════════════════════════════════════ */

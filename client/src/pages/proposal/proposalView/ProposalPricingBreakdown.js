@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { getPackageBySlug } from '../../../data/packages';
 import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
 import styles from './styles';
@@ -13,6 +13,7 @@ export default function ProposalPricingBreakdown({
   showSignAndPay,
   showPayOnly,
 }) {
+  const [termsExpanded, setTermsExpanded] = useState(false);
   return (
     <>
       {/* Package */}
@@ -23,10 +24,10 @@ export default function ProposalPricingBreakdown({
           if (detail) {
             return (
               <>
-                <p style={{ color: '#6b4226', fontSize: '0.95rem', marginBottom: '1rem', fontStyle: 'italic' }}>{detail.description}</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', marginBottom: '1rem', fontStyle: 'italic' }}>{detail.description}</p>
                 {detail.sections.map((section, si) => (
                   <div key={si} style={{ marginBottom: '0.75rem' }}>
-                    <h3 style={{ fontSize: '0.85rem', fontWeight: 600, color: '#4a2c17', margin: '0 0 0.25rem 0', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{section.heading}</h3>
+                    <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '0.78rem', fontWeight: 400, color: 'var(--brass)', margin: '0 0 0.4rem 0', textTransform: 'uppercase', letterSpacing: '0.18em' }}>{section.heading}</h3>
                     <ul style={styles.includesList}>
                       {section.items.map((item, i) => (
                         <li key={i} style={styles.includesItem}>{item}</li>
@@ -34,7 +35,7 @@ export default function ProposalPricingBreakdown({
                     </ul>
                   </div>
                 ))}
-                <p style={{ color: '#6b4226', fontSize: '0.85rem', marginTop: '0.5rem', fontStyle: 'italic' }}>{detail.serviceIncludes}</p>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.5rem', fontStyle: 'italic' }}>{detail.serviceIncludes}</p>
               </>
             );
           }
@@ -54,22 +55,22 @@ export default function ProposalPricingBreakdown({
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <tbody>
             {lineItems.map((item, i) => (
-              <tr key={i} style={{ borderBottom: '1px solid #ede3d3' }}>
-                <td style={{ padding: '0.55rem 0', color: '#3a2218', fontSize: '0.95rem' }}>
+              <tr key={i} style={{ borderBottom: '1px dotted rgba(28,22,16,0.22)' }}>
+                <td style={{ padding: '0.6rem 0', color: 'var(--deep-brown)', fontSize: '0.95rem' }}>
                   {item.label}
                 </td>
-                <td style={{ padding: '0.55rem 0', textAlign: 'right', color: Number(item.amount) < 0 ? '#2d6a4f' : '#3a2218', fontSize: '0.95rem', fontWeight: 500, whiteSpace: 'nowrap' }}>
-                  {Number(item.amount) < 0 ? `-${fmt(Math.abs(item.amount))}` : fmt(item.amount)}
+                <td style={{ padding: '0.6rem 0', textAlign: 'right', color: Number(item.amount) < 0 ? 'var(--sage)' : 'var(--deep-brown)', fontSize: '0.95rem', fontWeight: 500, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+                  {Number(item.amount) < 0 ? `−${fmt(Math.abs(item.amount))}` : fmt(item.amount)}
                 </td>
               </tr>
             ))}
           </tbody>
           <tfoot>
-            <tr style={{ borderTop: '2px solid #3a2218' }}>
-              <td style={{ padding: '0.75rem 0', fontWeight: 700, fontSize: '1.1rem', color: '#3a2218', fontFamily: 'Georgia, "Times New Roman", serif' }}>
+            <tr style={{ borderTop: '2px solid var(--deep-brown)' }}>
+              <td style={{ padding: '0.85rem 0 0', fontWeight: 400, fontSize: '1.1rem', color: 'var(--deep-brown)', fontFamily: 'var(--font-display)', letterSpacing: '0.015em' }}>
                 Total
               </td>
-              <td style={{ padding: '0.75rem 0', textAlign: 'right', fontWeight: 700, fontSize: '1.1rem', color: '#3a2218', fontFamily: 'Georgia, "Times New Roman", serif' }}>
+              <td style={{ padding: '0.85rem 0 0', textAlign: 'right', fontWeight: 400, fontSize: '1.35rem', color: 'var(--deep-brown)', fontFamily: 'var(--font-display)', fontVariantNumeric: 'tabular-nums' }}>
                 {snapshot ? fmt(snapshot.total) : '—'}
               </td>
             </tr>
@@ -77,10 +78,10 @@ export default function ProposalPricingBreakdown({
         </table>
       </div>
 
-      {/* ── Terms & Conditions (always visible) ── */}
+      {/* ── Terms & Conditions (collapsed-with-fadeout by default) ── */}
       <div style={styles.section}>
-        <h2 style={styles.sectionTitle}>Standard Terms and Conditions</h2>
-        <div style={styles.contractScroll}>
+        <h2 style={styles.sectionTitle}>The agreement, abridged.</h2>
+        <div className={`proposal-terms-scroll ${termsExpanded ? 'is-expanded' : 'is-collapsed'}`}>
           <p style={styles.contractText}>
             This agreement is made between <strong>Dr. Bartender, LLC</strong> ("Dr. Bartender") and the Client. These terms govern the provision of bartending services and outline the responsibilities of both parties.
           </p>
@@ -146,6 +147,13 @@ export default function ProposalPricingBreakdown({
             By signing below, the Client agrees to all terms above and confirms that the event details in this proposal are accurate.
           </p>
         </div>
+        <button
+          type="button"
+          className="proposal-terms-toggle"
+          onClick={() => setTermsExpanded((v) => !v)}
+        >
+          {termsExpanded ? 'Hide details' : 'Read full agreement →'}
+        </button>
       </div>
 
       {/* ── Payment Summary (always visible) ── */}
@@ -168,28 +176,31 @@ export default function ProposalPricingBreakdown({
 
         {/* Potion Planner Link */}
         {proposal.drink_plan_token && (
-          <div style={{ background: 'linear-gradient(135deg, #f8f0e3, #f3e8d5)', border: '2px solid #c17d3c', borderRadius: '12px', padding: '1.5rem', textAlign: 'center', marginTop: '1.5rem' }}>
-            <h3 style={{ fontFamily: 'var(--font-display, Georgia, serif)', color: '#2C1F0E', margin: '0 0 0.5rem', fontSize: '1.25rem' }}>
+          <div style={{ background: 'linear-gradient(180deg, var(--paper), var(--card-bg))', border: '2px solid var(--brass)', borderRadius: '10px', padding: '1.5rem', textAlign: 'center', marginTop: '1.5rem' }}>
+            <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', margin: '0 0 0.5rem', fontSize: '1.25rem', fontWeight: 400, letterSpacing: '0.015em' }}>
               Start Planning Your Bar
             </h3>
-            <p style={{ color: '#6b4226', fontSize: '0.9rem', margin: '0 0 1rem', lineHeight: 1.5 }}>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', margin: '0 0 1rem', lineHeight: 1.5 }}>
               Explore cocktails, discover flavors, and tell us what kind of bar experience
               you're imagining. Nothing is final — just have fun with it.
             </p>
             <a
               href={`/plan/${proposal.drink_plan_token}`}
-              style={{ display: 'inline-block', background: '#c17d3c', color: '#fff', padding: '0.65rem 1.75rem', borderRadius: '8px', textDecoration: 'none', fontWeight: 600, fontSize: '1rem' }}
+              className="btn btn-primary"
+              style={{ display: 'inline-block' }}
             >
               Open the Potion Planner
             </a>
           </div>
         )}
 
-        {/* CTA button */}
+        {/* CTA button — mobile-only; desktop has the sticky pay rail */}
         {(showSignAndPay || showPayOnly) && (
           <button
+            type="button"
             onClick={() => document.getElementById('sign-pay-section')?.scrollIntoView({ behavior: 'smooth' })}
-            style={styles.ctaButton}
+            className="btn btn-primary proposal-scroll-cta-button"
+            style={{ ...styles.ctaButton, background: undefined, color: undefined, fontFamily: undefined, fontWeight: undefined, letterSpacing: undefined }}
           >
             {showSignAndPay ? 'Sign & Secure Your Date' : 'Complete Your Payment'}
           </button>
