@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../../utils/api';
+import { useToast } from '../../context/ToastContext';
 
 const PAY_METHODS = [
   ['venmo', 'Venmo'],
@@ -11,6 +12,7 @@ const PAY_METHODS = [
 ];
 
 export default function MyTipPage() {
+  const toast = useToast();
   const [data, setData] = useState(null);
   const [tips, setTips] = useState([]);
   const [edit, setEdit] = useState({});
@@ -18,17 +20,24 @@ export default function MyTipPage() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    api.get('/me/tip-page').then(r => {
-      setData(r.data);
-      setEdit({
-        preferred_name: r.data.preferred_name || '',
-        venmo_handle: r.data.venmo_handle || '',
-        cashapp_handle: r.data.cashapp_handle || '',
-        paypal_url: r.data.paypal_url || '',
-        preferred_payment_method: r.data.preferred_payment_method || '',
-      });
-    });
-    api.get('/me/tips').then(r => setTips(r.data.tips || []));
+    api.get('/me/tip-page')
+      .then(r => {
+        setData(r.data);
+        setEdit({
+          preferred_name: r.data.preferred_name || '',
+          venmo_handle: r.data.venmo_handle || '',
+          cashapp_handle: r.data.cashapp_handle || '',
+          paypal_url: r.data.paypal_url || '',
+          preferred_payment_method: r.data.preferred_payment_method || '',
+        });
+      })
+      .catch(() => toast.error("Couldn't load your tip page. Try refreshing."));
+    api.get('/me/tips')
+      .then(r => setTips(r.data.tips || []))
+      .catch(() => toast.error("Couldn't load your tip history. Try refreshing."));
+    // toast is stable from the context provider — exhaustive-deps would force a
+    // pointless dep, retriggering the load on hot-reload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function save(e) {
@@ -38,6 +47,9 @@ export default function MyTipPage() {
       await api.patch('/me/tip-page', edit);
       const r = await api.get('/me/tip-page');
       setData(r.data);
+      toast.success('Saved.');
+    } catch (err) {
+      toast.error(err?.message || "Couldn't save. Try again.");
     } finally {
       setSaving(false);
     }

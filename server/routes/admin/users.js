@@ -567,6 +567,11 @@ router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, async
     if (k in req.body) fields[k] = req.body[k];
   }
 
+  // Empty-string preferred_payment_method = "form left this blank" → no-op,
+  // not silent clear. Explicit null clears (consistent with /api/me/tip-page).
+  if ('preferred_payment_method' in fields && fields.preferred_payment_method === '') {
+    delete fields.preferred_payment_method;
+  }
   if ('preferred_payment_method' in fields && fields.preferred_payment_method
       && !ALLOWED_PAYMENT_METHODS.includes(fields.preferred_payment_method)) {
     throw new ValidationError('invalid preferred_payment_method');

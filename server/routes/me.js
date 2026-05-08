@@ -70,6 +70,12 @@ router.patch('/tip-page', asyncHandler(async (req, res) => {
     if (!t) throw new ValidationError('preferred_name cannot be blank');
     updates.preferred_name = t;
   }
+  // preferred_payment_method: '' from the form means "not picked" (radio inputs
+  // can't be unselected) — treat as no-op rather than silent clear of a
+  // previously-set value. To explicitly clear, send null.
+  if ('preferred_payment_method' in updates && updates.preferred_payment_method === '') {
+    delete updates.preferred_payment_method;
+  }
   if ('preferred_payment_method' in updates && updates.preferred_payment_method
       && !ALLOWED_PAYMENT_METHODS.includes(updates.preferred_payment_method)) {
     throw new ValidationError('invalid preferred_payment_method');

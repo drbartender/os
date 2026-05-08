@@ -162,12 +162,14 @@ router.post('/', auth, asyncHandler(async (req, res) => {
         );
       }
 
-      // Upsert tip handles onto payment_profiles (row already exists from above)
+      // Upsert tip handles onto payment_profiles (row already exists from above).
+      // COALESCE so a re-submit that leaves a previously-set handle blank can't
+      // silently null it — staff edit handles via /me/tip-page after onboarding.
       await client.query(`
         UPDATE payment_profiles
-        SET venmo_handle = $1,
-            cashapp_handle = $2,
-            paypal_url = $3,
+        SET venmo_handle = COALESCE($1, payment_profiles.venmo_handle),
+            cashapp_handle = COALESCE($2, payment_profiles.cashapp_handle),
+            paypal_url = COALESCE($3, payment_profiles.paypal_url),
             tip_page_active = COALESCE(payment_profiles.tip_page_active, TRUE),
             updated_at = NOW()
         WHERE user_id = $4

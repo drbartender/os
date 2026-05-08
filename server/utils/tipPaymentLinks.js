@@ -48,7 +48,12 @@ async function createTipPaymentLink({ userId, displayName, token }) {
     after_completion: {
       type: 'redirect',
       redirect: {
-        url: `${PUBLIC_SITE_URL}/tip/${token}/thanks?amount={CHECKOUT_SESSION_AMOUNT_TOTAL}`,
+        // Stripe Payment Links only support {CHECKOUT_SESSION_ID} as a substitution
+        // variable in `after_completion.redirect.url`. {CHECKOUT_SESSION_AMOUNT_TOTAL}
+        // is NOT a recognized placeholder and ships to the customer literally — so
+        // we don't put it here. The thanks page reads tip details from the DB by
+        // session_id once the webhook has landed.
+        url: `${PUBLIC_SITE_URL}/tip/${token}/thanks`,
       },
     },
   });

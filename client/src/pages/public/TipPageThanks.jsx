@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { Chevron, HeroDecor } from './TipPage.atoms';
 import './TipPage.css';
@@ -9,12 +9,7 @@ const INSTAGRAM_URL = 'https://instagram.com/drbartender';
 
 export default function TipPageThanks() {
   const { token } = useParams();
-  const [params] = useSearchParams();
   const [data, setData] = useState(null);
-
-  // amount in dollars, parsed from amount_total cents Stripe substituted at redirect
-  const amountCents = Number(params.get('amount'));
-  const amount = Number.isFinite(amountCents) ? Math.round(amountCents / 100) : null;
 
   useEffect(() => {
     api.get(`/public/tip/${token}`)
@@ -41,7 +36,6 @@ export default function TipPageThanks() {
         </div>
         <h2>Tip received</h2>
         <p>Thanks for taking care of {data.display_name} tonight.</p>
-        {amount && <div className="amount-pill">${amount}.00 · sent</div>}
       </div>
 
       <a className="cta-card" href={GOOGLE_REVIEW_URL} target="_blank" rel="noopener noreferrer"

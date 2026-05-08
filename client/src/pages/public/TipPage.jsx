@@ -44,7 +44,23 @@ export default function TipPage() {
       </main>
     );
   }
-  if (!data) return null;
+  if (!data) {
+    // Skeleton — keeps the hero band on screen so LCP doesn't flash white while
+    // /api/public/tip/:token is in flight. Customers on cellular at a venue see
+    // "Loading…" instead of suspecting the page is broken.
+    return (
+      <main className="tip-page" aria-busy="true">
+        <header className="hero">
+          <HeroDecor compressed />
+          <p className="hero-kicker">Dr. Bartender</p>
+          <h1>Loading…</h1>
+        </header>
+        <div className="headshot-mount">
+          <div className="headshot-frame" style={{ background: 'var(--paper-dark)' }} />
+        </div>
+      </main>
+    );
+  }
 
   const isFeedbackOpen = stars >= 1 && stars <= 3;
 
@@ -78,6 +94,7 @@ export default function TipPage() {
     data.stripe_payment_link_url && { kind: 'card', label: 'Credit Card', sub: 'Apple Pay, Google Pay' },
     data.paypal_url && { kind: 'paypal', label: 'PayPal', sub: data.paypal_url.replace(/^https?:\/\//, '') },
   ].filter(Boolean);
+  const noPayMethods = buttons.length === 0;
 
   return (
     <main className="tip-page">
@@ -118,20 +135,26 @@ export default function TipPage() {
         </div>
         <p className="amount-tagline">Pick an amount, then tap how you'd like to send it.</p>
 
-        <ul className="pay-list">
-          {buttons.map(btn => {
-            const href = buildTipDeepLink({
-              kind: btn.kind,
-              handles: data,
-              amount: amount === 'custom' ? null : amount,
-            });
-            return (
-              <li key={btn.kind}>
-                <PayButton kind={btn.kind} label={btn.label} sub={btn.sub} href={href || '#'} />
-              </li>
-            );
-          })}
-        </ul>
+        {noPayMethods ? (
+          <p className="amount-tagline" style={{ marginTop: 12 }}>
+            Tipping isn't set up for this bartender yet — try again later, or hand them a cash tip.
+          </p>
+        ) : (
+          <ul className="pay-list">
+            {buttons.map(btn => {
+              const href = buildTipDeepLink({
+                kind: btn.kind,
+                handles: data,
+                amount: amount === 'custom' ? null : amount,
+              });
+              return (
+                <li key={btn.kind}>
+                  <PayButton kind={btn.kind} label={btn.label} sub={btn.sub} href={href || '#'} />
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
 
       <section className="section" aria-labelledby="rate-heading">
