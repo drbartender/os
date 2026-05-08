@@ -32,6 +32,13 @@ async function createTipPaymentLink({ userId, displayName, token }) {
   // Step 2: create the Payment Link referencing that Price
   const link = await stripe.paymentLinks.create({
     line_items: [{ price: price.id, quantity: 1 }],
+    // Pin synchronous methods only. The tips webhook records on
+    // checkout.session.completed and assumes the funds are settled — async
+    // methods (ACH, Klarna, etc.) can complete the session before settlement
+    // and would create a tip row that isn't real money yet, with no rollback
+    // path on a downstream failure. Card covers the apothecary-tip-card use
+    // case (which silently includes Apple Pay + Google Pay via Stripe).
+    payment_method_types: ['card'],
     metadata: {
       kind: 'tip',
       bartender_user_id: String(userId),

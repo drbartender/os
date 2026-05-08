@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const rateLimit = require('express-rate-limit');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
@@ -8,6 +9,7 @@ const { NotFoundError, ValidationError } = require('../utils/errors');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { ADMIN_URL } = require('../utils/urls');
+const { getSignedUrl } = require('../utils/storage');
 
 const router = express.Router();
 
@@ -44,9 +46,34 @@ router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
   // to prevent enumeration of valid-but-deactivated tokens.
   if (!row || !row.tip_page_active) throw new NotFoundError('Tip page not found');
 
+  // Headshot is stored as `/files/<filename>` and the only file-serving route
+  // (/api/files/:filename) is auth + admin/manager-only. Anonymous tip-page
+  // visitors can't fetch that path, so generate a short-lived signed R2 URL
+  // here. 15 min is plenty for a tip-page session; the page is normally a
+  // tap-and-done flow within seconds of the QR scan.
+  let headshotUrl = null;
+  if (row.headshot_url) {
+    if (row.headshot_url.startsWith('/files/')) {
+      try {
+        headshotUrl = await getSignedUrl(path.basename(row.headshot_url));
+      } catch (err) {
+        // Fall through with null — TipPage shows a placeholder circle if missing.
+        Sentry.captureException(err, {
+          tags: { route: 'publicTip.GET', op: 'sign_headshot' },
+          extra: { tokenPrefix: token.slice(0, 8) },
+        });
+      }
+    } else {
+      // Already an absolute URL (e.g. a public R2 path or imported asset) —
+      // pass through unchanged. Currently no upload site does this, but the
+      // shape is permitted by the column.
+      headshotUrl = row.headshot_url;
+    }
+  }
+
   res.json({
     display_name: row.display_name || 'your bartender',
-    headshot_url: row.headshot_url || null,
+    headshot_url: headshotUrl,
     venmo_handle: row.venmo_handle || null,
     cashapp_handle: row.cashapp_handle || null,
     paypal_url: row.paypal_url || null,
@@ -106,7 +133,7 @@ router.post('/:token/feedback', publicLimiter, feedbackLimiter, asyncHandler(asy
       rating,
       comment,
       submitterEmail: email,
-      adminUrl: `${ADMIN_URL}/admin/tips#feedback`,
+      adminUrl: `${ADMIN_URL}/tips#feedback`,
     });
     await sendEmail({
       to: process.env.ADMIN_FEEDBACK_NOTIFICATION_EMAIL || 'contact@drbartender.com',

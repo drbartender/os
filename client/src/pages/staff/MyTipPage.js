@@ -153,12 +153,14 @@ export default function MyTipPage() {
       <section>
         <h2>My tips</h2>
         <p>
-          Tips received via your QR this month:
+          Card tips received via Stripe this month:
           {' '}<strong>${(data.tips_this_month_cents / 100).toFixed(2)}</strong>
         </p>
         <p style={{ fontSize: 14, color: '#888', fontStyle: 'italic' }}>
-          These tips will be pooled with co-workers from each event and paid out via your next
-          payroll. Final amount may differ from this total.
+          Only the Credit Card path goes through Stripe and shows up here — Venmo, Cash App, and
+          PayPal taps go directly to your account so they aren't counted in this total. Stripe tips
+          are pooled with co-workers from each event and paid out via your next payroll. Final
+          amount may differ from this total.
         </p>
 
         {tips.length === 0 ? (
