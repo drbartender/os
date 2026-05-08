@@ -173,6 +173,7 @@ dr-bartender/
 │   │   ├── sms.js              # Twilio SMS wrapper
 │   │   ├── storage.js          # Cloudflare R2 upload + signed URL helpers
 │   │   ├── stripeClient.js     # Central Stripe client factory (test-mode toggle, fail-closed)
+│   │   ├── tipHandleValidation.js # Validates + normalizes venmo/cashapp handles + paypal.me URLs before persist
 │   │   ├── tipPageLifecycle.js # Tip page activate/deactivate transitions on hire/onboarding/offboard
 │   │   ├── tipPaymentLinks.js  # Creates/regenerates Stripe Payment Links for bartender tip pages
 │   │   └── urls.js             # Canonical PUBLIC_SITE_URL / ADMIN_URL / STAFF_URL / API_URL resolvers
@@ -308,7 +309,7 @@ dr-bartender/
 ### Tip QR Pages
 - Each onboarded bartender gets a public token-gated tip page (`/tip/:token`) with their photo, name, and tip buttons
 - Tip buttons deep-link to Venmo and Cash App when the bartender has those handles set, plus a Stripe Payment Link fallback that flows to the bartender's Stripe Express account
-- Stripe Payment Links are auto-provisioned (and regenerated on demand) via `server/utils/tipPaymentLinks.js`; tip flow is recorded in the `tips` table on `payment_intent.succeeded`
+- Stripe Payment Links are auto-provisioned (and regenerated on demand) via `server/utils/tipPaymentLinks.js`; tip flow is recorded in the `tips` table on `checkout.session.completed` (branched by `metadata.kind = 'tip'`)
 - After tipping, guests land on a thank-you page that nudges a Google review and offers an optional bartender feedback form (`tip_page_feedback` table; admin reviews in TipsAdmin)
 - Bartenders manage their tip page from the staff portal (`MyTipPage`) and can print a QR card (`PrintTipCard`) for events
 - Admins audit tip pages, regenerate Stripe links, and review tip activity from `TipsAdmin` and the `TipPageTab` on the user detail page

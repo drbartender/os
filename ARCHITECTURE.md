@@ -491,15 +491,14 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 **payment_profiles** — Payment method preferences
 - `user_id` FK → users
 - `preferred_payment_method`, `payment_username`
-- `routing_number`, `account_number` (direct deposit)
+- `routing_number`, `account_number` (direct deposit, AES-256-GCM encrypted)
 - `w9_file_url`
 - Tip-page columns (added for the bartender QR tip flow):
-  - `tip_page_token` UUID UNIQUE — public token for `/tip/:token`
-  - `tip_page_display_name` — overrides the user's name on the public tip page
-  - `tip_page_photo_url` — R2-hosted bartender photo for the tip page
-  - `tip_page_venmo_handle`, `tip_page_cashapp_handle` — payment-app handles for deep links
-  - `tip_page_stripe_payment_link_id`, `tip_page_stripe_payment_link_url` — Stripe-provisioned payment-link fallback (managed by `server/utils/tipPaymentLinks.js`)
-  - `tip_page_is_active` BOOLEAN — toggled by `tipPageLifecycle.js` on hire / offboard / admin override
+  - `tip_page_token` UUID — public token for `/tip/:token`. Partial-unique index `WHERE tip_page_token IS NOT NULL`.
+  - `venmo_handle`, `cashapp_handle`, `paypal_url` — payment-app handles for deep links. Validated + normalized by `server/utils/tipHandleValidation.js` before persist (paypal_url canonicalized to `https://paypal.me/<username>`).
+  - `stripe_payment_link_url`, `stripe_payment_link_id` — Stripe Payment Link, provisioned + activated/deactivated by `server/utils/tipPaymentLinks.js`
+  - `tip_page_active` BOOLEAN — toggled by `server/utils/tipPageLifecycle.js` on hire / offboard / admin override
+- Public bartender display name + photo come from `contractor_profiles.preferred_name` and `contractor_profiles.headshot_file_url` — the tip page does NOT carry its own copies.
 
 ### Application & Hiring
 
@@ -670,23 +669,26 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 
 ### Bartender Tip Pages
 
-**tips** — Successful tip records (one row per `payment_intent.succeeded` from a tip-page Payment Link)
-- `id` SERIAL PK, `user_id` FK → users (bartender who received the tip; CASCADE)
-- `stripe_payment_intent_id` UNIQUE — idempotency key against the Stripe webhook
-- `amount_cents` INTEGER — amount actually captured (after Stripe fees, in cents)
-- `source`: `stripe` | `venmo` | `cashapp` (off-platform sources are reserved for future ingestion; current pipeline only writes `stripe`)
-- `tipper_name`, `tipper_email` — optional metadata captured by the Payment Link
-- `created_at` TIMESTAMPTZ
-- Powers staff-side `GET /api/me/tips` and admin-side `GET /api/admin/tips` listings
+**tips** — Successful tip records (one row per `checkout.session.completed` event tagged `metadata.kind = 'tip'`)
+- `id` SERIAL PK
+- `tip_page_token` UUID NOT NULL — denormalized so the row stays meaningful if the bartender's token is later rotated
+- `target_user_id` FK → users (bartender who received the tip; ON DELETE RESTRICT — financial records aren't auto-deleted)
+- `amount_cents` INTEGER NOT NULL CHECK (> 0) — Stripe `session.amount_total`
+- `stripe_payment_intent_id` TEXT UNIQUE NOT NULL — idempotency key against webhook retries
+- `stripe_session_id` TEXT — Stripe Checkout Session id (the `cs_…` value)
+- `customer_email` — captured by Stripe Checkout, may be null
+- `tipped_at` TIMESTAMPTZ — Stripe `session.created`
+- `created_at` TIMESTAMPTZ DEFAULT NOW()
+- Indexed on `(target_user_id, tipped_at DESC)` for staff-side `GET /api/me/tips` + admin-side `GET /api/admin/tips`
 
-**tip_page_feedback** — Optional bartender-feedback submissions from the tip thank-you page
-- `id` SERIAL PK, `user_id` FK → users (bartender being reviewed; CASCADE)
-- `tip_page_token` UUID — denormalized to preserve context if the bartender's token is rotated later
-- `rating` SMALLINT (1–5)
+**tip_page_feedback** — Bartender-feedback submissions from the tip thank-you page (only the negative-rating path; 4-5★ flows nudge customers to a Google review instead)
+- `id` SERIAL PK
+- `target_user_id` FK → users (bartender being reviewed; ON DELETE RESTRICT)
+- `rating` INTEGER NOT NULL CHECK (1-3) — only 1, 2, or 3 stars submit through this surface
 - `comment` TEXT
 - `submitter_email` — optional contact for follow-up
-- `reviewed_at` TIMESTAMPTZ, `reviewed_by` FK → users (admin who triaged the feedback; SET NULL)
-- `created_at` TIMESTAMPTZ
+- `reviewed_at` TIMESTAMPTZ, `reviewed_by` FK → users (admin who triaged; ON DELETE SET NULL — preserves history if an admin is removed)
+- `created_at` TIMESTAMPTZ DEFAULT NOW()
 - Submission emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL`; admin reviews via `GET /api/admin/tip-feedback`
 
 ### Shopping List Generator
@@ -845,9 +847,9 @@ model is `service_packages.covered_addon_slugs` and `cocktails.upgrade_addon_slu
 - **Autopay**: When enrolled, Stripe saves the payment method via `setup_future_usage: 'off_session'`. A Stripe Customer is created for the client. Balance is auto-charged on the due date (default: 14 days before event) by the hourly scheduler in `server/utils/balanceScheduler.js`.
 - **Off-session charges**: Admin can manually trigger via `POST /api/stripe/charge-balance/:id` or the scheduler runs hourly.
 - **Alternative**: Admin generates a reusable Payment Link via `POST /api/stripe/payment-link/:id`
-- **Webhook events**: `payment_intent.succeeded` (handles deposit, full, balance, and bartender-tip payment types via metadata), `checkout.session.completed`
+- **Webhook events**: `payment_intent.succeeded` (deposit, full, balance, drink-plan-extras), `checkout.session.completed` (deposit via Payment Link AND bartender tips, branched on `metadata.kind`)
 - **Deposit**: $100 (configurable via `STRIPE_DEPOSIT_AMOUNT` in cents)
-- **Tip Payment Links**: Each onboarded bartender has a reusable Stripe Payment Link provisioned by `server/utils/tipPaymentLinks.js`. The link's `metadata.tip_page_user_id` is read by the Stripe webhook to insert a row into `tips`. Admin can regenerate via `POST /api/admin/contractors/:userId/tip-page/regenerate-stripe`.
+- **Tip Payment Links**: Each onboarded bartender has a reusable Stripe Payment Link with `metadata.kind = 'tip'`, `metadata.bartender_user_id`, and `metadata.tip_page_token`, provisioned by `server/utils/tipPaymentLinks.js`. On `checkout.session.completed` the webhook cross-validates the metadata against `payment_profiles.tip_page_token` (DB is source of truth — if metadata's bartender_user_id disagrees, the DB user_id wins) and inserts a row into `tips`. Admin can regenerate via `POST /api/admin/contractors/:userId/tip-page/regenerate-stripe`.
 - **Important**: Stripe webhook route (`/api/stripe/webhook`) must receive raw body — registered before `express.json()` in `server/index.js`
 
 ### Resend (Email)
