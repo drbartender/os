@@ -21,7 +21,7 @@
 .tip-page::before {
   content: "";
   position: absolute; inset: 0;
-  background-image: url("/tip-page/parchment-bg.png");
+  background-image: url("../../assets/tip-page/parchment-bg.png");
   background-size: 600px;
   background-repeat: repeat;
   opacity: 0.35;
@@ -34,7 +34,7 @@
 /* ── Hero — compressed ─────────────────────────────────────── */
 .tip-page .hero {
   background: var(--chalkboard);
-  background-image: url("/tip-page/chalkboard-bg.png");
+  background-image: url("../../assets/tip-page/chalkboard-bg.png");
   background-size: 800px;
   background-blend-mode: multiply;
   color: var(--cream-text);
