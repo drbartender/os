@@ -264,6 +264,21 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
     client.release();
   }
 
+  // Tip-page lifecycle. Runs AFTER COMMIT — Stripe ops can't be rolled back,
+  // and the helpers are best-effort (no-op if no Stripe link / payment profile).
+  // Deactivate when flipping INTO an off-funnel state; reactivate when flipping
+  // BACK to an active state from a previously-deactivated/rejected one.
+  if (oldStatus !== status) {
+    if (status === 'rejected' || status === 'deactivated') {
+      await deactivateTipPage(req.params.id);
+    } else if (
+      (oldStatus === 'rejected' || oldStatus === 'deactivated') &&
+      ['hired', 'in_progress', 'submitted', 'reviewed', 'approved'].includes(status)
+    ) {
+      await activateTipPage(req.params.id);
+    }
+  }
+
   // Send status-change email after COMMIT so a send failure can't roll back the
   // primary status change. Internal-only states (in_progress, reviewed, approved)
   // skip email by design — no entry in pickStatusEmail returns null.

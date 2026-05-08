@@ -3,6 +3,7 @@ const { pool } = require('../../db');
 const { auth, adminOnly } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../../utils/errors');
+const { activateTipPage, deactivateTipPage } = require('../../utils/tipPageLifecycle');
 
 const router = express.Router();
 
@@ -443,6 +444,10 @@ router.post('/applications/:userId/reject', auth, adminOnly, asyncHandler(async 
   } catch (e) { await client.query('ROLLBACK'); throw e; }
   finally { client.release(); }
 
+  // Retire the tip page + Stripe Payment Link AFTER COMMIT — Stripe ops can't
+  // be rolled back, and the helper is best-effort (no-op if no link/profile).
+  await deactivateTipPage(userId);
+
   res.json({ ok: true });
 }));
 
@@ -469,6 +474,10 @@ router.post('/applications/:userId/restore', auth, adminOnly, asyncHandler(async
     await client.query('COMMIT');
   } catch (e) { await client.query('ROLLBACK'); throw e; }
   finally { client.release(); }
+
+  // Symmetric reactivation. Most restored applicants won't have a Stripe link
+  // (rejection typically happens pre-onboarding), but the helper safely no-ops.
+  await activateTipPage(userId);
 
   res.json({ ok: true });
 }));
