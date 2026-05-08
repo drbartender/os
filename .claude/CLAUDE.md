@@ -42,6 +42,8 @@ See `.env.example` for the full list. Key ones:
 | `STRIPE_SECRET_KEY_TEST` / `STRIPE_PUBLISHABLE_KEY_TEST` / `STRIPE_WEBHOOK_SECRET_TEST` | Stripe test-mode credentials |
 | `STRIPE_TEST_MODE_UNTIL` | ISO date; while in the future, all Stripe calls use `*_TEST` creds (auto-reverts to live after cutoff) |
 | `STRIPE_DEPOSIT_AMOUNT` | Deposit in cents (default 10000 = $100) |
+| `PUBLIC_GOOGLE_REVIEW_URL` / `REACT_APP_GOOGLE_REVIEW_URL` | Google review URL for the tip thank-you flow (set the same value on server + client) |
+| `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` | Inbox for bartender-feedback submissions from the tip thank-you page (default `contact@drbartender.com`) |
 | `THUMBTACK_WEBHOOK_SECRET` | Shared secret for Thumbtack webhook auth |
 | `REACT_APP_API_URL` | Client-side API base URL (set in client/.env.production) |
 | `SENTRY_DSN_SERVER` | Server-side Sentry DSN (optional in dev; required in prod) |

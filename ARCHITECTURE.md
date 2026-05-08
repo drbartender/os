@@ -389,6 +389,35 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 |---|---|---|---|
 | POST | `/` | No (rate-limited, 20/15min) | Receives tester submissions from `/testing-guide.html` (name, optional email, progress summary, bug count, exported report text) and emails `contact@drbartender.com` via Resend. Reply-to set to the tester's email when provided. |
 
+### Public Tip Pages — `/api/public/tip`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/:token` | No (token-gated) | Fetch active tip page by token — bartender display name, photo, tip rails (Venmo/CashApp deep links + Stripe Payment Link). Returns 404 for missing or deactivated pages. |
+| POST | `/:token/feedback` | No (token-gated, rate-limited) | Submit post-tip feedback from the thank-you page (rating + free-text). Inserts into `tip_page_feedback` and emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL`. |
+
+### Authenticated Self — `/api/me`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/tip-page` | Yes | Get the current bartender's tip-page record (token, display name, photo URL, payment rails, activation state). |
+| PATCH | `/tip-page` | Yes | Update bartender-editable fields on the tip page (display name override, Venmo/CashApp handles, opt-in flags). |
+| GET | `/tips` | Yes | Paginated list of recent successful tips for the current bartender (amount, source, created_at). |
+
+### Admin Tip Pages — `/api/admin/contractors/:userId/tip-page`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| PATCH | `/` | Admin | Override tip-page fields for a bartender (display name, photo, payment handles, status). |
+| POST | `/regenerate-stripe` | Admin | Force-regenerate the bartender's Stripe Payment Link (e.g., after a connect-account change). |
+| POST | `/generate-stripe` | Admin | Provision a Stripe Payment Link for a bartender that doesn't yet have one. |
+| POST | `/deactivate` | Admin | Deactivate the tip page (sets `is_active = false`, hides the public route). |
+| POST | `/activate` | Admin | Re-activate a previously deactivated tip page. |
+
+### Admin Tip Activity — `/api/admin`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/tips` | Admin | Paginated list of all successful tips across bartenders for the TipsAdmin overview (filter by bartender, date range). |
+| GET | `/tip-feedback` | Admin | List unreviewed tip-page feedback submissions for admin triage. |
+| POST | `/tip-feedback/:id/review` | Admin | Mark a feedback row as reviewed (records reviewer + timestamp). |
+
 ### Other
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -464,6 +493,13 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `preferred_payment_method`, `payment_username`
 - `routing_number`, `account_number` (direct deposit)
 - `w9_file_url`
+- Tip-page columns (added for the bartender QR tip flow):
+  - `tip_page_token` UUID UNIQUE — public token for `/tip/:token`
+  - `tip_page_display_name` — overrides the user's name on the public tip page
+  - `tip_page_photo_url` — R2-hosted bartender photo for the tip page
+  - `tip_page_venmo_handle`, `tip_page_cashapp_handle` — payment-app handles for deep links
+  - `tip_page_stripe_payment_link_id`, `tip_page_stripe_payment_link_url` — Stripe-provisioned payment-link fallback (managed by `server/utils/tipPaymentLinks.js`)
+  - `tip_page_is_active` BOOLEAN — toggled by `tipPageLifecycle.js` on hire / offboard / admin override
 
 ### Application & Hiring
 
@@ -632,6 +668,27 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `twilio_sid`, `status` — delivery tracking
 - `sent_by` FK → users (admin who sent)
 
+### Bartender Tip Pages
+
+**tips** — Successful tip records (one row per `payment_intent.succeeded` from a tip-page Payment Link)
+- `id` SERIAL PK, `user_id` FK → users (bartender who received the tip; CASCADE)
+- `stripe_payment_intent_id` UNIQUE — idempotency key against the Stripe webhook
+- `amount_cents` INTEGER — amount actually captured (after Stripe fees, in cents)
+- `source`: `stripe` | `venmo` | `cashapp` (off-platform sources are reserved for future ingestion; current pipeline only writes `stripe`)
+- `tipper_name`, `tipper_email` — optional metadata captured by the Payment Link
+- `created_at` TIMESTAMPTZ
+- Powers staff-side `GET /api/me/tips` and admin-side `GET /api/admin/tips` listings
+
+**tip_page_feedback** — Optional bartender-feedback submissions from the tip thank-you page
+- `id` SERIAL PK, `user_id` FK → users (bartender being reviewed; CASCADE)
+- `tip_page_token` UUID — denormalized to preserve context if the bartender's token is rotated later
+- `rating` SMALLINT (1–5)
+- `comment` TEXT
+- `submitter_email` — optional contact for follow-up
+- `reviewed_at` TIMESTAMPTZ, `reviewed_by` FK → users (admin who triaged the feedback; SET NULL)
+- `created_at` TIMESTAMPTZ
+- Submission emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL`; admin reviews via `GET /api/admin/tip-feedback`
+
 ### Shopping List Generator
 
 Located in `client/src/components/ShoppingList/` (frontend) and `server/utils/shoppingList.js` (backend mirror).
@@ -788,8 +845,9 @@ model is `service_packages.covered_addon_slugs` and `cocktails.upgrade_addon_slu
 - **Autopay**: When enrolled, Stripe saves the payment method via `setup_future_usage: 'off_session'`. A Stripe Customer is created for the client. Balance is auto-charged on the due date (default: 14 days before event) by the hourly scheduler in `server/utils/balanceScheduler.js`.
 - **Off-session charges**: Admin can manually trigger via `POST /api/stripe/charge-balance/:id` or the scheduler runs hourly.
 - **Alternative**: Admin generates a reusable Payment Link via `POST /api/stripe/payment-link/:id`
-- **Webhook events**: `payment_intent.succeeded` (handles deposit, full, and balance payment types via metadata), `checkout.session.completed`
+- **Webhook events**: `payment_intent.succeeded` (handles deposit, full, balance, and bartender-tip payment types via metadata), `checkout.session.completed`
 - **Deposit**: $100 (configurable via `STRIPE_DEPOSIT_AMOUNT` in cents)
+- **Tip Payment Links**: Each onboarded bartender has a reusable Stripe Payment Link provisioned by `server/utils/tipPaymentLinks.js`. The link's `metadata.tip_page_user_id` is read by the Stripe webhook to insert a row into `tips`. Admin can regenerate via `POST /api/admin/contractors/:userId/tip-page/regenerate-stripe`.
 - **Important**: Stripe webhook route (`/api/stripe/webhook`) must receive raw body — registered before `express.json()` in `server/index.js`
 
 ### Resend (Email)
@@ -820,8 +878,11 @@ model is `service_packages.covered_addon_slugs` and `cocktails.upgrade_addon_slu
 ### Cloudflare R2 (File Storage)
 - **Wrapper**: `server/utils/storage.js`
 - **Upload flow**: Validate file (magic bytes) → Upload to R2 bucket → Store key in DB → Generate signed URL (15-min expiry) for downloads
-- **Files stored**: W-9, resume, headshot, alcohol certification, BASSET certification
+- **Files stored**: W-9, resume, headshot, alcohol certification, BASSET certification, bartender tip-page photos
 - **Admin access**: `GET /api/files/:filename` redirects to signed URL (admin/manager only)
+
+### QR Code Rendering (`qrcode.react`)
+- Client-only dependency used by `client/src/pages/staff/PrintTipCard.jsx` and `PrintTipCard.layouts.jsx` to render the bartender's tip-page URL as an SVG QR code on the printable tip card. No server side; rendered in the browser at print time.
 
 ## Deployment Architecture
 
