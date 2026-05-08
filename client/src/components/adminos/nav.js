@@ -10,8 +10,9 @@ const NAV = [
     { id: 'hiring',      label: 'Hiring',    icon: 'pen',       path: '/hiring',    badgeKey: 'new_applications' },
   ]},
   { section: 'Revenue', items: [
-    { id: 'financials',  label: 'Financials', icon: 'dollar',   path: '/financials' },
-    { id: 'marketing',   label: 'Marketing',  icon: 'mail',     path: '/email-marketing' },
+    { id: 'financials',  label: 'Financials',      icon: 'dollar',   path: '/financials' },
+    { id: 'tips',        label: 'Tips & Feedback', icon: 'dollar',   path: '/tips' },
+    { id: 'marketing',   label: 'Marketing',       icon: 'mail',     path: '/email-marketing' },
   ]},
   { section: 'Content', items: [
     { id: 'drink-plans', label: 'Drink Plans',   icon: 'flask', path: '/drink-plans', badgeKey: 'pending_shopping_lists' },
