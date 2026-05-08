@@ -93,7 +93,8 @@ async function convertFont(srcRel) {
   for (const t of IMAGE_TASKS) await convertImage(t);
   for (const t of FONT_TASKS) await convertFont(t);
   console.log('\nDone. To finalize, switch the CSS references and `git rm` the originals:');
-  console.log('  client/src/index.css            — @font-face src → .woff2 format(\'woff2\')');
+  console.log('  client/src/index.css                — @font-face src → .woff2 format(\'woff2\')');
+  console.log('  client/src/styles/drb-tokens.css    — @font-face src → .woff2 format(\'woff2\') (same family declared twice; both files reference the .ttf)');
   console.log('  client/src/pages/public/TipPage.css — background-image url(... .webp)');
   console.log('  git rm client/src/fonts/IMFellEnglish*.ttf');
   console.log('  git rm client/src/assets/tip-page/{parchment-bg,chalkboard-bg}.png');
