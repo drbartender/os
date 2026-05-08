@@ -47,6 +47,21 @@ router.post('/', auth, asyncHandler(async (req, res) => {
       throw new ValidationError({ preferred_payment_method: 'Payment method is required.' });
     }
 
+    const { venmo_handle, cashapp_handle, paypal_url, preferred_name } = req.body;
+
+    // Validate payroll method matches handle requirement (per Task 5 spec)
+    const methodToHandleField = {
+      venmo: { value: venmo_handle, name: 'Venmo handle' },
+      cashapp: { value: cashapp_handle, name: 'Cash App handle' },
+      paypal: { value: paypal_url, name: 'PayPal URL' },
+    };
+    const reqHandle = methodToHandleField[preferred_payment_method];
+    if (reqHandle && !reqHandle.value) {
+      throw new ValidationError(
+        `${reqHandle.name} is required when "${preferred_payment_method}" is your payroll preference.`
+      );
+    }
+
     let w9_url = null, w9_name = null;
 
     step = 'load_existing_profile';
@@ -122,28 +137,10 @@ router.post('/', auth, asyncHandler(async (req, res) => {
 
       // New for tip page (2026-05-08): persist payment handles + payroll preference
       step = 'upsert_tip_handles';
-      const {
-        venmo_handle,
-        cashapp_handle,
-        paypal_url,
-      } = req.body;
-
-      // Validate payroll method matches handle requirement (per spec 7.3)
-      const methodToHandleField = {
-        venmo: { value: venmo_handle, name: 'Venmo handle' },
-        cashapp: { value: cashapp_handle, name: 'Cash App handle' },
-        paypal: { value: paypal_url, name: 'PayPal URL' },
-      };
-      const reqHandle = methodToHandleField[preferred_payment_method];
-      if (reqHandle && !reqHandle.value) {
-        throw new ValidationError(
-          `${reqHandle.name} is required when "${preferred_payment_method}" is your payroll preference.`
-        );
-      }
       // (direct_deposit/check/other require no specific handle here)
 
       // Persist preferred_name on contractor_profiles (existing column)
-      const preferredNameForTip = String(req.body.preferred_name || '').trim() || null;
+      const preferredNameForTip = String(preferred_name || '').trim() || null;
       if (preferredNameForTip) {
         await client.query(
           'UPDATE contractor_profiles SET preferred_name = $1, updated_at = NOW() WHERE user_id = $2',
@@ -157,7 +154,7 @@ router.post('/', auth, asyncHandler(async (req, res) => {
         SET venmo_handle = $1,
             cashapp_handle = $2,
             paypal_url = $3,
-            tip_page_active = TRUE,
+            tip_page_active = COALESCE(payment_profiles.tip_page_active, TRUE),
             updated_at = NOW()
         WHERE user_id = $4
       `, [
