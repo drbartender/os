@@ -76,30 +76,6 @@ const CREDENTIALS = [
   ['Based', 'North Side, Chicago — travels'],
 ];
 
-const FALLBACK_TESTIMONIALS = [
-  {
-    id: 'fallback-1',
-    name: 'Eleanor V.',
-    text: 'They transformed our garden party into a Victorian speakeasy. The smoked rosemary gin fizz was nothing short of sorcery.',
-    rating: 5,
-    role: 'Wedding · 120 guests',
-  },
-  {
-    id: 'fallback-2',
-    name: 'James & Sarah K.',
-    text: 'The attention to detail was extraordinary — from the hand-labelled bottles to the copper jiggers. Our wedding guests are still talking about it.',
-    rating: 5,
-    role: 'Wedding · 180 guests',
-  },
-  {
-    id: 'fallback-3',
-    name: 'Marcus T.',
-    text: 'Hired them for a corporate holiday party and it was exactly what we needed — professional, well-paced, and the menu was dialed in.',
-    rating: 5,
-    role: 'Corporate · 80 guests',
-  },
-];
-
 function renderStars(rating) {
   const filled = Math.max(0, Math.min(5, Math.round(rating || 5)));
   return '★'.repeat(filled) + '☆'.repeat(5 - filled);
@@ -134,8 +110,8 @@ export default function HomePage() {
     return () => { cancelled = true; };
   }, []);
 
-  const useRealReviews = reviewsState.status === 'loaded' && reviewsState.reviews.length >= 1;
-  const normalizedReviews = useRealReviews
+  const hasReviews = reviewsState.status === 'loaded' && reviewsState.reviews.length >= 1;
+  const normalizedReviews = hasReviews
     ? reviewsState.reviews.map((r) => ({
         id: r.id,
         text: r.text,
@@ -143,10 +119,10 @@ export default function HomePage() {
         rating: r.rating,
         role: 'Thumbtack review',
       }))
-    : FALLBACK_TESTIMONIALS;
+    : [];
   const featuredReview = normalizedReviews[0];
   const secondaryReviews = normalizedReviews.slice(1, 4);
-  const showRatingBadge = useRealReviews && reviewsState.averageRating != null && reviewsState.count >= 3;
+  const showRatingBadge = hasReviews && reviewsState.averageRating != null && reviewsState.count >= 3;
 
   return (
     <PublicLayout>
@@ -323,61 +299,63 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Field Reports (live Thumbtack reviews in design's testimonial format) ── */}
-      <section className="ws-press-testimonial">
-        <div className="ws-wrap">
-          {showRatingBadge && (
+      {/* ── Field Reports (live Thumbtack reviews) — only render when we have real data ── */}
+      {hasReviews && (
+        <section className="ws-press-testimonial">
+          <div className="ws-wrap">
+            {showRatingBadge && (
+              <FadeUp>
+                <div className="ws-press-fieldreports-badge">
+                  <span className="kicker center">Field Reports</span>
+                  <div className="ws-press-fieldreports-rating">
+                    <strong>{reviewsState.averageRating.toFixed(1)}</strong>
+                    <span>·</span>
+                    <span>{reviewsState.count} reviews on Thumbtack</span>
+                  </div>
+                </div>
+              </FadeUp>
+            )}
+
             <FadeUp>
-              <div className="ws-press-fieldreports-badge">
-                <span className="kicker center">Field Reports</span>
-                <div className="ws-press-fieldreports-rating">
-                  <strong>{reviewsState.averageRating.toFixed(1)}</strong>
-                  <span>·</span>
-                  <span>{reviewsState.count} reviews on Thumbtack</span>
+              <div className="card ws-press-testimonial-card">
+                <div className="ws-press-brass-frame" aria-hidden="true" />
+                <div className="ws-press-testimonial-inner">
+                  <div className="kicker no-rule ws-press-testimonial-meta">
+                    Field Report · {featuredReview.name}
+                  </div>
+                  <p className="ws-press-testimonial-quote">"{featuredReview.text}"</p>
+                  <div className="divider-ornate ws-press-divider"><span aria-label={`${renderStars(featuredReview.rating)} stars`}>{renderStars(featuredReview.rating)}</span></div>
+                  <div className="ws-press-testimonial-attribution">
+                    {featuredReview.role || 'Thumbtack review'}
+                  </div>
                 </div>
               </div>
             </FadeUp>
-          )}
 
-          <FadeUp>
-            <div className="card ws-press-testimonial-card">
-              <div className="ws-press-brass-frame" aria-hidden="true" />
-              <div className="ws-press-testimonial-inner">
-                <div className="kicker no-rule ws-press-testimonial-meta">
-                  Field Report · {featuredReview.name}
-                </div>
-                <p className="ws-press-testimonial-quote">"{featuredReview.text}"</p>
-                <div className="divider-ornate ws-press-divider"><span aria-label={`${renderStars(featuredReview.rating)} stars`}>{renderStars(featuredReview.rating)}</span></div>
-                <div className="ws-press-testimonial-attribution">
-                  {featuredReview.role || 'Thumbtack review'}
-                </div>
-              </div>
-            </div>
-          </FadeUp>
-
-          {secondaryReviews.length > 0 && (
-            <div className="ws-press-fieldreports-grid">
-              {secondaryReviews.map((r, i) => (
-                <FadeUp key={r.id || r.name} delay={i * 0.08}>
-                  <div className="card ws-press-fieldreport">
-                    <div className="ws-press-brass-frame" aria-hidden="true" />
-                    <div className="ws-press-fieldreport-inner">
-                      <div className="kicker no-rule ws-press-testimonial-meta">
-                        Field Report · {r.name}
-                      </div>
-                      <p className="ws-press-fieldreport-quote">"{r.text}"</p>
-                      <div className="divider-ornate ws-press-divider"><span aria-label={`${renderStars(r.rating)} stars`}>{renderStars(r.rating)}</span></div>
-                      <div className="ws-press-testimonial-attribution">
-                        {r.role || 'Thumbtack review'}
+            {secondaryReviews.length > 0 && (
+              <div className="ws-press-fieldreports-grid">
+                {secondaryReviews.map((r, i) => (
+                  <FadeUp key={r.id || r.name} delay={i * 0.08}>
+                    <div className="card ws-press-fieldreport">
+                      <div className="ws-press-brass-frame" aria-hidden="true" />
+                      <div className="ws-press-fieldreport-inner">
+                        <div className="kicker no-rule ws-press-testimonial-meta">
+                          Field Report · {r.name}
+                        </div>
+                        <p className="ws-press-fieldreport-quote">"{r.text}"</p>
+                        <div className="divider-ornate ws-press-divider"><span aria-label={`${renderStars(r.rating)} stars`}>{renderStars(r.rating)}</span></div>
+                        <div className="ws-press-testimonial-attribution">
+                          {r.role || 'Thumbtack review'}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </FadeUp>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
+                  </FadeUp>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* ── Shimmer divider (rainbow placement #3) ── */}
       <div className="ws-wrap ws-shimmer-row">
