@@ -648,4 +648,83 @@ router.post('/contractors/:userId/tip-page/activate', auth, requireAdminOrManage
   res.json({ ok: true });
 }));
 
+// ─── Tips Activity + Feedback Queue ──────────────────────────────
+
+// All tips activity (admin)
+router.get('/tips', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const { bartender_id, from, to } = req.query;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+  const cursor = parseInt(req.query.cursor, 10) || null;
+
+  const filters = ['1=1'];
+  const params = [];
+  if (bartender_id) {
+    filters.push(`t.target_user_id = $${params.length + 1}`);
+    params.push(parseInt(bartender_id, 10));
+  }
+  if (from) {
+    filters.push(`t.tipped_at >= $${params.length + 1}`);
+    params.push(from);
+  }
+  if (to) {
+    filters.push(`t.tipped_at <= $${params.length + 1}`);
+    params.push(to);
+  }
+  if (cursor) {
+    filters.push(`t.id < $${params.length + 1}`);
+    params.push(cursor);
+  }
+
+  params.push(limit);
+  const { rows } = await pool.query(`
+    SELECT t.id, t.amount_cents, t.tipped_at, t.customer_email,
+           cp.preferred_name AS bartender_name, t.target_user_id
+    FROM tips t
+    LEFT JOIN contractor_profiles cp ON cp.user_id = t.target_user_id
+    WHERE ${filters.join(' AND ')}
+    ORDER BY t.id DESC
+    LIMIT $${params.length}
+  `, params);
+
+  res.json({
+    tips: rows,
+    next_cursor: rows.length === limit ? rows[rows.length - 1].id : null,
+  });
+}));
+
+// Feedback queue (admin)
+router.get('/tip-feedback', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const status = req.query.status === 'reviewed' ? 'reviewed'
+              : req.query.status === 'all' ? 'all' : 'unreviewed';
+
+  let where = 'reviewed_at IS NULL';
+  if (status === 'reviewed') where = 'reviewed_at IS NOT NULL';
+  if (status === 'all') where = '1=1';
+
+  const { rows } = await pool.query(`
+    SELECT f.id, f.target_user_id, f.rating, f.comment, f.submitter_email,
+           f.created_at, f.reviewed_at,
+           cp.preferred_name AS bartender_name
+    FROM tip_page_feedback f
+    LEFT JOIN contractor_profiles cp ON cp.user_id = f.target_user_id
+    WHERE ${where}
+    ORDER BY f.created_at DESC
+    LIMIT 200
+  `);
+  res.json({ feedback: rows });
+}));
+
+// Mark feedback reviewed
+router.post('/tip-feedback/:id/review', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) throw new ValidationError('invalid id');
+
+  await pool.query(`
+    UPDATE tip_page_feedback
+    SET reviewed_at = NOW(), reviewed_by = $1
+    WHERE id = $2
+  `, [req.user.id, id]);
+  res.json({ ok: true });
+}));
+
 module.exports = router;
