@@ -105,12 +105,15 @@ export default function AboutPage() {
             <h2 className="ws-press-h2">Twenty-five years, abridged.</h2>
           </div>
           <div className="card ws-press-career-card">
-            {TIMELINE.map(([when, what]) => (
-              <div key={when} className="leader ws-press-career-row">
-                <span className="leader-label ws-press-career-when">{when}</span>
-                <span className="leader-amount ws-press-career-what">{what}</span>
-              </div>
-            ))}
+            <div className="ws-press-career-timeline">
+              {TIMELINE.map(([when, what]) => (
+                <div key={when} className="ws-press-career-entry">
+                  <span className="ws-press-career-marker" aria-hidden="true" />
+                  <div className="ws-press-career-when">{when}</div>
+                  <div className="ws-press-career-what">{what}</div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </section>

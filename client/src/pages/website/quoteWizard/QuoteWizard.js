@@ -790,13 +790,16 @@ export default function QuoteWizard() {
           )}
         </div>
 
-        {/* Pricing sidebar */}
+        {/* Pricing sidebar — Apothecary Press parchment with brass frame */}
         <div className="wz-sidebar">
           <div className="wz-price-card">
-            <h4>Your Estimate</h4>
+            <div className="kicker no-rule wz-price-kicker">Live Estimate</div>
+            <h3 className="wz-price-name">The Prescription</h3>
             {preview ? (
               <>
                 <div className="wz-price-total">{formatCurrency(preview.total)}</div>
+                <div className="wz-price-sub">final · all-in · adjusts down for unused hours</div>
+                <div className="divider-ornate wz-price-divider"><span>breakdown</span></div>
                 <div className="wz-price-breakdown">
                   {preview.breakdown.map((item, i) => (
                     <div key={i} className="wz-price-line">
@@ -811,9 +814,14 @@ export default function QuoteWizard() {
                 <div className="wz-price-meta">
                   {preview.staffing.actual} bartender{preview.staffing.actual !== 1 ? 's' : ''} included
                 </div>
+                <div className="wz-price-trust">
+                  <div>⚗ Stripe · sign &amp; pay electronically</div>
+                  <div>⚗ General + liquor liability included</div>
+                  <div>⚗ $100 deposit locks the date</div>
+                </div>
               </>
             ) : (
-              <p className="wz-price-empty">Select a package to see pricing</p>
+              <p className="wz-price-empty">Adjust your event details to see pricing</p>
             )}
           </div>
         </div>

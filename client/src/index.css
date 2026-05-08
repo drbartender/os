@@ -121,8 +121,8 @@ h1, h2, h3, h4 {
 }
 
 h1 { font-size: clamp(1.85rem, 4vw, 2.75rem); letter-spacing: 0.02em; }
-h2 { font-size: clamp(1.4rem, 3vw, 1.9rem); }
-h3 { font-size: clamp(1.15rem, 2.5vw, 1.4rem); }
+h2 { font-size: clamp(1.4rem, 3vw, 1.9rem); letter-spacing: 0.015em; }
+h3 { font-size: clamp(1.15rem, 2.5vw, 1.4rem); letter-spacing: 0.015em; }
 h4 { font-size: 1rem; letter-spacing: 0.1em; text-transform: uppercase; font-family: var(--font-display); }
 
 .page-container h1,
@@ -233,10 +233,10 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   background: var(--chalkboard);
   padding: 0 1rem;
   color: var(--cream-text);
-  font-family: var(--font-display);
+  font-family: var(--font-body);
   font-style: italic;
-  font-size: 1.1rem;
-  letter-spacing: 0.05em;
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
 }
 /* Inside parchment cards, ornate divider sits on paper with deep-brown word */
 .card .divider-ornate::before {
@@ -312,42 +312,48 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
 .btn-primary {
   background: var(--amber);
   color: var(--cream-text);
-  box-shadow: 0 2px 8px rgba(29, 140, 137, 0.3);
+  box-shadow: 0 2px 10px rgba(29, 140, 137, 0.32);
   position: relative;
-  overflow: hidden;
+  /* overflow: visible — default — outer-glow halo extends past the button */
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--warm-brown);
-  box-shadow: 0 4px 16px rgba(19, 69, 68, 0.35);
+  box-shadow:
+    0 6px 18px rgba(29, 140, 137, 0.32),
+    0 0 0 2px rgba(240, 232, 214, 0.04);
   transform: translateY(-1px);
 }
-/* Iridescent border-glow on hover (brief §2.5 rainbow placement #2) */
-.btn-primary::after {
+/* Iridescent outer-glow halo on hover (brief §2.5 rainbow placement #2) */
+.btn-primary::after,
+.ws-nav-cta::after {
   content: "";
   position: absolute;
-  inset: -1px;
-  border-radius: inherit;
+  inset: -2px;
+  border-radius: calc(var(--radius) + 2px);
   pointer-events: none;
   background: linear-gradient(
-    115deg,
-    transparent 30%,
-    rgba(255, 200, 220, 0.35) 45%,
-    rgba(200, 230, 255, 0.35) 55%,
-    rgba(220, 255, 220, 0.30) 65%,
-    transparent 80%
+    110deg,
+    rgba(255, 150, 180, 0) 0%,
+    rgba(255, 150, 180, 0.55) 22%,
+    rgba(180, 210, 255, 0.55) 38%,
+    rgba(150, 255, 210, 0.55) 55%,
+    rgba(255, 230, 150, 0.55) 72%,
+    rgba(255, 150, 180, 0) 100%
   );
-  background-size: 240% 100%;
+  background-size: 220% 100%;
   background-position: 100% 0;
   opacity: 0;
-  transition: opacity 0.4s ease;
+  transition: opacity 0.25s ease;
+  z-index: -1;
+  filter: blur(6px);
 }
-.btn-primary:hover:not(:disabled)::after {
+.btn-primary:hover:not(:disabled)::after,
+.ws-nav-cta:hover::after {
   opacity: 1;
-  animation: drb-shimmer 1.6s ease-in-out;
+  animation: drb-shimmer 1.6s linear infinite;
 }
 @keyframes drb-shimmer {
-  0%   { background-position: 100% 0; }
-  100% { background-position: -100% 0; }
+  to { background-position: -120% 0; }
 }
 
 .btn-secondary {
@@ -418,14 +424,14 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
 .form-select,
 .form-textarea {
   width: 100%;
-  padding: 0.7rem 0.9rem;
-  border: 2px solid var(--border-dark);
-  border-radius: var(--radius);
+  padding: 12px 14px;
+  border: 1px solid var(--border-dark);
+  border-radius: 8px;
   background: var(--paper);
   font-family: var(--font-body);
   font-size: 0.95rem;
   color: var(--deep-brown);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, padding 0.15s;
   -webkit-appearance: none;
   appearance: none;
 }
@@ -434,8 +440,9 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
 .form-select:focus,
 .form-textarea:focus {
   outline: none;
-  border-color: var(--amber);
-  box-shadow: 0 0 0 3px rgba(29, 140, 137, 0.25);
+  border: 2px solid var(--amber);
+  padding: 11px 13px;
+  box-shadow: 0 0 0 3px rgba(29, 140, 137, 0.18);
 }
 
 .form-select {
@@ -714,13 +721,24 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   100% { opacity: 1; }
 }
 
-/* Apothecary alembic glyph — used as section ornament */
+/* Apothecary alembic glyph — section ornament with brass hairline bookends */
 .ornament {
-  font-family: var(--font-display);
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
   color: var(--brass);
-  font-size: 1.4rem;
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  letter-spacing: 0.4em;
   text-align: center;
-  display: inline-block;
+}
+.ornament::before,
+.ornament::after {
+  content: "";
+  width: 36px;
+  height: 1px;
+  background: var(--brass);
+  opacity: 0.7;
 }
 
 /* Reduced-motion: disable all decorative animations */
@@ -729,10 +747,12 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
   .specimen-card-tag,
   .flask-svg::before,
   .divider-shimmer,
-  .btn-primary::after {
+  .btn-primary::after,
+  .ws-nav-cta::after {
     animation: none !important;
   }
-  .btn-primary:hover:not(:disabled) {
+  .btn-primary:hover:not(:disabled),
+  .ws-nav-cta:hover {
     transform: none;
   }
 }
@@ -3423,23 +3443,29 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   background: var(--brass);
 }
 
-/* CTA button in header */
+/* CTA button in header — outer-glow halo shimmer matches .btn-primary */
 .ws-nav-cta {
   background: var(--amber);
   color: var(--cream-text) !important;
   font-family: var(--font-display);
   font-size: 13px;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
+  font-weight: 500;
   text-transform: none;
-  padding: 11px 22px;
+  padding: 12px 24px;
   border-radius: 8px;
   text-decoration: none;
-  transition: background 0.18s ease, transform 0.18s ease;
+  transition: background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
   display: inline-block;
+  position: relative;
+  box-shadow: 0 2px 10px rgba(29, 140, 137, 0.32);
 }
 .ws-nav-cta:hover {
   background: var(--warm-brown);
   transform: translateY(-1px);
+  box-shadow:
+    0 6px 18px rgba(29, 140, 137, 0.32),
+    0 0 0 2px rgba(240, 232, 214, 0.04);
 }
 
 /* Center stacked brand mark */
@@ -3992,13 +4018,18 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   text-transform: uppercase;
   color: rgba(240, 232, 214, 0.5);
 }
-.ws-footer-bottom span:last-child {
+.ws-footer-bottom span:last-child,
+.ws-footer-bottom-right {
   text-align: right;
   letter-spacing: 0.04em;
   text-transform: none;
-  font-style: italic;
   font-family: var(--font-body);
   font-size: 12px;
+  font-style: normal;
+}
+.ws-footer-bottom-right em {
+  font-style: italic;
+  color: var(--brass);
 }
 
 @media (max-width: 960px) {
@@ -4239,9 +4270,11 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   margin-left: auto;
   margin-right: auto;
   font-size: 14px;
-  color: var(--text-muted);
+  color: rgba(240, 232, 214, 0.78);
   font-style: italic;
 }
+/* On parchment cards, italic helper reverts to muted dark — readable on light */
+.card .ws-press-section-italic { color: var(--text-muted); }
 .ws-press-section-italic strong {
   color: var(--brass-bright);
   font-style: normal;
@@ -4250,6 +4283,17 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 22px;
+  align-items: stretch;
+}
+/* Stretch FadeUp wrapper + inner card to fill grid cell so all 3 are equal height */
+.ws-press-services-grid .ws-fade-up {
+  display: flex;
+  height: 100%;
+}
+.ws-press-services-grid .ws-fade-up > .card.ws-press-service {
+  flex: 1;
+  height: 100%;
+  margin-bottom: 0 !important;
 }
 .ws-press-service {
   padding: 0 !important;
@@ -4259,7 +4303,19 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   margin-bottom: 0;
 }
 .ws-press-service::before { content: none; } /* keep service cards crisp without noise overlay */
-.ws-press-service-body { padding: 22px 24px 24px; }
+.ws-press-service-body {
+  padding: 22px 24px 24px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.ws-press-service-body p {
+  margin-bottom: 14px;
+}
+.ws-press-service-body .btn {
+  margin-top: auto;
+  align-self: flex-start;
+}
 .ws-press-service-formula {
   font-size: 10px;
   letter-spacing: 0.32em;
@@ -4444,7 +4500,8 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   color: var(--cream-text);
   max-width: 820px;
 }
-.ws-press-pagehero-title em {
+.ws-press-pagehero-title em,
+.ws-press-pagehero em {
   font-style: italic;
   color: var(--brass-bright);
 }
@@ -4775,7 +4832,31 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 .ws-press-service-leaders {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0 22px;
+  gap: 12px 22px;
+}
+/* Stack each leader row vertically inside its cell — label above value, no dotted line.
+ * The narrow card-detail column was squeezing the auto-1fr-auto leader grid into broken text. */
+.ws-press-service-leaders .leader {
+  display: block;
+  padding: 0;
+}
+.ws-press-service-leaders .leader::before { display: none; }
+.ws-press-service-leaders .leader-label {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--brass);
+  margin-bottom: 3px;
+}
+.ws-press-service-leaders .leader-amount {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--deep-brown);
+  font-weight: 400;
+  line-height: 1.4;
 }
 .ws-press-service-cta {
   display: flex;
@@ -4930,27 +5011,76 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 .ws-press-about-bio { padding: 60px 0; }
 .ws-press-career { padding: 40px 0 80px; }
 .ws-press-career-card {
-  padding: 32px 40px !important;
+  padding: 36px 44px !important;
   margin-bottom: 0 !important;
 }
-.ws-press-career-row {
-  font-size: 14px;
-  padding: 8px 0;
+
+/* Vertical brass-marker timeline — replaces leader-dot rows */
+.ws-press-career-timeline {
+  position: relative;
+  padding-left: 4px;
+}
+/* Continuous brass dotted line through the marker column */
+.ws-press-career-timeline::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 16px;
+  bottom: 16px;
+  width: 1px;
+  border-left: 1px dotted rgba(184, 146, 74, 0.55);
+}
+.ws-press-career-entry {
+  display: grid;
+  grid-template-columns: 28px 150px 1fr;
+  align-items: baseline;
+  gap: 18px;
+  padding: 14px 0;
+  position: relative;
+}
+.ws-press-career-entry + .ws-press-career-entry {
+  border-top: 1px solid rgba(184, 146, 74, 0.22);
+}
+.ws-press-career-marker {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--brass);
+  margin-top: 4px;
+  /* Cream halo so the marker punches through the dotted vertical line cleanly */
+  box-shadow: 0 0 0 4px var(--card-bg);
+  position: relative;
+  z-index: 1;
 }
 .ws-press-career-when {
-  font-family: var(--font-display) !important;
-  font-size: 16px !important;
-  color: var(--warm-brown) !important;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  color: var(--warm-brown);
+  white-space: nowrap;
 }
 .ws-press-career-what {
+  font-size: 15px;
+  line-height: 1.55;
   color: var(--deep-brown);
-  text-align: right;
-  max-width: 540px;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 720px) {
   .ws-press-career-card { padding: 22px !important; }
-  .ws-press-career-what { text-align: left; max-width: none; }
+  .ws-press-career-entry {
+    grid-template-columns: 22px 1fr;
+    grid-template-rows: auto auto;
+    gap: 4px 12px;
+  }
+  .ws-press-career-marker {
+    grid-row: 1 / span 2;
+    align-self: flex-start;
+    margin-top: 8px;
+  }
+  .ws-press-career-when { grid-column: 2; }
+  .ws-press-career-what { grid-column: 2; }
+  .ws-press-career-timeline::before { left: 7px; }
 }
 
 
@@ -5547,12 +5677,53 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   color: var(--text-muted);
   margin-bottom: 0.5rem;
 }
+.wz-price-kicker {
+  color: var(--text-muted) !important;
+  margin-bottom: 4px;
+}
+.wz-price-name {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  color: var(--deep-brown);
+  margin-bottom: 1rem;
+  letter-spacing: 0.015em;
+  font-weight: 400;
+}
 .wz-price-total {
   font-family: var(--font-display);
   font-size: 3rem;
   color: var(--deep-brown);
   margin-bottom: 0.5rem;
   line-height: 1;
+}
+.wz-price-sub {
+  font-style: italic;
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 0.5rem;
+}
+.wz-price-divider { margin: 18px 0 12px !important; }
+/* Wz price-card has parchment surface — divider-ornate flips to deep-brown body italic */
+.wz-price-card .divider-ornate::before {
+  border-top-color: rgba(184, 146, 74, 0.7);
+}
+.wz-price-card .divider-ornate span {
+  background: var(--card-bg);
+  color: var(--deep-brown);
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 0.9rem;
+  letter-spacing: 0.06em;
+}
+.wz-price-trust {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 .wz-price-breakdown {
   display: flex;

@@ -189,13 +189,17 @@ export default function PublicLayout({ children }) {
                 <li><a href="mailto:contact@drbartender.com">contact@drbartender.com</a></li>
                 <li>Chicago, IL</li>
                 <li>IL · IN · MI</li>
+                <li><a href="https://instagram.com/drbartender" target="_blank" rel="noreferrer">@drbartender</a></li>
               </ul>
             </div>
           </div>
 
           <div className="ws-footer-bottom">
             <span>&copy; {new Date().getFullYear()} Dr. Bartender LLC</span>
-            <span>I'm the Dr. — the Doctor — in Dr. Bartender.</span>
+            <span className="ws-footer-bottom-right">
+              Privacy &middot; Terms &middot; Accessibility &middot;{' '}
+              <em>I'm the Dr. in Dr. Bartender.</em>
+            </span>
           </div>
         </div>
       </footer>
