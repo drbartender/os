@@ -560,8 +560,11 @@ function labratBugReportAdmin({ bugId, kind, missionId, stepIndex, testerName, t
   if (kind === 'bug') kindLabel = 'Bug';
   else if (kind === 'confusion') kindLabel = 'Confusion';
   else if (kind === 'mission-stale') kindLabel = 'Stale mission';
-  const subjectName = testerName ? ` from ${testerName}` : '';
-  const subjectMission = missionId ? ` — ${missionId}` : '';
+  // Strip CR/LF/tab and cap length before interpolating into the email subject —
+  // Resend / SMTP would reject header-significant chars, but defense-in-depth.
+  const subjectSafe = (v, max = 80) => (v ? String(v).replace(/[\r\n\t]/g, ' ').slice(0, max) : '');
+  const subjectName = testerName ? ` from ${subjectSafe(testerName)}` : '';
+  const subjectMission = missionId ? ` — ${subjectSafe(missionId, 60)}` : '';
   const formatBlock = (label, value) => value
     ? `<p style="margin:0.5rem 0;"><strong>${label}:</strong><br/>${esc(value).replace(/\n/g, '<br/>')}</p>`
     : '';

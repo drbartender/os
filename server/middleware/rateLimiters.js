@@ -47,4 +47,16 @@ const labratSeedLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, labratSeedLimiter };
+// Lab Rat bug-report endpoint is unauthenticated and triggers an admin email
+// with a user-controlled Reply-To. Tighter than publicLimiter so a botnet
+// can't reflect spam through contact@drbartender.com. 10/hour per IP is
+// generous for a real tester finishing a multi-mission session.
+const labratFeedbackLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,
+  message: { error: 'Too many feedback submissions. Try again in an hour.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, labratSeedLimiter, labratFeedbackLimiter };

@@ -2,7 +2,7 @@
 const express = require('express');
 const Sentry = require('@sentry/node');
 const asyncHandler = require('../middleware/asyncHandler');
-const { publicLimiter } = require('../middleware/rateLimiters');
+const { labratFeedbackLimiter } = require('../middleware/rateLimiters');
 const { ValidationError } = require('../utils/errors');
 const { appendBug } = require('../utils/bugLog');
 const { sendEmail } = require('../utils/email');
@@ -11,7 +11,12 @@ const { labratBugReportAdmin } = require('../utils/emailTemplates');
 const router = express.Router();
 const ALLOWED_KINDS = ['bug', 'confusion', 'mission-stale'];
 
-router.post('/', publicLimiter, asyncHandler(async (req, res) => {
+// Reject SMTP-header-significant characters in addition to the standard regex.
+// `\s` covers CR/LF/tab/space; explicit `<>"'\,;` blocks angle-bracket and
+// multi-recipient injection vectors when forwarded into Resend's `reply_to`.
+const EMAIL_RE = /^[^\s@<>"'\\,;]+@[^\s@<>"'\\,;]+\.[^\s@<>"'\\,;]+$/;
+
+router.post('/', labratFeedbackLimiter, asyncHandler(async (req, res) => {
   const body = req.body || {};
   const { missionId, stepIndex, testerName, testerEmail, expected, browser, screenshotUrl } = body;
   let { kind, where, didWhat, happened } = body;
@@ -29,9 +34,13 @@ router.post('/', publicLimiter, asyncHandler(async (req, res) => {
   const errs = {};
   if (!ALLOWED_KINDS.includes(kind)) errs.kind = `must be one of ${ALLOWED_KINDS.join(', ')}`;
   if (kind === 'bug' && (!happened || !happened.trim())) errs.happened = 'Tell us what happened';
+  let safeReplyTo;
   if (testerEmail && typeof testerEmail === 'string' && testerEmail.trim()) {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testerEmail.trim())) {
+    const trimmed = testerEmail.trim();
+    if (trimmed.length > 254 || !EMAIL_RE.test(trimmed)) {
       errs.testerEmail = 'Invalid email format';
+    } else {
+      safeReplyTo = trimmed;
     }
   }
   if (Object.keys(errs).length) throw new ValidationError(errs, 'Invalid feedback');
@@ -41,28 +50,27 @@ router.post('/', publicLimiter, asyncHandler(async (req, res) => {
     testerName, testerEmail, where, didWhat, happened, expected, browser, screenshotUrl,
   });
 
-  // Best-effort admin email — Render's filesystem is ephemeral, so the JSONL alone
-  // does not survive deploys. The email is the durable copy.
-  try {
-    const tpl = labratBugReportAdmin({
-      bugId: id, kind, missionId: missionId || null, stepIndex,
-      testerName, testerEmail, where, didWhat, happened, expected,
-      browser, screenshotUrl, reportedAt: new Date().toISOString(),
-    });
-    await sendEmail({
-      to: process.env.ADMIN_FEEDBACK_NOTIFICATION_EMAIL || 'contact@drbartender.com',
-      subject: tpl.subject,
-      html: tpl.html,
-      text: tpl.text,
-      replyTo: testerEmail && testerEmail.trim() ? testerEmail.trim() : undefined,
-    });
-  } catch (err) {
+  // Best-effort admin email — fire-and-forget so we don't block the tester's
+  // "Sent ✓" toast on Resend's 200-1000ms round-trip. Bug is already in
+  // bugLog; the email is the durable copy that survives Render deploys.
+  const tpl = labratBugReportAdmin({
+    bugId: id, kind, missionId: missionId || null, stepIndex,
+    testerName, testerEmail, where, didWhat, happened, expected,
+    browser, screenshotUrl, reportedAt: new Date().toISOString(),
+  });
+  sendEmail({
+    to: process.env.ADMIN_FEEDBACK_NOTIFICATION_EMAIL || 'contact@drbartender.com',
+    subject: tpl.subject,
+    html: tpl.html,
+    text: tpl.text,
+    replyTo: safeReplyTo,
+  }).catch((err) => {
     console.error('[labrat] bug-report admin email failed', err.message);
     Sentry.captureException(err, {
       tags: { route: 'testFeedback.post', op: 'admin_email' },
       extra: { bugId: id, kind, missionId: missionId || null },
     });
-  }
+  });
 
   res.json({ ok: true, id });
 }));
