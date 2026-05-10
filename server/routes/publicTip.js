@@ -10,6 +10,7 @@ const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { ADMIN_URL } = require('../utils/urls');
 const { getSignedUrl } = require('../utils/storage');
+const { normalizePaypalUrl } = require('../utils/tipHandleValidation');
 
 const router = express.Router();
 
@@ -71,12 +72,35 @@ router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
     }
   }
 
+  // Defense-in-depth: re-validate paypal_url on read. The write-time validator
+  // (server/utils/tipHandleValidation.js) was added after some rows already
+  // existed; pre-existing rows could hold non-paypal.me URLs, raw usernames in
+  // unexpected shapes, or whitespace-padded values. If a stored value can't be
+  // normalized to the canonical paypal.me form, drop it from the response —
+  // the public tip page will simply not render a PayPal button. Sentry-warns
+  // so admin can clean up the stored data via /me/tip-page or the admin tab.
+  let paypalUrl = null;
+  if (row.paypal_url) {
+    try {
+      paypalUrl = normalizePaypalUrl(row.paypal_url);
+    } catch (err) {
+      Sentry.captureMessage('Stored paypal_url failed read-side validation', {
+        level: 'warning',
+        tags: { route: 'publicTip.GET', op: 'paypal_url_validate' },
+        extra: {
+          tokenPrefix: token.slice(0, 8),
+          reason: err && err.fieldErrors && err.fieldErrors.paypal_url,
+        },
+      });
+    }
+  }
+
   res.json({
     display_name: row.display_name || 'your bartender',
     headshot_url: headshotUrl,
     venmo_handle: row.venmo_handle || null,
     cashapp_handle: row.cashapp_handle || null,
-    paypal_url: row.paypal_url || null,
+    paypal_url: paypalUrl,
     stripe_payment_link_url: row.stripe_payment_link_url || null,
   });
 }));

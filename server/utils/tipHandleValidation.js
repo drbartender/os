@@ -57,7 +57,13 @@ function normalizePaypalUrl(input) {
     try { username = decodeURIComponent(segs[0]); }
     catch { throw new ValidationError({ paypal_url: 'has an invalid username' }); }
   } else {
-    username = t.replace(/^@+/, '');
+    // No-scheme input: accept "@username", "username", "paypal.me/username",
+    // and "www.paypal.me/username" forms. Many users paste the URL bar form
+    // without the scheme — rejecting those creates a confusing "invalid"
+    // error when the value is unambiguously a paypal.me link.
+    username = t
+      .replace(/^@+/, '')
+      .replace(/^(?:www\.)?paypal\.me\/+/i, '');
   }
 
   if (!PAYPAL_USER_RE.test(username)) {
