@@ -15,6 +15,8 @@ if (process.env.SENTRY_DSN_SERVER) {
         if (!u) return u;
         return String(u)
           .replace(/\/t\/[^/?#]+/g, '/t/[redacted]')
+          .replace(/\/api\/public\/tip\/[^/?#]+/g, '/api/public/tip/[redacted]')
+          .replace(/\/tip\/[^/?#]+/g, '/tip/[redacted]')
           .replace(/\/unsubscribe\/[^/?#]+/g, '/unsubscribe/[redacted]')
           .replace(/\/reset-password\/[^/?#]+/g, '/reset-password/[redacted]')
           .replace(/[?&]token=[^&]+/g, (m) => m[0] + 'token=[redacted]');
