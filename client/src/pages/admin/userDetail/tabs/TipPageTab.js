@@ -46,6 +46,16 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
     run(() => api.post(`/admin/contractors/${userId}/tip-page/regenerate-stripe`));
   };
 
+  const rotateToken = () => {
+    if (!window.confirm(
+      'WARNING: This issues a NEW public URL and a NEW Stripe link. Printed QR cards using the OLD URL will STOP WORKING IMMEDIATELY. ' +
+      'Any payment sessions in flight on the old link will likely fail. ' +
+      'Use only when the existing URL is compromised (printed card was photographed, screenshot leaked, etc.). ' +
+      'Continue?'
+    )) return;
+    run(() => api.post(`/admin/contractors/${userId}/tip-page/rotate-token`));
+  };
+
   const generate = () => run(() => api.post(`/admin/contractors/${userId}/tip-page/generate-stripe`));
 
   const deactivate = () => {
@@ -199,6 +209,25 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
             )}
             <p className="tiny muted">
               Deactivating disables the public URL and pauses the Stripe link. Reactivating restores both — the token (and printed QR) is preserved.
+            </p>
+          </div>
+        </div>
+
+        {/* Emergency rotation — visually separated to discourage accidental clicks. */}
+        <div className="card">
+          <div className="card-head"><h3>Emergency rotation</h3></div>
+          <div className="card-body vstack" style={{ gap: 8 }}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              style={{ color: 'hsl(var(--danger-h) var(--danger-s) 65%)' }}
+              disabled={busy || !payment?.tip_page_token}
+              onClick={rotateToken}
+            >
+              Rotate URL (new token + Stripe link)
+            </button>
+            <p className="tiny muted">
+              Issues a fresh public URL AND fresh Stripe link. Old printed QRs stop working. Use only if the existing URL is compromised — otherwise prefer Regenerate Stripe link, which preserves the token.
             </p>
           </div>
         </div>

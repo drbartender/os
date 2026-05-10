@@ -387,7 +387,7 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 ### Test Feedback — `/api/test-feedback`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/` | No (rate-limited, 20/15min) | Receives tester submissions from `/testing-guide.html` (name, optional email, progress summary, bug count, exported report text) and emails `contact@drbartender.com` via Resend. Reply-to set to the tester's email when provided. |
+| POST | `/` | No (rate-limited, 20/15min) | Receives Lab Rat bug/confusion/mission-stale reports (`kind`, `missionId`, `stepIndex`, `testerName`, `where`, `didWhat`, `happened`, `expected`, `browser`, `screenshotUrl`). Appends to local JSONL via `bugLog.appendBug` AND emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` (default `contact@drbartender.com`) — the email is the durable copy because Render's disk is ephemeral. Reply-to set to tester's email when provided. Also accepts the legacy `{ reportText, progressSummary }` shape from `/testing-guide.html` via a back-compat shim. |
 
 ### Public Tip Pages — `/api/public/tip`
 | Method | Path | Auth | Description |
@@ -406,7 +406,8 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | PATCH | `/` | Admin | Override tip-page fields for a bartender (display name, photo, payment handles, status). |
-| POST | `/regenerate-stripe` | Admin | Force-regenerate the bartender's Stripe Payment Link (e.g., after a connect-account change). |
+| POST | `/regenerate-stripe` | Admin | Force-regenerate the bartender's Stripe Payment Link (e.g., after a connect-account change). Token unchanged — printed QRs keep working. |
+| POST | `/rotate-token` | Admin | Emergency rotation: issue a NEW `tip_page_token` AND a fresh Stripe Payment Link. Use only when the existing public URL is compromised (printed QR leaked, screenshot circulated). Old printed QRs stop working. |
 | POST | `/generate-stripe` | Admin | Provision a Stripe Payment Link for a bartender that doesn't yet have one. |
 | POST | `/deactivate` | Admin | Deactivate the tip page (sets `is_active = false`, hides the public route). |
 | POST | `/activate` | Admin | Re-activate a previously deactivated tip page. |

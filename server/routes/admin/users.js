@@ -600,6 +600,53 @@ router.patch('/contractors/:userId/tip-page', auth, requireAdminOrManager, async
   res.json({ ok: true });
 }));
 
+// POST — emergency rotation: issue a NEW tip_page_token AND a new Stripe link.
+// Use only when the existing public URL is compromised (printed QR card was
+// photographed, screenshot leaked, etc.). Customers with the old QR can no
+// longer pay through it. In-flight Stripe sessions on the old link will fail
+// or, if completed in the brief gap, get dropped at the webhook because the
+// metadata token won't match the rotated DB token.
+router.post('/contractors/:userId/tip-page/rotate-token', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const userId = parseInt(req.params.userId, 10);
+  if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
+  await ensureNonAdminTargetForManager(req, userId);
+
+  const { rows } = await pool.query(`
+    SELECT pp.tip_page_token, pp.stripe_payment_link_id, cp.preferred_name
+    FROM payment_profiles pp
+    LEFT JOIN contractor_profiles cp ON cp.user_id = pp.user_id
+    WHERE pp.user_id = $1
+  `, [userId]);
+  const row = rows[0];
+  if (!row || !row.tip_page_token) throw new NotFoundError('contractor has no tip page');
+
+  // Best-effort retire of the old Stripe link FIRST so the leaked URL stops
+  // accepting new payments immediately. The webhook drops any in-flight
+  // session whose old token no longer matches DB after the rotation below.
+  if (row.stripe_payment_link_id) {
+    try { await deactivateTipPaymentLink(row.stripe_payment_link_id); }
+    catch (err) { console.error('[tip-admin] retire old link on rotate failed', err.message); }
+  }
+
+  const newToken = uuidv4();
+  const { url, id } = await createTipPaymentLink({
+    userId,
+    displayName: row.preferred_name,
+    token: newToken,
+  });
+
+  await pool.query(`
+    UPDATE payment_profiles
+    SET tip_page_token = $1,
+        stripe_payment_link_url = $2,
+        stripe_payment_link_id = $3,
+        updated_at = NOW()
+    WHERE user_id = $4
+  `, [newToken, url, id, userId]);
+
+  res.json({ ok: true, token: newToken, url });
+}));
+
 // POST — rotate the Stripe Payment Link (deactivate old, create new). Token unchanged.
 router.post('/contractors/:userId/tip-page/regenerate-stripe', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
