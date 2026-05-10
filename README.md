@@ -118,7 +118,8 @@ dr-bartender/
 │   │   │   ├── hiring.js       # /hiring/summary (KPIs) + /hiring/search (cross-state applicant search)
 │   │   │   ├── managers.js     # /managers CRUD
 │   │   │   ├── blog.js         # /blog admin endpoints
-│   │   │   └── settings.js     # /settings + /test-email + /backfill-geocodes + /badge-counts
+│   │   │   ├── settings.js     # /settings + /test-email + /backfill-geocodes + /badge-counts (incl. open_tester_bugs)
+│   │   │   └── labratBugs.js   # /tester-bugs (list + PATCH triage state for the LabRatBugsPage)
 │   │   ├── agreement.js        # Contractor agreement + digital signature
 │   │   ├── application.js      # Contractor application form
 │   │   ├── auth.js             # POST /register, POST /login, GET /me
@@ -149,7 +150,7 @@ dr-bartender/
 │   │   ├── me.js               # Authenticated self endpoints (tip page settings, my-tips listing)
 │   │   ├── publicReviews.js    # Public cached endpoint for Thumbtack reviews on homepage
 │   │   ├── publicTip.js        # Public tip-page lookup + post-tip feedback (token-gated)
-│   │   ├── testFeedback.js     # Receives tester bug/checklist submissions from /testing-guide.html and emails contact@drbartender.com
+│   │   ├── testFeedback.js     # Receives Lab Rat bug reports — INSERTs into `tester_bugs` (durable) AND fire-and-forget emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` (notification)
 │   │   └── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   ├── utils/
 │   │   ├── agreementPdf.js     # PDFKit renderer for signed contractor agreements
@@ -217,7 +218,7 @@ dr-bartender/
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
 │   │   │   ├── (staff)         # Application, ApplicationStatus, HiringLanding
 │   │   │   ├── (admin)         # AdminDashboard (AdminUserDetail moved into admin/userDetail/, AdminApplicationDetail moved into admin/applicationDetail/)
-│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, TipsAdmin tip overview, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/)
+│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/)
 │   │   │   ├── staff/          # Staff portal (StaffDashboard, StaffShifts, StaffSchedule, StaffEvents, StaffResources, StaffProfile, MyTipPage tip-page settings, PrintTipCard printable QR card with PrintTipCard.layouts.jsx + PrintTipCard.css)
 │   │   │   ├── plan/           # PotionPlanningLab — public event questionnaire (with steps/ and data/; steps/HostedGuestPrefsStep.js = compact hosted-refinement step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test)
 │   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment

@@ -1962,3 +1962,34 @@ ALTER TABLE tip_page_feedback DROP CONSTRAINT IF EXISTS tip_page_feedback_review
 ALTER TABLE tip_page_feedback
   ADD CONSTRAINT tip_page_feedback_reviewed_by_fkey
   FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL;
+
+-- ─── Lab Rat tester bug reports (Postgres-persistent, 2026-05-10) ──
+-- Replaces the prior filesystem JSONL store at server/data/tester-bugs/
+-- which was wiped on every Render deploy (filesystem is ephemeral).
+-- Real tester submissions were lost in late April / early May 2026 —
+-- this table is the durable copy. Email-on-submit (testFeedback.js)
+-- is the redundant notification path that survived the prior outage.
+CREATE TABLE IF NOT EXISTS tester_bugs (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('bug', 'confusion', 'mission-stale')),
+  mission_id TEXT,
+  step_index INTEGER,
+  tester_name TEXT,
+  tester_email TEXT,
+  where_at TEXT,
+  did_what TEXT,
+  happened TEXT,
+  expected TEXT,
+  browser TEXT,
+  screenshot_url TEXT,
+  reported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'fixed', 'wontfix')),
+  status_updated_at TIMESTAMPTZ,
+  fix_commit_sha TEXT,
+  notes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_tester_bugs_open_reported_at
+  ON tester_bugs(reported_at DESC) WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS idx_tester_bugs_mission_open
+  ON tester_bugs(mission_id) WHERE status = 'open' AND mission_id IS NOT NULL;

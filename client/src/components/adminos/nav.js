@@ -15,10 +15,11 @@ const NAV = [
     { id: 'marketing',   label: 'Marketing',       icon: 'mail',     path: '/email-marketing' },
   ]},
   { section: 'Content', items: [
-    { id: 'drink-plans', label: 'Drink Plans',   icon: 'flask', path: '/drink-plans', badgeKey: 'pending_shopping_lists' },
-    { id: 'menu',        label: 'Cocktail Menu', icon: 'book',  path: '/cocktail-menu' },
-    { id: 'blog',        label: 'Lab Notes',     icon: 'pen',   path: '/blog' },
-    { id: 'settings',    label: 'Settings',      icon: 'gear',  path: '/settings' },
+    { id: 'drink-plans', label: 'Drink Plans',   icon: 'flask',     path: '/drink-plans', badgeKey: 'pending_shopping_lists' },
+    { id: 'menu',        label: 'Cocktail Menu', icon: 'book',      path: '/cocktail-menu' },
+    { id: 'blog',        label: 'Lab Notes',     icon: 'pen',       path: '/blog' },
+    { id: 'labrat-bugs', label: 'Lab Rat Bugs',  icon: 'clipboard', path: '/labrat-bugs', badgeKey: 'open_tester_bugs' },
+    { id: 'settings',    label: 'Settings',      icon: 'gear',      path: '/settings' },
   ]},
 ];
 

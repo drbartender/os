@@ -135,7 +135,8 @@ router.get('/badge-counts', auth, adminOnly, asyncHandler(async (req, res) => {
          JOIN users u ON u.id = a.user_id
          WHERE u.onboarding_status = 'applied')::int AS new_applications,
       (SELECT COUNT(*) FROM drink_plans
-         WHERE shopping_list_status = 'pending_review')::int AS pending_shopping_lists
+         WHERE shopping_list_status = 'pending_review')::int AS pending_shopping_lists,
+      (SELECT COUNT(*) FROM tester_bugs WHERE status = 'open')::int AS open_tester_bugs
   `);
   res.json(result.rows[0]);
 }));

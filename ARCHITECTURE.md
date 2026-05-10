@@ -387,7 +387,7 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 ### Test Feedback — `/api/test-feedback`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/` | No (rate-limited, 10/hour per IP via `labratFeedbackLimiter`) | Receives Lab Rat bug/confusion/mission-stale reports (`kind`, `missionId`, `stepIndex`, `testerName`, `where`, `didWhat`, `happened`, `expected`, `browser`, `screenshotUrl`). Appends to local JSONL via `bugLog.appendBug` AND fire-and-forget emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` (default `contact@drbartender.com`) — the email is the durable copy because Render's disk is ephemeral. `Reply-To` set to the tester's email only after a strict header-injection-safe regex passes. Also accepts the legacy `{ reportText, progressSummary }` shape from `/testing-guide.html` via a back-compat shim. |
+| POST | `/` | No (rate-limited, 10/hour per IP via `labratFeedbackLimiter`) | Receives Lab Rat bug/confusion/mission-stale reports (`kind`, `missionId`, `stepIndex`, `testerName`, `where`, `didWhat`, `happened`, `expected`, `browser`, `screenshotUrl`). Inserts into the `tester_bugs` Postgres table via `bugLog.appendBug` AND fire-and-forget emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` (default `contact@drbartender.com`) as a redundant notification path. `Reply-To` set to the tester's email only after a strict header-injection-safe regex passes. Also accepts the legacy `{ reportText, progressSummary }` shape from `/testing-guide.html` via a back-compat shim. Admin triage UI at `/labrat-bugs`; CLI listing via `npm run bugs:list`. |
 
 ### Public Tip Pages — `/api/public/tip`
 | Method | Path | Auth | Description |
@@ -418,6 +418,8 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | GET | `/tips` | Admin | Paginated list of all successful tips across bartenders for the TipsAdmin overview (filter by bartender, date range). |
 | GET | `/tip-feedback` | Admin | List unreviewed tip-page feedback submissions for admin triage. |
 | POST | `/tip-feedback/:id/review` | Admin | Mark a feedback row as reviewed (records reviewer + timestamp). |
+| GET | `/tester-bugs` | Admin/Manager | List Lab Rat bug reports (filter `?status=open\|fixed\|wontfix\|all` and `?missionId=...`). Returns `{ bugs, openCountByMission }`. |
+| PATCH | `/tester-bugs/:id` | Admin/Manager | Update a bug's triage state — body `{ status?, fixCommitSha?, notes? }`. Bumps `status_updated_at`. |
 
 ### Other
 | Method | Path | Auth | Description |
@@ -691,6 +693,20 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `reviewed_at` TIMESTAMPTZ, `reviewed_by` FK → users (admin who triaged; ON DELETE SET NULL — preserves history if an admin is removed)
 - `created_at` TIMESTAMPTZ DEFAULT NOW()
 - Submission emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL`; admin reviews via `GET /api/admin/tip-feedback`
+
+**tester_bugs** — Lab Rat tester-program bug reports (replaces the prior filesystem JSONL store, which was wiped on every Render deploy)
+- `id` TEXT PK — `bug_<iso>_<hex>` server-generated, sortable by timestamp
+- `kind` TEXT NOT NULL CHECK (`bug` | `confusion` | `mission-stale`)
+- `mission_id` TEXT, `step_index` INTEGER — links a report back to a Lab Rat mission and step
+- `tester_name`, `tester_email` — optional contact (testers are unauthenticated)
+- `where_at`, `did_what`, `happened`, `expected`, `browser`, `screenshot_url` — captured form fields (server-side length caps in `bugLog.appendBug`)
+- `reported_at` TIMESTAMPTZ DEFAULT NOW()
+- `status` TEXT NOT NULL DEFAULT `'open'` CHECK (`open` | `fixed` | `wontfix`)
+- `status_updated_at` TIMESTAMPTZ — bumped by `setBugStatus` on every triage update
+- `fix_commit_sha`, `notes` — admin triage metadata
+- Partial indexes on `(reported_at DESC) WHERE status='open'` and `(mission_id) WHERE status='open' AND mission_id IS NOT NULL` — both keep the badge-counts and mission-picker queries cheap as the table grows
+- Insert path: `POST /api/test-feedback` → `bugLog.appendBug` → INSERT (plus best-effort admin email)
+- Read paths: admin UI `GET /api/admin/tester-bugs`, mission-picker badges `GET /api/qa/shortlist`, CLI `npm run bugs:list`
 
 ### Shopping List Generator
 
