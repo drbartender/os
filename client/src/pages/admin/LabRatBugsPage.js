@@ -154,7 +154,7 @@ export default function LabRatBugsPage() {
             <h2 style={{ fontSize: 14, color: 'var(--ink-2)', margin: '8px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
               <span>{mission}</span>
               <span className="muted tiny">{list.length} in view</span>
-              {openCounts[mission] && status !== 'open' && (
+              {openCounts[mission] > 0 && status !== 'open' && (
                 <span className="muted tiny">· {openCounts[mission]} open</span>
               )}
             </h2>
@@ -179,7 +179,7 @@ export default function LabRatBugsPage() {
                     {b.didWhat && <p style={{ margin: '0 0 8px', whiteSpace: 'pre-wrap' }}><strong className="muted tiny">Did</strong><br />{b.didWhat}</p>}
                     {b.happened && <p style={{ margin: '0 0 8px', whiteSpace: 'pre-wrap' }}><strong className="muted tiny">{b.kind === 'mission-stale' ? "What's wrong" : 'Happened'}</strong><br />{b.happened}</p>}
                     {b.expected && <p style={{ margin: '0 0 8px', whiteSpace: 'pre-wrap' }}><strong className="muted tiny">Expected</strong><br />{b.expected}</p>}
-                    {b.screenshotUrl && (
+                    {b.screenshotUrl && /^https?:\/\//i.test(b.screenshotUrl) && (
                       <p style={{ margin: '0 0 8px' }}>
                         <strong className="muted tiny">Screenshot</strong><br />
                         <a href={b.screenshotUrl} target="_blank" rel="noopener noreferrer">{b.screenshotUrl}</a>
@@ -187,7 +187,7 @@ export default function LabRatBugsPage() {
                     )}
                     {b.testerEmail && (
                       <p className="muted tiny" style={{ margin: '8px 0 0' }}>
-                        Tester contact: <a href={`mailto:${b.testerEmail}`}>{b.testerEmail}</a>
+                        Tester contact: <a href={`mailto:${encodeURIComponent(b.testerEmail)}`}>{b.testerEmail}</a>
                       </p>
                     )}
                     {b.fixCommitSha && (

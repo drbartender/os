@@ -565,6 +565,10 @@ function labratBugReportAdmin({ bugId, kind, missionId, stepIndex, testerName, t
   const subjectSafe = (v, max = 80) => (v ? String(v).replace(/[\r\n\t]/g, ' ').slice(0, max) : '');
   const subjectName = testerName ? ` from ${subjectSafe(testerName)}` : '';
   const subjectMission = missionId ? ` — ${subjectSafe(missionId, 60)}` : '';
+  // Server-side validator should already reject non-http(s) URLs; this is the
+  // defense-in-depth gate so a hand-rolled INSERT can't ship a javascript: href
+  // to an admin's mail client.
+  const safeShot = screenshotUrl && /^https?:\/\//i.test(screenshotUrl) ? screenshotUrl : null;
   const formatBlock = (label, value) => value
     ? `<p style="margin:0.5rem 0;"><strong>${label}:</strong><br/>${esc(value).replace(/\n/g, '<br/>')}</p>`
     : '';
@@ -581,10 +585,10 @@ function labratBugReportAdmin({ bugId, kind, missionId, stepIndex, testerName, t
         ${formatBlock(kind === 'mission-stale' ? "What's wrong" : 'What happened', happened)}
         ${formatBlock('What they expected', expected)}
       </div>
-      ${screenshotUrl ? `<p><strong>Screenshot:</strong> <a href="${esc(screenshotUrl)}">${esc(screenshotUrl)}</a></p>` : ''}
+      ${safeShot ? `<p><strong>Screenshot:</strong> <a href="${esc(safeShot)}">${esc(safeShot)}</a></p>` : ''}
       <p style="color:${BRAND.secondary};font-size:12px;margin-top:1.5rem;">Bug ID: ${esc(bugId || '—')}<br/>Browser: ${esc(browser || 'unknown')}</p>
     `),
-    text: `Lab Rat ${kindLabel} from ${testerName || 'anonymous'}${missionId ? ` (mission ${missionId}${Number.isFinite(stepIndex) ? `, step ${stepIndex + 1}` : ''})` : ''}\n\nWhere: ${where || '—'}\nDid: ${didWhat || '—'}\nHappened: ${happened || '—'}${expected ? `\nExpected: ${expected}` : ''}${screenshotUrl ? `\nScreenshot: ${screenshotUrl}` : ''}\n\nBug ID: ${bugId || '—'}\nReported: ${reportedAt || new Date().toISOString()}`,
+    text: `Lab Rat ${kindLabel} from ${testerName || 'anonymous'}${missionId ? ` (mission ${missionId}${Number.isFinite(stepIndex) ? `, step ${stepIndex + 1}` : ''})` : ''}\n\nWhere: ${where || '—'}\nDid: ${didWhat || '—'}\nHappened: ${happened || '—'}${expected ? `\nExpected: ${expected}` : ''}${safeShot ? `\nScreenshot: ${safeShot}` : ''}\n\nBug ID: ${bugId || '—'}\nReported: ${reportedAt || new Date().toISOString()}`,
   };
 }
 

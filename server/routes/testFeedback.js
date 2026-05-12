@@ -43,11 +43,27 @@ router.post('/', labratFeedbackLimiter, asyncHandler(async (req, res) => {
       safeReplyTo = trimmed;
     }
   }
+  // Reject any URL scheme other than http(s). This blocks javascript:/data:/etc.
+  // payloads that would otherwise execute on admin click of the screenshot link.
+  let safeScreenshotUrl = null;
+  if (screenshotUrl && typeof screenshotUrl === 'string' && screenshotUrl.trim()) {
+    try {
+      const u = new URL(screenshotUrl.trim());
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+        errs.screenshotUrl = 'must be an http(s) URL';
+      } else {
+        safeScreenshotUrl = screenshotUrl.trim();
+      }
+    } catch {
+      errs.screenshotUrl = 'invalid URL';
+    }
+  }
   if (Object.keys(errs).length) throw new ValidationError(errs, 'Invalid feedback');
 
   const { id } = await appendBug({
     kind, missionId: missionId || null, stepIndex,
-    testerName, testerEmail, where, didWhat, happened, expected, browser, screenshotUrl,
+    testerName, testerEmail, where, didWhat, happened, expected, browser,
+    screenshotUrl: safeScreenshotUrl,
   });
 
   // Best-effort admin email — fire-and-forget so we don't block the tester's
@@ -56,7 +72,7 @@ router.post('/', labratFeedbackLimiter, asyncHandler(async (req, res) => {
   const tpl = labratBugReportAdmin({
     bugId: id, kind, missionId: missionId || null, stepIndex,
     testerName, testerEmail, where, didWhat, happened, expected,
-    browser, screenshotUrl, reportedAt: new Date().toISOString(),
+    browser, screenshotUrl: safeScreenshotUrl, reportedAt: new Date().toISOString(),
   });
   sendEmail({
     to: process.env.ADMIN_FEEDBACK_NOTIFICATION_EMAIL || 'contact@drbartender.com',
