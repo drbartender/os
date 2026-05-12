@@ -406,8 +406,8 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | PATCH | `/` | Admin | Override tip-page fields for a bartender (display name, photo, payment handles, status). |
-| POST | `/regenerate-stripe` | Admin | Force-regenerate the bartender's Stripe Payment Link (e.g., after a connect-account change). Token unchanged — printed QRs keep working. |
-| POST | `/rotate-token` | Admin | Emergency rotation: issue a NEW `tip_page_token` AND a fresh Stripe Payment Link. Use only when the existing public URL is compromised (printed QR leaked, screenshot circulated). Old printed QRs stop working. |
+| POST | `/regenerate-stripe` | Admin | Force-regenerate the bartender's Stripe Payment Link (e.g., after a connect-account change). Token unchanged — printed QRs keep working. Writes `tip_stripe_regenerate` to `admin_audit_log`. |
+| POST | `/rotate-token` | Admin | Emergency rotation: issue a NEW `tip_page_token` AND a fresh Stripe Payment Link. Use only when the existing public URL is compromised (printed QR leaked, screenshot circulated). Old printed QRs stop working. Writes `tip_token_rotate` to `admin_audit_log` with old/new token prefixes. |
 | POST | `/generate-stripe` | Admin | Provision a Stripe Payment Link for a bartender that doesn't yet have one. |
 | POST | `/deactivate` | Admin | Deactivate the tip page (sets `is_active = false`, hides the public route). |
 | POST | `/activate` | Admin | Re-activate a previously deactivated tip page. |
@@ -704,9 +704,20 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `status` TEXT NOT NULL DEFAULT `'open'` CHECK (`open` | `fixed` | `wontfix`)
 - `status_updated_at` TIMESTAMPTZ — bumped by `setBugStatus` on every triage update
 - `fix_commit_sha`, `notes` — admin triage metadata
-- Partial indexes on `(reported_at DESC) WHERE status='open'` and `(mission_id) WHERE status='open' AND mission_id IS NOT NULL` — both keep the badge-counts and mission-picker queries cheap as the table grows
+- Partial indexes on `(reported_at DESC) WHERE status='open'` and `(mission_id) WHERE status='open' AND mission_id IS NOT NULL` — both keep the badge-counts and mission-picker queries cheap as the table grows. A non-partial `(status, reported_at DESC)` index also covers the admin list view when filtering by `fixed` / `wontfix` / `all`.
+- `readAllBugs` caps results at 500 rows (defends against runaway result sets; far above current volume).
 - Insert path: `POST /api/test-feedback` → `bugLog.appendBug` → INSERT (plus best-effort admin email)
 - Read paths: admin UI `GET /api/admin/tester-bugs`, mission-picker badges `GET /api/qa/shortlist`, CLI `npm run bugs:list`
+
+**admin_audit_log** — Generic durable record of admin actions on user-owned resources. Initial call sites: tip-page rotate-token + regenerate-stripe; extend as more auditable surfaces emerge (role changes, deactivation, etc.).
+- `id` BIGSERIAL PK
+- `actor_user_id` FK → users (admin who performed the action; ON DELETE SET NULL — preserves history if the admin record is later removed)
+- `target_user_id` FK → users (user whose resource was acted on; ON DELETE SET NULL)
+- `action` TEXT NOT NULL — short stable identifier (`tip_token_rotate`, `tip_stripe_regenerate`, etc.)
+- `metadata` JSONB DEFAULT `'{}'` — action-specific fields (token prefixes, stripe link ids, etc.). Freeform so each action can store its own transition data without schema churn.
+- `created_at` TIMESTAMPTZ DEFAULT NOW()
+- Indexed on `(target_user_id, created_at DESC)` for "what's happened to this user" queries and `(action, created_at DESC)` for "all rotations in the last week" queries.
+- Write path: `server/utils/adminAuditLog.js` → `logAdminAction({ actorUserId, targetUserId, action, metadata })`. Best-effort — logging failures go to Sentry, never block the underlying business action.
 
 ### Shopping List Generator
 

@@ -16,6 +16,17 @@ const ALLOWED_KINDS = ['bug', 'confusion', 'mission-stale'];
 // multi-recipient injection vectors when forwarded into Resend's `reply_to`.
 const EMAIL_RE = /^[^\s@<>"'\\,;]+@[^\s@<>"'\\,;]+\.[^\s@<>"'\\,;]+$/;
 
+// Optional hostname allowlist for tester-submitted screenshot URLs. When
+// `LABRAT_SCREENSHOT_ALLOWED_HOSTS` is set (comma-separated), only those
+// hostnames pass — defends against open-redirect phishing where a tester
+// plants `https://evil.example/login` and an admin clicks it. When unset,
+// any http(s) host passes (current behavior).
+function getScreenshotHostAllowlist() {
+  const raw = process.env.LABRAT_SCREENSHOT_ALLOWED_HOSTS;
+  if (!raw) return null;
+  return raw.split(',').map(h => h.trim().toLowerCase()).filter(Boolean);
+}
+
 router.post('/', labratFeedbackLimiter, asyncHandler(async (req, res) => {
   const body = req.body || {};
   const { missionId, stepIndex, testerName, testerEmail, expected, browser, screenshotUrl } = body;
@@ -45,6 +56,7 @@ router.post('/', labratFeedbackLimiter, asyncHandler(async (req, res) => {
   }
   // Reject any URL scheme other than http(s). This blocks javascript:/data:/etc.
   // payloads that would otherwise execute on admin click of the screenshot link.
+  // If LABRAT_SCREENSHOT_ALLOWED_HOSTS is set, also restrict to those hostnames.
   let safeScreenshotUrl = null;
   if (screenshotUrl && typeof screenshotUrl === 'string' && screenshotUrl.trim()) {
     try {
@@ -52,7 +64,12 @@ router.post('/', labratFeedbackLimiter, asyncHandler(async (req, res) => {
       if (u.protocol !== 'http:' && u.protocol !== 'https:') {
         errs.screenshotUrl = 'must be an http(s) URL';
       } else {
-        safeScreenshotUrl = screenshotUrl.trim();
+        const allowedHosts = getScreenshotHostAllowlist();
+        if (allowedHosts && !allowedHosts.includes(u.hostname.toLowerCase())) {
+          errs.screenshotUrl = 'host not allowed';
+        } else {
+          safeScreenshotUrl = screenshotUrl.trim();
+        }
       }
     } catch {
       errs.screenshotUrl = 'invalid URL';

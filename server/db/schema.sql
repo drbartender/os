@@ -1993,3 +1993,29 @@ CREATE INDEX IF NOT EXISTS idx_tester_bugs_open_reported_at
   ON tester_bugs(reported_at DESC) WHERE status = 'open';
 CREATE INDEX IF NOT EXISTS idx_tester_bugs_mission_open
   ON tester_bugs(mission_id) WHERE status = 'open' AND mission_id IS NOT NULL;
+-- General-purpose index for the admin list view when filtering by
+-- status='fixed' / 'wontfix' / 'all'. The partial indexes above only help
+-- the status='open' path.
+CREATE INDEX IF NOT EXISTS idx_tester_bugs_status_reported_at
+  ON tester_bugs(status, reported_at DESC);
+
+-- ─── Admin audit log (2026-05-12) ──────────────────────────────────
+-- Generic durable record of admin actions on user-owned resources.
+-- Initial call sites: tip-page rotate-token + regenerate-stripe. Add
+-- more as auditable surfaces emerge (deactivation, role changes, etc.).
+-- `metadata` is freeform JSONB so each action can capture its own
+-- transition-specific fields without schema churn (e.g. token prefixes,
+-- stripe link ids).
+CREATE TABLE IF NOT EXISTS admin_audit_log (
+  id BIGSERIAL PRIMARY KEY,
+  actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  target_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_audit_log_target_created_at
+  ON admin_audit_log(target_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_log_action_created_at
+  ON admin_audit_log(action, created_at DESC);

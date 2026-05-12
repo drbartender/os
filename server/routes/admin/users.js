@@ -17,6 +17,7 @@ const {
 } = require('../../utils/tipPaymentLinks');
 const { activateTipPage, deactivateTipPage } = require('../../utils/tipPageLifecycle');
 const { normalizeTipHandlesInPlace } = require('../../utils/tipHandleValidation');
+const { logAdminAction } = require('../../utils/adminAuditLog');
 
 const router = express.Router();
 
@@ -644,6 +645,18 @@ router.post('/contractors/:userId/tip-page/rotate-token', auth, requireAdminOrMa
     WHERE user_id = $4
   `, [newToken, url, id, userId]);
 
+  await logAdminAction({
+    actorUserId: req.user.id,
+    targetUserId: userId,
+    action: 'tip_token_rotate',
+    metadata: {
+      oldTokenPrefix: row.tip_page_token.slice(0, 8),
+      newTokenPrefix: newToken.slice(0, 8),
+      oldStripeLinkId: row.stripe_payment_link_id || null,
+      newStripeLinkId: id,
+    },
+  });
+
   res.json({ ok: true, token: newToken, url });
 }));
 
@@ -676,6 +689,18 @@ router.post('/contractors/:userId/tip-page/regenerate-stripe', auth, requireAdmi
     'UPDATE payment_profiles SET stripe_payment_link_url = $1, stripe_payment_link_id = $2 WHERE user_id = $3',
     [url, id, userId]
   );
+
+  await logAdminAction({
+    actorUserId: req.user.id,
+    targetUserId: userId,
+    action: 'tip_stripe_regenerate',
+    metadata: {
+      tokenPrefix: row.tip_page_token.slice(0, 8),
+      oldStripeLinkId: row.stripe_payment_link_id || null,
+      newStripeLinkId: id,
+    },
+  });
+
   res.json({ ok: true, url });
 }));
 

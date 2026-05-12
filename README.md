@@ -153,6 +153,7 @@ dr-bartender/
 │   │   ├── testFeedback.js     # Receives Lab Rat bug reports — INSERTs into `tester_bugs` (durable) AND fire-and-forget emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` (notification)
 │   │   └── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   ├── utils/
+│   │   ├── adminAuditLog.js    # logAdminAction(...) — durable record of admin actions (rotate-token, regenerate-stripe). Best-effort; failures go to Sentry, never block the underlying op
 │   │   ├── agreementPdf.js     # PDFKit renderer for signed contractor agreements
 │   │   ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)
 │   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)

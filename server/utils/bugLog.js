@@ -95,7 +95,9 @@ async function setBugStatus(bugId, patch = {}) {
   return rows[0] ? rowToBug(rows[0]) : null;
 }
 
-async function readAllBugs({ status, missionId } = {}) {
+const MAX_LIMIT = 500;
+
+async function readAllBugs({ status, missionId, limit } = {}) {
   const filters = [];
   const values = [];
   if (status && status !== 'all') {
@@ -106,8 +108,10 @@ async function readAllBugs({ status, missionId } = {}) {
     values.push(missionId); filters.push(`mission_id = $${values.length}`);
   }
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const safeLimit = Number.isInteger(limit) && limit > 0 && limit <= MAX_LIMIT ? limit : MAX_LIMIT;
+  values.push(safeLimit);
   const { rows } = await pool.query(
-    `SELECT * FROM tester_bugs ${where} ORDER BY reported_at DESC`,
+    `SELECT * FROM tester_bugs ${where} ORDER BY reported_at DESC LIMIT $${values.length}`,
     values,
   );
   return rows.map(rowToBug);
