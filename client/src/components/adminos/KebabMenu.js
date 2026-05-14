@@ -34,14 +34,18 @@ export default function KebabMenu({ items }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState({ top: 0, left: 0 });
   const triggerRef = useRef(null);
+  const menuRef = useRef(null);
 
   useEffect(() => {
     if (!open) return undefined;
     const onOutside = (e) => {
-      if (triggerRef.current && !triggerRef.current.contains(e.target)) {
-        // Defer so the item's own onClick fires first when clicking inside the menu.
-        setTimeout(() => setOpen(false), 0);
-      }
+      // Click inside the trigger: the trigger's own onClick toggles. No-op here.
+      if (triggerRef.current?.contains(e.target)) return;
+      // Click inside the portal-rendered menu: the item's onClick closes us.
+      // If we close from here on mousedown, React unmounts the item before
+      // the mouseup/click can reach it on a normal-length human click.
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
     };
     const onEsc = (e) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onOutside);
@@ -79,6 +83,7 @@ export default function KebabMenu({ items }) {
       </button>
       {open && createPortal(
         <div
+          ref={menuRef}
           className="kebab-menu"
           role="menu"
           style={{
@@ -101,6 +106,9 @@ export default function KebabMenu({ items }) {
                   href={isDisabled ? undefined : cleanHref}
                   aria-disabled={isDisabled || undefined}
                   onClick={(e) => {
+                    // Disabled item: cancel the click and leave the menu open
+                    // so the user can pick another item (vs. forcing them to
+                    // reopen after a misclick on a greyed-out row).
                     if (isDisabled) { e.preventDefault(); return; }
                     e.stopPropagation();
                     setOpen(false);
