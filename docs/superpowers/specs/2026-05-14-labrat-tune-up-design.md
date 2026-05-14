@@ -13,7 +13,7 @@ The Lab Rat tester program has been running since 2026-04-27 and has accumulated
 - **No mission covers the new pre-hire onboarding flow.** `/onboarding` and `POST /api/auth/claim-pre-hire` shipped 2026-05-13 (see `docs/superpowers/specs/2026-05-13-pre-hire-onboarding-design.md`). Zero coverage. The downstream Welcome → Field Guide → … → Complete paperwork flow has never had a Lab Rat mission either.
 - **Catalog drift is plausible.** The catalog was written 2026-04-27. Step copy that references step numbers, admin credentials, or URLs may have rotted as the product evolved.
 - **`@labrat.test` test data has been accumulating** since launch and has never been cleaned up.
-- **Test coverage on `shortlist.js` is zero** — the most complex code in the program (tier selection, p0 saturation, time-budget relaxation) is uncovered.
+- **Test coverage on `shortlist.js` has gaps** — the existing `shortlist.test.js` covers tier graduation, bug saturation, device filter, admin-comfort filter, and within-tier sorting, but misses time-budget relaxation, the hard-filter rejection on time-budget overrun, wrong-area filter, and completed-mission filter.
 
 ## Goals
 
@@ -95,7 +95,12 @@ async function getCompletionCounts() {
 module.exports = { logCompletion, getCompletionCounts };
 ```
 
-The `LABRAT_COMPLETIONS_FILE` env-var indirection goes away. Tests will use a transactional `BEGIN`/`ROLLBACK` against the dev Postgres (see Section 4).
+The `LABRAT_COMPLETIONS_FILE` env-var indirection goes away. Existing `missionStats.test.js` is rewritten in the same commit (TDD pairing) using a `test-` prefix on mission ids plus a `beforeEach` cleanup of those rows — no transactional isolation needed since no other tests touch `mission_completions`.
+
+Updated `missionStats.test.js` covers:
+- Counts completions per mission id after multiple logs.
+- Returns empty object (modulo `test-` rows) when no rows.
+- `tester_name` null and non-null both stored correctly.
 
 ### `.gitignore`
 
@@ -248,26 +253,17 @@ Fix in-place; this is mission-file edits only.
 
 ## Section 4 — Tests
 
-### New: `server/utils/shortlist.test.js`
+### Extended: `server/utils/shortlist.test.js`
 
-Covers:
-- Hard filters reject correctly: wrong area, exceeds time budget, wrong device, `needsAdminComfort && adminComfort==='skip'`, completed mission, bug-saturated mission.
-- `chooseTiers` returns `['p0']` when uncompleted p0 candidates exist and p0 isn't globally saturated.
-- `chooseTiers` returns `['p0','p1']` when p0 candidates exist for the tester but every p0 in the global catalog has ≥3 completions.
-- `chooseTiers` returns `['p1','p2']` when no p0 candidates and at least one p1 candidate.
-- Time-budget relaxation: only fires when widening produces *new in-tier* candidates, never abandons the chosen tier.
-- Sort: lower priority rank first, then lower completion count first.
+The file already exists with 8 tests covering p0/p1 graduation, bug saturation, device + admin-comfort filters, and within-tier completion-count sort. Add the missing cases:
+
+- Hard filter — wrong area excluded.
+- Hard filter — mission exceeding `timeBudget` excluded.
+- Hard filter — completed mission excluded (by id).
+- Time-budget relaxation fires only when widening yields new in-tier candidates (e.g., tester budget 10, p0 missions take 12 — relaxation to 15 surfaces them; result.relaxed === true).
+- Time-budget relaxation does NOT abandon the chosen tier when widening adds only out-of-tier missions.
 
 Pure-function tests, no Postgres needed.
-
-### Updated: `server/utils/missionStats.test.js`
-
-Migrate to Postgres. Pattern follows other DB-touching tests in the repo (verify at implementation — likely uses `pool` with a `BEGIN`/`ROLLBACK` per test, or a per-test mission-id namespace to keep tests isolated).
-
-Tests:
-- Counts completions per mission id after multiple logs.
-- Returns empty object when no rows.
-- `tester_name` null and non-null both stored correctly.
 
 ### New: `server/utils/bugLog.test.js`
 
@@ -312,14 +308,14 @@ Not part of any commit — operational task. The implementation plan will produc
 | 1 | feat | `mission_completions` Postgres migration | `schema.sql`, `missionStats.js`, `.gitignore`, `ARCHITECTURE.md` |
 | 2 | refactor | Drop unused `testerEmail` + `screenshotUrl` | `schema.sql`, `testFeedback.js`, `bugLog.js`, `emailTemplates.js`, `LabRatBugsPage.js`, `CLAUDE.md`, `ARCHITECTURE.md` |
 | 3 | feat | Pre-hire missions + catalog drift sweep | `qaSeed.js`, `_shape.js`, `applicant.js` (+ any drifted catalog files), `LabRatMission.js` (setup renderer) |
-| 4 | test | Shortlist + missionStats(pg) + bugLog tests | `shortlist.test.js` (new), `missionStats.test.js` (rewritten), `bugLog.test.js` (new) |
+| 4 | test | Shortlist gap-filling + bugLog tests | `shortlist.test.js` (extended), `bugLog.test.js` (new) |
 
 One push at the end. All five agents (`consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`) run once over the batch per Pre-Push Procedure step 5.
 
 ## Testing plan
 
 Before push:
-- `npm test` passes (catalog validation, new shortlist tests, new bugLog tests, updated missionStats tests).
+- `npm test` passes (catalog validation, extended shortlist tests, new bugLog tests, updated missionStats tests).
 - Local smoke: hit `POST /api/qa/seed` with `recipe: 'pre-hire-invitation'` and confirm the response shape.
 - Local smoke: complete a mission, restart the server, verify `getCompletionCounts()` still returns the count (proves Postgres persistence).
 - Local smoke: post a bug via `BugDialog`, view it in `/labrat-bugs`, mark fixed.
@@ -332,6 +328,6 @@ After push (manual on prod):
 ## Open implementation details
 
 - **Exact `onboarding_status` value** the seed inserts — likely `'applied'`, confirmed by inspecting `POST /api/auth/claim-pre-hire`'s promotion logic at implementation time.
-- **Postgres test isolation pattern** for `missionStats.test.js` and `bugLog.test.js` — follow whatever convention already exists in the repo for DB-touching tests.
+- **Postgres test isolation pattern** for `bugLog.test.js` — `missionStats.test.js` uses a `test-` prefix on mission_id with cleanup in `beforeEach`. For `bugLog.test.js`, do the same: prefix `id` with `test-` and clean up.
 - **Exhaustive FK list** for the @labrat.test cleanup — produced at plan-writing time by grepping `REFERENCES clients` and `REFERENCES users` in `schema.sql`.
 - **Drift sweep findings** — the catalog spot-check happens during implementation; specific edits land in commit 3 alongside the new missions.
