@@ -24,22 +24,20 @@ async function appendBug(input) {
   const stepIndex = Number.isFinite(input.stepIndex) ? input.stepIndex : null;
   await pool.query(
     `INSERT INTO tester_bugs (
-      id, kind, mission_id, step_index, tester_name, tester_email,
-      where_at, did_what, happened, expected, browser, screenshot_url
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      id, kind, mission_id, step_index, tester_name,
+      where_at, did_what, happened, expected, browser
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
     [
       id,
       input.kind,
       input.missionId || null,
       stepIndex,
       clip(input.testerName, 120),
-      clip(input.testerEmail, 200),
       clip(input.where, 1000),
       clip(input.didWhat, 5000),
       clip(input.happened, 5000),
       clip(input.expected, 5000),
       clip(input.browser, 500),
-      clip(input.screenshotUrl, 1000),
     ],
   );
   return { id };
@@ -52,13 +50,11 @@ function rowToBug(row) {
     missionId: row.mission_id,
     stepIndex: row.step_index,
     testerName: row.tester_name,
-    testerEmail: row.tester_email,
     where: row.where_at,
     didWhat: row.did_what,
     happened: row.happened,
     expected: row.expected,
     browser: row.browser,
-    screenshotUrl: row.screenshot_url,
     reportedAt: row.reported_at instanceof Date ? row.reported_at.toISOString() : row.reported_at,
     status: row.status,
     statusUpdatedAt: row.status_updated_at instanceof Date ? row.status_updated_at.toISOString() : row.status_updated_at,

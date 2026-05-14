@@ -700,8 +700,8 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `id` TEXT PK — `bug_<iso>_<hex>` server-generated, sortable by timestamp
 - `kind` TEXT NOT NULL CHECK (`bug` | `confusion` | `mission-stale`)
 - `mission_id` TEXT, `step_index` INTEGER — links a report back to a Lab Rat mission and step
-- `tester_name`, `tester_email` — optional contact (testers are unauthenticated)
-- `where_at`, `did_what`, `happened`, `expected`, `browser`, `screenshot_url` — captured form fields (server-side length caps in `bugLog.appendBug`)
+- `tester_name` — optional contact (testers are unauthenticated)
+- `where_at`, `did_what`, `happened`, `expected`, `browser` — captured form fields (server-side length caps in `bugLog.appendBug`)
 - `reported_at` TIMESTAMPTZ DEFAULT NOW()
 - `status` TEXT NOT NULL DEFAULT `'open'` CHECK (`open` | `fixed` | `wontfix`)
 - `status_updated_at` TIMESTAMPTZ — bumped by `setBugStatus` on every triage update

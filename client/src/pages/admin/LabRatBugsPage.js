@@ -179,17 +179,6 @@ export default function LabRatBugsPage() {
                     {b.didWhat && <p style={{ margin: '0 0 8px', whiteSpace: 'pre-wrap' }}><strong className="muted tiny">Did</strong><br />{b.didWhat}</p>}
                     {b.happened && <p style={{ margin: '0 0 8px', whiteSpace: 'pre-wrap' }}><strong className="muted tiny">{b.kind === 'mission-stale' ? "What's wrong" : 'Happened'}</strong><br />{b.happened}</p>}
                     {b.expected && <p style={{ margin: '0 0 8px', whiteSpace: 'pre-wrap' }}><strong className="muted tiny">Expected</strong><br />{b.expected}</p>}
-                    {b.screenshotUrl && /^https?:\/\//i.test(b.screenshotUrl) && (
-                      <p style={{ margin: '0 0 8px' }}>
-                        <strong className="muted tiny">Screenshot</strong><br />
-                        <a href={b.screenshotUrl} target="_blank" rel="noopener noreferrer">{b.screenshotUrl}</a>
-                      </p>
-                    )}
-                    {b.testerEmail && (
-                      <p className="muted tiny" style={{ margin: '8px 0 0' }}>
-                        Tester contact: <a href={`mailto:${encodeURIComponent(b.testerEmail)}`}>{b.testerEmail}</a>
-                      </p>
-                    )}
                     {b.fixCommitSha && (
                       <p className="muted tiny" style={{ margin: '8px 0 0' }}>
                         Fix commit: <code>{b.fixCommitSha}</code>

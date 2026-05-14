@@ -555,7 +555,7 @@ function newThumbtackReviewAdmin({ reviewerName, rating, reviewText }) {
 
 // ─── Tip-page feedback (1-3★ negative-rating notification) ──────
 
-function labratBugReportAdmin({ bugId, kind, missionId, stepIndex, testerName, testerEmail, where, didWhat, happened, expected, browser, screenshotUrl, reportedAt }) {
+function labratBugReportAdmin({ bugId, kind, missionId, stepIndex, testerName, where, didWhat, happened, expected, browser, reportedAt }) {
   let kindLabel = kind || 'Report';
   if (kind === 'bug') kindLabel = 'Bug';
   else if (kind === 'confusion') kindLabel = 'Confusion';
@@ -565,10 +565,6 @@ function labratBugReportAdmin({ bugId, kind, missionId, stepIndex, testerName, t
   const subjectSafe = (v, max = 80) => (v ? String(v).replace(/[\r\n\t]/g, ' ').slice(0, max) : '');
   const subjectName = testerName ? ` from ${subjectSafe(testerName)}` : '';
   const subjectMission = missionId ? ` — ${subjectSafe(missionId, 60)}` : '';
-  // Server-side validator should already reject non-http(s) URLs; this is the
-  // defense-in-depth gate so a hand-rolled INSERT can't ship a javascript: href
-  // to an admin's mail client.
-  const safeShot = screenshotUrl && /^https?:\/\//i.test(screenshotUrl) ? screenshotUrl : null;
   const formatBlock = (label, value) => value
     ? `<p style="margin:0.5rem 0;"><strong>${label}:</strong><br/>${esc(value).replace(/\n/g, '<br/>')}</p>`
     : '';
@@ -577,7 +573,7 @@ function labratBugReportAdmin({ bugId, kind, missionId, stepIndex, testerName, t
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Lab Rat ${kindLabel.toLowerCase()} report</h2>
       <p style="color:${BRAND.secondary};margin:0 0 1rem;">${esc(reportedAt || new Date().toISOString())}</p>
-      <p><strong>Tester:</strong> ${esc(testerName || 'anonymous')}${testerEmail ? ` &lt;${esc(testerEmail)}&gt;` : ''}</p>
+      <p><strong>Tester:</strong> ${esc(testerName || 'anonymous')}</p>
       ${missionId ? `<p><strong>Mission:</strong> ${esc(missionId)}${Number.isFinite(stepIndex) ? ` (step ${stepIndex + 1})` : ''}</p>` : ''}
       ${where ? `<p><strong>Where:</strong> ${esc(where)}</p>` : ''}
       <div style="background:${BRAND.bg};padding:16px;border-radius:6px;margin:1rem 0;border-left:4px solid ${BRAND.secondary};">
@@ -585,10 +581,9 @@ function labratBugReportAdmin({ bugId, kind, missionId, stepIndex, testerName, t
         ${formatBlock(kind === 'mission-stale' ? "What's wrong" : 'What happened', happened)}
         ${formatBlock('What they expected', expected)}
       </div>
-      ${safeShot ? `<p><strong>Screenshot:</strong> <a href="${esc(safeShot)}">${esc(safeShot)}</a></p>` : ''}
       <p style="color:${BRAND.secondary};font-size:12px;margin-top:1.5rem;">Bug ID: ${esc(bugId || '—')}<br/>Browser: ${esc(browser || 'unknown')}</p>
     `),
-    text: `Lab Rat ${kindLabel} from ${testerName || 'anonymous'}${missionId ? ` (mission ${missionId}${Number.isFinite(stepIndex) ? `, step ${stepIndex + 1}` : ''})` : ''}\n\nWhere: ${where || '—'}\nDid: ${didWhat || '—'}\nHappened: ${happened || '—'}${expected ? `\nExpected: ${expected}` : ''}${safeShot ? `\nScreenshot: ${safeShot}` : ''}\n\nBug ID: ${bugId || '—'}\nReported: ${reportedAt || new Date().toISOString()}`,
+    text: `Lab Rat ${kindLabel} from ${testerName || 'anonymous'}${missionId ? ` (mission ${missionId}${Number.isFinite(stepIndex) ? `, step ${stepIndex + 1}` : ''})` : ''}\n\nWhere: ${where || '—'}\nDid: ${didWhat || '—'}\nHappened: ${happened || '—'}${expected ? `\nExpected: ${expected}` : ''}\n\nBug ID: ${bugId || '—'}\nReported: ${reportedAt || new Date().toISOString()}`,
   };
 }
 

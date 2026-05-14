@@ -2050,3 +2050,11 @@ CREATE TABLE IF NOT EXISTS mission_completions (
 );
 CREATE INDEX IF NOT EXISTS idx_mission_completions_mission_id
   ON mission_completions(mission_id);
+
+-- ─── Lab Rat tester_bugs: drop unused contact fields (2026-05-14) ──
+-- The BugDialog UI never collected tester_email or screenshot_url; the
+-- backend validation and admin-viewer rendering were defending an unused
+-- attack surface. Confirmed empty before drop. Triage workflow is admin
+-- UI + Claude session, not email reply.
+ALTER TABLE tester_bugs DROP COLUMN IF EXISTS tester_email;
+ALTER TABLE tester_bugs DROP COLUMN IF EXISTS screenshot_url;

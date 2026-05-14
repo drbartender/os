@@ -11,30 +11,13 @@ const { labratBugReportAdmin } = require('../utils/emailTemplates');
 const router = express.Router();
 const ALLOWED_KINDS = ['bug', 'confusion', 'mission-stale'];
 
-// Reject SMTP-header-significant characters in addition to the standard regex.
-// `\s` covers CR/LF/tab/space; explicit `<>"'\,;` blocks angle-bracket and
-// multi-recipient injection vectors when forwarded into Resend's `reply_to`.
-const EMAIL_RE = /^[^\s@<>"'\\,;]+@[^\s@<>"'\\,;]+\.[^\s@<>"'\\,;]+$/;
-
-// Optional hostname allowlist for tester-submitted screenshot URLs. When
-// `LABRAT_SCREENSHOT_ALLOWED_HOSTS` is set (comma-separated), only those
-// hostnames pass — defends against open-redirect phishing where a tester
-// plants `https://evil.example/login` and an admin clicks it. When unset,
-// any http(s) host passes (current behavior).
-function getScreenshotHostAllowlist() {
-  const raw = process.env.LABRAT_SCREENSHOT_ALLOWED_HOSTS;
-  if (!raw) return null;
-  return raw.split(',').map(h => h.trim().toLowerCase()).filter(Boolean);
-}
-
 router.post('/', labratFeedbackLimiter, asyncHandler(async (req, res) => {
   const body = req.body || {};
-  const { missionId, stepIndex, testerName, testerEmail, expected, browser, screenshotUrl } = body;
+  const { missionId, stepIndex, testerName, expected, browser } = body;
   let { kind, where, didWhat, happened } = body;
 
   // Back-compat shim for the legacy /testing-guide.html which posts the old
-  // shape: { testerName, testerEmail, progressSummary, bugCount, reportText }.
-  // Keep this until the legacy guide is removed.
+  // shape: { testerName, progressSummary, bugCount, reportText }.
   if (!kind && req.body && typeof req.body.reportText === 'string') {
     kind = 'bug';
     happened = req.body.reportText;
@@ -45,58 +28,26 @@ router.post('/', labratFeedbackLimiter, asyncHandler(async (req, res) => {
   const errs = {};
   if (!ALLOWED_KINDS.includes(kind)) errs.kind = `must be one of ${ALLOWED_KINDS.join(', ')}`;
   if (kind === 'bug' && (!happened || !happened.trim())) errs.happened = 'Tell us what happened';
-  let safeReplyTo;
-  if (testerEmail && typeof testerEmail === 'string' && testerEmail.trim()) {
-    const trimmed = testerEmail.trim();
-    if (trimmed.length > 254 || !EMAIL_RE.test(trimmed)) {
-      errs.testerEmail = 'Invalid email format';
-    } else {
-      safeReplyTo = trimmed;
-    }
-  }
-  // Reject any URL scheme other than http(s). This blocks javascript:/data:/etc.
-  // payloads that would otherwise execute on admin click of the screenshot link.
-  // If LABRAT_SCREENSHOT_ALLOWED_HOSTS is set, also restrict to those hostnames.
-  let safeScreenshotUrl = null;
-  if (screenshotUrl && typeof screenshotUrl === 'string' && screenshotUrl.trim()) {
-    try {
-      const u = new URL(screenshotUrl.trim());
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-        errs.screenshotUrl = 'must be an http(s) URL';
-      } else {
-        const allowedHosts = getScreenshotHostAllowlist();
-        if (allowedHosts && !allowedHosts.includes(u.hostname.toLowerCase())) {
-          errs.screenshotUrl = 'host not allowed';
-        } else {
-          safeScreenshotUrl = screenshotUrl.trim();
-        }
-      }
-    } catch {
-      errs.screenshotUrl = 'invalid URL';
-    }
-  }
   if (Object.keys(errs).length) throw new ValidationError(errs, 'Invalid feedback');
 
   const { id } = await appendBug({
     kind, missionId: missionId || null, stepIndex,
-    testerName, testerEmail, where, didWhat, happened, expected, browser,
-    screenshotUrl: safeScreenshotUrl,
+    testerName, where, didWhat, happened, expected, browser,
   });
 
   // Best-effort admin email — fire-and-forget so we don't block the tester's
   // "Sent ✓" toast on Resend's 200-1000ms round-trip. Bug is already in
-  // bugLog; the email is the durable copy that survives Render deploys.
+  // tester_bugs; the email is a notification redundancy.
   const tpl = labratBugReportAdmin({
     bugId: id, kind, missionId: missionId || null, stepIndex,
-    testerName, testerEmail, where, didWhat, happened, expected,
-    browser, screenshotUrl: safeScreenshotUrl, reportedAt: new Date().toISOString(),
+    testerName, where, didWhat, happened, expected,
+    browser, reportedAt: new Date().toISOString(),
   });
   sendEmail({
     to: process.env.ADMIN_FEEDBACK_NOTIFICATION_EMAIL || 'contact@drbartender.com',
     subject: tpl.subject,
     html: tpl.html,
     text: tpl.text,
-    replyTo: safeReplyTo,
   }).catch((err) => {
     console.error('[labrat] bug-report admin email failed', err.message);
     Sentry.captureException(err, {
