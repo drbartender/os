@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const bcrypt = require('bcryptjs');
 const { pool } = require('../db');
 
 function fakeName() {
@@ -38,8 +39,31 @@ async function recipeProposalInSent(client) {
   };
 }
 
+// Seeds a staff user in the 'applied' pre-claim state so the tester can
+// log in and exercise POST /api/auth/claim-pre-hire (which promotes
+// 'applied' → 'hired' and seeds contractor_profiles). Email follows the
+// @labrat.test convention so the one-off cleanup script sweeps it.
+async function recipePreHireInvitation(client) {
+  const email = fakeEmail();
+  const plaintext = 'LabRat-' + crypto.randomBytes(4).toString('hex');
+  const passwordHash = await bcrypt.hash(plaintext, 10);
+  const u = await client.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status)
+     VALUES ($1, $2, 'staff', 'applied')
+     RETURNING id`,
+    [email, passwordHash],
+  );
+  return {
+    userId: u.rows[0].id,
+    testerEmail: email,
+    testerPassword: plaintext,
+    onboardingUrl: '/onboarding',
+  };
+}
+
 const RECIPES = {
   'proposal-in-sent': recipeProposalInSent,
+  'pre-hire-invitation': recipePreHireInvitation,
 };
 
 async function runSeedRecipe(recipeId) {

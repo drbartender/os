@@ -96,6 +96,24 @@ export default function LabRatMission() {
                 </a>
               </>
             )}
+            {seedResult && seedResult.testerEmail && seedResult.testerPassword && (
+              <>
+                <p>✓ We made you a fake invited-staff account.</p>
+                <p>
+                  Email: <code>{seedResult.testerEmail}</code><br />
+                  Password: <code>{seedResult.testerPassword}</code>
+                </p>
+                {seedResult.onboardingUrl && (
+                  <p>
+                    After logging in, visit{' '}
+                    <a href={`https://hiring.drbartender.com${seedResult.onboardingUrl}`}
+                       target="_blank" rel="noopener noreferrer">
+                      hiring.drbartender.com{seedResult.onboardingUrl}
+                    </a>
+                  </p>
+                )}
+              </>
+            )}
           </section>
         )}
 

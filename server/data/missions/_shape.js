@@ -2,7 +2,7 @@ const VALID_AREAS = new Set(['customer', 'applicant', 'staff', 'admin', 'mobile'
 const VALID_DIFFICULTY = new Set(['easy', 'medium', 'hard']);
 const VALID_DEVICES = new Set(['desktop', 'mobile']);
 const VALID_PRIORITY = new Set(['p0', 'p1', 'p2']);
-const VALID_SEED_RECIPES = new Set([null, 'proposal-in-sent']);
+const VALID_SEED_RECIPES = new Set([null, 'proposal-in-sent', 'pre-hire-invitation']);
 
 function validateMission(m, fileLabel) {
   const errs = [];
