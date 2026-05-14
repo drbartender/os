@@ -14,7 +14,6 @@
       "Bash(findstr :5000)",
       "Bash(findstr LISTENING)",
       "Bash(taskkill /PID 70104 /F)",
-      "Bash(psql \"postgresql://postgres:M7n4mJ%40%40@localhost:5432/dr_bartender\" -c \"SELECT 1\")",
       "Bash(curl -s http://localhost:5000/api/auth/me)",
       "Bash(npm install:*)",
       "Bash(node -e \"require\\(''./node_modules/jspdf/dist/jspdf.node.js''\\); console.log\\(''jspdf ok''\\)\")",
@@ -155,7 +154,13 @@
       "Bash(unzip -l \"/c/Users/dalla/Downloads/Wild Light Admin-handoff.zip\")",
       "mcp__sentry__get_sentry_resource",
       "Bash(npx jest *)",
-      "mcp__sentry__update_issue"
+      "mcp__sentry__update_issue",
+      "Bash(codex review:*)",
+      "Skill(superpowers:brainstorming)",
+      "Bash(powershell -NoProfile -File C:/Users/dalla/.claude/statusline-command.ps1)",
+      "Skill(superpowers:executing-plans)",
+      "mcp__plugin_playwright_playwright__browser_fill_form",
+      "Skill(update-config)"
     ],
     "deny": [
       "Bash(codex apply *)",
