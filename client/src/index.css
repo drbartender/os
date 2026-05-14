@@ -10723,15 +10723,17 @@ html[data-app="admin-os"] .kebab-item {
   text-align: left;
   cursor: pointer;
   font-family: inherit;
+  text-decoration: none;
 }
-html[data-app="admin-os"] .kebab-item:hover:not(:disabled) {
+html[data-app="admin-os"] .kebab-item:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--row-hover);
   color: var(--ink-1);
 }
 html[data-app="admin-os"] .kebab-item.danger {
   color: hsl(var(--danger-h) var(--danger-s) 60%);
 }
-html[data-app="admin-os"] .kebab-item:disabled {
+html[data-app="admin-os"] .kebab-item:disabled,
+html[data-app="admin-os"] .kebab-item[aria-disabled="true"] {
   color: var(--ink-4);
   cursor: not-allowed;
 }

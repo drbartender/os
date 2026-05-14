@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { formatPhone, formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import useFormValidation from '../../hooks/useFormValidation';
@@ -8,6 +9,7 @@ import FieldError from '../../components/FieldError';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
+import KebabMenu from '../../components/adminos/KebabMenu';
 import useDrawerParam from '../../hooks/useDrawerParam';
 import ClientDrawer from '../../components/adminos/drawers/ClientDrawer';
 import { fmt$, fmtDate } from '../../components/adminos/format';
@@ -26,6 +28,7 @@ function initialsOf(name) {
 }
 
 export default function ClientsDashboard() {
+  const navigate = useNavigate();
   const toast = useToast();
   const drawer = useDrawerParam();
   const [clients, setClients] = useState([]);
@@ -224,10 +227,31 @@ export default function ClientsDashboard() {
                     <td className="muted">{fmtDate(c.created_at && String(c.created_at).slice(0, 10), { year: 'numeric' })}</td>
                     <td className="num">{c.events_count != null ? c.events_count : '—'}</td>
                     <td className="num"><strong>{c.lifetime_value != null ? fmt$(c.lifetime_value) : '—'}</strong></td>
-                    <td className="shrink">
-                      <button type="button" className="icon-btn" onClick={(e) => e.stopPropagation()} title="More">
-                        <Icon name="kebab" size={13} />
-                      </button>
+                    <td className="shrink" onClick={(ev) => ev.stopPropagation()}>
+                      <KebabMenu items={[
+                        {
+                          label: 'New Proposal',
+                          icon: 'plus',
+                          onClick: () => navigate(`/proposals/new?client_id=${c.id}`),
+                        },
+                        {
+                          label: 'Email',
+                          icon: 'mail',
+                          href: c.email ? `mailto:${c.email}` : undefined,
+                          disabled: !c.email,
+                        },
+                        {
+                          label: 'Call',
+                          icon: 'phone',
+                          href: c.phone ? `tel:${stripPhone(c.phone)}` : undefined,
+                          disabled: !c.phone,
+                        },
+                        {
+                          label: 'Open Full Page',
+                          icon: 'external',
+                          onClick: () => navigate(`/clients/${c.id}`),
+                        },
+                      ]} />
                     </td>
                   </tr>
                 );

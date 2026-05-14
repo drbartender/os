@@ -2,10 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
-import { formatPhone } from '../../utils/formatPhone';
+import { formatPhone, stripPhone } from '../../utils/formatPhone';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
+import KebabMenu from '../../components/adminos/KebabMenu';
+import AssignToEventModal from './userDetail/components/AssignToEventModal';
 
 function initialsOf(s) {
   if (!s?.preferred_name && !s?.email) return '?';
@@ -20,6 +22,7 @@ export default function StaffDashboard() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('active');
+  const [assignTarget, setAssignTarget] = useState(null);
 
   useEffect(() => {
     api.get('/admin/active-staff')
@@ -109,10 +112,47 @@ export default function StaffDashboard() {
                       {s.city && s.state ? `${s.city}, ${s.state}` : (s.city || s.state || '—')}
                     </td>
                     <td className="tiny muted">{equipment.length ? equipment.join(' · ') : '—'}</td>
-                    <td className="shrink">
-                      <button type="button" className="icon-btn" onClick={(e) => e.stopPropagation()} title="More">
-                        <Icon name="kebab" size={13} />
-                      </button>
+                    <td className="shrink" onClick={(ev) => ev.stopPropagation()}>
+                      <KebabMenu items={[
+                        {
+                          label: 'Email',
+                          icon: 'mail',
+                          href: s.email ? `mailto:${s.email}` : undefined,
+                          disabled: !s.email,
+                        },
+                        {
+                          label: 'Call',
+                          icon: 'phone',
+                          href: s.phone ? `tel:${stripPhone(s.phone)}` : undefined,
+                          disabled: !s.phone,
+                        },
+                        {
+                          label: 'Text',
+                          icon: 'chat',
+                          href: s.phone ? `sms:${stripPhone(s.phone)}` : undefined,
+                          disabled: !s.phone,
+                        },
+                        {
+                          label: 'Copy Phone',
+                          icon: 'copy',
+                          disabled: !s.phone,
+                          onClick: () => {
+                            navigator.clipboard.writeText(formatPhone(s.phone))
+                              .then(() => toast.success('Phone copied.'))
+                              .catch(() => toast.error('Copy failed.'));
+                          },
+                        },
+                        {
+                          label: 'Assign to Event',
+                          icon: 'userplus',
+                          onClick: () => setAssignTarget({ id: s.id, name: s.preferred_name || s.email }),
+                        },
+                        {
+                          label: 'Open Full Profile',
+                          icon: 'external',
+                          onClick: () => navigate(`/staffing/users/${s.id}`),
+                        },
+                      ]} />
                     </td>
                   </tr>
                 );
@@ -126,6 +166,16 @@ export default function StaffDashboard() {
         <div className="tiny muted" style={{ padding: '8px 2px' }}>
           {filtered.length} {filtered.length === 1 ? 'team member' : 'team members'}
         </div>
+      )}
+
+      {assignTarget && (
+        <AssignToEventModal
+          userId={assignTarget.id}
+          staffName={assignTarget.name}
+          onClose={() => setAssignTarget(null)}
+          onAssigned={() => {}}
+          toast={toast}
+        />
       )}
     </div>
   );
