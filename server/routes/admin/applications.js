@@ -4,6 +4,7 @@ const { auth, adminOnly } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../../utils/errors');
 const { activateTipPage, deactivateTipPage } = require('../../utils/tipPageLifecycle');
+const { writeActivity, writeActivityBestEffort } = require('../../utils/activityLog');
 
 const router = express.Router();
 
@@ -29,15 +30,7 @@ function parseUserId(raw) {
   return id;
 }
 
-// Append-only activity event writer. Pass either the pool or a transaction
-// client; both expose `.query`.
-async function writeActivity(client, { user_id, actor_id, event_type, metadata }) {
-  await client.query(
-    `INSERT INTO application_activity (user_id, actor_id, event_type, metadata)
-     VALUES ($1, $2, $3, $4)`,
-    [user_id, actor_id, event_type, metadata ? JSON.stringify(metadata) : null]
-  );
-}
+// writeActivity moved to server/utils/activityLog.js — see import above.
 
 // Enrich a raw application row with derived fields the frontend expects:
 // onboarding_progress (0..1), onboarding_blocker, flags array.
@@ -185,6 +178,10 @@ router.get('/applications/:userId', auth, adminOnly, asyncHandler(async (req, re
 
   // Unified timeline: application_activity (new) UNIONed with legacy interview_notes
   // rendered as note_added events. Newest first.
+  // Filter out `note_type='status_change'` interview_notes — those rows are
+  // duplicated by parallel `status_changed` entries in `application_activity`
+  // written by PUT /admin/users/:id/status and POST /auth/claim-pre-hire.
+  // Without this filter the timeline shows the same transition twice.
   const timeline = [
     ...activityRes.rows.map(r => ({
       kind: 'activity',
@@ -193,7 +190,7 @@ router.get('/applications/:userId', auth, adminOnly, asyncHandler(async (req, re
       actor_name: r.actor_name || r.actor_email || null,
       created_at: r.created_at,
     })),
-    ...notesRes.rows.map(r => ({
+    ...notesRes.rows.filter(r => r.note_type !== 'status_change').map(r => ({
       kind: 'activity',
       event_type: 'note_added',
       metadata: { note: r.note, legacy: true },
@@ -427,8 +424,12 @@ router.post('/applications/:userId/reject', auth, adminOnly, asyncHandler(async 
       throw new ValidationError(null, 'Already rejected.');
     }
 
+    // Also clear pre_hired: the flag is a one-time admin-review bypass and
+    // must not survive a rejection — otherwise a future restore would let the
+    // contractor auto-rehire themselves. KEEP IN SYNC with deactivation in
+    // server/routes/admin/users.js PUT /users/:id/status.
     await client.query(
-      `UPDATE users SET onboarding_status = 'rejected', updated_at = NOW() WHERE id = $1`,
+      `UPDATE users SET onboarding_status = 'rejected', pre_hired = false, updated_at = NOW() WHERE id = $1`,
       [userId]
     );
     await client.query(
@@ -502,10 +503,17 @@ router.post('/applications/:userId/reminder', auth, adminOnly, asyncHandler(asyn
 
   const { sendPaperworkReminderEmail } = require('../../utils/emailTemplates');
   await sendPaperworkReminderEmail({ userId });
-  await writeActivity(pool, {
-    user_id: userId, actor_id: req.user.id,
+  // Best-effort audit: if this insert fails AFTER a successful email send,
+  // the 24h throttle won't fire next time (mildly degraded). The opposite
+  // ordering (audit before email) would mean a failed Resend send would
+  // still block 24h — worse failure mode. Send-then-audit is the correct
+  // tradeoff; Sentry capture flags persistent audit failures.
+  await writeActivityBestEffort({
+    user_id: userId,
+    actor_id: req.user.id,
     event_type: 'reminder_sent',
     metadata: { kind: 'paperwork' },
+    source: 'POST /admin/applications/:userId/reminder',
   });
 
   res.json({ ok: true });

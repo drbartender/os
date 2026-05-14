@@ -1,6 +1,7 @@
 import React, { Suspense, lazy, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate } from 'react-router-dom';
 import api from './utils/api';
+import { getHomePath } from './utils/userRoutes';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ClientAuthProvider } from './context/ClientAuthContext';
 import { ToastProvider } from './context/ToastContext';
@@ -24,6 +25,7 @@ const HiringLanding = lazy(() => import('./pages/HiringLanding'));
 
 // Auth entry points — chunked once, cached after first login.
 const Register = lazy(() => import('./pages/Register'));
+const PreHireOnboarding = lazy(() => import('./pages/PreHireOnboarding'));
 const Login = lazy(() => import('./pages/Login'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
@@ -159,36 +161,7 @@ function getSiteContext() {
   return 'public';
 }
 
-/** Determine where a logged-in user should go based on their role and status */
-function getHomePath(user) {
-  if (!user) return '/login';
-  // Admins and managers always land on the dashboard
-  if (user.role === 'admin' || user.role === 'manager') return '/dashboard';
-  switch (user.onboarding_status) {
-    case 'applied':
-    case 'interviewing':
-      return '/application-status';
-    // Completed onboarding → portal
-    case 'submitted':
-    case 'reviewed':
-    case 'approved':
-      // Portal-status users belong on staff.drbartender.com. If they end up on
-      // admin.drbartender.com (rare — bookmark, copy-paste, etc.), kick them
-      // cross-domain. Vercel cross-subdomain redirects only fire on full page
-      // loads, not client-side React Router navs, so use window.location here.
-      if (typeof window !== 'undefined' && window.location.hostname === 'admin.drbartender.com') {
-        window.location.replace('https://staff.drbartender.com/dashboard');
-        return '/login';
-      }
-      return '/dashboard';
-    // Actively going through onboarding
-    case 'hired':
-      return '/welcome';
-    case 'in_progress':
-    default:
-      return user.has_application ? '/application-status' : '/apply';
-  }
-}
+// getHomePath is now imported from ./utils/userRoutes — see import above.
 
 /** Requires auth. adminOnly also allows managers (they share the dashboard). */
 function ProtectedRoute({ children, adminOnly = false }) {
@@ -272,6 +245,10 @@ function HiringRoutes() {
       <Routes>
         <Route path="/" element={<RedirectIfLoggedIn><HiringLanding /></RedirectIfLoggedIn>} />
         <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
+        {/* /onboarding intentionally has NO RedirectIfLoggedIn — already-logged-in users
+            visiting the URL should still get flagged as pre_hired via claim-pre-hire,
+            not silently bounced. The page handles both cases internally. */}
+        <Route path="/onboarding" element={<PreHireOnboarding />} />
         <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
         <Route path="/forgot-password" element={<RedirectIfLoggedIn><ForgotPassword /></RedirectIfLoggedIn>} />
         <Route path="/reset-password/:token" element={<RedirectIfLoggedIn><ResetPassword /></RedirectIfLoggedIn>} />
@@ -391,6 +368,10 @@ function AppRoutes() {
       <Route path="/my-proposals" element={<ClientDashboard />} />
 
       <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
+      {/* /onboarding intentionally has NO RedirectIfLoggedIn — the page handles
+          logged-in users internally via claim-pre-hire so the URL works for both
+          fresh recruits and returning ones. Mirrors the same route in HiringRoutes. */}
+      <Route path="/onboarding" element={<PreHireOnboarding />} />
       <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
       <Route path="/forgot-password" element={<RedirectIfLoggedIn><ForgotPassword /></RedirectIfLoggedIn>} />
       <Route path="/reset-password/:token" element={<RedirectIfLoggedIn><ResetPassword /></RedirectIfLoggedIn>} />

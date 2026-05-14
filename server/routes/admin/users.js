@@ -18,6 +18,8 @@ const {
 const { activateTipPage, deactivateTipPage } = require('../../utils/tipPageLifecycle');
 const { normalizeTipHandlesInPlace } = require('../../utils/tipHandleValidation');
 const { logAdminAction } = require('../../utils/adminAuditLog');
+const { seedContractorProfileFromApplication } = require('../../utils/contractorSeed');
+const { writeActivityBestEffort, writeInterviewNoteBestEffort } = require('../../utils/activityLog');
 
 const router = express.Router();
 
@@ -126,10 +128,22 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
     if (!currentRes.rows[0]) throw new NotFoundError('User not found');
     oldStatus = currentRes.rows[0].onboarding_status;
 
-    result = await client.query(
-      "UPDATE users SET onboarding_status=$1 WHERE id=$2 AND role IN ('staff','manager') RETURNING id, email, onboarding_status",
-      [status, req.params.id]
-    );
+    // Clear pre_hired on rejection/deactivation. The flag is a one-time
+    // bypass of the admin-review gate (see server/routes/auth.js POST
+    // /register-pre-hired); a contractor who's been rejected should not be
+    // able to auto-rehire themselves if later restored — they need fresh
+    // admin review. The application-submit handler also defense-in-depth
+    // gates the pre-hire branch on status==='in_progress'.
+    const clearPreHired = (status === 'rejected' || status === 'deactivated');
+    result = clearPreHired
+      ? await client.query(
+          "UPDATE users SET onboarding_status=$1, pre_hired=false WHERE id=$2 AND role IN ('staff','manager') RETURNING id, email, onboarding_status",
+          [status, req.params.id]
+        )
+      : await client.query(
+          "UPDATE users SET onboarding_status=$1 WHERE id=$2 AND role IN ('staff','manager') RETURNING id, email, onboarding_status",
+          [status, req.params.id]
+        );
     if (!result.rows[0]) throw new NotFoundError('User not found');
 
     // When hiring, ensure onboarding progress record exists and seed the contractor
@@ -157,64 +171,7 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
         if (appExists.rows[0]) {
           // Populate contractor_profiles from the application. Preserve an existing
           // hire_date if one was already set (re-hire or status-toggle case).
-          // KEEP IN SYNC WITH schema.sql contractor_profiles + PUT /users/:id/profile.
-          await client.query(`
-            INSERT INTO contractor_profiles (
-              user_id, preferred_name, phone, email, birth_month, birth_day, birth_year,
-              street_address, city, state, zip_code,
-              travel_distance, reliable_transportation,
-              equipment_portable_bar, equipment_cooler, equipment_table_with_spandex,
-              equipment_none_but_open, equipment_no_space,
-              emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
-              alcohol_certification_file_url, alcohol_certification_filename,
-              resume_file_url, resume_filename,
-              headshot_file_url, headshot_filename,
-              hire_date
-            )
-            SELECT
-              u.id, a.full_name, a.phone, u.email, a.birth_month, a.birth_day, a.birth_year,
-              a.street_address, a.city, a.state, a.zip_code,
-              a.travel_distance, a.reliable_transportation,
-              COALESCE(a.equipment_portable_bar, false), COALESCE(a.equipment_cooler, false),
-              COALESCE(a.equipment_table_with_spandex, false), COALESCE(a.equipment_none_but_open, false),
-              COALESCE(a.equipment_no_space, false),
-              a.emergency_contact_name, a.emergency_contact_phone, a.emergency_contact_relationship,
-              a.basset_file_url, a.basset_filename,
-              a.resume_file_url, a.resume_filename,
-              a.headshot_file_url, a.headshot_filename,
-              COALESCE($2::date, CURRENT_DATE)
-            FROM users u
-            JOIN applications a ON a.user_id = u.id
-            WHERE u.id = $1
-            ON CONFLICT (user_id) DO UPDATE SET
-              preferred_name = EXCLUDED.preferred_name,
-              phone = EXCLUDED.phone,
-              email = EXCLUDED.email,
-              birth_month = EXCLUDED.birth_month,
-              birth_day = EXCLUDED.birth_day,
-              birth_year = EXCLUDED.birth_year,
-              street_address = EXCLUDED.street_address,
-              city = EXCLUDED.city,
-              state = EXCLUDED.state,
-              zip_code = EXCLUDED.zip_code,
-              travel_distance = EXCLUDED.travel_distance,
-              reliable_transportation = EXCLUDED.reliable_transportation,
-              equipment_portable_bar = EXCLUDED.equipment_portable_bar,
-              equipment_cooler = EXCLUDED.equipment_cooler,
-              equipment_table_with_spandex = EXCLUDED.equipment_table_with_spandex,
-              equipment_none_but_open = EXCLUDED.equipment_none_but_open,
-              equipment_no_space = EXCLUDED.equipment_no_space,
-              emergency_contact_name = EXCLUDED.emergency_contact_name,
-              emergency_contact_phone = EXCLUDED.emergency_contact_phone,
-              emergency_contact_relationship = EXCLUDED.emergency_contact_relationship,
-              alcohol_certification_file_url = EXCLUDED.alcohol_certification_file_url,
-              alcohol_certification_filename = EXCLUDED.alcohol_certification_filename,
-              resume_file_url = EXCLUDED.resume_file_url,
-              resume_filename = EXCLUDED.resume_filename,
-              headshot_file_url = EXCLUDED.headshot_file_url,
-              headshot_filename = EXCLUDED.headshot_filename,
-              hire_date = EXCLUDED.hire_date
-          `, [req.params.id, existing.rows[0]?.hire_date || null]);
+          await seedContractorProfileFromApplication(client, req.params.id, existing.rows[0]?.hire_date || null);
         } else {
           // No application on file (rare — direct admin hire) — just ensure a skeleton row with hire_date
           await client.query(`
@@ -232,38 +189,53 @@ router.put('/users/:id/status', auth, adminOnly, asyncHandler(async (req, res) =
       }
     }
 
-    // Log status change as a system note in the interview_notes table.
-    // Audit log failures should not block the primary status change, so swallow the error.
-    if (oldStatus !== status) {
-      const toLabel = s => (s || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      try {
-        await client.query(
-          `INSERT INTO interview_notes (user_id, admin_id, note, note_type) VALUES ($1, $2, $3, 'status_change')`,
-          [req.params.id, req.user.id, `${toLabel(oldStatus)} → ${toLabel(status)}`]
-        );
-      } catch (logErr) {
-        console.error('Status change log failed:', logErr);
-      }
-
-      // Look up applicant display name for the status-change email (sent after COMMIT).
-      // Prefer the contractor's chosen preferred_name; fall back to the application full_name.
-      const nameRes = await client.query(
-        `SELECT cp.preferred_name AS profile_name, a.full_name AS app_name
-         FROM users u
-         LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
-         LEFT JOIN applications a ON a.user_id = u.id
-         WHERE u.id = $1`,
-        [req.params.id]
-      );
-      applicantName = nameRes.rows[0]?.profile_name || nameRes.rows[0]?.app_name || null;
-    }
-
     await client.query('COMMIT');
   } catch (txErr) {
     try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
     throw txErr;
   } finally {
     client.release();
+  }
+
+  // Audit writes + applicantName lookup run AFTER COMMIT, pipelined via
+  // Promise.all so the three calls don't serialize. They used to live inside
+  // the transaction with an inner try/catch — but Postgres marks a transaction
+  // as aborted the moment any statement errors, so a JS catch around
+  // client.query() can't rescue the primary state change from a log-row
+  // failure. The post-COMMIT pattern + best-effort helpers gives us truly
+  // best-effort audit.
+  //
+  // The nameRes read is unlocked-by-design — between COMMIT and this read a
+  // parallel contractor profile update could change preferred_name. That's
+  // acceptable: the email should reflect the freshest name anyway, and the
+  // window is sub-second.
+  if (oldStatus !== status) {
+    const toLabel = s => (s || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const noteText = `${toLabel(oldStatus)} → ${toLabel(status)}`;
+    const [, , nameRes] = await Promise.all([
+      writeInterviewNoteBestEffort({
+        user_id: req.params.id,
+        admin_id: req.user.id,
+        note: noteText,
+        source: 'PUT /admin/users/:id/status',
+      }),
+      writeActivityBestEffort({
+        user_id: req.params.id,
+        actor_id: req.user.id,
+        event_type: 'status_changed',
+        metadata: { from: oldStatus, to: status, via: 'admin_users_endpoint' },
+        source: 'PUT /admin/users/:id/status',
+      }),
+      pool.query(
+        `SELECT cp.preferred_name AS profile_name, a.full_name AS app_name
+         FROM users u
+         LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+         LEFT JOIN applications a ON a.user_id = u.id
+         WHERE u.id = $1`,
+        [req.params.id]
+      ),
+    ]);
+    applicantName = nameRes.rows[0]?.profile_name || nameRes.rows[0]?.app_name || null;
   }
 
   // Tip-page lifecycle. Runs AFTER COMMIT — Stripe ops can't be rolled back,

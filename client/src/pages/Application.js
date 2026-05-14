@@ -194,14 +194,23 @@ export default function Application() {
       if (files.headshot) data.append('headshot', files.headshot);
       if (files.basset) data.append('basset', files.basset);
 
-      await api.post('/application', data);
+      const submitRes = await api.post('/application', data);
 
       // Update local user state to reflect new status
       const meRes = await api.get('/auth/me');
       login(localStorage.getItem('token'), meRes.data.user);
 
-      toast.success('Application submitted!');
-      navigate('/application-status');
+      // Pre-hired contractors (registered via /onboarding) get status='hired' on
+      // submit and skip /application-status, landing directly on the onboarding
+      // flow. Everyone else waits on /application-status for admin review.
+      const newStatus = submitRes?.data?.onboarding_status || meRes?.data?.user?.onboarding_status;
+      if (newStatus === 'hired') {
+        toast.success("You're all set — welcome aboard!");
+        navigate('/welcome');
+      } else {
+        toast.success('Application submitted!');
+        navigate('/application-status');
+      }
     } catch (err) {
       setError(err.message || 'Failed to submit application.');
       if (err.fieldErrors) setFieldErrors(err.fieldErrors);

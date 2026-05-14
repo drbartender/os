@@ -21,7 +21,8 @@ function isSameUser(a, b) {
     && a.onboarding_status === b.onboarding_status
     && a.has_application === b.has_application
     && a.can_hire === b.can_hire
-    && a.can_staff === b.can_staff;
+    && a.can_staff === b.can_staff
+    && a.pre_hired === b.pre_hired;
 }
 
 export function AuthProvider({ children }) {

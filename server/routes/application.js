@@ -8,8 +8,10 @@ const { uploadFile } = require('../utils/storage');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ValidationError, ConflictError } = require('../utils/errors');
+const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
 const { validatePhone } = require('../utils/phone');
+const { seedContractorProfileFromApplication } = require('../utils/contractorSeed');
+const { writeActivity } = require('../utils/activityLog');
 
 const router = express.Router();
 
@@ -127,8 +129,36 @@ router.post('/', auth, asyncHandler(async (req, res) => {
   const toBool = v => v === 'true' || v === true || v === 'Yes';
 
   const client = await pool.connect();
+  // Hoisted out of the try block so the post-commit email + response shape
+  // can use the freshly-locked value rather than the stale req.user snapshot
+  // from auth middleware. Set inside the transaction once the lock is held.
+  let isPreHired = false;
   try {
     await client.query('BEGIN');
+
+    // Re-read the user row WITH ROW-LEVEL LOCK so a concurrent admin status
+    // change can't slip between auth-middleware's snapshot and our writes
+    // below. Without this lock, req.user.pre_hired / onboarding_status from
+    // the middleware's snapshot could be stale, and an unconditional status
+    // UPDATE could overwrite an admin's just-committed reject/interview/hire.
+    // The lock + status-must-be-in_progress gate ensures we only proceed
+    // when the user is genuinely in the "applying" state.
+    const lockRes = await client.query(
+      `SELECT pre_hired, onboarding_status FROM users WHERE id = $1 FOR UPDATE`,
+      [req.user.id]
+    );
+    if (lockRes.rows.length === 0) {
+      throw new NotFoundError('User not found');
+    }
+    const fresh = lockRes.rows[0];
+    // The only valid status for an application submit is 'in_progress'. Any
+    // other status (rejected, deactivated, applied, hired, interviewing, etc.)
+    // means either the user already applied (the unlocked duplicate-app check
+    // above missed a race) or an admin moved them since auth middleware ran.
+    // Either way, we must not write — return a clean conflict.
+    if (fresh.onboarding_status !== 'in_progress') {
+      throw new ConflictError('Account no longer eligible for application submit', 'STATUS_CHANGED');
+    }
 
     await client.query(
     `INSERT INTO applications (
@@ -179,16 +209,31 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     ]
   );
 
-    // Update user status to 'applied'
-    await client.query("UPDATE users SET onboarding_status = 'applied' WHERE id = $1", [req.user.id]);
+    // Pre-hired contractors (registered via the open /onboarding URL — see
+    // server/routes/auth.js POST /register-pre-hired) skip the admin-review
+    // wait: their status jumps straight to 'hired' and contractor_profiles is
+    // seeded from the application now, mirroring the admin "Hire" button.
+    // pre_hired is read from the locked row, NOT req.user. The status check
+    // is defense-in-depth (the throw above already guaranteed it).
+    isPreHired = !!fresh.pre_hired && fresh.onboarding_status === 'in_progress';
+    const newStatus = isPreHired ? 'hired' : 'applied';
+
+    await client.query('UPDATE users SET onboarding_status = $1 WHERE id = $2', [newStatus, req.user.id]);
+
+    if (isPreHired) {
+      await seedContractorProfileFromApplication(client, req.user.id, null);
+    }
 
     // Seed the activity timeline so the application detail page shows the
-    // submission event without a separate backfill query.
-    await client.query(
-      `INSERT INTO application_activity (user_id, actor_id, event_type, metadata)
-       VALUES ($1, $1, 'application_submitted', $2)`,
-      [req.user.id, JSON.stringify({ via: 'self' })]
-    );
+    // submission event without a separate backfill query. Foreground audit:
+    // if this insert fails, the whole submit should roll back (the application
+    // row already wrote, so the event MUST be recorded or the timeline lies).
+    await writeActivity(client, {
+      user_id: req.user.id,
+      actor_id: req.user.id,
+      event_type: 'application_submitted',
+      metadata: { via: isPreHired ? 'pre_hire_onboarding' : 'self' },
+    });
 
     await client.query('COMMIT');
   } catch (txErr) {
@@ -198,24 +243,34 @@ router.post('/', auth, asyncHandler(async (req, res) => {
     client.release();
   }
 
-  // Email notifications (non-blocking)
-  try {
-    const adminEmail = process.env.ADMIN_EMAIL;
-    const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-    if (adminEmail) {
-      const tpl = emailTemplates.newApplicationAdmin({ applicantName: full_name, applicantEmail: req.user.email, adminUrl: `${clientUrl}/admin/staff` });
-      await sendEmail({ to: adminEmail, ...tpl });
+  // Email notifications (non-blocking).
+  // Pre-hired contractors skip both emails: the admin already knows about them
+  // (they handed off the /onboarding URL in person), and the "we'll be in touch"
+  // confirmation would mislead a user who is about to land directly on /welcome.
+  // Branch on `isPreHired` (computed from the locked row) — NOT req.user.pre_hired,
+  // which is a potentially-stale snapshot from the auth middleware.
+  if (!isPreHired) {
+    try {
+      const adminEmail = process.env.ADMIN_EMAIL;
+      const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
+      if (adminEmail) {
+        const tpl = emailTemplates.newApplicationAdmin({ applicantName: full_name, applicantEmail: req.user.email, adminUrl: `${clientUrl}/admin/staff` });
+        await sendEmail({ to: adminEmail, ...tpl });
+      }
+      if (req.user.email) {
+        const tpl = emailTemplates.applicationReceivedConfirmation({ applicantName: full_name });
+        await sendEmail({ to: req.user.email, ...tpl });
+      }
+    } catch (emailErr) {
+      console.error('Application email failed (non-blocking):', emailErr);
     }
-    if (req.user.email) {
-      const tpl = emailTemplates.applicationReceivedConfirmation({ applicantName: full_name });
-      await sendEmail({ to: req.user.email, ...tpl });
-    }
-  } catch (emailErr) {
-    console.error('Application email failed (non-blocking):', emailErr);
   }
 
   const result = await pool.query('SELECT * FROM applications WHERE user_id = $1', [req.user.id]);
-  res.status(201).json(result.rows[0]);
+  // Include the user's new onboarding_status so the frontend can route to
+  // /welcome (pre-hired → 'hired') vs /application-status (regular → 'applied').
+  // Use `isPreHired` (locked-row value), not req.user.pre_hired (stale snapshot).
+  res.status(201).json({ ...result.rows[0], onboarding_status: isPreHired ? 'hired' : 'applied' });
 }));
 
 module.exports = router;

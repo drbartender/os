@@ -11,13 +11,22 @@ const EVENT_LABELS = {
   reminder_sent:             'Reminder sent',
   note_added:                'Note added',
   onboarding_step_completed: 'Onboarding step complete',
+  pre_hire_registered:       'Registered via /onboarding',
+  pre_hire_claimed:          'Pre-hire flag self-claimed',
 };
 
 function describe(event) {
   const meta = event.metadata || {};
   if (event.event_type === 'status_changed' && meta.from && meta.to) {
     const base = `${meta.from} → ${meta.to}`;
-    return meta.reason ? `${base} · ${meta.reason}` : base;
+    // Surface the `via` tag so a self-claimed auto-promotion is visually
+    // distinguishable from an admin-initiated hire — important forensic
+    // signal for the open /onboarding URL (see server/routes/auth.js
+    // POST /claim-pre-hire).
+    const tags = [];
+    if (meta.via === 'claim_pre_hire') tags.push('self-claimed via /onboarding');
+    if (meta.reason) tags.push(meta.reason);
+    return tags.length ? `${base} · ${tags.join(' · ')}` : base;
   }
   if (event.event_type === 'interview_scheduled' && meta.interview_at) {
     const d = new Date(meta.interview_at);

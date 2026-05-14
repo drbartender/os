@@ -8,6 +8,8 @@ const { auth } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError } = require('../utils/errors');
+const { seedContractorProfileFromApplication } = require('../utils/contractorSeed');
+const { writeActivityBestEffort, writeInterviewNoteBestEffort } = require('../utils/activityLog');
 
 const router = express.Router();
 
@@ -66,6 +68,219 @@ router.post('/register', authLimiter, asyncHandler(async (req, res) => {
     { expiresIn: '7d' }
   );
   res.status(201).json({ token, user: { ...user, has_application: false } });
+}));
+
+// Register as a pre-hired contractor — open URL hand-off from admin
+// (see docs/superpowers/specs/2026-05-13-pre-hire-onboarding-design.md).
+// Identical to POST /register except the new user has pre_hired=true so the
+// application-submit handler can promote them to 'hired' (instead of 'applied')
+// and seed contractor_profiles automatically — skipping the admin-review wait.
+router.post('/register-pre-hired', authLimiter, asyncHandler(async (req, res) => {
+  const { email, password, notifications_opt_in } = req.body;
+
+  const fieldErrors = {};
+  if (!email) fieldErrors.email = 'Email is required';
+  else if (!EMAIL_RE.test(email)) fieldErrors.email = 'Please enter a valid email address';
+  if (!password) fieldErrors.password = 'Password is required';
+  else if (!PASSWORD_RE.test(password)) {
+    fieldErrors.password = 'Password must be at least 8 characters with uppercase, lowercase, and a number.';
+  }
+  if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
+
+  const normalizedEmail = email.toLowerCase();
+
+  const existing = await pool.query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
+  if (existing.rows[0]) {
+    throw new ValidationError({ email: 'An account with this email already exists' });
+  }
+
+  const hash = await bcrypt.hash(password, 12);
+
+  // Wrap users + onboarding_progress in one transaction so a partial failure
+  // can't leave a pre_hired user with no progress row (the existing /register
+  // endpoint tolerates that via a defensive seed in the admin hire path; we
+  // tighten this new endpoint because pre_hired is load-bearing for the next
+  // step). The audit-log INSERT is written AFTER COMMIT via writeActivityBestEffort.
+  const client = await pool.connect();
+  let user;
+  try {
+    await client.query('BEGIN');
+
+    const userRes = await client.query(
+      `INSERT INTO users (email, password_hash, notifications_opt_in, pre_hired)
+       VALUES ($1, $2, $3, true)
+       RETURNING id, email, role, onboarding_status, token_version, pre_hired`,
+      [normalizedEmail, hash, notifications_opt_in || false]
+    );
+    user = userRes.rows[0];
+
+    await client.query(
+      'INSERT INTO onboarding_progress (user_id, account_created) VALUES ($1, true)',
+      [user.id]
+    );
+
+    await client.query('COMMIT');
+  } catch (txErr) {
+    try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    // Narrow the unique-violation mapping: only treat the users.email collision
+    // as a duplicate-email error. A 23505 on the onboarding_progress.user_id
+    // constraint (rare — would require a leftover row from a deleted-and-recreated
+    // user) should NOT lie about its cause to the caller.
+    if (txErr && txErr.code === '23505' && (txErr.constraint === 'users_email_key' || txErr.table === 'users')) {
+      throw new ValidationError({ email: 'An account with this email already exists' });
+    }
+    throw txErr;
+  } finally {
+    client.release();
+  }
+
+  // Audit trail (post-commit, best-effort) — distinguishes /onboarding signups
+  // from /register signups so a recruit who registers but never applies still
+  // appears in the activity feed.
+  await writeActivityBestEffort({
+    user_id: user.id,
+    actor_id: user.id,
+    event_type: 'pre_hire_registered',
+    metadata: { via: 'register_pre_hired_endpoint' },
+    source: 'POST /auth/register-pre-hired',
+  });
+
+  const token = jwt.sign(
+    { userId: user.id, tokenVersion: user.token_version ?? 0 },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+  res.status(201).json({ token, user: { ...user, has_application: false } });
+}));
+
+// Mark the current user as a pre-hired contractor. Used by the /onboarding
+// landing page when an already-logged-in user visits it (returning recruit,
+// or someone who registered at /register before being told about /onboarding).
+// Handles three cases inside one transaction:
+//   - 'in_progress' (no application yet)        → just set pre_hired=true
+//   - 'applied'     (application submitted)     → flip status to 'hired' AND
+//                                                  seed contractor_profiles
+//                                                  (same as POST /application would
+//                                                  have done if pre_hired was true
+//                                                  at submit time) AND write
+//                                                  audit entries to interview_notes
+//                                                  + application_activity
+//   - anything else (already 'hired'/'interviewing'/'rejected'/etc.) → no-op
+// Rate-limited via authLimiter and gated to role='staff' (admins/managers have
+// no business setting pre_hired on themselves). No emails fire — the recruit
+// is already on /onboarding and lands on /welcome immediately; the admin gets
+// the application_activity trail in lieu of an inbox notification, mirroring
+// the choice in POST /application for pre_hired submitters.
+router.post('/claim-pre-hire', authLimiter, auth, asyncHandler(async (req, res) => {
+  // Pre-hire is a contractor-onboarding concept — admins and managers shouldn't
+  // self-flag (the data state would be nonsensical and the flag has no effect
+  // on their flows). Treat as a no-op for non-staff. Admins/managers don't
+  // have applications by design, so has_application is false.
+  if (req.user.role !== 'staff') {
+    return res.json({ user: { ...req.user, has_application: false } });
+  }
+
+  const status = req.user.onboarding_status;
+  if (status !== 'in_progress' && status !== 'applied') {
+    // Already past the application gate (or rejected/deactivated). The flag's
+    // only effect is at application-submit time, which is past — back-filling
+    // it now would be pointless. Return the current user unchanged.
+    // has_application is implicit: only 'in_progress' can have no application.
+    return res.json({ user: { ...req.user, has_application: true } });
+  }
+
+  const client = await pool.connect();
+  let updated;
+  let promoted = false;
+  try {
+    await client.query('BEGIN');
+
+    // Re-read the user row WITH ROW-LEVEL LOCK before reading status. Without
+    // this, an admin moving the user 'applied' → 'interviewing' (or 'rejected'
+    // etc.) concurrently with the /onboarding visit could be silently
+    // overwritten by our UPDATE. Mirrors the same guard in POST /application.
+    const lockRes = await client.query(
+      `SELECT pre_hired, onboarding_status FROM users WHERE id = $1 FOR UPDATE`,
+      [req.user.id]
+    );
+    if (lockRes.rows.length === 0) {
+      throw new ConflictError('Account not found', 'NOT_FOUND');
+    }
+    const freshStatus = lockRes.rows[0].onboarding_status;
+
+    if (freshStatus === 'applied') {
+      // Flip 'applied' → 'hired' AND seed contractor_profiles, mirroring what
+      // POST /application would have done if pre_hired had been true at submit.
+      const r = await client.query(
+        `UPDATE users SET pre_hired = true, onboarding_status = 'hired' WHERE id = $1
+         RETURNING id, email, role, onboarding_status, can_hire, can_staff, pre_hired`,
+        [req.user.id]
+      );
+      updated = r.rows[0];
+      await seedContractorProfileFromApplication(client, req.user.id, null);
+      promoted = true;
+    } else if (freshStatus === 'in_progress') {
+      // 'in_progress' — flag only; the application submit will promote them later.
+      const r = await client.query(
+        `UPDATE users SET pre_hired = true WHERE id = $1
+         RETURNING id, email, role, onboarding_status, can_hire, can_staff, pre_hired`,
+        [req.user.id]
+      );
+      updated = r.rows[0];
+    } else {
+      // Status changed between auth-middleware read and our FOR UPDATE — the
+      // user is no longer eligible for the pre-hire promotion (e.g. admin
+      // moved them to 'interviewing', 'rejected', etc. while we were running).
+      // Treat as a no-op: roll back, return the current user without writes.
+      await client.query('ROLLBACK');
+      const appResult = await pool.query('SELECT id FROM applications WHERE user_id = $1', [req.user.id]);
+      return res.json({ user: { ...req.user, onboarding_status: freshStatus, has_application: appResult.rows.length > 0 } });
+    }
+
+    await client.query('COMMIT');
+  } catch (txErr) {
+    try { await client.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    throw txErr;
+  } finally {
+    client.release();
+  }
+
+  // Audit writes run AFTER COMMIT (best-effort) on separate pool connections,
+  // pipelined via Promise.all so the two writes don't sequentially block each
+  // other. They cannot affect the primary state change.
+  if (promoted) {
+    await Promise.all([
+      writeInterviewNoteBestEffort({
+        user_id: req.user.id,
+        admin_id: req.user.id,
+        note: 'Applied → Hired (via /onboarding self-claim)',
+        source: 'POST /auth/claim-pre-hire',
+      }),
+      writeActivityBestEffort({
+        user_id: req.user.id,
+        actor_id: req.user.id,
+        event_type: 'status_changed',
+        metadata: { from: 'applied', to: 'hired', via: 'claim_pre_hire' },
+        source: 'POST /auth/claim-pre-hire',
+      }),
+    ]);
+  } else {
+    await writeActivityBestEffort({
+      user_id: req.user.id,
+      actor_id: req.user.id,
+      event_type: 'pre_hire_claimed',
+      metadata: { via: 'claim_pre_hire' },
+      source: 'POST /auth/claim-pre-hire',
+    });
+  }
+
+  // has_application is now derivable without an extra SELECT: a 'promoted'
+  // user transitioned 'applied' → 'hired' so by definition has an application.
+  // A non-promoted user (status was 'in_progress') has no application yet.
+  // The 'no-op' early-return paths above still need the SELECT for the few
+  // statuses where we can't short-circuit (e.g. 'interviewing' might or might
+  // not have one — though in practice 'interviewing' always does).
+  res.json({ user: { ...updated, has_application: promoted } });
 }));
 
 // Login

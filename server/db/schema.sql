@@ -25,6 +25,20 @@ ALTER TABLE users DROP CONSTRAINT IF EXISTS users_onboarding_status_check;
 ALTER TABLE users ADD CONSTRAINT users_onboarding_status_check
   CHECK (onboarding_status IN ('in_progress','applied','interviewing','hired','rejected','submitted','reviewed','approved','deactivated'));
 
+-- pre_hired marks contractors who registered via the open /onboarding URL
+-- (hiring.drbartender.com/onboarding). They still complete the application
+-- form, but on application submit the server flips their status straight to
+-- 'hired' (instead of 'applied') and seeds their contractor_profiles
+-- automatically — skipping the admin-review wait. Cleared back to false on
+-- rejection / deactivation so a future restore can't auto-rehire without
+-- admin review (see server/routes/admin/users.js and admin/applications.js).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pre_hired BOOLEAN DEFAULT false;
+-- Backfill any rows where the column was added without a default (defensive —
+-- the IF NOT EXISTS above prevents this in practice, but historical rows from
+-- a partial migration could be NULL).
+UPDATE users SET pre_hired = false WHERE pre_hired IS NULL;
+ALTER TABLE users ALTER COLUMN pre_hired SET NOT NULL;
+
 CREATE TABLE IF NOT EXISTS onboarding_progress (
   id SERIAL PRIMARY KEY,
   user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -232,7 +246,9 @@ CREATE TABLE IF NOT EXISTS interview_scores (
 -- Activity timeline for the application detail page. Append-only event log.
 -- event_type is one of: application_submitted, status_changed,
 -- interview_scheduled, interview_rescheduled, reminder_sent, note_added,
--- onboarding_step_completed.
+-- onboarding_step_completed, pre_hire_registered (recruit signed up via the
+-- open /onboarding URL), pre_hire_claimed (already-logged-in user visited
+-- /onboarding and flipped their pre_hired flag).
 CREATE TABLE IF NOT EXISTS application_activity (
   id          SERIAL PRIMARY KEY,
   user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,

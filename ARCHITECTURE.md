@@ -109,6 +109,8 @@ Routes throw via `asyncHandler`-wrapped handlers; the global error middleware in
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/register` | No | Create account, auto-create onboarding_progress row |
+| POST | `/register-pre-hired` | No | Create account with `pre_hired=true` — the application form still runs but on submit the user lands at `'hired'` instead of `'applied'`. Backs the open `hiring.drbartender.com/onboarding` URL. |
+| POST | `/claim-pre-hire` | Yes | Flag an already-logged-in user as `pre_hired=true`. Staff-only. If status is `'applied'`, also promotes to `'hired'` + seeds contractor_profiles + writes audit entries. Called by the `/onboarding` page when a returning recruit visits the URL. |
 | POST | `/login` | No | Validate credentials, return JWT (7-day expiry) |
 | GET | `/me` | Yes | Current user + `has_application` flag |
 
