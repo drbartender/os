@@ -14,8 +14,21 @@ export default function SignaturePad({ onChange, value }) {
     if (!canvas) return;
     resizeCanvas();
 
-    window.addEventListener('resize', resizeCanvas);
-    return () => window.removeEventListener('resize', resizeCanvas);
+    // Coalesce rapid resize events (drag-resize fires dozens of times/sec)
+    // into one rAF tick — each call clears the canvas and reads layout.
+    let rafId = null;
+    const onResize = () => {
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        resizeCanvas();
+      });
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (rafId !== null) window.cancelAnimationFrame(rafId);
+    };
   }, [mode]);
 
   function resizeCanvas() {

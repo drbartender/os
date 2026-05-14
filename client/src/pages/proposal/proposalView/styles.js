@@ -19,13 +19,6 @@ const styles = {
     padding: '40px 16px 64px',
     fontFamily: 'var(--font-body)',
   },
-  container: {
-    maxWidth: '720px',
-    margin: '0 auto',
-    background: 'transparent',
-    borderRadius: 0,
-    overflow: 'visible',
-  },
   header: {
     textAlign: 'center',
     padding: '0 0 18px',

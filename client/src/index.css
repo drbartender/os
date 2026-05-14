@@ -8318,25 +8318,6 @@ html[data-app="admin-os"] .confirm-modal p {
   color: var(--deep-brown, #2C1F0E);
 }
 
-/* ─── ProposalView (client-facing) responsive overrides ─── */
-.proposal-view-container {
-  max-width: 680px;
-  margin: 0 auto;
-  padding: 1rem;
-}
-
-@media (max-width: 600px) {
-  .proposal-view-container {
-    padding: 0.5rem;
-  }
-  .proposal-view-container .proposal-detail-grid {
-    grid-template-columns: 1fr;
-  }
-  .proposal-view-container .proposal-section {
-    padding: 1rem;
-  }
-}
-
 /* ─── Invoice Dropdown ─────────────────────────────────────────── */
 .invoice-dropdown-wrapper {
   margin-top: 0.5rem;

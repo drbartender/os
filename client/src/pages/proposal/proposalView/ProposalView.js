@@ -176,7 +176,7 @@ export default function ProposalView() {
   if (loading) {
     return (
       <div style={styles.page}>
-        <div style={styles.container}>
+        <div className="proposal-view-container">
           <div style={{ textAlign: 'center', padding: '4rem' }}>
             <div className="spinner" />
           </div>
@@ -188,7 +188,7 @@ export default function ProposalView() {
   if (error) {
     return (
       <div style={styles.page}>
-        <div style={styles.container}>
+        <div className="proposal-view-container">
           <div style={{ textAlign: 'center', padding: '4rem' }}>
             <h2 style={styles.heading}>Oops!</h2>
             <p style={{ color: 'var(--brass)', marginTop: '0.5rem' }}>{error}</p>
@@ -278,7 +278,7 @@ export default function ProposalView() {
 
   return (
     <div style={styles.page}>
-      <div className="proposal-view-container" style={styles.container}>
+      <div className="proposal-view-container">
         {/* ── Hero — wax-seal medallion + brass kicker + display headline ── */}
         <div className="proposal-hero">
           <div className="wax-seal lg" aria-hidden="true">
