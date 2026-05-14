@@ -212,7 +212,7 @@ export default function ProposalCreate() {
   }, []);
 
   const selectedPkg = packages.find(p => p.id === Number(form.package_id));
-  const isHostedPackage = selectedPkg && (selectedPkg.pricing_type === 'per_guest' || selectedPkg.pricing_type === 'per_guest_timed');
+  const isHostedPackage = selectedPkg && selectedPkg.pricing_type === 'per_guest';
 
   const filteredAddons = useMemo(() => addons.filter(a => {
     if (a.applies_to !== 'all' && (!selectedPkg || a.applies_to !== selectedPkg.category)) return false;
@@ -662,7 +662,7 @@ function PackageSection({ form, packages, update, merge, fieldErrors }) {
   }
 
   const rateLabel = (pkg) => {
-    if (pkg.pricing_type === 'per_guest' || pkg.pricing_type === 'per_guest_timed') {
+    if (pkg.pricing_type === 'per_guest') {
       const big = pkg.base_rate_4hr ? `$${Number(pkg.base_rate_4hr)}/guest` : '';
       const small = pkg.base_rate_4hr_small ? `$${Number(pkg.base_rate_4hr_small)}/guest <50` : '';
       return [big, small].filter(Boolean).join(' · ');

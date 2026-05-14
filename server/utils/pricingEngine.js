@@ -17,10 +17,17 @@
  * $40/hr) plus the same sub-100-guest gratuity surcharge that applies on
  * BYOB ($50/$25/$15 per hour for <50/<75/<100 guests).
  *
+ * EXCEPTION: hosted packages with `bar_type = 'class'` (cocktail classes,
+ * 8-20 guests, 2hr fixed) keep the legacy "all bartenders free" behavior.
+ * The per-guest class rate already absorbs staffing flexibility, and
+ * over-ratio override on a class is a staffing-prep choice, not a luxury
+ * upcharge. Both base hourly AND gratuity surcharge are zeroed for classes.
+ *
  * If you add a new code path that charges for bartenders, call this
  * helper, get `staffing.required` from calculateStaffing(), and only zero
- * the charge for the first `staffing.required` bartenders. Grep for
- * `isHostedPackage` before adding bartender logic anywhere else.
+ * the charge for the first `staffing.required` bartenders (or all of them
+ * if `pkg.bar_type === 'class'`). Grep for `isHostedPackage` before adding
+ * bartender logic anywhere else.
  */
 function isHostedPackage(pkg) {
   return pkg?.pricing_type === 'per_guest';
@@ -86,6 +93,8 @@ function calculateStaffing(pkg, guestCount, durationHours, numBartendersOverride
   const configIncluded = Number(pkg.bartenders_included || 1);
   const hourlyRate = Number(pkg.extra_bartender_hourly || 40);
   const isHosted = isHostedPackage(pkg);
+  // HOSTED PACKAGE RULE EXCEPTION: see header comment by isHostedPackage().
+  const isClassPackage = isHosted && pkg.bar_type === 'class';
 
   const required = guestCount > 0 ? Math.max(1, Math.ceil(guestCount / perBartender)) : 1;
   // HOSTED PACKAGE RULE: hosted packages include bartenders at the 1:100 ratio
@@ -101,15 +110,16 @@ function calculateStaffing(pkg, guestCount, durationHours, numBartendersOverride
   // volume is light). For BYOB, `actual > required` distinguishes a luxury
   // add from a ratio-driven extra above `included`. For hosted, the new
   // included = max(configIncluded, required) means any extra > 0 already
-  // implies actual > required, so the guard is naturally satisfied.
+  // implies actual > required, so the guard is naturally satisfied. Class
+  // packages are exempt — see HOSTED PACKAGE RULE EXCEPTION.
   let gratuityPerHour = 0;
-  if (extra > 0 && actual > required) {
+  if (extra > 0 && actual > required && !isClassPackage) {
     if (guestCount < 50) gratuityPerHour = 50;
     else if (guestCount < 75) gratuityPerHour = 25;
     else if (guestCount < 100) gratuityPerHour = 15;
   }
 
-  const cost = extra * durationHours * (hourlyRate + gratuityPerHour);
+  const cost = isClassPackage ? 0 : extra * durationHours * (hourlyRate + gratuityPerHour);
 
   return { required, actual, included, extra, hourlyRate, gratuityPerHour, cost, isHosted };
 }
@@ -169,6 +179,7 @@ function calculateSyrupCost(syrupSelections, guestCount) {
 
 function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartenders, addons, syrupSelections, adjustments, totalPriceOverride }) {
   const isHosted = isHostedPackage(pkg); // HOSTED PACKAGE RULE — see helper comment.
+  const isClassPackage = isHosted && pkg.bar_type === 'class';
   const baseCost = calculateBaseCost(pkg, guestCount, durationHours);
   const floorApplied = isHosted && pkg.min_total && baseCost <= Number(pkg.min_total);
   const barRental = calculateBarRental(pkg, numBars);
@@ -180,12 +191,13 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
     + (addons || []).filter(a => a.slug === 'barback' || a.slug === 'banquet-server').reduce((sum, a) => sum + (a.quantity || 1), 0);
 
   // Gratuity surcharge for additional-bartender add-on. Addon bartenders are
-  // always over-ratio luxury adds (they sit on top of the auto/override count
-  // that already covers the ratio), so the gratuity tier applies on both BYOB
-  // and hosted when guest count is sub-100. See HOSTED PACKAGE RULE comment
-  // by isHostedPackage().
+  // treated as luxury adds layered on top of the auto/override staffing count
+  // — even if `num_bartenders` was simultaneously set under-ratio (an admin
+  // edge case), the addon-driven extra still carries the small-event gratuity
+  // because the bartender's tip volume is what's at stake. Class packages are
+  // exempt — see HOSTED PACKAGE RULE EXCEPTION by isHostedPackage().
   let bartenderGratuityPerHour = 0;
-  if (additionalBartenderQty > 0) {
+  if (additionalBartenderQty > 0 && !isClassPackage) {
     if (guestCount < 50) bartenderGratuityPerHour = 50;
     else if (guestCount < 75) bartenderGratuityPerHour = 25;
     else if (guestCount < 100) bartenderGratuityPerHour = 15;
@@ -195,9 +207,10 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
     if (addon.slug === 'additional-bartender') {
       // HOSTED PACKAGE RULE: hosted packages cover bartenders at the 1:100
       // ratio; addon-bartenders are always over-ratio and charged at the same
-      // hourly + gratuity rate as BYOB.
+      // hourly + gratuity rate as BYOB. Class packages are exempt — see
+      // HOSTED PACKAGE RULE EXCEPTION by isHostedPackage().
       const qty = addon.quantity || 1;
-      const effectiveRate = Number(addon.rate) + bartenderGratuityPerHour;
+      const effectiveRate = isClassPackage ? 0 : Number(addon.rate) + bartenderGratuityPerHour;
       const totalCost = qty * durationHours * effectiveRate;
       return {
         id: addon.id,
@@ -207,7 +220,7 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
         rate: Number(addon.rate),
         extra_hour_rate: addon.extra_hour_rate ? Number(addon.extra_hour_rate) : null,
         quantity: durationHours * qty,
-        gratuity_per_hour: bartenderGratuityPerHour,
+        gratuity_per_hour: isClassPackage ? 0 : bartenderGratuityPerHour,
         line_total: Math.round(totalCost * 100) / 100
       };
     }
@@ -253,36 +266,52 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
     });
   }
   if (staffing.extra > 0) {
-    // HOSTED PACKAGE RULE: hosted packages cover bartenders at the 1:100 ratio
-    // via staffing.included = max(configIncluded, ratioRequired). Anything in
-    // staffing.extra is OVER ratio and charged the same as BYOB.
-    const baseCostStaffing = staffing.extra * durationHours * staffing.hourlyRate;
-    breakdown.push({
-      label: `Additional Bartender${staffing.extra !== 1 ? 's' : ''} (${staffing.extra})`,
-      amount: Math.round(baseCostStaffing * 100) / 100
-    });
-    if (staffing.gratuityPerHour > 0) {
-      const gratuityAmount = staffing.extra * durationHours * staffing.gratuityPerHour;
+    if (isClassPackage) {
+      // HOSTED PACKAGE RULE EXCEPTION: classes keep "all bartenders free."
       breakdown.push({
-        label: 'Shared Gratuity',
-        amount: Math.round(gratuityAmount * 100) / 100
+        label: `Additional Bartender${staffing.extra !== 1 ? 's' : ''} (${staffing.extra}) — Included with class`,
+        amount: 0
       });
+    } else {
+      // HOSTED PACKAGE RULE: hosted packages cover bartenders at the 1:100 ratio
+      // via staffing.included = max(configIncluded, ratioRequired). Anything in
+      // staffing.extra is OVER ratio and charged the same as BYOB.
+      const baseCostStaffing = staffing.extra * durationHours * staffing.hourlyRate;
+      breakdown.push({
+        label: `Additional Bartender${staffing.extra !== 1 ? 's' : ''} (${staffing.extra})`,
+        amount: Math.round(baseCostStaffing * 100) / 100
+      });
+      if (staffing.gratuityPerHour > 0) {
+        const gratuityAmount = staffing.extra * durationHours * staffing.gratuityPerHour;
+        breakdown.push({
+          label: 'Shared Gratuity',
+          amount: Math.round(gratuityAmount * 100) / 100
+        });
+      }
     }
   }
   for (const addon of addonResults) {
     let label = addon.name;
     if (addon.slug === 'additional-bartender') {
       const qty = addon.quantity / durationHours; // recover count from total hours
-      // HOSTED PACKAGE RULE: addon bartenders are always over-ratio and
-      // charged at standard hourly + gratuity on both BYOB and hosted.
-      const baseCostAddon = qty * durationHours * Number(addon.rate);
-      breakdown.push({
-        label: `Additional Bartender${qty !== 1 ? 's' : ''} (${qty})`,
-        amount: Math.round(baseCostAddon * 100) / 100
-      });
-      if (addon.gratuity_per_hour > 0) {
-        const gratuityAmount = qty * durationHours * addon.gratuity_per_hour;
-        breakdown.push({ label: 'Shared Gratuity', amount: Math.round(gratuityAmount * 100) / 100 });
+      if (isClassPackage) {
+        // HOSTED PACKAGE RULE EXCEPTION: classes keep "all bartenders free."
+        breakdown.push({
+          label: `Additional Bartender${qty !== 1 ? 's' : ''} (${qty}) — Included with class`,
+          amount: 0
+        });
+      } else {
+        // HOSTED PACKAGE RULE: addon bartenders are always over-ratio and
+        // charged at standard hourly + gratuity on both BYOB and hosted.
+        const baseCostAddon = qty * durationHours * Number(addon.rate);
+        breakdown.push({
+          label: `Additional Bartender${qty !== 1 ? 's' : ''} (${qty})`,
+          amount: Math.round(baseCostAddon * 100) / 100
+        });
+        if (addon.gratuity_per_hour > 0) {
+          const gratuityAmount = qty * durationHours * addon.gratuity_per_hour;
+          breakdown.push({ label: 'Shared Gratuity', amount: Math.round(gratuityAmount * 100) / 100 });
+        }
       }
       continue;
     } else if (addon.billing_type === 'per_guest' || addon.billing_type === 'per_guest_timed') {

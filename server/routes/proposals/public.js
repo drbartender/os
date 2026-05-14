@@ -23,6 +23,17 @@ const VALID_LEAD_SOURCES = new Set([
   'thumbtack', 'referral', 'instagram', 'facebook', 'google', 'other',
 ]);
 
+// Coerce client-supplied addon quantity into a bounded positive integer.
+// Untrusted public input — negative/fractional/NaN values would silently
+// flow into pricing calculations and (post 2026-05-14 hosted bartender rule)
+// could shift money. Cap at 20 to bound any single addon line.
+const MAX_ADDON_QTY = 20;
+function safeAddonQty(raw) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(MAX_ADDON_QTY, n);
+}
+
 // ─── Public website endpoints (no auth) ─────────────────────────
 
 /** GET /api/proposals/public/packages — list active packages (public, limited fields) */
@@ -63,7 +74,7 @@ router.post('/public/calculate', publicLimiter, asyncHandler(async (req, res) =>
     );
     addons = addonResult.rows.map(a => ({
       ...a,
-      quantity: addon_quantities?.[String(a.id)] || 1,
+      quantity: safeAddonQty(addon_quantities?.[String(a.id)]),
     }));
   }
 
@@ -286,7 +297,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       );
       addons = addonResult.rows.map(a => ({
         ...a,
-        quantity: addon_quantities?.[String(a.id)] || 1,
+        quantity: safeAddonQty(addon_quantities?.[String(a.id)]),
       }));
     }
 

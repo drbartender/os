@@ -200,6 +200,16 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
     return true;
   });
 
+  // Detect snapshots priced under the pre-2026-05-14 hosted-bartender rule
+  // (where ALL extras on hosted were $0). Saving an edit re-prices under the
+  // new 1:100 ratio rule, which can add real cost. Banner is informational —
+  // admin can still save; this just prevents surprise.
+  const snap = proposal?.pricing_snapshot;
+  const pkgIsHosted = selectedPkg?.pricing_type === 'per_guest' && selectedPkg?.bar_type !== 'class';
+  const hasLegacyStaffing = snap?.staffing?.extra > 0 && Number(snap.staffing.total) === 0;
+  const hasLegacyAddon = (snap?.addons || []).some(a => a.slug === 'additional-bartender' && Number(a.line_total) === 0);
+  const showLegacyBartenderBanner = pkgIsHosted && (hasLegacyStaffing || hasLegacyAddon);
+
   return (
     <div className="card">
       <div className="card-head">
@@ -207,6 +217,19 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
         <span className="k">Internal</span>
       </div>
       <div className="card-body">
+        {showLegacyBartenderBanner && (
+          <div style={{
+            background: 'hsl(var(--warn-h) var(--warn-s) 95%)',
+            border: '1px solid hsl(var(--warn-h) var(--warn-s) 70%)',
+            borderRadius: 4,
+            padding: '8px 12px',
+            marginBottom: 16,
+            fontSize: 12,
+            color: 'var(--ink-1)',
+          }}>
+            <strong>Heads up:</strong> this hosted proposal was priced under the old "all bartenders free" rule. Saving will re-price additional bartenders under the new 1:100 ratio rule (over-ratio extras bill at hourly + gratuity).
+          </div>
+        )}
         {/* Client */}
         <div className="meta-k" style={{ marginBottom: 8 }}>Client</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>

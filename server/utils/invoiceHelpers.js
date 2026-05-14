@@ -84,14 +84,14 @@ async function generateLineItemsFromProposal(proposalId, dbClient) {
   // Extra bartenders. HOSTED PACKAGE RULE: hosted packages cover bartenders
   // at a 1:100 ratio inside the per-guest rate, so on hosted snap.staffing.extra
   // counts only the OVER-ratio bartenders and snap.staffing.total is the
-  // standard hourly + gratuity charge for them. The `>0` guards below skip
-  // legacy hosted snapshots (cut before 2026-05-14) that pre-zeroed staffing
-  // even when extras existed; new snapshots flow through correctly.
+  // standard hourly + gratuity charge for them. Class packages always have
+  // staffing.total = 0 (HOSTED PACKAGE RULE EXCEPTION). The `>0` guards below
+  // skip both classes and legacy hosted snapshots (cut before 2026-05-14)
+  // that pre-zeroed staffing even when extras existed.
   if (snap.staffing && snap.staffing.extra > 0 && snap.staffing.total > 0) {
-    const extra = snap.staffing.actual - snap.staffing.included;
-    const qty = extra > 0 ? extra : 1;
+    const qty = snap.staffing.extra;
     const lineTotal = toCents(snap.staffing.total);
-    const unitPrice = qty > 0 ? Math.round(lineTotal / qty) : lineTotal;
+    const unitPrice = Math.round(lineTotal / qty);
     items.push({
       description: 'Additional Bartender' + (qty > 1 ? 's' : ''),
       quantity: qty,
