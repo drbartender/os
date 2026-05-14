@@ -17,7 +17,6 @@ import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 //  - editForm state, dirty tracking, leave-confirm modal, beforeunload guard
 //  - package & addon catalog fetch
 //  - debounced live pricing preview
-//  - hosted-package bartender filter (CLAUDE.md "Hosted-package bartender rule")
 //
 // Parent passes the current proposal and callbacks. After a successful save
 // onSaved() is fired so the parent can reload and exit edit mode.
@@ -194,10 +193,8 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
 
   // Derived state
   const selectedPkg = packages.find(p => p.id === Number(editForm.package_id));
-  const isHostedPkg = selectedPkg && (selectedPkg.pricing_type === 'per_guest' || selectedPkg.pricing_type === 'per_guest_timed');
   const filteredAddons = addons.filter(a => {
     if (a.applies_to !== 'all' && (!selectedPkg || a.applies_to !== selectedPkg.category)) return false;
-    if (isHostedPkg && /bartender/i.test((a.name || '') + (a.slug || ''))) return false;
     const excluded = selectedPkg && PACKAGE_EXCLUDED_ADDONS[selectedPkg.slug];
     if (excluded && excluded.includes(a.slug)) return false;
     return true;

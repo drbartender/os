@@ -81,13 +81,12 @@ async function generateLineItemsFromProposal(proposalId, dbClient) {
     });
   }
 
-  // Extra bartenders — skipped on hosted packages (HOSTED PACKAGE RULE:
-  // bartender staffing is included in the per-guest rate, so staffing.total is 0).
-  // This file relies on pricingEngine.js pre-zeroing staffing.total and the
-  // additional-bartender addon line_total for hosted packages. If you ever
-  // populate snap.staffing.total or addon.line_total from a non-pricingEngine
-  // code path for a hosted proposal, add an explicit isHostedPackage() guard
-  // here — the snapshot fields are load-bearing.
+  // Extra bartenders. HOSTED PACKAGE RULE: hosted packages cover bartenders
+  // at a 1:100 ratio inside the per-guest rate, so on hosted snap.staffing.extra
+  // counts only the OVER-ratio bartenders and snap.staffing.total is the
+  // standard hourly + gratuity charge for them. The `>0` guards below skip
+  // legacy hosted snapshots (cut before 2026-05-14) that pre-zeroed staffing
+  // even when extras existed; new snapshots flow through correctly.
   if (snap.staffing && snap.staffing.extra > 0 && snap.staffing.total > 0) {
     const extra = snap.staffing.actual - snap.staffing.included;
     const qty = extra > 0 ? extra : 1;
@@ -104,7 +103,8 @@ async function generateLineItemsFromProposal(proposalId, dbClient) {
   }
 
   // Add-ons from proposal_addons table (authoritative at booking time).
-  // Skip $0 add-ons (e.g., additional-bartender on hosted packages — HOSTED PACKAGE RULE).
+  // Skip $0 add-ons (e.g., addons that bundle into the package or were
+  // adjusted to zero by an admin override — they don't deserve a line).
   const addonsResult = await client.query(
     `SELECT id, addon_id, addon_name, billing_type, rate, quantity, line_total
        FROM proposal_addons

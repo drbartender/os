@@ -1,3 +1,5 @@
+// claude-allow-large-file
+// Reason: admin proposal-create page bundles the create form, section helpers (Client/Event/Package/Staffing/Send), pricing dock, and field-status logic. Splitting belongs in a separate refactor — not money-math commits.
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
@@ -214,11 +216,10 @@ export default function ProposalCreate() {
 
   const filteredAddons = useMemo(() => addons.filter(a => {
     if (a.applies_to !== 'all' && (!selectedPkg || a.applies_to !== selectedPkg.category)) return false;
-    if (isHostedPackage && /bartender/i.test((a.name || '') + (a.slug || ''))) return false;
     const excluded = selectedPkg && PACKAGE_EXCLUDED_ADDONS[selectedPkg.slug];
     if (excluded && excluded.includes(a.slug)) return false;
     return true;
-  }), [addons, selectedPkg, isHostedPackage]);
+  }), [addons, selectedPkg]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -932,7 +933,7 @@ function StaffingSection({ form, update, preview, isHostedPackage }) {
 
       {isHostedPackage && (
         <div className="tiny" style={{ marginTop: 6, color: 'var(--ink-3)' }}>
-          <Icon name="check" size={10} style={{ color: 'hsl(var(--ok-h) var(--ok-s) 52%)' }} /> Bartenders included in per-guest rate. Extras don't add cost on hosted packages.
+          <Icon name="check" size={10} style={{ color: 'hsl(var(--ok-h) var(--ok-s) 52%)' }} /> Bartenders included at 1:100 guest ratio. Anything beyond ratio bills at the standard hourly rate plus gratuity.
         </div>
       )}
     </div>
