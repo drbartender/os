@@ -1,7 +1,7 @@
 // Playwright UI/UX review driver — disposable
 // Drives Playwright via global module location
 const path = require('path');
-process.env.NODE_PATH = 'C:\Users\dalla\AppData\Roaming\npm\node_modules';
+process.env.NODE_PATH = String.raw`C:\Users\dalla\AppData\Roaming\npm\node_modules`;
 require('module').Module._initPaths();
 
 const { chromium } = require('playwright');

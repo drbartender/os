@@ -51,6 +51,7 @@ const { AppError, ExternalServiceError } = require('./utils/errors');
 const { processAutopayCharges, processEventCompletions } = require('./utils/balanceScheduler');
 const { processScheduledAutoAssigns } = require('./utils/autoAssignScheduler');
 const { processSequenceSteps, expireStaleQuoteDrafts } = require('./utils/emailSequenceScheduler');
+const { purgeLabratTestData } = require('./utils/labratCleanup');
 
 // Startup guards — fail fast if critical env vars are missing
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
@@ -263,6 +264,11 @@ async function start() {
         // Quote draft cleanup — expire stale drafts daily
         setInterval(expireStaleQuoteDrafts, 24 * 60 * 60 * 1000);
         setTimeout(expireStaleQuoteDrafts, 120000); // initial run after 2 min
+
+        // Lab Rat test-data cleanup — purge @labrat.test rows older than 24h
+        // hourly so seed-endpoint flood damage steady-states near zero.
+        setTimeout(purgeLabratTestData, 150000); // initial run after 2.5 min
+        setInterval(purgeLabratTestData, 60 * 60 * 1000); // then every hour
 
         console.log('[schedulers] started');
       } else {

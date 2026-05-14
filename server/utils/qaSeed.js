@@ -45,8 +45,12 @@ async function recipeProposalInSent(client) {
 // @labrat.test convention so the one-off cleanup script sweeps it.
 async function recipePreHireInvitation(client) {
   const email = fakeEmail();
-  const plaintext = 'LabRat-' + crypto.randomBytes(4).toString('hex');
-  const passwordHash = await bcrypt.hash(plaintext, 10);
+  // 128 bits of entropy via base64url (16 random bytes → 22 chars). Matches the
+  // codebase-wide bcrypt cost of 12 elsewhere in auth/clientAuth. Defends
+  // against a seed-endpoint flood being a free working-credential farm even
+  // if the rate limiter is bypassed by a distributed attacker.
+  const plaintext = 'LabRat-' + crypto.randomBytes(16).toString('base64url');
+  const passwordHash = await bcrypt.hash(plaintext, 12);
   const u = await client.query(
     `INSERT INTO users (email, password_hash, role, onboarding_status)
      VALUES ($1, $2, 'staff', 'applied')

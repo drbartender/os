@@ -36,14 +36,28 @@ const drinkPlanWriteLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-// Lab Rat seed endpoint creates real DB rows on every call. Keep it tighter
-// than publicLimiter so a flood from a leaked URL can't pile up @labrat.test
-// records faster than the manual cleanup script can drain them.
+// Lab Rat seed endpoint mints real users + clients on every call AND returns
+// a working credential (for the pre-hire-invitation recipe). Tight per-IP cap
+// resists single-IP flooding; secondary global cap caps damage from a
+// distributed attacker rotating IPs. Combined with the hourly cleanup
+// scheduler (labratCleanup.js), the steady-state max-attacker damage is
+// roughly the global limit, since older rows continuously evaporate.
 const labratSeedLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5,
+  max: 2,
   message: { error: 'Too many seed requests. Try again in an hour.' },
   standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Global cap across all IPs — IP-rotating attacker still hits this ceiling.
+const labratSeedGlobalLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 20,
+  // Same key for every request so all IPs share the bucket.
+  keyGenerator: () => 'labrat-seed-global',
+  message: { error: 'Lab Rat seed is temporarily saturated. Try again later.' },
+  standardHeaders: false,
   legacyHeaders: false,
 });
 
@@ -59,4 +73,4 @@ const labratFeedbackLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, labratSeedLimiter, labratFeedbackLimiter };
+module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter };

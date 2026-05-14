@@ -389,7 +389,7 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 ### Test Feedback — `/api/test-feedback`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/` | No (rate-limited, 10/hour per IP via `labratFeedbackLimiter`) | Receives Lab Rat bug/confusion/mission-stale reports (`kind`, `missionId`, `stepIndex`, `testerName`, `where`, `didWhat`, `happened`, `expected`, `browser`, `screenshotUrl`). Inserts into the `tester_bugs` Postgres table via `bugLog.appendBug` AND fire-and-forget emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` (default `contact@drbartender.com`) as a redundant notification path. `Reply-To` set to the tester's email only after a strict header-injection-safe regex passes. Also accepts the legacy `{ reportText, progressSummary }` shape from `/testing-guide.html` via a back-compat shim. Admin triage UI at `/labrat-bugs`; CLI listing via `npm run bugs:list`. |
+| POST | `/` | No (rate-limited, 10/hour per IP via `labratFeedbackLimiter`) | Receives Lab Rat bug/confusion/mission-stale reports (`kind`, `missionId`, `stepIndex`, `testerName`, `where`, `didWhat`, `happened`, `expected`, `browser`). Inserts into the `tester_bugs` Postgres table via `bugLog.appendBug` AND fire-and-forget emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` (default `contact@drbartender.com`) as a redundant notification path. Also accepts the legacy `{ reportText, progressSummary }` shape from `/testing-guide.html` via a back-compat shim. Admin triage UI at `/labrat-bugs`; CLI listing via `npm run bugs:list`. |
 
 ### Public Tip Pages — `/api/public/tip`
 | Method | Path | Auth | Description |

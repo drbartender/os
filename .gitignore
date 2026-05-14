@@ -21,3 +21,9 @@ client/.claude/
 
 # Loose screenshots at repo root (intentional assets live under client/public/ or client/src/)
 /*.png
+
+# Claude Code per-user settings. Contains tool/permission allowlist entries that
+# may include developer-specific paths or one-off local-DB connection strings.
+# Treat as local-only — don't track. Project-level Claude config lives in
+# .claude/settings.json (committed) instead.
+.claude/settings.local.json
