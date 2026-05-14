@@ -1,33 +1,18 @@
-const fs = require('node:fs/promises');
-const path = require('node:path');
-
-function getFile() {
-  return process.env.LABRAT_COMPLETIONS_FILE
-    || path.join(__dirname, '..', 'data', 'mission-completions.jsonl');
-}
+const { pool } = require('../db');
 
 async function logCompletion(missionId, testerName) {
-  await fs.mkdir(path.dirname(getFile()), { recursive: true });
-  const line = JSON.stringify({
-    missionId,
-    testerName: testerName || null,
-    at: new Date().toISOString(),
-  }) + '\n';
-  await fs.appendFile(getFile(), line);
+  await pool.query(
+    'INSERT INTO mission_completions (mission_id, tester_name) VALUES ($1, $2)',
+    [missionId, testerName || null],
+  );
 }
 
 async function getCompletionCounts() {
-  let raw;
-  try { raw = await fs.readFile(getFile(), 'utf8'); }
-  catch (err) { if (err.code === 'ENOENT') return {}; throw err; }
+  const { rows } = await pool.query(
+    'SELECT mission_id, COUNT(*)::int AS count FROM mission_completions GROUP BY mission_id',
+  );
   const counts = {};
-  for (const line of raw.trim().split('\n')) {
-    if (!line) continue;
-    try {
-      const rec = JSON.parse(line);
-      counts[rec.missionId] = (counts[rec.missionId] || 0) + 1;
-    } catch { /* skip malformed */ }
-  }
+  for (const r of rows) counts[r.mission_id] = r.count;
   return counts;
 }
 

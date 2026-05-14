@@ -711,6 +711,15 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - Insert path: `POST /api/test-feedback` → `bugLog.appendBug` → INSERT (plus best-effort admin email)
 - Read paths: admin UI `GET /api/admin/tester-bugs`, mission-picker badges `GET /api/qa/shortlist`, CLI `npm run bugs:list`
 
+**mission_completions** — Lab Rat mission completion log (replaces the prior filesystem JSONL store, which was wiped on every Render deploy — same fix pattern as `tester_bugs` from 2026-05-10)
+- `id` BIGSERIAL PK
+- `mission_id` TEXT NOT NULL
+- `tester_name` TEXT — optional
+- `completed_at` TIMESTAMPTZ DEFAULT NOW()
+- Index `idx_mission_completions_mission_id` supports the shortlist's `GROUP BY mission_id COUNT(*)` aggregation
+- Insert path: `POST /api/qa/complete` → `missionStats.logCompletion` → INSERT
+- Read path: `POST /api/qa/shortlist` → `missionStats.getCompletionCounts`
+
 **admin_audit_log** — Generic durable record of admin actions on user-owned resources. Initial call sites: tip-page rotate-token + regenerate-stripe; extend as more auditable surfaces emerge (role changes, deactivation, etc.).
 - `id` BIGSERIAL PK
 - `actor_user_id` FK → users (admin who performed the action; ON DELETE SET NULL — preserves history if the admin record is later removed)

@@ -2035,3 +2035,18 @@ CREATE INDEX IF NOT EXISTS idx_admin_audit_log_target_created_at
   ON admin_audit_log(target_user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_admin_audit_log_action_created_at
   ON admin_audit_log(action, created_at DESC);
+
+-- ─── Lab Rat mission completion log (Postgres-persistent, 2026-05-14) ──
+-- Replaces the prior filesystem JSONL store at
+-- server/data/mission-completions.jsonl which was wiped on every Render
+-- deploy. Same fix as tester_bugs (2026-05-10). The shortlist algorithm
+-- in server/utils/shortlist.js reads from here to detect p0 saturation
+-- and to favor least-completed missions when sorting within a tier.
+CREATE TABLE IF NOT EXISTS mission_completions (
+  id BIGSERIAL PRIMARY KEY,
+  mission_id TEXT NOT NULL,
+  tester_name TEXT,
+  completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mission_completions_mission_id
+  ON mission_completions(mission_id);

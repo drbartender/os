@@ -21,7 +21,3 @@ client/.claude/
 
 # Loose screenshots at repo root (intentional assets live under client/public/ or client/src/)
 /*.png
-
-# Lab Rat runtime data — mission completions are still filesystem-based
-# (tester bugs moved to the `tester_bugs` Postgres table 2026-05-10).
-server/data/mission-completions.jsonl
