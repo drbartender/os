@@ -9583,6 +9583,42 @@ html[data-app="admin-os"][data-skin="dark"] {
   color-scheme: dark;
 }
 
+/* -- After Hours overrides for legacy components -----------------------------
+   Some legacy classes (.btn-primary text, .badge-*, .alert-*) hardcode light
+   colors in their base rules. Re-tint them for the dark skin so they stay
+   readable on a near-black page. Light skin is unaffected. */
+
+/* Primary button: white text on accent reads better in dark mode than the
+   hardcoded near-black (#0b0d10) which is identical to --bg-0. */
+html[data-app="admin-os"][data-skin="dark"] .btn-primary,
+html[data-app="admin-os"][data-skin="dark"] .btn-primary:hover {
+  color: #ffffff;
+}
+
+/* Status badges (legacy admin chips) */
+html[data-app="admin-os"][data-skin="dark"] .badge-inprogress { background: hsl(40 60% 14%);  color: hsl(40 80% 75%);  border-color: hsl(40 35% 28%); }
+html[data-app="admin-os"][data-skin="dark"] .badge-submitted   { background: hsl(212 45% 14%); color: hsl(212 80% 78%); border-color: hsl(212 30% 28%); }
+html[data-app="admin-os"][data-skin="dark"] .badge-reviewed    { background: hsl(272 30% 16%); color: hsl(272 70% 82%); border-color: hsl(272 20% 30%); }
+html[data-app="admin-os"][data-skin="dark"] .badge-approved    { background: hsl(120 30% 12%); color: hsl(120 55% 75%); border-color: hsl(120 25% 24%); }
+html[data-app="admin-os"][data-skin="dark"] .badge-deactivated { background: var(--bg-2);     color: var(--ink-3);     border-color: var(--line-2); }
+
+/* Alert cards (legacy admin alerts) */
+html[data-app="admin-os"][data-skin="dark"] .alert-error {
+  background: hsl(0 50% 50% / 0.12);
+  border-color: hsl(0 50% 50% / 0.35);
+  color: hsl(0 80% 78%);
+}
+html[data-app="admin-os"][data-skin="dark"] .alert-success {
+  background: hsl(140 50% 50% / 0.12);
+  border-color: hsl(140 50% 50% / 0.35);
+  color: hsl(140 60% 78%);
+}
+html[data-app="admin-os"][data-skin="dark"] .alert-info {
+  background: hsl(40 60% 50% / 0.10);
+  border-color: hsl(40 50% 50% / 0.30);
+  color: hsl(40 70% 78%);
+}
+
 
 /* ============================================================================
    LIGHT SKIN: "House Lights"
@@ -10122,7 +10158,7 @@ html[data-app="admin-os"][data-skin="light"] .section-title {
 }
 html[data-app="admin-os"][data-skin="light"] .section-title::after { content: none; }
 
-html[data-app="admin-os"][data-skin="light"] .dl { grid-template-columns: 160px 1fr; gap: 0.7rem 1.5rem; font-size: 13.5px; }
+html[data-app="admin-os"][data-skin="light"] .dl { grid-template-columns: 160px minmax(0, 1fr); gap: 0.7rem 1.5rem; font-size: 13.5px; }
 html[data-app="admin-os"][data-skin="light"] .dl dt {
   font-family: var(--font-ui);
   font-weight: 500;
@@ -11273,9 +11309,9 @@ html[data-app="admin-os"] .section-title {
 html[data-app="admin-os"] .section-title:first-child { margin-top: 0; }
 
 /* Definition list style */
-html[data-app="admin-os"] .dl { display: grid; grid-template-columns: 140px 1fr; gap: 0.35rem 1rem; font-size: 13px; }
+html[data-app="admin-os"] .dl { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 0.35rem 1rem; font-size: 13px; }
 html[data-app="admin-os"] .dl dt { color: var(--ink-3); font-weight: 500; }
-html[data-app="admin-os"] .dl dd { margin: 0; color: var(--ink-1); }
+html[data-app="admin-os"] .dl dd { margin: 0; color: var(--ink-1); min-width: 0; overflow-wrap: anywhere; }
 html[data-app="admin-os"] .dl dd.num { font-family: var(--font-numeric); }
 
 /* Staffing slot */
