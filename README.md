@@ -208,7 +208,7 @@ dr-bartender/
 │   │   │                       # TimePicker, NumberStepper, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
 │   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, KebabMenu,
-│   │   │   │                   # InterviewScheduleModal,
+│   │   │   │                   # InterviewScheduleModal, PackageIncludesModal,
 │   │   │   │                   # format, nav, shifts; drawers/{ClientDrawer,EventDrawer,InvoicesDrawer,
 │   │   │   │                   # ProposalDrawer,ShiftDrawer})
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export, ConsultationForm admin-input modal)
