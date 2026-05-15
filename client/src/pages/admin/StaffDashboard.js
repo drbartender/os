@@ -147,11 +147,6 @@ export default function StaffDashboard() {
                           icon: 'userplus',
                           onClick: () => setAssignTarget({ id: s.id, name: s.preferred_name || s.email }),
                         },
-                        {
-                          label: 'Open Full Profile',
-                          icon: 'external',
-                          onClick: () => navigate(`/staffing/users/${s.id}`),
-                        },
                       ]} />
                     </td>
                   </tr>
