@@ -16,8 +16,10 @@
 
 **Keep-sets (single source of truth):**
 - users: `1, 2, 12, 15, 16, 19`
-- proposals: `21, 25, 30, 51, 52`
-- clients: any row with a `thumbtack_leads` link **OR** id ∈ `21, 26, 31, 80, 83`
+- proposals: `21, 25, 30, 51, 52, 54`
+- clients: any row with a `thumbtack_leads` link **OR** id ∈ `21, 26, 31, 80, 83, 102`
+
+> **Amended 2026-05-15 (drift):** #54/#102 = Ketan Patel — quote-wizard lead #46 that converted to a real `deposit_paid` booking between analysis and rehearsal. Added to the keep-set; canonical script `server/scripts/prelaunch-data-scrub.sql` (commit `fbf49c0`) is the source of truth if this embedded copy ever drifts.
 - email_leads: `44, 46`
 
 ---
@@ -42,8 +44,8 @@ Create `server/scripts/prelaunch-data-scrub.sql` with EXACTLY this content:
 -- Cutoff: only rows created before 2026-05-16Z are eligible for deletion;
 -- anything newer (live traffic after analysis) is preserved automatically.
 --
--- Keep-sets: users {1,2,12,15,16,19}  proposals {21,25,30,51,52}
---   clients {has thumbtack_leads link} ∪ {21,26,31,80,83}  email_leads {44,46}
+-- Keep-sets: users {1,2,12,15,16,19}  proposals {21,25,30,51,52,54}
+--   clients {has thumbtack_leads link} ∪ {21,26,31,80,83,102}  email_leads {44,46}
 
 BEGIN;
 
@@ -68,18 +70,18 @@ UNION ALL SELECT 'email_sequence_steps', COUNT(*) FROM email_sequence_steps;
 --    Cascades invoice_line_items, invoice_payments.
 DELETE FROM invoices
  WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
-   AND (proposal_id IS NULL OR proposal_id NOT IN (21,25,30,51,52));
+   AND (proposal_id IS NULL OR proposal_id NOT IN (21,25,30,51,52,54));
 
 -- 2. Shifts for non-kept proposals. Cascades shift_requests.
 DELETE FROM shifts
  WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
-   AND (proposal_id IS NULL OR proposal_id NOT IN (21,25,30,51,52));
+   AND (proposal_id IS NULL OR proposal_id NOT IN (21,25,30,51,52,54));
 
 -- 3. Non-kept proposals. Cascades proposal_addons, proposal_activity_log,
 --    proposal_payments, stripe_sessions, drink_plans.
 DELETE FROM proposals
  WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
-   AND id NOT IN (21,25,30,51,52);
+   AND id NOT IN (21,25,30,51,52,54);
 
 -- 4. Sequence enrollments for non-kept leads.
 DELETE FROM email_sequence_enrollments
@@ -107,7 +109,7 @@ DELETE FROM clients c
  WHERE c.created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
    AND NOT (
      EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id = c.id)
-     OR c.id IN (21,26,31,80,83)
+     OR c.id IN (21,26,31,80,83,102)
    );
 
 -- 9. Non-kept users. Cascades agreements, applications, contractor_profiles,
@@ -129,13 +131,13 @@ BEGIN
 
   IF EXISTS (SELECT 1 FROM proposals
              WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
-               AND id NOT IN (21,25,30,51,52))
+               AND id NOT IN (21,25,30,51,52,54))
   THEN RAISE EXCEPTION 'proposals: pre-cutoff non-kept rows survived'; END IF;
 
   IF EXISTS (SELECT 1 FROM clients c
              WHERE c.created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
                AND NOT (EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id=c.id)
-                        OR c.id IN (21,26,31,80,83)))
+                        OR c.id IN (21,26,31,80,83,102)))
   THEN RAISE EXCEPTION 'clients: pre-cutoff non-kept rows survived'; END IF;
 
   IF EXISTS (SELECT 1 FROM email_leads
@@ -146,16 +148,16 @@ BEGIN
   -- 9b. No kept-set row was destroyed.
   IF (SELECT COUNT(*) FROM users WHERE id IN (1,2,12,15,16,19)) <> 6
   THEN RAISE EXCEPTION 'users: a kept account is missing'; END IF;
-  IF (SELECT COUNT(*) FROM proposals WHERE id IN (21,25,30,51,52)) <> 5
+  IF (SELECT COUNT(*) FROM proposals WHERE id IN (21,25,30,51,52,54)) <> 6
   THEN RAISE EXCEPTION 'proposals: a kept proposal is missing'; END IF;
-  IF (SELECT COUNT(*) FROM clients WHERE id IN (21,26,31,80,83)) <> 5
+  IF (SELECT COUNT(*) FROM clients WHERE id IN (21,26,31,80,83,102)) <> 6
   THEN RAISE EXCEPTION 'clients: a kept proposal-client is missing'; END IF;
   IF (SELECT COUNT(*) FROM email_leads WHERE id IN (44,46)) <> 2
   THEN RAISE EXCEPTION 'email_leads: a kept lead is missing'; END IF;
 
   -- 9c. Referential integrity.
   IF EXISTS (SELECT 1 FROM proposals p
-             WHERE p.id IN (21,25,30,51,52)
+             WHERE p.id IN (21,25,30,51,52,54)
                AND (p.client_id IS NULL
                     OR NOT EXISTS (SELECT 1 FROM clients c WHERE c.id=p.client_id)))
   THEN RAISE EXCEPTION 'a kept proposal lost its client'; END IF;
@@ -268,7 +270,7 @@ UNION ALL SELECT 'sms_messages',COUNT(*) FROM sms_messages
 UNION ALL SELECT 'thumbtack_leads',COUNT(*) FROM thumbtack_leads
 UNION ALL SELECT 'email_campaigns',COUNT(*) FROM email_campaigns ORDER BY t;
 ```
-Expected (assuming no live drift on prod copy): proposals 5, clients 70, users 6, shifts 1, invoices 0, email_leads 2, quote_drafts 2, email_sequence_enrollments 2, sms_messages 0, thumbtack_leads 66, email_campaigns 1.
+Expected (the rehearsal branch already includes Ketan's #54/#102): proposals 6, clients 71, users 6, shifts 1, invoices 0, email_leads 2, quote_drafts 2, email_sequence_enrollments 2, sms_messages 0, thumbtack_leads 66, email_campaigns 1.
 
 - [ ] **Step 2: Spot-check identities on the branch**
 
@@ -277,12 +279,12 @@ Call `mcp__Neon__run_sql` on `<REHEARSAL_BRANCH>`:
 SELECT array_agg(id ORDER BY id) FROM users;
 -- expect {1,2,12,15,16,19}
 SELECT array_agg(id ORDER BY id) FROM proposals;
--- expect {21,25,30,51,52}
+-- expect {21,25,30,51,52,54}
 SELECT array_agg(id ORDER BY id) FROM email_leads;
 -- expect {44,46}
 SELECT COUNT(*) FROM clients
  WHERE NOT (EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id=clients.id)
-            OR id IN (21,26,31,80,83));
+            OR id IN (21,26,31,80,83,102));
 -- expect 0
 ```
 Expected: arrays exactly as annotated; final count `0`. Any deviation → STOP, fix Task 1, recommit, recreate branch, re-rehearse.
@@ -298,11 +300,11 @@ This runs immediately before the prod apply to ensure live traffic since analysi
 Call `mcp__Neon__run_sql` on `br-noisy-frog-ad99sa6l`:
 ```sql
 SELECT 'users' t, array_agg(id ORDER BY id) ids FROM users WHERE id IN (1,2,12,15,16,19)
-UNION ALL SELECT 'proposals', array_agg(id ORDER BY id) FROM proposals WHERE id IN (21,25,30,51,52)
-UNION ALL SELECT 'clients', array_agg(id ORDER BY id) FROM clients WHERE id IN (21,26,31,80,83)
+UNION ALL SELECT 'proposals', array_agg(id ORDER BY id) FROM proposals WHERE id IN (21,25,30,51,52,54)
+UNION ALL SELECT 'clients', array_agg(id ORDER BY id) FROM clients WHERE id IN (21,26,31,80,83,102)
 UNION ALL SELECT 'email_leads', array_agg(id ORDER BY id) FROM email_leads WHERE id IN (44,46);
 ```
-Expected: users {1,2,12,15,16,19}, proposals {21,25,30,51,52}, clients {21,26,31,80,83}, email_leads {44,46} all fully present. If any kept id is missing → STOP and re-brainstorm the keep-set with the user.
+Expected: users {1,2,12,15,16,19}, proposals {21,25,30,51,52,54}, clients {21,26,31,80,83,102}, email_leads {44,46} all fully present. If any kept id is missing → STOP and re-brainstorm the keep-set with the user.
 
 - [ ] **Step 2: Quantify what the cutoff will delete vs. preserve on production**
 
@@ -311,7 +313,7 @@ Call `mcp__Neon__run_sql` on `br-noisy-frog-ad99sa6l`:
 SELECT 'proposals post-cutoff (preserved)' k, COUNT(*) v FROM proposals
   WHERE created_at >= TIMESTAMPTZ '2026-05-16 00:00:00+00'
 UNION ALL SELECT 'proposals pre-cutoff non-kept (will delete)', COUNT(*) FROM proposals
-  WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00' AND id NOT IN (21,25,30,51,52)
+  WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00' AND id NOT IN (21,25,30,51,52,54)
 UNION ALL SELECT 'clients post-cutoff non-tt (preserved)', COUNT(*) FROM clients c
   WHERE c.created_at >= TIMESTAMPTZ '2026-05-16 00:00:00+00'
     AND NOT EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id=c.id);
@@ -327,11 +329,11 @@ Expected: ~46 proposals to delete; "preserved" buckets are any genuine post-anal
 Call `mcp__Neon__run_sql` on `br-noisy-frog-ad99sa6l` for each of these and save the combined JSON to `.tmp/prelaunch-scrub-deleted-2026-05-15.json` (the `.tmp/` dir is gitignored):
 ```sql
 SELECT 'proposals' src, json_agg(p) j FROM (SELECT * FROM proposals
-  WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00' AND id NOT IN (21,25,30,51,52)) p
+  WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00' AND id NOT IN (21,25,30,51,52,54)) p
 UNION ALL SELECT 'clients', json_agg(c) FROM (SELECT * FROM clients c
   WHERE c.created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
     AND NOT (EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id=c.id)
-             OR c.id IN (21,26,31,80,83))) c
+             OR c.id IN (21,26,31,80,83,102))) c
 UNION ALL SELECT 'users', json_agg(u) FROM (SELECT id,email,role,onboarding_status,created_at
   FROM users WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
     AND id NOT IN (1,2,12,15,16,19)) u;
@@ -351,7 +353,7 @@ Expected: success with notice `prelaunch-data-scrub: all asserts passed`. If any
 - [ ] **Step 1: Post-scrub counts on production**
 
 Call `mcp__Neon__run_sql` on `br-noisy-frog-ad99sa6l` with the same query as Task 4 Step 1.
-Expected: proposals 5 (+ any post-cutoff real), clients ≥70, users 6, shifts 1, invoices 0, email_leads 2 (+ any post-cutoff), sms_messages 0, thumbtack_leads unchanged, email_campaigns 1.
+Expected: proposals 6 (+ any post-cutoff real), clients ≥71, users 6, shifts 1, invoices 0, email_leads 2 (+ any post-cutoff), sms_messages 0, thumbtack_leads unchanged, email_campaigns 1.
 
 - [ ] **Step 2: Identity spot-check on production**
 
@@ -399,4 +401,4 @@ After the user confirms production is healthy (hours/days later), call `mcp__Neo
 
 **2. Placeholder scan:** No TBD/TODO. `<REHEARSAL_BRANCH>` is a runtime-bound id (captured Task 2 Step 1), not a placeholder. All SQL is complete and literal.
 
-**3. Type/identity consistency:** Keep-set literals identical across script, asserts, Tasks 4/5/6/7 (users {1,2,12,15,16,19}, proposals {21,25,30,51,52}, clients {21,26,31,80,83}, email_leads {44,46}). Cutoff literal `TIMESTAMPTZ '2026-05-16 00:00:00+00'` identical in every delete and assert. Project id `round-tooth-34649976` / prod branch `br-noisy-frog-ad99sa6l` consistent throughout.
+**3. Type/identity consistency:** Keep-set literals identical across script, asserts, Tasks 4/5/6/7 (users {1,2,12,15,16,19}, proposals {21,25,30,51,52,54}, clients {21,26,31,80,83,102}, email_leads {44,46}). Cutoff literal `TIMESTAMPTZ '2026-05-16 00:00:00+00'` identical in every delete and assert. Project id `round-tooth-34649976` / prod branch `br-noisy-frog-ad99sa6l` consistent throughout.

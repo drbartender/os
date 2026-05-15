@@ -1,7 +1,7 @@
 # Pre-Launch Data Scrub — Design Spec
 
 **Date:** 2026-05-15
-**Status:** Approved (all rulings collected conversationally 2026-05-15)
+**Status:** Approved (all rulings collected conversationally 2026-05-15). **Drift addendum 2026-05-15:** Ketan Patel converted from quote-wizard lead #46 to a real `deposit_paid` booking during rehearsal prep — proposal **#54** + client **#102** added to the keep-set. The plan's `created_at < 2026-05-16Z` cutoff + Task 5 drift gate handle further live traffic.
 **Risk:** HIGH — destructive operation on the production Neon database. Real client/staff data is interleaved with development/test data.
 
 ## Problem
@@ -18,15 +18,15 @@ The production database (`dr-bartender`, branch `production` = `br-noisy-frog-ad
 
 Includes deliberately-removed real records the user confirmed: `#11` slparent@gmail.com (Sean, hired staff), `#3` dallasraby@gmail.com (owner's Gmail alt), `#18` zeehme51@gmail.com (Zuleika, deactivated mgr), plus the 8 fake-domain test accounts and the owner's `drabymj`/`rabydallas` alts.
 
-### Proposals — keep 5, delete 46
+### Proposals — keep 6, delete 46
 
-**KEEP (ids):** `21` (Stef D., $400 balance_paid) · `25` (Jane) · `30` (Kaite Watson) · `51` (David Luebke) · `52` (Tabitha Lopez)
+**KEEP (ids):** `21` (Stef D., $400 balance_paid) · `25` (Jane) · `30` (Kaite Watson) · `51` (David Luebke) · `52` (Tabitha Lopez) · `54` (Ketan Patel — real `deposit_paid` booking, converted post-analysis 2026-05-15)
 
 **DELETE:** all other 46 proposals.
 
-### Clients — keep 70, delete 28
+### Clients — keep 71, delete 28
 
-**KEEP:** every client with a row in `thumbtack_leads` (i.e. `EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id = clients.id)`) — 65 real webhook leads — **UNION** the 5 clients of kept proposals: `21` (Stef D.), `26` (Jane), `31` (Kaite Watson), `80` (David Luebke), `83` (Tabitha Lopez).
+**KEEP:** every client with a row in `thumbtack_leads` (i.e. `EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id = clients.id)`) — 65 real webhook leads — **UNION** the 6 clients of kept proposals: `21` (Stef D.), `26` (Jane), `31` (Kaite Watson), `80` (David Luebke), `83` (Tabitha Lopez), `102` (Ketan Patel — converted post-analysis 2026-05-15).
 
 **DELETE:** all other 28 clients (Dallas Raby variants, @labrat.test, joke names, unlinked `source='thumbtack'` test entries).
 
@@ -79,8 +79,8 @@ Build keep-lists as temp tables first (`keep_users`, `keep_proposals`, `keep_cli
 ## Verification (asserted before COMMIT; abort on any failure)
 
 - `users` = 6, exactly `{1,2,12,15,16,19}`
-- `proposals` = 5, exactly `{21,25,30,51,52}`
-- `clients` = 70; every surviving client has a `thumbtack_leads` row OR `id ∈ {21,26,31,80,83}`
+- `proposals` = 6, exactly `{21,25,30,51,52,54}`
+- `clients` = 71; every surviving client has a `thumbtack_leads` row OR `id ∈ {21,26,31,80,83,102}`
 - Each kept proposal's `client_id` still resolves to a surviving client
 - No `thumbtack_leads` row gets its `client_id` nulled (no tt-lead orphaned by a client delete)
 - `thumbtack_leads` = 66, `thumbtack_messages` = 126 (unchanged)
