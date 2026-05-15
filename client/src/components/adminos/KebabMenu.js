@@ -98,18 +98,35 @@ export default function KebabMenu({ items }) {
             if (item.href) {
               const cleanHref = safeHref(item.href);
               const isDisabled = !!item.disabled || !cleanHref;
+              // Disabled href items render as a button (not an anchor without
+              // href — that fails jsx-a11y/anchor-is-valid and isn't keyboard
+              // accessible). Leaves the menu open on misclick so the user can
+              // pick another item.
+              if (isDisabled) {
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    role="menuitem"
+                    className={`kebab-item ${item.danger ? 'danger' : ''}`}
+                    aria-disabled="true"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                  >
+                    {item.icon && <Icon name={item.icon} size={13} />}
+                    <span>{item.label}</span>
+                  </button>
+                );
+              }
               return (
                 <a
                   key={i}
                   role="menuitem"
                   className={`kebab-item ${item.danger ? 'danger' : ''}`}
-                  href={isDisabled ? undefined : cleanHref}
-                  aria-disabled={isDisabled || undefined}
+                  href={cleanHref}
                   onClick={(e) => {
-                    // Disabled item: cancel the click and leave the menu open
-                    // so the user can pick another item (vs. forcing them to
-                    // reopen after a misclick on a greyed-out row).
-                    if (isDisabled) { e.preventDefault(); return; }
                     e.stopPropagation();
                     setOpen(false);
                   }}
