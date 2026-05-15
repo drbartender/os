@@ -8,8 +8,9 @@
 -- Cutoff: only rows created before 2026-05-16Z are eligible for deletion;
 -- anything newer (live traffic after analysis) is preserved automatically.
 --
--- Keep-sets: users {1,2,12,15,16,19}  proposals {21,25,30,51,52}
---   clients {has thumbtack_leads link} U {21,26,31,80,83}  email_leads {44,46}
+-- Keep-sets: users {1,2,12,15,16,19}  proposals {21,25,30,51,52,54}
+--   clients {has thumbtack_leads link} U {21,26,31,80,83,102}  email_leads {44,46}
+-- (#54/#102 = Ketan Patel — real paid booking that converted post-analysis.)
 
 BEGIN;
 
@@ -34,18 +35,18 @@ UNION ALL SELECT 'email_sequence_steps', COUNT(*) FROM email_sequence_steps;
 --    Cascades invoice_line_items, invoice_payments.
 DELETE FROM invoices
  WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
-   AND (proposal_id IS NULL OR proposal_id NOT IN (21,25,30,51,52));
+   AND (proposal_id IS NULL OR proposal_id NOT IN (21,25,30,51,52,54));
 
 -- 2. Shifts for non-kept proposals. Cascades shift_requests.
 DELETE FROM shifts
  WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
-   AND (proposal_id IS NULL OR proposal_id NOT IN (21,25,30,51,52));
+   AND (proposal_id IS NULL OR proposal_id NOT IN (21,25,30,51,52,54));
 
 -- 3. Non-kept proposals. Cascades proposal_addons, proposal_activity_log,
 --    proposal_payments, stripe_sessions, drink_plans.
 DELETE FROM proposals
  WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
-   AND id NOT IN (21,25,30,51,52);
+   AND id NOT IN (21,25,30,51,52,54);
 
 -- 4. Sequence enrollments for non-kept leads.
 DELETE FROM email_sequence_enrollments
@@ -73,7 +74,7 @@ DELETE FROM clients c
  WHERE c.created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
    AND NOT (
      EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id = c.id)
-     OR c.id IN (21,26,31,80,83)
+     OR c.id IN (21,26,31,80,83,102)
    );
 
 -- 9. Non-kept users. Cascades agreements, applications, contractor_profiles,
@@ -95,13 +96,13 @@ BEGIN
 
   IF EXISTS (SELECT 1 FROM proposals
              WHERE created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
-               AND id NOT IN (21,25,30,51,52))
+               AND id NOT IN (21,25,30,51,52,54))
   THEN RAISE EXCEPTION 'proposals: pre-cutoff non-kept rows survived'; END IF;
 
   IF EXISTS (SELECT 1 FROM clients c
              WHERE c.created_at < TIMESTAMPTZ '2026-05-16 00:00:00+00'
                AND NOT (EXISTS (SELECT 1 FROM thumbtack_leads tl WHERE tl.client_id=c.id)
-                        OR c.id IN (21,26,31,80,83)))
+                        OR c.id IN (21,26,31,80,83,102)))
   THEN RAISE EXCEPTION 'clients: pre-cutoff non-kept rows survived'; END IF;
 
   IF EXISTS (SELECT 1 FROM email_leads
@@ -112,16 +113,16 @@ BEGIN
   -- 9b. No kept-set row was destroyed.
   IF (SELECT COUNT(*) FROM users WHERE id IN (1,2,12,15,16,19)) <> 6
   THEN RAISE EXCEPTION 'users: a kept account is missing'; END IF;
-  IF (SELECT COUNT(*) FROM proposals WHERE id IN (21,25,30,51,52)) <> 5
+  IF (SELECT COUNT(*) FROM proposals WHERE id IN (21,25,30,51,52,54)) <> 6
   THEN RAISE EXCEPTION 'proposals: a kept proposal is missing'; END IF;
-  IF (SELECT COUNT(*) FROM clients WHERE id IN (21,26,31,80,83)) <> 5
+  IF (SELECT COUNT(*) FROM clients WHERE id IN (21,26,31,80,83,102)) <> 6
   THEN RAISE EXCEPTION 'clients: a kept proposal-client is missing'; END IF;
   IF (SELECT COUNT(*) FROM email_leads WHERE id IN (44,46)) <> 2
   THEN RAISE EXCEPTION 'email_leads: a kept lead is missing'; END IF;
 
   -- 9c. Referential integrity.
   IF EXISTS (SELECT 1 FROM proposals p
-             WHERE p.id IN (21,25,30,51,52)
+             WHERE p.id IN (21,25,30,51,52,54)
                AND (p.client_id IS NULL
                     OR NOT EXISTS (SELECT 1 FROM clients c WHERE c.id=p.client_id)))
   THEN RAISE EXCEPTION 'a kept proposal lost its client'; END IF;
