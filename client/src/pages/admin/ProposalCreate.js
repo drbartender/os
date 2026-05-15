@@ -14,6 +14,7 @@ import TimePicker from '../../components/TimePicker';
 import NumberStepper from '../../components/NumberStepper';
 import Icon from '../../components/adminos/Icon';
 import { fmt$, fmt$2dp, fmtDateFull } from '../../components/adminos/format';
+import PackageIncludesModal from '../../components/adminos/PackageIncludesModal';
 
 const SOURCES = [
   { value: 'direct',    label: 'Direct' },
@@ -527,7 +528,7 @@ function EventSection({ form, update, merge, fieldErrors }) {
   return (
     <div style={{ display: 'grid', gap: 8 }}>
       {/* Row 1 — Type + Date */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.5fr) minmax(140px, 1fr)', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
         <Lbl text="Type">
           <div style={{ position: 'relative' }} ref={eventTypeRef}>
             <input
@@ -597,7 +598,7 @@ function EventSection({ form, update, merge, fieldErrors }) {
       )}
 
       {/* Row 2 — Start / Hrs / Guests / Bars */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 1.5fr) minmax(64px, 0.7fr) minmax(72px, 0.8fr) minmax(72px, 0.8fr)', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: 8 }}>
         <Lbl text="Start">
           <TimePicker
             className="input"
@@ -657,6 +658,8 @@ function EventSection({ form, update, merge, fieldErrors }) {
 // ─── Package section ────────────────────────────────────────────────────────
 
 function PackageSection({ form, packages, update, merge, fieldErrors }) {
+  const [infoPkg, setInfoPkg] = useState(null);
+
   if (packages.length === 0) {
     return <div className="muted tiny">Loading packages…</div>;
   }
@@ -673,17 +676,26 @@ function PackageSection({ form, packages, update, merge, fieldErrors }) {
     return [r3, r4, xtra].filter(Boolean).join(' · ');
   };
 
+  const selectPkg = (pkg) => {
+    merge({ package_id: String(pkg.id), addon_ids: [], addon_variants: {} });
+  };
+
   return (
     <div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {packages.map(pkg => {
           const sel = Number(form.package_id) === pkg.id;
           return (
-            <button
+            <div
               key={pkg.id}
-              type="button"
-              onClick={() => {
-                merge({ package_id: String(pkg.id), addon_ids: [], addon_variants: {} });
+              role="button"
+              tabIndex={0}
+              onClick={() => selectPkg(pkg)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  selectPkg(pkg);
+                }
               }}
               style={{
                 flex: '1 1 200px', minWidth: 200, textAlign: 'left',
@@ -700,14 +712,24 @@ function PackageSection({ form, packages, update, merge, fieldErrors }) {
                 <div className="spacer" style={{ flex: 1 }} />
                 <span className="num tiny" style={{ color: 'var(--ink-2)' }}>{rateLabel(pkg)}</span>
               </div>
-              {pkg.description && (
-                <div className="tiny" style={{ color: 'var(--ink-3)' }}>{pkg.description}</div>
-              )}
-            </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setInfoPkg(pkg); }}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); }}
+                style={{
+                  marginTop: 2, padding: 0, background: 'transparent', border: 0,
+                  color: 'var(--ink-3)', font: 'inherit', fontSize: 11,
+                  textDecoration: 'underline', cursor: 'pointer',
+                }}
+              >
+                What's included
+              </button>
+            </div>
           );
         })}
       </div>
       <FieldError error={fieldErrors?.package_id} />
+      <PackageIncludesModal open={!!infoPkg} pkg={infoPkg} onClose={() => setInfoPkg(null)} />
     </div>
   );
 }
