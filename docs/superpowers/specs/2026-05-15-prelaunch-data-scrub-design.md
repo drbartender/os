@@ -1,7 +1,9 @@
 # Pre-Launch Data Scrub — Design Spec
 
 **Date:** 2026-05-15
-**Status:** Approved (all rulings collected conversationally 2026-05-15). **Drift addendum 2026-05-15:** Ketan Patel converted from quote-wizard lead #46 to a real `deposit_paid` booking during rehearsal prep — proposal **#54** + client **#102** added to the keep-set. The plan's `created_at < 2026-05-16Z` cutoff + Task 5 drift gate handle further live traffic.
+**Status:** **EXECUTED 2026-05-16Z** — production (`br-noisy-frog-ad99sa6l`) scrubbed via `server/scripts/prelaunch-data-scrub.sql` after a clean rehearsal. Post-scrub verified: proposals 6 `{21,25,30,51,52,54}`, clients 71 (0 keep-predicate violations), users 6 `{1,2,12,15,16,19}`; catalog/Thumbtack/automation config untouched. Restore point: Neon branch `br-morning-union-ad26nq4r` (full pre-scrub copy) retained + ~6h PITR. Audit dump: `C:\Users\dalla\prelaunch-scrub-deleted-2026-05-15.json` (46 proposals / 28 clients / 13 users, outside repo — PII).
+
+**Drift addendum 2026-05-15:** Ketan Patel converted from quote-wizard lead #46 to a real `deposit_paid` booking ($650, event 2026-05-16) during rehearsal prep — proposal **#54** + client **#102** added to the keep-set; verified intact post-scrub. The `created_at < 2026-05-16Z` cutoff + Task 5 drift gate handled live traffic.
 **Risk:** HIGH — destructive operation on the production Neon database. Real client/staff data is interleaved with development/test data.
 
 ## Problem
