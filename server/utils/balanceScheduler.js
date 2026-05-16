@@ -182,7 +182,13 @@ async function processEventCompletions() {
       SET status = 'completed', updated_at = NOW()
       WHERE status IN ('balance_paid', 'confirmed')
         AND event_date IS NOT NULL
-        AND (event_date + (event_duration_hours || ' hours')::interval + (event_start_time || ':00')::interval) < NOW()
+        -- event_start_time is free-text VARCHAR with mixed legacy formats:
+        -- canonical 24h "HH:MM" plus older 12h "H:MM AM/PM" rows. ::time parses
+        -- BOTH; the regex guard skips any unparseable value so one bad row can
+        -- never abort the whole batch (the old "|| ':00'"::interval did exactly
+        -- that, silently blocking ALL auto-completions every run).
+        AND event_start_time ~* '^[0-9]{1,2}:[0-9]{2}( ?[AP]M)?$'
+        AND (event_date + event_start_time::time + (event_duration_hours || ' hours')::interval) < NOW()
         AND (COALESCE(total_price, 0) - COALESCE(amount_paid, 0)) <= 0
       RETURNING id, event_type, event_type_custom
     `);

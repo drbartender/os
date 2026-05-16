@@ -264,7 +264,7 @@ async function seedTestData() {
         INSERT INTO proposals (client_id, event_type, event_type_category, event_type_custom, event_date, event_start_time, event_duration_hours,
           event_location, guest_count, package_id, num_bars, num_bartenders, total_price, status,
           pricing_snapshot, created_by)
-        VALUES ($1, 'wedding-reception', 'wedding_related', NULL, '2026-06-20', '5:00 PM', 5,
+        VALUES ($1, 'wedding-reception', 'wedding_related', NULL, '2026-06-20', '17:00', 5,
           '1234 Lakeview Blvd, Chicago, IL 60614', 150, $2, 2, 2, 4950.00, 'draft',
           '{"package_total":3300,"bartender_total":600,"bar_fee_total":150,"addon_total":900}',
           $3)
@@ -278,7 +278,7 @@ async function seedTestData() {
         INSERT INTO proposals (client_id, event_type, event_type_category, event_type_custom, event_date, event_start_time, event_duration_hours,
           event_location, guest_count, package_id, num_bars, num_bartenders, total_price, status,
           pricing_snapshot, created_by)
-        VALUES ($1, 'holiday-party', 'corporate', NULL, '2026-12-12', '7:00 PM', 4,
+        VALUES ($1, 'holiday-party', 'corporate', NULL, '2026-12-12', '19:00', 4,
           '500 N Michigan Ave, Chicago, IL 60611', 100, $2, 1, 1, 2800.00, 'sent',
           '{"package_total":2200,"bartender_total":0,"bar_fee_total":50,"addon_total":550}',
           $3)
@@ -298,7 +298,7 @@ async function seedTestData() {
           amount_paid, deposit_amount, payment_type, view_count,
           client_signed_name, client_signed_at, client_signature_method,
           pricing_snapshot, created_by)
-        VALUES ($1, 'milestone-birthday', 'celebrations', NULL, '2026-07-18', '8:00 PM', 4,
+        VALUES ($1, 'milestone-birthday', 'celebrations', NULL, '2026-07-18', '20:00', 4,
           '2200 W Fullerton Ave, Chicago, IL 60647', 60, $2, 1, 1, 1380.00, 'deposit_paid',
           100.00, 100.00, 'deposit', 5,
           'Diego Ramirez', NOW() - INTERVAL '3 days', 'type',
@@ -335,7 +335,7 @@ async function seedTestData() {
           amount_paid, deposit_amount, payment_type, view_count,
           client_signed_name, client_signed_at, client_signature_method,
           pricing_snapshot, created_by)
-        VALUES ($1, 'baby-shower', 'celebrations', NULL, '2026-05-10', '2:00 PM', 3,
+        VALUES ($1, 'baby-shower', 'celebrations', NULL, '2026-05-10', '14:00', 3,
           '890 Elm St, Winnetka, IL 60093', 40, $2, 1, 1, 720.00, 'confirmed',
           720.00, 100.00, 'deposit', 8,
           'Priya Sharma', NOW() - INTERVAL '14 days', 'draw',
@@ -370,7 +370,7 @@ async function seedTestData() {
           event_location, guest_count, package_id, num_bars, num_bartenders, total_price, status,
           view_count, last_viewed_at,
           pricing_snapshot, created_by)
-        VALUES ($1, 'fundraiser-gala', 'corporate', NULL, '2026-09-05', '6:00 PM', 5,
+        VALUES ($1, 'fundraiser-gala', 'corporate', NULL, '2026-09-05', '18:00', 5,
           '2045 N Lincoln Park West, Chicago, IL 60614', 200, $2, 2, 3, 10800.00, 'viewed',
           3, NOW() - INTERVAL '1 day',
           '{"package_total":8000,"bartender_total":1200,"bar_fee_total":250,"addon_total":1350}',
