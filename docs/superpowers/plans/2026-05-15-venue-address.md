@@ -25,6 +25,10 @@ The spec's "Shared Component" section says the wizard passes `VenueAddressFields
 
 Spec says `create-intent` re-checks venue completeness server-side (defense in depth) — kept. **Added:** the client also gates the create-intent *request* on venue completeness, so the Stripe form isn't requested (and the "couldn't load payment form" error can't flash) until the venue address is filled. The server check remains as the true backstop.
 
+### Rebase note (2026-05-15) — integrates with `syncShiftsFromProposal`
+
+This plan was originally written against `main@2a31639`. The branch was repointed to current `main` (`2f052cd`), which now includes commit `d5998b1` ("consolidate event detail page — focused edit w/ linked-shift sync"). `d5998b1` added `syncShiftsFromProposal(proposalId, db)` to `server/utils/eventCreation.js` and calls it inside the `crud.js` PATCH transaction. That is the exact mechanism the original Task 8 hand-rolled. Tasks **3** and **8** were revised to **integrate with** `syncShiftsFromProposal` rather than duplicate it (do not re-introduce a hand-rolled `UPDATE shifts` in `crud.js`). Re-verified against current `main`: Task 12 anchors (`ProposalDetailEditForm.js` lines 5 / 169 / 301-302 / 525) are unchanged; Tasks 4-7 files (`public.js`, `publicToken.js`, `stripe.js`) were not touched by `d5998b1` or the later commits, so their anchors hold; `schema.sql` (Task 1) unaffected.
+
 ---
 
 ## File Structure
@@ -35,11 +39,11 @@ Spec says `create-intent` re-checks venue completeness server-side (defense in d
 
 **Modify (server):**
 - `server/db/schema.sql` — add idempotent `venue_*` columns to `proposals`.
-- `server/utils/eventCreation.js:133` — compose `shifts.location` from structured fields, fall back to `event_location`.
+- `server/utils/eventCreation.js` — compose `shifts.location` in BOTH `createEventShifts` (INSERT ≈:135) and `syncShiftsFromProposal` (UPDATE ≈:195-216) + reset `lat/lng` on address change; fall back to `event_location`.
 - `server/routes/proposals/public.js:226-342` — accept/validate/store `venue_*`, set `event_location` via compose.
 - `server/routes/proposals/publicToken.js:26-45, 94-133` — return `venue_*` + `venue_complete`; require/persist venue at sign.
 - `server/routes/stripe.js:88-118` — import `ValidationError`, select venue cols, reject incomplete.
-- `server/routes/proposals/crud.js:238-318` — accept/validate/persist `venue_*`, recompose `event_location`, sync linked shifts.
+- `server/routes/proposals/crud.js` — PATCH: accept/validate/persist `venue_*`, recompose `event_location` (≈:239-318). Shift propagation via the EXISTING `syncShiftsFromProposal` call added by `d5998b1` — **no shift SQL added here**.
 
 **Modify (client):**
 - `client/src/pages/website/quoteWizard/QuoteWizard.js:44-67, 595-613` — `defaultForm.venue_name`; submit sends `venue_*` not `event_location`.
@@ -170,10 +174,12 @@ false
 
 ---
 
-## Task 3: Compose `shifts.location` in createEventShifts
+## Task 3: Compose `shifts.location` in `createEventShifts` AND `syncShiftsFromProposal`
 
 **Files:**
-- Modify: `server/utils/eventCreation.js:1` (add require), `:133` (use compose)
+- Modify: `server/utils/eventCreation.js` — `:5` (require), `createEventShifts` INSERT (≈:135), `syncShiftsFromProposal` UPDATE (≈:195-216)
+
+> **Rebase context:** `d5998b1` added `syncShiftsFromProposal(proposalId, db)` (re-syncs a converted event's shift inside the admin PATCH transaction). The venue address must flow through **both** shift writes: the initial INSERT (`createEventShifts`) and the re-sync UPDATE (`syncShiftsFromProposal`). The re-sync is also where we reset `lat/lng` so geocoding re-resolves when an admin changes the address — this replaces the separate shift UPDATE the original Task 8 planned.
 
 - [ ] **Step 1: Add the require**
 
@@ -183,30 +189,95 @@ In `server/utils/eventCreation.js`, after line 5 (`const { PUBLIC_SITE_URL } = r
 const { composeVenueLocation } = require('./venueAddress');
 ```
 
-- [ ] **Step 2: Use composed location in the shift INSERT**
+- [ ] **Step 2: Composed location in the `createEventShifts` INSERT**
 
-In `server/utils/eventCreation.js`, replace line 133 exactly:
+In `createEventShifts`, in the `INSERT INTO shifts ... RETURNING *` value list, replace this exact block (the trailing `JSON.stringify(positions),` makes it unique vs. the `syncShiftsFromProposal` copy):
 
 ```js
+    startDisplay,
+    endDisplay,
     proposal.event_location || null,
+    JSON.stringify(positions),
 ```
 
 with:
 
 ```js
+    startDisplay,
+    endDisplay,
     composeVenueLocation(proposal) || proposal.event_location || null,
+    JSON.stringify(positions),
 ```
 
 (`proposal` is `SELECT p.*` so `venue_*` are present. Falls back to legacy `event_location` when no structured data.)
 
-- [ ] **Step 3: Lint**
+- [ ] **Step 3: Composed location + `lat/lng`-on-change in `syncShiftsFromProposal`**
+
+In `syncShiftsFromProposal`, replace this exact block:
+
+```js
+  const upd = await db.query(`
+    UPDATE shifts SET
+      event_date = $1,
+      start_time = $2,
+      end_time = $3,
+      location = $4,
+      client_name = $5,
+      event_type = $6,
+      event_type_custom = $7
+    WHERE proposal_id = $8
+    RETURNING *
+  `, [
+    proposal.event_date,
+    startDisplay,
+    endDisplay,
+    proposal.event_location || null,
+    proposal.client_name || null,
+    proposal.event_type || null,
+    proposal.event_type_custom || null,
+    proposalId,
+  ]);
+```
+
+with:
+
+```js
+  const composedLocation = composeVenueLocation(proposal) || proposal.event_location || null;
+  const upd = await db.query(`
+    UPDATE shifts SET
+      event_date = $1,
+      start_time = $2,
+      end_time = $3,
+      lat = CASE WHEN location IS DISTINCT FROM $4 THEN NULL ELSE lat END,
+      lng = CASE WHEN location IS DISTINCT FROM $4 THEN NULL ELSE lng END,
+      location = $4,
+      client_name = $5,
+      event_type = $6,
+      event_type_custom = $7
+    WHERE proposal_id = $8
+    RETURNING *
+  `, [
+    proposal.event_date,
+    startDisplay,
+    endDisplay,
+    composedLocation,
+    proposal.client_name || null,
+    proposal.event_type || null,
+    proposal.event_type_custom || null,
+    proposalId,
+  ]);
+```
+
+**Why the `lat/lng` CASE is correct:** in a Postgres `UPDATE`, every SET right-hand side is evaluated against the **pre-UPDATE** row, regardless of clause order. So `location` in the CASE is the *old* value and `$4` is the *new* composed value: when the address changes, `lat/lng` reset to NULL and the existing geocode path (`server/routes/shifts.js`) re-resolves coordinates lazily; when unchanged, coordinates are preserved. No extra query, atomic with the sync.
+
+- [ ] **Step 4: Lint**
 
 Run: `npm run lint`
 Expected: PASS.
 
-- [ ] **Step 4: Manual verification (deferred to Task 11 end-to-end run)**
+- [ ] **Step 5: Manual verification (deferred)**
 
-No standalone run here (requires a paid proposal + webhook). Verified in the end-to-end check at the end of Task 11.
+No standalone run (`createEventShifts` needs a paid proposal + webhook; `syncShiftsFromProposal` needs an admin edit). Verified in the Task 11 end-to-end check and the Task 12 admin-edit check.
 
 ---
 
@@ -539,14 +610,16 @@ git commit -m "feat(venue): structured venue address — schema, compose/validat
 
 ---
 
-## Task 8: Admin PATCH accepts/validates venue, recomposes, syncs shifts
+## Task 8: Admin PATCH accepts/validates venue & recomposes `event_location`
 
 **Files:**
-- Modify: `server/routes/proposals/crud.js:238-318` (+ require near top)
+- Modify: `server/routes/proposals/crud.js` — require (top), PATCH destructure (≈:239-244), validation (after ≈:254), proposals UPDATE (≈:299-318)
+
+> **Rebase context:** the original Task 8 hand-rolled an `UPDATE shifts SET location=…, lat=NULL, lng=NULL`. **That is removed.** `d5998b1` already calls `await syncShiftsFromProposal(req.params.id, dbClient);` inside this PATCH transaction (≈line 345, after the proposals UPDATE, before `COMMIT`), and Task 3 enhanced that helper to carry the composed venue address and reset `lat/lng` on change. Task 8 now touches **only the proposal row**; the linked shift propagates automatically. **Do not add any `UPDATE shifts` in `crud.js`.**
 
 - [ ] **Step 1: Require the util**
 
-Near the top of `server/routes/proposals/crud.js`, with the other requires, add:
+In `server/routes/proposals/crud.js`, on the line immediately after the eventCreation require (≈line 6: `const { createEventShifts, createDrinkPlan, syncShiftsFromProposal } = require('../../utils/eventCreation');`), add:
 
 ```js
 const { composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
@@ -554,10 +627,27 @@ const { composeVenueLocation, validateVenue } = require('../../utils/venueAddres
 
 - [ ] **Step 2: Accept venue keys**
 
-In the PATCH destructure at lines 239-244, add the venue keys. After `event_type, event_type_category, event_type_custom,` add:
+Replace the PATCH destructure (≈lines 239-244):
 
 ```js
+  const {
+    event_date, event_start_time, event_duration_hours,
+    event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
+    addon_variants, syrup_selections, event_type, event_type_category, event_type_custom,
+    adjustments, total_price_override
+  } = req.body;
+```
+
+with:
+
+```js
+  const {
+    event_date, event_start_time, event_duration_hours,
+    event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
+    addon_variants, syrup_selections, event_type, event_type_category, event_type_custom,
     venue_name, venue_street, venue_city, venue_state, venue_zip,
+    adjustments, total_price_override
+  } = req.body;
 ```
 
 - [ ] **Step 3: Validate formats (admin is trusted — no required fields)**
@@ -649,21 +739,9 @@ with:
 
 (`$17` = recomposed location wins when venue fields were edited; otherwise falls back to explicit `event_location` ($4) then existing — fully back-compatible.)
 
-- [ ] **Step 5: Sync linked shifts when venue changed (CLAUDE.md cross-cutting)**
+- [ ] **Step 5: Confirm the existing shift-sync call (verification only — NO new shift SQL)**
 
-Find the existing `DELETE FROM proposal_addons WHERE proposal_id = $1` line (≈321). Immediately **before** it, add:
-
-```js
-    // Keep linked shifts' location in sync with an edited venue, and clear
-    // lat/lng so the existing geocode path re-resolves coordinates.
-    if (venueProvided && recomposedLocation) {
-      await dbClient.query(
-        `UPDATE shifts SET location = $1, lat = NULL, lng = NULL
-         WHERE proposal_id = $2`,
-        [recomposedLocation, req.params.id]
-      );
-    }
-```
+Confirm `await syncShiftsFromProposal(req.params.id, dbClient);` still exists in the PATCH transaction **after** the proposals UPDATE and **before** `await dbClient.query('COMMIT');` (≈line 345). It propagates the recomposed `event_location` to the linked shift; Task 3 made it reset `lat/lng` on an address change. **Do not** add an `UPDATE shifts` here — a second write would conflict with `syncShiftsFromProposal`.
 
 - [ ] **Step 6: Lint**
 
@@ -673,7 +751,7 @@ Expected: PASS.
 **COMMIT CHECKPOINT B (admin backend) — only on a commit cue.**
 ```bash
 git add server/routes/proposals/crud.js
-git commit -m "feat(venue): admin edit persists structured venue + syncs linked shifts"
+git commit -m "feat(venue): admin edit persists structured venue + recomposes event_location"
 ```
 
 ---
@@ -1137,12 +1215,12 @@ git commit -m "docs(venue): schema, util, component tree for structured venue ad
 - Structured columns on `proposals` → Task 1. ✔
 - Compose/validate single util → Task 2. ✔
 - Wizard collects optional venue name + (existing) city/state, no street/zip → Tasks 4, 10 (+ Deviation 1 documented). ✔
-- `event_location` kept as composed display string; legacy "City, State" byte-identical → Task 2 compose rule + Task 4/6/8 wiring; smoke test in Task 2 Step 3. ✔
+- `event_location` kept as composed display string; legacy "City, State" byte-identical → Task 2 compose rule + Tasks 3/4/6/8 wiring; smoke test in Task 2 Step 3. ✔
 - Required gate at sign+pay, client + server enforced → Tasks 6 (server sign), 7 (server create-intent backstop), 11 (client). ✔
 - `venue_complete` from GET → Task 5. ✔
 - ZIP optional everywhere; venue name optional → `validateVenue` (Task 2), wizard (Task 10), gate (Task 6 requires street/city/state only). ✔
-- `createEventShifts` composes `shifts.location`, falls back → Task 3. ✔
-- Admin structured edit + recompose + **shift sync incl. lat/lng reset** → Task 8 (server) + Task 12 (UI). ✔
+- `shifts.location` composed in `createEventShifts` AND `syncShiftsFromProposal`, falls back → Task 3. ✔
+- Admin structured edit + recompose `event_location` → Task 8 (crud.js, proposal row only) + Task 12 (UI). Linked-shift propagation incl. **lat/lng reset on address change** → Task 3 (`syncShiftsFromProposal`, already called by `d5998b1` in the PATCH txn). ✔
 - Downstream consumers unchanged (read `event_location`/`shifts.location`) — no tasks needed; verified in Task 11 step 4. ✔
 - Non-goals respected: no reminder scheduler, no auto-assign gate, no admin-confirm hard block, no autocomplete — none added. ✔
 - Docs → Task 13. ✔
@@ -1159,4 +1237,6 @@ git commit -m "docs(venue): schema, util, component tree for structured venue ad
 - **stripe.js errors import shape**: Task 7 Step 1 — verify whether `errors` are destructured together or imported individually; add `ValidationError` in the file's existing style.
 - **Wizard city/state still client-required** via existing `getStepRules()` (lines 520-521) — unchanged; server now also validates (Task 4) which only tightens correctness.
 - **Idempotency**: schema ALTERs are `IF NOT EXISTS`; `createEventShifts` already idempotent — unchanged.
+- **Shift sync ownership (post-rebase)**: linked-shift propagation lives entirely in `syncShiftsFromProposal` (`d5998b1`), enhanced by Task 3. `crud.js` PATCH must NOT add its own `UPDATE shifts`. If `syncShiftsFromProposal`'s call site in the PATCH transaction is ever removed, Task 8's admin venue edits would stop reaching shifts — keep the Task 8 Step 5 verification.
+- **`syncShiftsFromProposal` only syncs 1:1 shifts**: by design it no-ops when a proposal has 0 shifts (not converted) or >1 (hand-built multi-shift). Venue edits on multi-shift events won't auto-propagate to those shifts — acceptable (admin manages those directly), and matches pre-existing date/time/location behavior.
 ```
