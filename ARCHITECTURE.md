@@ -239,7 +239,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/packages` | Admin | List service packages |
 | GET | `/addons` | Admin | List add-ons |
 | GET | `/:id` | Admin | Get single proposal with addons + activity log |
-| PATCH | `/:id` | Admin | Update event details and recalculate pricing |
+| PATCH | `/:id` | Admin | Update event details, recalculate pricing, and re-sync the linked event shift (date/time/location/client) when the proposal has been converted |
 | PATCH | `/:id/status` | Admin | Update proposal status |
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | DELETE | `/:id` | Admin | Delete a proposal |

@@ -527,17 +527,30 @@ router.post('/for-proposal/:proposalId', auth, requireAdminOrManager, asyncHandl
   res.json(existing.rows[0]);
 }));
 
-/** GET /api/drink-plans/by-proposal/:proposalId — fetch plan by proposal id. Keep
- *  selections (needed for detail); exclude shopping_list (has its own endpoint). */
+/** GET /api/drink-plans/by-proposal/:proposalId — fetch plan by proposal id.
+ *  Mirrors the GET /:id projection (consult + shopping-list status flags, kept
+ *  as IS NOT NULL booleans so the JSONB blobs stay off the wire) so the
+ *  event-page DrinkPlanCard can drive consult + shopping-list controls without
+ *  a second round-trip. selections is kept (needed for detail); shopping_list
+ *  itself has its own endpoint. */
 router.get('/by-proposal/:proposalId', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
             dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
             dp.selections, dp.status, dp.admin_notes, dp.exploration_submitted_at,
             dp.submitted_at, dp.created_at, dp.updated_at, dp.created_by,
-            u.email AS created_by_email
+            u.email AS created_by_email,
+            dp.consult_selections IS NOT NULL AS has_consult_selections,
+            dp.consult_filled_at, dp.consult_filled_by_user_id,
+            cu.email AS consult_filled_by_email,
+            dp.shopping_list_source,
+            dp.shopping_list IS NOT NULL AS has_shopping_list,
+            dp.shopping_list_status, dp.shopping_list_approved_at,
+            p.guest_count
      FROM drink_plans dp
      LEFT JOIN users u ON u.id = dp.created_by
+     LEFT JOIN users cu ON cu.id = dp.consult_filled_by_user_id
+     LEFT JOIN proposals p ON p.id = dp.proposal_id
      WHERE dp.proposal_id = $1`,
     [req.params.proposalId]
   );

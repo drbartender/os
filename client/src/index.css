@@ -11503,3 +11503,21 @@ html[data-app="admin-os"][data-skin="light"] .chip.warn { color: hsl(28 88% 38%)
 html[data-app="admin-os"][data-skin="light"] .chip.danger { color: hsl(358 72% 40%); background: hsl(358 72% 55% / 0.14); }
 html[data-app="admin-os"][data-skin="light"] .chip.info { color: hsl(208 72% 36%); background: hsl(208 72% 52% / 0.14); }
 
+/* Inline clickable client name in the EventDetailPage heading — looks like the
+   heading text, behaves like a link (keyboard-focusable, hover/focus underline). */
+.event-client-link {
+  background: none;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+.event-client-link:hover,
+.event-client-link:focus-visible {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+

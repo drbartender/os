@@ -3,7 +3,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const { calculateProposal } = require('../../utils/pricingEngine');
-const { createEventShifts, createDrinkPlan } = require('../../utils/eventCreation');
+const { createEventShifts, createDrinkPlan, syncShiftsFromProposal } = require('../../utils/eventCreation');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, linkPaymentToInvoice } = require('../../utils/invoiceHelpers');
@@ -337,6 +337,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, 'updated', 'admin', $2, $3)`,
       [req.params.id, req.user.id, JSON.stringify({ new_total: snapshot.total })]
     );
+
+    // Keep the converted event's shift in lockstep with its proposal — date,
+    // time, location, client, and event type. No-op until the proposal is
+    // converted (0 shifts) and skipped for hand-built multi-shift events.
+    // Runs in this transaction so the shift never commits out of sync.
+    await syncShiftsFromProposal(req.params.id, dbClient);
 
     await dbClient.query('COMMIT');
 

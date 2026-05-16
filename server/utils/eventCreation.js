@@ -9,7 +9,8 @@ const { PUBLIC_SITE_URL } = require('./urls');
  * Returns a 12-hour formatted string like "9:00 PM" for the shift display.
  */
 function addHoursToTime(timeStr, hours) {
-  const [h, m] = timeStr.split(':').map(Number);
+  const [h, m] = String(timeStr).split(':').map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
   const totalMinutes = h * 60 + m + hours * 60;
   const newH = Math.floor(totalMinutes / 60) % 24;
   const newM = totalMinutes % 60;
@@ -22,7 +23,8 @@ function addHoursToTime(timeStr, hours) {
  * Format a 24-hour time string to 12-hour display (e.g. "17:00" → "5:00 PM").
  */
 function formatTime12(timeStr) {
-  const [h, m] = timeStr.split(':').map(Number);
+  const [h, m] = String(timeStr).split(':').map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
   const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
   const ampm = h >= 12 ? 'PM' : 'AM';
   return `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
@@ -148,4 +150,70 @@ async function createEventShifts(proposalId) {
   return shiftResult.rows[0];
 }
 
-module.exports = { createEventShifts, createDrinkPlan };
+/**
+ * Re-sync the auto-created shift's event identity from its proposal after an
+ * admin edits event details (date / time / location / client / event type).
+ * Mirrors the field derivation in createEventShifts so a converted event's
+ * shift never drifts from the proposal it came from.
+ *
+ * Only touches the 1:1 auto-created shift: if the proposal has 0 shifts it
+ * isn't converted yet (nothing to sync); if it has >1 it's a hand-built
+ * multi-shift event the admin manages directly — clobbering those with a
+ * single proposal date/time would destroy deliberate setup, so we skip.
+ *
+ * @param {number} proposalId
+ * @param {object} db - pg pool OR an in-transaction client. Pass the caller's
+ *   transaction client so the sync commits atomically with the proposal edit.
+ * @returns {object|null} the updated shift row, or null if skipped
+ */
+async function syncShiftsFromProposal(proposalId, db = pool) {
+  const cnt = await db.query(
+    'SELECT COUNT(*)::int AS n FROM shifts WHERE proposal_id = $1',
+    [proposalId]
+  );
+  if (cnt.rows[0].n !== 1) return null;
+
+  const result = await db.query(`
+    SELECT p.*, c.name AS client_name, c.email AS client_email
+    FROM proposals p
+    LEFT JOIN clients c ON c.id = p.client_id
+    WHERE p.id = $1
+  `, [proposalId]);
+  if (!result.rows[0]) return null;
+  const proposal = result.rows[0];
+
+  const startTime = proposal.event_start_time || null;
+  let startDisplay = null;
+  let endDisplay = null;
+  if (startTime) {
+    startDisplay = formatTime12(startTime);
+    if (proposal.event_duration_hours) {
+      endDisplay = addHoursToTime(startTime, Number(proposal.event_duration_hours));
+    }
+  }
+
+  const upd = await db.query(`
+    UPDATE shifts SET
+      event_date = $1,
+      start_time = $2,
+      end_time = $3,
+      location = $4,
+      client_name = $5,
+      event_type = $6,
+      event_type_custom = $7
+    WHERE proposal_id = $8
+    RETURNING *
+  `, [
+    proposal.event_date,
+    startDisplay,
+    endDisplay,
+    proposal.event_location || null,
+    proposal.client_name || null,
+    proposal.event_type || null,
+    proposal.event_type_custom || null,
+    proposalId,
+  ]);
+  return upd.rows[0] || null;
+}
+
+module.exports = { createEventShifts, createDrinkPlan, syncShiftsFromProposal };

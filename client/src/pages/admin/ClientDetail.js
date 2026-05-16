@@ -150,6 +150,9 @@ export default function ClientDetail() {
                 <Icon name="phone" size={12} />Call
               </a>
             )}
+            <button type="button" className="btn btn-ghost" onClick={() => editing ? handleCancelEdit() : setEditing(true)}>
+              <Icon name={editing ? 'x' : 'pen'} size={12} />{editing ? 'Cancel' : 'Edit'}
+            </button>
             <button type="button" className="btn btn-primary" onClick={() => navigate(`/proposals/new?client_id=${client.id}`)}>
               <Icon name="plus" size={12} />New proposal
             </button>
@@ -209,15 +212,10 @@ export default function ClientDetail() {
         </div>
 
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
-          <div className="card">
-            <div className="card-head">
-              <h3>Contact</h3>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => editing ? handleCancelEdit() : setEditing(true)}>
-                <Icon name={editing ? 'x' : 'pen'} size={11} />{editing ? 'Cancel' : 'Edit'}
-              </button>
-            </div>
-            <div className="card-body">
-              {editing ? (
+          {editing && (
+            <div className="card">
+              <div className="card-head"><h3>Edit contact</h3></div>
+              <div className="card-body">
                 <div style={{ display: 'grid', gap: 10 }}>
                   <div>
                     <div className="meta-k" style={{ marginBottom: 4 }}>Name</div>
@@ -250,16 +248,9 @@ export default function ClientDetail() {
                     <button type="button" className="btn btn-ghost" onClick={handleCancelEdit}>Cancel</button>
                   </div>
                 </div>
-              ) : (
-                <dl className="dl">
-                  <dt>Email</dt><dd>{client.email || '—'}</dd>
-                  <dt>Phone</dt><dd>{client.phone ? formatPhone(client.phone) : '—'}</dd>
-                  <dt>Source</dt><dd><StatusChip kind={src.kind}>{src.label}</StatusChip></dd>
-                  <dt>Added</dt><dd>{client.created_at ? fmtDate(String(client.created_at).slice(0, 10), { year: 'numeric' }) : '—'}</dd>
-                </dl>
-              )}
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="card">
             <div className="card-head"><h3>Lifetime</h3></div>

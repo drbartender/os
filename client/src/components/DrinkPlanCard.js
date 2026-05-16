@@ -1,4 +1,4 @@
-import React, { memo, useState } from 'react';
+import React, { memo, useState, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../utils/api';
 import { useToast } from '../context/ToastContext';
@@ -6,6 +6,10 @@ import { PUBLIC_SITE_URL } from '../utils/constants';
 import Icon from './adminos/Icon';
 import StatusChip from './adminos/StatusChip';
 import ShoppingListButton from './ShoppingList/ShoppingListButton';
+
+// Lazy so the consult form (and its cocktail/mocktail dependency graph) stays
+// out of the bundle for sessions that never open it.
+const ConsultationForm = lazy(() => import('./ShoppingList/ConsultationForm'));
 
 const DRINK_PLAN_STATUS = {
   pending: { label: 'Pending', kind: 'neutral' },
@@ -19,10 +23,17 @@ function formatDateTime(d) {
   return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading }) {
+// `fullControls` turns on the admin-prep controls (consult input + the
+// shopping-list button gated the same way as the full drink-plan page). It's
+// the canonical event-side surface; the proposal-side card stays a lean
+// preview and leaves these off.
+function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullControls = false, guestCount }) {
   const navigate = useNavigate();
   const toast = useToast();
   const [copied, setCopied] = useState(false);
+  const [consultOpen, setConsultOpen] = useState(false);
+  const [consultCatalogs, setConsultCatalogs] = useState(null);
+  const [consultLoading, setConsultLoading] = useState(false);
 
   const generate = async () => {
     try {
@@ -31,6 +42,15 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading }) {
       toast.success('Drink plan link generated.');
     } catch (err) {
       toast.error(err.message || 'Failed to generate drink plan.');
+    }
+  };
+
+  const refetch = async () => {
+    try {
+      const res = await api.get(`/drink-plans/by-proposal/${proposalId}`);
+      setDrinkPlan(res.data);
+    } catch (err) {
+      // Non-fatal — the action that triggered this already toasted on failure.
     }
   };
 
@@ -51,6 +71,35 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading }) {
       setTimeout(() => setCopied(false), 2000);
     });
   };
+
+  const openConsult = async () => {
+    if (consultCatalogs) {
+      setConsultOpen(true);
+      return;
+    }
+    setConsultLoading(true);
+    try {
+      const [cocktailsRes, mocktailsRes] = await Promise.all([
+        api.get('/cocktails'),
+        api.get('/mocktails').catch(() => ({ data: { mocktails: [] } })),
+      ]);
+      setConsultCatalogs({
+        cocktails: cocktailsRes.data.cocktails || [],
+        mocktails: mocktailsRes.data.mocktails || [],
+      });
+      setConsultOpen(true);
+    } catch (err) {
+      toast.error(err.message || 'Failed to load drink catalog.');
+    } finally {
+      setConsultLoading(false);
+    }
+  };
+
+  const showShoppingList = drinkPlan && (
+    drinkPlan.status === 'submitted' ||
+    drinkPlan.status === 'reviewed' ||
+    (fullControls && drinkPlan.has_shopping_list)
+  );
 
   return (
     <div className="card">
@@ -86,12 +135,27 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading }) {
                 onClick={() => navigate(`/drink-plans/${drinkPlan.id}`)}>
                 <Icon name="external" size={11} />View details
               </button>
-              <button type="button" className="btn btn-ghost btn-sm" style={{ justifyContent: 'center' }}
+              <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }}
                 onClick={copyLink}>
                 <Icon name="copy" size={11} />{copied ? 'Copied!' : 'Copy client link'}
               </button>
-              {(drinkPlan.status === 'submitted' || drinkPlan.status === 'reviewed') && (
-                <ShoppingListButton planId={drinkPlan.id} planToken={drinkPlan.token} />
+              {fullControls && (
+                <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }}
+                  onClick={openConsult} disabled={consultLoading}>
+                  <Icon name="flask" size={11} />
+                  {consultLoading
+                    ? 'Loading…'
+                    : drinkPlan.has_consult_selections ? 'Edit consult input' : 'Input from consult'}
+                </button>
+              )}
+              {showShoppingList && (
+                <ShoppingListButton
+                  planId={drinkPlan.id}
+                  planToken={drinkPlan.token}
+                  className="btn btn-secondary btn-sm"
+                  style={{ justifyContent: 'center' }}
+                  iconSize={11}
+                />
               )}
               {drinkPlan.status === 'submitted' && (
                 <button type="button" className="btn btn-primary btn-sm" style={{ justifyContent: 'center' }}
@@ -110,6 +174,20 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading }) {
           </>
         )}
       </div>
+
+      {fullControls && consultOpen && consultCatalogs && (
+        <Suspense fallback={null}>
+          <ConsultationForm
+            planId={drinkPlan.id}
+            isOpen={consultOpen}
+            onClose={() => setConsultOpen(false)}
+            onSaved={refetch}
+            cocktails={consultCatalogs.cocktails}
+            mocktails={consultCatalogs.mocktails}
+            planContext={{ guest_count: drinkPlan.guest_count ?? guestCount }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

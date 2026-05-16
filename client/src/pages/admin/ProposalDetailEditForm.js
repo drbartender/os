@@ -507,7 +507,7 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
   );
 }
 
-function initialFormFromProposal(p) {
+export function initialFormFromProposal(p) {
   const currentAddonIds = (p.addons || []).map(a => a.addon_id);
   const currentAddonVariants = {};
   (p.addons || []).forEach(a => {

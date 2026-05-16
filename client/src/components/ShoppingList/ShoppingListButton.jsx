@@ -3,12 +3,22 @@ import api from '../../utils/api';
 import { generateShoppingList } from './generateShoppingList';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
+import Icon from '../adminos/Icon';
 
 // Lazy-load the modal so @dnd-kit and the PDF/jspdf graph stay out of the
 // admin bundle for sessions where the Shopping List button is never clicked.
 const ShoppingListModal = lazy(() => import('./ShoppingListModal'));
 
-export default function ShoppingListButton({ planId, planToken }) {
+// className/style/iconSize let the caller match this to its sibling buttons
+// (e.g. DrinkPlanCard renders it btn-sm + centered alongside its other rows;
+// DrinkPlanDetail keeps the default full-size header button).
+export default function ShoppingListButton({
+  planId,
+  planToken,
+  className = 'btn btn-secondary',
+  style,
+  iconSize = 12,
+}) {
   const toast = useToast();
   const [loading, setLoading] = useState(false);
   const [guestCountPrompt, setGuestCountPrompt] = useState(false);
@@ -92,11 +102,12 @@ export default function ShoppingListButton({ planId, planToken }) {
   return (
     <>
       <button
-        className="btn btn-secondary"
+        className={className}
+        style={style}
         onClick={handleClick}
         disabled={loading}
       >
-        {loading ? 'Loading...' : 'Shopping List'}
+        <Icon name="clipboard" size={iconSize} />{loading ? 'Loading…' : 'Shopping List'}
       </button>
 
       {/* Guest count prompt when no proposal is linked */}

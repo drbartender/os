@@ -18,7 +18,11 @@ import { parsePositionsArray, approvedCount } from '../shifts';
 //   - Remove staff    → DELETE /shifts/requests/:requestId
 //   - Manual assign   → POST /shifts/:id/assign  { user_id, position }
 // (SMS notifications are sent server-side on approve/assign — no separate SMS button.)
-export default function ShiftDrawer({ shiftId, open, onClose }) {
+//
+// onUpdate (optional) fires after any mutation so a parent surface (e.g.
+// EventDetailPage's Staffing card) can refetch and reflect the change without
+// a full page reload. The drawer always refetches its own data regardless.
+export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
   const toast = useToast();
   const [shift, setShift] = useState(null);
   const [requests, setRequests] = useState([]);
@@ -76,6 +80,7 @@ export default function ShiftDrawer({ shiftId, open, onClose }) {
       });
       toast.success('Request approved.');
       loadShift();
+      onUpdate?.();
     } catch (e) {
       toast.error(e?.message || 'Failed to approve request.');
     } finally {
@@ -89,6 +94,7 @@ export default function ShiftDrawer({ shiftId, open, onClose }) {
       await api.put(`/shifts/requests/${req.id}`, { status: 'denied' });
       toast.success('Request denied.');
       loadShift();
+      onUpdate?.();
     } catch (e) {
       toast.error(e?.message || 'Failed to deny request.');
     } finally {
@@ -103,6 +109,7 @@ export default function ShiftDrawer({ shiftId, open, onClose }) {
       await api.delete(`/shifts/requests/${req.id}`);
       toast.success('Removed.');
       loadShift();
+      onUpdate?.();
     } catch (e) {
       toast.error(e?.message || 'Failed to remove.');
     } finally {
@@ -124,6 +131,7 @@ export default function ShiftDrawer({ shiftId, open, onClose }) {
       setSelectedStaff(null);
       setPickerPosition('');
       loadShift();
+      onUpdate?.();
     } catch (e) {
       toast.error(e?.message || 'Failed to assign staff.');
     } finally {

@@ -208,7 +208,12 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
   const result = await pool.query(`
     SELECT s.*,
       (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
-      (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count
+      (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count,
+      (SELECT COALESCE(array_agg(COALESCE(cp.preferred_name, u.email) ORDER BY COALESCE(cp.preferred_name, u.email)), '{}')
+         FROM shift_requests sr
+         JOIN users u ON u.id = sr.user_id
+         LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
+        WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_staff
     FROM shifts s
     WHERE s.proposal_id = $1
     ORDER BY s.event_date ASC, s.start_time ASC, s.id ASC
