@@ -1,11 +1,17 @@
 import React, { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { WHATSAPP_GROUP_URL, COMPANY_PHONE, COMPANY_PHONE_TEL } from '../utils/constants';
 
 export default function Completion() {
-  const navigate = useNavigate();
   const { refreshUser } = useAuth();
+
+  // Onboarding just flipped onboarding_status -> 'approved' server-side, but the
+  // in-memory AuthContext user can still be the stale 'hired' from login. A
+  // client-side navigate() into a RequirePortal route would then evaluate the
+  // guard against stale state, getHomePath('hired') -> /welcome, and restart
+  // onboarding. A full-page navigation re-bootstraps AuthContext from
+  // /auth/me (DB truth), so the portal guard always sees 'approved'.
+  const goToPortal = (path) => { window.location.assign(path); };
 
   // Safety net: if the user landed here without a fresh session (e.g. hard refresh),
   // reload /auth/me so RequirePortal sees the 'approved' status set by payment.js.
@@ -29,14 +35,14 @@ export default function Completion() {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => navigate('/shifts')}
+            onClick={() => goToPortal('/shifts')}
           >
             See Open Shifts →
           </button>
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => navigate('/dashboard')}
+            onClick={() => goToPortal('/dashboard')}
           >
             Go to Dashboard
           </button>

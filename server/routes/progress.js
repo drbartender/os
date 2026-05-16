@@ -20,6 +20,15 @@ router.put('/step', auth, asyncHandler(async (req, res) => {
   const validSteps = ['welcome_viewed', 'field_guide_completed', 'agreement_completed', 'contractor_profile_completed', 'payday_protocols_completed'];
   if (!validSteps.includes(step)) throw new ValidationError({ step: 'Invalid step' });
 
+  // A finished account must never be rewound. If onboarding is already
+  // complete, ignore step writes — otherwise a stale client that gets bounced
+  // back through /welcome (see Completion.js handoff) would regress
+  // last_completed_step and re-corrupt the row. Return the row unchanged.
+  const cur = await pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [req.user.id]);
+  if (cur.rows[0]?.onboarding_completed) {
+    return res.json(cur.rows[0]);
+  }
+
   await pool.query(`
     UPDATE onboarding_progress SET
       welcome_viewed = CASE WHEN $1::text = 'welcome_viewed' THEN true ELSE welcome_viewed END,
