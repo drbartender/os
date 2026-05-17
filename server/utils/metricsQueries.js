@@ -14,8 +14,8 @@ const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 function isRealDate(s) {
   if (!ISO.test(s)) return false;
-  const t = Date.parse(s + 'T00:00:00Z');
-  return !Number.isNaN(t);
+  const d = new Date(s + 'T00:00:00Z');
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
 /**

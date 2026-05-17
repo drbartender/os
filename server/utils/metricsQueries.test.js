@@ -32,6 +32,18 @@ test('resolveFilters: from after to throws', () => {
   assert.throws(() => resolveFilters({ from: '2026-05-01', to: '2026-04-01' }), /before/i);
 });
 
+test('resolveFilters: rolled-over calendar date (Feb 30) throws — not silently accepted', () => {
+  assert.throws(() => resolveFilters({ from: '2026-02-30', to: '2026-03-31' }), /date/i);
+});
+
+test('resolveFilters: April 31 (impossible day) throws', () => {
+  assert.throws(() => resolveFilters({ from: '2026-04-01', to: '2026-04-31' }), /date/i);
+});
+
+test('resolveFilters: non-leap Feb 29 throws', () => {
+  assert.throws(() => resolveFilters({ from: '2025-02-29', to: '2025-03-01' }), /date/i);
+});
+
 // ── priorPeriod ──
 test('priorPeriod: April 2026 → March 2026 (equal length, immediately prior)', () => {
   assert.deepEqual(
