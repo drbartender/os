@@ -441,6 +441,12 @@ INSERT INTO cocktails (id, name, category_id, emoji, description, sort_order) VA
   ('last-word','Last Word','bartenders-picks','🟢','Gin, green Chartreuse, maraschino, and lime — herbaceous and bold.',5)
 ON CONFLICT (id) DO NOTHING;
 
+-- Discontinued: Last Word retired from the menu (green Chartreuse too specialty
+-- to source reliably). Soft-disable so historical drink plans that reference it
+-- still resolve the name (plan rendering selects by id without an is_active
+-- filter, and the row still exists). Reversible: set is_active = true.
+UPDATE cocktails SET is_active = false WHERE id = 'last-word';
+
 -- Backfill base_spirit for existing cocktails
 UPDATE cocktails SET base_spirit = CASE id
   WHEN 'vodka-berry-lemonade' THEN 'Vodka'
@@ -684,7 +690,7 @@ ON CONFLICT (slug) DO NOTHING;
 INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_hour_rate, applies_to, sort_order, minimum_hours, category, requires_addon_slug) VALUES
   ('specialty-bitter-aperitifs', 'Bitter Aperitifs', 'Campari, Aperol, Cynar, and amaro. For Negronis, Boulevardiers, Paper Planes, and anything with a bitter backbone.', 'per_guest', 3.00, NULL, 'all', 35, NULL, 'craft_ingredients', NULL),
   ('specialty-vermouths', 'Vermouth & Fortified Wines', 'Sweet and dry vermouth plus Lillet Blanc. For Manhattans, Martinis, Negronis, and Corpse Revivers.', 'per_guest', 1.50, NULL, 'all', 36, NULL, 'craft_ingredients', NULL),
-  ('specialty-niche-liqueurs', 'Specialty Liqueurs', 'Cointreau, green Chartreuse, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur — the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.', 'per_guest', 2.50, NULL, 'all', 37, NULL, 'craft_ingredients', NULL),
+  ('specialty-niche-liqueurs', 'Specialty Liqueurs', 'Cointreau, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur — the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.', 'per_guest', 2.50, NULL, 'all', 37, NULL, 'craft_ingredients', NULL),
   ('specialty-mezcal', 'Mezcal', 'Smoky agave spirit for Smokey Piñas and mezcal-forward cocktails.', 'per_guest', 3.00, NULL, 'all', 38, NULL, 'craft_ingredients', NULL),
   ('specialty-cognac', 'Cognac', 'Aged French grape spirit for Sidecars and classic cognac builds.', 'per_guest', 4.00, NULL, 'all', 39, NULL, 'craft_ingredients', NULL)
 ON CONFLICT (slug) DO NOTHING;
@@ -720,6 +726,13 @@ WHERE slug = 'non-alcoholic-beer' AND description = 'NA beer selection for guest
 UPDATE service_addons
 SET description = 'Premium zero-proof spirits from Lyre''s — non-alcoholic versions of gin, whiskey, rum, and more, used to craft full-flavor NA cocktails.'
 WHERE slug = 'zero-proof-spirits' AND description = 'Premium zero-proof spirit alternatives for crafted NA cocktails (Seedlip, Lyre''s, etc.).';
+
+-- Gated: drop "green Chartreuse" from Specialty Liqueurs (too specialty to source
+-- reliably). Only rewrites the original seed text so any admin edit is preserved;
+-- fresh DBs get the new text from the INSERT above, so this is a no-op there.
+UPDATE service_addons
+SET description = 'Cointreau, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur — the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.'
+WHERE slug = 'specialty-niche-liqueurs' AND description = 'Cointreau, green Chartreuse, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur — the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.';
 
 -- Polished descriptions were previously applied unconditionally on every boot,
 -- clobbering any admin-dashboard edits. The INSERT above seeds reasonable
