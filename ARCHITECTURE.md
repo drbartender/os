@@ -232,8 +232,8 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/` | Admin | List proposals with filters (status, search). Default excludes paid + cancelled (those appear in Events / archive) |
-| GET | `/financials` | Admin | Aggregated revenue + payments for FinancialsDashboard |
-| GET | `/dashboard-stats` | Admin | Server-side aggregations (booked / collected / outstanding / pipeline / 12-month revenue) for the admin home — accurate past the 50-row /api/proposals LIMIT |
+| GET | `/financials` | Admin | Aggregated revenue + payments for FinancialsDashboard. Accepts `?from=&to=&basis=` (booked\|scheduled\|paid) for date-range + lens filtering. |
+| GET | `/dashboard-stats` | Admin | Server-side aggregations (booked / collected / outstanding / funnel / pipeline / monthly revenue series) for the admin home. Accepts `?from=&to=&basis=` for date-range + lens filtering; prior-period deltas included. |
 | POST | `/` | Admin | Create proposal (auto-calculates pricing, creates client if needed) |
 | POST | `/calculate` | Admin | Preview pricing without saving |
 | GET | `/packages` | Admin | List service packages |
@@ -857,6 +857,7 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 - UUID tokens on `drink_plans`, `proposals`, and `quote_drafts` for public access without auth
 - JSONB columns for flexible data: `selections`, `pricing_snapshot`, `includes`, `details`
 - Status columns use CHECK constraints for valid values
+- **Metrics indexes** (added 2026-05-17): `idx_proposals_sent_at` on `proposals(sent_at)`, `idx_proposals_accepted_at` on `proposals(accepted_at)`, `idx_proposal_payments_created_at` on `proposal_payments(created_at)` — support the date-range filter queries in `GET /api/proposals/dashboard-stats` and `GET /api/proposals/financials`
 
 ## Pricing Engine
 

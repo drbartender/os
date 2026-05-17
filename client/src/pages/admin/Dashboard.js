@@ -6,144 +6,129 @@ import { getEventTypeLabel } from '../../utils/eventTypes';
 import Icon from '../../components/adminos/Icon';
 import StaffPills from '../../components/adminos/StaffPills';
 import AreaChart from '../../components/adminos/AreaChart';
+import MetricsFilterBar from '../../components/adminos/MetricsFilterBar';
+import useMetricsFilter from '../../hooks/useMetricsFilter';
 import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
 import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip } from '../../components/adminos/shifts';
 import ClickableRow from '../../components/ClickableRow';
 
 const PIPELINE_COLORS = {
-  draft:    'var(--ink-3)',
-  sent:     'hsl(var(--info-h) var(--info-s) 62%)',
-  viewed:   'var(--accent)',
+  draft: 'var(--ink-3)',
+  sent: 'hsl(var(--info-h) var(--info-s) 62%)',
+  viewed: 'var(--accent)',
   modified: 'hsl(var(--violet-h) var(--violet-s) 65%)',
   accepted: 'hsl(var(--ok-h) var(--ok-s) 52%)',
 };
 
-// Route a shift row to its event detail (proposal-backed) or shift detail (manual).
 function eventRoute(e) {
   return e?.proposal_id ? `/events/${e.proposal_id}` : `/events/shift/${e?.id}`;
 }
 
 const EMPTY_STATS = {
-  totals: { booked: 0, collected: 0, outstanding: 0, events_count: 0, events_owing_balance: 0 },
-  pipeline: [],
-  revenue: [],
+  filters: { from: null, to: null, basis: 'booked' },
+  money: { basis: 'booked', value: 0, priorValue: null, deltaPct: null, outstanding: 0, outstandingPrior: null, outstandingDeltaPct: null },
+  funnel: {
+    sent: { count: 0, value: 0 }, accepted: { count: 0, value: 0 },
+    winRate: { sentCohort: 0, acceptedFromCohort: 0, pending: 0, pct: null },
+    timeToAcceptMedianDays: null, lostValue: 0, pipelineOutstanding: { count: 0, value: 0 },
+  },
+  revenue: [], pipeline: [],
 };
+
+const LENS_LABEL = { booked: 'Booked', scheduled: 'Scheduled', paid: 'Paid' };
+
+function Delta({ pct }) {
+  if (pct == null) return null;
+  const up = pct >= 0;
+  return (
+    <span className="tiny" style={{ color: up ? 'hsl(var(--ok-h) var(--ok-s) 45%)' : 'hsl(var(--danger-h) var(--danger-s) 55%)' }}>
+      {up ? '▲' : '▼'} {Math.abs(pct)}% vs prior
+    </span>
+  );
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const toast = useToast();
+  const filter = useMetricsFilter();
+  const { from, to, basis } = filter;
+
   const [stats, setStats] = useState(EMPTY_STATS);
   const [shifts, setShifts] = useState([]);
   const [proposals, setProposals] = useState([]);
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Analytics zone — refetches on filter change.
+  useEffect(() => {
+    const params = { basis };
+    if (from && to) { params.from = from; params.to = to; }
+    api.get('/proposals/dashboard-stats', { params })
+      .then(r => setStats(r.data || EMPTY_STATS))
+      .catch(() => toast.error('Dashboard metrics failed to load. Try refreshing.'));
+  }, [from, to, basis, toast]);
+
+  // Operational zone — exempt from the filter, loads once.
   useEffect(() => {
     let anyFailed = false;
-    const trackFail = () => { anyFailed = true; };
     Promise.all([
-      api.get('/proposals/dashboard-stats').then(r => r.data).catch(() => { trackFail(); return EMPTY_STATS; }),
-      api.get('/shifts').then(r => r.data).catch(() => { trackFail(); return []; }),
-      api.get('/proposals').then(r => r.data).catch(() => { trackFail(); return []; }),
-      api.get('/admin/applications').then(r => r.data).catch(() => { trackFail(); return { applications: [] }; }),
-    ])
-      .then(([statsData, shiftsData, proposalsData, appsData]) => {
-        setStats(statsData || EMPTY_STATS);
-        setShifts(shiftsData || []);
-        setProposals(proposalsData || []);
-        setApplications(appsData?.applications || appsData || []);
-        if (anyFailed) toast.error('Some dashboard data failed to load. Try refreshing.');
-      })
-      .catch((err) => {
-        toast.error('Some dashboard data failed to load. Try refreshing.');
-        console.error(err);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+      api.get('/shifts').then(r => r.data).catch(() => { anyFailed = true; return []; }),
+      api.get('/proposals').then(r => r.data).catch(() => { anyFailed = true; return []; }),
+      api.get('/admin/applications').then(r => r.data).catch(() => { anyFailed = true; return { applications: [] }; }),
+    ]).then(([s, p, a]) => {
+      setShifts(s || []);
+      setProposals(p || []);
+      setApplications(a?.applications || a || []);
+      if (anyFailed) toast.error('Some dashboard data failed to load. Try refreshing.');
+    }).finally(() => setLoading(false));
   }, [toast]);
 
-  // All shifts (manual + proposal-backed) count for staffing-status views.
-  // Revenue stats come from the server-side aggregation, not this list.
   const upcoming = useMemo(() =>
-    shifts
-      .filter(e => e.event_date && dayDiff(e.event_date.slice(0, 10)) >= 0)
-      .sort((a, b) => a.event_date.localeCompare(b.event_date)),
-  [shifts]);
-
+    shifts.filter(e => e.event_date && dayDiff(e.event_date.slice(0, 10)) >= 0)
+      .sort((a, b) => a.event_date.localeCompare(b.event_date)), [shifts]);
   const unstaffed = useMemo(() =>
-    upcoming.filter(e => approvedCount(e) < parsePositionsCount(e)),
-  [upcoming]);
-
-  const openShifts = useMemo(() =>
-    upcoming.reduce((sum, e) => sum + Math.max(0, parsePositionsCount(e) - approvedCount(e)), 0),
-  [upcoming]);
-
+    upcoming.filter(e => approvedCount(e) < parsePositionsCount(e)), [upcoming]);
   const newApplications = useMemo(() =>
-    Array.isArray(applications) ? applications.filter(a => a.onboarding_status === 'applied').length : 0,
-  [applications]);
+    Array.isArray(applications) ? applications.filter(a => a.onboarding_status === 'applied').length : 0, [applications]);
 
   const actionQueue = useMemo(() => {
     const items = [];
     unstaffed.slice(0, 3).forEach(e => {
-      const needed = parsePositionsCount(e);
-      const filled = approvedCount(e);
-      const open = needed - filled;
+      const open = parsePositionsCount(e) - approvedCount(e);
       const days = dayDiff(e.event_date.slice(0, 10));
       items.push({
-        id: 'unstaffed-' + e.id,
-        type: 'unstaffed',
-        priority: days < 7 ? 'danger' : 'warn',
+        id: 'unstaffed-' + e.id, type: 'unstaffed', priority: days < 7 ? 'danger' : 'warn',
         title: `${e.client_name || 'Event'} needs ${open} ${open === 1 ? 'bartender' : 'bartenders'}`,
         sub: `${getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })} · ${fmtDate(e.event_date.slice(0, 10))} · ${days}d out`,
-        meta: `${open} open`,
-        target: e.proposal_id ? 'event' : 'shift',
-        ref: e.proposal_id || e.id,
+        meta: `${open} open`, target: e.proposal_id ? 'event' : 'shift', ref: e.proposal_id || e.id,
       });
     });
     proposals.filter(p => ['sent', 'viewed', 'modified'].includes(p.status)).slice(0, 2).forEach(p => {
       items.push({
-        id: 'prop-' + p.id,
-        type: 'proposal',
-        priority: 'info',
+        id: 'prop-' + p.id, type: 'proposal', priority: 'info',
         title: `${p.client_name || p.client_email} proposal — ${p.status}`,
         sub: getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom }),
-        meta: fmt$(Number(p.total_price || 0)),
-        target: 'proposal',
-        ref: p.id,
+        meta: fmt$(Number(p.total_price || 0)), target: 'proposal', ref: p.id,
       });
     });
     if (newApplications > 0) {
       items.push({
-        id: 'apps',
-        type: 'application',
-        priority: 'info',
+        id: 'apps', type: 'application', priority: 'info',
         title: `${newApplications} new ${newApplications === 1 ? 'application' : 'applications'}`,
-        sub: 'Review in hiring',
-        meta: `${newApplications} new`,
-        target: 'hiring',
-        ref: null,
+        sub: 'Review in hiring', meta: `${newApplications} new`, target: 'hiring', ref: null,
       });
     }
     return items;
   }, [unstaffed, proposals, newApplications]);
 
-  const totals = stats.totals || EMPTY_STATS.totals;
-  const totalBooked = Number(totals.booked || 0);
-  const totalCollected = Number(totals.collected || 0);
-  const outstanding = Number(totals.outstanding || 0);
-  const eventsOwingBalance = Number(totals.events_owing_balance || 0);
-  const eventsCount = Number(totals.events_count || 0);
-
+  const m = stats.money || EMPTY_STATS.money;
+  const fn = stats.funnel || EMPTY_STATS.funnel;
   const pipeline = stats.pipeline || [];
   const maxPipelineValue = Math.max(1, ...pipeline.map(p => Number(p.value || 0)));
+  const wr = fn.winRate || EMPTY_STATS.funnel.winRate;
 
   if (loading) {
-    return (
-      <div className="page">
-        <div className="muted">Loading dashboard…</div>
-      </div>
-    );
+    return <div className="page"><div className="muted">Loading dashboard…</div></div>;
   }
 
   return (
@@ -166,37 +151,60 @@ export default function Dashboard() {
         </div>
       </div>
 
+      <MetricsFilterBar filter={filter} />
+
+      {/* Money zone — driven by the lens toggle */}
       <div className="stat-row" style={{ marginBottom: 'var(--gap)' }}>
         <div className="stat" onClick={() => navigate('/financials')}>
-          <div className="stat-label">Booked</div>
-          <div className="stat-value">{fmt$(totalBooked)}</div>
-          <div className="stat-sub"><span>{eventsCount} {eventsCount === 1 ? 'event' : 'events'} on record</span></div>
-        </div>
-        <div className="stat" onClick={() => navigate('/financials')}>
-          <div className="stat-label">Collected</div>
-          <div className="stat-value">{fmt$(totalCollected)}</div>
-          <div className="stat-sub"><span>{totalBooked > 0 ? Math.round((totalCollected / totalBooked) * 100) : 0}% of booked</span></div>
+          <div className="stat-label">{LENS_LABEL[m.basis]}</div>
+          <div className="stat-value">{fmt$(m.value)}</div>
+          <div className="stat-sub"><Delta pct={m.deltaPct} /></div>
         </div>
         <div className="stat" onClick={() => navigate('/financials')}>
           <div className="stat-label">Outstanding</div>
-          <div className="stat-value" style={{ color: outstanding > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
-            {fmt$(outstanding)}
+          <div className="stat-value" style={{ color: m.outstanding > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : '' }}>
+            {fmt$(m.outstanding)}
           </div>
-          <div className="stat-sub"><span>{eventsOwingBalance} {eventsOwingBalance === 1 ? 'event' : 'events'} owe balance</span></div>
+          <div className="stat-sub"><Delta pct={m.outstandingDeltaPct} /></div>
         </div>
-        <div className="stat" onClick={() => navigate('/events')}>
-          <div className="stat-label">Upcoming events</div>
-          <div className="stat-value">{upcoming.length}</div>
+        <div className="stat">
+          <div className="stat-label">Sent</div>
+          <div className="stat-value">{fn.sent.count}</div>
+          <div className="stat-sub"><span>{fmt$(fn.sent.value)} quoted</span></div>
+        </div>
+        <div className="stat">
+          <div className="stat-label">Accepted</div>
+          <div className="stat-value">{fn.accepted.count}</div>
+          <div className="stat-sub"><span>{fmt$(fn.accepted.value)} won</span></div>
+        </div>
+        <div className="stat">
+          <div className="stat-label">Win rate</div>
+          <div className="stat-value">{wr.pct == null ? '—' : `${wr.pct}%`}</div>
           <div className="stat-sub">
-            <span>{upcoming[0] ? `Next: ${fmtDate(upcoming[0].event_date.slice(0, 10))}` : 'No upcoming'}</span>
+            <span>{wr.acceptedFromCohort} of {wr.sentCohort} sent · {wr.pending} pending</span>
           </div>
         </div>
-        <div className="stat" onClick={() => navigate('/events')}>
-          <div className="stat-label">Unstaffed</div>
-          <div className="stat-value" style={{ color: unstaffed.length > 0 ? 'hsl(var(--danger-h) var(--danger-s) 65%)' : '' }}>
-            {unstaffed.length}
+      </div>
+
+      <div className="stat-row" style={{ marginBottom: 'var(--gap)' }}>
+        <div className="stat">
+          <div className="stat-label">Time to accept</div>
+          <div className="stat-value">
+            {fn.timeToAcceptMedianDays == null ? '—' : `${fn.timeToAcceptMedianDays}d`}
           </div>
-          <div className="stat-sub"><span>{openShifts} open {openShifts === 1 ? 'shift' : 'shifts'}</span></div>
+          <div className="stat-sub"><span>median, accepted in range</span></div>
+        </div>
+        <div className="stat">
+          <div className="stat-label">Pipeline <span className="k">Live</span></div>
+          <div className="stat-value">{fn.pipelineOutstanding.count}</div>
+          <div className="stat-sub"><span>{fmt$(fn.pipelineOutstanding.value)} in flight</span></div>
+        </div>
+        <div className="stat">
+          <div className="stat-label">Lost</div>
+          <div className="stat-value" style={{ color: fn.lostValue > 0 ? 'hsl(var(--danger-h) var(--danger-s) 55%)' : '' }}>
+            {fmt$(fn.lostValue)}
+          </div>
+          <div className="stat-sub"><span>quoted then cancelled</span></div>
         </div>
       </div>
 
@@ -206,11 +214,11 @@ export default function Dashboard() {
             <div className="card-head">
               <div className="hstack">
                 <h3>Revenue</h3>
-                <span className="k">12 months</span>
+                <span className="k">{LENS_LABEL[m.basis]} by month</span>
               </div>
               <div className="hstack" style={{ gap: 14 }}>
                 <span className="hstack tiny muted" style={{ gap: 4 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent)' }} />Booked
+                  <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--accent)' }} />{LENS_LABEL[m.basis]}
                 </span>
                 <span className="hstack tiny muted" style={{ gap: 4 }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: 'hsl(var(--ok-h) var(--ok-s) 52%)' }} />Collected
@@ -218,13 +226,15 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="card-body">
-              <AreaChart data={stats.revenue || []} />
+              {(stats.revenue || []).length === 0
+                ? <div className="muted tiny" style={{ padding: '2rem 0', textAlign: 'center' }}>No revenue in this range.</div>
+                : <AreaChart data={stats.revenue} keys={['value', 'paid']} />}
             </div>
           </div>
 
           <div className="card">
             <div className="card-head">
-              <h3>Upcoming events</h3>
+              <h3>Upcoming events <span className="k">Live</span></h3>
               <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/events')}>
                 View all <Icon name="right" size={11} />
               </button>
@@ -273,7 +283,7 @@ export default function Dashboard() {
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
           <div className="card">
             <div className="card-head">
-              <h3><Icon name="alert" size={12} /> Needs attention</h3>
+              <h3><Icon name="alert" size={12} /> Needs attention <span className="k">Live</span></h3>
               <span className="k">{actionQueue.length}</span>
             </div>
             <div>
@@ -281,26 +291,17 @@ export default function Dashboard() {
                 <div className="muted tiny" style={{ padding: '0.75rem 1rem' }}>Nothing pressing right now.</div>
               )}
               {actionQueue.map(a => (
-                <div
-                  key={a.id}
-                  className="queue-item"
+                <div key={a.id} className="queue-item"
                   onClick={() => {
                     if (a.target === 'event') navigate(`/events/${a.ref}`);
                     else if (a.target === 'shift') navigate(`/events/shift/${a.ref}`);
                     else if (a.target === 'proposal') navigate(`/proposals/${a.ref}`);
                     else if (a.target === 'hiring') navigate('/hiring');
                   }}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.click(); }}
-                >
+                  role="button" tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.click(); }}>
                   <div className={`queue-icon ${a.priority}`}>
-                    <Icon name={
-                      a.type === 'unstaffed' ? 'userplus' :
-                      a.type === 'proposal' ? 'eye' :
-                      a.type === 'application' ? 'pen' :
-                      'alert'
-                    } />
+                    <Icon name={a.type === 'unstaffed' ? 'userplus' : a.type === 'proposal' ? 'eye' : a.type === 'application' ? 'pen' : 'alert'} />
                   </div>
                   <div className="queue-main">
                     <div className="queue-title">{a.title}</div>
@@ -315,9 +316,7 @@ export default function Dashboard() {
           <div className="card">
             <div className="card-head"><h3>Pipeline</h3><span className="k">Proposals</span></div>
             <div className="card-body" style={{ padding: '0.75rem 1rem' }}>
-              {pipeline.length === 0 && (
-                <div className="muted tiny">No active proposals.</div>
-              )}
+              {pipeline.length === 0 && <div className="muted tiny">No active proposals.</div>}
               {pipeline.map(row => {
                 const value = Number(row.value || 0);
                 return (
