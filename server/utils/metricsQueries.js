@@ -86,4 +86,154 @@ function toDollars(value, { fromCents = false } = {}) {
   return fromCents ? n / 100 : n;
 }
 
-module.exports = { resolveFilters, priorPeriod, dateClause, toDollars, BASES };
+// ── SQL builders. Each returns { sql, params }. `f` = { from, to, basis }. ──
+
+const NOT_DEAD = "status NOT IN ('cancelled','archived')";
+
+function qSent(f) {
+  const params = [];
+  const c = dateClause('sent_at', f.from, f.to, params);
+  return {
+    sql: `SELECT COUNT(*)::int AS count, COALESCE(SUM(total_price),0)::float8 AS value
+          FROM proposals WHERE sent_at IS NOT NULL${c}`,
+    params,
+  };
+}
+
+function qAccepted(f) {
+  const params = [];
+  const c = dateClause('accepted_at', f.from, f.to, params);
+  return {
+    sql: `SELECT COUNT(*)::int AS count, COALESCE(SUM(total_price),0)::float8 AS value
+          FROM proposals WHERE accepted_at IS NOT NULL${c}`,
+    params,
+  };
+}
+
+function qWinRate(f) {
+  const params = [];
+  const c = dateClause('sent_at', f.from, f.to, params);
+  return {
+    sql: `SELECT COUNT(*)::int AS sent_cohort,
+                 COUNT(*) FILTER (WHERE accepted_at IS NOT NULL)::int AS accepted_from_cohort,
+                 COUNT(*) FILTER (WHERE status IN ('sent','viewed','modified'))::int AS pending
+          FROM proposals WHERE sent_at IS NOT NULL${c}`,
+    params,
+  };
+}
+
+function qTimeToAccept(f) {
+  const params = [];
+  const c = dateClause('accepted_at', f.from, f.to, params);
+  return {
+    sql: `SELECT percentile_cont(0.5) WITHIN GROUP (
+                   ORDER BY EXTRACT(EPOCH FROM (accepted_at - sent_at))/86400.0
+                 ) AS median_days
+          FROM proposals
+          WHERE accepted_at IS NOT NULL AND sent_at IS NOT NULL${c}`,
+    params,
+  };
+}
+
+function qLostValue(f) {
+  const params = [];
+  const c = dateClause('sent_at', f.from, f.to, params);
+  return {
+    sql: `SELECT COALESCE(SUM(total_price),0)::float8 AS value
+          FROM proposals
+          WHERE sent_at IS NOT NULL AND status IN ('cancelled','archived')${c}`,
+    params,
+  };
+}
+
+function qPipelineOutstanding() {
+  return {
+    sql: `SELECT COUNT(*)::int AS count, COALESCE(SUM(total_price),0)::float8 AS value
+          FROM proposals WHERE status IN ('sent','viewed','modified')`,
+    params: [],
+  };
+}
+
+/** Headline money for the basis. Paid returns cents in `value` (caller → toDollars fromCents). */
+function qMoney(f) {
+  const params = [];
+  if (f.basis === 'paid') {
+    const c = dateClause('pp.created_at', f.from, f.to, params);
+    return {
+      sql: `SELECT COALESCE(SUM(pp.amount),0)::float8 AS value
+            FROM proposal_payments pp WHERE pp.status = 'succeeded'${c}`,
+      params,
+      cents: true,
+    };
+  }
+  const col = f.basis === 'scheduled' ? 'event_date' : 'accepted_at';
+  const c = dateClause(col, f.from, f.to, params);
+  return {
+    sql: `SELECT COALESCE(SUM(total_price),0)::float8 AS value
+          FROM proposals
+          WHERE accepted_at IS NOT NULL AND ${NOT_DEAD}${c}`,
+    params,
+    cents: false,
+  };
+}
+
+function qOutstanding(f) {
+  const params = [];
+  const c = dateClause('event_date', f.from, f.to, params);
+  return {
+    sql: `SELECT COALESCE(SUM(GREATEST(total_price - COALESCE(amount_paid,0),0)),0)::float8 AS value
+          FROM proposals
+          WHERE accepted_at IS NOT NULL AND ${NOT_DEAD}${c}`,
+    params,
+  };
+}
+
+/**
+ * Monthly series. `value` = basis $ per month, `paid` = succeeded payments $.
+ * Bounds: explicit [from,to] when given; else data MIN → now, capped to the
+ * trailing 24 months so a stray ancient row can't create a pathological series.
+ */
+function qRevenue(f) {
+  const params = [];
+  let lo;
+  let hi;
+  if (f.from && f.to) {
+    params.push(f.from); lo = `date_trunc('month', $${params.length}::date)`;
+    params.push(f.to); hi = `date_trunc('month', $${params.length}::date)`;
+  } else {
+    const minExpr = f.basis === 'paid'
+      ? "(SELECT MIN(created_at) FROM proposal_payments WHERE status='succeeded')"
+      : f.basis === 'scheduled'
+        ? `(SELECT MIN(event_date) FROM proposals WHERE accepted_at IS NOT NULL AND ${NOT_DEAD})`
+        : `(SELECT MIN(accepted_at) FROM proposals WHERE accepted_at IS NOT NULL AND ${NOT_DEAD})`;
+    lo = `GREATEST(
+            date_trunc('month', COALESCE(${minExpr}, NOW() - INTERVAL '11 months')),
+            date_trunc('month', NOW()) - INTERVAL '23 months')`;
+    hi = `date_trunc('month', NOW())`;
+  }
+  const valueSub = f.basis === 'paid'
+    ? `(SELECT COALESCE(SUM(amount),0)::float8/100.0 FROM proposal_payments pp
+        WHERE pp.status='succeeded' AND pp.created_at >= ms AND pp.created_at < ms + INTERVAL '1 month')`
+    : `(SELECT COALESCE(SUM(total_price),0)::float8 FROM proposals p
+        WHERE p.accepted_at IS NOT NULL AND p.${NOT_DEAD}
+          AND p.${f.basis === 'scheduled' ? 'event_date' : 'accepted_at'} >= ms
+          AND p.${f.basis === 'scheduled' ? 'event_date' : 'accepted_at'} < ms + INTERVAL '1 month')`;
+  return {
+    sql: `SELECT to_char(ms,'YYYY-MM') AS key,
+                 to_char(ms,'Mon')     AS m,
+                 ${valueSub} AS value,
+                 (SELECT COALESCE(SUM(amount),0)::float8/100.0 FROM proposal_payments pp
+                   WHERE pp.status='succeeded' AND pp.created_at >= ms
+                     AND pp.created_at < ms + INTERVAL '1 month') AS paid
+          FROM generate_series(${lo}, ${hi}, INTERVAL '1 month') AS ms
+          ORDER BY ms`,
+    params,
+  };
+}
+
+const builders = {
+  qSent, qAccepted, qWinRate, qTimeToAccept, qLostValue,
+  qPipelineOutstanding, qMoney, qOutstanding, qRevenue,
+};
+
+module.exports = { resolveFilters, priorPeriod, dateClause, toDollars, BASES, ...builders };
