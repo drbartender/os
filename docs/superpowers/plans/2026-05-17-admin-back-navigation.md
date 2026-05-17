@@ -12,6 +12,15 @@
 
 **Command note:** All `npx react-scripts ...` commands run from the `client/` directory via the Bash tool (bash). `CI=true` matches the Vercel CI gate (warnings → errors).
 
+**Pre-implementation verification (completed during planning — do not re-litigate, but rely on these facts):**
+- App uses `<BrowserRouter>` (App.js:443), so `location.key === 'default'` is the correct cold-entry signal.
+- Row-open is a **push**: `EventsDashboard` row → `dispatch('rowClick')` → `navigate('/events/${id}')` (no `replace`). Same push pattern for ⌘K (`CommandPalette` `navigate(path)`), Clients kebab, and Proposal→client/event links. So `navigate(-1)` correctly returns to the originating list/page.
+- `EventEditForm` and `ProposalDetailEditForm` are **in-page editors, not routed** (App.js has only `/events/:id` and `/proposals/:id` — no `/edit` route). Editing creates no history entry, so Back never bounces into a stale edit form. Do NOT add navigation to these forms.
+- `findPageTitle` (the renamed `findNavLabel`) mislabels nothing: every admin route resolves to a correct NAV label via prefix match, including `/staffing/users/:id`, `/staffing/applications/:id`, and all `/email-marketing/*` children (they are *nested* routes, so the pathname starts with `/email-marketing/`). The `'Dashboard'` fallback is unreachable for real admin routes.
+- The 6 detail pages are the **exhaustive** set of fake back buttons (verified by a full sweep for `‹`/`←`/`arrow_left`/`name="left"`/`navigate(-1)`/section-navigate across `client/src/pages/admin`). Email sub-pages have no such button.
+
+**Out of scope (noticed during verification, NOT part of this task):** `nav.js` still lists a `Cocktail Menu` item → `/cocktail-menu`, but that route is now `<Navigate to="/settings" replace>` (App.js:403). Stale dead nav, unrelated to the breadcrumb system. Leave it unless the user explicitly folds it in.
+
 ---
 
 ### Task 1: Create the `BackButton` primitive (TDD)
@@ -324,10 +333,12 @@ Expected final: `Compiled successfully.`
 
 - [ ] **Step 8: Manual smoke test**
 
-Start the dev server if not running (Claude-managed background process — see project memory). Then verify:
-1. Open an Event detail page → click into its Drink Plan → click **Back** → you return to **the event** (not the Drink Plans queue).
-2. Paste a drink-plan URL directly into a fresh tab (cold entry) → click **Back** → you land on `/drink-plans`.
-3. Spot-check one more: open a Client from the Clients list → **Back** → returns to the list.
+Start the dev server if not running (Claude-managed background process — see project memory). Verify each verified journey:
+1. **The grr fix:** Events list → open an event → open its Drink Plan → **Back** → returns to **the event** (not the Drink Plans queue). **Back** again → returns to the Events list.
+2. **List round-trip:** Clients list → open a client → **Back** → returns to the Clients list.
+3. **Command palette:** from any page press ⌘K → jump to a proposal → **Back** → returns to the page you were on before ⌘K.
+4. **Cold entry:** paste a drink-plan URL into a fresh browser tab → **Back** → lands on `/drink-plans` (fallback; does not leave the app).
+5. **No edit bounce:** open an event → edit it in-page and save → **Back** → returns to the Events list (not a stale edit view).
 
 - [ ] **Step 9: Commit (covers Task 1 + Task 2 — the whole back-nav feature)**
 
