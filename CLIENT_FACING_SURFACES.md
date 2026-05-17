@@ -50,25 +50,19 @@ Token-gated pages (`/proposal/:token`, `/plan/:token`, `/invoice/:token`, `/shop
 | `client/src/pages/proposal/proposalView/PaymentForm.js` | Stripe Elements-aware form that signs the proposal first, then confirms payment in one click. |
 | `client/src/pages/proposal/proposalView/helpers.js` | `fmt`, `formatTime`, `calcEndTime`, `formatDateShort`, `DEPOSIT_DOLLARS`. |
 | `client/src/pages/proposal/proposalView/styles.js` | All proposal page inline-style objects (page, container, heading, paid banner, footer). The whole page is style-prop driven — not class-based — so it's the most isolated visual surface for a redesign. |
-| `client/src/pages/plan/PotionPlanningLab.js` | The big one — drink plan questionnaire. Two phases (Exploration → Refinement) gated by proposal status. Auto-saves every 30s + on unload, supports browser back-button to navigate steps, can checkout extras through Stripe mid-flow. |
-| `client/src/pages/plan/steps/WelcomeStep.js` | Front-door splash for the lab. |
-| `client/src/pages/plan/steps/RefinementWelcomeStep.js` | Phase-2 entry splash that recaps the exploration data. |
-| `client/src/pages/plan/steps/VibeStep.js` | Exploration — pick an event vibe. |
-| `client/src/pages/plan/steps/FlavorDirectionStep.js` | Exploration — flavor directions + free-text "dream drink" notes. |
-| `client/src/pages/plan/steps/ExplorationBrowseStep.js` | Exploration — browse the cocktail menu, mark favorites, attach per-drink upgrades. |
-| `client/src/pages/plan/steps/MocktailInterestStep.js` | Exploration — yes/no/maybe on mocktails. |
-| `client/src/pages/plan/steps/ExplorationSaveStep.js` | Exploration — save & wait for proposal to be sent. |
-| `client/src/pages/plan/steps/QuickPickStep.js` | Refinement — quick-pick serving styles (signature drinks / full bar / beer & wine / mocktail / custom). |
-| `client/src/pages/plan/steps/CustomSetupStep.js` | Refinement — opt-in toggles for each module (signatures, mocktails, full bar, beer/wine). |
-| `client/src/pages/plan/steps/SignaturePickerStep.js` | Refinement — pick the actual signature drinks, with custom add, mixers question, and per-drink upgrades (carbonation, smoke, smoke-bubble, syrups). |
-| `client/src/pages/plan/steps/MocktailStep.js` | Refinement — pick mocktails, attach syrups + add-ons. |
-| `client/src/pages/plan/steps/FullBarSpiritsStep.js` | Refinement — spirits selection. |
-| `client/src/pages/plan/steps/FullBarBeerWineStep.js` | Refinement — beer/wine on a full bar. |
-| `client/src/pages/plan/steps/BeerWineStep.js` | Refinement — beer/wine-only setup. |
-| `client/src/pages/plan/steps/HostedGuestPrefsStep.js` | Refinement (hosted only) — compact guest-preferences step. |
-| `client/src/pages/plan/steps/MenuDesignStep.js` | Refinement — opt into a custom menu graphic, naming, theme, notes. |
+| `client/src/pages/plan/PotionPlanningLab.js` | The big one — drink plan questionnaire. A single linear **post-booking** flow (created only after deposit; no pre-booking Exploration phase). Auto-saves every 30s + on unload, supports browser back-button to navigate steps, can checkout extras through Stripe mid-flow. Renders a lock screen if the API returns `{ locked: true }` for a stale pre-deposit `/plan/:token` link. |
+| `client/src/pages/plan/steps/RefinementWelcomeStep.js` | The sole entry splash — shows the hosted-package recap + "your booking is confirmed" framing (no longer recaps any exploration data). Rendered for the `welcome` step. |
+| `client/src/pages/plan/steps/QuickPickStep.js` | Quick-pick serving styles (signature drinks / full bar / beer & wine / mocktail / custom). |
+| `client/src/pages/plan/steps/CustomSetupStep.js` | Opt-in toggles for each module (signatures, mocktails, full bar, beer/wine). |
+| `client/src/pages/plan/steps/SignaturePickerStep.js` | Pick the actual signature drinks, with custom add, mixers question, and per-drink upgrades (carbonation, smoke, smoke-bubble, syrups). |
+| `client/src/pages/plan/steps/MocktailStep.js` | Pick mocktails, attach syrups + add-ons. |
+| `client/src/pages/plan/steps/FullBarSpiritsStep.js` | Spirits selection. |
+| `client/src/pages/plan/steps/FullBarBeerWineStep.js` | Beer/wine on a full bar. |
+| `client/src/pages/plan/steps/BeerWineStep.js` | Beer/wine-only setup. |
+| `client/src/pages/plan/steps/HostedGuestPrefsStep.js` | Hosted-package only — compact guest-preferences step. |
+| `client/src/pages/plan/steps/MenuDesignStep.js` | Opt into a custom menu graphic, naming, theme, notes. |
 | `client/src/pages/plan/steps/MakeItYoursPanel.js` | Reusable upsell side-panel inside the lab. |
-| `client/src/pages/plan/steps/LogisticsStep.js` | Refinement — day-of contact, parking, equipment add-ons (bar rental), access notes. |
+| `client/src/pages/plan/steps/LogisticsStep.js` | Day-of contact, parking, equipment add-ons (bar rental), access notes. |
 | `client/src/pages/plan/steps/ConfirmationStep.js` | Final review, surcharge tally, Stripe handoff if there are paid extras, submit button. |
 | `client/src/pages/plan/data/cocktailMenu.js` | Cocktail seed data. |
 | `client/src/pages/plan/data/servingTypes.js` | The QUICK_PICKS, MODULE_STEP_MAP, and queue-builder logic that drives the wizard. |
@@ -444,7 +438,7 @@ The primary status badges in `index.css` (`badge-inprogress`, `badge-submitted`,
 
 **Proposals are sign-and-pay in one breath.** The proposal page shows the event identity, what's included, line items, totals, and a single combined "Sign & Pay deposit (or full)" section. The signature is captured first, then Stripe confirms the payment in the same click. Once paid, the page swaps to a confirmation banner with the balance-due date.
 
-**The Potion Planning Lab is the longest, most-stateful client surface.** It's a multi-phase wizard (Exploration → Refinement) attached to a paid proposal. Auto-saves every 30 seconds and on tab close, supports browser-back to navigate steps, can charge mid-flow extras through Stripe, and ends in a celebration screen that promises a shopping list + BEO within 2 business days. The ConfirmationStep is the last consumer before the back office takes over.
+**The Potion Planning Lab is the longest, most-stateful client surface.** It's a single linear **post-booking** wizard attached to a booked (deposit-paid) proposal — there is no pre-booking phase; the plan doesn't exist until the deposit lands. Auto-saves every 30 seconds and on tab close, supports browser-back to navigate steps, can charge mid-flow extras through Stripe, and ends in a celebration screen that promises a shopping list + BEO within 2 business days. The ConfirmationStep is the last consumer before the back office takes over. A stale pre-deposit `/plan/:token` link renders a lock screen instead of the wizard.
 
 **Invoices and shopping lists are standalone token URLs**, both designed for phones — invoices print well, the shopping list has its own dark mobile UI with checkbox-line-through and a progress bar, completely off the rest of the site's visual system.
 
@@ -468,21 +462,17 @@ The primary status badges in `index.css` (`badge-inprogress`, `badge-submitted`,
 
 4. **They view the proposal.** ProposalView loads, shows event identity + line-item breakdown + total. If it's still unsigned and unpaid, the Sign & Pay section appears: type or draw a signature, pick deposit-only ($100) vs pay-in-full, optionally tick autopay-on-balance-due-date, then click the Stripe payment button. Signature is saved first; payment confirms; page swaps to the "Deposit Received!" banner with balance-due copy.
 
-5. **A drink plan is created.** When the deposit lands, the Stripe webhook (in `server/routes/stripe.js`) flips the proposal to `deposit_paid`, generates a drink-plan token, and emails the client a "Plan your drinks!" link to `/plan/:token`.
+5. **The deposit lands and a drink plan is created.** The Stripe webhook (in `server/routes/stripe.js`) flips the proposal to `deposit_paid`, runs `createEventShifts` → `createDrinkPlan` (idempotent — no plan exists before this), and emails the client a "Plan your drinks!" link to `/plan/:token`. No drink-plan token or link is generated before the deposit; a stale `/plan/:token` link from a pre-deposit proposal renders a lock screen ("your drink plan unlocks after you book") that links back to the proposal.
 
-6. **They go through the Potion Planning Lab — Exploration phase first.** Welcome screen → Vibe → Flavor Direction → Browse cocktails (favorite drinks + per-drink upgrades) → Mocktail Interest → Save. This phase is a "wishlist" — it doesn't commit anything; it just collects taste. Auto-saves continuously.
+6. **They go through the Potion Planning Lab — one linear post-booking flow.** Welcome screen → quick-pick a serving style (or Custom for module toggles) → per-module steps (Signature drinks with mixers/upgrades, Mocktails, Full Bar Spirits, Beer/Wine, Hosted Guest Prefs for hosted packages, Menu Design opt-in, Logistics with day-of contact + parking + bar-rental add-on) → confirmation. There is no pre-booking "wishlist"/Exploration phase. The confirmation step tallies any paid extras; if there are surcharges, the client can pay them through Stripe right inside the lab (the webhook then lands those on a "Drink Plan Extras" invoice). Submit lands a "Plan submitted!" celebration screen and emails the BEO data to admin. (Admin works the proposal in parallel behind the scenes — pricing adjustments, staffing, package finalization.)
 
-7. **Admin reviews the proposal.** Behind the scenes, pricing is adjusted, staff are added, the package is finalized. When the proposal is sent and accepted, the lab progresses to Refinement.
+7. **Balance comes due.** ~14 days before the event (configurable per proposal), the balance scheduler emails the client a payment link. They land back on the proposal token URL — now in "pay-only" mode — and pay the balance via Stripe (or autopay charges automatically). Status flips to `balance_paid`.
 
-8. **The client returns and goes through Refinement.** Quick-pick a serving style (or Custom for module toggles), then per-module steps (Signature drinks with mixers/upgrades, Mocktails, Full Bar Spirits, Beer/Wine, Hosted Guest Prefs for hosted packages, Menu Design opt-in, Logistics with day-of contact + parking + bar-rental add-on). A confirmation step tallies any paid extras; if there are surcharges, the client can pay them through Stripe right inside the lab (the webhook then lands those on a "Drink Plan Extras" invoice). Submit lands a "Plan submitted!" celebration screen and emails the BEO data to admin.
+8. **Shopping list ships.** When the BEO/shopping list is finalized internally, the client gets a `/shopping-list/:token` URL. They view it on their phone, check items off as they shop, and the same data fuels event-day prep.
 
-9. **Balance comes due.** ~14 days before the event (configurable per proposal), the balance scheduler emails the client a payment link. They land back on the proposal token URL — now in "pay-only" mode — and pay the balance via Stripe (or autopay charges automatically). Status flips to `balance_paid`.
+9. **Event happens.** Staff side: bartenders see the event on `staff.drbartender.com` (StaffEvents / StaffSchedule), pull their iCal feed from StaffResources, message via WhatsApp.
 
-10. **Shopping list ships.** When the BEO/shopping list is finalized internally, the client gets a `/shopping-list/:token` URL. They view it on their phone, check items off as they shop, and the same data fuels event-day prep.
-
-11. **Event happens.** Staff side: bartenders see the event on `staff.drbartender.com` (StaffEvents / StaffSchedule), pull their iCal feed from StaffResources, message via WhatsApp.
-
-12. **Repeat clients log into `/login` on drbartender.com** (the OTP flow) and see all their past + current proposals on `/my-proposals`, with invoice access from the dropdowns.
+10. **Repeat clients log into `/login` on drbartender.com** (the OTP flow) and see all their past + current proposals on `/my-proposals`, with invoice access from the dropdowns.
 
 **Two parallel applicant flows live in the same shell:**
 

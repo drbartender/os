@@ -318,6 +318,7 @@ Organized by the density categories from §5.0.
 **`ClassWizard.js`** — same treatment as QuoteWizard.
 
 **`PotionPlanningLab.js`** (the long stateful wizard)
+- **Note (2026-05-17):** the pre-booking Exploration phase, its 5 steps, and the dual `WelcomeStep` were removed — the Lab is now a single post-booking flow (created only after deposit). So this bite no longer styles exploration steps or splits by phase; the only welcome screen is `RefinementWelcomeStep` (`welcome` step), and the per-step list / phase-split guidance below applies to the surviving refinement steps only.
 - This file is over 1000 lines. **If you touch it, you split it** per `CLAUDE.md`. Split by phase: `ExplorationPhase.js` and `RefinementPhase.js`. Parent is a thin orchestrator.
 - Visual: dark base, parchment step cards, teal active states, brass section dividers. Auto-save indicator gets a slow brass pulse — magical-realism placement.
 - Each step (Welcome, Vibe, FlavorDirection, ExplorationBrowse, etc.): parchment content card with comfortable padding, kicker label in brass, headline in display font, content in clean modern type.

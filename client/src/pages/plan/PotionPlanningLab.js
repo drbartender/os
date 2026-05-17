@@ -223,7 +223,7 @@ export default function PotionPlanningLab() {
             }
             setSelections(prev => ({ ...prev, ...savedSel }));
           } else {
-            // No serving type yet — just restore selections (exploration data)
+            // No serving type yet — restore partial draft selections (may include legacy exploration data via the shim above)
             setSelections(prev => ({ ...prev, ...savedSel }));
           }
 

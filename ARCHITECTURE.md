@@ -212,7 +212,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | PATCH | `/:id/status` | Admin | Update plan status |
 | DELETE | `/:id` | Admin | Delete a plan |
-| GET | `/t/:token` | Public | Fetch questionnaire by token (JOINs proposal for guest_count, num_bartenders, pricing_snapshot) |
+| GET | `/t/:token` | Public | Fetch questionnaire by token (JOINs proposal for guest_count, num_bartenders, pricing_snapshot). Returns a locked payload `{ locked: true, proposalToken }` when the linked proposal is pre-deposit, so a stale emailed `/plan/:token` link renders a lock screen instead of the wizard (`isDrinkPlanPreBooking` allowlist, fails safe) |
 | PUT | `/t/:token` | Public | Save draft or submit selections (on submit: processes addOns into proposal_addons, recalculates pricing, sends admin email, auto-generates pending_review shopping list) |
 | GET | `/t/:token/shopping-list` | Public | Client read-only view — returns the list only once admin has approved it |
 
@@ -533,7 +533,7 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 
 ### Event Planning
 
-**drink_plans** — Client event questionnaire (auto-created when proposal becomes an event)
+**drink_plans** — Client event questionnaire (created only after the client books — Stripe deposit webhook → `createEventShifts` → `createDrinkPlan`, idempotent; never pre-deposit)
 - `token` UUID (public access)
 - `client_name`, `client_email`, `event_type`, `event_type_custom`, `event_date`
 - `proposal_id` — links to the source proposal/event
@@ -865,11 +865,26 @@ Located in `server/utils/pricingEngine.js`. Pure functions, no database dependen
 
 The result is stored as a `pricing_snapshot` JSONB on the proposal for historical accuracy.
 
-## Hosted package-aware refinement
+## Potion Planning Lab (post-booking only)
+
+The drink plan is created **only after the client books** — the Stripe deposit
+webhook (`server/routes/stripe.js`) flips the proposal to `deposit_paid` and
+calls `createEventShifts` → `createDrinkPlan` (idempotent). There is no
+pre-deposit Exploration phase: the Lab is a single linear post-booking flow
+(welcome → serving-style quick pick → per-module steps → confirmation). No
+drink-plan token or link is generated before the deposit lands.
+
+As a safety net for any `/plan/:token` link already sitting in an inbox from a
+pre-deposit proposal, `GET /api/drink-plans/t/:token` returns a locked payload
+`{ locked: true, proposalToken }` whenever the linked proposal has not reached
+a post-booking status (`isDrinkPlanPreBooking` allowlist in
+`server/utils/drinkPlanAccess.js`, fails safe on null/unknown). The client
+renders a lock screen ("your drink plan unlocks after you book") with a link
+back to the proposal instead of mounting the wizard — relevant for legacy
+links only, since no new pre-deposit plans are created.
 
 When a drink plan's linked proposal has a hosted package
-(`service_packages.category = 'hosted'`) and the proposal has reached
-refinement phase (deposit paid or later), the Potion Planning Lab skips the
+(`service_packages.category = 'hosted'`), the Potion Planning Lab skips the
 serving-style quick pick, the spirits selection, and the beer/wine selection
 — these are already fixed by the package. A compact `HostedGuestPrefsStep`
 replaces them, asking only how guests lean (mostly beer / cocktails / wine /
