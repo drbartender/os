@@ -12,6 +12,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
 const { ADMIN_URL, PUBLIC_SITE_URL } = require('../utils/urls');
 const { autoGenerateShoppingList } = require('../utils/shoppingListGen');
+const { isDrinkPlanPreBooking } = require('../utils/drinkPlanAccess');
 
 const router = express.Router();
 
@@ -59,6 +60,7 @@ router.get('/t/:token', publicReadLimiter, asyncHandler(async (req, res) => {
             dp.proposal_id, dp.exploration_submitted_at,
             p.guest_count, p.num_bartenders, p.num_bars, p.pricing_snapshot,
             p.status AS proposal_status,
+            p.token AS proposal_token,
             p.total_price AS proposal_total_price,
             p.amount_paid AS proposal_amount_paid,
             p.event_date AS proposal_event_date,
@@ -76,7 +78,15 @@ router.get('/t/:token', publicReadLimiter, asyncHandler(async (req, res) => {
     [req.params.token]
   );
   if (!result.rows[0]) throw new NotFoundError('This drink plan link is no longer valid');
-  res.json(result.rows[0]);
+  const plan = result.rows[0];
+  // The drink plan only opens after the client books (deposit paid).
+  // Outstanding proposal-sent emails may still carry a /plan/:token link for a
+  // pre-deposit proposal — never drop an unbooked client into the wizard (it
+  // can run a Stripe charge in ConfirmationStep). Return a locked payload.
+  if (isDrinkPlanPreBooking(plan.proposal_status)) {
+    return res.json({ locked: true, proposalToken: plan.proposal_token });
+  }
+  res.json(plan);
 }));
 
 /** PUT /api/drink-plans/t/:token — save draft or submit (public) */
