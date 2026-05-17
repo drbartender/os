@@ -202,7 +202,11 @@ const LabelStyle = {
 
 // ─ Business card · FRONT (Tip QR) ──────────────────────────
 // 3.5" × 2"  landscape · 525 × 300 at 150dpi
-export function BizCardFrontA({ name = 'your bartender', tipUrl = '' }) {
+const BIZ_MARKS = ['apple', 'venmo', 'cashapp', 'paypal', 'visa'];
+
+export function BizCardFrontA({ name = 'your bartender', tipUrl = '', marks = null }) {
+  // marks === null → no caller passed it: keep the original full row (back-compat).
+  const shownMarks = marks == null ? BIZ_MARKS : BIZ_MARKS.filter((m) => marks.includes(m));
   return (
     <PrintSheet width={525} height={300}>
       <PaperBg />
@@ -254,16 +258,20 @@ export function BizCardFrontA({ name = 'your bartender', tipUrl = '' }) {
             marginBottom: 10,
           }}>your bartender tonight</div>
           <BrassRule width={70} />
-          <div style={{
-            fontFamily: 'var(--drb-font-display)',
-            fontSize: 10,
-            letterSpacing: '0.24em',
-            textTransform: 'uppercase',
-            color: 'var(--drb-warm-brown)',
-            marginTop: 6,
-            marginBottom: 6,
-          }}>Scan to Tip</div>
-          <PaymentRow size={20} gap={4} marks={['apple', 'venmo', 'cashapp', 'paypal', 'visa']} align="flex-start" />
+          {shownMarks.length > 0 && (
+            <>
+              <div style={{
+                fontFamily: 'var(--drb-font-display)',
+                fontSize: 10,
+                letterSpacing: '0.24em',
+                textTransform: 'uppercase',
+                color: 'var(--drb-warm-brown)',
+                marginTop: 6,
+                marginBottom: 6,
+              }}>Scan to Tip</div>
+              <PaymentRow size={20} gap={4} marks={shownMarks} align="flex-start" />
+            </>
+          )}
         </div>
         {/* right — QR plate */}
         <div style={{
@@ -380,7 +388,13 @@ export function BizCardBackA({
 
 // ─ 4 × 6 portrait — single-sided tip collection ────────────
 // 600 × 900 at 150dpi
-export function FourBySixA({ name = 'your bartender', tipUrl = '', headshotUrl = '' }) {
+const FEATURE_ROW_MARKS = ['apple', 'google', 'venmo', 'cashapp', 'paypal'];
+const FEATURE_NET_MARKS = ['visa', 'mc', 'amex'];
+
+export function FourBySixA({ name = 'your bartender', tipUrl = '', headshotUrl = '', marks = null }) {
+  const rowMarks = marks == null ? FEATURE_ROW_MARKS : FEATURE_ROW_MARKS.filter((m) => marks.includes(m));
+  const netMarks = marks == null ? FEATURE_NET_MARKS : FEATURE_NET_MARKS.filter((m) => marks.includes(m));
+  const showPayCard = rowMarks.length > 0 || netMarks.length > 0;
   return (
     <PrintSheet width={600} height={900}>
       <PaperBg />
@@ -473,27 +487,29 @@ export function FourBySixA({ name = 'your bartender', tipUrl = '', headshotUrl =
           marginBottom: 14,
         }}>Scan to Tip</div>
 
-        {/* Payment methods — feature row */}
-        <div style={{
-          background: 'var(--drb-card-bg)',
-          border: '1.5px solid var(--drb-brass)',
-          borderRadius: 10,
-          padding: '12px 16px',
-          width: '100%',
-        }}>
+        {/* Payment methods — feature row (only the methods this bartender has) */}
+        {showPayCard && (
           <div style={{
-            fontFamily: 'var(--drb-font-display)',
-            fontSize: 8,
-            letterSpacing: '0.28em',
-            textTransform: 'uppercase',
-            color: 'var(--drb-brass)',
-            textAlign: 'center',
-            marginBottom: 8,
-          }}>Pay any way you like</div>
-          <PaymentRow size={32} gap={8} marks={['apple', 'google', 'venmo', 'cashapp', 'paypal']} />
-          <div style={{ height: 8 }} />
-          <PaymentRow size={26} gap={8} marks={['visa', 'mc', 'amex']} />
-        </div>
+            background: 'var(--drb-card-bg)',
+            border: '1.5px solid var(--drb-brass)',
+            borderRadius: 10,
+            padding: '12px 16px',
+            width: '100%',
+          }}>
+            <div style={{
+              fontFamily: 'var(--drb-font-display)',
+              fontSize: 8,
+              letterSpacing: '0.28em',
+              textTransform: 'uppercase',
+              color: 'var(--drb-brass)',
+              textAlign: 'center',
+              marginBottom: 8,
+            }}>Pay any way you like</div>
+            {rowMarks.length > 0 && <PaymentRow size={32} gap={8} marks={rowMarks} />}
+            {rowMarks.length > 0 && netMarks.length > 0 && <div style={{ height: 8 }} />}
+            {netMarks.length > 0 && <PaymentRow size={26} gap={8} marks={netMarks} />}
+          </div>
+        )}
 
         <div style={{ flex: 1 }} />
         <div style={{
@@ -511,7 +527,10 @@ export function FourBySixA({ name = 'your bartender', tipUrl = '', headshotUrl =
 
 // ─ 5 × 7 portrait — single-sided tip collection ────────────
 // 750 × 1050 at 150dpi
-export function FiveBySevenA({ name = 'your bartender', tipUrl = '', headshotUrl = '' }) {
+export function FiveBySevenA({ name = 'your bartender', tipUrl = '', headshotUrl = '', marks = null }) {
+  const rowMarks = marks == null ? FEATURE_ROW_MARKS : FEATURE_ROW_MARKS.filter((m) => marks.includes(m));
+  const netMarks = marks == null ? FEATURE_NET_MARKS : FEATURE_NET_MARKS.filter((m) => marks.includes(m));
+  const showPayCard = rowMarks.length > 0 || netMarks.length > 0;
   return (
     <PrintSheet width={750} height={1050}>
       <PaperBg />
@@ -600,27 +619,29 @@ export function FiveBySevenA({ name = 'your bartender', tipUrl = '', headshotUrl
           marginBottom: 16,
         }}>Scan to Tip</div>
 
-        {/* Payment methods — feature card */}
-        <div style={{
-          background: 'var(--drb-card-bg)',
-          border: '1.5px solid var(--drb-brass)',
-          borderRadius: 10,
-          padding: '14px 18px',
-          width: '100%',
-        }}>
+        {/* Payment methods — feature card (only the methods this bartender has) */}
+        {showPayCard && (
           <div style={{
-            fontFamily: 'var(--drb-font-display)',
-            fontSize: 9,
-            letterSpacing: '0.32em',
-            textTransform: 'uppercase',
-            color: 'var(--drb-brass)',
-            textAlign: 'center',
-            marginBottom: 10,
-          }}>Pay any way you like</div>
-          <PaymentRow size={38} gap={10} marks={['apple', 'google', 'venmo', 'cashapp', 'paypal']} />
-          <div style={{ height: 8 }} />
-          <PaymentRow size={28} gap={10} marks={['visa', 'mc', 'amex']} />
-        </div>
+            background: 'var(--drb-card-bg)',
+            border: '1.5px solid var(--drb-brass)',
+            borderRadius: 10,
+            padding: '14px 18px',
+            width: '100%',
+          }}>
+            <div style={{
+              fontFamily: 'var(--drb-font-display)',
+              fontSize: 9,
+              letterSpacing: '0.32em',
+              textTransform: 'uppercase',
+              color: 'var(--drb-brass)',
+              textAlign: 'center',
+              marginBottom: 10,
+            }}>Pay any way you like</div>
+            {rowMarks.length > 0 && <PaymentRow size={38} gap={10} marks={rowMarks} />}
+            {rowMarks.length > 0 && netMarks.length > 0 && <div style={{ height: 8 }} />}
+            {netMarks.length > 0 && <PaymentRow size={28} gap={10} marks={netMarks} />}
+          </div>
+        )}
 
         <div style={{ flex: 1 }} />
         <div style={{

@@ -8,6 +8,7 @@ import {
   BizCardFrontA, BizCardBackA,
   FourBySixA, FiveBySevenA,
 } from './PrintTipCard.layouts';
+import { buildTipCardMarks } from '../../utils/tipCardMarks';
 
 const SIZES = {
   bizcard: { label: 'Business card (3.5×2", 2-sided)', renderFront: BizCardFrontA, renderBack: BizCardBackA },
@@ -52,6 +53,7 @@ export default function PrintTipCard() {
 
   const { renderFront: Front, renderBack: Back } = SIZES[size];
   const name = data.preferred_name || 'your bartender';
+  const marks = buildTipCardMarks(data);
 
   return (
     <div className="print-tip-card-root drb">
@@ -84,7 +86,7 @@ export default function PrintTipCard() {
       {/* ─ printable area ─ */}
       <div className={`print-stage size-${size}`} data-print-area>
         <div className="sheet">
-          <Front name={name} tipUrl={data.url} headshotUrl={data.headshot_url} />
+          <Front name={name} tipUrl={data.url} headshotUrl={data.headshot_url} marks={marks} />
         </div>
         {Back && (
           <div className="page-break">
