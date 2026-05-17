@@ -22,12 +22,13 @@
 |---|---|
 | `server/utils/metricsQueries.js` | **New.** Pure: `resolveFilters`, `priorPeriod`, `dateClause`, `toDollars` + per-metric `{sql,params}` builders. No DB calls, no `require('../db')`. |
 | `server/utils/metricsQueries.test.js` | **New.** `node:test` unit tests for the four pure helpers. |
-| `server/routes/proposals/metadata.js` | **Modify.** Rewrite `/financials` (70-116) and `/dashboard-stats` (118-190) to parse params via `metricsQueries` and return the new shapes. Executes the builders; no SQL strings of its own. |
+| `server/routes/proposals/metadata.js` | **Modify.** Rewrite `/financials` (70-116) and `/dashboard-stats` (118-190) to parse params via `metricsQueries` and return the new shapes; `/dashboard-stats` also returns top-level `paidCount` (from `qPaidCount`) for ProposalsDashboard's Paid-tab badge. Executes the builders; no SQL strings of its own. |
 | `server/db/schema.sql` | **Modify (append).** Three idempotent `CREATE INDEX IF NOT EXISTS`. |
 | `client/src/hooks/useMetricsFilter.js` | **New.** URL-synced `{from,to,basis}` state + preset math. Mirrors `useDrawerParam.js`. |
 | `client/src/components/adminos/MetricsFilterBar.js` | **New.** Presentational filter bar (preset dropdown, custom date inputs, Booked/Scheduled/Paid toggle). Dumb — driven by `useMetricsFilter`. |
 | `client/src/pages/admin/Dashboard.js` | **Modify.** Mount filter bar; split fetch (stats vs operational); render money/funnel zones + lens-aware chart; label exempt widgets "Live". |
 | `client/src/pages/admin/FinancialsDashboard.js` | **Modify.** Mount filter bar; range+lens summary; payments "in range"; tables filter by `event_date`. |
+| `client/src/pages/admin/ProposalsDashboard.js` | **Modify (review C-followup).** Pre-existing 3rd consumer of `/dashboard-stats`. Its Paid-tab badge read `totals.events_count` (removed in the rewrite). Switch line ~67 from `r.data?.totals?.events_count` to `r.data?.paidCount`. Its other reads (`pipeline[]`, lines 62-66) are unchanged. |
 | `README.md`, `ARCHITECTURE.md` | **Modify.** New util/hook/component in folder tree; index note. |
 
 **Wire contract (all money in DOLLARS; Paid is summed in cents server-side then converted before JSON):**
@@ -50,7 +51,8 @@ GET /api/proposals/dashboard-stats?from=YYYY-MM-DD&to=YYYY-MM-DD&basis=booked|sc
     pipelineOutstanding: { count, value }               // live snapshot, range-independent
   },
   revenue:  [ { key, m, value, paid } ],                // monthly; value=basis $, paid=collected $
-  pipeline: [ { key, label, count, value } ]            // UNCHANGED existing draft→accepted bars
+  pipeline: [ { key, label, count, value } ],           // UNCHANGED existing draft→accepted bars
+  paidCount                                             // int — range-independent COUNT of paid-status proposals; restores old totals.events_count for ProposalsDashboard's Paid-tab badge
 }
 
 GET /api/proposals/financials?from=&to=&basis=&page=&limit=
@@ -474,9 +476,20 @@ function qRevenue(f) {
   };
 }
 
+/** Range-independent count of proposals in a paid status. Restores the old
+ *  dashboard-stats `totals.events_count` consumed by ProposalsDashboard's Paid tab. */
+function qPaidCount() {
+  return {
+    sql: `SELECT COUNT(*)::int AS count
+          FROM proposals
+          WHERE status IN ('deposit_paid','balance_paid','confirmed','completed')`,
+    params: [],
+  };
+}
+
 const builders = {
   qSent, qAccepted, qWinRate, qTimeToAccept, qLostValue,
-  qPipelineOutstanding, qMoney, qOutstanding, qRevenue,
+  qPipelineOutstanding, qMoney, qOutstanding, qRevenue, qPaidCount,
 };
 ```
 

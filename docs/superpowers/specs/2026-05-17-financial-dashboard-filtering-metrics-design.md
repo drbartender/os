@@ -68,7 +68,7 @@ Plus **Outstanding** as an always-on companion card: Σ`GREATEST(total_price −
 
 ## Section 3 — Backend
 
-Endpoints: `GET /proposals/dashboard-stats` and `GET /proposals/financials` in `server/routes/proposals/metadata.js`.
+Endpoints: `GET /proposals/dashboard-stats` and `GET /proposals/financials` in `server/routes/proposals/metadata.js`. **Consumers of `/dashboard-stats`:** the redesigned Dashboard (money/funnel) **and** — pre-existing, easy to miss — `ProposalsDashboard.js` (Paid-tab count badge, reads `totals.events_count` + `pipeline[]`). The new response keeps `pipeline[]` and adds a **range-independent top-level `paidCount`** to replace the removed `totals.events_count`; that consumer must be updated in lockstep (cross-cutting consistency).
 
 **Params (both):** `from`, `to` (ISO `YYYY-MM-DD`), `basis` (`booked|scheduled|paid`).
 
