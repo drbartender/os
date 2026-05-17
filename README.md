@@ -211,8 +211,7 @@ dr-bartender/
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
 │   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, KebabMenu,
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal,
-│   │   │   │                   # format, nav, shifts; drawers/{ClientDrawer,EventDrawer,InvoicesDrawer,
-│   │   │   │                   # ProposalDrawer,ShiftDrawer})
+│   │   │   │                   # format, nav, shifts; drawers/{ClientDrawer,InvoicesDrawer,ShiftDrawer})
 │   │   │   └── ShoppingList/   # Shopping list generator (PDF export, ConsultationForm admin-input modal)
 │   │   ├── data/               # Shared data (addonCategories, eventTypes, menuSamples, packages, syrups)
 │   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam, useFormValidation, useWizardHistory)

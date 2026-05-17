@@ -7,8 +7,6 @@ import { useToast } from '../../context/ToastContext';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
-import useDrawerParam from '../../hooks/useDrawerParam';
-import ProposalDrawer from '../../components/adminos/drawers/ProposalDrawer';
 import { fmt$, fmtDate, relDay } from '../../components/adminos/format';
 
 // Mirrors `proposals_status_check` in server/db/schema.sql. Keep in sync —
@@ -33,7 +31,6 @@ const STATUS = {
 export default function ProposalsDashboard() {
   const navigate = useNavigate();
   const toast = useToast();
-  const drawer = useDrawerParam();
 
   const [proposals, setProposals] = useState([]);
   const [counts, setCounts] = useState({ active: 0, draft: 0, accepted: 0, paid: 0 });
@@ -162,7 +159,7 @@ export default function ProposalsDashboard() {
               {!loading && filtered.map(p => {
                 const st = STATUS[p.status] || { label: p.status || '—', kind: 'neutral' };
                 return (
-                  <tr key={p.id} onClick={() => drawer.open('proposal', p.id)}>
+                  <tr key={p.id} onClick={() => navigate(`/proposals/${p.id}`)}>
                     <td>
                       <strong>{p.client_name || '—'}</strong>
                       {p.client_email && <div className="sub">{p.client_email}</div>}
@@ -213,15 +210,9 @@ export default function ProposalsDashboard() {
 
       {!loading && (
         <div className="tiny muted" style={{ padding: '8px 2px' }}>
-          {filtered.length} {filtered.length === 1 ? 'proposal' : 'proposals'} · Click a row to peek
+          {filtered.length} {filtered.length === 1 ? 'proposal' : 'proposals'} · Click a row to open
         </div>
       )}
-
-      <ProposalDrawer
-        id={drawer.kind === 'proposal' ? drawer.id : null}
-        open={drawer.kind === 'proposal'}
-        onClose={drawer.close}
-      />
     </div>
   );
 }

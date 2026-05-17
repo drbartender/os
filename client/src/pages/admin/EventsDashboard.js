@@ -13,7 +13,6 @@ import StaffPills from '../../components/adminos/StaffPills';
 import Toolbar from '../../components/adminos/Toolbar';
 import KebabMenu from '../../components/adminos/KebabMenu';
 import useDrawerParam from '../../hooks/useDrawerParam';
-import EventDrawer from '../../components/adminos/drawers/EventDrawer';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
 import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
@@ -105,16 +104,7 @@ export default function EventsDashboard() {
       setForm(EMPTY_FORM);
       setShowCreateForm(false);
       const newShift = res.data;
-      if (newShift.proposal_id) {
-        navigate(`/events/${newShift.proposal_id}`);
-      } else {
-        // Manual events have no dedicated page (ShiftDetail.js retired) — open
-        // the ShiftDrawer so admin can immediately review/staff the new event.
-        // ShiftDrawer fetches its own /shifts/detail/:id, so the events-list
-        // refresh runs in the background to avoid delaying the drawer open.
-        drawer.open('shift', newShift.id);
-        fetchEvents();
-      }
+      navigate(`/events/${newShift.proposal_id}`);
     } catch (err) {
       setCreateError(err.message || 'Failed to create event.');
       setFieldErrors(err.fieldErrors || {});
@@ -130,8 +120,7 @@ export default function EventsDashboard() {
   // every parent render (e.g. typing into the search box).
   const handlersRef = useRef(null);
   handlersRef.current = {
-    rowClick: (e) => drawer.open('event', e.id),
-    view: (e) => {
+    rowClick: (e) => {
       if (e.proposal_id) navigate(`/events/${e.proposal_id}`);
       else drawer.open('shift', e.id);
     },
@@ -339,15 +328,9 @@ export default function EventsDashboard() {
 
       {!loading && (
         <div className="tiny muted" style={{ padding: '8px 2px' }}>
-          {filtered.length} {filtered.length === 1 ? 'event' : 'events'} · Click a row to peek
+          {filtered.length} {filtered.length === 1 ? 'event' : 'events'} · Click a row to open
         </div>
       )}
-
-      <EventDrawer
-        id={drawer.kind === 'event' ? drawer.id : null}
-        open={drawer.kind === 'event'}
-        onClose={drawer.close}
-      />
 
       <ShiftDrawer
         open={drawer.kind === 'shift' && !!drawer.id}
@@ -398,11 +381,6 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
   const fullyPaid = total > 0 && paid >= total;
 
   const kebabItems = useMemo(() => [
-    {
-      label: 'View Event',
-      icon: 'eye',
-      onClick: () => dispatch('view', e),
-    },
     {
       label: 'Assign Staff',
       icon: 'users',
