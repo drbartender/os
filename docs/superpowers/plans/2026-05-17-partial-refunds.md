@@ -265,6 +265,12 @@ function planRefund({ paymentsWithRemaining, requestedDollars, amountPaidDollars
     return { ok: false, code: 'EXCEEDS_AMOUNT_PAID', message: 'Refund exceeds the amount currently paid on this proposal.' };
   }
 
+  // Conservative full-Approach-A bound: assumes the whole refund is contract
+  // money (worst case for total_price). The AUTHORITATIVE total_price_after
+  // is computed in applyRefundReconciliation from the linked invoice labels
+  // — an extra-scope refund reduces total_price LESS (or not at all), so
+  // this guard never wrongly rejects a valid refund. totalPriceAfterDollars
+  // below is therefore a preview the reconciliation finalizes.
   const totalAfterCents = Math.round(Number(totalPriceDollars) * 100) - amountCents;
   if (totalAfterCents < 0) {
     return { ok: false, code: 'EXCEEDS_TOTAL', message: 'Refund would drop the proposal total below $0.00.' };
@@ -323,8 +329,12 @@ Add above `module.exports`:
  *      refund id → adopt it (self-heal: Stripe refunded, sync write failed).
  *   3. else create a fresh `succeeded` row (out-of-band dashboard refund).
  *
- * Then, exactly once: proposals total/paid −= dollars; reverse linked
- * invoice(s); activity-log line.
+ * Then, exactly once: reverse linked invoice(s) (net-aggregated so repeated
+ * partial refunds never over-reverse); amount_paid −= full refund;
+ * total_price −= the CONTRACT portion only (refund cents not linked to a
+ * non-contract-labeled invoice); finalize total_price_after; activity-log
+ * line. Extra-scope (e.g. Additional Services) refunds drop amount_paid +
+ * that invoice but leave total_price intact.
  *
  * @param {object} a
  * @param {number} a.proposalId
@@ -360,10 +370,11 @@ async function applyRefundReconciliation(
   if (done.rows[0]) return { applied: false };
 
   const totalBefore = Number(propRes.rows[0].total_price);
-  const dollars = amountCents / 100;
-  const totalAfter = totalBefore - dollars;
 
-  // 2/3. adopt a pending row, else create a succeeded row.
+  // 2/3. Adopt a pending row, else create a succeeded row. total_price_after
+  // is finalized AFTER the invoice walk (it depends on the contract vs.
+  // extra-scope split, which the invoice labels below determine). Insert a
+  // provisional value (= totalBefore) to satisfy NOT NULL; overwrite later.
   let refundRowId;
   const pending = await dbClient.query(
     `SELECT id FROM proposal_refunds
@@ -376,57 +387,61 @@ async function applyRefundReconciliation(
     refundRowId = pending.rows[0].id;
     await dbClient.query(
       `UPDATE proposal_refunds
-          SET status = 'succeeded', stripe_refund_id = $1,
-              total_price_before = $2, total_price_after = $3
-        WHERE id = $4`,
-      [stripeRefundId, totalBefore, totalAfter, refundRowId]
+          SET status = 'succeeded', stripe_refund_id = $1, total_price_before = $2
+        WHERE id = $3`,
+      [stripeRefundId, totalBefore, refundRowId]
     );
   } else {
     const ins = await dbClient.query(
       `INSERT INTO proposal_refunds
          (proposal_id, payment_id, stripe_payment_intent_id, stripe_refund_id,
           amount, reason, total_price_before, total_price_after, issued_by, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'succeeded')
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8,'succeeded')
        RETURNING id`,
       [proposalId, paymentId, paymentIntentId, stripeRefundId, amountCents,
-       reason, totalBefore, totalAfter, issuedBy]
+       reason, totalBefore, issuedBy]
     );
     refundRowId = ins.rows[0].id;
   }
 
-  // proposals: Approach A — total & paid drop together (exact NUMERIC).
-  await dbClient.query(
-    `UPDATE proposals
-        SET total_price = GREATEST(total_price - ($1 / 100.0), 0),
-            amount_paid = GREATEST(amount_paid - ($1 / 100.0), 0)
-      WHERE id = $2`,
-    [amountCents, proposalId]
-  );
-
-  // Reverse linked invoice(s). A payment may be split across >1 invoice
-  // (drink_plan_with_balance); subtract greedily, clamped per link, until
-  // the refunded cents are exhausted. Mirrors linkPaymentToInvoice in
-  // reverse, incl. the amount_paid>=amount_due → 'paid' recompute.
+  // Reverse linked invoice(s) AND classify contract vs. extra-scope by the
+  // invoice label — the same markers invoiceHelpers.js uses (lines 315/398/
+  // 421/692). Aggregate NET still-applied per invoice (Σ of the original
+  // positive link + any prior negative reversal rows) so splitting one
+  // refund into several against the same charge (the no-spanning rule
+  // forces this) can never over-reverse an invoice. Walk greedily, clamped
+  // per invoice. Extra-scope portions (non-contract label) are tracked so
+  // they do NOT shrink total_price.
+  const CONTRACT_LABELS = ['Deposit', 'Balance', 'Full Payment'];
+  let nonContractCents = 0;
   if (paymentId != null) {
     const links = await dbClient.query(
-      `SELECT ip.id AS link_id, ip.invoice_id, ip.amount AS link_amount
+      `SELECT ip.invoice_id,
+              i.label AS invoice_label,
+              SUM(ip.amount)::int AS net_applied
          FROM invoice_payments ip
+         JOIN invoices i ON i.id = ip.invoice_id
         WHERE ip.payment_id = $1
-        ORDER BY ip.id ASC`,
+        GROUP BY ip.invoice_id, i.label
+       HAVING SUM(ip.amount) > 0
+        ORDER BY ip.invoice_id ASC`,
       [paymentId]
     );
     let remaining = amountCents;
     for (const link of links.rows) {
       if (remaining <= 0) break;
-      const take = Math.min(remaining, link.link_amount);
+      const take = Math.min(remaining, link.net_applied);
       remaining -= take;
-      // Negative linkage row keeps Σ invoice_payments.amount == invoices.amount_paid.
+      if (!CONTRACT_LABELS.includes(link.invoice_label)) {
+        nonContractCents += take; // extra scope — must not shrink total_price
+      }
+      // Negative linkage row keeps Σ invoice_payments.amount == amount_paid.
       await dbClient.query(
         'INSERT INTO invoice_payments (invoice_id, payment_id, amount) VALUES ($1,$2,$3)',
         [link.invoice_id, paymentId, -take]
       );
-      // Approach A: drop amount_due AND amount_paid by `take` → a paid
-      // invoice stays paid at the corrected figure (no phantom unpaid).
+      // Drop amount_due AND amount_paid by `take` so a fully-paid invoice
+      // stays paid at the corrected figure (no phantom unpaid line).
       const upd = await dbClient.query(
         `UPDATE invoices
             SET amount_paid = GREATEST(amount_paid - $1, 0),
@@ -443,9 +458,29 @@ async function applyRefundReconciliation(
     }
   }
 
-  // Activity log — chronological story. Use the dedicated actor_id column
-  // (not just JSON) so the admin is queryable; 'admin' actor for an
-  // operator-issued refund, 'system' for an out-of-band dashboard refund.
+  // amount_paid ALWAYS drops by the full refund (every refunded dollar was
+  // money the client paid). total_price drops ONLY by the contract portion
+  // (Approach A) — extra-scope refunds leave the base contract total intact.
+  // Exact NUMERIC division ($/100.0); GREATEST clamps ≥ 0.
+  const contractCents = amountCents - nonContractCents;
+  const totalAfter = totalBefore - contractCents / 100;
+  await dbClient.query(
+    `UPDATE proposals
+        SET total_price = GREATEST(total_price - ($1 / 100.0), 0),
+            amount_paid = GREATEST(amount_paid - ($2 / 100.0), 0)
+      WHERE id = $3`,
+    [contractCents, amountCents, proposalId]
+  );
+
+  // Finalize total_price_after now that contract vs. extra-scope is known.
+  await dbClient.query(
+    'UPDATE proposal_refunds SET total_price_after = $1 WHERE id = $2',
+    [totalAfter, refundRowId]
+  );
+
+  // Activity log — chronological story + the contract/extra split for audit.
+  // Dedicated actor_id column (not just JSON) so it's queryable; 'admin' for
+  // an operator-issued refund, 'system' for an out-of-band dashboard refund.
   await dbClient.query(
     `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
      VALUES ($1, 'refund_issued', $2, $3, $4)`,
@@ -455,6 +490,7 @@ async function applyRefundReconciliation(
       issuedBy,
       JSON.stringify({
         amount: amountCents, reason, stripe_refund_id: stripeRefundId,
+        contract_cents: contractCents, non_contract_cents: nonContractCents,
         total_price_before: totalBefore, total_price_after: totalAfter,
         issued_by: issuedBy, refund_row_id: refundRowId,
       }),
@@ -483,7 +519,7 @@ Expected: no errors for `server/utils/refundHelpers.js`.
 
 - [ ] **Step 4: Read-through against spec invariants** (no code change — verification step)
 
-Confirm by reading the function: (a) the `SELECT … FOR UPDATE` on the proposals row happens **before** the already-applied check (concurrency serialization point — no double-decrement under concurrent submits); (b) early-return `{applied:false}` no-op when a `succeeded` row exists for the refund id; (c) `proposals` uses exact NUMERIC `($1 / 100.0)`, never JS float; (d) both `total_price` and `amount_paid` drop by the same dollars (Approach A invariant: balance-due unchanged); (e) invoice loop inserts a **negative** `invoice_payments` row and drops both `amount_due` and `amount_paid` so a paid invoice stays paid (and a fully-paid invoice stays `locked` — settled at the corrected figure; the refund deliberately does **not** call `refreshUnlockedInvoices`/`createAdditionalInvoiceIfNeeded`); (f) `paymentId == null` path skips invoice reversal cleanly.
+Confirm by reading the function: (a) the `SELECT … FOR UPDATE` on the proposals row happens **before** the already-applied check (concurrency serialization point — no double-decrement under concurrent submits); (b) early-return `{applied:false}` no-op when a `succeeded` row exists for the refund id; (c) `proposals` uses exact NUMERIC `($1 / 100.0)`, never JS float; (d) `amount_paid` drops by the **full** `amountCents`; `total_price` drops by `contractCents = amountCents − nonContractCents` only (contract case: nonContract=0 → both move together = Approach A, balance-due unchanged; extra-scope: total_price untouched); (e) the links query aggregates **net** still-applied per invoice (`SUM(ip.amount) … HAVING SUM > 0`) so repeated partial refunds against one charge never over-reverse; each iteration inserts a **negative** `invoice_payments` row, drops both `amount_due` and `amount_paid`, recomputes status; a fully-paid invoice stays paid + `locked` (settled at corrected figure; refund deliberately does **not** call `refreshUnlockedInvoices`/`createAdditionalInvoiceIfNeeded`); (f) non-contract classification is by `invoice.label ∉ ('Deposit','Balance','Full Payment')` — matches invoiceHelpers.js markers; (g) `paymentId == null` (dashboard, no payment row) → no links → `nonContractCents=0` → contract treatment (documented caveat); (h) `total_price_after` is finalized AFTER the loop and the audit JSON records `contract_cents`/`non_contract_cents`.
 
 - [ ] **Step 5: Commit**
 
@@ -567,13 +603,15 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
 
   // Succeeded, intent-bearing payments with cents still refundable
   // (amount − Σ succeeded refunds against that payment).
-  // Base-contract charges only. Approach A also lowers total_price, which is
-  // only correct for money that IS in total_price (deposit/balance/full —
-  // where a no-show-bartender refund lives). drink_plan_* / invoice charges
-  // are extra scope NOT in total_price; refunding them must NOT shrink the
-  // base total, so they are deliberately excluded from auto-target (see
-  // spec Non-Goals). Stripe's own per-charge refund cap is the final
-  // over-refund backstop on top of the remainingCents math below.
+  // Refundable charges: deposit/balance/full AND invoice. `invoice` is the
+  // STANDARD balance path post the invoice-rollup fix (balance paid via the
+  // public invoice page → payment_type='invoice' linked to a 'Balance'
+  // invoice — exactly where a no-show-bartender refund lives). Excluding it
+  // would defeat the headline use case. Whether total_price also drops is
+  // decided downstream by the linked invoice LABEL (applyRefundReconciliation),
+  // not here. Only the drink_plan_* rails are excluded. Stripe's own
+  // per-charge refund cap is the final over-refund backstop on top of the
+  // remainingCents math (which nets prior succeeded refunds per charge).
   const payRes = await pool.query(
     `SELECT pp.id,
             pp.stripe_payment_intent_id,
@@ -585,7 +623,7 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
       WHERE pp.proposal_id = $1
         AND pp.status = 'succeeded'
         AND pp.stripe_payment_intent_id IS NOT NULL
-        AND pp.payment_type IN ('deposit', 'balance', 'full')`,
+        AND pp.payment_type IN ('deposit', 'balance', 'full', 'invoice')`,
     [proposalId]
   );
 
@@ -792,12 +830,13 @@ Expected: PASS (unchanged; sanity that nothing in the helper module regressed).
 
 - [ ] **Step 4: Integration smoke (Stripe test mode) — manual, documented**
 
-Pre: dev server running (Claude-managed bg process per project norms), `STRIPE_TEST_MODE_UNTIL` in the future, a Stripe **test-mode** proposal that is paid in full with a succeeded `proposal_payments` row.
+Pre: dev server **restarted after the Wave-2 server edits** (Claude-managed bg process does not auto-reload — testing stale code silently passes; see coordination plan), `STRIPE_TEST_MODE_UNTIL` in the future. Prepare two test-mode proposals: **(P1)** balance paid via the **public invoice page** (`payment_type='invoice'`, linked to a `'Balance'` invoice — the standard post-rollup path); **(P2)** paid in full plus a separate **"Additional Services"** invoice paid (extra scope; `amount_paid > total_price`).
 
-1. In the admin payment panel, issue a refund of part of the balance with a reason.
-2. Verify: Stripe test dashboard shows the partial refund against the right charge; `SELECT total_price, amount_paid FROM proposals WHERE id=…` both dropped by the refund and are still equal (balance $0, still "Paid in full"); one `proposal_refunds` row `status='succeeded'` with before/after; one `proposal_activity_log` `refund_issued`; if a linked invoice existed, its `amount_due`/`amount_paid` both dropped and status stayed `paid`.
-3. Idempotency: re-trigger the same `charge.refunded` from the Stripe CLI/dashboard → **no** second `proposal_refunds` row, totals unchanged.
-4. No-spanning: attempt a refund larger than the largest charge → rejected with the `$X.XX` message; no Stripe call; no DB rows.
+1. **Contract refund (Approach A) — P1:** issue a partial refund of the balance with a reason. Verify: Stripe test dashboard shows the partial refund on the `invoice`-type balance charge; `proposals` `total_price` AND `amount_paid` both dropped by the refund and stay equal (balance $0, still "Paid in full"); INV-`Balance` `amount_due`/`amount_paid` both dropped, status stayed `paid`; one `proposal_refunds` `succeeded` row with `total_price_before > total_price_after`; activity-log `refund_issued` with `non_contract_cents: 0`.
+2. **Extra-scope refund — P2:** refund the Additional-Services invoice payment. Verify: `amount_paid` dropped by the refund but `total_price` is **UNCHANGED**; the Additional-Services invoice `amount_due`/`amount_paid` dropped; `proposal_refunds.total_price_after == total_price_before`; activity-log `non_contract_cents == amount`. (Confirms the label conditional.)
+3. **Multi-partial / no over-reversal — P1:** split a refund into two parts against the same balance charge (forced by no-spanning). Verify the second refund's `remainingCents` reflects the first; the `'Balance'` invoice's `amount_paid` nets correctly (never goes below 0, no over-reversal); two `proposal_refunds` rows; `total_price` dropped by the sum.
+4. **Idempotency:** re-trigger the same `charge.refunded` from the Stripe CLI/dashboard → **no** second `proposal_refunds` row, totals unchanged.
+5. **No-spanning:** attempt a refund larger than the largest single charge → rejected with the precise `$X.XX` AppError message in the admin toast; no Stripe call; no DB rows.
 
 Record pass/fail for each in the execution log. Any fail → stop, fix root cause, re-run.
 
@@ -980,7 +1019,7 @@ git commit -m "docs(refunds): proposal_refunds schema, routes, refundHelpers in 
 ## Self-Review (completed)
 
 **1. Spec coverage:**
-- Approach A (total correction) → Task 3 (`proposals` GREATEST(... − $/100), both columns) + Task 2 invariant test.
+- Approach A (total correction), label-conditional → Task 3 (`amount_paid −= full`, `total_price −= contract portion` by invoice label) + Task 5 contract vs. extra-scope smokes.
 - `proposal_refunds` audit ledger → Task 1.
 - Units seam → Task 2 (pure, cents) + Task 3 (exact NUMERIC SQL); explicit cents-seam test.
 - Auto-target, no-spanning, validation order → Task 2 (full TDD).
@@ -1003,7 +1042,7 @@ Verified against the actual codebase, then fixed inline:
 3. **`ExternalServiceError` signature (confirmed bug, fixed).** Constructor is `(service, originalError, message)`; the plan's 2-arg call mis-slotted the user message. Corrected to 3-arg.
 4. **Concurrency double-decrement (closed).** `SELECT proposals … FOR UPDATE` now precedes the already-applied check, serializing concurrent submits on the proposal row. The partial unique index on `stripe_refund_id` is the second backstop. No path double-decrements `total_price`/`amount_paid`.
 5. **Ghost pending rows (closed).** On idempotent no-op (`applied:false`) the route deletes its redundant pending row; `GET /refunds/:id` excludes `status='pending'` so a transient/stranded row never renders as a real refund.
-6. **Approach-A scope tightened (correctness).** Auto-target restricted to `payment_type IN ('deposit','balance','full')`. Refunding `drink_plan_*`/`invoice` charges (extra scope NOT in `total_price`) would wrongly shrink the base total — now excluded by construction (spec Non-Goal). The no-show-bartender money is in the balance/full charge, unaffected.
+6. **Approach-A scope by invoice label, not payment_type (corrected after cross-plan review).** Initial hardening excluded `payment_type='invoice'` — but the invoice-rollup fix makes `invoice` the *standard* balance path, so that exclusion broke the headline use case (verified vs. rollup's Ketan evidence). Corrected: candidates = `deposit/balance/full/invoice` (exclude only `drink_plan_*`); `total_price` drops only for the **contract portion**, classified by linked invoice `label ∈ ('Deposit','Balance','Full Payment')` — the markers `invoiceHelpers.js` already uses. Extra-scope refunds drop `amount_paid` + that invoice, not `total_price`. The fix also closed a **latent multi-refund bug**: the invoice-reversal loop now nets prior reversals (`SUM(ip.amount) HAVING > 0`) so splitting a refund across several charges-of-one (forced by no-spanning) can't over-reverse an invoice.
 7. **Authz raised for money-out.** `POST /refund/:id` guarded by `adminOnly` (admin role only) — stricter than the money-in `charge-balance` (`requireAdminOrManager`). Read-only history stays admin/manager.
 8. **Over-refund backstops documented.** Stripe's per-charge refund cap is the final guarantee on top of the `remainingCents` math; noted in code comments (concurrent in-flight pending refunds aren't subtracted from `remainingCents`, but Stripe rejects an over-refund and the row is marked `failed`).
 9. **Invoice-refresh non-interference.** Refund adjusts only the directly-linked invoice and never calls `refreshUnlockedInvoices`/`createAdditionalInvoiceIfNeeded`; a fully-paid invoice stays `locked` (settled at the corrected figure). Verified against `invoiceHelpers.js`.

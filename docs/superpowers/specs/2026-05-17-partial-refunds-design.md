@@ -16,14 +16,16 @@ We need admin-issued **partial refunds** that keep three audiences consistent:
 
 ## Core Decision: refund = total correction (Approach A)
 
-A no-show means we **delivered less than contracted** (one bartender, not two). The refund is a correction to the agreed total, not a credit against an unchanged total. So a refund of `$Y` does:
+A no-show means we **delivered less than contracted** (one bartender, not two). The refund is a correction to the agreed total, not a credit against an unchanged total. So a refund of `$Y`:
 
 ```
-total_price  -= Y
-amount_paid  -= Y
+amount_paid  -= Y                     (always — every refunded dollar was paid)
+total_price  -= contract_portion(Y)   (only the part that was contract money)
 ```
 
-Both move together, so `balance_due = total_price − amount_paid` stays `$0` and the proposal correctly **still reads "paid in full"** at the corrected total. Nothing downstream that computes balance-due needs to learn about refunds — that's the whole point of choosing A over a separate-credit model, and it's why this is the safe choice against a money codebase full of `total_price − amount_paid` call sites.
+**`amount_paid` always drops by the full `Y`.** `total_price` drops only by the **contract portion** — the part of `Y` that was money *in* the contracted total. Contract vs. extra-scope is decided by the **linked invoice label** (the same markers `invoiceHelpers.js` already uses): a refund mapped to a `'Deposit'`/`'Balance'`/`'Full Payment'` invoice — or a direct deposit/balance/full charge with no invoice — is contract money → `total_price` drops too (Approach A proper, the no-show-bartender case). A refund mapped to any other invoice label ("Additional Services", etc.) is extra scope billed *on top* of `total_price` → `amount_paid` and that invoice drop, but `total_price` does **not** (lowering it would understate the base contract).
+
+For the common/headline case (deposit + balance, no extras) every dollar is contract money, so both move together exactly as before: `balance_due = total_price − amount_paid` stays `$0` and the proposal correctly **still reads "paid in full"** at the corrected total. Nothing downstream that computes balance-due needs to learn about refunds — the whole point of choosing A. For an extra-scope refund, `amount_paid` falling to meet the unchanged `total_price` is *also* correct: it removes the add-on the client didn't keep without pretending the base contract shrank.
 
 The original contracted figure is **not** preserved on the proposal. It is preserved in the audit table (below) and, permanently, in Stripe.
 
@@ -69,7 +71,7 @@ The admin types a **dollar** amount. **All refund math runs in integer cents.** 
 
 Admin enters **amount + reason only**. The server picks the charge:
 
-1. Candidate set = `proposal_payments` rows for the proposal where `status='succeeded'`, `stripe_payment_intent_id IS NOT NULL`, **and** `payment_type IN ('deposit','balance','full')`. Outside/cash payments (no intent) and `drink_plan_*`/`invoice` charges (extra scope not in `total_price`) are excluded — see Non-Goals. Stripe's own per-charge refund cap is the final over-refund backstop on top of the `remaining` math.
+1. Candidate set = `proposal_payments` rows for the proposal where `status='succeeded'`, `stripe_payment_intent_id IS NOT NULL`, **and** `payment_type IN ('deposit','balance','full','invoice')`. `invoice` is included because — post the invoice-rollup fix — paying the balance via the public invoice page is the **standard** balance path (it lands as `payment_type='invoice'` linked to a `'Balance'` invoice); excluding it would make the headline use case (refund the no-show bartender, whose cost is in the balance) impossible. Only `drink_plan_extras`/`drink_plan_with_balance` (separate extra-scope rails) and outside/cash payments (no intent) are excluded — see Non-Goals. Stripe's own per-charge refund cap is the final over-refund backstop on top of the `remaining` math.
 2. For each candidate, `remaining = amount − COALESCE(SUM(proposal_refunds.amount WHERE payment_id = candidate.id AND status='succeeded'), 0)`.
 3. Target = the candidate with the **largest `remaining`**. In practice this is always the balance or full-pay charge, never the $100 deposit — that is where the bartender money sits.
 4. **No spanning.** If `amount_cents > target.remaining`, reject:
@@ -139,7 +141,7 @@ API call through `client/src/utils/api.js` (`api.post('/stripe/refund/:id', { am
 ## Non-Goals & Assumptions
 
 - **Stripe charges only.** Outside/cash/Venmo payments (`record-payment`, no `stripe_payment_intent_id`) are refunded outside the system, the mirror of how they were recorded. A "record outside refund" form is a future item, explicitly not built now (YAGNI; protect working money paths).
-- **Base-contract charges only.** `drink_plan_extras`, `drink_plan_with_balance`, and `invoice`-type payments are excluded from refundability. Approach A also lowers `total_price`; that is only correct for money that is *in* `total_price` (deposit/balance/full). Refunding extra-scope charges would understate the base contract. Rare, and the no-show-bartender case lives in the balance/full charge — unaffected. Refund those in the Stripe dashboard if ever needed (the `charge.refunded` backstop still records them with `issued_by` null).
+- **Drink-plan rails excluded.** `drink_plan_extras`/`drink_plan_with_balance` payments are not refundable through this tool (separate extra-scope rails with their own invoices/flow). `invoice`-type **is** refundable (it's the standard balance path post-rollup); extra-scope is handled correctly by the linked-invoice-label rule (above), not by excluding the payment type. Dashboard refunds of drink-plan charges are still recorded by the `charge.refunded` backstop (`issued_by` null); a dashboard refund of an unlinked charge defaults to contract treatment (rare; operator bypassed the app — documented caveat).
 - **Purely financial. No staffing coupling.** Refund does not touch the no-show bartender's shift, `shift_requests`, or contractor pay. Admin works the bartender side with existing staffing tools. Decoupling money from scheduling matches the rest of the system and is the fragility-avoidance call.
 - **No multi-charge spanning** in a single refund action (admin splits into separate refunds).
 - **No new proposal `status` enum value** — A keeps the state machine untouched; a fully-refunded-down proposal is still `balance_paid`/`confirmed` at its corrected total.

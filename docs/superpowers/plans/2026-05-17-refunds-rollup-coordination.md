@@ -48,7 +48,7 @@ This is safe (it rejects, never mis-refunds — the layered guards hold) but fun
 
 **Resolution (clean, idiomatic — `invoiceHelpers.js` already centers on these labels):** refund candidates = succeeded, intent-bearing payments of type `deposit`/`balance`/`full`/**`invoice`**; exclude only `drink_plan_extras`/`drink_plan_with_balance`. Whether Approach A also lowers `total_price` is decided by the **linked invoice label**, not `payment_type`: contract money (`label IN ('Deposit','Balance','Full Payment')`, or a direct deposit/balance/full charge with no invoice) → lower `total_price` + `amount_paid` (Approach A, as designed). Extra-scope invoice (any other label — Additional Services, etc.) → lower `amount_paid` + that invoice only, **not** `total_price`. `applyRefundReconciliation` already walks `invoice_payments`; this is one conditional in the loop it already has, using the same `label` markers `invoiceHelpers.js` uses at lines 315/398/421/692.
 
-**Status: Wave 2 is BLOCKED until the refunds spec + plan are amended for this. Owner decision required (it reverts a defensive default + adds the label conditional) — see report.** Until resolved, this coordination plan is not executable past Wave 1.
+**Status: ✅ RESOLVED (owner-approved, 2026-05-17).** Refunds spec + plan amended: candidates = `deposit/balance/full/invoice` (exclude only `drink_plan_*`); `amount_paid −= full`, `total_price −= contract portion` classified by linked invoice `label ∈ ('Deposit','Balance','Full Payment')`; the invoice-reversal loop now net-aggregates prior reversals (also fixed a latent multi-refund over-reversal bug). Wave 2 is unblocked.
 
 ### 5. Confirmed NON-conflicts
 
