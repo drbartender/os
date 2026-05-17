@@ -984,6 +984,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_payments_intent_unique
   ON proposal_payments(stripe_payment_intent_id)
   WHERE stripe_payment_intent_id IS NOT NULL AND status = 'succeeded';
 
+-- ─── Proposal Refunds (audit ledger for partial refunds) ─────────
+-- Approach A: a refund corrects the proposal total downward (delivered
+-- less than contracted). proposals.total_price + amount_paid both drop
+-- by the refund, so balance-due stays $0 and nothing that computes
+-- total_price − amount_paid needs to learn about refunds. This table is
+-- the admin-facing history + the idempotency anchor shared by the
+-- synchronous refund route and the charge.refunded webhook backstop.
+CREATE TABLE IF NOT EXISTS proposal_refunds (
+  id SERIAL PRIMARY KEY,
+  proposal_id INTEGER NOT NULL REFERENCES proposals(id) ON DELETE RESTRICT,
+  payment_id INTEGER REFERENCES proposal_payments(id) ON DELETE RESTRICT,
+  stripe_payment_intent_id VARCHAR(255),
+  stripe_refund_id VARCHAR(255),
+  amount INTEGER NOT NULL,                 -- CENTS (Stripe-native)
+  reason TEXT NOT NULL,
+  total_price_before NUMERIC NOT NULL,     -- dollars, snapshot pre-refund
+  total_price_after  NUMERIC NOT NULL,     -- dollars, post-refund
+  issued_by INTEGER REFERENCES users(id),  -- admin/manager; NULL = dashboard refund
+  status VARCHAR(20) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'succeeded', 'failed')),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_proposal_refunds_proposal_id
+  ON proposal_refunds(proposal_id);
+-- Idempotency anchor: at most one applied refund per Stripe refund id.
+-- Partial so multiple pending rows (no refund id yet) never collide.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_refunds_stripe_refund_id
+  ON proposal_refunds(stripe_refund_id)
+  WHERE stripe_refund_id IS NOT NULL;
+
 -- Shifts
 CREATE INDEX IF NOT EXISTS idx_shifts_event_date ON shifts(event_date);
 CREATE INDEX IF NOT EXISTS idx_shifts_status ON shifts(status);
