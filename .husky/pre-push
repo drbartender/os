@@ -1,0 +1,36 @@
+#!/usr/bin/env sh
+# pre-push — block any push that would fail the Vercel client build.
+#
+# Vercel runs `react-scripts build` with CI=true, where ESLint warnings
+# (e.g. no-unused-vars) are FATAL. Nothing else local catches that:
+# lint-staged only covers server/, and a plain `eslint` run treats it as
+# a non-fatal warning. So we run the EXACT same command Vercel runs — but
+# only when this push actually changes client/ (server-only / docs pushes
+# stay instant).
+#
+# Emergencies only: bypass with `git push --no-verify`.
+set -e
+
+if git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+  if git diff --quiet origin/main HEAD -- client/; then
+    echo "pre-push: no client/ changes vs origin/main — skipping client build gate."
+    exit 0
+  fi
+fi
+
+echo "pre-push: client/ changed — running the Vercel-equivalent gate (CI=true react-scripts build, ~1 min)…"
+LOG="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/drb-prepush-build.$$.log")"
+if ( cd client && CI=true npx react-scripts build ) >"$LOG" 2>&1; then
+  echo "✓ pre-push: client build passed — the Vercel client deploy will not fail-compile."
+  rm -f "$LOG"
+  exit 0
+fi
+
+echo ""
+echo "✗ pre-push BLOCKED — the client build failed. This WOULD fail the Vercel deploy."
+echo "  ── last 25 lines ──────────────────────────────────────────"
+tail -25 "$LOG"
+echo "  ───────────────────────────────────────────────────────────"
+echo "  Fix the errors above. Emergencies only: git push --no-verify"
+rm -f "$LOG"
+exit 1
