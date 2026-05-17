@@ -775,11 +775,12 @@ import { useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 /**
- * URL-synced metrics filter state. Reads/writes ?from=&to=&basis=.
- * Mirrors useDrawerParam.js — layered on top of other params, never clobbers them.
- *
- * Presets are pure date math relative to today. "All time" clears from/to.
- * Default (no params) = Last 12 months, basis=booked.
+ * URL-synced metrics filter state. Three representable selections:
+ *   - named preset → ?from=YYYY-MM-DD&to=YYYY-MM-DD   (no `range` param)
+ *   - All time     → ?range=all                       (no from/to; API omits the date predicate)
+ *   - Custom       → ?range=custom&from=...&to=...
+ * No params at all → default = Last 12 months (deliberately DISTINCT from All time).
+ * Mirrors useDrawerParam.js — layered on other params, never clobbers them.
  */
 const iso = (d) => d.toISOString().slice(0, 10);
 
@@ -796,48 +797,70 @@ export function presetRange(preset, today = new Date()) {
     }
     case 'ytd':          return { from: iso(d0(y, 0, 1)), to: iso(d0(y, mo, today.getUTCDate())) };
     case 'last-12':      return { from: iso(d0(y, mo - 11, 1)), to: iso(d0(y, mo + 1, 0)) };
-    case 'all':          return { from: null, to: null };
     default:             return { from: null, to: null };
   }
 }
 
+const NAMED = ['this-month', 'last-month', 'this-quarter', 'ytd', 'last-12'];
+
 export default function useMetricsFilter() {
   const [params, setParams] = useSearchParams();
+  const range = params.get('range');            // 'all' | 'custom' | null
   const from = params.get('from');
   const to = params.get('to');
   const basis = params.get('basis') || 'booked';
 
-  // No explicit range in URL → Last 12 months (default view).
+  // What the consuming page sends to the API.
   const effective = useMemo(() => {
+    if (range === 'all') return { from: null, to: null, basis };  // true all-time
     if (from && to) return { from, to, basis };
-    if (from || to) return { from, to, basis }; // server will 400; surfaced as toast
-    return { ...presetRange('last-12'), basis };
-  }, [from, to, basis]);
+    return { ...presetRange('last-12'), basis };                   // no params → default
+  }, [range, from, to, basis]);
 
-  const setRange = useCallback((next) => {
+  const write = useCallback((mut) => {
     const p = new URLSearchParams(params);
-    if (next.from && next.to) { p.set('from', next.from); p.set('to', next.to); }
-    else { p.delete('from'); p.delete('to'); }
+    mut(p);
     setParams(p, { replace: false });
   }, [params, setParams]);
+
+  // key ∈ NAMED ∪ { 'all', 'custom' }
+  const setPreset = useCallback((key) => {
+    if (key === 'all') {
+      write((p) => { p.set('range', 'all'); p.delete('from'); p.delete('to'); });
+    } else if (key === 'custom') {
+      const seed = (from && to) ? { from, to } : presetRange('last-12');
+      write((p) => { p.set('range', 'custom'); p.set('from', seed.from); p.set('to', seed.to); });
+    } else {
+      const r = presetRange(key);
+      write((p) => { p.delete('range'); p.set('from', r.from); p.set('to', r.to); });
+    }
+  }, [write, from, to]);
+
+  const setCustom = useCallback((next) => {
+    write((p) => {
+      p.set('range', 'custom');
+      if (next.from) p.set('from', next.from); else p.delete('from');
+      if (next.to) p.set('to', next.to); else p.delete('to');
+    });
+  }, [write]);
 
   const setBasis = useCallback((b) => {
-    const p = new URLSearchParams(params);
-    p.set('basis', b);
-    setParams(p, { replace: false });
-  }, [params, setParams]);
+    write((p) => p.set('basis', b));
+  }, [write]);
 
-  // Which preset is active (for the dropdown), by matching computed ranges.
+  // Which dropdown option is active.
   const activePreset = useMemo(() => {
-    if (!from && !to) return params.has('from') ? 'custom' : 'last-12';
-    for (const k of ['this-month', 'last-month', 'this-quarter', 'ytd', 'last-12']) {
+    if (range === 'all') return 'all';
+    if (range === 'custom') return 'custom';
+    if (!from && !to) return 'last-12';                 // no params → default
+    for (const k of NAMED) {
       const r = presetRange(k);
       if (r.from === from && r.to === to) return k;
     }
-    return 'custom';
-  }, [from, to, params]);
+    return 'custom';                                    // shared link, off-preset dates
+  }, [range, from, to]);
 
-  return { ...effective, rawFrom: from, rawTo: to, activePreset, setRange, setBasis };
+  return { ...effective, rawFrom: from, rawTo: to, activePreset, setPreset, setCustom, setBasis };
 }
 ```
 
@@ -847,7 +870,6 @@ Create `client/src/components/adminos/MetricsFilterBar.js`:
 
 ```js
 import React from 'react';
-import { presetRange } from '../../hooks/useMetricsFilter';
 
 const PRESETS = [
   ['this-month', 'This month'], ['last-month', 'Last month'],
@@ -857,22 +879,13 @@ const PRESETS = [
 const LENSES = [['booked', 'Booked'], ['scheduled', 'Scheduled'], ['paid', 'Paid']];
 
 export default function MetricsFilterBar({ filter }) {
-  const { basis, rawFrom, rawTo, activePreset, setRange, setBasis } = filter;
+  const { basis, rawFrom, rawTo, activePreset, setPreset, setCustom, setBasis } = filter;
   const isCustom = activePreset === 'custom';
-
-  const onPreset = (e) => {
-    const k = e.target.value;
-    if (k === 'custom') {
-      const r = presetRange('last-12');
-      setRange({ from: rawFrom || r.from, to: rawTo || r.to });
-    } else {
-      setRange(presetRange(k));
-    }
-  };
 
   return (
     <div className="hstack" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 'var(--gap)' }}>
-      <select className="input" value={activePreset} onChange={onPreset} aria-label="Date range">
+      <select className="input" value={activePreset}
+        onChange={(e) => setPreset(e.target.value)} aria-label="Date range">
         {PRESETS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
       </select>
 
@@ -880,11 +893,11 @@ export default function MetricsFilterBar({ filter }) {
         <>
           <input type="date" className="input" aria-label="From date"
             value={rawFrom || ''} max={rawTo || undefined}
-            onChange={(e) => setRange({ from: e.target.value, to: rawTo })} />
+            onChange={(e) => setCustom({ from: e.target.value, to: rawTo })} />
           <span className="muted tiny">to</span>
           <input type="date" className="input" aria-label="To date"
             value={rawTo || ''} min={rawFrom || undefined}
-            onChange={(e) => setRange({ from: rawFrom, to: e.target.value })} />
+            onChange={(e) => setCustom({ from: rawFrom, to: e.target.value })} />
         </>
       )}
 
