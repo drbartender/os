@@ -650,7 +650,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
       `, [proposalId]);
       const pi = payInfo.rows[0];
       const amountFormatted = (amountCents / 100).toFixed(2);
-      const payLabel = paymentType === 'full' ? 'full payment' : paymentType === 'balance' ? 'balance payment' : 'deposit';
+      const payLabel = paymentType === 'full' ? 'full payment' : paymentType === 'balance' ? 'balance payment' : paymentType === 'invoice' ? 'invoice payment' : 'deposit';
       const eventLabel = eventLabelFor(pi);
 
       // Coupled sign+pay: if the client signed within the last 6 hours and this
@@ -760,6 +760,28 @@ router.post('/webhook', asyncHandler(async (req, res) => {
                 );
               }
             }
+          } else if (paymentType === 'invoice') {
+            // Invoice payment (Balance / Additional Services / manual invoice paid
+            // via the public invoice page). Roll the captured amount up into the
+            // proposal and promote to balance_paid once fully paid. Increment —
+            // never "set to total" — so partial invoice payments and Additional
+            // Services (which push amount_paid ABOVE total_price) are correct.
+            // Mirrors the drink_plan_extras branch. Idempotent: this whole block
+            // is inside isFirstDelivery (gated by the proposal_payments ON CONFLICT
+            // insert), so a Stripe retry never re-increments.
+            const paidDollars = intent.amount / 100;
+            const upd = await dbClient.query(`
+              UPDATE proposals
+              SET amount_paid = COALESCE(amount_paid, 0) + $1
+              WHERE id = $2
+              RETURNING amount_paid, total_price
+            `, [paidDollars, proposalId]);
+            if (upd.rows[0] && Number(upd.rows[0].amount_paid) >= Number(upd.rows[0].total_price)) {
+              await dbClient.query(
+                "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed')",
+                [proposalId]
+              );
+            }
           } else {
             // deposit
             await dbClient.query(`
@@ -817,6 +839,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             : paymentType === 'full' ? 'paid_in_full'
             : paymentType === 'drink_plan_extras' ? 'drink_plan_extras_paid'
             : paymentType === 'drink_plan_with_balance' ? 'drink_plan_balance_paid'
+            : paymentType === 'invoice' ? 'invoice_paid'
             : 'deposit_paid';
           await dbClient.query(
             `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, $2, 'system', $3)`,

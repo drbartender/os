@@ -604,7 +604,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 
 **proposal_payments** — Individual payment records
 - `proposal_id` FK, `stripe_payment_intent_id`
-- `payment_type`: deposit | balance | full
+- `payment_type`: deposit | balance | full | invoice
 - `amount` (cents), `status`
 
 ### Invoices
