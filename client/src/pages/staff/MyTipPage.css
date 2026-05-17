@@ -1,0 +1,98 @@
+/* My Tip Page — staff money screen. Self-contained Dr. Bartender surface
+   rendered inside the light staff shell. Scoped under .mtp so it can't leak. */
+.mtp {
+  --mtp-paper: #EDE6D6;
+  --mtp-ink: #1C1610;
+  --mtp-muted: #5A5048;
+  --mtp-teal: #1D8C89;
+  --mtp-brass: #B8924A;
+  --mtp-line: #D8CFBE;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  color: var(--mtp-ink);
+}
+.mtp h1 {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.9rem;
+  margin: 0 0 4px;
+  color: var(--mtp-ink);
+}
+.mtp .mtp-sub { color: var(--mtp-muted); margin: 0 0 24px; font-size: 0.95rem; }
+.mtp-card {
+  background: linear-gradient(180deg, #EFE9DB 0%, #E6DDCC 100%);
+  border: 1px solid var(--mtp-brass);
+  border-radius: 12px;
+  padding: 20px 22px;
+  margin-bottom: 18px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+.mtp-card h2 {
+  font-family: Georgia, serif;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+  margin: 0 0 14px;
+  color: var(--mtp-ink);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.mtp-kicker {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.18em;
+  color: var(--mtp-brass); font-weight: 700;
+}
+.mtp-url {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: #fff; border: 1px solid var(--mtp-line);
+  border-radius: 8px; padding: 10px 12px;
+}
+.mtp-url code { font-size: 0.95rem; color: var(--mtp-ink); word-break: break-all; }
+.mtp-btn {
+  font: inherit; cursor: pointer; border-radius: 8px;
+  padding: 9px 16px; border: 1px solid var(--mtp-teal);
+  background: var(--mtp-teal); color: #fff; transition: filter .15s ease;
+}
+.mtp-btn:hover { filter: brightness(1.08); }
+.mtp-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.mtp-btn.ghost { background: transparent; color: var(--mtp-teal); }
+.mtp-btn.ghost:hover { background: rgba(29,140,137,0.08); }
+.mtp-field { margin-bottom: 14px; }
+.mtp-field:last-child { margin-bottom: 0; }
+.mtp-field label {
+  display: block; font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.14em; color: var(--mtp-muted); margin-bottom: 5px;
+}
+.mtp-field input, .mtp-field select {
+  font: inherit; width: 100%; padding: 10px 12px;
+  border: 1px solid var(--mtp-line); border-radius: 8px;
+  background: #fff; color: var(--mtp-ink);
+}
+.mtp-field input:focus, .mtp-field select:focus {
+  outline: 0; border-color: var(--mtp-teal);
+  box-shadow: 0 0 0 3px rgba(29,140,137,0.15);
+}
+.mtp-note {
+  font-size: 0.85rem; color: var(--mtp-muted); font-style: italic; margin: 8px 0 0;
+}
+.mtp-reassure {
+  display: flex; gap: 8px; align-items: flex-start;
+  font-size: 0.85rem; color: var(--mtp-muted);
+  background: rgba(29,140,137,0.07); border-radius: 8px;
+  padding: 10px 12px; margin-top: 12px;
+}
+.mtp-preview-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
+.mtp-preview-list li {
+  display: flex; justify-content: space-between; gap: 12px;
+  font-size: 0.9rem; padding: 8px 12px;
+  background: #fff; border: 1px solid var(--mtp-line); border-radius: 8px;
+}
+.mtp-preview-list .mtp-empty { color: var(--mtp-muted); font-style: italic; justify-content: center; }
+.mtp-row-actions { display: flex; gap: 8px; margin-top: 16px; }
+.mtp-tips-total { font-size: 1.5rem; font-weight: 700; color: var(--mtp-ink); }
+.mtp-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.9rem; }
+.mtp-table th { text-align: left; color: var(--mtp-muted); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--mtp-line); }
+.mtp-table td { padding: 6px 8px; border-bottom: 1px solid var(--mtp-line); }
+.mtp-state { text-align: center; color: var(--mtp-muted); padding: 40px 0; }
+@media (max-width: 560px) {
+  .mtp h2 { flex-direction: column; align-items: flex-start; }
+  .mtp-row-actions { flex-direction: column; }
+  .mtp-row-actions .mtp-btn { width: 100%; }
+}

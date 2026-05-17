@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
+import './MyTipPage.css';
 
 const PAY_METHODS = [
   ['venmo', 'Venmo'],
@@ -10,164 +12,238 @@ const PAY_METHODS = [
   ['direct_deposit', 'Direct deposit'],
   ['other', 'Other'],
 ];
+const METHOD_LABEL = Object.fromEntries(PAY_METHODS);
 
 export default function MyTipPage() {
   const toast = useToast();
   const [data, setData] = useState(null);
   const [tips, setTips] = useState([]);
-  const [edit, setEdit] = useState({});
-  const [saving, setSaving] = useState(false);
+  const [loadErr, setLoadErr] = useState(false);
+  const [edit, setEdit] = useState(null);          // null until loaded
+  const [savingHandles, setSavingHandles] = useState(false);
+  const [savingMethod, setSavingMethod] = useState(false);
+  const [editingMethod, setEditingMethod] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  function hydrate(d) {
+    setData(d);
+    setEdit({
+      preferred_name: d.preferred_name || '',
+      venmo_handle: d.venmo_handle || '',
+      cashapp_handle: d.cashapp_handle || '',
+      paypal_url: d.paypal_url || '',
+      preferred_payment_method: d.preferred_payment_method || '',
+    });
+  }
 
   useEffect(() => {
     api.get('/me/tip-page')
-      .then(r => {
-        setData(r.data);
-        setEdit({
-          preferred_name: r.data.preferred_name || '',
-          venmo_handle: r.data.venmo_handle || '',
-          cashapp_handle: r.data.cashapp_handle || '',
-          paypal_url: r.data.paypal_url || '',
-          preferred_payment_method: r.data.preferred_payment_method || '',
-        });
-      })
-      .catch(() => toast.error("Couldn't load your tip page. Try refreshing."));
+      .then(r => hydrate(r.data))
+      .catch(() => { setLoadErr(true); toast.error("Couldn't load your tip page. Try refreshing."); });
     api.get('/me/tips')
       .then(r => setTips(r.data.tips || []))
-      .catch(() => toast.error("Couldn't load your tip history. Try refreshing."));
-    // toast is stable from the context provider — exhaustive-deps would force a
-    // pointless dep, retriggering the load on hot-reload.
+      .catch(() => { /* tips are secondary; page still usable */ });
+    // toast is stable from the provider; adding it would retrigger on hot-reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function save(e) {
+  async function saveHandles(e) {
     e.preventDefault();
-    setSaving(true);
+    setSavingHandles(true);
     try {
-      await api.patch('/me/tip-page', edit);
+      await api.patch('/me/tip-page', {
+        preferred_name: edit.preferred_name,
+        venmo_handle: edit.venmo_handle,
+        cashapp_handle: edit.cashapp_handle,
+        paypal_url: edit.paypal_url,
+      });
       const r = await api.get('/me/tip-page');
-      setData(r.data);
+      hydrate(r.data);
       toast.success('Saved.');
     } catch (err) {
       toast.error(err?.message || "Couldn't save. Try again.");
     } finally {
-      setSaving(false);
+      setSavingHandles(false);
+    }
+  }
+
+  async function saveMethod() {
+    setSavingMethod(true);
+    try {
+      await api.patch('/me/tip-page', { preferred_payment_method: edit.preferred_payment_method });
+      const r = await api.get('/me/tip-page');
+      hydrate(r.data);
+      setEditingMethod(false);
+      toast.success('Payout method updated.');
+    } catch (err) {
+      toast.error(err?.message || "Couldn't update. Try again.");
+    } finally {
+      setSavingMethod(false);
     }
   }
 
   function copyUrl() {
-    if (!data || !data.url) return;
+    if (!data?.url) return;
     navigator.clipboard.writeText(data.url);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
 
-  if (!data) return <p>Loading…</p>;
+  if (loadErr && !data) {
+    return (
+      <div className="mtp">
+        <div className="mtp-state">Couldn't load your tip page. Refresh the page to try again.</div>
+      </div>
+    );
+  }
+  if (!data || !edit) {
+    return <div className="mtp"><div className="mtp-state">Loading your tip page…</div></div>;
+  }
+
+  const previewMethods = [
+    edit.venmo_handle && ['Venmo', `@${edit.venmo_handle}`],
+    edit.cashapp_handle && ['Cash App', `$${edit.cashapp_handle}`],
+    edit.paypal_url && ['PayPal', edit.paypal_url.replace(/^https?:\/\//, '')],
+    data.has_stripe_link && ['Credit Card', 'Apple Pay · Google Pay'],
+  ].filter(Boolean);
 
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto', padding: 24 }}>
+    <div className="mtp">
       <h1>My Tip Page</h1>
+      <p className="mtp-sub">Your tips, your handles, your money — manage it all here.</p>
 
-      {/* URL + copy */}
-      {data.url ? (
-        <section style={{ marginBottom: 24 }}>
-          <h2>Your tip page</h2>
-          <code style={{ fontSize: 16 }}>{data.url}</code>
-          <button onClick={copyUrl} style={{ marginLeft: 12 }}>
-            {copied ? 'Copied!' : 'Copy'}
-          </button>
-        </section>
-      ) : (
-        <p><em>Your tip page is not yet active. Complete onboarding first.</em></p>
-      )}
-
-      {/* Print card */}
-      {data.has_stripe_link && data.url && (
-        <section style={{ marginBottom: 24 }}>
-          <h2>Print your QR card</h2>
-          <p>
-            Choose business card, 4×6, or 5×7 — your browser will open the print dialog
-            with the right page size. Save as PDF and take it to any photo counter
-            (Walmart, CVS, Walgreens) for same-day printing, ~$0.30. Or print at home.
-          </p>
-          <a href="/my-tip-page/print" className="btn-primary">Print my tip card</a>
-        </section>
-      )}
-
-      {/* Stripe link not yet ready */}
-      {!data.has_stripe_link && data.url && (
-        <p><em>Your Stripe link isn't ready yet. Contact admin to generate it.</em></p>
-      )}
-
-      {/* Edit handles */}
-      <section style={{ marginBottom: 24 }}>
-        <h2>Edit my handles</h2>
-        <form onSubmit={save}>
-          <label>
-            Preferred name{' '}
-            <input required value={edit.preferred_name}
-              onChange={e => setEdit(s => ({ ...s, preferred_name: e.target.value }))} />
-          </label>
-
-          <label>
-            Venmo{' '}
-            <input value={edit.venmo_handle}
-              onChange={e => setEdit(s => ({ ...s, venmo_handle: e.target.value }))} />
-          </label>
-
-          <label>
-            Cash App{' '}
-            <input value={edit.cashapp_handle}
-              onChange={e => setEdit(s => ({ ...s, cashapp_handle: e.target.value }))} />
-          </label>
-
-          <label>
-            PayPal{' '}
-            <input type="url" value={edit.paypal_url}
-              onChange={e => setEdit(s => ({ ...s, paypal_url: e.target.value }))} />
-          </label>
-
-          <fieldset>
-            <legend>Pay me out via</legend>
-            {PAY_METHODS.map(([v, l]) => (
-              <label key={v} style={{ display: 'block' }}>
-                <input type="radio" name="ppm" value={v}
-                  checked={edit.preferred_payment_method === v}
-                  onChange={() => setEdit(s => ({ ...s, preferred_payment_method: v }))} />
-                {' '}{l}
-              </label>
-            ))}
-          </fieldset>
-
-          <button type="submit" disabled={saving} className="btn-primary">
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </form>
-
-        <p style={{ fontSize: 14, color: '#888', marginTop: 8 }}>
-          Stripe link: <strong>Managed by DRB.</strong> Contact admin to regenerate.
-        </p>
+      {/* ── Your tip page ── */}
+      <section className="mtp-card">
+        <h2><span>Your tip page</span><span className="mtp-kicker">Public</span></h2>
+        {data.url ? (
+          <>
+            <div className="mtp-url">
+              <code>{data.url}</code>
+              <button type="button" className="mtp-btn" onClick={copyUrl}>
+                {copied ? 'Copied!' : 'Copy link'}
+              </button>
+            </div>
+            <ul className="mtp-preview-list">
+              {previewMethods.length === 0 ? (
+                <li className="mtp-empty">No tip options yet — add a handle below and it appears here.</li>
+              ) : previewMethods.map(([label, sub]) => (
+                <li key={label}><span>{label}</span><span style={{ color: 'var(--mtp-muted)' }}>{sub}</span></li>
+              ))}
+            </ul>
+            {data.has_stripe_link ? (
+              <div className="mtp-row-actions">
+                <Link to="/my-tip-page/print" className="mtp-btn">Print my QR card</Link>
+              </div>
+            ) : (
+              <p className="mtp-note">Your card-payment link isn't ready yet — contact an admin to generate it. Your other handles still work.</p>
+            )}
+          </>
+        ) : (
+          <p className="mtp-note">Your tip page isn't active yet. Finish onboarding and an admin will switch it on.</p>
+        )}
       </section>
 
-      {/* My tips */}
-      <section>
-        <h2>My tips</h2>
-        <p>
-          Card tips received via Stripe this month:
-          {' '}<strong>${(data.tips_this_month_cents / 100).toFixed(2)}</strong>
-        </p>
-        <p style={{ fontSize: 14, color: '#888', fontStyle: 'italic' }}>
-          Only the Credit Card path goes through Stripe and shows up here — Venmo, Cash App, and
-          PayPal taps go directly to your account so they aren't counted in this total. Stripe tips
-          are pooled with co-workers from each event and paid out via your next payroll. Final
-          amount may differ from this total.
-        </p>
-
-        {tips.length === 0 ? (
-          <p><em>No tips yet. Print your QR and bring it to your next event.</em></p>
+      {/* ── How you get paid ── */}
+      <section className="mtp-card">
+        <h2><span>How you get paid</span><span className="mtp-kicker">Payroll</span></h2>
+        {editingMethod ? (
+          <>
+            <div className="mtp-field">
+              <label htmlFor="mtp-method">Pay me out via</label>
+              <select
+                id="mtp-method"
+                value={edit.preferred_payment_method}
+                onChange={e => setEdit(s => ({ ...s, preferred_payment_method: e.target.value }))}
+              >
+                <option value="">Select a method…</option>
+                {PAY_METHODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
+            <div className="mtp-row-actions">
+              <button type="button" className="mtp-btn" disabled={savingMethod || !edit.preferred_payment_method} onClick={saveMethod}>
+                {savingMethod ? 'Saving…' : 'Save method'}
+              </button>
+              <button
+                type="button"
+                className="mtp-btn ghost"
+                disabled={savingMethod}
+                onClick={() => { setEditingMethod(false); setEdit(s => ({ ...s, preferred_payment_method: data.preferred_payment_method || '' })); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </>
         ) : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead><tr><th align="left">Amount</th><th align="left">Date</th><th align="left">Source</th></tr></thead>
+          <>
+            <p style={{ margin: 0, fontSize: '1.05rem' }}>
+              {data.preferred_payment_method
+                ? <strong>{METHOD_LABEL[data.preferred_payment_method] || data.preferred_payment_method}</strong>
+                : <span style={{ color: 'var(--mtp-muted)' }}>No payout method on file yet.</span>}
+            </p>
+            <div className="mtp-row-actions">
+              <button type="button" className="mtp-btn ghost" onClick={() => setEditingMethod(true)}>
+                {data.preferred_payment_method ? 'Change payout method' : 'Set payout method'}
+              </button>
+            </div>
+          </>
+        )}
+        <div className="mtp-reassure">
+          <span aria-hidden="true">🔒</span>
+          <span>This is how Dr. Bartender sends your wages and pooled tips. Encrypted, never shared outside DRB.</span>
+        </div>
+      </section>
+
+      {/* ── Tip handles ── */}
+      <section className="mtp-card">
+        <h2><span>Tip handles</span><span className="mtp-kicker">Optional</span></h2>
+        <p className="mtp-note" style={{ marginTop: 0, marginBottom: 14 }}>
+          These only affect your public tip page and printed QR card. Add, change, or
+          clear them anytime — leaving one blank simply hides it.
+        </p>
+        <form onSubmit={saveHandles}>
+          <div className="mtp-field">
+            <label htmlFor="mtp-name">Preferred name</label>
+            <input id="mtp-name" required value={edit.preferred_name}
+              onChange={e => setEdit(s => ({ ...s, preferred_name: e.target.value }))} />
+          </div>
+          <div className="mtp-field">
+            <label htmlFor="mtp-venmo">Venmo handle</label>
+            <input id="mtp-venmo" placeholder="yourname" value={edit.venmo_handle}
+              onChange={e => setEdit(s => ({ ...s, venmo_handle: e.target.value }))} />
+          </div>
+          <div className="mtp-field">
+            <label htmlFor="mtp-cashapp">Cash App handle</label>
+            <input id="mtp-cashapp" placeholder="yourname" value={edit.cashapp_handle}
+              onChange={e => setEdit(s => ({ ...s, cashapp_handle: e.target.value }))} />
+          </div>
+          <div className="mtp-field">
+            <label htmlFor="mtp-paypal">PayPal URL</label>
+            <input id="mtp-paypal" placeholder="paypal.me/yourname" value={edit.paypal_url}
+              onChange={e => setEdit(s => ({ ...s, paypal_url: e.target.value }))} />
+          </div>
+          <div className="mtp-row-actions">
+            <button type="submit" className="mtp-btn" disabled={savingHandles}>
+              {savingHandles ? 'Saving…' : 'Save handles'}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {/* ── Tips earned ── */}
+      <section className="mtp-card">
+        <h2><span>Tips earned</span><span className="mtp-kicker">This month</span></h2>
+        <p className="mtp-tips-total">${((data.tips_this_month_cents || 0) / 100).toFixed(2)}</p>
+        <p className="mtp-note">
+          Only the Credit Card path goes through Stripe and shows here. Venmo, Cash App,
+          and PayPal taps go straight to your account, so they aren't counted. Stripe
+          tips are pooled with co-workers per event and paid out via your next payroll —
+          the final amount may differ.
+        </p>
+        {tips.length === 0 ? (
+          <p className="mtp-note" style={{ marginTop: 12 }}>No card tips yet. Print your QR and bring it to your next event.</p>
+        ) : (
+          <table className="mtp-table">
+            <thead><tr><th>Amount</th><th>Date</th><th>Source</th></tr></thead>
             <tbody>
               {tips.map(t => (
                 <tr key={t.id}>
