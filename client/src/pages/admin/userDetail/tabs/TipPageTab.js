@@ -11,6 +11,15 @@ import StatusChip from '../../../../components/adminos/StatusChip';
 // detail endpoint is needed. After every mutation we re-fetch via the parent's
 // reload callback so the parent stays the source of truth.
 
+const PAY_METHODS = [
+  ['venmo', 'Venmo'],
+  ['cashapp', 'Cash App'],
+  ['paypal', 'PayPal'],
+  ['check', 'Check'],
+  ['direct_deposit', 'Direct deposit'],
+  ['other', 'Other'],
+];
+
 export default function TipPageTab({ userId, payment, profile, onChanged }) {
   const [edit, setEdit] = useState({});
   const [busy, setBusy] = useState(false);
@@ -27,6 +36,7 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
   const venmo = payment?.venmo_handle || '';
   const cashapp = payment?.cashapp_handle || '';
   const paypal = payment?.paypal_url || '';
+  const payMethod = payment?.preferred_payment_method || '';
 
   const run = async (fn) => {
     setBusy(true);
@@ -150,6 +160,17 @@ export default function TipPageTab({ userId, payment, profile, onChanged }) {
                   value={edit.paypal_url ?? paypal}
                   onChange={(e) => setEdit(s => ({ ...s, paypal_url: e.target.value }))}
                 />
+              </div>
+              <div>
+                <div className="meta-k" style={{ marginBottom: 4 }}>Payroll method (how DRB pays them)</div>
+                <select
+                  className="input"
+                  value={edit.preferred_payment_method ?? payMethod}
+                  onChange={(e) => setEdit(s => ({ ...s, preferred_payment_method: e.target.value }))}
+                >
+                  <option value="">— not set —</option>
+                  {PAY_METHODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
               </div>
             </div>
           </div>
