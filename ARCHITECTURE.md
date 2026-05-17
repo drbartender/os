@@ -256,6 +256,8 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | POST | `/create-intent/:token` | Public | Create Stripe PaymentIntent (deposit or full amount, with optional autopay) |
 | POST | `/payment-link/:id` | Admin | Generate reusable Stripe Payment Link |
 | POST | `/charge-balance/:id` | Admin | Manually trigger off-session autopay balance charge |
+| POST | `/refund/:id` | Admin (`auth, adminOnly`) | Issue a partial refund — auto-targets the largest refundable charge; no cross-charge spanning |
+| GET | `/refunds/:id` | Admin/Manager (`auth, requireAdminOrManager`) | Refund history for a proposal |
 | POST | `/webhook` | Stripe | Handle `payment_intent.succeeded`, `checkout.session.completed` — updates payment status, auto-creates event shift |
 
 ### Clients — `/api/clients`
@@ -607,6 +609,13 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `payment_type`: deposit | balance | full | invoice
 - `amount` (cents), `status`
 
+**proposal_refunds** — Audit ledger for partial refunds
+- `id` PK; `proposal_id` FK→proposals (ON DELETE RESTRICT, NOT NULL); `payment_id` FK→proposal_payments (ON DELETE RESTRICT, nullable); `stripe_payment_intent_id`; `stripe_refund_id`
+- `amount` (INTEGER cents); `reason` (TEXT); `total_price_before` / `total_price_after` (NUMERIC dollars)
+- `issued_by` FK→users (nullable — NULL = dashboard refund); `status`: pending | succeeded | failed; `created_at`
+- Approach A reconciliation: a refund drops `proposals.amount_paid` by the full refund amount and adjusts `total_price` only for contract-scope invoices (classified by linked invoice `label`: Deposit / Balance / Full Payment); extra-scope invoices leave `total_price` intact
+- Partial unique index on `stripe_refund_id` (WHERE NOT NULL) — idempotency anchor shared by the synchronous route and the `charge.refunded` webhook backstop
+
 ### Invoices
 
 **invoices** — Invoice records (sit on top of proposals)
@@ -939,6 +948,7 @@ deliberate scope choice.
 - **Webhook events**: `payment_intent.succeeded` (deposit, full, balance, drink-plan-extras), `checkout.session.completed` (deposit via Payment Link AND bartender tips, branched on `metadata.kind`)
 - **Deposit**: $100 (configurable via `STRIPE_DEPOSIT_AMOUNT` in cents)
 - **Tip Payment Links**: Each onboarded bartender has a reusable Stripe Payment Link with `metadata.kind = 'tip'`, `metadata.bartender_user_id`, and `metadata.tip_page_token`, provisioned by `server/utils/tipPaymentLinks.js`. On `checkout.session.completed` the webhook cross-validates the metadata against `payment_profiles.tip_page_token` (DB is source of truth — if metadata's bartender_user_id disagrees, the DB user_id wins) and inserts a row into `tips`. Admin can regenerate the Stripe link via `POST /api/admin/contractors/:userId/tip-page/regenerate-stripe`, or rotate the tip token entirely via `POST /api/admin/contractors/:userId/tip-page/rotate-token` — the emergency break-glass route used when a printed QR card or URL is compromised. Rotation issues a fresh UUID, deactivates the old Stripe Payment Link, creates a new one, and invalidates in-flight checkouts on the old link (the webhook drops sessions whose `metadata.tip_page_token` no longer matches the DB).
+- **Partial refunds**: Admin-issued via `POST /api/stripe/refund/:id`. `planRefund` (in `server/utils/refundHelpers.js`) auto-targets the largest refundable charge (no spanning). `applyRefundReconciliation` (same file) holds a row-lock on the proposals row, applies Approach-A label-conditional `total_price` correction (Deposit/Balance/Full Payment invoices adjust the contract total; extra-scope invoices leave it intact), nets the aggregate invoice reversal, and writes to the activity log. The synchronous route does the Stripe API call then reconciliation; an idempotent `charge.refunded` webhook handler is the backstop that self-heals a failed post-Stripe write AND records out-of-band Stripe-dashboard refunds. The partial unique index on `proposal_refunds.stripe_refund_id` (WHERE NOT NULL) is the shared idempotency anchor.
 - **Important**: Stripe webhook route (`/api/stripe/webhook`) must receive raw body — registered before `express.json()` in `server/index.js`
 
 ### Resend (Email)

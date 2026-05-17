@@ -168,6 +168,7 @@ dr-bartender/
 │   │   ├── fileValidation.js   # Magic-byte file type validation
 │   │   ├── geocode.js          # Nominatim geocoding (address → lat/lng)
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
+│   │   ├── refundHelpers.js    # Partial-refund planner (planRefund) + idempotent reconciliation (applyRefundReconciliation)
 │   │   ├── phone.js            # Save-time phone validation (10 digits, strips country code 1)
 │   │   ├── pricingEngine.js    # Pure pricing calculation engine
 │   │   ├── shoppingList.js     # Shopping-list generator (mirrors client generateShoppingList.js); also includes consult-mode branch + buildGeneratorInputFromConsult translator
@@ -306,6 +307,7 @@ dr-bartender/
 ### Admin Dashboard
 - **Staffing**: Application review, hire/reject, interview notes, user management, SMS messaging (compose, recipient picker, shift invitation templates, grouped message history)
 - **Proposals**: Create, price, send, track views/signatures — paid proposals automatically move to Events
+- **Partial Refunds**: Admin partial refunds via Stripe — Approach-A `total_price` correction + audit ledger (`proposal_refunds`), idempotent `charge.refunded` webhook-backstopped
 - **Clients**: CRM with source tracking (direct, Thumbtack, referral, website)
 - **Drink Plans**: Auto-created when proposals become events; accessed from event detail page; client receives email with questionnaire link
 - **Drink Menu**: Manage 25 cocktails + 16 mocktails across categories
