@@ -579,6 +579,20 @@ export default function QuoteWizard() {
     }
   };
 
+  // Skip the (long) extras step without selecting anything. Lossless: does NOT
+  // clear form.addon_ids — user can return via the stepper/Back. Mirrors
+  // tryAdvance's draft-save path; addons has no validation so none is needed.
+  const skipExtras = () => {
+    setError('');
+    setFieldErrors({});
+    clearAll();
+    setResumed(false);
+    const nextStep = step + 1;
+    saveDraftLocal(form, nextStep, draftTokenRef.current);
+    if (draftTokenRef.current) saveDraftServer();
+    setStep(nextStep);
+  };
+
   const handleSubmit = async () => {
     const result = validate(getStepRules(), form);
     if (!result.valid) {
@@ -767,6 +781,7 @@ export default function QuoteWizard() {
               toggleExpand={toggleExpand}
               isIncludedByBundle={isIncludedByBundle}
               isUnavailableByBundle={isUnavailableByBundle}
+              onSkipExtras={skipExtras}
             />
           )}
 

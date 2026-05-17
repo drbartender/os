@@ -16,6 +16,7 @@ export default function ExtrasStep({
   toggleExpand,
   isIncludedByBundle,
   isUnavailableByBundle,
+  onSkipExtras,
 }) {
   return (
     <div className="wz-card">
@@ -23,6 +24,14 @@ export default function ExtrasStep({
       <p style={{ fontSize: '0.95rem', marginBottom: '1.25rem', color: 'var(--deep-brown)', opacity: 0.7 }}>
         Add extras to make your event unforgettable. All selections are optional.
       </p>
+      <button
+        type="button"
+        className="btn btn-secondary"
+        onClick={onSkipExtras}
+        style={{ marginBottom: '1.5rem' }}
+      >
+        Skip extras →
+      </button>
       {groupedAddons.length > 0 ? (
         groupedAddons.map(group => (
           <div key={group.key} className="wz-addon-category">
