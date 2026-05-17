@@ -528,7 +528,6 @@ export function initialFormFromProposal(p) {
     event_date: p.event_date ? p.event_date.slice(0, 10) : '',
     event_start_time: p.event_start_time || '',
     event_duration_hours: Number(p.event_duration_hours) || 4,
-    event_location: p.event_location || '',
     venue_name: p.venue_name || '',
     venue_street: p.venue_street || '',
     venue_city: p.venue_city || '',

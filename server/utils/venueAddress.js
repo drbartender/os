@@ -1,5 +1,8 @@
 // Structured venue address: compose + validate. Pure, no DB calls.
 // event_location and shifts.location are derived from these fields.
+// VENUE_STATES + composeVenueLocation are mirrored client-side in
+// client/src/components/VenueAddressFields.js (VENUE_STATES + formatVenue) —
+// kept in sync manually (same pattern as eventTypes.js). Edit both together.
 
 const VENUE_STATES = ['Illinois', 'Indiana', 'Michigan', 'Minnesota', 'Wisconsin'];
 // Linear-time: fully anchored, fixed-length quantifiers, no ambiguous

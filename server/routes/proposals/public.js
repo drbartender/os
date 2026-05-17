@@ -409,7 +409,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
             spiritCategory: cleanClassOptions?.spirit_category || null,
             guestCount: gc,
             eventDate: event_date || null,
-            eventLocation: event_location || null,
+            eventLocation: composedLocation || null,
             proposalId: proposal.id,
             adminUrl,
           });

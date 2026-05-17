@@ -1,5 +1,8 @@
 import React from 'react';
 
+// VENUE_STATES + formatVenue mirror server/utils/venueAddress.js
+// (VENUE_STATES + composeVenueLocation) — kept in sync manually
+// (same pattern as eventTypes.js). Edit both together.
 export const VENUE_STATES = ['Illinois', 'Indiana', 'Michigan', 'Minnesota', 'Wisconsin'];
 
 // Controlled structured-address inputs. Used at the sign+pay gate and the
