@@ -3,7 +3,7 @@
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { auth, requireAdminOrManager } = require('../middleware/auth');
+const { auth, adminOnly, requireAdminOrManager } = require('../middleware/auth');
 const { publicLimiter } = require('../middleware/rateLimiters');
 const { createEventShifts } = require('../utils/eventCreation');
 const { getBookingWindow } = require('../utils/bookingWindow');
@@ -535,6 +535,180 @@ router.post('/charge-balance/:id', auth, requireAdminOrManager, asyncHandler(asy
 
   // Webhook will handle status update on success
   res.json({ status: intent.status, amount: balanceCents });
+}));
+
+// ─── Admin: refund history for a proposal ────────────────────────
+
+/** GET /api/stripe/refunds/:id — admin/manager (read-only refund history) */
+router.get('/refunds/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Exclude 'pending': a transient/stranded pre-Stripe row must never render
+  // in history as if a refund actually happened. Only resolved rows show.
+  const { rows } = await pool.query(
+    `SELECT id, amount, reason, total_price_before, total_price_after,
+            stripe_refund_id, status, created_at
+       FROM proposal_refunds
+      WHERE proposal_id = $1 AND status <> 'pending'
+      ORDER BY created_at DESC`,
+    [req.params.id]
+  );
+  res.json(rows);
+}));
+
+// ─── Admin: issue a partial refund ───────────────────────────────
+
+/**
+ * POST /api/stripe/refund/:id — admin ONLY (money OUT, stricter than the
+ * money-IN charge-balance which allows managers). Body: { amount, reason,
+ * idempotency_key }. All refund rejections throw AppError so the precise
+ * planner message reaches the admin toast (ValidationError would bury it
+ * in fieldErrors behind the generic "Please fix the errors below").
+ */
+router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
+
+  const proposalId = req.params.id;
+  const { amount, reason, idempotency_key } = req.body;
+  const cleanReason = String(reason || '').trim();
+  if (!cleanReason) throw new AppError('A refund reason is required.', 400, 'REASON_REQUIRED');
+  if (!idempotency_key || typeof idempotency_key !== 'string') {
+    throw new AppError('Missing idempotency key — reopen the refund form and retry.', 400, 'MISSING_IDEMPOTENCY_KEY');
+  }
+
+  const propRes = await pool.query(
+    'SELECT id, total_price, amount_paid FROM proposals WHERE id = $1',
+    [proposalId]
+  );
+  if (!propRes.rows[0]) throw new NotFoundError('Proposal not found');
+  const proposal = propRes.rows[0];
+
+  // Refundable charges: deposit/balance/full AND invoice. `invoice` is the
+  // STANDARD balance path post the invoice-rollup fix (balance paid via the
+  // public invoice page → payment_type='invoice' linked to a 'Balance'
+  // invoice — exactly where a no-show-bartender refund lives). Excluding it
+  // would defeat the headline use case. Whether total_price also drops is
+  // decided downstream by the linked invoice LABEL (applyRefundReconciliation),
+  // not here. Only the drink_plan_* rails are excluded. Stripe's own
+  // per-charge refund cap is the final over-refund backstop on top of the
+  // remainingCents math (which nets prior succeeded refunds per charge).
+  const payRes = await pool.query(
+    `SELECT pp.id,
+            pp.stripe_payment_intent_id,
+            pp.amount
+              - COALESCE((SELECT SUM(pr.amount) FROM proposal_refunds pr
+                           WHERE pr.payment_id = pp.id AND pr.status = 'succeeded'), 0)
+              AS "remainingCents"
+       FROM proposal_payments pp
+      WHERE pp.proposal_id = $1
+        AND pp.status = 'succeeded'
+        AND pp.stripe_payment_intent_id IS NOT NULL
+        AND pp.payment_type IN ('deposit', 'balance', 'full', 'invoice')`,
+    [proposalId]
+  );
+
+  const { planRefund, applyRefundReconciliation } = require('../utils/refundHelpers');
+  const plan = planRefund({
+    paymentsWithRemaining: payRes.rows.map(r => ({
+      id: r.id,
+      stripe_payment_intent_id: r.stripe_payment_intent_id,
+      remainingCents: Number(r.remainingCents),
+    })),
+    requestedDollars: amount,
+    amountPaidDollars: Number(proposal.amount_paid),
+    totalPriceDollars: Number(proposal.total_price),
+  });
+  if (!plan.ok) {
+    // AppError → `.message` surfaces as response `error` → admin toast.
+    // (ValidationError would hide plan.message in fieldErrors behind the
+    // generic banner, defeating the precise no-spanning guidance.)
+    throw new AppError(plan.message, 400, plan.code);
+  }
+
+  // Pending row BEFORE Stripe, so a Stripe success we then fail to record
+  // is still discoverable (and adoptable by the webhook backstop).
+  const pendRes = await pool.query(
+    `INSERT INTO proposal_refunds
+       (proposal_id, payment_id, stripe_payment_intent_id, amount, reason,
+        total_price_before, total_price_after, issued_by, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending')
+     RETURNING id`,
+    [proposalId, plan.targetPaymentId, plan.targetIntentId, plan.amountCents,
+     cleanReason, Number(proposal.total_price), plan.totalPriceAfterDollars, req.user.id]
+  );
+  const pendingRowId = pendRes.rows[0].id;
+
+  let refund;
+  try {
+    refund = await stripe.refunds.create(
+      { payment_intent: plan.targetIntentId, amount: plan.amountCents },
+      { idempotencyKey: `refund-${proposalId}-${idempotency_key}` }
+    );
+  } catch (err) {
+    await pool.query(`UPDATE proposal_refunds SET status = 'failed' WHERE id = $1`, [pendingRowId]);
+    console.error('Stripe refund error:', err);
+    if (err.type === 'StripeInvalidRequestError') {
+      throw new PaymentError(`Refund rejected: ${err.message}`, 'REFUND_REJECTED');
+    }
+    throw new ExternalServiceError('Stripe', err, 'Refund temporarily unavailable. Please try again.');
+  }
+
+  const dbClient = await pool.connect();
+  let recon;
+  try {
+    await dbClient.query('BEGIN');
+    recon = await applyRefundReconciliation(
+      {
+        proposalId: Number(proposalId),
+        stripeRefundId: refund.id,
+        paymentIntentId: plan.targetIntentId,
+        paymentId: plan.targetPaymentId,
+        amountCents: plan.amountCents,
+        reason: cleanReason,
+        issuedBy: req.user.id,
+      },
+      dbClient
+    );
+    await dbClient.query('COMMIT');
+  } catch (dbErr) {
+    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(dbErr, { tags: { route: '/stripe/refund', proposalId } });
+    }
+    // Money already left via Stripe; the charge.refunded webhook backstop
+    // adopts our pending row and reconciles. Surface 502 (not a silent 200),
+    // correct ExternalServiceError signature: (service, originalError, userMsg).
+    console.error('Refund reconciliation failed (webhook will backstop):', dbErr);
+    throw new ExternalServiceError(
+      'Database',
+      dbErr,
+      'Refund was processed by Stripe; the records will finish syncing momentarily.'
+    );
+  } finally {
+    dbClient.release();
+  }
+
+  // applied===false → reconciliation no-op'd because this refund id was
+  // already applied (idempotent winner, e.g. a double-submit whose Stripe
+  // idempotency key returned the same refund). The pending row we inserted
+  // above is now redundant — delete it so it can't strand as a ghost
+  // 'pending' history entry. Money/books are already correct.
+  if (recon && recon.applied === false) {
+    await pool.query(
+      `DELETE FROM proposal_refunds
+        WHERE id = $1 AND status = 'pending' AND stripe_refund_id IS NULL`,
+      [pendingRowId]
+    );
+  }
+
+  const after = await pool.query(
+    'SELECT total_price, amount_paid FROM proposals WHERE id = $1',
+    [proposalId]
+  );
+  res.json({
+    refunded: plan.amountCents,
+    total_price: Number(after.rows[0].total_price),
+    amount_paid: Number(after.rows[0].amount_paid),
+  });
 }));
 
 // ─── Public: create a Payment Intent for an invoice ─────────────
