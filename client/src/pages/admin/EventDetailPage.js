@@ -205,6 +205,11 @@ export default function EventDetailPage() {
               ) : (proposal.client_name || 'Event')}
               {` · ${eventTypeLabel}`}
             </h1>
+            {proposal.last_minute_hold && (
+              <span className="lm-hold-badge" title="Booked ≤72h out — verify staff availability before the event">
+                ⚠ Last-minute — verify staffing
+              </span>
+            )}
             <div className="muted" style={{ fontSize: 13 }}>
               {fmtDateFull(proposal.event_date && String(proposal.event_date).slice(0, 10))}
               {timeRange && ` · ${timeRange}`}
