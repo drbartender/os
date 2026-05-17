@@ -170,3 +170,34 @@ Replace with the design-folder source. White editorial treatment:
 - Highest-attention item is the PDF (the artifact clients receive) — verify
   large-list pagination/row-fit before push.
 - No migration, no env var, no data shape change.
+
+## Revision — 2026-05-17 (post-implementation feedback)
+
+After the initial drop-in, the user revised three points. These supersede the
+matching parts of "Detailed design" above:
+
+1. **Modal: no logo.** The `<img>` and the `LOGO_BASE64` import are removed from
+   `ShoppingListModal.jsx` (an unused import would fail the `CI=true` lint gate).
+   `logoBase64.js` is now imported by **PDF + ClientShoppingList only** (not the
+   modal); the contained-ripple analysis still holds.
+2. **Modal: re-themed to Admin OS, not base tokens.** `ShoppingListModal` is
+   admin-only — verified every render path roots in `pages/admin/`
+   (`DrinkPlanDetail`, and `DrinkPlanCard` via `EventDetailPage` /
+   `ProposalDetail`); the client never sees it (the client gets the separate
+   read-only `/shopping-list/:token` page + PDF). So the modal's bespoke
+   chalkboard/cream/`--amber` styling is replaced with the **Admin OS skin
+   tokens** (`--bg-elev`, `--ink-1/2/3`, `--line-1/2`, `--accent`,
+   `--accent-soft`, `--accent-line`, `--shadow-pop`, `--radius*`, semantic
+   `--ok-h/--danger-h` for the save indicator) so it auto-swaps with the admin
+   light/dark skin like `.confirm-modal` does. `.btn`/`.btn-secondary`/
+   `.btn-success` kept (already admin-skinned); Undo button is now
+   `.btn .btn-sm .btn-primary` with inline color overrides dropped. Under
+   `html[data-app="admin-os"]`, `--font-display` resolves to Inter — that is the
+   intended admin match. **Logic remains byte-identical.**
+3. **Client page: IM Fell headings.** `ClientShoppingList.js` `brand`,
+   `clientName`, and `sectionHeader` switch `Georgia, serif` →
+   `var(--font-display)`. The public page is not `data-app="admin-os"`, so this
+   resolves from `:root` = IM Fell English SC (the apothecary brand). Item rows /
+   meta / disclaimer keep the system sans for glance readability.
+
+PDF is unchanged from the approved design-folder source.

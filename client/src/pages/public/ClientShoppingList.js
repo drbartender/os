@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
+// NOTE: swap logoBase64.js to encode the gold-ringed character mark
+// (logo-character-dark.png) — the ring is baked into the asset; no outer
+// medallion treatment needed.
+import { LOGO_BASE64 } from '../../components/ShoppingList/logoBase64';
 
 const BASE_URL = process.env.REACT_APP_API_URL || '';
 
@@ -50,7 +54,7 @@ export default function ClientShoppingList() {
         <div style={styles.container}>
           <div style={{ textAlign: 'center', padding: '3rem 1rem' }}>
             <div className="spinner" style={{ margin: '0 auto 1rem' }} />
-            <p style={{ color: '#D49549', fontStyle: 'italic' }}>Loading your shopping list...</p>
+            <p style={{ color: '#2FA7A0', fontStyle: 'italic' }}>Loading your shopping list...</p>
           </div>
         </div>
       </div>
@@ -62,10 +66,11 @@ export default function ClientShoppingList() {
       <div style={styles.page}>
         <div style={styles.container}>
           <div style={styles.header}>
+            <div style={styles.logoMedallion}><img src={LOGO_BASE64} alt="Dr. Bartender" style={styles.logoImg} /></div>
             <h1 style={styles.brand}>Dr. Bartender</h1>
           </div>
           <div style={{ textAlign: 'center', padding: '3rem 1rem' }}>
-            <p style={{ color: '#D49549', fontSize: '1.1rem' }}>{error}</p>
+            <p style={{ color: '#2FA7A0', fontSize: '1.1rem' }}>{error}</p>
           </div>
         </div>
       </div>
@@ -77,12 +82,13 @@ export default function ClientShoppingList() {
       <div style={styles.page}>
         <div style={styles.container}>
           <div style={styles.header}>
+            <div style={styles.logoMedallion}><img src={LOGO_BASE64} alt="Dr. Bartender" style={styles.logoImg} /></div>
             <h1 style={styles.brand}>Dr. Bartender</h1>
             {data?.client_name && <p style={styles.clientName}>{data.client_name}</p>}
           </div>
           <div style={{ textAlign: 'center', padding: '3rem 1.5rem' }}>
             <p style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>Your shopping list is being prepared</p>
-            <p style={{ color: '#D49549', fontStyle: 'italic' }}>
+            <p style={{ color: '#2FA7A0', fontStyle: 'italic' }}>
               Our team is customizing your shopping list. Check back soon!
             </p>
           </div>
@@ -134,7 +140,7 @@ export default function ClientShoppingList() {
               <div
                 key={itemKey(section, item) + '-checked-' + i}
                 onClick={() => toggleItem(itemKey(section, item))}
-                style={{ ...styles.itemRow, backgroundColor: 'rgba(26,20,16,0.3)' }}
+                style={{ ...styles.itemRow, backgroundColor: 'rgba(18,22,28,0.4)' }}
               >
                 <div style={styles.checkbox}>
                   <div style={styles.checkboxChecked}>✓</div>
@@ -157,6 +163,7 @@ export default function ClientShoppingList() {
       <div style={styles.container}>
         {/* Header */}
         <div style={styles.header}>
+          <div style={styles.logoMedallion}><img src={LOGO_BASE64} alt="Dr. Bartender" style={styles.logoImg} /></div>
           <h1 style={styles.brand}>Dr. Bartender</h1>
           <p style={styles.tagline}>Premium Bar Services</p>
         </div>
@@ -187,8 +194,8 @@ export default function ClientShoppingList() {
         {/* Signature cocktails */}
         {list.signatureCocktailNames && list.signatureCocktailNames.length > 0 && (
           <div style={styles.cocktailBar}>
-            <span style={{ color: '#D49549', fontSize: '0.82rem', fontStyle: 'italic' }}>Signature Cocktails: </span>
-            <span style={{ color: '#F5F0E8', fontSize: '0.85rem' }}>
+            <span style={{ color: '#2FA7A0', fontSize: '0.82rem', fontStyle: 'italic' }}>Signature Cocktails: </span>
+            <span style={{ color: '#F0E8D6', fontSize: '0.85rem' }}>
               {list.signatureCocktailNames.join('  ·  ')}
             </span>
           </div>
@@ -202,7 +209,7 @@ export default function ClientShoppingList() {
           >
             Refresh List
           </button>
-          <p style={{ color: '#7A6245', fontSize: '0.75rem', marginTop: '0.5rem', fontStyle: 'italic' }}>
+          <p style={{ color: 'rgba(240,232,214,0.6)', fontSize: '0.75rem', marginTop: '0.5rem', fontStyle: 'italic' }}>
             Pull to refresh or tap above to check for updates
           </p>
         </div>
@@ -214,7 +221,7 @@ export default function ClientShoppingList() {
             drawn from decades of experience in bar service. We advise purchasing refundable alcohol as close to
             the event date as possible to ensure compliance with return policies from your alcohol supplier.
           </p>
-          <p style={{ color: '#C17D3C', fontSize: '0.8rem', textAlign: 'center', marginTop: '0.5rem' }}>
+          <p style={{ color: '#1D8C89', fontSize: '0.8rem', textAlign: 'center', marginTop: '0.5rem' }}>
             drbartender.com
           </p>
         </div>
@@ -226,9 +233,9 @@ export default function ClientShoppingList() {
 const styles = {
   page: {
     minHeight: '100vh',
-    backgroundColor: '#1A1410',
+    backgroundColor: '#12161C',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-    color: '#F5F0E8',
+    color: '#F0E8D6',
   },
   container: {
     maxWidth: 500,
@@ -237,17 +244,23 @@ const styles = {
   },
   header: {
     textAlign: 'center',
-    padding: '2rem 1rem 1rem',
-    borderBottom: '2px solid #C17D3C',
+    padding: '1.25rem 1rem 1rem',
+    borderBottom: '2px solid #1D8C89',
   },
+  logoMedallion: {
+    width: 72, height: 72,
+    margin: '0 auto 0.5rem',
+    display: 'block',
+  },
+  logoImg: { width: '100%', height: '100%', objectFit: 'contain', display: 'block' },
   brand: {
-    fontFamily: 'Georgia, serif',
+    fontFamily: 'var(--font-display)',
     fontSize: '1.6rem',
-    color: '#F5F0E8',
+    color: '#F0E8D6',
     margin: 0,
   },
   tagline: {
-    color: '#D49549',
+    color: '#2FA7A0',
     fontSize: '0.8rem',
     fontStyle: 'italic',
     margin: '0.25rem 0 0',
@@ -257,55 +270,62 @@ const styles = {
     padding: '1rem 1rem 0.5rem',
   },
   clientName: {
-    fontFamily: 'Georgia, serif',
+    fontFamily: 'var(--font-display)',
     fontSize: '1.2rem',
-    color: '#F5F0E8',
+    color: '#F0E8D6',
     margin: '0 0 0.25rem',
   },
   metaRow: {
     display: 'flex',
     justifyContent: 'center',
     gap: '1.5rem',
-    color: '#D49549',
+    color: '#2FA7A0',
     fontSize: '0.85rem',
     fontStyle: 'italic',
   },
   progressContainer: {
     padding: '0.75rem 1.25rem 1.25rem',
+    position: 'sticky',
+    top: 0,
+    zIndex: 5,
+    background: 'rgba(18,22,28,0.92)',
+    backdropFilter: 'saturate(140%) blur(8px)',
+    WebkitBackdropFilter: 'saturate(140%) blur(8px)',
+    borderBottom: '1px solid rgba(29,140,137,0.18)',
   },
   progressBar: {
     height: 6,
-    backgroundColor: '#2a2a2a',
+    backgroundColor: '#1E242B',
     borderRadius: 3,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#C17D3C',
+    backgroundColor: '#1D8C89',
     borderRadius: 3,
     transition: 'width 0.3s ease',
   },
   progressText: {
     textAlign: 'center',
     fontSize: '0.78rem',
-    color: '#D49549',
+    color: '#2FA7A0',
     marginTop: '0.375rem',
   },
   sectionHeader: {
-    backgroundColor: '#2a2a2a',
-    color: '#E8DFC4',
+    backgroundColor: '#1E242B',
+    color: '#E6DDCC',
     fontSize: '0.82rem',
     textAlign: 'center',
     padding: '0.4rem 0.5rem',
-    fontFamily: 'Georgia, serif',
+    fontFamily: 'var(--font-display)',
     letterSpacing: '0.04em',
-    borderBottom: '1.5px solid #C17D3C',
+    borderBottom: '1.5px solid #1D8C89',
   },
   itemRow: {
     display: 'flex',
     alignItems: 'center',
     padding: '0.65rem 1rem',
-    borderBottom: '1px solid rgba(193,125,60,0.15)',
+    borderBottom: '1px solid rgba(29,140,137,0.18)',
     cursor: 'pointer',
     userSelect: 'none',
     WebkitTapHighlightColor: 'transparent',
@@ -318,14 +338,14 @@ const styles = {
     width: 22,
     height: 22,
     borderRadius: 4,
-    border: '2px solid #C17D3C',
+    border: '2px solid #1D8C89',
   },
   checkboxChecked: {
     width: 22,
     height: 22,
     borderRadius: 4,
-    backgroundColor: '#C17D3C',
-    color: '#1A1410',
+    backgroundColor: '#1D8C89',
+    color: '#F0E8D6',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -338,39 +358,39 @@ const styles = {
   },
   itemSize: {
     fontSize: '0.8rem',
-    color: '#D49549',
+    color: '#2FA7A0',
   },
   itemQty: {
     fontSize: '1rem',
     fontWeight: 'bold',
-    color: '#C17D3C',
+    color: '#1D8C89',
     marginLeft: '0.5rem',
     minWidth: 24,
     textAlign: 'right',
   },
   cocktailBar: {
-    backgroundColor: '#2a2a2a',
-    border: '1px solid #C17D3C',
+    backgroundColor: '#1E242B',
+    border: '1px solid #1D8C89',
     borderRadius: 4,
     padding: '0.5rem 1rem',
     margin: '0 1rem',
   },
   refreshBtn: {
     background: 'none',
-    border: '1px solid #C17D3C',
-    color: '#C17D3C',
+    border: '1px solid #1D8C89',
+    color: '#1D8C89',
     padding: '0.5rem 2rem',
     borderRadius: 4,
     fontSize: '0.85rem',
     cursor: 'pointer',
   },
   footer: {
-    borderTop: '1px solid rgba(193,125,60,0.3)',
+    borderTop: '1px solid rgba(29,140,137,0.3)',
     padding: '1rem 1.25rem 2rem',
   },
   disclaimer: {
     fontSize: '0.7rem',
-    color: '#7A6245',
+    color: 'rgba(240,232,214,0.6)',
     fontStyle: 'italic',
     lineHeight: 1.5,
   },

@@ -255,3 +255,33 @@ Keep the 500×500 source `logo-character-dark.png` in `client/src/images/` for r
 **Placeholder scan:** No TBD/TODO; every code/command step is concrete and runnable. Build-output expectations are exact strings.
 
 **Type/contract consistency:** `LOGO_BASE64` named export consumed identically in all three importers; `generateShoppingListPDF(listData)` signature asserted unchanged in Task 4; modal behavioral anchors asserted in Task 3. Commit policy stated once and referenced consistently (Tasks 1–4 no-stage, Task 6 single commit).
+
+---
+
+## Revision — 2026-05-17 (post-implementation feedback)
+
+Executed after Tasks 1–5. Supersedes Task 3 and amends Task 2; logo importer set changes.
+
+- **Task 7 — modal reskin + drop logo (done):** `ShoppingListModal.jsx` is no
+  longer a drop-in of the design-folder source. Verified admin-only (every
+  render path roots in `pages/admin/`: `DrinkPlanDetail`; `DrinkPlanCard` via
+  `EventDetailPage`/`ProposalDetail`). Removed the logo `<img>` + `LOGO_BASE64`
+  import; rewrote all style values from base tokens to Admin OS skin tokens
+  (`--bg-elev`, `--ink-1/2/3`, `--line-1/2`, `--accent`, `--accent-soft`,
+  `--accent-line`, `--shadow-pop`, `--radius*`, `hsl(var(--ok-h)…)` /
+  `hsl(var(--danger-h)…)`), scrim `0.65`→`0.6`, Undo → `.btn .btn-sm
+  .btn-primary`. Logic byte-identical (verified: 0 stale base tokens / 0
+  `LOGO_BASE64` refs; 32 admin-os token usages).
+- **Task 8 — client IM Fell headings (done):** `ClientShoppingList.js`
+  `brand`/`clientName`/`sectionHeader` `Georgia, serif` →
+  `var(--font-display)` (3 replacements, 0 Georgia left; resolves to IM Fell
+  via `:root` since the page is not admin-os). Body/meta/disclaimer unchanged.
+- **Logo importers now PDF + ClientShoppingList only** (modal dropped). The
+  contained-ripple conclusion is unchanged.
+- **Task 5 build gate must be re-run** after Tasks 7–8, from the canonical
+  casing: `cd "C:/Users/dalla/DRB_OS/os/client" && CI=true npx react-scripts
+  build` (lowercase `drb_os` triggers a false ESLint "plugin react conflicted"
+  failure — not a code error).
+- **Task 6 manual check expands:** modal must be verified in **both** Admin OS
+  skins (dark + light) and must match surrounding admin chrome; client page
+  shows IM Fell headings with no logo on the modal.

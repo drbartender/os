@@ -169,7 +169,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
         guestCount: parseInt(guestCount, 10) || edited.guestCount,
         eventTypeLabel: edited.eventTypeLabel || listData.eventTypeLabel,
       };
-      // Dynamic-import the PDF generator (which carries the 129KB embedded logo
+      // Dynamic-import the PDF generator (which carries the embedded logo
       // + jspdf) so admins who never download a PDF don't pay that cost.
       const { generateShoppingListPDF } = await import('./ShoppingListPDF');
       const blob = await generateShoppingListPDF(finalData);
@@ -238,50 +238,54 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
   const saveIndicator = saveStatus === 'saving' ? 'Saving...'
     : saveStatus === 'saved' ? 'Saved'
     : 'Unsaved';
-  const saveColor = saveStatus === 'saved' ? '#4caf50' : saveStatus === 'saving' ? '#D49549' : '#ff9800';
+  // Admin-os semantic colors (skin-aware via the html[data-app=admin-os] cascade).
+  const saveColor = saveStatus === 'saved' ? 'hsl(var(--ok-h) var(--ok-s) 42%)'
+    : saveStatus === 'saving' ? 'var(--ink-3)'
+    : 'hsl(var(--danger-h) var(--danger-s) 55%)';
 
   return createPortal(
     <div style={{
       position: 'fixed', inset: 0, zIndex: 1000,
-      backgroundColor: 'rgba(0,0,0,0.65)',
+      backgroundColor: 'rgba(0,0,0,0.6)',
       display: 'flex', flexDirection: 'column',
       overflowY: 'auto',
       paddingTop: 'calc(60px + 1.5rem)',
     }}>
       <div style={{
-        backgroundColor: 'var(--cream)',
+        backgroundColor: 'var(--bg-elev)',
         margin: '0 auto 1.5rem',
         width: '100%',
         maxWidth: 960,
-        borderRadius: 8,
-        boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+        borderRadius: 'var(--radius-lg)',
+        boxShadow: 'var(--shadow-pop)',
+        border: '1px solid var(--line-2)',
         display: 'flex',
         flexDirection: 'column',
       }}>
 
         {/* ── Modal Header ── */}
         <div style={{
-          backgroundColor: '#1A1410',
-          borderRadius: '8px 8px 0 0',
+          backgroundColor: 'transparent',
+          borderRadius: 'var(--radius-lg) var(--radius-lg) 0 0',
           padding: '0.875rem 1.25rem',
           display: 'flex',
           alignItems: 'center',
           gap: '1rem',
           flexWrap: 'wrap',
-          borderBottom: '2px solid #C17D3C',
+          borderBottom: '1px solid var(--line-2)',
         }}>
           <div style={{ flex: 1 }}>
-            <p style={{ color: '#F5F0E8', fontFamily: 'var(--font-display)', fontSize: '1.1rem', margin: 0 }}>
+            <p style={{ color: 'var(--ink-1)', fontFamily: 'var(--font-display)', fontSize: '1.1rem', margin: 0 }}>
               {edited.clientName || 'Shopping List'}
             </p>
             {edited.eventDate && (
-              <p style={{ color: '#D49549', fontSize: '0.8rem', margin: '2px 0 0', fontStyle: 'italic' }}>
+              <p style={{ color: 'var(--ink-3)', fontSize: '0.8rem', margin: '2px 0 0', fontStyle: 'italic' }}>
                 {new Date(edited.eventDate).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' })}
               </p>
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <label style={{ color: '#D49549', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>Guests:</label>
+            <label style={{ color: 'var(--ink-2)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>Guests:</label>
             <input
               type="number"
               min="1"
@@ -289,9 +293,9 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
               onChange={e => handleGuestCountChange(e.target.value)}
               onBlur={handleGuestCountBlur}
               style={{
-                width: 64, padding: '0.3rem 0.5rem', borderRadius: 4,
-                border: '1px solid #C17D3C', backgroundColor: '#2a2a2a',
-                color: '#F5F0E8', fontSize: '0.9rem', textAlign: 'center',
+                width: 64, padding: '0.3rem 0.5rem', borderRadius: 'var(--radius-sm)',
+                border: '1px solid var(--line-2)', backgroundColor: 'var(--bg-3)',
+                color: 'var(--ink-1)', fontSize: '0.9rem', textAlign: 'center',
               }}
             />
           </div>
@@ -302,9 +306,9 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           )}
           {undoStack.length > 0 && (
             <button
-              className="btn btn-sm"
+              className="btn btn-sm btn-primary"
               onClick={undoLastDelete}
-              style={{ whiteSpace: 'nowrap', backgroundColor: '#D49549', border: 'none', color: '#1A1410', fontWeight: 'bold' }}
+              style={{ whiteSpace: 'nowrap' }}
               title={`Undo (${undoStack.length} item${undoStack.length > 1 ? 's' : ''})`}
             >
               Undo ({undoStack.length})
@@ -318,7 +322,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
             Reset
           </button>
           <button onClick={onClose} style={{
-            background: 'none', border: 'none', color: '#F5F0E8',
+            background: 'none', border: 'none', color: 'var(--ink-2)',
             fontSize: '1.4rem', cursor: 'pointer', lineHeight: 1, padding: '0 0.25rem',
           }}>×</button>
         </div>
@@ -354,19 +358,19 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
         {edited.signatureCocktailNames && edited.signatureCocktailNames.length > 0 && (
           <div style={{
             margin: '0 1.25rem',
-            backgroundColor: '#1A1410',
-            border: '1px solid #C17D3C',
-            borderRadius: 4,
+            backgroundColor: 'var(--bg-2)',
+            border: '1px solid var(--line-2)',
+            borderRadius: 'var(--radius)',
             padding: '0.5rem 0.875rem',
             display: 'flex',
             gap: '0.5rem',
             alignItems: 'center',
             flexWrap: 'wrap',
           }}>
-            <span style={{ color: '#D49549', fontSize: '0.78rem', fontStyle: 'italic', whiteSpace: 'nowrap' }}>
+            <span style={{ color: 'var(--ink-3)', fontSize: '0.78rem', fontStyle: 'italic', whiteSpace: 'nowrap' }}>
               Signature Cocktails:
             </span>
-            <span style={{ color: '#F5F0E8', fontSize: '0.82rem' }}>
+            <span style={{ color: 'var(--ink-1)', fontSize: '0.82rem' }}>
               {edited.signatureCocktailNames.join('  ·  ')}
             </span>
           </div>
@@ -378,16 +382,16 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           justifyContent: 'flex-end',
           gap: '0.75rem',
           padding: '1rem 1.25rem',
-          borderTop: '1px solid var(--border)',
+          borderTop: '1px solid var(--line-2)',
           marginTop: '1rem',
           flexWrap: 'wrap',
           alignItems: 'center',
         }}>
           {pdfError && (
-            <span style={{ color: '#d32f2f', fontSize: '0.82rem', marginRight: 'auto' }}>{pdfError}</span>
+            <span style={{ color: 'hsl(var(--danger-h) var(--danger-s) 55%)', fontSize: '0.82rem', marginRight: 'auto' }}>{pdfError}</span>
           )}
           {approveError && (
-            <span style={{ color: '#d32f2f', fontSize: '0.82rem', marginRight: 'auto' }}>{approveError}</span>
+            <span style={{ color: 'hsl(var(--danger-h) var(--danger-s) 55%)', fontSize: '0.82rem', marginRight: 'auto' }}>{approveError}</span>
           )}
           {planToken && (
             <button className="btn btn-sm btn-secondary" onClick={handleShareLink}>
@@ -424,13 +428,13 @@ function EditableSection({ title, items, onUpdate, onRemove, onAdd, onDragEnd, s
     <div>
       {/* Section header */}
       <div style={{
-        backgroundColor: '#1A1410',
-        color: '#E8DFC4',
+        backgroundColor: 'var(--bg-2)',
+        color: 'var(--ink-2)',
         fontSize: '0.78rem',
         textAlign: 'center',
         padding: '0.3rem 0.5rem',
         marginBottom: '0.25rem',
-        borderRadius: 3,
+        borderRadius: 'var(--radius-sm)',
         fontFamily: 'var(--font-display)',
         letterSpacing: '0.05em',
       }}>
@@ -442,14 +446,14 @@ function EditableSection({ title, items, onUpdate, onRemove, onAdd, onDragEnd, s
         display: 'grid',
         gridTemplateColumns: '20px 40px 60px 1fr 28px',
         gap: '0.25rem',
-        backgroundColor: '#2a2a2a',
+        backgroundColor: 'var(--bg-3)',
         padding: '0.3rem 0.4rem',
-        borderBottom: '1.5px solid #C17D3C',
+        borderBottom: '1px solid var(--line-2)',
         marginBottom: '0.125rem',
       }}>
         <span />
         {['Qty', 'Size', 'Item', ''].map(h => (
-          <span key={h} style={{ color: '#E8DFC4', fontSize: '0.7rem', textAlign: h === 'Qty' ? 'center' : 'left' }}>{h}</span>
+          <span key={h} style={{ color: 'var(--ink-3)', fontSize: '0.7rem', textAlign: h === 'Qty' ? 'center' : 'left' }}>{h}</span>
         ))}
       </div>
 
@@ -473,9 +477,9 @@ function EditableSection({ title, items, onUpdate, onRemove, onAdd, onDragEnd, s
         onClick={onAdd}
         style={{
           width: '100%', marginTop: '0.375rem',
-          background: 'none', border: '1px dashed #C17D3C',
-          color: '#C17D3C', fontSize: '0.78rem', cursor: 'pointer',
-          borderRadius: 3, padding: '0.3rem 0', textAlign: 'center',
+          background: 'none', border: '1px dashed var(--accent-line)',
+          color: 'var(--accent)', fontSize: '0.78rem', cursor: 'pointer',
+          borderRadius: 'var(--radius-sm)', padding: '0.3rem 0', textAlign: 'center',
         }}
       >
         + Add Item
@@ -500,8 +504,8 @@ function SortableRow({ row, index, onUpdate, onRemove }) {
     gap: '0.25rem',
     alignItems: 'center',
     padding: '0.2rem 0.4rem',
-    backgroundColor: isDragging ? '#D49549' : index % 2 === 0 ? '#F5F0E8' : '#EDE3CC',
-    borderBottom: '0.5px solid rgba(193,125,60,0.2)',
+    backgroundColor: isDragging ? 'var(--accent-soft)' : index % 2 === 0 ? 'var(--bg-elev)' : 'var(--bg-2)',
+    borderBottom: '0.5px solid var(--line-1)',
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.8 : 1,
@@ -517,7 +521,7 @@ function SortableRow({ row, index, onUpdate, onRemove }) {
         {...listeners}
         style={{
           background: 'none', border: 'none', cursor: 'grab',
-          color: '#aaa', fontSize: '0.8rem', lineHeight: 1, padding: 0,
+          color: 'var(--ink-3)', fontSize: '0.8rem', lineHeight: 1, padding: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           touchAction: 'none',
         }}
@@ -528,23 +532,23 @@ function SortableRow({ row, index, onUpdate, onRemove }) {
         min="0"
         value={row.qty}
         onChange={e => onUpdate(index, 'qty', e.target.value)}
-        style={rowInput({ textAlign: 'center', color: '#6B4226', fontWeight: 'bold' })}
+        style={rowInput({ textAlign: 'center', color: 'var(--accent)', fontWeight: 'bold' })}
       />
       <input
         value={row.size}
         onChange={e => onUpdate(index, 'size', e.target.value)}
-        style={rowInput({ color: '#7A6245', fontSize: '0.78rem' })}
+        style={rowInput({ color: 'var(--ink-3)', fontSize: '0.78rem' })}
       />
       <input
         value={row.item}
         onChange={e => onUpdate(index, 'item', e.target.value)}
-        style={rowInput({ fontWeight: '600', color: '#2C1F0E' })}
+        style={rowInput({ fontWeight: '600', color: 'var(--ink-1)' })}
       />
       <button
         onClick={() => onRemove(index)}
         style={{
           background: 'none', border: 'none', cursor: 'pointer',
-          color: '#aaa', fontSize: '0.9rem', lineHeight: 1, padding: 0,
+          color: 'var(--ink-3)', fontSize: '0.9rem', lineHeight: 1, padding: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}
         title="Remove"
