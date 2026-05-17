@@ -29,11 +29,14 @@ placeholder instead of the bartender's uploaded headshot.
 **Change:**
 1. `server/routes/me.js` — add `headshot_file_url` to the `/me/tip-page` query and return a
    **usable URL**. The stored value is a path like `/files/{filename}`; a raw path will not
-   render. Reuse the existing signed-R2-URL generation already used by
-   `server/routes/publicTip.js` (`GET /api/public/tip/:token`) so the same code path produces
-   the displayable URL. Do not duplicate the signing logic — reuse/extract the existing
-   helper. Endpoint is already scoped to the authenticated bartender (`req.user`), so no IDOR
-   surface; no new query param.
+   render. **Decision (protect working money path):** mirror the proven signing block from
+   `server/routes/publicTip.js` (lines ~55–73: `getSignedUrl(path.basename(...))` for
+   `/files/` paths, else passthrough, Sentry-capture + fall through `null` on error) inline
+   in `me.js`. Do **not** refactor `publicTip.js` — it is a battle-tested public
+   tip-collection (real-money) path and deduping ~18 lines is not worth the regression risk.
+   The local duplication is acceptable; a future shared-helper extraction is a parked chore
+   (see Out of Scope). Endpoint is already scoped to the authenticated bartender
+   (`req.user`), so no IDOR surface; no new query param.
 2. `client/src/pages/staff/PrintTipCard.jsx` — extract the headshot URL from the response and
    pass it as a prop to the layout components.
 3. `client/src/pages/staff/PrintTipCard.layouts.jsx` — accept the prop and pass it as `src`
@@ -166,21 +169,39 @@ because the add-on row is not deleted.
 
 **Decision:** Confirmed — "Last Word can go."
 
-**Source of truth — RESOLVE FIRST (plan's first sub-step):** "Last Word" appears in both
-`server/db/schema.sql` (~line 441 description; ~line 1836 `upgrade_addon_slugs`) and
-`client/src/pages/plan/data/cocktailMenu.js:43`. The implementation plan's first step for
-this fix is to determine which actually drives the client/admin cocktail picker (DB
-`cocktails` table vs the static client data file) and remove/deactivate it there:
-- If DB-backed with an `is_active`-style flag → soft-disable + idempotent `UPDATE`.
-- If the static `cocktailMenu.js` file drives it → remove the entry.
+**Source of truth — RESOLVED.** The cocktail picker is DB-backed: every consumer
+(`DrinkPlanCard`, `DrinkPlanDetail`, `ProposalDetail`, `PotionPlanningLab`) calls
+`GET /api/cocktails`, which serves `cocktails` rows filtered `is_active = true`
+(`server/routes/cocktails.js`). The `cocktails` table has `is_active BOOLEAN DEFAULT true`
+(`schema.sql:388`); soft-disable is the established retire convention (cf.
+`cocktails.js` DELETE = soft delete; `schema.sql:1713`
+`UPDATE service_packages SET is_active = FALSE WHERE slug = ...`).
+`client/src/pages/plan/data/cocktailMenu.js:43` is **dead** — grep confirms no importer.
 
-**Cross-cutting (consistency rule — update everything that depends on it):**
-- `client/src/pages/plan/data/drinkUpgrades.js:98` — smoke-bubble pitch for "Last Word".
-  Remove it; an upgrade pitch for a removed cocktail is dead/incorrect.
+**Change (the entire fix):** one idempotent statement in `server/db/schema.sql`, after the
+cocktails seed `ON CONFLICT (id) DO NOTHING;` (line 442), matching the `service_packages`
+soft-disable precedent:
+
+```sql
+UPDATE cocktails SET is_active = false WHERE id = 'last-word';
+```
+
+**Cross-cutting — RESOLVED (intentionally minimal):**
+- Soft-disable removes Last Word from every picker/consumer at once (all go through the
+  `is_active`-filtered endpoint). Nothing user-visible references it afterward.
+- Historical drink plans that stored `'last-word'` still resolve the name: plan rendering
+  selects `cocktails WHERE id = ANY(...)` **without** an `is_active` filter
+  (`server/routes/drinkPlans.js`), and the row still exists (soft-disabled, not deleted).
+  This is the denormalization-safety analogue of #4a.
+- **Intentionally left (documented, not a miss):** `cocktailMenu.js:43` (dead, no importer);
+  `drinkUpgrades.js` last-word keys (lines 21/32/56/70/84/98/114) and `syrups.js:207` are
+  inert lookup metadata only consulted for *selectable* cocktails — unreachable once
+  Last Word is soft-disabled, and keeping them intact makes re-enabling reversible. Editing
+  these working data tables for zero functional gain would violate the protect-working-paths
+  / minimal principle. A "purge dead Last Word static refs + delete unused `cocktailMenu.js`"
+  cleanup is a parked optional chore (see Out of Scope).
 - The Last Word row's `upgrade_addon_slugs = '{specialty-niche-liqueurs}'` becomes moot once
-  the cocktail is gone — no separate action needed if the row is removed/deactivated.
-- Historical proposals/plans that already selected "Last Word" must not be corrupted —
-  verify the same denormalization safety as #4a (display from snapshot, not by live join).
+  the row is inactive — no separate action.
 
 **Risk:** Low. Content/data only.
 
@@ -211,4 +232,12 @@ Each batch is independently shippable, reviewable, and revertible.
   `RejectModal`, `AssignToEventModal`, `AdminUserDetail` backdrop. Remediation (portal them
   to body, or introduce a shared portal/`<Modal>` helper) is a deliberate separate task —
   it touches battle-tested modals and must not be bundled with these quick fixes.
+- **Signed-headshot helper dedupe.** After #1, the `/files/` → signed-R2-URL block exists
+  in both `publicTip.js` and `me.js`. Extracting a shared helper is optional cleanup —
+  deliberately deferred to avoid refactoring the live tip-collection path in a quick-fix
+  batch.
+- **Dead Last Word / legacy static-menu cleanup.** Purge inert `last-word` keys from
+  `drinkUpgrades.js` / `syrups.js` and delete the unreferenced
+  `client/src/pages/plan/data/cocktailMenu.js`. Pure hygiene, no functional effect; separate
+  chore.
 - **`:5000` server startup failure** — separate diagnostic, not part of this batch.
