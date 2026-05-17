@@ -1368,6 +1368,62 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     }
   }
 
+  if (event.type === 'charge.refunded') {
+    const charge = event.data.object;
+    const paymentIntentId = typeof charge.payment_intent === 'string'
+      ? charge.payment_intent
+      : charge.payment_intent?.id;
+    // charge.refunded delivers the whole charge; refunds.data is newest-first,
+    // so data[0] is the refund this event is about. A mis-pick in a rare
+    // multi-refund race is harmless: the unique stripe_refund_id index makes
+    // applyRefundReconciliation a no-op for an id already applied by the
+    // synchronous route.
+    const refundObj = charge.refunds?.data?.[0];
+    const proposalId = charge.metadata?.proposal_id
+      || (paymentIntentId
+            ? (await pool.query(
+                'SELECT proposal_id FROM proposal_payments WHERE stripe_payment_intent_id = $1 LIMIT 1',
+                [paymentIntentId]
+              )).rows[0]?.proposal_id
+            : null);
+
+    if (proposalId && refundObj && paymentIntentId) {
+      const dbClient = await pool.connect();
+      try {
+        await dbClient.query('BEGIN');
+        const payRow = await dbClient.query(
+          `SELECT id FROM proposal_payments
+            WHERE stripe_payment_intent_id = $1 AND status = 'succeeded' LIMIT 1`,
+          [paymentIntentId]
+        );
+        const { applyRefundReconciliation } = require('../utils/refundHelpers');
+        await applyRefundReconciliation(
+          {
+            proposalId: Number(proposalId),
+            stripeRefundId: refundObj.id,
+            paymentIntentId,
+            paymentId: payRow.rows[0]?.id ?? null,
+            amountCents: refundObj.amount,
+            reason: 'Refunded via Stripe dashboard',
+            issuedBy: null,
+          },
+          dbClient
+        );
+        await dbClient.query('COMMIT');
+        console.log(`charge.refunded reconciled for proposal ${proposalId} (refund ${refundObj.id})`);
+      } catch (dbErr) {
+        try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(dbErr, { tags: { webhook: 'stripe', event: 'charge.refunded' } });
+        }
+        console.error('Webhook charge.refunded error:', dbErr);
+        throw dbErr; // 5xx → Stripe retries (same posture as payment_intent.succeeded)
+      } finally {
+        dbClient.release();
+      }
+    }
+  }
+
   res.json({ received: true });
 }));
 
