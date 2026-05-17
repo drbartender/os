@@ -104,14 +104,15 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
     throw new ConflictError('This plan has already been submitted.');
   }
 
-  const newStatus = status === 'submitted' ? 'submitted'
-                  : status === 'exploration_saved' ? 'exploration_saved'
-                  : 'draft';
+  const newStatus = status === 'submitted' ? 'submitted' : 'draft';
 
   // Compute timestamps in JS to avoid PostgreSQL "inconsistent types" error
   // when reusing the same parameter ($3) in both SET and CASE WHEN contexts
   const submittedNow = newStatus === 'submitted' ? new Date() : null;
-  const explorationNow = newStatus === 'exploration_saved' ? new Date() : null;
+  // Legacy: the Exploration phase was removed 2026-05-17. The
+  // exploration_submitted_at column + its $-param are kept inert (always null)
+  // so the financial UPDATE's parameter numbering stays untouched.
+  const explorationNow = null;
 
   // Detect submit-with-side-effects up front. When true, we run the plan
   // UPDATE inside the same transaction as the addon/total/invoice work so a
@@ -393,8 +394,8 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
     return res.json(updatedPlan);
   }
 
-  // Fast path: drafts, exploration_saved, or submit-without-addons. No
-  // financial side effects, so we can use a single auto-committed UPDATE.
+  // Fast path: drafts or submit-without-addons. No financial side effects, so
+  // we can use a single auto-committed UPDATE.
   let result;
   if (newStatus === 'draft') {
     result = await pool.query(`
@@ -673,7 +674,7 @@ router.patch('/:id/notes', auth, requireAdminOrManager, asyncHandler(async (req,
 /** PATCH /api/drink-plans/:id/status — update plan status */
 router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { status } = req.body;
-  if (!['pending', 'draft', 'exploration_saved', 'submitted', 'reviewed'].includes(status)) {
+  if (!['pending', 'draft', 'submitted', 'reviewed'].includes(status)) {
     throw new ValidationError({ status: 'Invalid status.' });
   }
   const result = await pool.query(
