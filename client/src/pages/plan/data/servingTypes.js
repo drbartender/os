@@ -59,20 +59,7 @@ export const MODULE_STEP_MAP = {
   logistics: 'stepLogistics',
 };
 
-// Exploration phase steps
-export const EXPLORATION_STEPS = [
-  'stepVibe',
-  'stepFlavorDirection',
-  'stepExplorationBrowse',
-  'stepMocktailInterest',
-];
-
-/** Build exploration step queue */
-export function buildExplorationQueue() {
-  return [...EXPLORATION_STEPS];
-}
-
-/** Build ordered step queue from activeModules (refinement phase) */
+/** Build ordered step queue from activeModules */
 export function buildStepQueue(activeModules) {
   const steps = [];
   for (const mod of MODULE_ORDER) {
@@ -124,14 +111,4 @@ export function hostedActiveModules(barType) {
     fullBar: false,
     beerWineOnly: false,
   };
-}
-
-// Phase derivation from proposal status
-const EXPLORATION_STATUSES = ['sent', 'viewed', 'modified', 'accepted'];
-const REFINEMENT_STATUSES = ['deposit_paid', 'balance_paid', 'confirmed', 'completed'];
-
-export function derivePhase(proposalStatus) {
-  if (!proposalStatus || EXPLORATION_STATUSES.includes(proposalStatus)) return 'exploration';
-  if (REFINEMENT_STATUSES.includes(proposalStatus)) return 'refinement';
-  return 'exploration';
 }

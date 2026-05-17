@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { QUICK_PICKS } from '../data/servingTypes';
 
-export default function QuickPickStep({ selected, onSelect, exploration }) {
+export default function QuickPickStep({ selected, onSelect }) {
   const [selecting, setSelecting] = useState(null);
 
   const handleSelect = (key) => {
@@ -21,11 +21,6 @@ export default function QuickPickStep({ selected, onSelect, exploration }) {
         <p className="text-muted">
           What kind of bar experience are you imagining?
         </p>
-        {exploration?.vibe && (
-          <p className="text-muted text-small" style={{ color: 'var(--amber)', fontStyle: 'italic', marginTop: '0.5rem' }}>
-            Based on your {exploration.vibe} vibe, we'd suggest starting here.
-          </p>
-        )}
       </div>
 
       <div className="serving-type-grid">

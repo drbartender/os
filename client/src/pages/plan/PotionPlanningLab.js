@@ -4,11 +4,9 @@ import axios from 'axios';
 import { API_BASE_URL as BASE_URL } from '../../utils/api';
 import FormBanner from '../../components/FormBanner';
 import { useToast } from '../../context/ToastContext';
-import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue, buildExplorationQueue, derivePhase, buildHostedStepQueue, hostedActiveModules, HOSTED_GUEST_PREFS_STEP } from './data/servingTypes';
+import { QUICK_PICKS, MODULE_STEP_MAP, buildStepQueue, buildHostedStepQueue, hostedActiveModules, HOSTED_GUEST_PREFS_STEP } from './data/servingTypes';
 import { DRINK_UPGRADES, PER_DRINK_UPGRADE_SLUGS } from './data/drinkUpgrades';
-// WelcomeStep renders first — keep eager to avoid a Suspense flash on initial load.
-import WelcomeStep from './steps/WelcomeStep';
-// All other step components are lazy-loaded: cuts ~18 chunks out of the initial bundle
+// All step components are lazy-loaded: cuts ~18 chunks out of the initial bundle
 // for a public-facing page where most visitors only traverse a subset of the steps.
 const QuickPickStep = lazy(() => import('./steps/QuickPickStep'));
 const CustomSetupStep = lazy(() => import('./steps/CustomSetupStep'));
@@ -20,27 +18,13 @@ const MocktailStep = lazy(() => import('./steps/MocktailStep'));
 const MenuDesignStep = lazy(() => import('./steps/MenuDesignStep'));
 const LogisticsStep = lazy(() => import('./steps/LogisticsStep'));
 const ConfirmationStep = lazy(() => import('./steps/ConfirmationStep'));
-// Exploration phase steps
-const VibeStep = lazy(() => import('./steps/VibeStep'));
-const FlavorDirectionStep = lazy(() => import('./steps/FlavorDirectionStep'));
-const ExplorationBrowseStep = lazy(() => import('./steps/ExplorationBrowseStep'));
-const MocktailInterestStep = lazy(() => import('./steps/MocktailInterestStep'));
-const ExplorationSaveStep = lazy(() => import('./steps/ExplorationSaveStep'));
 const RefinementWelcomeStep = lazy(() => import('./steps/RefinementWelcomeStep'));
 const HostedGuestPrefsStep = lazy(() => import('./steps/HostedGuestPrefsStep'));
 
 const DEFAULT_ACTIVE_MODULES = { signatureDrinks: false, mocktails: false, fullBar: false, beerWineOnly: false };
 
 const DEFAULT_SELECTIONS = {
-  // Exploration data (Phase 1)
-  exploration: {
-    vibe: null,
-    flavorDirections: [],
-    dreamDrinkNotes: '',
-    favoriteDrinks: [],
-    mocktailInterest: null,
-  },
-  // Refinement data (Phase 2 — existing fields)
+  // Refinement data (existing fields)
   signatureDrinks: [],
   signatureDrinkSpirits: [],
   customCocktails: [],
@@ -87,9 +71,6 @@ export default function PotionPlanningLab() {
   const [saving, setSaving] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
 
-  // Phase (derived from proposal status)
-  const [phase, setPhase] = useState('exploration');
-
   // Cocktail menu
   const [cocktails, setCocktails] = useState([]);
   const [cocktailCategories, setCocktailCategories] = useState([]);
@@ -124,7 +105,6 @@ export default function PotionPlanningLab() {
   const [quickPickChoice, setQuickPickChoice] = useState(null);
   const [activeModules, setActiveModules] = useState(DEFAULT_ACTIVE_MODULES);
   const [moduleQueue, setModuleQueue] = useState([]);
-  const [explorationQueue, setExplorationQueue] = useState([]);
 
   // Form selections
   const [selections, setSelections] = useState(DEFAULT_SELECTIONS);
@@ -146,14 +126,9 @@ export default function PotionPlanningLab() {
         setAddonPricing(addonsRes.data || []);
         setPlan(planRes.data);
 
-        // Derive phase from proposal status
-        const derivedPhase = derivePhase(planRes.data.proposal_status);
-        setPhase(derivedPhase);
-
-        // Set up exploration queue
-        if (derivedPhase === 'exploration') {
-          setExplorationQueue(buildExplorationQueue());
-        }
+        // Pre-deposit plans are served as { locked: true } by the API (the
+        // wizard never mounts for them) — handled in the loading/guard block
+        // below. Everything past this point is the post-booking flow.
 
         // Extract proposal context (guest count, bartenders, pre-purchased syrups)
         const planData = planRes.data;
@@ -174,9 +149,9 @@ export default function PotionPlanningLab() {
           });
         }
 
-        // Restore saved state if draft/submitted/exploration_saved
+        // Restore saved state if draft/submitted
         const data = planRes.data;
-        if (data.status === 'draft' || data.status === 'submitted' || data.status === 'exploration_saved') {
+        if (data.status === 'draft' || data.status === 'submitted') {
           const savedSel = data.selections || {};
 
           // Migrate legacy flat syrupSelections array to per-drink map
@@ -198,6 +173,8 @@ export default function PotionPlanningLab() {
           // applicable drinks so the per-drink display works without erasing the user's intent.
           if (savedSel.addOns) {
             const sigDrinks = savedSel.signatureDrinks || [];
+            // Legacy: pre-2026-05-17 exploration data. Safe to delete once all
+            // such proposals have closed.
             const favDrinks = savedSel.exploration?.favoriteDrinks || [];
             const allDrinks = [...new Set([...sigDrinks, ...favDrinks])];
             for (const slug of PER_DRINK_UPGRADE_SLUGS) {
@@ -218,8 +195,11 @@ export default function PotionPlanningLab() {
             }
           }
 
-          // Phase 2 seeding: if entering refinement and exploration data exists, seed refinement fields
-          if (derivedPhase === 'refinement' && savedSel.exploration?.favoriteDrinks?.length > 0 && !data.serving_type) {
+          // Legacy shim: a few in-flight clients explored under the old
+          // pre-booking flow before 2026-05-17. When they book, still seed
+          // their saved favorites into signature drinks so they aren't
+          // stranded. Safe to delete once those proposals have closed.
+          if (savedSel.exploration?.favoriteDrinks?.length > 0 && !data.serving_type) {
             const expl = savedSel.exploration;
             if (expl.favoriteDrinks.length > 0 && (!savedSel.signatureDrinks || savedSel.signatureDrinks.length === 0)) {
               savedSel.signatureDrinks = [...expl.favoriteDrinks];
@@ -249,22 +229,16 @@ export default function PotionPlanningLab() {
 
           if (data.status === 'submitted') {
             setStep('submitted');
-          } else if (derivedPhase === 'exploration' && data.status === 'exploration_saved') {
-            // Re-entering exploration — show exploration save screen or let them re-explore
-            setStep('welcome');
-          } else if (derivedPhase === 'refinement') {
-            // If already has a serving type and modules, stay at current state
-            // Otherwise start at refinement welcome
-            if (!data.serving_type) {
-              if (planData.package_category === 'hosted') {
-                // Hosted package — skip QuickPick, derive queue directly from bar_type
-                const barType = planData.package_bar_type || 'full_bar';
-                setQuickPickChoice(barType);
-                setActiveModules(hostedActiveModules(barType));
-                setModuleQueue(buildHostedStepQueue(barType));
-              }
-              setStep('refinementWelcome');
+          } else if (!data.serving_type) {
+            // Fresh post-booking entry — start at the welcome screen.
+            if (planData.package_category === 'hosted') {
+              // Hosted package — skip QuickPick, derive queue directly from bar_type
+              const barType = planData.package_bar_type || 'full_bar';
+              setQuickPickChoice(barType);
+              setActiveModules(hostedActiveModules(barType));
+              setModuleQueue(buildHostedStepQueue(barType));
             }
+            setStep('welcome');
           }
         }
       } catch (err) {
@@ -330,10 +304,10 @@ export default function PotionPlanningLab() {
 
   // Periodic auto-save every 30 seconds (crash recovery, silent — no UI flash)
   useEffect(() => {
-    if (!plan || step === 'submitted' || step === 'explorationSaved' || step === 'welcome') return;
+    if (!plan || step === 'submitted' || step === 'welcome') return;
     const interval = setInterval(() => {
       const s = stepRef.current;
-      if (s === 'submitted' || s === 'explorationSaved' || s === 'welcome') return;
+      if (s === 'submitted' || s === 'welcome') return;
       saveDraft(quickPickRef.current, activeModulesRef.current, selectionsRef.current, true);
     }, 30000);
     return () => clearInterval(interval);
@@ -342,7 +316,7 @@ export default function PotionPlanningLab() {
   // Save on page unload (beforeunload)
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (!token || stepRef.current === 'submitted' || stepRef.current === 'explorationSaved') return;
+      if (!token || stepRef.current === 'submitted') return;
       const payload = JSON.stringify({
         serving_type: quickPickRef.current,
         selections: { ...selectionsRef.current, activeModules: activeModulesRef.current },
@@ -360,28 +334,6 @@ export default function PotionPlanningLab() {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [token]);
-
-  // Save exploration
-  const handleExplorationSave = async () => {
-    setSaving(true);
-    setError(null);
-    setFieldErrors({});
-    try {
-      await axios.put(`${BASE_URL}/drink-plans/t/${token}`, {
-        selections: { ...selections, activeModules },
-        status: 'exploration_saved',
-      });
-      toast.success('Your exploration was saved!');
-      setStep('explorationSaved');
-    } catch (err) {
-      // eslint-disable-next-line no-restricted-syntax
-      const data = err.response?.data;
-      setError(data?.error || 'Failed to save. Please try again.');
-      setFieldErrors(data?.fieldErrors || {});
-    } finally {
-      setSaving(false);
-    }
-  };
 
   // Submit drink plan to server (without changing step — used by payment flow)
   // paidSeparately=true when extras will be charged via Stripe on the same turn:
@@ -431,14 +383,6 @@ export default function PotionPlanningLab() {
   // Update a selection field
   const updateSelections = (field, value) => {
     setSelections(prev => ({ ...prev, [field]: value }));
-  };
-
-  // Update exploration sub-field
-  const updateExploration = (field, value) => {
-    setSelections(prev => ({
-      ...prev,
-      exploration: { ...prev.exploration, [field]: value },
-    }));
   };
 
   // Toggle an addon on/off in selections.addOns
@@ -561,17 +505,6 @@ export default function PotionPlanningLab() {
     });
   };
 
-  const updateFavoriteDrinks = (drinks) => {
-    setSelections(prev => {
-      const removed = (prev.exploration?.favoriteDrinks || []).filter(d => !drinks.includes(d));
-      return {
-        ...prev,
-        exploration: { ...prev.exploration, favoriteDrinks: drinks },
-        addOns: pruneAddOnsForRemovedDrinks(prev.addOns || {}, removed),
-      };
-    });
-  };
-
   // Toggle a syrup for a specific drink in per-drink syrupSelections map.
   // Special drinkId '_all' removes the syrup from every drink (used by summary views).
   const toggleSyrup = (drinkId, syrupId) => {
@@ -642,22 +575,7 @@ export default function PotionPlanningLab() {
   const handleNext = () => {
     saveDraft(quickPickChoice, activeModules, selections);
 
-    // Exploration navigation
-    if (phase === 'exploration') {
-      if (step === 'welcome') return goToStep(explorationQueue[0] || 'stepVibe');
-      const explorationIdx = explorationQueue.indexOf(step);
-      if (explorationIdx !== -1) {
-        const nextIdx = explorationIdx + 1;
-        if (nextIdx < explorationQueue.length) {
-          return goToStep(explorationQueue[nextIdx]);
-        }
-        return goToStep('explorationSave');
-      }
-      return;
-    }
-
-    // Refinement navigation
-    if (step === 'welcome' || step === 'refinementWelcome') {
+    if (step === 'welcome') {
       // Hosted packages skip the QuickPick — queue was pre-built from bar_type.
       if (plan?.package_category === 'hosted') return goToStep(moduleQueue[0]);
       if (plan?.package_bar_type === 'mocktail') return goToStep(moduleQueue[0]);
@@ -686,22 +604,8 @@ export default function PotionPlanningLab() {
 
   // Back navigation
   const handleBack = () => {
-    // Exploration back
-    if (phase === 'exploration') {
-      if (step === explorationQueue[0]) return goToStep('welcome');
-      const explorationIdx = explorationQueue.indexOf(step);
-      if (explorationIdx > 0) {
-        return goToStep(explorationQueue[explorationIdx - 1]);
-      }
-      if (step === 'explorationSave') {
-        return goToStep(explorationQueue[explorationQueue.length - 1]);
-      }
-      return;
-    }
-
-    // Refinement back
-    if (step === 'quickPick') return goToStep(plan?.exploration_submitted_at ? 'refinementWelcome' : 'welcome');
-    if (step === 'refinementWelcome') return; // no back from refinement welcome
+    if (step === 'quickPick') return goToStep('welcome');
+    if (step === 'welcome') return; // no back from welcome
     if (step === 'customSetup') return goToStep('quickPick');
 
     const currentIdx = moduleQueue.indexOf(step);
@@ -711,10 +615,10 @@ export default function PotionPlanningLab() {
       }
       // Hosted packages never show QuickPick; back from first step goes to welcome.
       if (plan?.package_category === 'hosted') {
-        return goToStep(plan?.exploration_submitted_at ? 'refinementWelcome' : 'welcome');
+        return goToStep('welcome');
       }
       if (plan?.package_bar_type === 'mocktail') {
-        return goToStep(plan?.exploration_submitted_at ? 'refinementWelcome' : 'welcome');
+        return goToStep('welcome');
       }
       return goToStep(quickPickChoice === 'custom' ? 'customSetup' : 'quickPick');
     }
@@ -727,12 +631,12 @@ export default function PotionPlanningLab() {
   // Keep ref updated for popstate handler
   handleBackRef.current = handleBack;
 
-  // Compute step progress (refinement only)
+  // Compute step progress
   const totalSteps = moduleQueue.length + 1;
   const currentQueueIdx = moduleQueue.indexOf(step);
-  const progressStep = phase === 'refinement' && currentQueueIdx !== -1
+  const progressStep = currentQueueIdx !== -1
     ? currentQueueIdx + 1
-    : (phase === 'refinement' && step === 'confirmation' ? totalSteps : null);
+    : (step === 'confirmation' ? totalSteps : null);
 
   // Loading / error states
   if (loading) {
@@ -742,6 +646,33 @@ export default function PotionPlanningLab() {
           <div role="status" aria-live="polite">
             <div className="spinner" />
             <p className="text-muted mt-2">Loading your drink plan...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (plan?.locked) {
+    return (
+      <div className="auth-page">
+        <div className="page-container" style={{ textAlign: 'center', paddingTop: '4rem' }}>
+          <div className="card">
+            <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
+              Your drink plan unlocks after you book
+            </h2>
+            <p className="text-muted" style={{ marginTop: '0.75rem' }}>
+              Once your deposit is paid, you'll design your drinks here. Until
+              then, review and accept your proposal.
+            </p>
+            {plan.proposalToken && (
+              <a
+                className="btn btn-primary"
+                href={`/proposal/${plan.proposalToken}`}
+                style={{ marginTop: '1.25rem', display: 'inline-block' }}
+              >
+                View your proposal
+              </a>
+            )}
           </div>
         </div>
       </div>
@@ -807,104 +738,32 @@ export default function PotionPlanningLab() {
     );
   }
 
-  // Exploration saved screen
-  if (step === 'explorationSaved') {
-    return (
-      <div className="auth-page">
-        <div className="page-container" style={{ textAlign: 'center', paddingTop: '3rem' }}>
-          <div className="card">
-            <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>&#10024;</div>
-            <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>Exploration Saved!</h2>
-            <p className="text-muted" style={{ marginTop: '0.75rem' }}>
-              We've saved your preferences, {plan?.client_name || 'friend'}. When you're ready
-              to book, all your favorites will be waiting for you.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   // Steps that manage their own nav buttons (hide global nav)
   const selfNavigatingSteps = [MODULE_STEP_MAP.signatureDrinks, MODULE_STEP_MAP.mocktails];
   const hideGlobalNav = selfNavigatingSteps.includes(step);
 
-  const showBack = !['welcome', 'quickPick', 'refinementWelcome'].includes(step) && !hideGlobalNav;
-  const showNext = !['quickPick', 'customSetup', 'confirmation', 'submitted', 'explorationSave', 'explorationSaved'].includes(step) && !hideGlobalNav;
+  const showBack = !['welcome', 'quickPick'].includes(step) && !hideGlobalNav;
+  const showNext = !['quickPick', 'customSetup', 'confirmation', 'submitted'].includes(step) && !hideGlobalNav;
 
   // Button label
-  const nextLabel = phase === 'exploration' ? 'Keep Going' : 'Next';
+  const nextLabel = 'Next';
 
   // Render current step
   const renderStep = () => {
     switch (step) {
       case 'welcome':
-        return <WelcomeStep plan={plan} phase={phase} />;
-      case 'refinementWelcome':
         return (
           <RefinementWelcomeStep
             plan={plan}
-            exploration={selections.exploration}
             guestCount={guestCount}
           />
         );
 
-      // Exploration steps
-      case 'stepVibe':
-        return (
-          <VibeStep
-            value={selections.exploration.vibe}
-            onChange={(val) => updateExploration('vibe', val)}
-          />
-        );
-      case 'stepFlavorDirection':
-        return (
-          <FlavorDirectionStep
-            selected={selections.exploration.flavorDirections}
-            onChange={(val) => updateExploration('flavorDirections', val)}
-            dreamNotes={selections.exploration.dreamDrinkNotes}
-            onDreamNotesChange={(val) => updateExploration('dreamDrinkNotes', val)}
-          />
-        );
-      case 'stepExplorationBrowse':
-        return (
-          <ExplorationBrowseStep
-            cocktails={cocktails}
-            categories={cocktailCategories}
-            favoriteDrinks={selections.exploration.favoriteDrinks}
-            onChange={updateFavoriteDrinks}
-            addOns={selections.addOns || {}}
-            toggleAddOn={toggleAddOn}
-            toggleAddOnForDrink={toggleAddOnForDrink}
-            addonPricing={addonPricing}
-            syrupSelections={selections.syrupSelections || {}}
-            onSyrupToggle={toggleSyrup}
-          />
-        );
-      case 'stepMocktailInterest':
-        return (
-          <MocktailInterestStep
-            value={selections.exploration.mocktailInterest}
-            onChange={(val) => updateExploration('mocktailInterest', val)}
-          />
-        );
-      case 'explorationSave':
-        return (
-          <ExplorationSaveStep
-            exploration={selections.exploration}
-            cocktails={cocktails}
-            onSave={handleExplorationSave}
-            saving={saving}
-          />
-        );
-
-      // Refinement steps
       case 'quickPick':
         return (
           <QuickPickStep
             selected={quickPickChoice}
             onSelect={handleQuickPickSelect}
-            exploration={selections.exploration}
           />
         );
       case 'customSetup':
@@ -934,7 +793,6 @@ export default function PotionPlanningLab() {
             syrupSelfProvided={selections.syrupSelfProvided || []}
             onSelfProvidedChange={updateSyrupSelfProvided}
             proposalSyrups={proposalSyrups}
-            phase={phase}
             plan={plan}
             onNext={() => handleNext()}
             onBack={() => handleBack()}
@@ -956,7 +814,6 @@ export default function PotionPlanningLab() {
             syrupSelections={selections.syrupSelections || {}}
             onSyrupToggle={toggleSyrup}
             proposalSyrups={proposalSyrups}
-            phase={phase}
             plan={plan}
             onNext={() => handleNext()}
             onBack={() => handleBack()}
@@ -1075,7 +932,7 @@ export default function PotionPlanningLab() {
         </div>
 
         {/* Surface submit/save errors near the navigation buttons */}
-        {plan && step !== 'submitted' && step !== 'explorationSaved' && (
+        {plan && step !== 'submitted' && (
           <FormBanner error={error} fieldErrors={fieldErrors} />
         )}
 
