@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { generateShoppingList } from './generateShoppingList';
 import {
   DndContext,
@@ -239,7 +240,7 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
     : 'Unsaved';
   const saveColor = saveStatus === 'saved' ? '#4caf50' : saveStatus === 'saving' ? '#D49549' : '#ff9800';
 
-  return (
+  return createPortal(
     <div style={{
       position: 'fixed', inset: 0, zIndex: 1000,
       backgroundColor: 'rgba(0,0,0,0.65)',
@@ -413,7 +414,8 @@ export default function ShoppingListModal({ listData, onClose, planId, planToken
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

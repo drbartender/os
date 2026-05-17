@@ -1,4 +1,5 @@
 import React, { useState, lazy, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import api from '../../utils/api';
 import { generateShoppingList } from './generateShoppingList';
 import { getEventTypeLabel } from '../../utils/eventTypes';
@@ -111,7 +112,7 @@ export default function ShoppingListButton({
       </button>
 
       {/* Guest count prompt when no proposal is linked */}
-      {guestCountPrompt && (
+      {guestCountPrompt && createPortal(
         <div style={{
           position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
@@ -140,7 +141,8 @@ export default function ShoppingListButton({
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Shopping list editor modal */}
