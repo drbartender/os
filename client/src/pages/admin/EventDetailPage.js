@@ -148,7 +148,7 @@ export default function EventDetailPage() {
       proposal.client_email,
       proposal.client_source,
     ].filter(Boolean);
-    return { eventTypeLabel, snapshot, bartenders, durationHours, includes, packageStructured, timeRange, contactBits };
+    return { eventTypeLabel, snapshot, includes, packageStructured, timeRange, contactBits };
   }, [proposal]);
 
   if (loading) return <div className="page"><div className="muted">Loading event…</div></div>;
@@ -166,7 +166,7 @@ export default function EventDetailPage() {
   }
 
   const {
-    eventTypeLabel, snapshot, bartenders, durationHours,
+    eventTypeLabel, snapshot,
     includes, packageStructured, timeRange, contactBits,
   } = derived;
 

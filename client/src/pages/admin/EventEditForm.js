@@ -8,7 +8,6 @@ import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
 import TimePicker from '../../components/TimePicker';
 import NumberStepper from '../../components/NumberStepper';
-import Icon from '../../components/adminos/Icon';
 import { initialFormFromProposal } from './ProposalDetailEditForm';
 
 // Focused event-specifics editor for EventDetailPage. Edits date, time,
