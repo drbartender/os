@@ -69,7 +69,7 @@ The admin types a **dollar** amount. **All refund math runs in integer cents.** 
 
 Admin enters **amount + reason only**. The server picks the charge:
 
-1. Candidate set = `proposal_payments` rows for the proposal where `status='succeeded'` **and** `stripe_payment_intent_id IS NOT NULL` (outside/cash payments have no intent and are out of scope — see Non-Goals).
+1. Candidate set = `proposal_payments` rows for the proposal where `status='succeeded'`, `stripe_payment_intent_id IS NOT NULL`, **and** `payment_type IN ('deposit','balance','full')`. Outside/cash payments (no intent) and `drink_plan_*`/`invoice` charges (extra scope not in `total_price`) are excluded — see Non-Goals. Stripe's own per-charge refund cap is the final over-refund backstop on top of the `remaining` math.
 2. For each candidate, `remaining = amount − COALESCE(SUM(proposal_refunds.amount WHERE payment_id = candidate.id AND status='succeeded'), 0)`.
 3. Target = the candidate with the **largest `remaining`**. In practice this is always the balance or full-pay charge, never the $100 deposit — that is where the bartender money sits.
 4. **No spanning.** If `amount_cents > target.remaining`, reject:
@@ -96,7 +96,7 @@ Eligibility gates on **refundable money, not proposal status** — a refund is v
 
 ## Server: `POST /api/stripe/refund/:id`
 
-Lives in `server/routes/stripe.js` (admin-initiated Stripe action, same home and shape as `charge-balance/:id`), `auth, requireAdminOrManager`. Body: `{ amount, reason, idempotency_key }`.
+Lives in `server/routes/stripe.js` (admin-initiated Stripe action, same home as `charge-balance/:id`). Guarded by `auth, adminOnly` — **admin role only**, deliberately stricter than the money-*in* `charge-balance` (`requireAdminOrManager`), because a refund moves money *out*. The read-only history endpoint stays `requireAdminOrManager`. Body: `{ amount, reason, idempotency_key }`. Reconciliation serializes on the proposals row (`SELECT … FOR UPDATE` before the idempotency check) so concurrent submits cannot double-decrement. All rejections throw `AppError` (not `ValidationError`) so the precise message reaches the admin.
 
 The reconciliation is non-trivial and is shared verbatim with the webhook backstop, so it is extracted into a new pure-ish helper **`server/utils/refundHelpers.js`** (mirrors `invoiceHelpers.js`): `applyRefundReconciliation({ proposalId, stripeRefundId, paymentIntentId, paymentId, amountCents, ... }, dbClient)` — idempotent on `stripe_refund_id`, runs inside a caller-supplied transaction.
 
@@ -139,6 +139,7 @@ API call through `client/src/utils/api.js` (`api.post('/stripe/refund/:id', { am
 ## Non-Goals & Assumptions
 
 - **Stripe charges only.** Outside/cash/Venmo payments (`record-payment`, no `stripe_payment_intent_id`) are refunded outside the system, the mirror of how they were recorded. A "record outside refund" form is a future item, explicitly not built now (YAGNI; protect working money paths).
+- **Base-contract charges only.** `drink_plan_extras`, `drink_plan_with_balance`, and `invoice`-type payments are excluded from refundability. Approach A also lowers `total_price`; that is only correct for money that is *in* `total_price` (deposit/balance/full). Refunding extra-scope charges would understate the base contract. Rare, and the no-show-bartender case lives in the balance/full charge — unaffected. Refund those in the Stripe dashboard if ever needed (the `charge.refunded` backstop still records them with `issued_by` null).
 - **Purely financial. No staffing coupling.** Refund does not touch the no-show bartender's shift, `shift_requests`, or contractor pay. Admin works the bartender side with existing staffing tools. Decoupling money from scheduling matches the rest of the system and is the fragility-avoidance call.
 - **No multi-charge spanning** in a single refund action (admin splits into separate refunds).
 - **No new proposal `status` enum value** — A keeps the state machine untouched; a fully-refunded-down proposal is still `balance_paid`/`confirmed` at its corrected total.

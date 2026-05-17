@@ -341,19 +341,24 @@ async function applyRefundReconciliation(
   { proposalId, stripeRefundId, paymentIntentId, paymentId, amountCents, reason, issuedBy },
   dbClient
 ) {
-  // 1. already applied?
+  // Serialize ALL refund reconciliation for this proposal on the proposals
+  // row BEFORE the already-applied check. Closes the TOCTOU where two
+  // concurrent submits both pass an unlocked check and double-decrement:
+  // any waiter blocks here until the winner COMMITs, then sees the winner's
+  // succeeded row and cleanly no-ops.
+  const propRes = await dbClient.query(
+    'SELECT total_price, amount_paid FROM proposals WHERE id = $1 FOR UPDATE',
+    [proposalId]
+  );
+  if (!propRes.rows[0]) throw new Error(`applyRefundReconciliation: proposal ${proposalId} not found`);
+
+  // Already applied? Safe now — we hold the row lock.
   const done = await dbClient.query(
     `SELECT id FROM proposal_refunds WHERE stripe_refund_id = $1 AND status = 'succeeded' LIMIT 1`,
     [stripeRefundId]
   );
   if (done.rows[0]) return { applied: false };
 
-  // Snapshot proposal money (dollars).
-  const propRes = await dbClient.query(
-    'SELECT total_price, amount_paid FROM proposals WHERE id = $1 FOR UPDATE',
-    [proposalId]
-  );
-  if (!propRes.rows[0]) throw new Error(`applyRefundReconciliation: proposal ${proposalId} not found`);
   const totalBefore = Number(propRes.rows[0].total_price);
   const dollars = amountCents / 100;
   const totalAfter = totalBefore - dollars;
@@ -438,13 +443,16 @@ async function applyRefundReconciliation(
     }
   }
 
-  // Activity log — chronological story (actor 'admin'; system for dashboard).
+  // Activity log — chronological story. Use the dedicated actor_id column
+  // (not just JSON) so the admin is queryable; 'admin' actor for an
+  // operator-issued refund, 'system' for an out-of-band dashboard refund.
   await dbClient.query(
-    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
-     VALUES ($1, 'refund_issued', $2, $3)`,
+    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+     VALUES ($1, 'refund_issued', $2, $3, $4)`,
     [
       proposalId,
       issuedBy ? 'admin' : 'system',
+      issuedBy,
       JSON.stringify({
         amount: amountCents, reason, stripe_refund_id: stripeRefundId,
         total_price_before: totalBefore, total_price_after: totalAfter,
@@ -475,7 +483,7 @@ Expected: no errors for `server/utils/refundHelpers.js`.
 
 - [ ] **Step 4: Read-through against spec invariants** (no code change — verification step)
 
-Confirm by reading the function: (a) early-return no-op when a `succeeded` row exists for the refund id; (b) `proposals` uses exact NUMERIC `($1 / 100.0)`, never JS float; (c) both `total_price` and `amount_paid` drop by the same dollars (Approach A invariant: balance-due unchanged); (d) invoice loop inserts a **negative** `invoice_payments` row and drops both `amount_due` and `amount_paid` so a paid invoice stays paid; (e) `paymentId == null` path skips invoice reversal cleanly.
+Confirm by reading the function: (a) the `SELECT … FOR UPDATE` on the proposals row happens **before** the already-applied check (concurrency serialization point — no double-decrement under concurrent submits); (b) early-return `{applied:false}` no-op when a `succeeded` row exists for the refund id; (c) `proposals` uses exact NUMERIC `($1 / 100.0)`, never JS float; (d) both `total_price` and `amount_paid` drop by the same dollars (Approach A invariant: balance-due unchanged); (e) invoice loop inserts a **negative** `invoice_payments` row and drops both `amount_due` and `amount_paid` so a paid invoice stays paid (and a fully-paid invoice stays `locked` — settled at the corrected figure; the refund deliberately does **not** call `refreshUnlockedInvoices`/`createAdditionalInvoiceIfNeeded`); (f) `paymentId == null` path skips invoice reversal cleanly.
 
 - [ ] **Step 5: Commit**
 
@@ -491,20 +499,38 @@ git commit -m "feat(refunds): idempotent applyRefundReconciliation — totals, i
 **Files:**
 - Modify: `server/routes/stripe.js` — add `POST /refund/:id` and `GET /refunds/:id`, both `auth, requireAdminOrManager`. Place directly after the `charge-balance/:id` handler (ends ~line 538).
 
-- [ ] **Step 1: Add the two endpoints**
+- [ ] **Step 1a: Add `adminOnly` to the auth import**
+
+In `server/routes/stripe.js` line ~6, change:
+
+```js
+const { auth, requireAdminOrManager } = require('../middleware/auth');
+```
+
+to:
+
+```js
+const { auth, adminOnly, requireAdminOrManager } = require('../middleware/auth');
+```
+
+(`adminOnly` is exported from `server/middleware/auth.js` and gates `req.user.role === 'admin'` only.)
+
+- [ ] **Step 1b: Add the two endpoints**
 
 After the `charge-balance/:id` route in `server/routes/stripe.js`, insert:
 
 ```js
 // ─── Admin: list refunds for a proposal ──────────────────────────
 
-/** GET /api/stripe/refunds/:id — admin only (refund history for the panel) */
+/** GET /api/stripe/refunds/:id — admin/manager (read-only refund history) */
 router.get('/refunds/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Exclude 'pending': a transient/stranded pre-Stripe row must never render
+  // in history as if a refund actually happened. Only resolved rows show.
   const { rows } = await pool.query(
     `SELECT id, amount, reason, total_price_before, total_price_after,
             stripe_refund_id, status, created_at
        FROM proposal_refunds
-      WHERE proposal_id = $1
+      WHERE proposal_id = $1 AND status <> 'pending'
       ORDER BY created_at DESC`,
     [req.params.id]
   );
@@ -513,17 +539,23 @@ router.get('/refunds/:id', auth, requireAdminOrManager, asyncHandler(async (req,
 
 // ─── Admin: issue a partial refund ───────────────────────────────
 
-/** POST /api/stripe/refund/:id — admin only. Body: { amount, reason, idempotency_key } */
-router.post('/refund/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+/**
+ * POST /api/stripe/refund/:id — admin ONLY (money OUT, stricter than the
+ * money-IN charge-balance which allows managers). Body: { amount, reason,
+ * idempotency_key }. All refund rejections throw AppError so the precise
+ * planner message reaches the admin toast (ValidationError would bury it
+ * in fieldErrors behind the generic "Please fix the errors below").
+ */
+router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   const stripe = getStripe();
   if (!stripe) throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
 
   const proposalId = req.params.id;
   const { amount, reason, idempotency_key } = req.body;
   const cleanReason = String(reason || '').trim();
-  if (!cleanReason) throw new ValidationError({ reason: 'A reason is required.' });
+  if (!cleanReason) throw new AppError('A refund reason is required.', 400, 'REASON_REQUIRED');
   if (!idempotency_key || typeof idempotency_key !== 'string') {
-    throw new ValidationError({ idempotency_key: 'Missing idempotency key.' });
+    throw new AppError('Missing idempotency key — reopen the refund form and retry.', 400, 'MISSING_IDEMPOTENCY_KEY');
   }
 
   const propRes = await pool.query(
@@ -535,6 +567,13 @@ router.post('/refund/:id', auth, requireAdminOrManager, asyncHandler(async (req,
 
   // Succeeded, intent-bearing payments with cents still refundable
   // (amount − Σ succeeded refunds against that payment).
+  // Base-contract charges only. Approach A also lowers total_price, which is
+  // only correct for money that IS in total_price (deposit/balance/full —
+  // where a no-show-bartender refund lives). drink_plan_* / invoice charges
+  // are extra scope NOT in total_price; refunding them must NOT shrink the
+  // base total, so they are deliberately excluded from auto-target (see
+  // spec Non-Goals). Stripe's own per-charge refund cap is the final
+  // over-refund backstop on top of the remainingCents math below.
   const payRes = await pool.query(
     `SELECT pp.id,
             pp.stripe_payment_intent_id,
@@ -545,7 +584,8 @@ router.post('/refund/:id', auth, requireAdminOrManager, asyncHandler(async (req,
        FROM proposal_payments pp
       WHERE pp.proposal_id = $1
         AND pp.status = 'succeeded'
-        AND pp.stripe_payment_intent_id IS NOT NULL`,
+        AND pp.stripe_payment_intent_id IS NOT NULL
+        AND pp.payment_type IN ('deposit', 'balance', 'full')`,
     [proposalId]
   );
 
@@ -561,8 +601,10 @@ router.post('/refund/:id', auth, requireAdminOrManager, asyncHandler(async (req,
     totalPriceDollars: Number(proposal.total_price),
   });
   if (!plan.ok) {
-    // All planner rejections are client-actionable validation errors.
-    throw new ValidationError(plan.message);
+    // AppError → `.message` surfaces as response `error` → admin toast.
+    // (ValidationError would hide plan.message in fieldErrors behind the
+    // generic banner, defeating the precise no-spanning guidance.)
+    throw new AppError(plan.message, 400, plan.code);
   }
 
   // Pending row BEFORE Stripe, so a Stripe success we then fail to record
@@ -594,9 +636,10 @@ router.post('/refund/:id', auth, requireAdminOrManager, asyncHandler(async (req,
   }
 
   const dbClient = await pool.connect();
+  let recon;
   try {
     await dbClient.query('BEGIN');
-    await applyRefundReconciliation(
+    recon = await applyRefundReconciliation(
       {
         proposalId: Number(proposalId),
         stripeRefundId: refund.id,
@@ -614,12 +657,30 @@ router.post('/refund/:id', auth, requireAdminOrManager, asyncHandler(async (req,
     if (process.env.SENTRY_DSN_SERVER) {
       Sentry.captureException(dbErr, { tags: { route: '/stripe/refund', proposalId } });
     }
-    // Money already refunded by Stripe; the charge.refunded webhook backstop
-    // will reconcile (adopt the pending row). Surface as 502, not a silent 200.
+    // Money already left via Stripe; the charge.refunded webhook backstop
+    // adopts our pending row and reconciles. Surface 502 (not a silent 200),
+    // correct ExternalServiceError signature: (service, originalError, userMsg).
     console.error('Refund reconciliation failed (webhook will backstop):', dbErr);
-    throw new ExternalServiceError('Refund recorded with Stripe; books will sync shortly.', dbErr);
+    throw new ExternalServiceError(
+      'Database',
+      dbErr,
+      'Refund was processed by Stripe; the records will finish syncing momentarily.'
+    );
   } finally {
     dbClient.release();
+  }
+
+  // applied===false → reconciliation no-op'd because this refund id was
+  // already applied (idempotent winner, e.g. a double-submit whose Stripe
+  // idempotency key returned the same refund). The pending row we inserted
+  // above is now redundant — delete it so it can't strand as a ghost
+  // 'pending' history entry. Money/books are already correct.
+  if (recon && recon.applied === false) {
+    await pool.query(
+      `DELETE FROM proposal_refunds
+        WHERE id = $1 AND status = 'pending' AND stripe_refund_id IS NULL`,
+      [pendingRowId]
+    );
   }
 
   const after = await pool.query(
@@ -637,7 +698,7 @@ router.post('/refund/:id', auth, requireAdminOrManager, asyncHandler(async (req,
 - [ ] **Step 2: Lint**
 
 Run: `npm run lint`
-Expected: no errors. (`AppError, ValidationError, NotFoundError, ExternalServiceError, PaymentError`, `Sentry`, `getStripe`, `auth`, `requireAdminOrManager`, `asyncHandler`, `pool` are all already imported at the top of `server/routes/stripe.js` — confirm by reading lines 1–40; add nothing.)
+Expected: no errors. (`AppError`, `ExternalServiceError`, `PaymentError`, `NotFoundError`, `Sentry`, `getStripe`, `auth`, `requireAdminOrManager`, `asyncHandler`, `pool` are already imported at the top of `server/routes/stripe.js` — confirm by reading lines 1–40. The ONLY import change is adding `adminOnly` in Step 1a. `ValidationError` is intentionally **not** used by these handlers — all rejections are `AppError` so the message reaches the toast.)
 
 - [ ] **Step 3: Read-through verification**
 
@@ -667,7 +728,11 @@ In the `/webhook` handler, immediately before the final `res.json({ received: tr
     const paymentIntentId = typeof charge.payment_intent === 'string'
       ? charge.payment_intent
       : charge.payment_intent?.id;
-    // The most recent refund on this charge (Stripe sends the whole charge).
+    // charge.refunded delivers the whole charge; refunds.data is newest-first,
+    // so data[0] is the refund this event is about. A mis-pick in a rare
+    // multi-refund race is harmless: the unique stripe_refund_id index makes
+    // applyRefundReconciliation a no-op for an id already applied by the
+    // synchronous route.
     const refundObj = charge.refunds?.data?.[0];
     const proposalId = charge.metadata?.proposal_id
       || (paymentIntentId
@@ -763,7 +828,7 @@ Below the existing invoice state (`const [creatingInvoice, setCreatingInvoice] =
   const [issuingRefund, setIssuingRefund] = useState(false);
   const [refunds, setRefunds] = useState([]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     let alive = true;
     api.get(`/stripe/refunds/${proposal.id}`)
       .then(res => { if (alive) setRefunds(res.data || []); })
@@ -803,7 +868,13 @@ Below the existing invoice state (`const [creatingInvoice, setCreatingInvoice] =
   };
 ```
 
-(`React` is already imported as default in this file — `import React, { useState } from 'react';` — so `React.useEffect` is valid without changing the import.)
+First update the import at the top of the file:
+
+```js
+import React, { useState, useEffect } from 'react';
+```
+
+(File currently imports `import React, { useState } from 'react';` — add `useEffect`.)
 
 - [ ] **Step 2: Render the refund section + history**
 
@@ -863,8 +934,8 @@ Immediately before the final closing `</div>\n      </div>\n    </div>` of the c
 
 - [ ] **Step 3: Verify client build (the only client gate — Vercel CI mirror)**
 
-Run: `cd client && set CI=true&& npx react-scripts build` (PowerShell: `$env:CI='true'; npx react-scripts build`)
-Expected: build succeeds, **no ESLint warnings-as-errors** (unused vars, missing hook deps). Per project norm, client lint is enforced only by this build — it must be clean.
+Run (via the Bash tool — POSIX): `cd client && CI=true npx react-scripts build`
+Expected: build succeeds, **no ESLint warnings-as-errors** (unused vars, missing hook deps — note the `useEffect` dep array). Per project norm (memory: client lint only enforced by Vercel CI / `.husky/pre-push`), this build is the gate — it must be clean.
 
 - [ ] **Step 4: Commit**
 
@@ -922,3 +993,20 @@ git commit -m "docs(refunds): proposal_refunds schema, routes, refundHelpers in 
 **2. Placeholder scan:** No TBD/TODO; every code step has complete code; commands have expected output; the one manual task (Task 5 Step 4) enumerates exact verifiable checks.
 
 **3. Type/name consistency:** `planRefund` / `applyRefundReconciliation` / `fmtUSD` signatures and `{ok,code,amountCents,targetPaymentId,targetIntentId,totalPriceAfterDollars,maxRefundableCents}` shape are identical across Tasks 2→4. Route passes exactly `applyRefundReconciliation`'s documented args in Tasks 4 & 5. `proposal_refunds` columns identical in Tasks 1, 3, 4. API paths (`/stripe/refund/:id`, `/stripe/refunds/:id`) identical in Tasks 4 & 6. `fmt$2dp` / `Icon` / `useToast` / `api` already imported in the panel (verified in Task 6 prose).
+
+## Security & Correctness Review — hardening applied (2026-05-17)
+
+Verified against the actual codebase, then fixed inline:
+
+1. **`proposal_activity_log` won't break the money path.** Confirmed `action`/`actor_type` are free-form VARCHAR (no CHECK) — `'refund_issued'`/`'admin'` insert cleanly, so reconciliation can't roll back *after* Stripe moved money on a constraint violation. Also now writes the dedicated `actor_id` column (not just JSON) for queryable attribution.
+2. **Error messages reach the admin (confirmed bug, fixed).** Client toast shows `data.error` = the AppError `.message`. `ValidationError(msg)` puts `msg` in `fieldErrors` and `.message` defaults to *"Please fix the errors below"* — the precise *"Largest refundable payment is $X"* would be invisible. All refund rejections now throw `AppError(plan.message, 400, plan.code)`.
+3. **`ExternalServiceError` signature (confirmed bug, fixed).** Constructor is `(service, originalError, message)`; the plan's 2-arg call mis-slotted the user message. Corrected to 3-arg.
+4. **Concurrency double-decrement (closed).** `SELECT proposals … FOR UPDATE` now precedes the already-applied check, serializing concurrent submits on the proposal row. The partial unique index on `stripe_refund_id` is the second backstop. No path double-decrements `total_price`/`amount_paid`.
+5. **Ghost pending rows (closed).** On idempotent no-op (`applied:false`) the route deletes its redundant pending row; `GET /refunds/:id` excludes `status='pending'` so a transient/stranded row never renders as a real refund.
+6. **Approach-A scope tightened (correctness).** Auto-target restricted to `payment_type IN ('deposit','balance','full')`. Refunding `drink_plan_*`/`invoice` charges (extra scope NOT in `total_price`) would wrongly shrink the base total — now excluded by construction (spec Non-Goal). The no-show-bartender money is in the balance/full charge, unaffected.
+7. **Authz raised for money-out.** `POST /refund/:id` guarded by `adminOnly` (admin role only) — stricter than the money-in `charge-balance` (`requireAdminOrManager`). Read-only history stays admin/manager.
+8. **Over-refund backstops documented.** Stripe's per-charge refund cap is the final guarantee on top of the `remainingCents` math; noted in code comments (concurrent in-flight pending refunds aren't subtracted from `remainingCents`, but Stripe rejects an over-refund and the row is marked `failed`).
+9. **Invoice-refresh non-interference.** Refund adjusts only the directly-linked invoice and never calls `refreshUnlockedInvoices`/`createAdditionalInvoiceIfNeeded`; a fully-paid invoice stays `locked` (settled at the corrected figure). Verified against `invoiceHelpers.js`.
+10. **No regression surface.** All edits are additive (new table, new file, new route/webhook blocks, new UI section). No existing query, webhook branch, or pure util is modified; existing `*.test.js` unaffected. Stripe never replays historical events, so the new `charge.refunded` branch can't fire on legacy data.
+
+Two items are owner decisions, not defects — surfaced for veto (default applied = the safer choice): **(7)** admin-only refunds, and **(6)** excluding drink-plan/invoice charges from refundability.
