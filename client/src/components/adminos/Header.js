@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import Icon from './Icon';
 import NAV from './nav';
 
-function findNavLabel(pathname) {
+function findPageTitle(pathname) {
   for (const group of NAV) {
     for (const item of group.items) {
       if (pathname === item.path || pathname.startsWith(item.path + '/')) return item.label;
@@ -14,15 +14,11 @@ function findNavLabel(pathname) {
 
 export default function Header({ onOpenPalette, onQuickAdd, unreadCount = 0 }) {
   const { pathname } = useLocation();
-  const title = findNavLabel(pathname);
+  const title = findPageTitle(pathname);
 
   return (
     <header className="header">
-      <div className="header-crumbs">
-        <span>Workspace</span>
-        <span className="crumb-sep">/</span>
-        <span className="crumb-current">{title}</span>
-      </div>
+      <div className="header-title">{title}</div>
       <button type="button" className="header-search" onClick={onOpenPalette} aria-label="Open command palette">
         <Icon name="search" />
         <span>Search events, clients, proposals…</span>

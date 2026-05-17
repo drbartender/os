@@ -1764,45 +1764,6 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   padding: 0;
 }
 
-/* Breadcrumbs */
-.admin-breadcrumbs {
-  padding: 0.75rem 1.5rem;
-  font-size: 0.85rem;
-  color: var(--text-muted, #5C3319);
-  border-bottom: 1px solid var(--border-color, #e5e7eb);
-  background: var(--card-bg);
-}
-.admin-breadcrumbs ol {
-  display: flex;
-  align-items: center;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  flex-wrap: wrap;
-  gap: 0;
-}
-.admin-breadcrumbs li {
-  display: flex;
-  align-items: center;
-}
-.admin-breadcrumbs a {
-  color: var(--amber);
-  text-decoration: none;
-  transition: color 0.15s;
-}
-.admin-breadcrumbs a:hover {
-  color: var(--primary-hover, #5a4bd1);
-  text-decoration: underline;
-}
-.admin-breadcrumbs span[aria-current="page"] {
-  color: var(--text-primary, #1f2937);
-  font-weight: 500;
-}
-.breadcrumb-sep {
-  margin: 0 0.4rem;
-  color: var(--text-muted, #9ca3af);
-  font-weight: 300;
-}
 
 /* Hamburger toggle — hidden on desktop, visible on mobile */
 .admin-sidebar-toggle {
@@ -9809,19 +9770,14 @@ html[data-app="admin-os"][data-skin="light"] .header {
   padding: 0 2rem;
   height: 52px;
 }
-html[data-app="admin-os"][data-skin="light"] .header-crumbs {
+html[data-app="admin-os"][data-skin="light"] .header-title {
   font-family: var(--font-ui);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.18em;
-  font-weight: 500;
-  color: var(--ink-3);
-}
-html[data-app="admin-os"][data-skin="light"] .header-crumbs .crumb-current {
-  color: var(--ink-1);
   font-weight: 600;
+  color: var(--ink-1);
 }
-html[data-app="admin-os"][data-skin="light"] .header-crumbs .crumb-sep { color: var(--ink-4); }
 
 html[data-app="admin-os"][data-skin="light"] .header-search {
   background: transparent;
@@ -10686,17 +10642,13 @@ html[data-app="admin-os"] .header {
   padding: 0 0.9rem;
   min-width: 0;
 }
-html[data-app="admin-os"] .header-crumbs {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
+html[data-app="admin-os"] .header-title {
   font-size: 12.5px;
-  color: var(--ink-3);
+  color: var(--ink-1);
+  font-weight: 500;
   min-width: 0;
   flex: 1;
 }
-html[data-app="admin-os"] .header-crumbs .crumb-sep { color: var(--ink-4); }
-html[data-app="admin-os"] .header-crumbs .crumb-current { color: var(--ink-1); font-weight: 500; }
 
 html[data-app="admin-os"] .header-search {
   display: flex;

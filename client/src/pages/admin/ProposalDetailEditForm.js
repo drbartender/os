@@ -90,7 +90,7 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
   );
 
   // Browser refresh / close guard. (In-app navigation away — sidebar clicks,
-  // breadcrumbs — would need react-router's `useBlocker`, which requires
+  // in-app links — would need react-router's `useBlocker`, which requires
   // migrating the app from `<BrowserRouter>` to `createBrowserRouter`. That's a
   // larger refactor; until then the user's only loss path is clicking an
   // in-app link mid-edit, which the explicit Cancel button + leave-confirm
