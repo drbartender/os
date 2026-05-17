@@ -2,8 +2,9 @@ import React from 'react';
 import StatusChip from '../../../../components/adminos/StatusChip';
 import { fmtDate } from '../../../../components/adminos/format';
 import { getEventTypeLabel } from '../../../../utils/eventTypes';
+import ClickableRow from '../../../../components/ClickableRow';
 
-export default function ShiftsTab({ upcoming, past, eventsLoading, navigate }) {
+export default function ShiftsTab({ upcoming, past, eventsLoading }) {
   if (eventsLoading) return <div className="muted">Loading shifts…</div>;
   return (
     <div className="vstack" style={{ gap: 'var(--gap)' }}>
@@ -28,9 +29,9 @@ export default function ShiftsTab({ upcoming, past, eventsLoading, navigate }) {
               </thead>
               <tbody>
                 {upcoming.map(ev => (
-                  <tr
+                  <ClickableRow
                     key={`${ev.id}-up`}
-                    onClick={() => ev.proposal_id ? navigate(`/events/${ev.proposal_id}`) : navigate(`/events/shift/${ev.id}`)}
+                    to={ev.proposal_id ? `/events/${ev.proposal_id}` : `/events/shift/${ev.id}`}
                   >
                     <td>
                       <div>{ev.event_date ? fmtDate(String(ev.event_date).slice(0, 10), { year: 'numeric' }) : '—'}</div>
@@ -50,7 +51,7 @@ export default function ShiftsTab({ upcoming, past, eventsLoading, navigate }) {
                         {ev.request_status === 'approved' ? 'Confirmed' : 'Pending'}
                       </StatusChip>
                     </td>
-                  </tr>
+                  </ClickableRow>
                 ))}
               </tbody>
             </table>

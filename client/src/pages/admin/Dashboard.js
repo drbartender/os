@@ -8,6 +8,7 @@ import StaffPills from '../../components/adminos/StaffPills';
 import AreaChart from '../../components/adminos/AreaChart';
 import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
 import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip } from '../../components/adminos/shifts';
+import ClickableRow from '../../components/ClickableRow';
 
 const PIPELINE_COLORS = {
   draft:    'var(--ink-3)',
@@ -245,7 +246,7 @@ export default function Dashboard() {
                     const paid = Number(e.proposal_amount_paid || e.amount_paid || 0);
                     const bal = total - paid;
                     return (
-                      <tr key={e.id} onClick={() => navigate(eventRoute(e))}>
+                      <ClickableRow key={e.id} to={eventRoute(e)}>
                         <td>
                           <strong>{e.client_name || '—'}</strong>
                           <div className="sub">{getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })}</div>
@@ -260,7 +261,7 @@ export default function Dashboard() {
                         <td className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'var(--ink-3)' }}>
                           {bal > 0 ? fmt$(bal) : '—'}
                         </td>
-                      </tr>
+                      </ClickableRow>
                     );
                   })}
                 </tbody>

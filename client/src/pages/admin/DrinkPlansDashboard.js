@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { PUBLIC_SITE_URL } from '../../utils/constants';
@@ -9,6 +8,7 @@ import FieldError from '../../components/FieldError';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
+import ClickableRow from '../../components/ClickableRow';
 import { fmtDate } from '../../components/adminos/format';
 
 const STATUS = {
@@ -27,7 +27,6 @@ const SERVING_LABEL = {
 };
 
 export default function DrinkPlansDashboard() {
-  const navigate = useNavigate();
   const toast = useToast();
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -174,7 +173,7 @@ export default function DrinkPlansDashboard() {
               {!loading && filtered.map(p => {
                 const st = STATUS[p.status] || { label: p.status || '—', kind: 'neutral' };
                 return (
-                  <tr key={p.id} onClick={() => navigate(`/drink-plans/${p.id}`)}>
+                  <ClickableRow key={p.id} to={`/drink-plans/${p.id}`}>
                     <td>
                       <strong>{p.client_name || '—'}</strong>
                       {p.client_email && <div className="sub">{p.client_email}</div>}
@@ -194,7 +193,7 @@ export default function DrinkPlansDashboard() {
                         <Icon name={copyMessage === p.token ? 'check' : 'copy'} size={13} />
                       </button>
                     </td>
-                  </tr>
+                  </ClickableRow>
                 );
               })}
             </tbody>

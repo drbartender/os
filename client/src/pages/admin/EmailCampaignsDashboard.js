@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
+import ClickableRow from '../../components/ClickableRow';
 
 export default function EmailCampaignsDashboard() {
   const navigate = useNavigate();
@@ -76,7 +77,7 @@ export default function EmailCampaignsDashboard() {
               const clickRate = sends > 0 ? (clicks / sends * 100).toFixed(1) : '—';
 
               return (
-                <tr key={c.id} onClick={() => navigate(`/email-marketing/campaigns/${c.id}`)} className="em-row-clickable">
+                <ClickableRow key={c.id} to={`/email-marketing/campaigns/${c.id}`} className="em-row-clickable">
                   <td><strong>{c.name}</strong></td>
                   <td><span className="em-badge em-badge-type">{c.type}</span></td>
                   <td><span className="em-badge" style={{ background: getStatusColor(c.status), color: '#fff' }}>{c.status}</span></td>
@@ -84,7 +85,7 @@ export default function EmailCampaignsDashboard() {
                   <td>{opens} {openRate !== '—' && <span className="em-rate">({openRate}%)</span>}</td>
                   <td>{clicks} {clickRate !== '—' && <span className="em-rate">({clickRate}%)</span>}</td>
                   <td>{new Date(c.created_at).toLocaleDateString()}</td>
-                </tr>
+                </ClickableRow>
               );
             })}
           </tbody>

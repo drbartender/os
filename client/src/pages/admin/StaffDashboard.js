@@ -7,6 +7,7 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
 import KebabMenu from '../../components/adminos/KebabMenu';
+import ClickableRow from '../../components/ClickableRow';
 import AssignToEventModal from './userDetail/components/AssignToEventModal';
 
 function initialsOf(s) {
@@ -91,7 +92,7 @@ export default function StaffDashboard() {
                   s.equipment_table_with_spandex && 'Table',
                 ].filter(Boolean);
                 return (
-                  <tr key={s.id} onClick={() => navigate(`/staffing/users/${s.id}`)}>
+                  <ClickableRow key={s.id} to={`/staffing/users/${s.id}`}>
                     <td>
                       <div className="hstack">
                         <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{initialsOf(s)}</div>
@@ -112,7 +113,7 @@ export default function StaffDashboard() {
                       {s.city && s.state ? `${s.city}, ${s.state}` : (s.city || s.state || '—')}
                     </td>
                     <td className="tiny muted">{equipment.length ? equipment.join(' · ') : '—'}</td>
-                    <td className="shrink" onClick={(ev) => ev.stopPropagation()}>
+                    <td className="shrink" onMouseUp={(ev) => ev.stopPropagation()}>
                       <KebabMenu items={[
                         {
                           label: 'Email',
@@ -149,7 +150,7 @@ export default function StaffDashboard() {
                         },
                       ]} />
                     </td>
-                  </tr>
+                  </ClickableRow>
                 );
               })}
             </tbody>

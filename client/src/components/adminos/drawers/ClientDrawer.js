@@ -7,6 +7,7 @@ import Drawer from '../Drawer';
 import Icon from '../Icon';
 import StatusChip from '../StatusChip';
 import { fmt$, fmt$2dp, fmtDate } from '../format';
+import ClickableRow from '../../ClickableRow';
 
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
@@ -143,7 +144,7 @@ function ClientDrawerBody({ client, navigate, onClose }) {
             </thead>
             <tbody>
               {proposals.map(p => (
-                <tr key={p.id} onClick={() => { onClose(); navigate(`/proposals/${p.id}`); }}>
+                <ClickableRow key={p.id} onActivate={() => { onClose(); navigate(`/proposals/${p.id}`); }}>
                   <td>
                     <strong>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</strong>
                     {p.package_name && <div className="sub">{p.package_name}</div>}
@@ -153,7 +154,7 @@ function ClientDrawerBody({ client, navigate, onClose }) {
                     <StatusChip kind={PROP_STATUS[p.status] || 'neutral'}>{p.status || '—'}</StatusChip>
                   </td>
                   <td className="num">{fmt$(p.total_price)}</td>
-                </tr>
+                </ClickableRow>
               ))}
             </tbody>
           </table>

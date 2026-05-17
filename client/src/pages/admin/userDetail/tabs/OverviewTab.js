@@ -6,6 +6,7 @@ import { formatPhone, formatPhoneInput, stripPhone } from '../../../../utils/for
 import { getEventTypeLabel } from '../../../../utils/eventTypes';
 import FormBanner from '../../../../components/FormBanner';
 import FieldError from '../../../../components/FieldError';
+import ClickableRow from '../../../../components/ClickableRow';
 import Sparkbars from '../components/Sparkbars';
 import EquipmentDisplay from '../components/EquipmentDisplay';
 
@@ -14,7 +15,7 @@ export default function OverviewTab(props) {
     user, profile, upcoming, recent, eventsLoading,
     editing, editForm, setEditForm, startEditing, cancelEditing,
     saveProfile, saving, profileError, profileFieldErrors,
-    permsSaving, updatePermission, navigate,
+    permsSaving, updatePermission,
   } = props;
 
   const monthly = useMemo(() => {
@@ -56,9 +57,9 @@ export default function OverviewTab(props) {
                 </thead>
                 <tbody>
                   {upcoming.slice(0, 6).map(ev => (
-                    <tr
+                    <ClickableRow
                       key={`${ev.id}-up`}
-                      onClick={() => ev.proposal_id ? navigate(`/events/${ev.proposal_id}`) : navigate(`/events/shift/${ev.id}`)}
+                      to={ev.proposal_id ? `/events/${ev.proposal_id}` : `/events/shift/${ev.id}`}
                     >
                       <td>
                         <strong>{ev.client_name || 'Event'}</strong>
@@ -77,7 +78,7 @@ export default function OverviewTab(props) {
                           {ev.request_status === 'approved' ? 'Confirmed' : 'Pending'}
                         </StatusChip>
                       </td>
-                    </tr>
+                    </ClickableRow>
                   ))}
                 </tbody>
               </table>

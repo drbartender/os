@@ -8,6 +8,7 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
 import { fmt$, fmtDate, relDay } from '../../components/adminos/format';
+import ClickableRow from '../../components/ClickableRow';
 
 // Mirrors `proposals_status_check` in server/db/schema.sql. Keep in sync —
 // the constraint allows draft/sent/viewed/modified/accepted/deposit_paid/
@@ -159,7 +160,7 @@ export default function ProposalsDashboard() {
               {!loading && filtered.map(p => {
                 const st = STATUS[p.status] || { label: p.status || '—', kind: 'neutral' };
                 return (
-                  <tr key={p.id} onClick={() => navigate(`/proposals/${p.id}`)}>
+                  <ClickableRow key={p.id} to={`/proposals/${p.id}`}>
                     <td>
                       <strong>{p.client_name || '—'}</strong>
                       {p.client_email && <div className="sub">{p.client_email}</div>}
@@ -178,7 +179,7 @@ export default function ProposalsDashboard() {
                     <td className="muted">{p.sent_at ? relDay(String(p.sent_at).slice(0, 10)) : '—'}</td>
                     <td className="num"><strong>{fmt$(p.total_price)}</strong></td>
                     <td className="shrink">
-                      <div className="hstack" onClick={(e) => e.stopPropagation()}>
+                      <div className="hstack" onMouseUp={(e) => e.stopPropagation()}>
                         {isPaidStatus(p.status) && (
                           <button
                             type="button"
@@ -200,7 +201,7 @@ export default function ProposalsDashboard() {
                         </button>
                       </div>
                     </td>
-                  </tr>
+                  </ClickableRow>
                 );
               })}
             </tbody>

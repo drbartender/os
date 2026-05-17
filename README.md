@@ -208,7 +208,8 @@ dr-bartender/
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, MenuSamplesModal,
 │   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,
 │   │   │                       # TimePicker, NumberStepper, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler,
-│   │   │                       # VenueAddressFields (structured venue address — sign+pay gate & admin edit)
+│   │   │                       # VenueAddressFields (structured venue address — sign+pay gate & admin edit),
+│   │   │                       # ClickableRow (table <tr> wrapper: plain click navigates, drag selects/copies text)
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
 │   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, KebabMenu,
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal,

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmt$, fmt$fromCents, fmtDate } from '../../components/adminos/format';
+import ClickableRow from '../../components/ClickableRow';
 
 const STATUS = {
   draft: 'neutral', sent: 'info', viewed: 'accent', modified: 'violet',
@@ -13,7 +13,6 @@ const STATUS = {
 };
 
 export default function FinancialsDashboard() {
-  const navigate = useNavigate();
   const toast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -93,7 +92,7 @@ export default function FinancialsDashboard() {
                 const paid = Number(p.amount_paid || 0);
                 const bal = total - paid;
                 return (
-                  <tr key={p.id} onClick={() => navigate(`/proposals/${p.id}`)}>
+                  <ClickableRow key={p.id} to={`/proposals/${p.id}`}>
                     <td><strong>{p.client_name || '—'}</strong></td>
                     <td>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</td>
                     <td>{p.event_date ? fmtDate(String(p.event_date).slice(0, 10), { year: 'numeric' }) : '—'}</td>
@@ -103,7 +102,7 @@ export default function FinancialsDashboard() {
                     <td className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'var(--ink-3)' }}>
                       {bal > 0 ? fmt$(bal) : '—'}
                     </td>
-                  </tr>
+                  </ClickableRow>
                 );
               })}
             </tbody>
@@ -129,15 +128,15 @@ export default function FinancialsDashboard() {
                 <tr><td colSpan={5} className="muted">No payments recorded yet.</td></tr>
               )}
               {recentPayments && recentPayments.map(pp => (
-                <tr key={pp.id} style={{ cursor: pp.invoice_token ? 'pointer' : 'default' }}
-                  onClick={() => pp.invoice_token && window.open(`/invoice/${pp.invoice_token}`, '_blank', 'noopener,noreferrer')}
+                <ClickableRow key={pp.id} style={{ cursor: pp.invoice_token ? 'pointer' : 'default' }}
+                  onActivate={() => pp.invoice_token && window.open(`/invoice/${pp.invoice_token}`, '_blank', 'noopener,noreferrer')}
                   title={pp.invoice_token ? 'View invoice' : ''}>
                   <td><strong>{pp.client_name || '—'}</strong></td>
                   <td>{getEventTypeLabel({ event_type: pp.event_type, event_type_custom: pp.event_type_custom })}</td>
                   <td className="muted" style={{ textTransform: 'capitalize' }}>{pp.payment_type}</td>
                   <td className="num">{fmt$fromCents(pp.amount)}</td>
                   <td className="muted">{fmtDate(pp.created_at && String(pp.created_at).slice(0, 10), { year: 'numeric' })}</td>
-                </tr>
+                </ClickableRow>
               ))}
             </tbody>
           </table>

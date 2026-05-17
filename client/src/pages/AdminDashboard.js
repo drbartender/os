@@ -5,6 +5,7 @@ import { useToast } from '../context/ToastContext';
 import api from '../utils/api';
 import { formatPhone } from '../utils/formatPhone';
 import TimePicker from '../components/TimePicker';
+import ClickableRow from '../components/ClickableRow';
 
 export default function AdminDashboard() {
   const { user } = useAuth();
@@ -261,7 +262,7 @@ export default function AdminDashboard() {
                             s.equipment_table_with_spandex && 'Table',
                           ].filter(Boolean);
                           return (
-                            <tr key={s.id} onClick={() => navigate(`/staffing/users/${s.id}`)}>
+                            <ClickableRow key={s.id} to={`/staffing/users/${s.id}`}>
                               <td>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                                   <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{s.preferred_name || '—'}</span>
@@ -285,7 +286,7 @@ export default function AdminDashboard() {
                                   View →
                                 </button>
                               </td>
-                            </tr>
+                            </ClickableRow>
                           );
                         })}
                     </tbody>

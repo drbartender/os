@@ -10,6 +10,7 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmt$, fmt$2dp, fmtDate, fmtDateFull } from '../../components/adminos/format';
 import BackButton from '../../components/adminos/BackButton';
+import ClickableRow from '../../components/ClickableRow';
 
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
@@ -183,7 +184,7 @@ export default function ClientDetail() {
                   </thead>
                   <tbody>
                     {proposals.map(p => (
-                      <tr key={p.id} onClick={() => navigate(`/proposals/${p.id}`)}>
+                      <ClickableRow key={p.id} to={`/proposals/${p.id}`}>
                         <td>
                           <strong>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</strong>
                         </td>
@@ -192,7 +193,7 @@ export default function ClientDetail() {
                         <td><StatusChip kind={PROP_STATUS[p.status] || 'neutral'}>{p.status || '—'}</StatusChip></td>
                         <td className="num">{fmt$(p.total_price)}</td>
                         <td className="num muted">{fmt$(p.amount_paid)}</td>
-                      </tr>
+                      </ClickableRow>
                     ))}
                   </tbody>
                 </table>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import LeadImportModal from '../../components/LeadImportModal';
+import ClickableRow from '../../components/ClickableRow';
 import useFormValidation from '../../hooks/useFormValidation';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
@@ -9,7 +9,6 @@ import FieldError from '../../components/FieldError';
 import { LEAD_SOURCES } from '../../utils/leadSources';
 
 export default function EmailLeadsDashboard() {
-  const navigate = useNavigate();
   const toast = useToast();
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
@@ -150,14 +149,14 @@ export default function EmailLeadsDashboard() {
             </thead>
             <tbody>
               {leads.map(lead => (
-                <tr key={lead.id} onClick={() => navigate(`/email-marketing/leads/${lead.id}`)} className="em-row-clickable">
+                <ClickableRow key={lead.id} to={`/email-marketing/leads/${lead.id}`} className="em-row-clickable">
                   <td>{lead.name}</td>
                   <td>{lead.email}</td>
                   <td>{lead.company || '—'}</td>
                   <td><span className="em-badge em-badge-source">{lead.lead_source?.replace('_', ' ')}</span></td>
                   <td><span className={`em-badge em-badge-${lead.status}`}>{lead.status}</span></td>
                   <td>{new Date(lead.created_at).toLocaleDateString()}</td>
-                </tr>
+                </ClickableRow>
               ))}
             </tbody>
           </table>

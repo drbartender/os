@@ -10,6 +10,7 @@ import ConfirmModal from '../../components/ConfirmModal';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import StaffPills from '../../components/adminos/StaffPills';
+import ClickableRow from '../../components/ClickableRow';
 import Toolbar from '../../components/adminos/Toolbar';
 import KebabMenu from '../../components/adminos/KebabMenu';
 import useDrawerParam from '../../hooks/useDrawerParam';
@@ -401,7 +402,7 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
   ], [e, dispatch, fullyPaid]);
 
   return (
-    <tr onClick={() => dispatch('rowClick', e)}>
+    <ClickableRow onActivate={() => dispatch('rowClick', e)}>
       <td>
         <strong>{e.client_name || 'Event'}</strong>
         <div className="sub">{getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })}{!e.proposal_id && ' · Manual'}</div>
@@ -418,9 +419,9 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
       <td className="num" style={{ color: bal > 0 ? 'hsl(var(--warn-h) var(--warn-s) 58%)' : 'var(--ink-3)' }}>
         {bal > 0 ? fmt$(bal) : '—'}
       </td>
-      <td className="shrink" onClick={(ev) => ev.stopPropagation()}>
+      <td className="shrink" onMouseUp={(ev) => ev.stopPropagation()}>
         <KebabMenu items={kebabItems} />
       </td>
-    </tr>
+    </ClickableRow>
   );
 });

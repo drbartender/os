@@ -10,6 +10,7 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
 import KebabMenu from '../../components/adminos/KebabMenu';
+import ClickableRow from '../../components/ClickableRow';
 import useDrawerParam from '../../hooks/useDrawerParam';
 import ClientDrawer from '../../components/adminos/drawers/ClientDrawer';
 import { fmt$, fmtDate } from '../../components/adminos/format';
@@ -211,7 +212,7 @@ export default function ClientsDashboard() {
               {!loading && filtered.map(c => {
                 const src = SOURCE[c.source] || { label: c.source || '—', kind: 'neutral' };
                 return (
-                  <tr key={c.id} onClick={() => drawer.open('client', c.id)}>
+                  <ClickableRow key={c.id} onActivate={() => drawer.open('client', c.id)}>
                     <td>
                       <div className="hstack">
                         <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{initialsOf(c.name)}</div>
@@ -227,7 +228,7 @@ export default function ClientsDashboard() {
                     <td className="muted">{fmtDate(c.created_at && String(c.created_at).slice(0, 10), { year: 'numeric' })}</td>
                     <td className="num">{c.events_count != null ? c.events_count : '—'}</td>
                     <td className="num"><strong>{c.lifetime_value != null ? fmt$(c.lifetime_value) : '—'}</strong></td>
-                    <td className="shrink" onClick={(ev) => ev.stopPropagation()}>
+                    <td className="shrink" onMouseUp={(ev) => ev.stopPropagation()}>
                       <KebabMenu items={[
                         {
                           label: 'New Proposal',
@@ -253,7 +254,7 @@ export default function ClientsDashboard() {
                         },
                       ]} />
                     </td>
-                  </tr>
+                  </ClickableRow>
                 );
               })}
             </tbody>
