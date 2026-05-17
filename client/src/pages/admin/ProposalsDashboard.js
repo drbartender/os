@@ -64,7 +64,7 @@ export default function ProposalsDashboard() {
           active:   (pipeByKey.sent || 0) + (pipeByKey.viewed || 0) + (pipeByKey.modified || 0),
           draft:    pipeByKey.draft || 0,
           accepted: pipeByKey.accepted || 0,
-          paid:     r.data?.totals?.events_count || 0,
+          paid:     r.data?.paidCount || 0,
         });
       })
       .catch(() => { /* leave counts at zero — graceful degradation */ });

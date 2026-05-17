@@ -231,9 +231,20 @@ function qRevenue(f) {
   };
 }
 
+/** Range-independent count of proposals in a paid status. Restores the old
+ *  dashboard-stats `totals.events_count` consumed by ProposalsDashboard's Paid tab. */
+function qPaidCount() {
+  return {
+    sql: `SELECT COUNT(*)::int AS count
+          FROM proposals
+          WHERE status IN ('deposit_paid','balance_paid','confirmed','completed')`,
+    params: [],
+  };
+}
+
 const builders = {
   qSent, qAccepted, qWinRate, qTimeToAccept, qLostValue,
-  qPipelineOutstanding, qMoney, qOutstanding, qRevenue,
+  qPipelineOutstanding, qMoney, qOutstanding, qRevenue, qPaidCount,
 };
 
 module.exports = { resolveFilters, priorPeriod, dateClause, toDollars, BASES, ...builders };

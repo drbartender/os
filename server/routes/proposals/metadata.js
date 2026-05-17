@@ -156,6 +156,7 @@ router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (
   const lost = metrics.qLostValue(f);
   const pipeOut = metrics.qPipelineOutstanding();
   const rev = metrics.qRevenue(f);
+  const paidCnt = metrics.qPaidCount();
 
   // Prior-period variants (null when All time → no prior window).
   const priorF = prior ? { ...f, from: prior.from, to: prior.to } : null;
@@ -166,7 +167,7 @@ router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (
 
   const [
     moneyR, outR, sentR, accR, wrR, ttaR, lostR, pipeOutR, revR,
-    pipelineR, moneyPriorR, outPriorR,
+    pipelineR, moneyPriorR, outPriorR, paidCntR,
   ] = await Promise.all([
     pool.query(money.sql, money.params),
     pool.query(out.sql, out.params),
@@ -183,6 +184,7 @@ router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (
     `),
     moneyPrior ? pool.query(moneyPrior.sql, moneyPrior.params) : Promise.resolve(null),
     outPrior ? pool.query(outPrior.sql, outPrior.params) : Promise.resolve(null),
+    pool.query(paidCnt.sql, paidCnt.params),
   ]);
 
   const PIPELINE_ORDER = [
@@ -231,6 +233,7 @@ router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (
     },
     revenue: revR.rows,
     pipeline,
+    paidCount: paidCntR.rows[0].count,
   });
 }));
 
