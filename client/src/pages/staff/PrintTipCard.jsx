@@ -86,11 +86,11 @@ export default function PrintTipCard() {
       {/* ─ printable area ─ */}
       <div className={`print-stage size-${size}`} data-print-area>
         <div className="sheet">
-          <Front name={name} tipUrl={data.url} headshotUrl={data.headshot_url} marks={marks} />
+          <Front name={name} tipUrl={data.url} marks={marks} />
         </div>
         {Back && (
           <div className="page-break">
-            <Back name={name} tipUrl={data.url} headshotUrl={data.headshot_url} />
+            <Back name={name} tipUrl={data.url} />
           </div>
         )}
       </div>

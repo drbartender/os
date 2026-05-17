@@ -391,7 +391,7 @@ export function BizCardBackA({
 const FEATURE_ROW_MARKS = ['apple', 'google', 'venmo', 'cashapp', 'paypal'];
 const FEATURE_NET_MARKS = ['visa', 'mc', 'amex'];
 
-export function FourBySixA({ name = 'your bartender', tipUrl = '', headshotUrl = '', marks = null }) {
+export function FourBySixA({ name = 'your bartender', tipUrl = '', marks = null }) {
   const rowMarks = marks == null ? FEATURE_ROW_MARKS : FEATURE_ROW_MARKS.filter((m) => marks.includes(m));
   const netMarks = marks == null ? FEATURE_NET_MARKS : FEATURE_NET_MARKS.filter((m) => marks.includes(m));
   const showPayCard = rowMarks.length > 0 || netMarks.length > 0;
@@ -440,7 +440,7 @@ export function FourBySixA({ name = 'your bartender', tipUrl = '', headshotUrl =
         transform: 'translateX(-50%)',
         zIndex: 2,
       }}>
-        <HeadshotFrame size={112} src={headshotUrl} />
+        <HeadshotFrame size={112} />
       </div>
 
       <div style={{
@@ -527,7 +527,7 @@ export function FourBySixA({ name = 'your bartender', tipUrl = '', headshotUrl =
 
 // ─ 5 × 7 portrait — single-sided tip collection ────────────
 // 750 × 1050 at 150dpi
-export function FiveBySevenA({ name = 'your bartender', tipUrl = '', headshotUrl = '', marks = null }) {
+export function FiveBySevenA({ name = 'your bartender', tipUrl = '', marks = null }) {
   const rowMarks = marks == null ? FEATURE_ROW_MARKS : FEATURE_ROW_MARKS.filter((m) => marks.includes(m));
   const netMarks = marks == null ? FEATURE_NET_MARKS : FEATURE_NET_MARKS.filter((m) => marks.includes(m));
   const showPayCard = rowMarks.length > 0 || netMarks.length > 0;
@@ -570,7 +570,7 @@ export function FiveBySevenA({ name = 'your bartender', tipUrl = '', headshotUrl
         transform: 'translateX(-50%)',
         zIndex: 2,
       }}>
-        <HeadshotFrame size={140} src={headshotUrl} />
+        <HeadshotFrame size={140} />
       </div>
 
       <div style={{
