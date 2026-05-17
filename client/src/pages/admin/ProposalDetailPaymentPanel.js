@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import InvoiceDropdown from '../../components/InvoiceDropdown';
@@ -51,6 +51,53 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
   const [newInvoiceAmount, setNewInvoiceAmount] = useState('');
   const [newInvoiceDueDate, setNewInvoiceDueDate] = useState('');
   const [creatingInvoice, setCreatingInvoice] = useState(false);
+
+  // Refund
+  const [showRefund, setShowRefund] = useState(false);
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundReason, setRefundReason] = useState('');
+  const [refundKey, setRefundKey] = useState('');
+  const [issuingRefund, setIssuingRefund] = useState(false);
+  const [refunds, setRefunds] = useState([]);
+
+  useEffect(() => {
+    let alive = true;
+    api.get(`/stripe/refunds/${proposal.id}`)
+      .then(res => { if (alive) setRefunds(res.data || []); })
+      .catch(() => { /* non-fatal: history just won't render */ });
+    return () => { alive = false; };
+  }, [proposal.id, proposal.amount_paid, proposal.total_price]);
+
+  const openRefund = () => {
+    setRefundKey(
+      (window.crypto && window.crypto.randomUUID)
+        ? window.crypto.randomUUID()
+        : String(Date.now()) + Math.random().toString(16).slice(2)
+    );
+    setShowRefund(true);
+  };
+
+  const issueRefund = async () => {
+    if (!refundAmount || Number(refundAmount) <= 0) { toast.error('Enter a valid amount.'); return; }
+    if (!refundReason.trim()) { toast.error('A reason is required.'); return; }
+    setIssuingRefund(true);
+    try {
+      const res = await api.post(`/stripe/refund/${proposal.id}`, {
+        amount: Number(refundAmount),
+        reason: refundReason.trim(),
+        idempotency_key: refundKey,
+      });
+      toast.success(`Refunded ${fmt$2dp(res.data.refunded / 100)}.`);
+      setShowRefund(false);
+      setRefundAmount('');
+      setRefundReason('');
+      onUpdate?.();
+    } catch (err) {
+      toast.error(err.message || 'Refund failed.');
+    } finally {
+      setIssuingRefund(false);
+    }
+  };
 
   const saveBalanceDueDate = async () => {
     if (!balanceDueDate) return;
@@ -315,6 +362,56 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
                       onClick={() => setShowRecordPayment(false)}>Cancel</button>
                   </div>
                 </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Issue refund */}
+        {amountPaid > 0 && (
+          <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line-1)' }}>
+            {!showRefund ? (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={openRefund}>
+                <Icon name="dollar" size={11} />Issue refund
+              </button>
+            ) : (
+              <div>
+                <div className="meta-k" style={{ marginBottom: 6 }}>Issue refund</div>
+                <div className="vstack" style={{ gap: 6 }}>
+                  <input type="number" className="input" placeholder="Amount ($)"
+                    value={refundAmount} onChange={e => setRefundAmount(e.target.value)}
+                    min="0.01" step="0.01" />
+                  <textarea className="input" placeholder="Reason (e.g. second bartender no-show)"
+                    value={refundReason} onChange={e => setRefundReason(e.target.value)}
+                    rows={2} style={{ resize: 'vertical' }} />
+                  <div className="hstack" style={{ gap: 6 }}>
+                    <button type="button" className="btn btn-primary btn-sm"
+                      onClick={issueRefund} disabled={issuingRefund}>
+                      {issuingRefund ? 'Refunding…' : 'Confirm refund'}
+                    </button>
+                    <button type="button" className="btn btn-ghost btn-sm"
+                      onClick={() => setShowRefund(false)}>Cancel</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {refunds.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div className="meta-k" style={{ marginBottom: 4 }}>Refund history</div>
+                {refunds.map(r => (
+                  <div key={r.id} className="tiny" style={{ marginBottom: 4 }}>
+                    <span style={{ color: 'hsl(var(--danger-h) var(--danger-s) 50%)' }}>
+                      −{fmt$2dp(r.amount / 100)}
+                    </span>{' '}
+                    · {r.reason} ·{' '}
+                    {new Date(r.created_at).toLocaleDateString('en-US', { timeZone: 'UTC' })}
+                    {r.status !== 'succeeded' && <> · <em>{r.status}</em></>}
+                    <div className="muted">
+                      total {fmt$2dp(Number(r.total_price_before))} → {fmt$2dp(Number(r.total_price_after))}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
