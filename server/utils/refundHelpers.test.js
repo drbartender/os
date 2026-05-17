@@ -81,15 +81,17 @@ test('amount exceeds amount_paid → EXCEEDS_AMOUNT_PAID', () => {
   assert.equal(r.code, 'EXCEEDS_AMOUNT_PAID');
 });
 
-test('refund below zero total → EXCEEDS_TOTAL', () => {
+test('amount exceeding base total_price is NOT rejected by the pure planner (extra-scope: authoritative total floor + label conditional live in applyRefundReconciliation, not here)', () => {
   const r = planRefund({
-    paymentsWithRemaining: [pay(2, 'pi_bal', 999999)],
-    requestedDollars: 600,
-    amountPaidDollars: 600,
-    totalPriceDollars: 500,
+    paymentsWithRemaining: [pay(2, 'pi_inv', 120000)], // a $1200 invoice charge
+    requestedDollars: 1200,
+    amountPaidDollars: 2200,   // base $1000 + $1200 extras paid
+    totalPriceDollars: 1000,   // base contract total
   });
-  assert.equal(r.ok, false);
-  assert.equal(r.code, 'EXCEEDS_TOTAL');
+  assert.equal(r.ok, true);
+  assert.equal(r.amountCents, 120000);
+  assert.equal(r.targetPaymentId, 2);
+  assert.equal(r.targetIntentId, 'pi_inv');
 });
 
 for (const bad of ['0', '-5', '', 'abc', null, undefined, NaN]) {

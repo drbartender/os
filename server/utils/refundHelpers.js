@@ -57,16 +57,17 @@ function planRefund({ paymentsWithRemaining, requestedDollars, amountPaidDollars
     return { ok: false, code: 'EXCEEDS_AMOUNT_PAID', message: 'Refund exceeds the amount currently paid on this proposal.' };
   }
 
-  // Conservative full-Approach-A bound: assumes the whole refund is contract
-  // money (worst case for total_price). The AUTHORITATIVE total_price_after
-  // is computed in applyRefundReconciliation from the linked invoice labels
-  // — an extra-scope refund reduces total_price LESS (or not at all), so
-  // this guard never wrongly rejects a valid refund. totalPriceAfterDollars
-  // below is therefore a preview the reconciliation finalizes.
-  const totalAfterCents = Math.round(Number(totalPriceDollars) * 100) - amountCents;
-  if (totalAfterCents < 0) {
-    return { ok: false, code: 'EXCEEDS_TOTAL', message: 'Refund would drop the proposal total below $0.00.' };
-  }
+  // No total_price pre-check here: planRefund is PURE and cannot see the
+  // linked invoice label, so it cannot know how much of this refund is
+  // contract money. The authoritative total correction (and its 0-floor) is
+  // applied in applyRefundReconciliation via SQL GREATEST(total_price −
+  // contractCents/100, 0), where contractCents is classified by invoice
+  // label. Flooring on total_price here would WRONGLY reject a valid
+  // extra-scope refund (contractCents=0 → total_price untouched). For a
+  // contract refund the SQL floor + EXCEEDS_AMOUNT_PAID + the per-charge cap
+  // already bound it. totalPriceAfterDollars below is a non-negative
+  // worst-case (all-contract) PREVIEW the reconciliation overwrites.
+  const totalAfterCents = Math.max(0, Math.round(Number(totalPriceDollars) * 100) - amountCents);
 
   return {
     ok: true,

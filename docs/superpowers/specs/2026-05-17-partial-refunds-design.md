@@ -86,7 +86,8 @@ Admin enters **amount + reason only**. The server picks the charge:
 3. Candidate set non-empty → else `"No Stripe payment on this proposal is available to refund."`
 4. `amount_cents ≤ target.remaining` → else the no-spanning rejection above.
 5. `amount_cents ≤ round(amount_paid * 100)` → defense-in-depth (we never refund more than we currently hold as paid).
-6. `total_price_after = total_price − amount ≥ 0` → else reject (cannot refund below zero).
+
+The pure planner does **not** pre-check `total_price`. It cannot see the linked invoice label, so it cannot know how much of the refund is contract money — flooring on `total_price` here would wrongly reject a valid **extra-scope** refund (e.g. refunding a paid "Additional Services" invoice whose amount exceeds the base `total_price`). The authoritative 0-floor + the contract-vs-extra split is enforced once, downstream, in `applyRefundReconciliation`: `UPDATE proposals SET total_price = GREATEST(total_price − contractCents/100, 0)`, where `contractCents` is `0` for an extra-scope refund (so `total_price` is untouched) and `= amount` for a contract refund (where it can never exceed `total_price` anyway). `EXCEEDS_SINGLE_CHARGE`, `EXCEEDS_AMOUNT_PAID`, the SQL `GREATEST`, and Stripe's own per-charge refund cap together bound every case.
 
 Eligibility gates on **refundable money, not proposal status** — a refund is valid whenever a real Stripe charge has room left, regardless of `status` (`balance_paid` / `confirmed` / `completed` are the expected post-event states, but the gate is the ledger, not the enum).
 

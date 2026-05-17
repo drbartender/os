@@ -171,15 +171,17 @@ test('amount exceeds amount_paid → EXCEEDS_AMOUNT_PAID', () => {
   assert.equal(r.code, 'EXCEEDS_AMOUNT_PAID');
 });
 
-test('refund below zero total → EXCEEDS_TOTAL', () => {
+test('amount exceeding base total_price is NOT rejected by the pure planner (extra-scope: authoritative total floor + label conditional live in applyRefundReconciliation, not here)', () => {
   const r = planRefund({
-    paymentsWithRemaining: [pay(2, 'pi_bal', 999999)],
-    requestedDollars: 600,
-    amountPaidDollars: 600,
-    totalPriceDollars: 500,
+    paymentsWithRemaining: [pay(2, 'pi_inv', 120000)], // a $1200 invoice charge
+    requestedDollars: 1200,
+    amountPaidDollars: 2200,   // base $1000 + $1200 extras paid
+    totalPriceDollars: 1000,   // base contract total
   });
-  assert.equal(r.ok, false);
-  assert.equal(r.code, 'EXCEEDS_TOTAL');
+  assert.equal(r.ok, true);
+  assert.equal(r.amountCents, 120000);
+  assert.equal(r.targetPaymentId, 2);
+  assert.equal(r.targetIntentId, 'pi_inv');
 });
 
 for (const bad of ['0', '-5', '', 'abc', null, undefined, NaN]) {
@@ -265,16 +267,17 @@ function planRefund({ paymentsWithRemaining, requestedDollars, amountPaidDollars
     return { ok: false, code: 'EXCEEDS_AMOUNT_PAID', message: 'Refund exceeds the amount currently paid on this proposal.' };
   }
 
-  // Conservative full-Approach-A bound: assumes the whole refund is contract
-  // money (worst case for total_price). The AUTHORITATIVE total_price_after
-  // is computed in applyRefundReconciliation from the linked invoice labels
-  // — an extra-scope refund reduces total_price LESS (or not at all), so
-  // this guard never wrongly rejects a valid refund. totalPriceAfterDollars
-  // below is therefore a preview the reconciliation finalizes.
-  const totalAfterCents = Math.round(Number(totalPriceDollars) * 100) - amountCents;
-  if (totalAfterCents < 0) {
-    return { ok: false, code: 'EXCEEDS_TOTAL', message: 'Refund would drop the proposal total below $0.00.' };
-  }
+  // No total_price pre-check here: planRefund is PURE and cannot see the
+  // linked invoice label, so it cannot know how much of this refund is
+  // contract money. The authoritative total correction (and its 0-floor) is
+  // applied in applyRefundReconciliation via SQL GREATEST(total_price −
+  // contractCents/100, 0), where contractCents is classified by invoice
+  // label. Flooring on total_price here would WRONGLY reject a valid
+  // extra-scope refund (contractCents=0 → total_price untouched). For a
+  // contract refund the SQL floor + EXCEEDS_AMOUNT_PAID + the per-charge cap
+  // already bound it. totalPriceAfterDollars below is a non-negative
+  // worst-case (all-contract) PREVIEW the reconciliation overwrites.
+  const totalAfterCents = Math.max(0, Math.round(Number(totalPriceDollars) * 100) - amountCents);
 
   return {
     ok: true,
@@ -291,7 +294,7 @@ module.exports = { planRefund, fmtUSD };
 - [ ] **Step 4: Run the test, verify it passes**
 
 Run: `node --test server/utils/refundHelpers.test.js`
-Expected: PASS — all tests (cents seam, auto-target, prior-refund shrink, no-spanning, NO_REFUNDABLE_PAYMENT, EXCEEDS_AMOUNT_PAID, EXCEEDS_TOTAL, all INVALID_AMOUNT cases).
+Expected: PASS — all tests (cents seam, auto-target, prior-refund shrink, no-spanning, NO_REFUNDABLE_PAYMENT, EXCEEDS_AMOUNT_PAID, extra-scope-not-rejected-by-pure-planner, all INVALID_AMOUNT cases).
 
 - [ ] **Step 5: Lint**
 
