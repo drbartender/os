@@ -39,7 +39,7 @@ getBookingWindow({ eventDate, eventStartTime, now = new Date() }) →
 
 ## Server Enforcement (the hard gate)
 
-`POST /api/stripe/create-payment-intent/:token` (`server/routes/stripe.js:~99`):
+`POST /api/stripe/create-intent/:token` (`server/routes/stripe.js:~99`):
 
 1. Add `event_start_time` to the proposal SELECT (it already selects `event_date`).
 2. Compute `getBookingWindow(...)`.
@@ -47,7 +47,7 @@ getBookingWindow({ eventDate, eventStartTime, now = new Date() }) →
 
 **Reject, never silently coerce.** A client expecting a $100 charge must never be quietly charged the full total. The UI will already only offer "full" in these tiers; this is the backstop against a stale client or a direct API hit.
 
-This gate covers the **client self-service** booking entry point (`create-payment-intent`). Admin-generated Stripe payment links are admin-mediated and intentionally **not** gated (consistent with the admin-path non-goal below). Balance / drink-plan / invoice intents are post-conversion and can never be an initial ≤14-day booking.
+This gate covers the **client self-service** booking entry point (`create-intent`). Admin-generated Stripe payment links are admin-mediated and intentionally **not** gated (consistent with the admin-path non-goal below). Balance / drink-plan / invoice intents are post-conversion and can never be an initial ≤14-day booking.
 
 **Why this is money-clean:** full payment → webhook sets `status='balance_paid'` directly. The autopay scheduler only ever claims `status='deposit_paid'` (`server/utils/balanceScheduler.js:37`), so forcing full *automatically* sidesteps the past-due-balance problem. The Stripe charge code, `balance_due_date` COALESCE, and the autopay scheduler are **untouched**.
 
@@ -126,7 +126,7 @@ No automated refund money-code is built for this rare exception path — this is
 |---|---|
 | `server/utils/bookingWindow.js` | **New.** Pure helper — the source of truth. |
 | `server/db/schema.sql` | `+ last_minute_hold BOOLEAN DEFAULT false` (idempotent). |
-| `server/routes/stripe.js` | Gate in `create-payment-intent`; set `last_minute_hold` + SMS blast in webhook. |
+| `server/routes/stripe.js` | Gate in `create-intent`; set `last_minute_hold` + SMS blast in webhook. |
 | `server/routes/proposals/publicToken.js` | Add `payment_policy` to `GET /t/:token` response. |
 | `server/utils/emailTemplates.js` | Conditional warning block in `signedAndPaidClient` + `paymentReceivedClient`. |
 | `server/routes/shifts.js` | Clear `last_minute_hold` when linked shift fully staffed. |

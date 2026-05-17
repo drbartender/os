@@ -881,6 +881,38 @@ from every offer point. Logic lives in `client/src/pages/plan/data/packageGaps.j
 (pure helpers) + `server/utils/pricingEngine.js` (parity helpers); the data
 model is `service_packages.covered_addon_slugs` and `cocktails.upgrade_addon_slugs`.
 
+## Booking-Window Policy
+
+Lead-time-based booking rules, computed by one pure helper so the client never
+re-derives date math:
+
+- `server/utils/bookingWindow.js` — pure lead-time tier (14-day full-payment /
+  72-hour staffing-hold) computation; the single source of truth for
+  booking-window policy. `getBookingWindow({ eventDate, eventStartTime, now }) →
+  { hoursUntilEvent, fullPaymentRequired, lastMinuteHold }`. UTC math (consistent
+  with the rest of the date code); null `event_start_time` ⇒ 00:00 of the event
+  date (conservative — classifies more urgent).
+- `server/utils/lastMinuteAlert.js` — admin + broad-net staff SMS blast for
+  ≤72h "staffing hold" bookings (`notifyLastMinuteBooking(proposalId)`,
+  self-guarding/non-blocking).
+
+**Behavior.** Bookings ≤14 days out require full payment — the deposit option is
+**rejected at the `create-intent` payment-intent gate** (`FULL_PAYMENT_REQUIRED`;
+never silently coerced) and hidden in the proposal UI via the server-computed
+`payment_policy` block on `GET /t/:token`. Bookings ≤72h out additionally set
+`proposals.last_minute_hold` (in the `payment_intent.succeeded` webhook, in-tx,
+inside the `isFirstDelivery` idempotency guard), warn the client both
+pre-payment (proposal page) and in the first-payment email that the booking is
+subject to staff availability with a full refund if unstaffable, and trigger an
+admin + staff SMS blast post-commit (once-per-payment via `isFirstDelivery`).
+The hold clears automatically when the linked shift is fully staffed (approved
+`shift_requests` ≥ `positions_needed` length — autoAssign's definition) via the
+approve/assign handlers in `server/routes/shifts.js`. The Stripe charge path,
+`balance_due_date` COALESCE, and the autopay scheduler are untouched (full
+payment naturally sets `status='balance_paid'`, which the scheduler never
+claims). Refunds on the rare unstaffable case are manual (Stripe dashboard) by
+deliberate scope choice.
+
 ## Third-Party Integrations
 
 ### Stripe (Payments)

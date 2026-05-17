@@ -8972,6 +8972,35 @@ html[data-app="admin-os"] .location-suggest-item.active {
   margin: 4px 0 0;
 }
 
+/* Last-minute booking policy — client proposal page (within 14d / 72h) */
+.payment-policy-note {
+  font-size: 0.85rem;
+  color: var(--ink, #333);
+  margin-top: 0.75rem;
+}
+.payment-policy-warn {
+  font-size: 0.85rem;
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  background: #fff4e5;
+  border-left: 3px solid #d9822b;
+  border-radius: 4px;
+}
+
+/* Admin proposal detail — last-minute "verify staffing" badge */
+.lm-hold-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #8a4b00;
+  background: #ffe9cc;
+  border: 1px solid #d9822b;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
 .proposal-paid-card {
   background: rgba(45, 107, 90, 0.15);
   border: 1px solid rgba(45, 107, 90, 0.5);

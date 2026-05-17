@@ -66,6 +66,9 @@ export default function SignAndPaySection({
   setPaymentOption,
   autopayChecked,
   setAutopayChecked,
+  // Booking-window policy (server-computed; never re-derived here)
+  fullPaymentRequired,
+  lastMinuteHold,
   // Display
   totalPrice,
   balanceAmount,
@@ -91,6 +94,25 @@ export default function SignAndPaySection({
   const depositSelected = paymentOption === 'deposit';
   const fullSelected = paymentOption === 'full';
   const autopayLabel = `Automatically pay remaining ${fmt(balanceAmount)} on ${formatDateShort(balanceDueDate)}`;
+
+  // Booking-window policy notices (shared by both modes). fullPaymentRequired
+  // (event ≤14d) hides the deposit tablet + autopay and shows the explainer;
+  // lastMinuteHold (event ≤72h) additionally shows the cancellation-consent
+  // warning directly above the pay button — the client must consent BEFORE the
+  // card is charged.
+  const fullRequiredNotice = fullPaymentRequired ? (
+    <p className="payment-policy-note">
+      Because your event is within 2 weeks, full payment is required to confirm your booking.
+    </p>
+  ) : null;
+
+  const lastMinuteWarning = lastMinuteHold ? (
+    <p className="payment-policy-warn">
+      Heads up — because this event is less than 72 hours away, your booking is confirmed
+      subject to staff availability. In the rare case we can't staff it in time, we'll cancel
+      and fully refund you.
+    </p>
+  ) : null;
 
   // Live "what's still needed to pay" list (signAndPay only). Names the exact
   // missing items so the disabled Pay button is never a mystery.
@@ -169,26 +191,30 @@ export default function SignAndPaySection({
         <div>
           <label className="sign-pay-eyebrow">How would you like to pay?</label>
 
+          {!fullPaymentRequired && (
+            <PaymentTablet
+              selected={depositSelected}
+              onSelect={() => setPaymentOption('deposit')}
+              value="deposit"
+              label={`Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`}
+              amount={fmt(DEPOSIT_DOLLARS)}
+              desc={`Remaining ${fmt(balanceAmount)} due before your event`}
+              showAutopay={depositSelected && balanceAmount > 0}
+              autopayChecked={autopayChecked}
+              setAutopayChecked={setAutopayChecked}
+              autopayLabel={autopayLabel}
+            />
+          )}
           <PaymentTablet
-            selected={depositSelected}
-            onSelect={() => setPaymentOption('deposit')}
-            value="deposit"
-            label={`Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`}
-            amount={fmt(DEPOSIT_DOLLARS)}
-            desc={`Remaining ${fmt(balanceAmount)} due before your event`}
-            showAutopay={depositSelected && balanceAmount > 0}
-            autopayChecked={autopayChecked}
-            setAutopayChecked={setAutopayChecked}
-            autopayLabel={autopayLabel}
-          />
-          <PaymentTablet
-            selected={fullSelected}
+            selected={fullSelected || fullPaymentRequired}
             onSelect={() => { setPaymentOption('full'); setAutopayChecked(false); }}
             value="full"
             label="Pay in Full"
             amount={fmt(totalPrice)}
             desc="No remaining balance"
           />
+          {fullRequiredNotice}
+          {lastMinuteWarning}
         </div>
 
         {payNeeds.length > 0 && (
@@ -264,26 +290,30 @@ export default function SignAndPaySection({
 
       <div>
         <label className="sign-pay-eyebrow">How would you like to pay?</label>
+        {!fullPaymentRequired && (
+          <PaymentTablet
+            selected={depositSelected}
+            onSelect={() => setPaymentOption('deposit')}
+            value="deposit"
+            label={`Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`}
+            amount={fmt(DEPOSIT_DOLLARS)}
+            desc={`Remaining ${fmt(balanceAmount)} due before your event`}
+            showAutopay={depositSelected && balanceAmount > 0}
+            autopayChecked={autopayChecked}
+            setAutopayChecked={setAutopayChecked}
+            autopayLabel={autopayLabel}
+          />
+        )}
         <PaymentTablet
-          selected={depositSelected}
-          onSelect={() => setPaymentOption('deposit')}
-          value="deposit"
-          label={`Pay ${fmt(DEPOSIT_DOLLARS)} Deposit`}
-          amount={fmt(DEPOSIT_DOLLARS)}
-          desc={`Remaining ${fmt(balanceAmount)} due before your event`}
-          showAutopay={depositSelected && balanceAmount > 0}
-          autopayChecked={autopayChecked}
-          setAutopayChecked={setAutopayChecked}
-          autopayLabel={autopayLabel}
-        />
-        <PaymentTablet
-          selected={fullSelected}
+          selected={fullSelected || fullPaymentRequired}
           onSelect={() => { setPaymentOption('full'); setAutopayChecked(false); }}
           value="full"
           label="Pay in Full"
           amount={fmt(totalPrice)}
           desc="No remaining balance"
         />
+        {fullRequiredNotice}
+        {lastMinuteWarning}
       </div>
 
       <div>

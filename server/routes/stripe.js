@@ -6,6 +6,8 @@ const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicLimiter } = require('../middleware/rateLimiters');
 const { createEventShifts } = require('../utils/eventCreation');
+const { getBookingWindow } = require('../utils/bookingWindow');
+const { notifyLastMinuteBooking } = require('../utils/lastMinuteAlert');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { calculateSyrupCost } = require('../utils/pricingEngine');
@@ -99,7 +101,8 @@ router.post('/create-intent/:token', publicLimiter, asyncHandler(async (req, res
   const { payment_option = 'deposit', autopay = false } = req.body;
 
   const result = await pool.query(`
-    SELECT p.id, p.status, p.event_type, p.event_type_custom, p.total_price, p.event_date,
+    SELECT p.id, p.status, p.event_type, p.event_type_custom, p.total_price,
+           p.event_date, p.event_start_time,
            p.stripe_customer_id, p.deposit_amount,
            c.email AS client_email, c.name AS client_name
     FROM proposals p
@@ -115,6 +118,25 @@ router.post('/create-intent/:token', publicLimiter, asyncHandler(async (req, res
   }
   if (!['sent', 'viewed', 'accepted'].includes(proposal.status)) {
     throw new ConflictError('This proposal is not available for payment', 'NOT_PAYABLE');
+  }
+
+  // Last-minute booking gate: inside 14 days, full payment is the ONLY option.
+  // Reject a deposit attempt outright — NEVER silently upgrade the charge (the
+  // client expects a $100 deposit; charging the full total without consent is a
+  // money-integrity violation). The UI already hides the deposit tablet inside
+  // this window; this is the server-side backstop against a stale client or a
+  // direct API hit. Full payment naturally drives status='balance_paid', which
+  // the autopay scheduler never claims — so this also sidesteps the past-due
+  // balance problem without touching the charge path or balance_due_date.
+  const bookingWindow = getBookingWindow({
+    eventDate: proposal.event_date,
+    eventStartTime: proposal.event_start_time,
+  });
+  if (bookingWindow.fullPaymentRequired && payment_option !== 'full') {
+    throw new ConflictError(
+      'This event is within 2 weeks — full payment is required to book.',
+      'FULL_PAYMENT_REQUIRED'
+    );
   }
 
   const isFullPay = payment_option === 'full';
@@ -621,7 +643,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
     try {
       const payInfo = await pool.query(`
-        SELECT p.event_type, p.event_type_custom, p.client_signed_at,
+        SELECT p.event_type, p.event_type_custom, p.client_signed_at, p.last_minute_hold,
                c.name AS client_name, c.email AS client_email
         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
         WHERE p.id = $1
@@ -642,9 +664,13 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         && (paymentType === 'deposit' || paymentType === 'full');
 
       if (pi?.client_email) {
+        // last_minute_hold was set in-tx and committed before this post-commit
+        // notifier runs, so the flag is readable here. Append the cancellation
+        // caveat to the first-payment client email when the booking is ≤72h out.
+        const lastMinute = !!pi?.last_minute_hold;
         const tpl = isCoupledSigning
-          ? emailTemplates.signedAndPaidClient({ clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel })
-          : emailTemplates.paymentReceivedClient({ clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel });
+          ? emailTemplates.signedAndPaidClient({ clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute })
+          : emailTemplates.paymentReceivedClient({ clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute });
         await sendEmail({ to: pi.client_email, ...tpl });
       }
       const adminEmail = process.env.ADMIN_EMAIL;
@@ -673,6 +699,11 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     if (proposalId) {
       const dbClient = await pool.connect();
       let isFirstDelivery = false;
+      // Set true in-tx when this initial-booking payment is for a ≤72h event.
+      // Gates BOTH the flag UPDATE (inside the tx) and the post-commit SMS
+      // blast — strictly within the isFirstDelivery guard so a Stripe webhook
+      // retry never double-flags or double-blasts.
+      let isLastMinuteHold = false;
       try {
         await dbClient.query('BEGIN');
 
@@ -738,6 +769,34 @@ router.post('/webhook', asyncHandler(async (req, res) => {
                   payment_type = 'deposit'
               WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')
             `, [proposalId]);
+          }
+
+          // Last-minute staffing hold — only for the INITIAL-booking branches
+          // (full; deposit covered defensively even though the create-intent
+          // gate makes a ≤14d deposit impossible). balance / drink_plan_* /
+          // invoice are post-conversion and must never flip the hold. Flag the
+          // proposal atomically with the status change so the admin badge is
+          // consistent the instant the tx commits; the post-commit SMS blast is
+          // gated on the same isLastMinuteHold flag (set here) AND
+          // isFirstDelivery, so a Stripe retry can neither re-flag nor re-blast.
+          if (paymentType === 'full' || paymentType === 'deposit') {
+            const lmRes = await dbClient.query(
+              'SELECT event_date, event_start_time FROM proposals WHERE id = $1',
+              [proposalId]
+            );
+            if (lmRes.rows[0]) {
+              const w = getBookingWindow({
+                eventDate: lmRes.rows[0].event_date,
+                eventStartTime: lmRes.rows[0].event_start_time,
+              });
+              if (w.lastMinuteHold) {
+                isLastMinuteHold = true;
+                await dbClient.query(
+                  'UPDATE proposals SET last_minute_hold = true WHERE id = $1',
+                  [proposalId]
+                );
+              }
+            }
           }
 
           // Save payment method ID if autopay was enrolled (card saved via setup_future_usage)
@@ -870,6 +929,11 @@ router.post('/webhook', asyncHandler(async (req, res) => {
       // Non-blocking post-commit work — only on first delivery. Retries must
       // not re-send receipts or re-create shifts.
       if (isFirstDelivery) {
+        // ≤72h booking: admin + broad-net staff SMS blast. Fire-and-forget;
+        // notifyLastMinuteBooking self-guards (try/catch + Sentry, never
+        // throws). Gated by isLastMinuteHold (set in-tx above) AND
+        // isFirstDelivery so a Stripe webhook retry never re-blasts.
+        if (isLastMinuteHold) notifyLastMinuteBooking(proposalId);
         sendPaymentNotifications(proposalId, intent.amount, paymentType);
         try {
           const shift = await createEventShifts(proposalId);

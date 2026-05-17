@@ -154,6 +154,19 @@ export default function ProposalView() {
     return () => { cancelled = true; };
   }, [isPayableStatus, paymentOption, autopayChecked, token, depositSecret, fullSecret]);
 
+  // When the server's payment_policy says full payment is required (event ≤14
+  // days out), lock paymentOption to 'full' and clear autopay so the intent
+  // effect above requests the correct (full) amount. Read policy off `proposal`
+  // here rather than the post-return derived vars — hooks must run before the
+  // loading/error early returns. Server is authoritative; this is just UI sync.
+  const serverFullRequired = !!proposal?.payment_policy?.full_payment_required;
+  useEffect(() => {
+    if (serverFullRequired && paymentOption !== 'full') {
+      setPaymentOption('full');
+      setAutopayChecked(false);
+    }
+  }, [serverFullRequired, paymentOption]);
+
   // Sign the proposal — called by PaymentForm before confirming payment
   const handleSign = async () => {
     setFormError('');
@@ -294,6 +307,13 @@ export default function ProposalView() {
     });
   }
 
+  // Server-computed booking-window policy (never re-derived client-side).
+  // fullPaymentRequired → deposit/autopay hidden, option locked to 'full'.
+  // lastMinuteHold → also show the pre-payment cancellation-consent warning.
+  const policy = proposal.payment_policy || {};
+  const fullPaymentRequired = !!policy.full_payment_required;
+  const lastMinuteHold = !!policy.last_minute_hold;
+
   const isAlreadySigned = !!proposal.client_signed_at;
   const isPaid = ['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status) || paid;
 
@@ -363,6 +383,8 @@ export default function ProposalView() {
                 setPaymentOption={setPaymentOption}
                 autopayChecked={autopayChecked}
                 setAutopayChecked={setAutopayChecked}
+                fullPaymentRequired={fullPaymentRequired}
+                lastMinuteHold={lastMinuteHold}
                 totalPrice={totalPrice}
                 balanceAmount={balanceAmount}
                 balanceDueDate={balanceDueDate}
@@ -394,6 +416,8 @@ export default function ProposalView() {
                 setPaymentOption={setPaymentOption}
                 autopayChecked={autopayChecked}
                 setAutopayChecked={setAutopayChecked}
+                fullPaymentRequired={fullPaymentRequired}
+                lastMinuteHold={lastMinuteHold}
                 totalPrice={totalPrice}
                 balanceAmount={balanceAmount}
                 balanceDueDate={balanceDueDate}

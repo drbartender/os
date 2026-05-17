@@ -88,7 +88,25 @@ function proposalSignedConfirmation({ clientName, eventTypeLabel = 'event' }) {
   };
 }
 
-function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, paymentType }) {
+// Conditional cancellation caveat appended to first-payment client emails when
+// the booking is ≤72h out (passed lastMinute=true by the Stripe webhook
+// notifier). Additive copy only — no behavior change when the flag is false.
+function lastMinuteCaveatHtml(lastMinute) {
+  return lastMinute
+    ? `<p style="background:#fff4e5;border-left:4px solid #d9822b;padding:12px 16px;font-size:14px;">
+         <strong>One quick note:</strong> because your event is less than 72 hours away, your booking is
+         confirmed subject to staff availability. In the rare case we can't staff it in time, we'll
+         cancel and fully refund you right away.
+       </p>`
+    : '';
+}
+function lastMinuteCaveatText(lastMinute) {
+  return lastMinute
+    ? ' Note: because your event is <72h away, your booking is confirmed subject to staff availability — in the rare case we cannot staff it we will cancel and fully refund you.'
+    : '';
+}
+
+function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, paymentType, lastMinute = false }) {
   const name = clientName || 'there';
   return {
     subject: `Payment Received — your ${eventTypeLabel} — Dr. Bartender`,
@@ -96,15 +114,16 @@ function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, p
       <h2 style="color:${BRAND.primary};margin-top:0;">Payment Received!</h2>
       <p>Hi ${name},</p>
       <p>We've received your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${eventTypeLabel}</strong>.</p>
+      ${lastMinuteCaveatHtml(lastMinute)}
       <p>Thank you! We'll be in touch with next steps as your event date approaches.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
       <p>Cheers,<br/>The Dr. Bartender Team</p>
     `),
-    text: `Hi ${name}, we've received your ${paymentType} of $${amount} for your ${eventTypeLabel}. Thank you! — The Dr. Bartender Team`,
+    text: `Hi ${name}, we've received your ${paymentType} of $${amount} for your ${eventTypeLabel}.${lastMinuteCaveatText(lastMinute)} Thank you! — The Dr. Bartender Team`,
   };
 }
 
-function signedAndPaidClient({ clientName, eventTypeLabel = 'event', amount, paymentType }) {
+function signedAndPaidClient({ clientName, eventTypeLabel = 'event', amount, paymentType, lastMinute = false }) {
   const name = clientName || 'there';
   return {
     subject: `Signed & Paid — your ${eventTypeLabel} — Dr. Bartender`,
@@ -112,11 +131,12 @@ function signedAndPaidClient({ clientName, eventTypeLabel = 'event', amount, pay
       <h2 style="color:${BRAND.primary};margin-top:0;">You're Locked In!</h2>
       <p>Hi ${name},</p>
       <p>We've received your signed proposal <em>and</em> your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${eventTypeLabel}</strong>. Your date is officially on the books.</p>
+      ${lastMinuteCaveatHtml(lastMinute)}
       <p>We'll be in touch with next steps as your event date approaches.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
       <p>Cheers,<br/>The Dr. Bartender Team</p>
     `),
-    text: `Hi ${name}, we've received your signed proposal and your ${paymentType} of $${amount} for your ${eventTypeLabel}. Your date is officially on the books. — The Dr. Bartender Team`,
+    text: `Hi ${name}, we've received your signed proposal and your ${paymentType} of $${amount} for your ${eventTypeLabel}. Your date is officially on the books.${lastMinuteCaveatText(lastMinute)} — The Dr. Bartender Team`,
   };
 }
 

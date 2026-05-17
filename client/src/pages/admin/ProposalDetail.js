@@ -239,6 +239,11 @@ export default function ProposalDetail() {
                 {proposal.client_name || `Proposal #${proposal.id}`}
               </h1>
               <StatusChip kind={statusInfo.kind}>{statusInfo.label}</StatusChip>
+              {proposal.last_minute_hold && (
+                <span className="lm-hold-badge" title="Booked ≤72h out — verify staff availability before the event">
+                  ⚠ Last-minute — verify staffing
+                </span>
+              )}
               {proposal.package_name && <span className="tag">{proposal.package_name}</span>}
             </div>
             <div className="muted" style={{ fontSize: 13 }}>

@@ -1109,6 +1109,15 @@ ALTER TABLE drink_plans DROP COLUMN IF EXISTS event_name;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS adjustments JSONB DEFAULT '[]';
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS total_price_override NUMERIC(10,2);
 
+-- ─── Last-Minute Booking Hold ─────────────────────────────────────
+-- Set TRUE by the Stripe webhook (payment_intent.succeeded) when a paid
+-- booking is ≤72h out — drives the admin "verify staffing" badge, the
+-- client cancellation caveat, and the admin/staff SMS blast (it is the
+-- idempotency anchor for that blast). Cleared back to false when the
+-- linked shift becomes fully staffed. Operational flag only — NOT a
+-- status enum value; the working state machine is unchanged.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS last_minute_hold BOOLEAN DEFAULT false;
+
 -- ─── Setup Time (back-of-house only) ──────────────────────────────
 -- Crew arrival/setup lead time, in minutes before service start. NULL ⇒ derive
 -- the default at read time (90 for hosted/per-guest packages, 60 otherwise) —

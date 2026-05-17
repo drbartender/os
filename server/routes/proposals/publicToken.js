@@ -6,6 +6,7 @@ const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { ADMIN_URL } = require('../../utils/urls');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
+const { getBookingWindow } = require('../../utils/bookingWindow');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
 const { isVenueComplete, composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
@@ -85,12 +86,27 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
 
   const drinkPlanToken = dpRes.rows[0]?.drink_plan_token || null;
 
+  // Server-computed booking-window policy. The client NEVER re-derives this
+  // date math (avoids the ESM/CJS dual-maintenance trap); it only reads these
+  // booleans to hide the deposit option and show the cancellation caveat.
+  // setup_* fields stay excluded from the public payload (see allowlist note
+  // above) — payment_policy carries only lead-time tier info, no crew timing.
+  const win = getBookingWindow({
+    eventDate: proposal.event_date,
+    eventStartTime: proposal.event_start_time,
+  });
+
   res.json({
     ...proposal,
     addons: addonsRes.rows,
     drink_plan_token: drinkPlanToken,
     venue_complete: isVenueComplete(proposal),
     status: proposal.status === 'sent' ? 'viewed' : proposal.status,
+    payment_policy: {
+      full_payment_required: win.fullPaymentRequired,
+      last_minute_hold: win.lastMinuteHold,
+      hours_until_event: win.hoursUntilEvent,
+    },
   });
 }));
 

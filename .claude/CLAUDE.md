@@ -44,6 +44,7 @@ See `.env.example` for the full list. Key ones:
 | `STRIPE_DEPOSIT_AMOUNT` | Deposit in cents (default 10000 = $100) |
 | `PUBLIC_GOOGLE_REVIEW_URL` / `REACT_APP_GOOGLE_REVIEW_URL` | Google review URL for the tip thank-you flow (set the same value on server + client) |
 | `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` | Inbox for bartender-feedback submissions from the tip thank-you page (default `contact@drbartender.com`) |
+| `ADMIN_PHONE` | Optional. E.164 number for last-minute (<72h) booking SMS alerts. Unset → admin SMS skipped; broad staff blast still fires. |
 | `THUMBTACK_WEBHOOK_SECRET` | Shared secret for Thumbtack webhook auth |
 | `REACT_APP_API_URL` | Client-side API base URL (set in client/.env.production) |
 | `SENTRY_DSN_SERVER` | Server-side Sentry DSN (optional in dev; required in prod) |

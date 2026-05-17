@@ -27,7 +27,7 @@
 | `server/utils/bookingWindow.test.js` | **New.** Built-in-runner unit tests. |
 | `server/utils/lastMinuteAlert.js` | **New.** Resolve recipients + send admin/staff SMS blast. One responsibility. |
 | `server/db/schema.sql` | `+ last_minute_hold` column (idempotent). |
-| `server/routes/stripe.js` | Gate in `create-payment-intent`; set flag in-tx + call blast post-commit (≤3 lines added). |
+| `server/routes/stripe.js` | Gate in `create-intent`; set flag in-tx + call blast post-commit (≤3 lines added). |
 | `server/routes/proposals/publicToken.js` | Add `payment_policy` to `GET /t/:token`. |
 | `server/routes/proposals/crud.js` | Add `p.last_minute_hold` to the admin GET select. |
 | `server/utils/emailTemplates.js` | Conditional warning block in two client templates. |
@@ -228,11 +228,11 @@ git commit -m "feat(db): add proposals.last_minute_hold flag"
 ### Task 3: Server gate — reject deposit inside 14 days
 
 **Files:**
-- Modify: `server/routes/stripe.js` — the `create-payment-intent/:token` handler (proposal SELECT ~line 101; gate inserted after the status checks ~line 118)
+- Modify: `server/routes/stripe.js` — the `create-intent/:token` handler (proposal SELECT ~line 101; gate inserted after the status checks ~line 118)
 
 - [ ] **Step 1: Add `event_start_time` to the proposal SELECT**
 
-In the `create-payment-intent/:token` handler, the query currently selects:
+In the `create-intent/:token` handler, the query currently selects:
 `SELECT p.id, p.status, p.event_type, p.event_type_custom, p.total_price, p.event_date,`
 Change that line to also select `p.event_start_time`:
 
@@ -285,13 +285,13 @@ node -e "require('dotenv').config();const{pool}=require('./server/db');pool.quer
 ```
 Start the server (`npm start` in another shell), then:
 ```bash
-curl -s -X POST http://localhost:5000/api/stripe/create-payment-intent/<TOKEN> -H "Content-Type: application/json" -d "{\"payment_option\":\"deposit\"}"
+curl -s -X POST http://localhost:5000/api/stripe/create-intent/<TOKEN> -H "Content-Type: application/json" -d "{\"payment_option\":\"deposit\"}"
 ```
 Expected: JSON error, code `FULL_PAYMENT_REQUIRED`, message "This event is within 2 weeks — full payment is required to book."
 
 Then confirm full still works:
 ```bash
-curl -s -X POST http://localhost:5000/api/stripe/create-payment-intent/<TOKEN> -H "Content-Type: application/json" -d "{\"payment_option\":\"full\"}"
+curl -s -X POST http://localhost:5000/api/stripe/create-intent/<TOKEN> -H "Content-Type: application/json" -d "{\"payment_option\":\"full\"}"
 ```
 Expected: JSON `{ "clientSecret": "pi_..._secret_..." }`.
 
