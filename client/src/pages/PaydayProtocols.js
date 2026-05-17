@@ -217,6 +217,10 @@ export default function PaydayProtocols() {
   }
 
   const method = form.preferred_payment_method;
+  // A P2P method (venmo/cashapp/paypal) is BOTH the payroll target and a tip-page
+  // handle — it lives in one shared column, so it is collected once in Card A
+  // and shown read-only in Card B (no duplicate input bound to the same state).
+  const p2pPayroll = method === 'venmo' || method === 'cashapp' || method === 'paypal';
 
   return (
     <div className="page-container">
@@ -282,65 +286,16 @@ export default function PaydayProtocols() {
         {legacyNotice && <div className="alert alert-info">{legacyNotice}</div>}
 
         <form onSubmit={submit}>
-          {/* ── Tip & Payroll Preferences ── */}
-          <fieldset className="tip-payroll-fieldset" style={{ border: 'none', padding: 0, margin: '0 0 1.5rem' }}>
-            <legend style={{ fontFamily: 'var(--font-display)', fontSize: '1.1rem', fontWeight: 700, color: 'var(--deep-brown)', padding: 0, marginBottom: '0.5rem' }}>
-              Tip & Payroll Preferences
-            </legend>
-            <p className="text-small text-muted" style={{ marginBottom: '0.5rem' }}>
-              Your tip page lives at <strong>drbartender.com/tip/your-name</strong>. We'll generate a QR you can print at any photo counter.
-              We pay you out via the handle you pick below — the others just show up on your tip page so customers can pick what they prefer.
+          {/* ── Card A — How we pay you (REQUIRED) ── */}
+          <div className="card" style={{ marginBottom: '1.25rem' }}>
+            <h3 style={{ marginBottom: '0.35rem' }}>How we pay you</h3>
+            <p className="text-small text-muted" style={{ marginBottom: '0.25rem' }}>
+              Pick one way to receive your wages and pooled tips. This is the only
+              payment detail we require to finish onboarding.
             </p>
             <p className="text-small text-muted italic" style={{ marginBottom: '1.25rem' }}>
-              None of this is shared with anyone outside DRB.
+              Encrypted and never shared outside Dr. Bartender.
             </p>
-
-            <div className={`form-group${fieldClass('preferred_name')}`}>
-              <label htmlFor="pp-preferred_name" className="form-label">Preferred name *</label>
-              <input
-                id="pp-preferred_name" name="preferred_name" type="text"
-                className={`form-input${inputClass('preferred_name')}`}
-                value={form.preferred_name} onChange={handle}
-                maxLength={80} required
-                placeholder="What customers see on your tip page"
-              />
-              <p className="form-helper">
-                The name customers see on your tip page. Use whatever you go by — your real name, a nickname, a stage name.
-              </p>
-            </div>
-
-            <div className={`form-group${fieldClass('venmo_handle')}`}>
-              <label htmlFor="pp-venmo_handle" className="form-label">Venmo handle</label>
-              <input
-                id="pp-venmo_handle" name="venmo_handle" type="text"
-                className={`form-input${inputClass('venmo_handle')}`}
-                value={form.venmo_handle} onChange={handleVenmoHandle}
-                placeholder="yourname"
-              />
-              <p className="form-helper">Just the username — we'll strip the @ or venmo.com/u/ for you.</p>
-            </div>
-
-            <div className={`form-group${fieldClass('cashapp_handle')}`}>
-              <label htmlFor="pp-cashapp_handle" className="form-label">Cash App handle</label>
-              <input
-                id="pp-cashapp_handle" name="cashapp_handle" type="text"
-                className={`form-input${inputClass('cashapp_handle')}`}
-                value={form.cashapp_handle} onChange={handleCashappHandle}
-                placeholder="yourname"
-              />
-              <p className="form-helper">Just the cashtag — we'll strip the $ or cash.app/$ for you.</p>
-            </div>
-
-            <div className={`form-group${fieldClass('paypal_url')}`}>
-              <label htmlFor="pp-paypal_url" className="form-label">PayPal URL</label>
-              <input
-                id="pp-paypal_url" name="paypal_url" type="text"
-                className={`form-input${inputClass('paypal_url')}`}
-                value={form.paypal_url} onChange={handle}
-                placeholder="paypal.me/yourname"
-              />
-              <p className="form-helper">Either paypal.me/yourname or a full URL.</p>
-            </div>
 
             <div className={`form-group${fieldClass('preferred_payment_method')}`} role="radiogroup" aria-labelledby="pp-payroll-legend">
               <div id="pp-payroll-legend" className="form-label">Pay me out via *</div>
@@ -362,51 +317,165 @@ export default function PaydayProtocols() {
                 ))}
               </div>
             </div>
-          </fieldset>
 
-          {/* ── Direct Deposit details (only when method === direct_deposit) ── */}
-          {method === 'direct_deposit' && (
-            <div style={{ background: 'var(--parchment)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '1.25rem', marginBottom: '1.25rem' }}>
-              <div style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--warm-brown)', marginBottom: '0.85rem' }}>
-                Bank Account Details
-              </div>
-              <div className={`form-group${fieldClass('routing_number')}`}>
-                <label htmlFor="pp-routing_number" className="form-label">Routing Number *</label>
+            {method === 'venmo' && (
+              <div className={`form-group${fieldClass('venmo_handle')}`}>
+                <label htmlFor="pp-venmo_handle" className="form-label">Venmo handle *</label>
                 <input
-                  id="pp-routing_number" name="routing_number" className={`form-input${inputClass('routing_number')}`}
-                  value={form.routing_number} onChange={handle}
-                  placeholder="9 digits" maxLength={9} inputMode="numeric"
-                  style={{ fontFamily: 'monospace', letterSpacing: '0.15em' }}
+                  id="pp-venmo_handle" name="venmo_handle" type="text"
+                  className={`form-input${inputClass('venmo_handle')}`}
+                  value={form.venmo_handle} onChange={handleVenmoHandle}
+                  placeholder="yourname"
                 />
-                <p className="form-helper">The 9-digit number on the bottom-left of your check</p>
+                <p className="form-helper">Just the username — we'll strip the @ or venmo.com/u/ for you.</p>
               </div>
-              <div className={`form-group${fieldClass('account_number')}`} style={{ marginBottom: 0 }}>
-                <label htmlFor="pp-account_number" className="form-label">Account Number *</label>
+            )}
+
+            {method === 'cashapp' && (
+              <div className={`form-group${fieldClass('cashapp_handle')}`}>
+                <label htmlFor="pp-cashapp_handle" className="form-label">Cash App handle *</label>
                 <input
-                  id="pp-account_number" name="account_number" className={`form-input${inputClass('account_number')}`}
-                  value={form.account_number} onChange={handle}
-                  placeholder="Your account number"
-                  style={{ fontFamily: 'monospace', letterSpacing: '0.15em' }}
+                  id="pp-cashapp_handle" name="cashapp_handle" type="text"
+                  className={`form-input${inputClass('cashapp_handle')}`}
+                  value={form.cashapp_handle} onChange={handleCashappHandle}
+                  placeholder="yourname"
                 />
-                <p className="form-helper">Your checking account number — found on a check or in your banking app</p>
+                <p className="form-helper">Just the cashtag — we'll strip the $ or cash.app/$ for you.</p>
               </div>
-            </div>
-          )}
+            )}
 
-          {method === 'check' && (
-            <div className="alert alert-info" style={{ marginBottom: '1.25rem' }}>
-              Checks will be mailed to the address on file. Make sure your mailing address in your Contractor Profile is current.
-            </div>
-          )}
+            {method === 'paypal' && (
+              <div className={`form-group${fieldClass('paypal_url')}`}>
+                <label htmlFor="pp-paypal_url" className="form-label">PayPal URL *</label>
+                <input
+                  id="pp-paypal_url" name="paypal_url" type="text"
+                  className={`form-input${inputClass('paypal_url')}`}
+                  value={form.paypal_url} onChange={handle}
+                  placeholder="paypal.me/yourname"
+                />
+                <p className="form-helper">Either paypal.me/yourname or a full URL.</p>
+              </div>
+            )}
 
-          {/* ── W-9 ── */}
+            {method === 'direct_deposit' && (
+              <div style={{ background: 'var(--parchment)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '1.25rem' }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--warm-brown)', marginBottom: '0.85rem' }}>
+                  Bank Account Details
+                </div>
+                <div className={`form-group${fieldClass('routing_number')}`}>
+                  <label htmlFor="pp-routing_number" className="form-label">Routing Number *</label>
+                  <input
+                    id="pp-routing_number" name="routing_number" className={`form-input${inputClass('routing_number')}`}
+                    value={form.routing_number} onChange={handle}
+                    placeholder="9 digits" maxLength={9} inputMode="numeric"
+                    style={{ fontFamily: 'monospace', letterSpacing: '0.15em' }}
+                  />
+                  <p className="form-helper">The 9-digit number on the bottom-left of your check</p>
+                </div>
+                <div className={`form-group${fieldClass('account_number')}`} style={{ marginBottom: 0 }}>
+                  <label htmlFor="pp-account_number" className="form-label">Account Number *</label>
+                  <input
+                    id="pp-account_number" name="account_number" className={`form-input${inputClass('account_number')}`}
+                    value={form.account_number} onChange={handle}
+                    placeholder="Your account number"
+                    style={{ fontFamily: 'monospace', letterSpacing: '0.15em' }}
+                  />
+                  <p className="form-helper">Your checking account number — found on a check or in your banking app</p>
+                </div>
+              </div>
+            )}
+
+            {method === 'check' && (
+              <div className="alert alert-info" style={{ marginBottom: 0 }}>
+                Checks are mailed to the address on your Contractor Profile. Make sure your mailing address there is current.
+              </div>
+            )}
+
+            {method === 'other' && (
+              <div className="alert alert-info" style={{ marginBottom: 0 }}>
+                No problem — we'll coordinate your payout method with you directly before your first payday.
+              </div>
+            )}
+          </div>
+
+          {/* ── Card B — Your public tip page (handles OPTIONAL) ── */}
+          <div className="card" style={{ marginBottom: '1.25rem' }}>
+            <h3 style={{ marginBottom: '0.35rem' }}>Your public tip page</h3>
+            <p className="text-small text-muted" style={{ marginBottom: '1.25rem' }}>
+              Your tip page lives at <strong>drbartender.com/tip/your-name</strong> with a
+              QR you can print. Your name is required; the tip handles below are
+              <strong> optional</strong> — add them now, later from My Tip Page, or never.
+              None of this is shared outside DRB.
+            </p>
+
+            <div className={`form-group${fieldClass('preferred_name')}`}>
+              <label htmlFor="pp-preferred_name" className="form-label">Preferred name *</label>
+              <input
+                id="pp-preferred_name" name="preferred_name" type="text"
+                className={`form-input${inputClass('preferred_name')}`}
+                value={form.preferred_name} onChange={handle}
+                maxLength={80} required
+                placeholder="What customers see on your tip page"
+              />
+              <p className="form-helper">
+                The name customers see on your tip page. Use whatever you go by — your real name, a nickname, a stage name.
+              </p>
+            </div>
+
+            {p2pPayroll && (
+              <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
+                Your payroll {method === 'venmo' ? 'Venmo' : method === 'cashapp' ? 'Cash App' : 'PayPal'}{' '}
+                handle is already on your tip page — no need to re-enter it here.
+              </div>
+            )}
+
+            {method !== 'venmo' && (
+              <div className={`form-group${fieldClass('venmo_handle')}`}>
+                <label htmlFor="pp-venmo_handle-tip" className="form-label">Venmo handle <span className="text-muted">(optional)</span></label>
+                <input
+                  id="pp-venmo_handle-tip" name="venmo_handle" type="text"
+                  className={`form-input${inputClass('venmo_handle')}`}
+                  value={form.venmo_handle} onChange={handleVenmoHandle}
+                  placeholder="yourname"
+                />
+                <p className="form-helper">Just the username — we'll strip the @ or venmo.com/u/ for you.</p>
+              </div>
+            )}
+
+            {method !== 'cashapp' && (
+              <div className={`form-group${fieldClass('cashapp_handle')}`}>
+                <label htmlFor="pp-cashapp_handle-tip" className="form-label">Cash App handle <span className="text-muted">(optional)</span></label>
+                <input
+                  id="pp-cashapp_handle-tip" name="cashapp_handle" type="text"
+                  className={`form-input${inputClass('cashapp_handle')}`}
+                  value={form.cashapp_handle} onChange={handleCashappHandle}
+                  placeholder="yourname"
+                />
+                <p className="form-helper">Just the cashtag — we'll strip the $ or cash.app/$ for you.</p>
+              </div>
+            )}
+
+            {method !== 'paypal' && (
+              <div className={`form-group${fieldClass('paypal_url')}`} style={{ marginBottom: 0 }}>
+                <label htmlFor="pp-paypal_url-tip" className="form-label">PayPal URL <span className="text-muted">(optional)</span></label>
+                <input
+                  id="pp-paypal_url-tip" name="paypal_url" type="text"
+                  className={`form-input${inputClass('paypal_url')}`}
+                  value={form.paypal_url} onChange={handle}
+                  placeholder="paypal.me/yourname"
+                />
+                <p className="form-helper">Either paypal.me/yourname or a full URL.</p>
+              </div>
+            )}
+          </div>
+
+          {/* ── W-9 (unchanged, still required) ── */}
           <div style={{ marginBottom: '0.5rem' }}>
             <div style={{ fontWeight: 700, fontSize: '0.85rem', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--warm-brown)', marginBottom: '0.75rem' }}>
               W-9 Form *
             </div>
             <FieldError error={fieldErrors?.w9} />
 
-            {/* Mode toggle */}
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
               <button
                 type="button"
