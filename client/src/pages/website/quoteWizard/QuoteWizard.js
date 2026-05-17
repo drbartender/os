@@ -833,9 +833,18 @@ export default function QuoteWizard() {
                   {preview.staffing.actual} bartender{preview.staffing.actual !== 1 ? 's' : ''} included
                 </div>
                 <div className="wz-price-trust">
-                  <div>⚗ Stripe · sign &amp; pay electronically</div>
-                  <div>⚗ General + liquor liability included</div>
-                  <div>⚗ $100 deposit locks the date</div>
+                  <div className="wz-trust-item">
+                    <span className="wz-trust-mark" aria-hidden="true">⚗</span>
+                    <span>Stripe · sign &amp; pay electronically</span>
+                  </div>
+                  <div className="wz-trust-item">
+                    <span className="wz-trust-mark" aria-hidden="true">⚗</span>
+                    <span>General + liquor liability included</span>
+                  </div>
+                  <div className="wz-trust-item">
+                    <span className="wz-trust-mark" aria-hidden="true">⚗</span>
+                    <span>$100 deposit locks the date</span>
+                  </div>
                 </div>
               </>
             ) : (

@@ -5842,11 +5842,21 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   margin-top: 16px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  gap: 9px;
+  font-size: 12px;
+  letter-spacing: 0.01em;
   color: var(--text-muted);
+}
+.wz-trust-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  line-height: 1.4;
+}
+.wz-trust-mark {
+  flex: 0 0 auto;
+  color: var(--brass);
+  line-height: 1.4;
 }
 .wz-price-breakdown {
   display: flex;
