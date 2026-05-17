@@ -3,7 +3,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const { calculateProposal } = require('../../utils/pricingEngine');
-const { createEventShifts, createDrinkPlan, syncShiftsFromProposal } = require('../../utils/eventCreation');
+const { createEventShifts, syncShiftsFromProposal } = require('../../utils/eventCreation');
 const { composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
@@ -488,38 +488,11 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
         const proposalUrl = `${PUBLIC_SITE_URL}/proposal/${p.token}`;
         const eventTypeLabel = getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom });
 
-        // Create drink plan and include link in email
-        let planUrl = null;
-        try {
-          const drinkPlan = await createDrinkPlan(req.params.id, {
-            client_name: p.client_name,
-            client_email: p.client_email,
-            event_type: p.event_type,
-            event_type_custom: p.event_type_custom,
-            event_date: p.event_date,
-            created_by: p.created_by,
-          }, { skipEmail: true });
-
-          if (drinkPlan?.token) {
-            planUrl = `${PUBLIC_SITE_URL}/plan/${drinkPlan.token}`;
-          } else {
-            // Already exists — look up existing token
-            const existingPlan = await pool.query(
-              'SELECT token FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
-              [req.params.id]
-            );
-            if (existingPlan.rows[0]?.token) {
-              planUrl = `${PUBLIC_SITE_URL}/plan/${existingPlan.rows[0].token}`;
-            }
-          }
-        } catch (planErr) {
-          if (process.env.SENTRY_DSN_SERVER) {
-            Sentry.captureException(planErr, { tags: { route: 'proposals/status', issue: 'drink-plan-creation' } });
-          }
-          console.error('Drink plan creation failed (non-blocking):', planErr);
-        }
-
-        const tpl = emailTemplates.proposalSent({ clientName: p.client_name, eventTypeLabel, proposalUrl, planUrl });
+        // The drink plan is created only after the client books (deposit paid),
+        // via the Stripe webhook → createEventShifts → createDrinkPlan. No
+        // pre-deposit plan or link. proposalSent() omits the drink-plan CTA
+        // when planUrl is null.
+        const tpl = emailTemplates.proposalSent({ clientName: p.client_name, eventTypeLabel, proposalUrl, planUrl: null });
         await sendEmail({ to: p.client_email, ...tpl });
       }
     } catch (emailErr) {
