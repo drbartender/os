@@ -376,6 +376,7 @@ export default function ProposalView() {
                 handleSign={handleSign}
                 venue={venue}
                 setVenue={setVenue}
+                setFieldErrors={setFieldErrors}
                 venueComplete={venueComplete}
                 venuePrefilled={!!proposal?.venue_complete}
                 proposalVenue={{

@@ -74,6 +74,7 @@ export default function SignAndPaySection({
   loadingIntent,
   formError,
   fieldErrors,
+  setFieldErrors = () => {},
   activeSecret,
   stripePromise,
   payLabel,
@@ -145,7 +146,15 @@ export default function SignAndPaySection({
           ) : (
             <VenueAddressFields
               value={venue}
-              onChange={(f, val) => setVenue((cur) => ({ ...cur, [f]: val }))}
+              onChange={(f, val) => {
+                setVenue((cur) => ({ ...cur, [f]: val }));
+                setFieldErrors((fe) => {
+                  if (!fe[f]) return fe;
+                  const next = { ...fe };
+                  delete next[f];
+                  return next;
+                });
+              }}
               fieldErrors={fieldErrors}
               requireStreet
               inputClassName="sign-pay-input"

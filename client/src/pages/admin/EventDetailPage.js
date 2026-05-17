@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
@@ -120,6 +120,37 @@ export default function EventDetailPage() {
     return () => { cancelled = true; };
   }, [id]);
 
+  // Derived view-model. Memoized on [proposal] so it doesn't recompute on
+  // every drawer open/close, drink-plan load, or unrelated state change —
+  // this page hosts shifts + drink plan + payment panel + edit form.
+  const derived = useMemo(() => {
+    if (!proposal) return null;
+    const eventTypeLabel = getEventTypeLabel({
+      event_type: proposal.event_type,
+      event_type_custom: proposal.event_type_custom,
+    });
+    const snapshot = proposal.pricing_snapshot;
+    const bartenders = snapshot?.staffing?.actual;
+    const durationHours = snapshot?.inputs?.durationHours;
+    const includes = (proposal.package_includes || []).map(item => {
+      let text = item;
+      if (durationHours != null) text = text.replace(/\{hours\}/g, durationHours);
+      if (bartenders != null) {
+        text = text.replace(/\{bartenders\}/g, bartenders);
+        text = text.replace(/\{bartenders_s\}/g, bartenders !== 1 ? 's' : '');
+      }
+      return text;
+    });
+    const packageStructured = getPackageItems(proposal.package_slug);
+    const timeRange = fmtTimeRange(proposal.event_start_time, proposal.event_duration_hours);
+    const contactBits = [
+      proposal.client_phone && formatPhone(proposal.client_phone),
+      proposal.client_email,
+      proposal.client_source,
+    ].filter(Boolean);
+    return { eventTypeLabel, snapshot, bartenders, durationHours, includes, packageStructured, timeRange, contactBits };
+  }, [proposal]);
+
   if (loading) return <div className="page"><div className="muted">Loading event…</div></div>;
   if (err || !proposal) {
     return (
@@ -134,29 +165,10 @@ export default function EventDetailPage() {
     );
   }
 
-  const eventTypeLabel = getEventTypeLabel({
-    event_type: proposal.event_type,
-    event_type_custom: proposal.event_type_custom,
-  });
-  const snapshot = proposal.pricing_snapshot;
-  const bartenders = snapshot?.staffing?.actual;
-  const durationHours = snapshot?.inputs?.durationHours;
-  const includes = (proposal.package_includes || []).map(item => {
-    let text = item;
-    if (durationHours != null) text = text.replace(/\{hours\}/g, durationHours);
-    if (bartenders != null) {
-      text = text.replace(/\{bartenders\}/g, bartenders);
-      text = text.replace(/\{bartenders_s\}/g, bartenders !== 1 ? 's' : '');
-    }
-    return text;
-  });
-  const packageStructured = getPackageItems(proposal.package_slug);
-  const timeRange = fmtTimeRange(proposal.event_start_time, proposal.event_duration_hours);
-  const contactBits = [
-    proposal.client_phone && formatPhone(proposal.client_phone),
-    proposal.client_email,
-    proposal.client_source,
-  ].filter(Boolean);
+  const {
+    eventTypeLabel, snapshot, bartenders, durationHours,
+    includes, packageStructured, timeRange, contactBits,
+  } = derived;
 
   return (
     <div className="page" style={{ maxWidth: 1280 }}>

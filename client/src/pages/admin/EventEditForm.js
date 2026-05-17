@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
-import LocationInput from '../../components/LocationInput';
+import VenueAddressFields from '../../components/VenueAddressFields';
 import ConfirmModal from '../../components/ConfirmModal';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
@@ -76,7 +76,11 @@ export default function EventEditForm({ proposal, onSaved, onCancel }) {
         event_date: form.event_date,
         event_start_time: form.event_start_time,
         event_duration_hours: Number(form.event_duration_hours),
-        event_location: form.event_location,
+        venue_name: form.venue_name,
+        venue_street: form.venue_street,
+        venue_city: form.venue_city,
+        venue_state: form.venue_state,
+        venue_zip: form.venue_zip,
         guest_count: Number(form.guest_count),
         package_id: Number(form.package_id),
         num_bars: Number(form.num_bars) || 0,
@@ -134,8 +138,10 @@ export default function EventEditForm({ proposal, onSaved, onCancel }) {
           <div />
           <div style={{ gridColumn: '1 / -1' }}>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Location</label>
-            <LocationInput value={form.event_location}
-              onChange={(v) => update('event_location', v)} />
+            <VenueAddressFields
+              value={form}
+              onChange={(f, val) => update(f, val)}
+            />
           </div>
         </div>
 
