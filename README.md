@@ -201,7 +201,8 @@ dr-bartender/
 │   │   │   ├── eventTypes.js   # Event type id→label resolver (mirrors server)
 │   │   │   ├── formatPhone.js  # Phone number formatting
 │   │   │   ├── leadSources.js  # Lead source enum (mirrors schema CHECK + server validator)
-│   │   │   └── timeOptions.js  # Time option generator + 12h formatter + input parser
+│   │   │   ├── timeOptions.js  # Time option generator + 12h formatter + input parser
+│   │   │   └── tipCardMarks.js # Derives printable QR-card payment marks from saved handles (Stripe link + handles → mark list)
 │   │   ├── components/         # AdminLayout, StaffLayout, Layout, PublicLayout,
 │   │   │                       # InvoiceDropdown, SignaturePad, FileUpload, DrinkPlanCard,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, MenuSamplesModal,
