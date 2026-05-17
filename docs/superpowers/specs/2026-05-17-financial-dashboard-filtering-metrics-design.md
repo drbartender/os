@@ -80,7 +80,7 @@ Endpoints: `GET /proposals/dashboard-stats` and `GET /proposals/financials` in `
 
 **Revenue chart** generalizes from the hard-coded 12-month series to `generate_series(date_trunc('month',$from) … $to, '1 month')` left-joined to the chosen basis aggregate. Monthly buckets stay sane at "All time" even with the backfill (tens of bars).
 
-**Period-over-period delta:** each headline card also computes itself over the immediately-prior equal-length window and returns `{ value, priorValue, deltaPct }`. "All time" → `deltaPct: null` (UI hides it). Prior window empty (`priorValue = 0`) → UI shows "new", not "▲∞%".
+**Period-over-period delta:** each headline card also computes itself over the immediately-prior equal-length window and returns `{ value, priorValue, deltaPct }`. **v1:** `deltaPct` is `null` whenever no meaningful comparison exists — both "All time" (no prior) **and** an empty prior window (`priorValue = 0`) — and the UI hides the delta badge in both cases. This deliberately avoids a misleading "▲∞%"/divide-by-zero; the only cost is not surfacing an explicit "new" badge for the all-new case. A distinct "new" sentinel/pill is a recorded **optional future enhancement** (would need a dedicated server value, not an overloaded `null`), intentionally deferred — not required for v1.
 
 **Schema change — new indexes.** Idempotent `CREATE INDEX IF NOT EXISTS` in `schema.sql` on `proposals(sent_at)`, `proposals(accepted_at)`, `proposals(event_date)`, `proposal_payments(created_at)`. Necessary with 1.5 years of history incoming; low-risk.
 
@@ -119,7 +119,7 @@ Same `MetricsFilterBar`. Summary cards (Booked/Collected/Outstanding/Avg) become
 - **Null timestamps.** A metric counts a row only if *its driving timestamp is non-null* — including "All time" (All-time Sent = `sent_at IS NOT NULL`, not "every proposal").
 - **Timezone off-by-one.** `event_date` is `DATE`; `sent_at`/`accepted_at`/`proposal_payments.created_at` are `TIMESTAMPTZ`. Compare in the **business timezone** — `TIMESTAMPTZ` via `>= from AND < to + 1 day` in that TZ; `DATE` via plain `BETWEEN`. Reuse whatever timezone the app already applies to event dates elsewhere (do **not** introduce a new constant) and apply it everywhere here, or month-boundary events silently drop.
 - **Empty / divide-by-zero.** Zero sent-cohort → win rate renders "—" (not `NaN`/`0%`). Money sums `COALESCE` to 0. Charts render an empty state.
-- **Prior period = 0.** Delta shows "new", not "▲∞%". "All time" has no prior → no delta.
+- **Prior period = 0.** `deltaPct: null` → delta badge hidden (same path as "All time" — no prior). Never "▲∞%"/NaN. (An explicit "new" badge for prior=0 is a deferred optional enhancement, not v1.)
 - **Cancelled-after-accepted.** Deliberate: leaves Booked, enters Lost (Booked net-of-cancellation, §2).
 - **Re-sent proposals.** v1 counts by current `sent_at` — a re-send moves the proposal into the new period. Known, accepted simplification.
 - **Check Cherry forward-compat (flag, do not solve).** Imported history will have `event_date` but likely no `proposal_payments` rows → the Paid lens would under-report pre-cutover. **Handed to Project 2's spec:** it must decide how historical paid money is represented (synthetic payment rows vs `amount_paid` only) so Paid stays truthful post-import. Inherited boundary, not built here.
