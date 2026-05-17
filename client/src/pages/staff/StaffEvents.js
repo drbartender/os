@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { formatSetupTime } from '../../utils/setupTime';
 
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -60,6 +61,11 @@ export default function StaffEvents() {
                     {fmtDate(ev.event_date)}
                     {ev.start_time && <> &middot; {ev.start_time}{ev.end_time && ` - ${ev.end_time}`}</>}
                   </div>
+                  {ev.start_time && formatSetupTime(ev.start_time, ev.setup_minutes_before ?? 60) && (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                      Setup {formatSetupTime(ev.start_time, ev.setup_minutes_before ?? 60)}
+                    </div>
+                  )}
                   {ev.location && (
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
                       {ev.location}

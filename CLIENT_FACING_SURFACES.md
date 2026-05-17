@@ -204,6 +204,8 @@ Worth knowing because the overhaul probably touches the things clients receive i
 | `client/public/testing-guide.html` | Built from `TESTING.md` by `scripts/build-testing-guide.js`. Lab Rat program references it. |
 | `client/src/data/menuSamples.js`, `addonCategories.js`, `eventTypes.js`, `packages.js`, `syrups.js` | Static catalog data. `packages.js` and `syrups.js` are shown to clients; changes here re-skin the Quote Wizard add-on cards and Potion Planning Lab. |
 
+**Setup time is back-of-house only.** `proposals.setup_minutes_before` (admin override; NULL ⇒ derive 90 hosted / 60 else), the synced `shifts.setup_minutes_before`, and the derived `setup_time_display` are crew arrival/prep timing — surfaced ONLY on admin event/proposal pages, the staff portal (StaffShifts / StaffSchedule / StaffEvents), and the staff hire-confirmation email (`shiftRequestApproved`). The public token route (`server/routes/proposals/publicToken.js`) uses an explicit column allowlist that **deliberately omits** `setup_minutes_before` and adds no derived setup key to its `res.json` — clients/leads never see it. No client-facing email or token-gated template (proposal / invoice / drink plan / shopping list) renders setup time.
+
 ---
 
 ## K. Design Rules & Conventions

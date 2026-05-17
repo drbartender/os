@@ -4,6 +4,7 @@ import { useToast } from '../../context/ToastContext';
 import api from '../../utils/api';
 import { WHATSAPP_GROUP_URL } from '../../utils/constants';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { formatSetupTime } from '../../utils/setupTime';
 
 const STATUS_STYLES = {
   pending:  { background: '#FFF3DC', color: '#8B5E0A', border: '1px solid #E5C97A' },
@@ -112,6 +113,11 @@ export default function StaffShifts() {
                       {fmtDate(shift.event_date)}
                       {shift.start_time && <> &middot; {shift.start_time}{shift.end_time && ` - ${shift.end_time}`}</>}
                     </div>
+                    {shift.start_time && formatSetupTime(shift.start_time, shift.setup_minutes_before ?? 60) && (
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                        Setup {formatSetupTime(shift.start_time, shift.setup_minutes_before ?? 60)}
+                      </div>
+                    )}
                     {shift.location && (
                       <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
                         {shift.location}

@@ -7,6 +7,7 @@ const { autoAssignShift } = require('../utils/autoAssign');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { getEventTypeLabel } = require('../utils/eventTypes');
+const { subtractMinutesFromTime } = require('../utils/setupTime');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError, PermissionError } = require('../utils/errors');
 const { ADMIN_URL } = require('../utils/urls');
@@ -115,6 +116,7 @@ router.get('/user/:userId/events', auth, asyncHandler(async (req, res) => {
 
   const result = await pool.query(`
     SELECT s.id, s.event_date, s.start_time, s.end_time, s.location,
+           s.setup_minutes_before,
            s.event_type, s.event_type_custom,
            sr.position, sr.status AS request_status,
            p.event_type AS proposal_event_type,
@@ -149,7 +151,8 @@ router.get('/user/:userId/events', auth, asyncHandler(async (req, res) => {
 router.get('/my-requests', auth, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT sr.*, s.event_type, s.event_type_custom, s.client_name,
-           s.event_date, s.start_time, s.end_time, s.location, s.status AS shift_status
+           s.event_date, s.start_time, s.end_time, s.location,
+           s.setup_minutes_before, s.status AS shift_status
     FROM shift_requests sr
     JOIN shifts s ON s.id = sr.shift_id
     WHERE sr.user_id = $1
@@ -534,6 +537,9 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
       const date = shift.event_date
         ? new Date(shift.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
         : 'TBD';
+      // shift comes from SELECT * so setup_minutes_before is in hand. Back-of-
+      // house setup clock time; null start time → template omits the row.
+      const setupTime = subtractMinutesFromTime(shift.start_time, shift.setup_minutes_before ?? 60);
       const tpl = emailTemplates.shiftRequestApproved({
         staffName: cpRes2.rows[0]?.preferred_name || 'there',
         eventTypeLabel: getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom }),
@@ -541,6 +547,7 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
         startTime: shift.start_time || 'TBD',
         endTime: shift.end_time || 'TBD',
         location: shift.location || 'TBD',
+        setupTime,
       });
       await sendEmail({ to: staffEmail, ...tpl });
     }
@@ -619,6 +626,7 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
       const infoForEmail = (await pool.query(`
         SELECT s.event_type, s.event_type_custom,
                s.event_date, s.start_time, s.end_time, s.location,
+               s.setup_minutes_before,
                cp.preferred_name
         FROM shift_requests sr
         JOIN shifts s ON s.id = sr.shift_id
@@ -629,6 +637,9 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
         const date = infoForEmail.event_date
           ? new Date(infoForEmail.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
           : 'TBD';
+        // Back-of-house setup clock time (start − minutes, default 60). null when
+        // start time is missing/unparseable → template omits the row entirely.
+        const setupTime = subtractMinutesFromTime(infoForEmail.start_time, infoForEmail.setup_minutes_before ?? 60);
         const tpl = emailTemplates.shiftRequestApproved({
           staffName: infoForEmail.preferred_name || 'there',
           eventTypeLabel: getEventTypeLabel({ event_type: infoForEmail.event_type, event_type_custom: infoForEmail.event_type_custom }),
@@ -636,6 +647,7 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
           startTime: infoForEmail.start_time || 'TBD',
           endTime: infoForEmail.end_time || 'TBD',
           location: infoForEmail.location || 'TBD',
+          setupTime,
         });
         await sendEmail({ to: staffEmail, ...tpl });
       }

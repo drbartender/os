@@ -9,6 +9,7 @@ import FieldError from '../../components/FieldError';
 import TimePicker from '../../components/TimePicker';
 import NumberStepper from '../../components/NumberStepper';
 import { initialFormFromProposal } from './ProposalDetailEditForm';
+import { formatSetupTime } from '../../utils/setupTime';
 
 // Focused event-specifics editor for EventDetailPage. Edits date, time,
 // location, and client contact ONLY — package/pricing/add-ons are out of
@@ -88,6 +89,12 @@ export default function EventEditForm({ proposal, onSaved, onCancel }) {
         syrup_selections: form.syrup_selections || [],
         adjustments: form.adjustments || [],
         total_price_override: form.total_price_override,
+        // Blank → explicit null (reset to package default); else a number.
+        // Single-shift events re-sync shifts.setup_minutes_before in the same
+        // PATCH transaction; multi-shift events are edited per shift instead.
+        setup_minutes_before: form.setup_minutes_before === '' || form.setup_minutes_before == null
+          ? null
+          : Number(form.setup_minutes_before),
       });
       toast.success('Event updated.');
       onSaved?.(res.data);
@@ -103,6 +110,11 @@ export default function EventEditForm({ proposal, onSaved, onCancel }) {
     if (isDirty) setShowLeaveConfirm(true);
     else onCancel?.();
   };
+
+  // Hosted = per-guest package. Mirrors server isHostedPackage(pkg) — used only
+  // to preview the setup-time default (90 hosted / 60 else); the server
+  // re-derives authoritatively from pricing_snapshot.package on save.
+  const eventIsHosted = proposal?.pricing_snapshot?.package?.pricing_type === 'per_guest';
 
   return (
     <div className="card">
@@ -134,7 +146,27 @@ export default function EventEditForm({ proposal, onSaved, onCancel }) {
               onChange={v => update('event_duration_hours', v)}
               ariaLabelIncrease="Increase duration" ariaLabelDecrease="Decrease duration" />
           </div>
-          <div />
+          <div>
+            <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Setup time (min before)</label>
+            <input className="input" type="number" min="0" max="600" step="5" style={{ width: '100%' }}
+              placeholder={eventIsHosted ? '90 (default)' : '60 (default)'}
+              value={form.setup_minutes_before}
+              onChange={e => update('setup_minutes_before', e.target.value)} />
+            {(() => {
+              const effMin = form.setup_minutes_before === '' || form.setup_minutes_before == null
+                ? (eventIsHosted ? 90 : 60)
+                : Number(form.setup_minutes_before);
+              const clock = formatSetupTime(form.event_start_time, effMin);
+              return (
+                <div className="tiny muted" style={{ marginTop: 4 }}>
+                  {clock
+                    ? <>Crew arrives <strong>{clock}</strong>{form.setup_minutes_before === '' || form.setup_minutes_before == null ? ` (default ${eventIsHosted ? 90 : 60} min)` : ''}</>
+                    : <>Blank uses the package default ({eventIsHosted ? 90 : 60} min)</>}
+                  <br />Applies to single-shift events only; multi-shift events are edited per shift.
+                </div>
+              );
+            })()}
+          </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Location</label>
             <VenueAddressFields

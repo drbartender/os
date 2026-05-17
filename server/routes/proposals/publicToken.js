@@ -23,7 +23,10 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
   }
   // Public-safe column allowlist — do NOT expose admin_notes, stripe_customer_id,
   // stripe_payment_method_id, client_signature_ip, client_signature_user_agent,
-  // created_by, or other internal fields.
+  // created_by, setup_minutes_before, or other internal fields. setup_minutes_before
+  // (and any derived setup_time_display) is back-of-house only — clients/leads
+  // must never see crew arrival/setup timing. Intentionally absent from both the
+  // SELECT list and the res.json() payload below.
   const result = await pool.query(`
     SELECT
       p.id, p.token, p.client_id,

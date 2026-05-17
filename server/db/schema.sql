@@ -1109,6 +1109,16 @@ ALTER TABLE drink_plans DROP COLUMN IF EXISTS event_name;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS adjustments JSONB DEFAULT '[]';
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS total_price_override NUMERIC(10,2);
 
+-- ─── Setup Time (back-of-house only) ──────────────────────────────
+-- Crew arrival/setup lead time, in minutes before service start. NULL ⇒ derive
+-- the default at read time (90 for hosted/per-guest packages, 60 otherwise) —
+-- no SQL default so a package flip pre-booking re-derives correctly. Synced into
+-- shifts.setup_minutes_before by createEventShifts / syncShiftsFromProposal.
+-- NEVER exposed on public token/proposal/invoice surfaces (see publicToken.js).
+-- (The shifts.setup_minutes_before column is defined separately above ~line 1059
+-- with a DB DEFAULT 60 — do not change it.)
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS setup_minutes_before INTEGER;
+
 -- ─── Blog Posts ─────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS blog_posts (

@@ -4,6 +4,7 @@ const { drinkPlanLink } = require('./emailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
 const { composeVenueLocation } = require('./venueAddress');
+const { effectiveSetupMinutes } = require('./setupTime');
 
 /**
  * Convert a 24-hour time string (e.g. "17:00") and add hours to produce a new time string.
@@ -121,10 +122,13 @@ async function createEventShifts(proposalId) {
   const numBartenders = proposal.num_bartenders || 1;
   const positions = Array(numBartenders).fill('Bartender');
 
-  // Insert the shift
+  // Insert the shift. setup_minutes_before mirrors the proposal's effective
+  // value (explicit override, else 90 hosted / 60 — derived from pricing_snapshot
+  // which is in hand via SELECT p.*). Informational only — start_time stays equal
+  // to service start; this never shifts the billable/pay window.
   const shiftResult = await pool.query(`
-    INSERT INTO shifts (event_type, event_type_custom, client_name, event_date, start_time, end_time, location, positions_needed, notes, status, proposal_id, created_by)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'open', $10, $11)
+    INSERT INTO shifts (event_type, event_type_custom, client_name, event_date, start_time, end_time, location, setup_minutes_before, positions_needed, notes, status, proposal_id, created_by)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11, $12)
     RETURNING *
   `, [
     proposal.event_type || null,
@@ -134,6 +138,7 @@ async function createEventShifts(proposalId) {
     startDisplay,
     endDisplay,
     composeVenueLocation(proposal) || proposal.event_location || null,
+    effectiveSetupMinutes(proposal),
     JSON.stringify(positions),
     `Auto-created from proposal #${proposal.id}. ${proposal.guest_count || 0} guests. Client: ${proposal.client_name || 'Unknown'}.`,
     proposalId,
@@ -194,6 +199,9 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
   }
 
   const composedLocation = composeVenueLocation(proposal) || proposal.event_location || null;
+  // setup_minutes_before re-derives from the proposal each sync (same rule as
+  // createEventShifts). Multi-shift events are skipped by the count !== 1 guard
+  // above (by design — the admin manages those per shift via PUT /shifts/:id).
   const upd = await db.query(`
     UPDATE shifts SET
       event_date = $1,
@@ -204,7 +212,8 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
       location = $4,
       client_name = $5,
       event_type = $6,
-      event_type_custom = $7
+      event_type_custom = $7,
+      setup_minutes_before = $9
     WHERE proposal_id = $8
     RETURNING *
   `, [
@@ -216,6 +225,7 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
     proposal.event_type || null,
     proposal.event_type_custom || null,
     proposalId,
+    effectiveSetupMinutes(proposal),
   ]);
   return upd.rows[0] || null;
 }

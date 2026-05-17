@@ -208,6 +208,8 @@ export default function EventDetailPage() {
             <div className="muted" style={{ fontSize: 13 }}>
               {fmtDateFull(proposal.event_date && String(proposal.event_date).slice(0, 10))}
               {timeRange && ` · ${timeRange}`}
+              {/* Back-of-house setup time (server-derived; never on public surfaces) */}
+              {proposal.setup_time_display && ` · setup ${proposal.setup_time_display}`}
               {proposal.event_location && ` · ${proposal.event_location}`}
             </div>
             {contactBits.length > 0 && (

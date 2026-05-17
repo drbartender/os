@@ -9,6 +9,7 @@ const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, linkPaymentToInvoice } = require('../../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
+const { setupTimeDisplay } = require('../../utils/setupTime');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
@@ -232,7 +233,17 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     ),
   ]);
 
-  res.json({ ...result.rows[0], addons: addons.rows, activity: activity.rows });
+  // setup_time_display: server-derived clock time (service start − effective
+  // minutes) for back-of-house display. Raw setup_minutes_before already flows
+  // via SELECT p.* (NULL until an admin overrides; null display when unparseable
+  // start time). Back-of-house only — never added to the public token response.
+  const row = result.rows[0];
+  res.json({
+    ...row,
+    setup_time_display: setupTimeDisplay(row),
+    addons: addons.rows,
+    activity: activity.rows,
+  });
 }));
 
 /** PATCH /api/proposals/:id — update event details and recalculate */
@@ -242,7 +253,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
     addon_variants, syrup_selections, event_type, event_type_category, event_type_custom,
     venue_name, venue_street, venue_city, venue_state, venue_zip,
-    adjustments, total_price_override
+    adjustments, total_price_override, setup_minutes_before
   } = req.body;
 
   const dbClient = await pool.connect();
@@ -312,6 +323,23 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         });
       }
     }
+
+    // setup_minutes_before — undefined/null sentinel, mirrored on the
+    // total_price_override handling directly above. A time-only PATCH omits this
+    // key (undefined → keep old). Explicit null resets to the package-derived
+    // default (90 hosted / 60 else, resolved at read time). A number is
+    // validated 0–600 inclusive. Bound DIRECTLY in the UPDATE below (NOT via
+    // COALESCE — COALESCE would make reset-to-default impossible). This is not a
+    // pricing input — it never touches calculateProposal/total_price/snapshot.
+    const setupMinutes = setup_minutes_before !== undefined ? setup_minutes_before : old.setup_minutes_before;
+    if (setup_minutes_before !== undefined && setup_minutes_before !== null) {
+      const sm = Number(setup_minutes_before);
+      if (!Number.isInteger(sm) || sm < 0 || sm > 600) {
+        throw new ValidationError({
+          setup_minutes_before: 'Must be a whole number of minutes between 0 and 600',
+        });
+      }
+    }
     const snapshot = calculateProposal({
       pkg: pkgResult.rows[0], guestCount: gc, durationHours: dh, numBars: nb,
       numBartenders: num_bartenders, addons, syrupSelections: syrups,
@@ -333,7 +361,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         venue_street = COALESCE($19, venue_street),
         venue_city  = COALESCE($20, venue_city),
         venue_state = COALESCE($21, venue_state),
-        venue_zip   = COALESCE($22, venue_zip)
+        venue_zip   = COALESCE($22, venue_zip),
+        setup_minutes_before = $23
       WHERE id = $11
       RETURNING *
     `, [
@@ -344,7 +373,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       JSON.stringify(adj), tpo ?? null,
       recomposedLocation,
       venue_name ?? null, venue_street ?? null, venue_city ?? null,
-      venue_state ?? null, venue_zip ?? null
+      venue_state ?? null, venue_zip ?? null,
+      setupMinutes ?? null
     ]);
 
     // Replace proposal add-ons — single bulk INSERT

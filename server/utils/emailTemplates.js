@@ -291,9 +291,16 @@ function shiftRequestAdmin({ staffName, eventTypeLabel = 'event', eventDate, pos
 
 // ─── Staff-Facing Templates ─────────────────────────────────────
 
-function shiftRequestApproved({ staffName, eventTypeLabel = 'event', eventDate, startTime, endTime, location }) {
+// setupTime is back-of-house only — this is a STAFF confirmation email, never
+// sent to clients/leads. The "arrive by" row/line renders ONLY when setupTime
+// is truthy (caller passes null when start time is missing/unparseable).
+function shiftRequestApproved({ staffName, eventTypeLabel = 'event', eventDate, startTime, endTime, location, setupTime }) {
   const name = staffName || 'there';
   const eventPhrase = eventTypeLabel === 'event' ? 'an upcoming event' : `an upcoming ${eventTypeLabel} event`;
+  const setupRow = setupTime
+    ? `<tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Setup / arrive by</td><td style="padding:8px 12px;">${setupTime}</td></tr>`
+    : '';
+  const setupText = setupTime ? ` Setup / arrive by ${setupTime}.` : '';
   return {
     subject: `You're Confirmed: ${eventTypeLabel} on ${eventDate} — Dr. Bartender`,
     html: wrapEmail(`
@@ -303,12 +310,13 @@ function shiftRequestApproved({ staffName, eventTypeLabel = 'event', eventDate, 
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:100px;">Date</td><td style="padding:8px 12px;">${eventDate}</td></tr>
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Time</td><td style="padding:8px 12px;">${startTime} – ${endTime}</td></tr>
+        ${setupRow}
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Location</td><td style="padding:8px 12px;">${location}</td></tr>
       </table>
       <p>Please arrive on time and in proper uniform. See you there!</p>
       <p>— The Dr. Bartender Team</p>
     `),
-    text: `Hi ${name}, you're confirmed to work ${eventPhrase} on ${eventDate}, ${startTime} – ${endTime} at ${location}. Please arrive on time and in proper uniform. — The Dr. Bartender Team`,
+    text: `Hi ${name}, you're confirmed to work ${eventPhrase} on ${eventDate}, ${startTime} – ${endTime} at ${location}.${setupText} Please arrive on time and in proper uniform. — The Dr. Bartender Team`,
   };
 }
 

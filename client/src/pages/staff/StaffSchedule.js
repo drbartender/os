@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import { formatSetupTime } from '../../utils/setupTime';
 
 const STATUS_STYLES = {
   pending:  { background: '#FFF3DC', color: '#8B5E0A', border: '1px solid #E5C97A' },
@@ -97,6 +98,11 @@ export default function StaffSchedule() {
                     {req.start_time && <> &middot; {req.start_time}{req.end_time && ` - ${req.end_time}`}</>}
                     {req.location && <> &middot; {req.location}</>}
                   </div>
+                  {req.start_time && formatSetupTime(req.start_time, req.setup_minutes_before ?? 60) && (
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                      Setup {formatSetupTime(req.start_time, req.setup_minutes_before ?? 60)}
+                    </div>
+                  )}
                   {req.position && (
                     <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
                       Position: {req.position}

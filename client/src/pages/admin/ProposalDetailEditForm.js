@@ -12,6 +12,7 @@ import NumberStepper from '../../components/NumberStepper';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import Icon from '../../components/adminos/Icon';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
+import { formatSetupTime } from '../../utils/setupTime';
 
 // Self-contained edit form for ProposalDetail. Owns:
 //  - editForm state, dirty tracking, leave-confirm modal, beforeunload guard
@@ -179,6 +180,11 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
         syrup_selections: editForm.syrup_selections || [],
         adjustments: editForm.adjustments || [],
         total_price_override: editForm.total_price_override,
+        // Blank → explicit null (reset to package default); else a number.
+        // Server uses the undefined/null sentinel — sending null is the reset.
+        setup_minutes_before: editForm.setup_minutes_before === '' || editForm.setup_minutes_before == null
+          ? null
+          : Number(editForm.setup_minutes_before),
       });
       toast.success('Proposal updated.');
       onSaved?.(res.data);
@@ -299,6 +305,26 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
             <input className="input" type="number" min="1" max="1000" style={{ width: '100%' }}
               value={editForm.guest_count}
               onChange={e => update('guest_count', e.target.value)} />
+          </div>
+          <div>
+            <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Setup time (min before)</label>
+            <input className="input" type="number" min="0" max="600" step="5" style={{ width: '100%' }}
+              placeholder={pkgIsHosted ? '90 (default)' : '60 (default)'}
+              value={editForm.setup_minutes_before}
+              onChange={e => update('setup_minutes_before', e.target.value)} />
+            {(() => {
+              const effMin = editForm.setup_minutes_before === '' || editForm.setup_minutes_before == null
+                ? (pkgIsHosted ? 90 : 60)
+                : Number(editForm.setup_minutes_before);
+              const clock = formatSetupTime(editForm.event_start_time, effMin);
+              return (
+                <div className="tiny muted" style={{ marginTop: 4 }}>
+                  {clock
+                    ? <>Crew arrives <strong>{clock}</strong>{editForm.setup_minutes_before === '' || editForm.setup_minutes_before == null ? ` (default ${pkgIsHosted ? 90 : 60} min)` : ''} · back-of-house only</>
+                    : <>Blank uses the package default ({pkgIsHosted ? 90 : 60} min) · back-of-house only</>}
+                </div>
+              );
+            })()}
           </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Location</label>
@@ -541,5 +567,8 @@ export function initialFormFromProposal(p) {
     syrup_selections: snapshot.syrups?.selections || [],
     adjustments: p.adjustments || [],
     total_price_override: p.total_price_override ?? null,
+    // '' = "use the package-derived default" (server resolves null → 90 hosted /
+    // 60 else). A number is an explicit override. Inherited by EventEditForm.
+    setup_minutes_before: p.setup_minutes_before ?? '',
   };
 }
