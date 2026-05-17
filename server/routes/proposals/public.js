@@ -9,6 +9,7 @@ const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../../utils/errors');
+const { composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
 
 const router = express.Router();
 
@@ -227,7 +228,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   const {
     client_name, client_email, client_phone,
     event_date, event_start_time, event_duration_hours,
-    event_location, guest_count, package_id, num_bars, addon_ids,
+    venue_name, venue_city, venue_state, guest_count, package_id, num_bars, addon_ids,
     addon_quantities, syrup_selections,
     event_type, event_type_category, event_type_custom,
     client_provides_glassware,
@@ -240,6 +241,11 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   if (!package_id) fieldErrors.package_id = 'Package is required';
   if (!guest_count || guest_count < 1) fieldErrors.guest_count = 'Guest count is required';
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
+
+  const venueInput = { venue_name, venue_city, venue_state };
+  const venueErrors = validateVenue(venueInput, { requireCityState: true });
+  if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
+  const composedLocation = composeVenueLocation(venueInput);
 
   // Normalize class_options: only persist recognized keys and only for class bookings
   const isClassBooking = event_type_category === 'class';
@@ -329,16 +335,18 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     const proposalResult = await dbClient.query(`
       INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours,
         event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, status,
-        event_type, event_type_category, event_type_custom, admin_notes, class_options)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        event_type, event_type_category, event_type_custom, admin_notes, class_options,
+        venue_name, venue_city, venue_state)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
       RETURNING *
     `, [
       finalClientId, event_date || null,
-      event_start_time || null, dh, event_location || null, gc, package_id, nb,
+      event_start_time || null, dh, composedLocation, gc, package_id, nb,
       numBartenders, snapshotJson, totalPrice, proposalStatus,
       event_type || null, event_type_category || null, event_type_custom || null,
       glasswareNote,
-      cleanClassOptions ? JSON.stringify(cleanClassOptions) : null
+      cleanClassOptions ? JSON.stringify(cleanClassOptions) : null,
+      (venue_name || '').trim() || null, (venue_city || '').trim() || null, (venue_state || '').trim() || null
     ]);
 
     const proposal = proposalResult.rows[0];

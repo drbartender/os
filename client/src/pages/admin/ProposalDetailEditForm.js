@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
-import LocationInput from '../../components/LocationInput';
+import VenueAddressFields from '../../components/VenueAddressFields';
 import SyrupPicker from '../../components/SyrupPicker';
 import ConfirmModal from '../../components/ConfirmModal';
 import FormBanner from '../../components/FormBanner';
@@ -166,7 +166,11 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
         event_date: editForm.event_date,
         event_start_time: editForm.event_start_time,
         event_duration_hours: Number(editForm.event_duration_hours),
-        event_location: editForm.event_location,
+        venue_name: editForm.venue_name,
+        venue_street: editForm.venue_street,
+        venue_city: editForm.venue_city,
+        venue_state: editForm.venue_state,
+        venue_zip: editForm.venue_zip,
         guest_count: Number(editForm.guest_count),
         package_id: Number(editForm.package_id),
         num_bars: Number(editForm.num_bars) || 0,
@@ -298,8 +302,10 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
           </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Location</label>
-            <LocationInput value={editForm.event_location}
-              onChange={(v) => update('event_location', v)} />
+            <VenueAddressFields
+              value={editForm}
+              onChange={(f, val) => update(f, val)}
+            />
           </div>
           <div>
             <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Portable bars</label>
@@ -523,6 +529,11 @@ export function initialFormFromProposal(p) {
     event_start_time: p.event_start_time || '',
     event_duration_hours: Number(p.event_duration_hours) || 4,
     event_location: p.event_location || '',
+    venue_name: p.venue_name || '',
+    venue_street: p.venue_street || '',
+    venue_city: p.venue_city || '',
+    venue_state: p.venue_state || '',
+    venue_zip: p.venue_zip || '',
     guest_count: p.guest_count || 50,
     package_id: p.package_id || '',
     num_bars: p.num_bars || 0,

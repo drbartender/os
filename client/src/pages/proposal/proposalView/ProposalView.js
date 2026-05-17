@@ -29,6 +29,9 @@ export default function ProposalView() {
   const [sigName, setSigName] = useState('');
   const [sigData, setSigData] = useState('');
   const [sigMethod, setSigMethod] = useState(null);
+  const [venue, setVenue] = useState({
+    venue_name: '', venue_street: '', venue_city: '', venue_state: '', venue_zip: '',
+  });
   const signedThisSession = useRef(false);
 
   // Payment option state
@@ -71,6 +74,23 @@ export default function ProposalView() {
     if (paid) toast.success('Payment received!');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paid]);
+
+  // Seed editable venue from the loaded proposal (once).
+  useEffect(() => {
+    if (proposal) {
+      setVenue((cur) => (cur._seeded ? cur : {
+        venue_name: proposal.venue_name || '',
+        venue_street: proposal.venue_street || '',
+        venue_city: proposal.venue_city || '',
+        venue_state: proposal.venue_state || '',
+        venue_zip: proposal.venue_zip || '',
+        _seeded: true,
+      }));
+    }
+  }, [proposal]);
+
+  const venueComplete = !!proposal?.venue_complete
+    || !!(venue.venue_street?.trim() && venue.venue_city?.trim() && venue.venue_state?.trim());
 
   // Only load Stripe.js (~200KB gzipped) when the proposal actually needs a
   // payment form. Skip for already-paid, confirmed, or non-payable proposals.
@@ -149,6 +169,19 @@ export default function ProposalView() {
       throw new Error(msg);
     }
 
+    if (!proposal.venue_complete) {
+      const ve = {};
+      if (!venue.venue_street?.trim()) ve.venue_street = 'Street address is required';
+      if (!venue.venue_city?.trim()) ve.venue_city = 'City is required';
+      if (!venue.venue_state?.trim()) ve.venue_state = 'State is required';
+      if (Object.keys(ve).length) {
+        setFieldErrors(ve);
+        const msg = 'Please add the venue address.';
+        setFormError(msg);
+        throw new Error(msg);
+      }
+    }
+
     // If already signed (server state or this session), skip
     if (proposal.client_signed_at || signedThisSession.current) return;
 
@@ -157,6 +190,11 @@ export default function ProposalView() {
         client_signed_name: sigName.trim(),
         client_signature_data: sigData,
         client_signature_method: sigMethod,
+        venue_name: venue.venue_name?.trim() || null,
+        venue_street: venue.venue_street?.trim() || null,
+        venue_city: venue.venue_city?.trim() || null,
+        venue_state: venue.venue_state?.trim() || null,
+        venue_zip: venue.venue_zip?.trim() || null,
       });
       signedThisSession.current = true;
       toast.success('Proposal accepted!');
@@ -336,6 +374,15 @@ export default function ProposalView() {
                 payLabel={payLabel}
                 payOnlyLabel={payOnlyLabel}
                 handleSign={handleSign}
+                venue={venue}
+                setVenue={setVenue}
+                venueComplete={venueComplete}
+                venuePrefilled={!!proposal?.venue_complete}
+                proposalVenue={{
+                  venue_name: proposal.venue_name, venue_street: proposal.venue_street,
+                  venue_city: proposal.venue_city, venue_state: proposal.venue_state,
+                  venue_zip: proposal.venue_zip,
+                }}
               />
             )}
 

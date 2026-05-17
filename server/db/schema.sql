@@ -1074,6 +1074,15 @@ ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_type VARCHAR(100);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_type_category VARCHAR(50);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_type_custom VARCHAR(255);
 
+-- Structured venue address (collected: venue name optional in quote wizard;
+-- street required at sign+pay). event_location is a derived display string
+-- composed from these via server/utils/venueAddress.js.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_name   TEXT;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_street TEXT;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_city   TEXT;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_state  TEXT;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS venue_zip    TEXT;
+
 -- ─── Backfill denormalized columns from linked proposals ──
 UPDATE shifts s
    SET event_type        = p.event_type,

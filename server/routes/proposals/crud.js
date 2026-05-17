@@ -4,6 +4,7 @@ const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const { calculateProposal } = require('../../utils/pricingEngine');
 const { createEventShifts, createDrinkPlan, syncShiftsFromProposal } = require('../../utils/eventCreation');
+const { composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, linkPaymentToInvoice } = require('../../utils/invoiceHelpers');
@@ -240,6 +241,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
     addon_variants, syrup_selections, event_type, event_type_category, event_type_custom,
+    venue_name, venue_street, venue_city, venue_state, venue_zip,
     adjustments, total_price_override
   } = req.body;
 
@@ -252,6 +254,26 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       throw new NotFoundError('Proposal not found');
     }
     const old = existing.rows[0];
+
+    const venueProvided = [venue_name, venue_street, venue_city, venue_state, venue_zip]
+      .some(v => v !== undefined);
+    if (venueProvided) {
+      const venueErrors = validateVenue(
+        { venue_name, venue_street, venue_city, venue_state, venue_zip },
+        { requireStreet: false, requireCityState: false }
+      );
+      if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
+    }
+    const mergedVenue = {
+      venue_name:   venue_name   ?? old.venue_name,
+      venue_street: venue_street ?? old.venue_street,
+      venue_city:   venue_city   ?? old.venue_city,
+      venue_state:  venue_state  ?? old.venue_state,
+      venue_zip:    venue_zip    ?? old.venue_zip,
+    };
+    const recomposedLocation = venueProvided
+      ? composeVenueLocation(mergedVenue)
+      : null;
 
     const pkgId = package_id || old.package_id;
     const pkgResult = await dbClient.query('SELECT * FROM service_packages WHERE id = $1', [pkgId]);
@@ -300,13 +322,18 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       UPDATE proposals SET
         event_date = COALESCE($1, event_date),
         event_start_time = COALESCE($2, event_start_time), event_duration_hours = $3,
-        event_location = COALESCE($4, event_location), guest_count = $5,
+        event_location = COALESCE($17, COALESCE($4, event_location)), guest_count = $5,
         package_id = $6, num_bars = $7, num_bartenders = $8,
         pricing_snapshot = $9, total_price = $10,
         event_type = COALESCE($12, event_type),
         event_type_category = COALESCE($13, event_type_category),
         event_type_custom = COALESCE($14, event_type_custom),
-        adjustments = $15, total_price_override = $16
+        adjustments = $15, total_price_override = $16,
+        venue_name  = COALESCE($18, venue_name),
+        venue_street = COALESCE($19, venue_street),
+        venue_city  = COALESCE($20, venue_city),
+        venue_state = COALESCE($21, venue_state),
+        venue_zip   = COALESCE($22, venue_zip)
       WHERE id = $11
       RETURNING *
     `, [
@@ -314,7 +341,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       pkgId, nb, snapshot.staffing.actual,
       JSON.stringify(snapshot), snapshot.total, req.params.id,
       event_type || null, event_type_category || null, event_type_custom || null,
-      JSON.stringify(adj), tpo ?? null
+      JSON.stringify(adj), tpo ?? null,
+      recomposedLocation,
+      venue_name ?? null, venue_street ?? null, venue_city ?? null,
+      venue_state ?? null, venue_zip ?? null
     ]);
 
     // Replace proposal add-ons — single bulk INSERT

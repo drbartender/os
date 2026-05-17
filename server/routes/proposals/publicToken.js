@@ -8,6 +8,7 @@ const { ADMIN_URL } = require('../../utils/urls');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
+const { isVenueComplete, composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
 
 const router = express.Router();
 
@@ -28,6 +29,7 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
       p.id, p.token, p.client_id,
       p.event_date, p.event_start_time, p.event_duration_hours,
       p.event_location, p.event_type, p.event_type_category, p.event_type_custom,
+      p.venue_name, p.venue_street, p.venue_city, p.venue_state, p.venue_zip,
       p.guest_count, p.package_id, p.num_bars, p.num_bartenders,
       p.pricing_snapshot, p.total_price, p.status,
       p.amount_paid, p.deposit_amount, p.payment_type, p.autopay_enrolled,
@@ -84,6 +86,7 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
     ...proposal,
     addons: addonsRes.rows,
     drink_plan_token: drinkPlanToken,
+    venue_complete: isVenueComplete(proposal),
     status: proposal.status === 'sent' ? 'viewed' : proposal.status,
   });
 }));
@@ -92,7 +95,8 @@ const PROPOSAL_DOCUMENT_VERSION = 'event-services-agreement-v2';
 
 /** POST /api/proposals/t/:token/sign — client signs and accepts proposal */
 router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
-  const { client_signed_name, client_signature_data, client_signature_method } = req.body;
+  const { client_signed_name, client_signature_data, client_signature_method,
+    venue_name, venue_street, venue_city, venue_state, venue_zip } = req.body;
   const fieldErrors = {};
   if (!client_signed_name) fieldErrors.client_signed_name = 'Please enter your full name';
   if (!client_signature_data) fieldErrors.signature = 'Please sign before accepting';
@@ -104,10 +108,22 @@ router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
   }
 
   const lookup = await pool.query(
-    "SELECT id FROM proposals WHERE token = $1",
+    `SELECT id, venue_name, venue_street, venue_city, venue_state, venue_zip
+       FROM proposals WHERE token = $1`,
     [req.params.token]
   );
   if (!lookup.rows[0]) throw new NotFoundError('This proposal is no longer available');
+
+  // Venue address gate: if the proposal doesn't already have a complete venue
+  // address, the client must supply one now (street + city + state required).
+  const storedVenue = lookup.rows[0];
+  let venueToPersist = null;
+  if (!isVenueComplete(storedVenue)) {
+    const submitted = { venue_name, venue_street, venue_city, venue_state, venue_zip };
+    const venueErrors = validateVenue(submitted, { requireStreet: true, requireCityState: true });
+    if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
+    venueToPersist = submitted;
+  }
 
   const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || null;
   const userAgent = req.headers['user-agent'] || null;
@@ -116,6 +132,12 @@ router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
   // signature has been recorded yet AND that the status is still in a signable
   // state. This collapses the SELECT-then-UPDATE TOCTOU window so two parallel
   // requests on the same token can't both pass a check and overwrite each other.
+  // When venueToPersist is set, also write the structured fields and the
+  // recomposed event_location in the same atomic UPDATE. String-coerce values
+  // (public endpoint — never trust req.body types).
+  const mergedVenue = venueToPersist || storedVenue;
+  const composedLocation = composeVenueLocation(mergedVenue);
+  const vStr = (x) => String(x ?? '').trim();
   const upd = await pool.query(`
     UPDATE proposals SET
       client_signed_name = $1,
@@ -125,12 +147,27 @@ router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
       client_signature_ip = $4,
       client_signature_user_agent = $5,
       client_signature_document_version = $6,
-      status = 'accepted'
+      status = 'accepted',
+      venue_name  = COALESCE($8, venue_name),
+      venue_street = COALESCE($9, venue_street),
+      venue_city  = COALESCE($10, venue_city),
+      venue_state = COALESCE($11, venue_state),
+      venue_zip   = COALESCE($12, venue_zip),
+      event_location = COALESCE($13, event_location)
     WHERE id = $7
       AND client_signed_at IS NULL
       AND status NOT IN ('accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'cancelled')
     RETURNING id
-  `, [client_signed_name, client_signature_data, client_signature_method, ip, userAgent, PROPOSAL_DOCUMENT_VERSION, lookup.rows[0].id]);
+  `, [
+    client_signed_name, client_signature_data, client_signature_method, ip, userAgent,
+    PROPOSAL_DOCUMENT_VERSION, lookup.rows[0].id,
+    venueToPersist ? (vStr(venue_name) || null) : null,
+    venueToPersist ? vStr(venue_street) : null,
+    venueToPersist ? vStr(venue_city) : null,
+    venueToPersist ? vStr(venue_state) : null,
+    venueToPersist ? (vStr(venue_zip) || null) : null,
+    venueToPersist ? composedLocation : null,
+  ]);
   if (!upd.rows[0]) {
     throw new ConflictError('This proposal has already been accepted', 'ALREADY_ACCEPTED');
   }

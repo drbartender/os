@@ -1,0 +1,61 @@
+// Structured venue address: compose + validate. Pure, no DB calls.
+// event_location and shifts.location are derived from these fields.
+
+const VENUE_STATES = ['Illinois', 'Indiana', 'Michigan', 'Minnesota', 'Wisconsin'];
+// Linear-time: fully anchored, fixed-length quantifiers, no ambiguous
+// backtracking — the detect-unsafe-regex heuristic flags the optional group
+// as a false positive here.
+// eslint-disable-next-line security/detect-unsafe-regex
+const ZIP_RE = /^\d{5}(-\d{4})?$/;
+
+function s(v) { return (v === null || v === undefined ? '' : String(v)).trim(); }
+
+/**
+ * Join non-empty parts: [name, street, "City, State Zip"].
+ * City/state only → "Chicago, Illinois" (byte-identical to legacy event_location).
+ * Returns null when nothing is set.
+ */
+function composeVenueLocation(v = {}) {
+  const name = s(v.venue_name);
+  const street = s(v.venue_street);
+  const city = s(v.venue_city);
+  const state = s(v.venue_state);
+  const zip = s(v.venue_zip);
+  const cityState = [city, state].filter(Boolean).join(', ');
+  const cityStateZip = [cityState, zip].filter(Boolean).join(' ');
+  return [name, street, cityStateZip].filter(Boolean).join(', ') || null;
+}
+
+/** True when the address is "complete enough" to dispatch staff. */
+function isVenueComplete(v = {}) {
+  return !!(s(v.venue_street) && s(v.venue_city) && s(v.venue_state));
+}
+
+/**
+ * Validate a venue payload. Returns a fieldErrors object (empty = valid).
+ * @param {object} v
+ * @param {object} opts { requireStreet, requireCityState }
+ */
+function validateVenue(v = {}, opts = {}) {
+  const { requireStreet = false, requireCityState = false } = opts;
+  const e = {};
+  const name = s(v.venue_name);
+  const street = s(v.venue_street);
+  const city = s(v.venue_city);
+  const state = s(v.venue_state);
+  const zip = s(v.venue_zip);
+
+  if (requireStreet && !street) e.venue_street = 'Street address is required';
+  if (requireCityState && !city) e.venue_city = 'City is required';
+  if (requireCityState && !state) e.venue_state = 'State is required';
+
+  if (name.length > 200) e.venue_name = 'Venue name is too long';
+  if (street.length > 200) e.venue_street = 'Street address is too long';
+  if (city.length > 120) e.venue_city = 'City is too long';
+  if (state && !VENUE_STATES.includes(state)) e.venue_state = 'Select a valid state';
+  if (zip && !ZIP_RE.test(zip)) e.venue_zip = 'Enter a valid ZIP (e.g. 60601)';
+
+  return e;
+}
+
+module.exports = { VENUE_STATES, composeVenueLocation, isVenueComplete, validateVenue };

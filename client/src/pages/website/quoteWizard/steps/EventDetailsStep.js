@@ -86,6 +86,13 @@ export default function EventDetailsStep({
           <FieldError error={fieldErrors?.event_state} />
         </div>
 
+        <div className="form-group">
+          <label htmlFor="wz-venue_name" className="form-label">Venue name (optional)</label>
+          <input id="wz-venue_name" className="form-input" value={form.venue_name || ''}
+            onChange={e => update('venue_name', e.target.value)}
+            placeholder="e.g. Citadel Banquet Hall (if you know it)" autoComplete="off" />
+        </div>
+
         {/* Alcohol provider */}
         <div className={`form-group${fieldClass('alcohol_provider')}`}>
           <label htmlFor="wz-alcohol_provider" className="form-label">Who provides the alcohol? *</label>

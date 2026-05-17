@@ -3,6 +3,7 @@ const { sendEmail } = require('./email');
 const { drinkPlanLink } = require('./emailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
+const { composeVenueLocation } = require('./venueAddress');
 
 /**
  * Convert a 24-hour time string (e.g. "17:00") and add hours to produce a new time string.
@@ -132,7 +133,7 @@ async function createEventShifts(proposalId) {
     proposal.event_date,
     startDisplay,
     endDisplay,
-    proposal.event_location || null,
+    composeVenueLocation(proposal) || proposal.event_location || null,
     JSON.stringify(positions),
     `Auto-created from proposal #${proposal.id}. ${proposal.guest_count || 0} guests. Client: ${proposal.client_name || 'Unknown'}.`,
     proposalId,
@@ -192,11 +193,14 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
     }
   }
 
+  const composedLocation = composeVenueLocation(proposal) || proposal.event_location || null;
   const upd = await db.query(`
     UPDATE shifts SET
       event_date = $1,
       start_time = $2,
       end_time = $3,
+      lat = CASE WHEN location IS DISTINCT FROM $4 THEN NULL ELSE lat END,
+      lng = CASE WHEN location IS DISTINCT FROM $4 THEN NULL ELSE lng END,
       location = $4,
       client_name = $5,
       event_type = $6,
@@ -207,7 +211,7 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
     proposal.event_date,
     startDisplay,
     endDisplay,
-    proposal.event_location || null,
+    composedLocation,
     proposal.client_name || null,
     proposal.event_type || null,
     proposal.event_type_custom || null,

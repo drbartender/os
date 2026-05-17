@@ -4,6 +4,7 @@ import SignaturePad from '../../../components/SignaturePad';
 import FormBanner from '../../../components/FormBanner';
 import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
 import PaymentForm from './PaymentForm';
+import VenueAddressFields, { formatVenue } from '../../../components/VenueAddressFields';
 
 // Renders BOTH the sign-and-pay flow (status: sent/viewed, not yet signed)
 // AND the pay-only flow (status: accepted, already signed but not paid).
@@ -79,10 +80,27 @@ export default function SignAndPaySection({
   payOnlyLabel,
   // Callbacks
   handleSign,
+  // Venue gate
+  venue,
+  setVenue,
+  venueComplete,
+  venuePrefilled,
+  proposalVenue,
 }) {
   const depositSelected = paymentOption === 'deposit';
   const fullSelected = paymentOption === 'full';
   const autopayLabel = `Automatically pay remaining ${fmt(balanceAmount)} on ${formatDateShort(balanceDueDate)}`;
+
+  // Live "what's still needed to pay" list (signAndPay only). Names the exact
+  // missing items so the disabled Pay button is never a mystery.
+  const payNeeds = [];
+  if (!venuePrefilled) {
+    if (!venue?.venue_street?.trim()) payNeeds.push('the venue street address');
+    if (!venue?.venue_city?.trim()) payNeeds.push('city');
+    if (!venue?.venue_state?.trim()) payNeeds.push('state');
+  }
+  if (!sigName?.trim()) payNeeds.push('your full name');
+  if (!sigData) payNeeds.push('your signature');
 
   if (mode === 'signAndPay') {
     return (
@@ -117,6 +135,27 @@ export default function SignAndPaySection({
           <p className="sign-pay-sig-caption">x · sign above</p>
         </div>
 
+        {/* Venue address */}
+        <div>
+          <label className="sign-pay-eyebrow">Where is your event?</label>
+          {venuePrefilled ? (
+            <p className="sign-pay-venue-confirm">
+              {formatVenue(proposalVenue)}
+            </p>
+          ) : (
+            <VenueAddressFields
+              value={venue}
+              onChange={(f, val) => setVenue((cur) => ({ ...cur, [f]: val }))}
+              fieldErrors={fieldErrors}
+              requireStreet
+              inputClassName="sign-pay-input"
+              selectClassName="sign-pay-input"
+              labelClassName="sign-pay-eyebrow"
+              idPrefix="signpay-venue"
+            />
+          )}
+        </div>
+
         {/* Payment Options */}
         <div>
           <label className="sign-pay-eyebrow">How would you like to pay?</label>
@@ -143,6 +182,25 @@ export default function SignAndPaySection({
           />
         </div>
 
+        {payNeeds.length > 0 && (
+          <div
+            className="sign-pay-needs"
+            role="status"
+            aria-live="polite"
+            style={{
+              border: '1px solid #c8a24a',
+              background: '#fbf3dd',
+              color: '#5a4413',
+              borderRadius: 8,
+              padding: '0.7rem 0.9rem',
+              fontSize: '0.875rem',
+              lineHeight: 1.4,
+            }}
+          >
+            Before you can pay, please add: {payNeeds.join(' · ')}.
+          </div>
+        )}
+
         {/* Stripe Payment Element */}
         <div>
           {loadingIntent && (
@@ -163,7 +221,7 @@ export default function SignAndPaySection({
                 <PaymentForm
                   onSubmit={handleSign}
                   payLabel={payLabel}
-                  disabled={!sigName.trim() || !sigData}
+                  disabled={!sigName.trim() || !sigData || !venueComplete}
                 />
               </Elements>
             </div>

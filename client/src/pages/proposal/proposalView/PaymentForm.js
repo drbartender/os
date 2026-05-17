@@ -52,7 +52,12 @@ export default function PaymentForm({ onSubmit, payLabel, disabled }) {
       <button
         type="submit"
         disabled={!stripe || paying || disabled}
-        style={{ ...styles.payButton, opacity: (!stripe || paying || disabled) ? 0.6 : 1 }}
+        style={{
+          ...styles.payButton,
+          ...((!stripe || paying || disabled)
+            ? { opacity: 0.45, filter: 'grayscale(0.7)', cursor: 'not-allowed' }
+            : { opacity: 1, cursor: 'pointer' }),
+        }}
       >
         {paying ? 'Processing...' : payLabel}
       </button>
