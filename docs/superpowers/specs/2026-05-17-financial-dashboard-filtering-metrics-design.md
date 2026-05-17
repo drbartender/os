@@ -37,7 +37,7 @@ A shared `MetricsFilterBar` component (`client/src/components/`), rendered at th
 
 ## Section 2 — Metric catalog + exact date math
 
-**Mental model:** every proposal that has been sent sits in exactly one bucket — **in pipeline** (sent, not yet accepted or dead), **booked** (accepted, not cancelled), or **lost** (cancelled/archived). No double-counting; everything reconciles.
+**Mental model:** every proposal that has been sent sits in exactly one bucket — **lost** (`status = 'cancelled'`), **won** (`accepted_at` is set and status ≠ cancelled), or **pending** (sent, no `accepted_at` yet, not cancelled). Proposals have **no `'archived'` status** — `'cancelled'` is the only terminal/dead state (schema CHECK + comment). The three buckets partition the sent-cohort exactly: no double-counting, no gaps.
 
 ### Count / funnel metrics — always filter by their own timestamp, ignore the money lens
 
@@ -45,10 +45,10 @@ A shared `MetricsFilterBar` component (`client/src/components/`), rendered at th
 |---|---|---|
 | **Sent** | count of proposals with `sent_at` in range | `sent_at` |
 | **Accepted** | count with `accepted_at` in range | `accepted_at` |
-| **Win rate** | **cohort**: of proposals *sent in range*, % since accepted. Displayed with the open count: "62% — 18 of 29 sent · 4 pending". | `sent_at` (cohort) |
+| **Win rate** | **cohort**: of proposals *sent in range*, % won. won = `accepted_at IS NOT NULL AND status <> 'cancelled'`; pending = `accepted_at IS NULL AND status <> 'cancelled'`; lost = `status = 'cancelled'`. Displayed with the open count: "62% — 18 of 29 sent · 4 pending". | `sent_at` (cohort) |
 | **Time-to-accept** | **median** days `accepted_at − sent_at`, over proposals accepted in range (`percentile_cont(0.5)` — median, not mean; one stale deal wrecks a mean) | `accepted_at` |
 | **Pipeline outstanding** | count + Σ`total_price` of proposals currently `sent`/`viewed`/`modified`. A **live snapshot** — takes no date predicate, labeled "Current". | none |
-| **Lost value** | Σ`total_price` of proposals with `sent_at` in range now `cancelled`/`archived` | `sent_at` |
+| **Lost value** | Σ`total_price` of proposals with `sent_at` in range now `status = 'cancelled'` | `sent_at` |
 
 Win rate is the **cohort** definition (chosen over the simpler period-ratio: accepted-in-range ÷ sent-in-range, which mixes cohorts — a deal sent in Feb, accepted in March would inflate March). Cohort is the honest answer to "is my pitch working"; the pending count is shown so the in-flight incompleteness is visible.
 
@@ -56,13 +56,13 @@ Win rate is the **cohort** definition (chosen over the simpler period-ratio: acc
 
 | Lens | Definition | Date column |
 |---|---|---|
-| **Booked** | Σ`total_price`, proposals with `accepted_at` in range, **excluding** currently `cancelled`/`archived` (net of cancellation) | `accepted_at` |
-| **Scheduled** | Σ`total_price`, proposals with `event_date` in range that reached accepted-or-beyond and aren't `cancelled`/`archived` | `event_date` |
+| **Booked** | Σ`total_price`, proposals with `accepted_at` in range, **excluding** `status = 'cancelled'` (net of cancellation) | `accepted_at` |
+| **Scheduled** | Σ`total_price`, proposals with `event_date` in range that reached accepted+ (`accepted_at IS NOT NULL`) and status ≠ cancelled | `event_date` |
 | **Paid** | Σ succeeded `proposal_payments.amount` (cents → dollars), by payment date | `proposal_payments.created_at` |
 
 Plus **Outstanding** as an always-on companion card: Σ`GREATEST(total_price − amount_paid, 0)` over non-cancelled accepted+ proposals with `event_date` in range — pairs with Scheduled.
 
-**Bucket consistency:** a proposal accepted in-range then later cancelled leaves Booked and enters Lost — Booked is deliberately net-of-cancellation. This keeps `Accepted + Still-pending + Lost = Sent` for any sent-cohort (the reconciliation identity used for testing, §5).
+**Bucket consistency:** a proposal accepted in-range then later cancelled leaves Won/Booked and enters Lost (it is `status='cancelled'`, so Won *and* Booked money exclude it and Lost includes it — win rate and Booked agree). A `completed`/`confirmed` proposal with `accepted_at` set counts as Won; one with `accepted_at` NULL and not cancelled counts as Pending (the residual bucket, so nothing falls through). This makes `Won + Pending + Lost = Sent` for any sent-cohort hold **by construction** (the reconciliation identity used for testing, §5).
 
 ---
 
@@ -76,7 +76,7 @@ Endpoints: `GET /proposals/dashboard-stats` and `GET /proposals/financials` in `
 - `basis` is a **server-side whitelist → column map**: `booked`→`accepted_at`, `scheduled`→`event_date`, `paid`→`pp.created_at`. The client string only selects a key; it never reaches SQL. Unknown value → `ValidationError`.
 - All predicates parameterized (`$1/$2`). No string concatenation of input.
 
-**Per-metric WHERE, not one global filter.** Each metric carries its own date column per §2. Win rate is the cohort query over the `sent_at`-in-range set: `COUNT(*)` vs `COUNT(*) FILTER (WHERE accepted_at IS NOT NULL)` vs still-pending count. Time-to-accept = `percentile_cont(0.5) WITHIN GROUP (ORDER BY accepted_at - sent_at)`.
+**Per-metric WHERE, not one global filter.** Each metric carries its own date column per §2. Win rate is the cohort query over the `sent_at`-in-range set: `COUNT(*)` as sent_cohort, `COUNT(*) FILTER (WHERE accepted_at IS NOT NULL AND status <> 'cancelled')` as won, `COUNT(*) FILTER (WHERE accepted_at IS NULL AND status <> 'cancelled')` as pending; lost = sent_cohort − won − pending. Time-to-accept = `percentile_cont(0.5) WITHIN GROUP (ORDER BY accepted_at - sent_at)`.
 
 **Revenue chart** generalizes from the hard-coded 12-month series to `generate_series(date_trunc('month',$from) … $to, '1 month')` left-joined to the chosen basis aggregate. Monthly buckets stay sane at "All time" even with the backfill (tens of bars).
 
@@ -126,7 +126,7 @@ Same `MetricsFilterBar`. Summary cards (Booked/Collected/Outstanding/Avg) become
 
 ### Testing
 
-Correctness backbone — the **reconciliation identity**: for any sent-cohort, `Accepted + Still-pending + Lost = Sent`. A built-in audit; baked into a verification step per lens × range.
+Correctness backbone — the **reconciliation identity**: for any sent-cohort, `Won + Pending + Lost = Sent` (won/pending/lost per §2). Exact equality, by construction. A built-in audit; baked into a verification step per lens × range.
 
 - **Unit tests** on the pure date-bucketing/aggregation helper (real-money math warrants it): cohort win-rate, null-timestamp exclusion, period-over-period incl. prior=0 and All-time, cents↔dollars on Paid.
 - **Manual matrix:** each lens × {This month, All time} — eyeball headline numbers + reconciliation identity holds.

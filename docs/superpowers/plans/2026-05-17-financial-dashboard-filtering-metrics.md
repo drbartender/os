@@ -331,7 +331,7 @@ Insert into `server/utils/metricsQueries.js` immediately above the `module.expor
 ```js
 // ── SQL builders. Each returns { sql, params }. `f` = { from, to, basis }. ──
 
-const NOT_DEAD = "status NOT IN ('cancelled','archived')";
+const NOT_DEAD = "status <> 'cancelled'";
 
 function qSent(f) {
   const params = [];
@@ -358,8 +358,8 @@ function qWinRate(f) {
   const c = dateClause('sent_at', f.from, f.to, params);
   return {
     sql: `SELECT COUNT(*)::int AS sent_cohort,
-                 COUNT(*) FILTER (WHERE accepted_at IS NOT NULL)::int AS accepted_from_cohort,
-                 COUNT(*) FILTER (WHERE status IN ('sent','viewed','modified'))::int AS pending
+                 COUNT(*) FILTER (WHERE accepted_at IS NOT NULL AND status <> 'cancelled')::int AS accepted_from_cohort,
+                 COUNT(*) FILTER (WHERE accepted_at IS NULL AND status <> 'cancelled')::int AS pending
           FROM proposals WHERE sent_at IS NOT NULL${c}`,
     params,
   };
@@ -384,7 +384,7 @@ function qLostValue(f) {
   return {
     sql: `SELECT COALESCE(SUM(total_price),0)::float8 AS value
           FROM proposals
-          WHERE sent_at IS NOT NULL AND status IN ('cancelled','archived')${c}`,
+          WHERE sent_at IS NOT NULL AND status = 'cancelled'${c}`,
     params,
   };
 }
@@ -1449,7 +1449,8 @@ Restart the Claude-managed dev server (kill `:5000` PID, relaunch `npm run dev`)
 | Custom range, `from` after `to` via URL `?from=2026-06-01&to=2026-01-01` | Toast error; no crash |
 | `?basis=bogus` in URL | Toast error; no crash |
 | Range with zero sent proposals | Win rate shows "—" (not NaN/0%); chart shows "No revenue in this range." |
-| Reconciliation identity (pick a closed past month) | `acceptedFromCohort + pending + (lost count for that cohort)` ≈ `sentCohort` |
+| Reconciliation identity (pick a closed past month) | `acceptedFromCohort + pending + lostCount` **= exactly** `sentCohort` (won = accepted_at set & not cancelled; pending = accepted_at NULL & not cancelled; lost = status='cancelled' — a true partition, equality is exact not approximate) |
+| Scheduled lens, event dated the 1st of a month, custom range ending that month | Event lands in the correct month bucket — no off-by-one at the DATE/timestamptz month boundary under the deployment TZ |
 | Refresh the page on a custom range | Filter persists (URL params round-trip) |
 
 Record the matrix result. Any failure → stop, fix root cause, re-run.
