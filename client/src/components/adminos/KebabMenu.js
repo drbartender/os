@@ -127,8 +127,17 @@ export default function KebabMenu({ items }) {
                   className={`kebab-item ${item.danger ? 'danger' : ''}`}
                   href={cleanHref}
                   onClick={(e) => {
+                    // Do NOT unmount this anchor synchronously. A click on an
+                    // <a mailto:/tel:/sms:> performs its OS hand-off as the
+                    // click's DEFAULT ACTION, which the browser runs after the
+                    // discrete event dispatch. React 18 flushes setOpen inside
+                    // that dispatch, so an un-deferred close removes this <a>
+                    // from the DOM before the hand-off and the browser
+                    // silently cancels it (a disconnected anchor never
+                    // navigates). Defer the close one macrotask so the anchor
+                    // is still connected when the browser acts on the click.
                     e.stopPropagation();
-                    setOpen(false);
+                    setTimeout(() => setOpen(false), 0);
                   }}
                 >
                   {item.icon && <Icon name={item.icon} size={13} />}
