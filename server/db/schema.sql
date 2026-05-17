@@ -2130,3 +2130,11 @@ CREATE INDEX IF NOT EXISTS idx_mission_completions_mission_id
 -- UI + Claude session, not email reply.
 ALTER TABLE tester_bugs DROP COLUMN IF EXISTS tester_email;
 ALTER TABLE tester_bugs DROP COLUMN IF EXISTS screenshot_url;
+
+-- ─── Metrics filtering: date-column indexes (2026-05-17) ──────────
+-- Dashboard/Financials filter by sent_at, accepted_at, and payment
+-- date. proposals(event_date) [idx_proposals_event_date] and
+-- proposals(created_at) [idx_proposals_created_at] already exist.
+CREATE INDEX IF NOT EXISTS idx_proposals_sent_at ON proposals(sent_at);
+CREATE INDEX IF NOT EXISTS idx_proposals_accepted_at ON proposals(accepted_at);
+CREATE INDEX IF NOT EXISTS idx_proposal_payments_created_at ON proposal_payments(created_at);
