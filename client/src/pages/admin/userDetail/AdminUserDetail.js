@@ -6,6 +6,7 @@ import { useToast } from '../../../context/ToastContext';
 import Icon from '../../../components/adminos/Icon';
 import StatusChip from '../../../components/adminos/StatusChip';
 import { fmt$, fmtDate } from '../../../components/adminos/format';
+import BackButton from '../../../components/adminos/BackButton';
 import {
   DEFAULT_HOURS_PER_SHIFT,
   initialsOf,
@@ -113,9 +114,7 @@ export default function AdminUserDetail() {
   if (!data) return (
     <div className="page">
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/staffing')}>
-          <Icon name="left" size={11} />Staff
-        </button>
+        <BackButton fallback="/staffing" />
       </div>
       <div className="chip danger">Contractor not found.</div>
     </div>
@@ -284,9 +283,7 @@ export default function AdminUserDetail() {
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/staffing')}>
-          <Icon name="left" size={11} />Staff
-        </button>
+        <BackButton fallback="/staffing" />
       </div>
 
       {/* ── Identity bar ────────────────────────────────── */}

@@ -5,6 +5,7 @@ import { useToast } from '../../../context/ToastContext';
 import Icon from '../../../components/adminos/Icon';
 import StatusChip from '../../../components/adminos/StatusChip';
 import { initialsOf, relDay, AD_FLOW, stageOf, chipKindFor, tryParseArray } from './helpers';
+import BackButton from '../../../components/adminos/BackButton';
 import PipelineStrip from './components/PipelineStrip';
 import ScorecardCard from './components/ScorecardCard';
 import TimelineCard from './components/TimelineCard';
@@ -98,10 +99,7 @@ export default function AdminApplicationDetail() {
   return (
     <div className="page" data-app="admin-os" style={{ maxWidth: 1280 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button className="btn btn-ghost btn-sm" onClick={() => navigate('/hiring')}>
-          <Icon name="arrow_right" size={11} style={{ transform: 'rotate(180deg)' }} />
-          Hiring pipeline
-        </button>
+        <BackButton fallback="/hiring" />
       </div>
 
       {/* Identity bar */}

@@ -9,6 +9,7 @@ import FieldError from '../../components/FieldError';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmt$, fmt$2dp, fmtDate, fmtDateFull } from '../../components/adminos/format';
+import BackButton from '../../components/adminos/BackButton';
 
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
@@ -113,9 +114,7 @@ export default function ClientDetail() {
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/clients')}>
-          <Icon name="left" size={11} />Clients
-        </button>
+        <BackButton fallback="/clients" />
       </div>
 
       {/* Identity bar */}

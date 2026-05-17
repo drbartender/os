@@ -11,6 +11,7 @@ import FieldError from '../../components/FieldError';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmtDateFull } from '../../components/adminos/format';
+import BackButton from '../../components/adminos/BackButton';
 
 const ConsultationForm = lazy(() => import('../../components/ShoppingList/ConsultationForm'));
 
@@ -135,9 +136,7 @@ export default function DrinkPlanDetail() {
     return (
       <div className="page">
         <div className="hstack" style={{ marginBottom: 8 }}>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/drink-plans')}>
-            <Icon name="left" size={11} />Drink Plans
-          </button>
+        <BackButton fallback="/drink-plans" />
         </div>
         <div className="muted">Plan not found.</div>
       </div>
@@ -150,9 +149,7 @@ export default function DrinkPlanDetail() {
   return (
     <div className="page" style={{ maxWidth: 1200 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/drink-plans')}>
-          <Icon name="left" size={11} />Drink Plans
-        </button>
+        <BackButton fallback="/drink-plans" />
       </div>
 
       <div className="card" style={{ padding: '1.5rem 1.75rem', marginBottom: 'var(--gap)' }}>

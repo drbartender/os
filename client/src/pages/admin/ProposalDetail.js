@@ -14,6 +14,7 @@ import StatusChip from '../../components/adminos/StatusChip';
 import { fmtDateFull } from '../../components/adminos/format';
 import ProposalDetailEditForm from './ProposalDetailEditForm';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
+import BackButton from '../../components/adminos/BackButton';
 
 const STATUS = {
   draft: { label: 'Draft', kind: 'neutral' },
@@ -215,9 +216,7 @@ export default function ProposalDetail() {
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/proposals')}>
-          <Icon name="left" size={11} />Proposals
-        </button>
+        <BackButton fallback="/proposals" />
       </div>
 
       {/* Identity bar */}

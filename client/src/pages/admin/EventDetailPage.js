@@ -16,6 +16,7 @@ import { fmtDate, fmtDateFull, relDay } from '../../components/adminos/format';
 import { parsePositionsCount, approvedCount } from '../../components/adminos/shifts';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import EventEditForm from './EventEditForm';
+import BackButton from '../../components/adminos/BackButton';
 
 // "18:00" + 5 → "18:00–23:00 (5 hrs)". Tolerates a 12-hour stored value
 // ("6:00 PM") and falls back to whatever we have if the time can't be parsed.
@@ -156,9 +157,7 @@ export default function EventDetailPage() {
     return (
       <div className="page">
         <div className="hstack" style={{ marginBottom: 8 }}>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/events')}>
-            <Icon name="left" size={11} />Events
-          </button>
+        <BackButton fallback="/events" />
         </div>
         <div className="chip danger">{err || 'Event not found'}</div>
       </div>
@@ -173,9 +172,7 @@ export default function EventDetailPage() {
   return (
     <div className="page" style={{ maxWidth: 1280 }}>
       <div className="hstack" style={{ marginBottom: 8 }}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate('/events')}>
-          <Icon name="left" size={11} />Events
-        </button>
+        <BackButton fallback="/events" />
       </div>
 
       {/* Identity bar */}
