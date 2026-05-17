@@ -30,10 +30,10 @@ export default function MetricsFilterBar({ filter }) {
         </>
       )}
 
-      <div className="seg" role="group" aria-label="Money lens" style={{ marginLeft: 'auto' }}>
+      <div className="metrics-seg" role="group" aria-label="Money lens" style={{ marginLeft: 'auto' }}>
         {LENSES.map(([v, l]) => (
           <button key={v} type="button"
-            className={`seg-btn${basis === v ? ' is-active' : ''}`}
+            className={`metrics-seg-btn${basis === v ? ' is-active' : ''}`}
             aria-pressed={basis === v}
             onClick={() => setBasis(v)}>{l}</button>
         ))}
