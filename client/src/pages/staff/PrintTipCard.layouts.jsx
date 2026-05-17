@@ -380,7 +380,7 @@ export function BizCardBackA({
 
 // ─ 4 × 6 portrait — single-sided tip collection ────────────
 // 600 × 900 at 150dpi
-export function FourBySixA({ name = 'your bartender', tipUrl = '' }) {
+export function FourBySixA({ name = 'your bartender', tipUrl = '', headshotUrl = '' }) {
   return (
     <PrintSheet width={600} height={900}>
       <PaperBg />
@@ -426,7 +426,7 @@ export function FourBySixA({ name = 'your bartender', tipUrl = '' }) {
         transform: 'translateX(-50%)',
         zIndex: 2,
       }}>
-        <HeadshotFrame size={112} />
+        <HeadshotFrame size={112} src={headshotUrl} />
       </div>
 
       <div style={{
@@ -511,7 +511,7 @@ export function FourBySixA({ name = 'your bartender', tipUrl = '' }) {
 
 // ─ 5 × 7 portrait — single-sided tip collection ────────────
 // 750 × 1050 at 150dpi
-export function FiveBySevenA({ name = 'your bartender', tipUrl = '' }) {
+export function FiveBySevenA({ name = 'your bartender', tipUrl = '', headshotUrl = '' }) {
   return (
     <PrintSheet width={750} height={1050}>
       <PaperBg />
@@ -551,7 +551,7 @@ export function FiveBySevenA({ name = 'your bartender', tipUrl = '' }) {
         transform: 'translateX(-50%)',
         zIndex: 2,
       }}>
-        <HeadshotFrame size={140} />
+        <HeadshotFrame size={140} src={headshotUrl} />
       </div>
 
       <div style={{

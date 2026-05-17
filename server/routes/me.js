@@ -1,9 +1,12 @@
 const express = require('express');
+const path = require('path');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError } = require('../utils/errors');
 const { PUBLIC_SITE_URL } = require('../utils/urls');
+const { getSignedUrl } = require('../utils/storage');
 const { normalizeTipHandlesInPlace } = require('../utils/tipHandleValidation');
 
 const router = express.Router();
@@ -13,6 +16,7 @@ router.get('/tip-page', asyncHandler(async (req, res) => {
   const { rows } = await pool.query(`
     SELECT
       cp.preferred_name,
+      cp.headshot_file_url,
       pp.tip_page_token,
       pp.tip_page_active,
       pp.venmo_handle,
@@ -35,8 +39,26 @@ router.get('/tip-page', asyncHandler(async (req, res) => {
     ? `${PUBLIC_SITE_URL}/tip/${row.tip_page_token}`
     : null;
 
+  // Headshot is stored as `/files/<filename>`; that route is admin-only, so
+  // mirror publicTip.js and hand the staff print page a short-lived signed R2
+  // URL. Intentional local duplication — see 2026-05-17-little-fixes-batch
+  // spec (deduping would refactor the live tip-collection path).
+  let headshotUrl = null;
+  if (row.headshot_file_url) {
+    if (row.headshot_file_url.startsWith('/files/')) {
+      try {
+        headshotUrl = await getSignedUrl(path.basename(row.headshot_file_url));
+      } catch (err) {
+        Sentry.captureException(err, { tags: { route: 'me.tip-page', op: 'sign_headshot' } });
+      }
+    } else {
+      headshotUrl = row.headshot_file_url;
+    }
+  }
+
   res.json({
     url,
+    headshot_url: headshotUrl,
     active: !!row.tip_page_active,
     has_stripe_link: !!row.stripe_payment_link_url,
     preferred_name: row.preferred_name || null,
