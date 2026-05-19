@@ -75,12 +75,6 @@ const FieldBlock = ({ id, icon, title, status, span = 1, children }) => (
   <section
     id={id}
     className={span === 2 ? 'field-block field-block--span-2' : 'field-block'}
-    style={{
-      background: 'var(--bg-1)',
-      border: '1px solid var(--line-1)',
-      borderRadius: 6,
-      padding: '12px 14px',
-    }}
   >
     <header style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
       <Icon name={icon} size={13} style={{ color: 'var(--ink-3)' }} />
@@ -259,12 +253,12 @@ export default function ProposalCreate() {
   const ago = Math.max(0, Math.floor((Date.now() - savedAt) / 1000));
 
   return (
-    <form onSubmit={handleSubmit} style={{ height: '100%', minHeight: 'calc(100vh - var(--header-h))' }}>
+    <form onSubmit={handleSubmit} style={{ height: '100%', minHeight: 'calc(100dvh - var(--header-h))' }}>
       <div
         className="proposal-create-outer"
         style={{
           gap: 0,
-          minHeight: 'calc(100vh - var(--header-h))',
+          minHeight: 'calc(100dvh - var(--header-h))',
           background: 'var(--bg-0)',
         }}
       >
@@ -992,7 +986,7 @@ function PricingDock({ form, preview, packages, submitting, error, fieldErrors }
       position: 'sticky',
       top: 0,
       alignSelf: 'start',
-      maxHeight: 'calc(100vh - var(--header-h))',
+      maxHeight: 'calc(100dvh - var(--header-h))',
     }}>
       {/* Header */}
       <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--line-1)' }}>

@@ -32,7 +32,7 @@ export default function Header({ onOpenPalette, onQuickAdd, unreadCount = 0, onO
       <button type="button" className="header-search" onClick={onOpenPalette} aria-label="Open command palette">
         <Icon name="search" />
         <span>Search events, clients, proposals…</span>
-        <span className="kbd-group" style={{ display: 'flex', gap: 2 }}>
+        <span className="kbd-group">
           <span className="kbd">⌘</span><span className="kbd">K</span>
         </span>
       </button>

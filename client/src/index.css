@@ -10749,6 +10749,10 @@ html[data-app="admin-os"] .header-search .kbd {
   margin-left: auto;
   display: flex; gap: 2px;
 }
+html[data-app="admin-os"] .kbd-group {
+  display: flex;
+  gap: 2px;
+}
 html[data-app="admin-os"] .kbd {
   font-family: var(--font-numeric);
   font-size: 10px;
@@ -10793,7 +10797,7 @@ html[data-app="admin-os"] .icon-btn svg { width: 14px; height: 14px; }
   }
   html[data-app="admin-os"] .header-search svg { width: 18px; height: 18px; }
   html[data-app="admin-os"] .header-search > span:not(.kbd-group) { display: none; }
-  html[data-app="admin-os"] .header-search > .kbd-group { display: none !important; }
+  html[data-app="admin-os"] .header-search > .kbd-group { display: none; }
 }
 html[data-app="admin-os"] .icon-btn .dot {
   position: absolute;
@@ -11732,6 +11736,12 @@ html[data-app="admin-os"] .proposal-create-outer {
 html[data-app="admin-os"] .proposal-create-form-col {
   border-right: 1px solid var(--line-1);
 }
+html[data-app="admin-os"] .field-block {
+  background: var(--bg-1);
+  border: 1px solid var(--line-1);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
 @media (max-width: 820px) {
   html[data-app="admin-os"] .proposal-create-outer { grid-template-columns: 1fr; }
   /* Right-border separator between form + rail becomes a bottom border once
@@ -11793,6 +11803,12 @@ html[data-app="admin-os"] .proposal-create-form-col {
 
   /* Hide the desktop collapse-to-rail toggle inside the drawer — meaningless here */
   html[data-app="admin-os"] .sidebar-footer-controls > .sidebar-footer-action:first-child { display: none; }
+
+  /* Belt-and-suspenders: mirror the desktop "rescue" rule that keeps the user-row
+     sign-out action visible inside a rail-pref sidebar (index.css:10584). Without
+     this, a future bare .sidebar-footer-action added outside .sidebar-footer--user /
+     .sidebar-footer-controls would silently disappear on mobile for rail-pref users. */
+  html[data-app="admin-os"][data-sidebar="rail"] .sidebar-footer--user .sidebar-footer-action { display: grid; }
 
   @media (prefers-reduced-motion: reduce) {
     html[data-app="admin-os"] .sidebar { transition: none; }
