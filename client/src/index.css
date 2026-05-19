@@ -10775,6 +10775,26 @@ html[data-app="admin-os"] .icon-btn {
 }
 html[data-app="admin-os"] .icon-btn:hover { background: var(--row-hover); color: var(--ink-1); }
 html[data-app="admin-os"] .icon-btn svg { width: 14px; height: 14px; }
+/* Touch devices need a >=44x44 hit area for the iOS HIG / WCAG 2.5.5 minimum;
+   the dense 28x26 desktop size is impossible to hit reliably with a finger.
+   Also collapse the verbose header search bar to a tap-target icon — its
+   280px min-width + placeholder text + kbd hint overflow narrow viewports
+   (and the keyboard shortcut is irrelevant on touch). */
+@media (pointer: coarse) {
+  html[data-app="admin-os"] .icon-btn { width: 44px; height: 44px; }
+  html[data-app="admin-os"] .icon-btn svg { width: 18px; height: 18px; }
+  html[data-app="admin-os"] .header-search {
+    min-width: 0;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  html[data-app="admin-os"] .header-search svg { width: 18px; height: 18px; }
+  html[data-app="admin-os"] .header-search > span:not(.kbd-group) { display: none; }
+  html[data-app="admin-os"] .header-search > .kbd-group { display: none !important; }
+}
 html[data-app="admin-os"] .icon-btn .dot {
   position: absolute;
   top: 5px; right: 6px;
