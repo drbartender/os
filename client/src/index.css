@@ -11672,6 +11672,36 @@ html[data-app="admin-os"] .shell-scrim.open { opacity: 1; pointer-events: auto; 
   html[data-app="admin-os"] .shell-scrim { display: none; }
 }
 
+/* ==========================================================================
+   Tablet-band two-column collapse (Batch 5)
+
+   ProposalCreate inner grid (Client | Event | Package) and EventDetailPage
+   two-column shell were hardcoded inline-style 2-col grids that didn't
+   collapse, so the iPad-portrait band (768-1024) clipped the right column.
+   Hoist to classed grids so a media query can collapse them.
+   ========================================================================== */
+html[data-app="admin-os"] .event-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: var(--gap);
+}
+@media (max-width: 1000px) {
+  html[data-app="admin-os"] .event-detail-grid { grid-template-columns: 1fr; }
+}
+
+html[data-app="admin-os"] .proposal-create-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+html[data-app="admin-os"] .field-block--span-2 { grid-column: span 2; }
+@media (max-width: 820px) {
+  html[data-app="admin-os"] .proposal-create-grid { grid-template-columns: 1fr; }
+  /* Cancel span-2 below the breakpoint so children fit the single column
+     instead of forcing an implicit second track. */
+  html[data-app="admin-os"] .field-block--span-2 { grid-column: auto; }
+}
+
 @media (max-width: 900px) {
   /* Single-column shell: header on top, full-width main below. Sidebar is
      position:fixed and takes itself out of the grid. */

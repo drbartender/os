@@ -230,7 +230,7 @@ export default function EventDetailPage() {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 'var(--gap)' }}>
+      <div className="event-detail-grid">
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
           {editing ? (
             <EventEditForm

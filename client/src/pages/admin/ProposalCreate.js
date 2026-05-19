@@ -74,8 +74,8 @@ const Lbl = ({ text, span = 1, children }) => (
 const FieldBlock = ({ id, icon, title, status, span = 1, children }) => (
   <section
     id={id}
+    className={span === 2 ? 'field-block field-block--span-2' : 'field-block'}
     style={{
-      gridColumn: span === 2 ? 'span 2' : undefined,
       background: 'var(--bg-1)',
       border: '1px solid var(--line-1)',
       borderRadius: 6,
@@ -320,7 +320,7 @@ export default function ProposalCreate() {
 
           {/* Field grid */}
           <div className="scroll-thin" style={{ flex: 1, overflow: 'auto', padding: '14px 22px 22px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 14 }}>
+            <div className="proposal-create-grid">
               <FieldBlock id="cockpit-client" icon="users" title="Client" status={status.client}>
                 <ClientSection form={form} merge={merge} update={update} fieldErrors={fieldErrors} />
               </FieldBlock>
