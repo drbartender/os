@@ -4,7 +4,7 @@ import BrandLogo from '../components/BrandLogo';
 
 export default function HiringLanding() {
   return (
-    <div className="auth-page" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div className="auth-page" style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
       <header className="site-header">
         <BrandLogo />
       </header>

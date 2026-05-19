@@ -11,7 +11,7 @@
 
 const styles = {
   page: {
-    minHeight: '100vh',
+    minHeight: '100dvh',
     background: 'var(--chalkboard)',
     backgroundImage: 'url("/static/chalkboard_background.png")',
     backgroundSize: '1200px auto',

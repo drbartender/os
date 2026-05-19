@@ -17,7 +17,7 @@ export default function ApplicationStatus() {
   if (status === 'in_progress' && !user?.has_application) return <Navigate to="/apply" replace />;
 
   return (
-    <div className="auth-page" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div className="auth-page" style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
       <header className="site-header">
         <BrandLogo />
         <div className="header-actions">

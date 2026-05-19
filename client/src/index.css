@@ -101,7 +101,7 @@ body {
   background-color: var(--chalkboard);
   color: var(--cream-text);
   line-height: 1.65;
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 /* Auth pages (Login/Register) — full chalkboard */
@@ -120,7 +120,7 @@ body {
 /* Full-width chalkboard behind main content */
 main {
   position: relative;
-  min-height: calc(100vh - 8rem);
+  min-height: calc(100dvh - 8rem);
   background: url('./images/chalkboard_background.png') center top / 1200px auto repeat;
   background-color: var(--chalkboard);
 }
@@ -1690,7 +1690,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 
 .admin-shell {
   display: flex;
-  min-height: calc(100vh - 60px);
+  min-height: calc(100dvh - 60px);
 }
 
 .admin-sidebar {
@@ -1700,7 +1700,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   padding: 1.25rem 0;
   position: sticky;
   top: 60px;
-  height: calc(100vh - 60px);
+  height: calc(100dvh - 60px);
   overflow-y: auto;
   flex-shrink: 0;
 }
@@ -1795,7 +1795,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
     position: fixed;
     left: -240px;
     top: 60px;
-    height: calc(100vh - 60px);
+    height: calc(100dvh - 60px);
     overflow-y: auto;
     z-index: var(--z-sidebar);
     transition: left 0.25s ease;
@@ -3325,7 +3325,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
    ═══════════════════════════════════════════════════════════ */
 
 .ws-shell {
-  min-height: 100vh;
+  min-height: 100dvh;
   background: var(--chalkboard);
   color: var(--cream-text);
 }
@@ -6050,7 +6050,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 
 /* ── Class Wizard ───────────────────────────────────────── */
 .wz-class-page {
-  min-height: 100vh;
+  min-height: 100dvh;
   padding: 2rem 0;
 }
 .wz-back-link {
@@ -8364,7 +8364,7 @@ html[data-app="admin-os"] .location-suggest-item.active {
 
 .invoice-page {
   background: var(--chalkboard);
-  min-height: 100vh;
+  min-height: 100dvh;
   padding: 56px clamp(16px, 4vw, 40px);
 }
 .invoice-layout {
@@ -10376,7 +10376,7 @@ html[data-app="admin-os"] .shell {
   grid-template-areas:
     "sidebar header"
     "sidebar main";
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 html[data-app="admin-os"][data-sidebar="rail"] .shell { grid-template-columns: var(--sidebar-rail-w) 1fr; }

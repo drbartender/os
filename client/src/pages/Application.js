@@ -220,7 +220,7 @@ export default function Application() {
   }
 
   return (
-    <div className="auth-page" style={{ minHeight: '100vh' }}>
+    <div className="auth-page" style={{ minHeight: '100dvh' }}>
       <header className="site-header">
         <BrandLogo />
         <div className="header-actions">

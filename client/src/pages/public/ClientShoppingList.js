@@ -232,7 +232,7 @@ export default function ClientShoppingList() {
 
 const styles = {
   page: {
-    minHeight: '100vh',
+    minHeight: '100dvh',
     backgroundColor: '#12161C',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     color: '#F0E8D6',
