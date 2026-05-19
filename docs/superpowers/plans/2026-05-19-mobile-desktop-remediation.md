@@ -23,7 +23,7 @@ This is responsive CSS remediation, not feature code. Adapting the skill's TDD l
 
 ---
 
-## Execution status — updated 2026-05-19 (read before resuming)
+## Execution status — updated 2026-05-19 evening (read before resuming)
 
 **Shipped (committed local on `main`, NOT pushed):**
 
@@ -36,19 +36,22 @@ This is responsive CSS remediation, not feature code. Adapting the skill's TDD l
 | `9b6c891` | **C2b** blog editor / `.form-label` | Playwright: 0/138 dark; no light regression |
 | `cd76bbb` | **C2c** drink-plan detail (systemic `.card`/heading/`.muted` dark re-tints) | Playwright: 0/25 dark; no light regression |
 | (no code) | **C2d** event detail | fixed for free by C2c; Playwright-verified H1 no longer invisible |
+| `b1458fb` | **Batch 4 / C1** — adminos responsive off-canvas sidebar + header hamburger ≤900px | Playwright @ 360/390/414: `<main>` is full-viewport width (was 132–194); hamburger 44×44, opens drawer, Esc/scrim/route-change closes; body-scroll-lock; ≥1024 sidebar static 220px unchanged; CI build clean |
+| `391669b` | **Batch 5 (partial)** — tablet-band 2-col collapse: ProposalCreate inner grid + EventDetailPage rail (H9 + H10) | Playwright: ProposalCreate 768/800 → 1-col, 1024/1440 → 2-col; EventDetailPage 768/1000 → 1-col, 1001/1024/1440 → 2-col with 320 rail; `.field-block--span-2` cancels at ≤820 to avoid implicit-column expansion |
+| `5ce7f8a` | **Batch 6a** — adminos `.icon-btn` ≥44×44 on `(pointer: coarse)` + header `.header-search` collapses to 44×44 icon | Playwright cascade check confirms rule + selector + computed values; desktop pointer:fine unchanged at 28×26 with 280px search; touch sim → header fits at 390 with 4 buttons, no clip |
+| `86d6dcb` | **Batch 7 (partial)** — ProposalCreate outer 2-col (form + PricingDock 320px rail) collapses to 1-col below 820 | Playwright @ 390: form column 382 (was crushed to ~70); 820↔821 boundary clean; ≥1440 unchanged with 892/320 |
 
-Note: C2a–C2c live in `client/src/index.css` in the **"After Hours overrides"** section (search `[data-skin="dark"] .em-`, `.form-label`, `.card p`). C2b also touched `BlogDashboard.js`; C2c also touched `DrinkPlanDetail.js` (removed inline `color: var(--text-muted)`).
+Note on index.css cascade: my new responsive shell block lives at the end of `client/src/index.css` ("Responsive adminos shell — mobile nav drawer" + the Batch 5/6a/7 rules immediately after). C2 fixes live earlier in the same file ("After Hours overrides" section).
 
-**Done:** C3 (fully). C2 = 4 of 5 surfaces (a–d).
+**Done:** C3 (fully). C2 = 4 of 5 surfaces (a–d). **Batch 4 fully**. **Batch 5 = the two in-scope items (H9 + H10); H8 client-confirm, H11 leave-out skipped.** **Batch 6a (.icon-btn + header-search). Batch 7 = ProposalCreate outer rail collapse; other batch-7 residuals (event-detail content min-widths, dashboard KPI grid) were already fine post-Batch 4/5, re-verified at 390.**
 
 **Remaining / not started:**
-- **C2e — settings** (DEFERRED). `SettingsDashboard.js` has dozens of inline `color: var(--deep-brown/--warm-brown/--text-muted)` across sub-components, no clean root wrapper. Recommended fix: add a root className to SettingsDashboard's component root, then a C2a-style dark-skin token-scope block on it (`{ --deep-brown: var(--ink-1); --warm-brown: var(--ink-3); --text-muted: var(--ink-3); }`). Verify all 3 tabs + House Lights.
-- **Batch 4 — C1 admin sidebar** (NOT started — single highest-impact item; whole adminos app ≈140px on phones across ~15 routes).
-- **Batch 5 — tablet-band 768–1024 collapse** (H8–H11) — not started.
-- **Batch 6 — standalone Highs** (H3 `.icon-btn`, H4 cocktail drag touch-fallback, H5 quote stepper overflow, H6 spinners, H7 plan review-card overflow) — not started.
-- **Batch 7 — post-C1 residual mobile** — blocked on Batch 4.
-- **Batch 8 — Medium/Low cleanup** — not started.
-- **Staff portal** — parked/blocked (needs valid local staff creds + `staff.localhost` host-spoof, or manual on real subdomain).
+- **C2e — settings** — out of scope (settings is on the design-tool list).
+- **Batch 6b — cocktail reorder touch fallback** — leave-out (design tool will redo Cocktail Menu).
+- **Batch 6c — quote wizard stepper + spinners** [H5/H6] — client-confirm (public quote wizard).
+- **Batch 6d — plan review-card** [H7] — client-confirm (public client surface, money path).
+- **Batch 8 — Medium/Low cleanup** — not started. Likely candidates that survive the redesign scope: `ClickableRow` `onTouchEnd` path (admin tables — needs care to avoid double-fire vs synthetic mouse events); OTP box width @360 (auth = client-confirm); `.admin-sidebar` legacy `calc(100vh)`→`100dvh` (staff portal only — parked); plus assorted polish (font nudges, `@media (max-width:400px)`). Most low items are leave-out.
+- **Staff portal** — parked/blocked (needs valid local staff creds + `staff.localhost` host-spoof, or manual on real subdomain). Batches 2, 3, 4 likely fixed most of it for free; verify on real subdomain.
 
 **Out-of-scope findings discovered during C2 (NOT the C2 invisibility bug — separate, logged, not fixed):**
 1. **House Lights** `.muted`/section-title/`TH` ≈ **4.22:1** and `.btn-ghost` danger ("Delete") ≈ **2.56:1** — app-wide, pre-existing, marginally sub-AA. House Lights `.muted` uses light `--ink-3` (#7A7468) on paper. Future polish: bump House Lights muted token to ≥4.5.
@@ -57,9 +60,9 @@ Note: C2a–C2c live in `client/src/index.css` in the **"After Hours overrides"*
 
 **Verification method that worked (reuse it):** Playwright MCP, log in admin (`admin@drbartender.com` / `DrBartender2024!`) at localhost:3000, navigate the surface, run a WCAG contrast scan (computed `color` vs effective bg, fail < 4.5 / < 3 for ≥24px-or-bold). Toggle skins via the **real** `button.mode-opt` ("House Lights"/"After Hours") — forcing `data-skin` via `setAttribute` desyncs from React and gives false positives. All C2 fix CSS is `[data-skin="dark"]`-scoped so House Lights is unaffected by construction; still verify via the real toggle.
 
-**Repo state:** nothing pushed (no push cue all session) — 6 remediation commits + earlier spec commit `9a9e18d` sit local on `main`. Untracked & intentionally uncommitted: `.claude/mobile-audit-2026-05-15/`, this plan doc, `docs/superpowers/specs/2026-05-17-potion-planner-redesign-design.md` (not authored here). Also modified by a parallel session (left untouched): `client/src/components/ShoppingList/shoppingListPars.js`, `server/utils/shoppingList.js`.
+**Repo state:** nothing pushed — 10 remediation commits + earlier spec commit `9a9e18d` sit local on `main`. The parallel-session edit to `index.css` (broaden `[data-skin="dark"]` headings rule from `.card h1–h6` to all `h1–h6`) is still uncommitted in the working tree — I revert/restore around each of my commits so it stays out of my history. Untracked & intentionally uncommitted: `.claude/mobile-audit-2026-05-15/`, this plan doc, `docs/superpowers/specs/2026-05-17-potion-planner-redesign-design.md`.
 
-**Recommended resume point:** Batch 4 (C1 sidebar) — highest impact, unblocks Batch 7. C2e and the 3 findings above are low-severity and can wait.
+**Recommended resume point:** decide on Batch 6c/6d/OTP scope (public-surface client-confirm questions), then Batch 8 polish if any items survive the redesign list. The highest-impact mobile work (C1/C2/C3, tablet collapse, touch targets) is now done.
 
 ---
 
