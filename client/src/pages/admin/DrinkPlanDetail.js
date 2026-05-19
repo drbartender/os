@@ -201,7 +201,7 @@ export default function DrinkPlanDetail() {
 
       {plan.selections && plan.has_consult_selections && (
         <div className="card" style={{ padding: '0.75rem 1.25rem', marginBottom: 'var(--gap)', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-          <div style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted, #888)' }}>
+          <div style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
             Shopping list source
           </div>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: sourceSwitching ? 'wait' : 'pointer' }}>

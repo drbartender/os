@@ -9667,6 +9667,33 @@ html[data-app="admin-os"][data-skin="dark"] .form-group small,
 html[data-app="admin-os"][data-skin="dark"] .blog-editor-upload-placeholder {
   color: var(--ink-3);
 }
+/* Generic .card hardcodes color:var(--deep-brown) (correct for light paper
+   cards: proposal, website). adminos gives .card a dark background per skin
+   but never re-tinted the inherited text, so any adminos page that relies on
+   inherited card text (drink-plan detail, event detail, …) was near-black on
+   near-black. /tips escaped only because it sets explicit --ink-* colors.
+   Re-tint inherited card text + the muted helper classes for the dark skin
+   (light skin already has the .muted twin; mirror it). House Lights untouched. */
+html[data-app="admin-os"][data-skin="dark"] .card {
+  color: var(--ink-1);
+}
+html[data-app="admin-os"][data-skin="dark"] .muted,
+html[data-app="admin-os"][data-skin="dark"] .text-muted {
+  color: var(--ink-3);
+}
+/* `.card p` / `.card h4` / the base h1–h4 rules explicitly set --deep-brown,
+   so they beat the inherited .card re-tint above. Override headings + p
+   inside adminos cards on the dark skin (this is where bare semantic text
+   lives — drink-plan / event detail bodies). */
+html[data-app="admin-os"][data-skin="dark"] .card p,
+html[data-app="admin-os"][data-skin="dark"] .card h1,
+html[data-app="admin-os"][data-skin="dark"] .card h2,
+html[data-app="admin-os"][data-skin="dark"] .card h3,
+html[data-app="admin-os"][data-skin="dark"] .card h4,
+html[data-app="admin-os"][data-skin="dark"] .card h5,
+html[data-app="admin-os"][data-skin="dark"] .card h6 {
+  color: var(--ink-1);
+}
 
 
 /* ============================================================================
