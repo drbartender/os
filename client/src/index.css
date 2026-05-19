@@ -10919,6 +10919,21 @@ html[data-app="admin-os"] .input-group input {
 }
 html[data-app="admin-os"] .input-group input::placeholder { color: var(--ink-4); }
 
+/* iOS Safari zooms the page when a focused field is <16px and never zooms back.
+   The adminos desktop look is intentionally dense (12.5px), so only raise to the
+   16px floor on coarse (touch) pointers — desktop mouse keeps the compact size.
+   [data-skin] presence ties the light-skin specificity and beats base; this block
+   is later in source so it wins on both After Hours (dark) and House Lights. */
+@media (pointer: coarse) {
+  html[data-app="admin-os"][data-skin] .input,
+  html[data-app="admin-os"][data-skin] .select,
+  html[data-app="admin-os"][data-skin] .input-group input,
+  html[data-app="admin-os"][data-skin] textarea,
+  html[data-app="admin-os"][data-skin] .header-search {
+    font-size: 16px;
+  }
+}
+
 /* segmented control */
 html[data-app="admin-os"] .seg {
   display: inline-flex;
