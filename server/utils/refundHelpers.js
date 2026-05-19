@@ -116,7 +116,7 @@ async function applyRefundReconciliation(
   // any waiter blocks here until the winner COMMITs, then sees the winner's
   // succeeded row and cleanly no-ops.
   const propRes = await dbClient.query(
-    'SELECT total_price, amount_paid FROM proposals WHERE id = $1 FOR UPDATE',
+    'SELECT total_price, amount_paid, status FROM proposals WHERE id = $1 FOR UPDATE',
     [proposalId]
   );
   if (!propRes.rows[0]) throw new Error(`applyRefundReconciliation: proposal ${proposalId} not found`);
@@ -129,6 +129,9 @@ async function applyRefundReconciliation(
   if (done.rows[0]) return { applied: false };
 
   const totalBefore = Number(propRes.rows[0].total_price);
+  const statusBefore = propRes.rows[0].status;
+  let statusAfter = statusBefore;
+  let autopayDisarmed = false;
 
   // 2/3. Adopt a pending row, else create a succeeded row. total_price_after
   // is finalized AFTER the invoice walk (it depends on the contract vs.
@@ -223,13 +226,58 @@ async function applyRefundReconciliation(
   // Exact NUMERIC division ($/100.0); GREATEST clamps ≥ 0.
   const contractCents = amountCents - nonContractCents;
   const totalAfter = totalBefore - contractCents / 100;
-  await dbClient.query(
+  const moneyRes = await dbClient.query(
     `UPDATE proposals
         SET total_price = GREATEST(total_price - ($1 / 100.0), 0),
             amount_paid = GREATEST(amount_paid - ($2 / 100.0), 0)
-      WHERE id = $3`,
+      WHERE id = $3
+      RETURNING total_price, amount_paid`,
     [contractCents, amountCents, proposalId]
   );
+
+  // Keep status ⟷ money consistent. A refund is the sole money-OUT path;
+  // every money-IN path (record-payment crud.js:652-654, the stripe webhook
+  // branches) re-derives proposals.status from the new money state. Skip it
+  // here and status-driven surfaces — the payment panel's "Paid in full" chip,
+  // the record-payment gate, the Paid tab — go stale, leaving a proposal
+  // marked paid when it isn't (CLAUDE.md cross-cutting rule). Mirror that
+  // rule, DEMOTE-only:
+  //   amount_paid <= 0           → 'accepted'      (nothing held)
+  //   amount_paid <  total_price → 'deposit_paid'  (partial — balance owed)
+  //   amount_paid >= total_price → unchanged       (contract refund: still
+  //                                 fully paid at the corrected total)
+  // Only the pure payment statuses are demoted. 'confirmed'/'completed' are
+  // lifecycle states ('completed' is state-machine-terminal) — a refund is an
+  // accounting correction, not an un-confirmation; the panel's display guard
+  // keeps THOSE from showing "Paid in full" beside a balance. Direct UPDATE
+  // (like every payment-side write) deliberately bypasses the crud.js status
+  // state machine — this IS the admin-backed ledger correction it exempts.
+  //
+  // CRITICAL: on balance_paid → deposit_paid ONLY, also clear autopay_enrolled.
+  // balanceScheduler.js off-session charges (total_price − amount_paid) for any
+  // deposit_paid + autopay_enrolled + balance_due_date<=today + card-on-file
+  // row. Without this, the next hourly tick would silently re-charge the exact
+  // amount just refunded. A normal deposit-stage partial refund does NOT change
+  // status, so legitimate future autopay on a still-owed contract balance is
+  // left armed — the disarm is scoped to the was-fully-paid transition only.
+  const mr = moneyRes.rows[0];
+  if (mr && ['balance_paid', 'deposit_paid'].includes(statusBefore)) {
+    const apAfter = Number(mr.amount_paid);
+    const tpAfter = Number(mr.total_price);
+    let demoted = null;
+    if (apAfter <= 0) demoted = 'accepted';
+    else if (apAfter < tpAfter) demoted = 'deposit_paid';
+    if (demoted && demoted !== statusBefore) {
+      autopayDisarmed = statusBefore === 'balance_paid' && demoted === 'deposit_paid';
+      await dbClient.query(
+        autopayDisarmed
+          ? 'UPDATE proposals SET status = $1, autopay_enrolled = false WHERE id = $2'
+          : 'UPDATE proposals SET status = $1 WHERE id = $2',
+        [demoted, proposalId]
+      );
+      statusAfter = demoted;
+    }
+  }
 
   // Finalize total_price_after now that contract vs. extra-scope is known.
   await dbClient.query(
@@ -251,6 +299,8 @@ async function applyRefundReconciliation(
         amount: amountCents, reason, stripe_refund_id: stripeRefundId,
         contract_cents: contractCents, non_contract_cents: nonContractCents,
         total_price_before: totalBefore, total_price_after: totalAfter,
+        status_before: statusBefore, status_after: statusAfter,
+        autopay_disarmed: autopayDisarmed,
         issued_by: issuedBy, refund_row_id: refundRowId,
       }),
     ]

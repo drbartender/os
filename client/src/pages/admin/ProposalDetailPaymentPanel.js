@@ -16,7 +16,13 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
   const totalPrice = Number(proposal.total_price || 0);
   const amountPaid = Number(proposal.amount_paid || 0);
   const balanceDue = totalPrice - amountPaid;
-  const isFullyPaid = ['balance_paid', 'confirmed', 'completed'].includes(proposal.status);
+  // "Paid in full" needs BOTH a paid lifecycle status AND no outstanding
+  // balance. A refund can leave a 'confirmed'/'completed' proposal (lifecycle
+  // statuses refundHelpers.js intentionally does NOT demote) with a positive
+  // balance; status alone would render a green "Paid in full" chip beside a
+  // balance due. Money is the source of truth for paid-ness.
+  const isFullyPaid =
+    ['balance_paid', 'confirmed', 'completed'].includes(proposal.status) && balanceDue <= 0;
   const isDepositPaid = proposal.status === 'deposit_paid';
   const canGeneratePaymentLink = !['deposit_paid', 'balance_paid', 'confirmed', 'completed'].includes(proposal.status);
   const canRecordPayment = !['balance_paid', 'confirmed', 'completed'].includes(proposal.status);

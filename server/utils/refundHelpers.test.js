@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { planRefund } = require('./refundHelpers');
+const { planRefund, applyRefundReconciliation } = require('./refundHelpers');
 
 // Helper: a succeeded, intent-bearing payment with N cents still refundable.
 const pay = (id, intent, remainingCents) => ({
@@ -106,3 +106,126 @@ for (const bad of ['0', '-5', '', 'abc', null, undefined, NaN]) {
     assert.equal(r.code, 'INVALID_AMOUNT');
   });
 }
+
+// ── applyRefundReconciliation: status ⟷ money invariant ──────────────
+// A refund is the sole money-OUT path. Like every money-IN path it MUST keep
+// proposals.status consistent with amount_paid/total_price, or status-driven
+// surfaces (payment-panel "Paid in full" chip, record-payment gate) go stale.
+// Mirror of record-payment's rule (crud.js): amount_paid>=total_price →
+// balance_paid; <total → deposit_paid; here also amount_paid<=0 → accepted.
+// On the balance_paid→deposit_paid demotion ONLY, autopay_enrolled is cleared
+// so balanceScheduler.js can't off-session re-charge the refunded money.
+
+// Minimal fake of a pg client driving applyRefundReconciliation's query
+// sequence. Returns a superset row on the FOR UPDATE select + totals UPDATE so
+// the same test holds before and after the RETURNING/status columns are added.
+function makeFakeClient({ status, totalPrice, amountPaid, invoiceLabel, amountCents, alreadyApplied = false }) {
+  const calls = [];
+  return {
+    calls,
+    async query(sql, params) {
+      const s = String(sql).replace(/\s+/g, ' ').trim();
+      calls.push({ s, params });
+
+      if (/FROM proposals WHERE id = \$1 FOR UPDATE/.test(s)) {
+        return { rows: [{ total_price: totalPrice, amount_paid: amountPaid, status }] };
+      }
+      if (/FROM proposal_refunds WHERE stripe_refund_id = \$1 AND status = 'succeeded'/.test(s)) {
+        return { rows: alreadyApplied ? [{ id: 7 }] : [] };
+      }
+      if (/FROM proposal_refunds WHERE stripe_payment_intent_id = \$1 AND amount = \$2/.test(s)) {
+        return { rows: [] }; // no pending → INSERT branch
+      }
+      if (/INSERT INTO proposal_refunds/.test(s)) return { rows: [{ id: 1 }] };
+      if (/FROM invoice_payments ip JOIN invoices i/.test(s)) {
+        return { rows: [{ invoice_id: 1, invoice_label: invoiceLabel, net_applied: amountCents }] };
+      }
+      if (/INSERT INTO invoice_payments/.test(s)) return { rows: [] };
+      if (/UPDATE invoices SET amount_paid = GREATEST/.test(s)) return { rows: [{ amount_due: 0, amount_paid: 0 }] };
+      if (/UPDATE invoices SET status = \$1/.test(s)) return { rows: [] };
+      if (/UPDATE proposals SET total_price = GREATEST/.test(s)) {
+        const [contractCents, amtCents] = params;
+        const tp = Math.max(0, Number(totalPrice) - contractCents / 100);
+        const ap = Math.max(0, Number(amountPaid) - amtCents / 100);
+        return { rows: [{ total_price: tp, amount_paid: ap, status }] };
+      }
+      return { rows: [] }; // status-reconcile UPDATE, total_price_after, activity log
+    },
+  };
+}
+
+// Locate the status-reconciliation UPDATE (distinct from the totals UPDATE,
+// which sets total_price/amount_paid and never `status =`).
+function statusReconcile(calls) {
+  const c = calls.find(({ s }) => /UPDATE proposals SET status =/.test(s));
+  if (!c) return { found: false };
+  return {
+    found: true,
+    value: c.params && c.params[0],
+    disarmsAutopay: /autopay_enrolled = false/.test(c.s),
+  };
+}
+
+const baseArgs = (over = {}) => ({
+  proposalId: 42, stripeRefundId: 're_1', paymentIntentId: 'pi_1',
+  paymentId: 9, amountCents: 20000, reason: 'second bartender no-show',
+  issuedBy: 3, ...over,
+});
+
+test('extra-scope refund on a fully-paid proposal demotes balance_paid → deposit_paid AND disarms autopay', async () => {
+  // $1000 proposal, paid in full, refund $200 of a non-contract invoice charge.
+  const client = makeFakeClient({
+    status: 'balance_paid', totalPrice: 1000, amountPaid: 1000,
+    invoiceLabel: 'Additional Services', amountCents: 20000,
+  });
+  const r = await applyRefundReconciliation(baseArgs(), client);
+  assert.equal(r.applied, true);
+  const st = statusReconcile(client.calls);
+  assert.equal(st.found, true, 'expected a status-reconciliation UPDATE');
+  assert.equal(st.value, 'deposit_paid');
+  assert.equal(st.disarmsAutopay, true, 'balance_paid→deposit_paid must clear autopay_enrolled');
+});
+
+test('contract refund that keeps amount_paid == total_price does NOT change status', async () => {
+  // Contract-labeled refund drops total_price AND amount_paid equally → still
+  // fully paid at the corrected total → balance_paid stays (correct).
+  const client = makeFakeClient({
+    status: 'balance_paid', totalPrice: 1000, amountPaid: 1000,
+    invoiceLabel: 'Balance', amountCents: 20000,
+  });
+  await applyRefundReconciliation(baseArgs(), client);
+  assert.equal(statusReconcile(client.calls).found, false);
+});
+
+test('refund draining amount_paid to zero demotes to accepted', async () => {
+  const client = makeFakeClient({
+    status: 'balance_paid', totalPrice: 1000, amountPaid: 1000,
+    invoiceLabel: 'Full Payment', amountCents: 100000,
+  });
+  await applyRefundReconciliation(baseArgs({ amountCents: 100000 }), client);
+  const st = statusReconcile(client.calls);
+  assert.equal(st.found, true);
+  assert.equal(st.value, 'accepted');
+});
+
+test('partial deposit refund while still deposit_paid leaves status and autopay untouched (legit future autopay preserved)', async () => {
+  // $1000 proposal, $300 deposit paid, refund $100 of the deposit. Still
+  // deposit_paid; the contract balance is legitimately still owed and autopay
+  // must remain armed to collect it when due.
+  const client = makeFakeClient({
+    status: 'deposit_paid', totalPrice: 1000, amountPaid: 300,
+    invoiceLabel: 'Deposit', amountCents: 10000,
+  });
+  await applyRefundReconciliation(baseArgs({ amountCents: 10000 }), client);
+  assert.equal(statusReconcile(client.calls).found, false);
+});
+
+test('idempotent: an already-applied refund id is a no-op (no status write)', async () => {
+  const client = makeFakeClient({
+    status: 'balance_paid', totalPrice: 1000, amountPaid: 1000,
+    invoiceLabel: 'Additional Services', amountCents: 20000, alreadyApplied: true,
+  });
+  const r = await applyRefundReconciliation(baseArgs(), client);
+  assert.equal(r.applied, false);
+  assert.equal(statusReconcile(client.calls).found, false);
+});
