@@ -9617,6 +9617,40 @@ html[data-app="admin-os"][data-skin="dark"] .alert-info {
   color: hsl(40 70% 78%);
 }
 
+/* Email Marketing (.em-*) was built pre-theming: every text rule consumes the
+   fixed light-paper tokens --deep-brown/--warm-brown, so on After Hours the
+   whole module was near-black on near-black. Rather than chase ~30 text
+   selectors (verification proved that misses .em-bar-*, .em-no-stats,
+   conversations, etc.), re-scope the two tokens themselves on the dark
+   .em-dashboard root — every var() consumer (seen and unseen) flips to the
+   skin foreground. Then restore the literal paper tokens on the inner panels
+   that are intentionally light even on the dark skin (#fff / cream / parchment
+   backgrounds) so their text stays dark-on-light. Light skin untouched. */
+html[data-app="admin-os"][data-skin="dark"] .em-dashboard {
+  --deep-brown: var(--ink-1);
+  --warm-brown: var(--ink-3);
+  color: var(--ink-1);
+}
+html[data-app="admin-os"][data-skin="dark"] .em-create-form,
+html[data-app="admin-os"][data-skin="dark"] .em-edit-form,
+html[data-app="admin-os"][data-skin="dark"] .em-stat-card,
+html[data-app="admin-os"][data-skin="dark"] .em-step-card,
+html[data-app="admin-os"][data-skin="dark"] .em-step-editor,
+html[data-app="admin-os"][data-skin="dark"] .em-enroll-panel,
+html[data-app="admin-os"][data-skin="dark"] .em-lead-list-scroll,
+html[data-app="admin-os"][data-skin="dark"] .em-preview-frame,
+html[data-app="admin-os"][data-skin="dark"] .em-metrics-bar,
+html[data-app="admin-os"][data-skin="dark"] .em-lead-notes,
+html[data-app="admin-os"][data-skin="dark"] .em-message-inbound,
+html[data-app="admin-os"][data-skin="dark"] .em-message-outbound,
+html[data-app="admin-os"][data-skin="dark"] .em-chip,
+html[data-app="admin-os"][data-skin="dark"] .em-badge-source,
+html[data-app="admin-os"][data-skin="dark"] .em-badge-type {
+  --deep-brown: #1C1610;
+  --warm-brown: #134544;
+  color: #1C1610;
+}
+
 
 /* ============================================================================
    LIGHT SKIN: "House Lights"
