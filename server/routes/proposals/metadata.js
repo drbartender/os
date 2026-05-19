@@ -84,8 +84,10 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
   const propDate = metrics.dateClause('p.event_date', f.from, f.to, listParams);
   const payParams = [];
   const payDate = metrics.dateClause('pp.created_at', f.from, f.to, payParams);
+  const collParams = [];
+  const collClause = metrics.dateClause('created_at', f.from, f.to, collParams);
 
-  const [moneyR, outR, accR, totalR, proposalsR, paymentsR] = await Promise.all([
+  const [moneyR, outR, accR, totalR, proposalsR, paymentsR, collectedRow] = await Promise.all([
     pool.query(money.sql, money.params),
     pool.query(out.sql, out.params),
     pool.query(acc.sql, acc.params),
@@ -117,14 +119,12 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
       ORDER BY pp.created_at DESC
       LIMIT 200
     `, payParams),
+    pool.query(
+      `SELECT COALESCE(SUM(amount),0)::float8 AS c FROM proposal_payments
+       WHERE status='succeeded'${collClause}`, collParams),
   ]);
 
   const booked = metrics.toDollars(moneyR.rows[0].value, { fromCents: !!money.cents });
-  const collParams = [];
-  const collClause = metrics.dateClause('created_at', f.from, f.to, collParams);
-  const collectedRow = await pool.query(
-    `SELECT COALESCE(SUM(amount),0)::float8 AS c FROM proposal_payments
-     WHERE status='succeeded'${collClause}`, collParams);
   const acceptedCount = accR.rows[0].count;
 
   res.json({

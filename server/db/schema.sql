@@ -999,8 +999,8 @@ CREATE TABLE IF NOT EXISTS proposal_refunds (
   stripe_refund_id VARCHAR(255),
   amount INTEGER NOT NULL,                 -- CENTS (Stripe-native)
   reason TEXT NOT NULL,
-  total_price_before NUMERIC NOT NULL,     -- dollars, snapshot pre-refund
-  total_price_after  NUMERIC NOT NULL,     -- dollars, post-refund
+  total_price_before NUMERIC(10,2) NOT NULL, -- dollars, snapshot pre-refund
+  total_price_after  NUMERIC(10,2) NOT NULL, -- dollars, post-refund
   issued_by INTEGER REFERENCES users(id),  -- admin/manager; NULL = dashboard refund
   status VARCHAR(20) NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'succeeded', 'failed')),
@@ -1014,6 +1014,21 @@ CREATE INDEX IF NOT EXISTS idx_proposal_refunds_proposal_id
 CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_refunds_stripe_refund_id
   ON proposal_refunds(stripe_refund_id)
   WHERE stripe_refund_id IS NOT NULL;
+
+-- proposal_refunds.total_price_before/after shipped initially as bare NUMERIC.
+-- Tighten to NUMERIC(10,2) for ledger hygiene (the CREATE TABLE IF NOT EXISTS
+-- above won't retype an already-created table). Guarded so it only rewrites
+-- when not already (10,2) — idempotent, no per-boot table rewrite.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'proposal_refunds' AND column_name = 'total_price_before'
+      AND (numeric_precision IS DISTINCT FROM 10 OR numeric_scale IS DISTINCT FROM 2)
+  ) THEN
+    ALTER TABLE proposal_refunds ALTER COLUMN total_price_before TYPE NUMERIC(10,2);
+    ALTER TABLE proposal_refunds ALTER COLUMN total_price_after  TYPE NUMERIC(10,2);
+  END IF;
+END $$;
 
 -- Shifts
 CREATE INDEX IF NOT EXISTS idx_shifts_event_date ON shifts(event_date);
