@@ -11722,6 +11722,26 @@ html[data-app="admin-os"] .field-block--span-2 { grid-column: span 2; }
   html[data-app="admin-os"] .field-block--span-2 { grid-column: auto; }
 }
 
+/* ProposalCreate outer shell: form column + 320px sticky pricing rail. The
+   rail is useful next to the form on desktop, but at narrow widths it
+   crushes the form to ~70px. Stack the rail below the form on mobile. */
+html[data-app="admin-os"] .proposal-create-outer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+html[data-app="admin-os"] .proposal-create-form-col {
+  border-right: 1px solid var(--line-1);
+}
+@media (max-width: 820px) {
+  html[data-app="admin-os"] .proposal-create-outer { grid-template-columns: 1fr; }
+  /* Right-border separator between form + rail becomes a bottom border once
+     the rail stacks below. */
+  html[data-app="admin-os"] .proposal-create-form-col {
+    border-right: 0;
+    border-bottom: 1px solid var(--line-1);
+  }
+}
+
 @media (max-width: 900px) {
   /* Single-column shell: header on top, full-width main below. Sidebar is
      position:fixed and takes itself out of the grid. */

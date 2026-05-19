@@ -260,15 +260,16 @@ export default function ProposalCreate() {
 
   return (
     <form onSubmit={handleSubmit} style={{ height: '100%', minHeight: 'calc(100vh - var(--header-h))' }}>
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1fr) 320px',
-        gap: 0,
-        minHeight: 'calc(100vh - var(--header-h))',
-        background: 'var(--bg-0)',
-      }}>
+      <div
+        className="proposal-create-outer"
+        style={{
+          gap: 0,
+          minHeight: 'calc(100vh - var(--header-h))',
+          background: 'var(--bg-0)',
+        }}
+      >
         {/* ─── Left column ─── */}
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, borderRight: '1px solid var(--line-1)' }}>
+        <div className="proposal-create-form-col" style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {/* Top bar */}
           <div style={{
             borderBottom: '1px solid var(--line-1)',
