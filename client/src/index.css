@@ -11611,3 +11611,122 @@ html[data-app="admin-os"][data-skin="light"] .chip.info { color: hsl(208 72% 36%
 .metrics-seg-btn:last-child { border-right: 0; }
 .metrics-seg-btn.is-active { background: var(--accent); color: #fff; }
 
+/* ==========================================================================
+   Responsive adminos shell — mobile nav drawer (<=900px)
+
+   The static 220px sidebar would crush <main> to ~140-194px on phones,
+   making the admin app unusable across ~15 routes. Below 900px the sidebar
+   becomes an off-canvas drawer toggled by a header hamburger; <main> takes
+   the full viewport width. Desktop (>=901px) layout is unchanged.
+   ========================================================================== */
+
+/* Hamburger button in header — hidden on desktop, shown on mobile */
+html[data-app="admin-os"] .header-menu-btn {
+  display: none;
+  width: 44px;
+  height: 44px;
+  margin-left: -8px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink-2);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+html[data-app="admin-os"] .header-menu-btn:hover { background: var(--row-hover); color: var(--ink-1); }
+html[data-app="admin-os"] .header-menu-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Close button in the drawer brand row — mobile-only */
+html[data-app="admin-os"] .sidebar-close-btn {
+  display: none;
+  margin-left: auto;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink-3);
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+html[data-app="admin-os"] .sidebar-close-btn:hover { background: var(--row-hover); color: var(--ink-1); }
+html[data-app="admin-os"] .sidebar-close-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Shell scrim — covers the page when the mobile drawer is open. Tap-to-close
+   handled in AdminLayout. Hidden on desktop even if the open class lingers. */
+html[data-app="admin-os"] .shell-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 40;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+html[data-app="admin-os"] .shell-scrim.open { opacity: 1; pointer-events: auto; }
+@media (min-width: 901px) {
+  html[data-app="admin-os"] .shell-scrim { display: none; }
+}
+
+@media (max-width: 900px) {
+  /* Single-column shell: header on top, full-width main below. Sidebar is
+     position:fixed and takes itself out of the grid. */
+  html[data-app="admin-os"] .shell {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "header"
+      "main";
+  }
+  /* User's saved sidebar pref (rail/hidden) does not apply on mobile —
+     the drawer is always full-labeled. */
+  html[data-app="admin-os"][data-sidebar="rail"] .shell,
+  html[data-app="admin-os"][data-sidebar="hidden"] .shell {
+    grid-template-columns: 1fr;
+  }
+
+  /* Sidebar becomes a left-edge off-canvas drawer */
+  html[data-app="admin-os"] .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    max-width: 86vw;
+    z-index: 41;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease-out;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+  /* Hidden-pref keeps display:none on desktop; on mobile the drawer must render. */
+  html[data-app="admin-os"][data-sidebar="hidden"] .sidebar { display: flex; }
+  html[data-app="admin-os"] .shell.mobile-nav-open .sidebar { transform: translateX(0); }
+
+  /* Undo rail compaction so the drawer is always full-labeled regardless of saved pref */
+  html[data-app="admin-os"][data-sidebar="rail"] .sidebar-brand-text { display: block; }
+  html[data-app="admin-os"][data-sidebar="rail"] .sidebar-section { display: block; }
+  html[data-app="admin-os"][data-sidebar="rail"] .nav-label { display: inline; }
+  html[data-app="admin-os"][data-sidebar="rail"] .nav-item { justify-content: flex-start; padding: 0.36rem 0.5rem; }
+  html[data-app="admin-os"][data-sidebar="rail"] .nav-badge { position: static; }
+  html[data-app="admin-os"][data-sidebar="rail"] .sidebar-footer-main { display: block; }
+  html[data-app="admin-os"][data-sidebar="rail"] .mode-toggle { display: grid; }
+
+  /* Show mobile-only chrome */
+  html[data-app="admin-os"] .header-menu-btn { display: inline-flex; }
+  html[data-app="admin-os"] .sidebar-close-btn { display: inline-flex; }
+
+  /* Tighten header padding so title doesn't collide with hamburger */
+  html[data-app="admin-os"] .header { padding-left: 0.5rem; padding-right: 0.5rem; }
+
+  /* Hide the desktop collapse-to-rail toggle inside the drawer — meaningless here */
+  html[data-app="admin-os"] .sidebar-footer-controls > .sidebar-footer-action:first-child { display: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    html[data-app="admin-os"] .sidebar { transition: none; }
+    html[data-app="admin-os"] .shell-scrim { transition: none; }
+  }
+}
+

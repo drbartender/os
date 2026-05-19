@@ -12,12 +12,22 @@ function findPageTitle(pathname) {
   return 'Dashboard';
 }
 
-export default function Header({ onOpenPalette, onQuickAdd, unreadCount = 0 }) {
+export default function Header({ onOpenPalette, onQuickAdd, unreadCount = 0, onOpenMobileNav, mobileNavOpen = false }) {
   const { pathname } = useLocation();
   const title = findPageTitle(pathname);
 
   return (
     <header className="header">
+      <button
+        type="button"
+        className="header-menu-btn"
+        onClick={onOpenMobileNav}
+        aria-label="Open menu"
+        aria-expanded={mobileNavOpen}
+        aria-controls="primary-nav"
+      >
+        <Icon name="menu" size={20} />
+      </button>
       <div className="header-title">{title}</div>
       <button type="button" className="header-search" onClick={onOpenPalette} aria-label="Open command palette">
         <Icon name="search" />

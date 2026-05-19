@@ -20,7 +20,7 @@ function roleLabel(role) {
   return 'Team';
 }
 
-export default function Sidebar({ badges = {} }) {
+export default function Sidebar({ badges = {}, onCloseMobileNav }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { user, logout } = useAuth();
@@ -32,10 +32,18 @@ export default function Sidebar({ badges = {} }) {
   };
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" id="primary-nav" aria-label="Primary navigation">
       <div className="sidebar-brand">
         <div className="sidebar-brand-mark">℞</div>
         <div className="sidebar-brand-text">Dr. Bartender <span className="muted">OS</span></div>
+        <button
+          type="button"
+          className="sidebar-close-btn"
+          onClick={onCloseMobileNav}
+          aria-label="Close menu"
+        >
+          <Icon name="x" size={16} />
+        </button>
       </div>
 
       <nav className="sidebar-nav scroll-thin">

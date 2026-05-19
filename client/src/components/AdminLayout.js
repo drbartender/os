@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import api from '../utils/api';
 import Sidebar from './adminos/Sidebar';
 import Header from './adminos/Header';
@@ -7,8 +7,10 @@ import CommandPalette from './adminos/CommandPalette';
 
 export default function AdminLayout() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [badges, setBadges] = useState({});
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Mark the document as being inside the Admin OS shell so the scoped CSS
   // (html[data-app="admin-os"] …) takes effect. Remove on unmount so public /
@@ -73,6 +75,7 @@ export default function AdminLayout() {
       setPaletteOpen(v => !v);
     } else if (e.key === 'Escape') {
       setPaletteOpen(false);
+      setMobileNavOpen(false);
     }
   }, []);
 
@@ -81,18 +84,43 @@ export default function AdminLayout() {
     return () => window.removeEventListener('keydown', onKey);
   }, [onKey]);
 
+  // Close the mobile nav drawer whenever the route changes so the user lands on
+  // the page they tapped — never on a covered overlay.
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname]);
+
+  // Lock body scroll while the mobile nav drawer is open so the page behind
+  // doesn't scroll under the user's finger.
+  useEffect(() => {
+    if (!mobileNavOpen) return undefined;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [mobileNavOpen]);
+
+  const closeMobileNav = useCallback(() => setMobileNavOpen(false), []);
+  const openMobileNav = useCallback(() => setMobileNavOpen(true), []);
+
   return (
     <>
       <a href="#main-content" className="skip-nav">Skip to main content</a>
-      <div className="shell">
-        <Sidebar badges={badges} />
+      <div className={`shell${mobileNavOpen ? ' mobile-nav-open' : ''}`}>
+        <Sidebar badges={badges} onCloseMobileNav={closeMobileNav} />
         <Header
           onOpenPalette={() => setPaletteOpen(true)}
           onQuickAdd={() => navigate('/proposals/new')}
+          onOpenMobileNav={openMobileNav}
+          mobileNavOpen={mobileNavOpen}
         />
         <main className="main scroll-thin" id="main-content">
           <Outlet />
         </main>
+        <div
+          className={`shell-scrim${mobileNavOpen ? ' open' : ''}`}
+          onClick={closeMobileNav}
+          aria-hidden="true"
+        />
       </div>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </>
