@@ -79,7 +79,7 @@ export default function Login() {
               <div className={"form-group" + fieldClass('email')}>
                 <label htmlFor="email" className="form-label">Email Address</label>
                 <input
-                  id="email" name="email" type="email" className={"form-input" + inputClass('email')}
+                  id="email" name="email" type="email" autoComplete="username" className={"form-input" + inputClass('email')}
                   placeholder="your@email.com"
                   value={form.email} onChange={handle}
                 />
@@ -88,7 +88,7 @@ export default function Login() {
               <div className={"form-group" + fieldClass('password')} style={{ marginBottom: '1.5rem' }}>
                 <label htmlFor="password" className="form-label">Password</label>
                 <input
-                  id="password" name="password" type="password" className={"form-input" + inputClass('password')}
+                  id="password" name="password" type="password" autoComplete="current-password" className={"form-input" + inputClass('password')}
                   placeholder="Your password"
                   value={form.password} onChange={handle}
                 />

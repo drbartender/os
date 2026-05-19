@@ -140,7 +140,7 @@ export default function PreHireOnboarding() {
               <div className={"form-group" + fieldClass('email')}>
                 <label htmlFor="prehire-email" className="form-label">Email Address</label>
                 <input
-                  id="prehire-email" name="email" type="email" className={"form-input" + inputClass('email')}
+                  id="prehire-email" name="email" type="email" autoComplete="email" className={"form-input" + inputClass('email')}
                   placeholder="your@email.com"
                   value={form.email} onChange={handle}
                   aria-invalid={!!fieldErrors?.email}
@@ -151,7 +151,7 @@ export default function PreHireOnboarding() {
               <div className={"form-group" + fieldClass('password')}>
                 <label htmlFor="prehire-password" className="form-label">Create Password</label>
                 <input
-                  id="prehire-password" name="password" type="password" className={"form-input" + inputClass('password')}
+                  id="prehire-password" name="password" type="password" autoComplete="new-password" className={"form-input" + inputClass('password')}
                   placeholder="Minimum 8 characters, with a number and uppercase letter"
                   value={form.password} onChange={handle}
                   aria-invalid={!!fieldErrors?.password}
@@ -162,7 +162,7 @@ export default function PreHireOnboarding() {
               <div className={"form-group" + fieldClass('confirmPassword')}>
                 <label htmlFor="prehire-confirmPassword" className="form-label">Confirm Password</label>
                 <input
-                  id="prehire-confirmPassword" name="confirmPassword" type="password" className={"form-input" + inputClass('confirmPassword')}
+                  id="prehire-confirmPassword" name="confirmPassword" type="password" autoComplete="new-password" className={"form-input" + inputClass('confirmPassword')}
                   placeholder="Confirm your password"
                   value={form.confirmPassword} onChange={handle}
                   aria-invalid={!!fieldErrors?.confirmPassword}

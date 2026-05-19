@@ -3914,7 +3914,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   padding: 0.75rem 1rem;
   border-radius: var(--radius);
   font-family: var(--font-body);
-  font-size: 0.92rem;
+  font-size: 1rem;
   color: var(--cream-text);
   background: rgba(31, 26, 20, 0.8);
   border: 1px solid rgba(61, 50, 37, 0.8);

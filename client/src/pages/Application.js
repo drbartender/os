@@ -329,7 +329,7 @@ export default function Application() {
               </div>
               <div className="form-group">
                 <label htmlFor="app-zip_code" className="form-label">Zip Code</label>
-                <input id="app-zip_code" name="zip_code" className="form-input" value={form.zip_code} onChange={handle} placeholder="60601" />
+                <input id="app-zip_code" name="zip_code" inputMode="numeric" autoComplete="postal-code" className="form-input" value={form.zip_code} onChange={handle} placeholder="60601" />
               </div>
             </div>
 

@@ -103,6 +103,7 @@ export default function ResetPassword() {
                     id="reset-password"
                     name="password"
                     type="password"
+                    autoComplete="new-password"
                     className={"form-input" + inputClass('password')}
                     placeholder="At least 8 characters"
                     value={form.password}
@@ -117,6 +118,7 @@ export default function ResetPassword() {
                     id="reset-confirmPassword"
                     name="confirmPassword"
                     type="password"
+                    autoComplete="new-password"
                     className={"form-input" + inputClass('confirmPassword')}
                     placeholder="Re-enter your password"
                     value={form.confirmPassword}

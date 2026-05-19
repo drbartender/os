@@ -208,6 +208,7 @@ export default function ClientLogin() {
                 <input
                   id="client-login-email"
                   type="email"
+                  autoComplete="email"
                   className="client-input"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}

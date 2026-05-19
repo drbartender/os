@@ -88,7 +88,7 @@ export default function Register() {
               <div className={"form-group" + fieldClass('email')}>
                 <label htmlFor="register-email" className="form-label">Email Address</label>
                 <input
-                  id="register-email" name="email" type="email" className={"form-input" + inputClass('email')}
+                  id="register-email" name="email" type="email" autoComplete="email" className={"form-input" + inputClass('email')}
                   placeholder="your@email.com"
                   value={form.email} onChange={handle}
                   aria-invalid={!!fieldErrors?.email}
@@ -99,7 +99,7 @@ export default function Register() {
               <div className={"form-group" + fieldClass('password')}>
                 <label htmlFor="register-password" className="form-label">Create Password</label>
                 <input
-                  id="register-password" name="password" type="password" className={"form-input" + inputClass('password')}
+                  id="register-password" name="password" type="password" autoComplete="new-password" className={"form-input" + inputClass('password')}
                   placeholder="Minimum 8 characters"
                   value={form.password} onChange={handle}
                   aria-invalid={!!fieldErrors?.password}
@@ -110,7 +110,7 @@ export default function Register() {
               <div className={"form-group" + fieldClass('confirmPassword')}>
                 <label htmlFor="register-confirmPassword" className="form-label">Confirm Password</label>
                 <input
-                  id="register-confirmPassword" name="confirmPassword" type="password" className={"form-input" + inputClass('confirmPassword')}
+                  id="register-confirmPassword" name="confirmPassword" type="password" autoComplete="new-password" className={"form-input" + inputClass('confirmPassword')}
                   placeholder="Confirm your password"
                   value={form.confirmPassword} onChange={handle}
                   aria-invalid={!!fieldErrors?.confirmPassword}

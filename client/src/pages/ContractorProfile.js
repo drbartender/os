@@ -204,7 +204,7 @@ export default function ContractorProfile() {
             </div>
             <div className="form-group">
               <label htmlFor="cp-zip_code" className="form-label">Zip Code</label>
-              <input id="cp-zip_code" name="zip_code" className="form-input" value={form.zip_code} onChange={handle} placeholder="60601" />
+              <input id="cp-zip_code" name="zip_code" inputMode="numeric" autoComplete="postal-code" className="form-input" value={form.zip_code} onChange={handle} placeholder="60601" />
             </div>
           </div>
 
