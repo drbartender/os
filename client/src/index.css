@@ -9651,6 +9651,23 @@ html[data-app="admin-os"][data-skin="dark"] .em-badge-type {
   color: #1C1610;
 }
 
+/* Generic .form-label hardcodes --deep-brown (correct on light/paper forms:
+   auth, proposal, website). Inside the adminos dark shell the label sits on
+   the near-black page surface with no background, so it was invisible (blog
+   editor, settings, every adminos form). Re-tint to the skin foreground on
+   the dark skin only — inputs already carry their own --paper background so
+   they stay readable and are intentionally left alone. */
+html[data-app="admin-os"][data-skin="dark"] .form-label {
+  color: var(--ink-1);
+}
+/* Form helper text (bare <small> hints, the cover-image upload placeholder)
+   hardcodes --text-muted (#5A5048) — only ~2.35:1 on the dark surface. Light
+   skin already remaps .muted; mirror that for these dark-skin helper texts. */
+html[data-app="admin-os"][data-skin="dark"] .form-group small,
+html[data-app="admin-os"][data-skin="dark"] .blog-editor-upload-placeholder {
+  color: var(--ink-3);
+}
+
 
 /* ============================================================================
    LIGHT SKIN: "House Lights"

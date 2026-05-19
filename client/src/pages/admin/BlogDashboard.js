@@ -122,7 +122,7 @@ function PostForm({ form, setForm, onSubmit, onCancel, submitLabel, uploading, o
             onChange={e => setForm(f => ({ ...f, published_at: e.target.value || '' }))}
             placeholder="Leave blank for current date"
           />
-          <small style={{ color: 'var(--text-muted)', marginTop: '0.25rem', display: 'block' }}>Leave blank to use today's date when published</small>
+          <small style={{ marginTop: '0.25rem', display: 'block' }}>Leave blank to use today's date when published</small>
           <FieldError error={fieldErrors?.published_at} />
         </div>
       </div>
