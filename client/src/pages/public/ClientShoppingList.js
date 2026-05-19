@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
-// NOTE: swap logoBase64.js to encode the gold-ringed character mark
-// (logo-character-dark.png) — the ring is baked into the asset; no outer
-// medallion treatment needed.
-import { LOGO_BASE64 } from '../../components/ShoppingList/logoBase64';
+// Logo served as a static, browser-cacheable file (decoded from the shared
+// base64 asset) so the ~82 KB data URI never ships inside this public page's
+// JS bundle. The PDF path keeps the base64 — jsPDF needs the bytes in hand.
+const LOGO_SRC = process.env.PUBLIC_URL + '/shopping-list-logo.png';
 
 const BASE_URL = process.env.REACT_APP_API_URL || '';
 
@@ -66,7 +66,7 @@ export default function ClientShoppingList() {
       <div style={styles.page}>
         <div style={styles.container}>
           <div style={styles.header}>
-            <div style={styles.logoMedallion}><img src={LOGO_BASE64} alt="Dr. Bartender" style={styles.logoImg} /></div>
+            <div style={styles.logoMedallion}><img src={LOGO_SRC} alt="Dr. Bartender" style={styles.logoImg} /></div>
             <h1 style={styles.brand}>Dr. Bartender</h1>
           </div>
           <div style={{ textAlign: 'center', padding: '3rem 1rem' }}>
@@ -82,7 +82,7 @@ export default function ClientShoppingList() {
       <div style={styles.page}>
         <div style={styles.container}>
           <div style={styles.header}>
-            <div style={styles.logoMedallion}><img src={LOGO_BASE64} alt="Dr. Bartender" style={styles.logoImg} /></div>
+            <div style={styles.logoMedallion}><img src={LOGO_SRC} alt="Dr. Bartender" style={styles.logoImg} /></div>
             <h1 style={styles.brand}>Dr. Bartender</h1>
             {data?.client_name && <p style={styles.clientName}>{data.client_name}</p>}
           </div>
@@ -163,7 +163,7 @@ export default function ClientShoppingList() {
       <div style={styles.container}>
         {/* Header */}
         <div style={styles.header}>
-          <div style={styles.logoMedallion}><img src={LOGO_BASE64} alt="Dr. Bartender" style={styles.logoImg} /></div>
+          <div style={styles.logoMedallion}><img src={LOGO_SRC} alt="Dr. Bartender" style={styles.logoImg} /></div>
           <h1 style={styles.brand}>Dr. Bartender</h1>
           <p style={styles.tagline}>Premium Bar Services</p>
         </div>
