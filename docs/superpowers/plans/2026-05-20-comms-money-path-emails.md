@@ -12,6 +12,21 @@ Coordinated revisions across Plans 2a/b/c/d apply five Gemini design-stage findi
 
 The remaining two findings (Finding 2 atomic reschedule, Finding 4 retention TZ) live in Plans 2c and 2d respectively.
 
+## What This Resolves (Pre-execution review, 2026-05-20)
+
+A second-pass pre-execution review against the shared-contract ground truth surfaced eight additional findings (three BLOCKERs that would fail at runtime / test time, and five WARNINGs spanning coverage gaps, edge-case data loss, and docs drift). All eight are addressed in this revision:
+
+- **BLOCKER B1 — `ON CONFLICT ON CONSTRAINT idx_scheduled_messages_pending_uniq` rejected by PostgreSQL.** Postgres only accepts named CONSTRAINTS in `ON CONFLICT ON CONSTRAINT`, not named partial unique INDEXES. Task 8's `scheduleMessage` helper now uses the column-list inference form (`ON CONFLICT (entity_id, entity_type, message_type, recipient_id, recipient_type, channel) WHERE status = 'pending' DO NOTHING`) which matches the partial unique index declared in Task 1.
+- **BLOCKER B2 — Dispatcher test INSERTs non-existent `proposals.client_name` / `proposals.client_email` columns.** Those columns live on `clients`, not `proposals`. Task 9's test setup now inserts a `clients` row first (with an existence check since `clients` has no UNIQUE on email), then inserts a `proposals` row with `client_id` set.
+- **BLOCKER B3 — Dispatcher test passes a string for `proposals.token` (UUID column).** Task 9's test setup omits `token` from the INSERT so the column default (`gen_random_uuid()`) fires.
+- **WARNING W1 — `users.phone` column does not exist in `lookupRecipient` SELECT.** Staff phone numbers live on `contractor_profiles`. The dispatcher's `lookupRecipient` now selects `id, email, role, communication_preferences` only — Plan 2b/2d staff handlers fetch phone separately when they need it.
+- **WARNING W2 — `messageSuppression.test.js` was missing from the self-review test-file checklist.** Added.
+- **WARNING W3 — No test coverage for the marketing-gate suppression path.** Task 9 now includes a dedicated test that registers a marketing-category handler, flips `marketing_enabled` to false, and asserts the row is suppressed with `marketing_disabled`.
+- **WARNING W4 — `scheduleBalanceReminders` past-date cutoff dropped today-due reminders.** The original `dueDate.getTime() < Date.now()` would silently skip the `balance_due_today` row for last-minute bookings that deposit on the same day the balance is due. Now uses a start-of-today UTC cutoff so only strictly past dates are skipped.
+- **WARNING W5 — `ADMIN_EMAIL` runtime dependency not reflected in env docs.** Task 2 makes `ADMIN_EMAIL` a runtime requirement for the default `Reply-To` on every client-facing email; Task 14 now updates CLAUDE.md (new row) and README.md (refines existing row) to document the elevated role.
+
+Em dashes in NEW client-facing copy (subject lines and text sign-offs in the new templates) were also swept and replaced with commas / colons / periods per project preference (`feedback_no_em_dashes`). Existing baselined em dashes in templates not authored here (e.g., the default branch of `paymentReceivedClient`) are preserved.
+
 ---
 
 **Goal:** Ship the money-path client emails (balance reminders, autopay success, payment failure, refund notification) and the dispatcher infrastructure that all other Plan 2 chunks (drink-plan touches, event-week/eve, post-event) will build on. Plan 2a is the load-bearing piece of Phase 1 from the spec — it introduces the scheduling helper, the dispatcher loop, handler registration, suppression checks, and the first batch of registered handlers (balance reminders).
@@ -218,7 +233,7 @@ function paymentReminderClient({ clientName, eventTypeLabel = 'event', balanceDu
     : 'before your event';
   const isAutopay = paymentMode === 'autopay';
   const subject = isAutopay
-    ? `Heads up — balance for your ${eventTypeLabel} runs in 3 days`
+    ? `Heads up: balance for your ${eventTypeLabel} runs in 3 days`
     : `Balance due in 3 days for your ${eventTypeLabel}`;
   const cardLine = isAutopay && last4
     ? `<p>Your card ending in <strong>${esc(String(last4))}</strong> will be charged automatically. No action needed.</p>`
@@ -248,7 +263,7 @@ function paymentReminderClient({ clientName, eventTypeLabel = 'event', balanceDu
       ${footer}
       <p>Cheers,<br/>The Dr. Bartender Team</p>
     `),
-    text: `Hi ${name}, ${textIntro} ${isAutopay ? 'No action needed. Pay early or change card: ' : 'View and pay: '}${proposalUrl} — The Dr. Bartender Team`,
+    text: `Hi ${name}, ${textIntro} ${isAutopay ? 'No action needed. Pay early or change card: ' : 'View and pay: '}${proposalUrl}. Cheers, The Dr. Bartender Team`,
   };
 }
 ```
@@ -318,7 +333,7 @@ function paymentReminderLate({ clientName, eventTypeLabel = 'event', balanceDue,
       ${closeLine}
       <p>Cheers,<br/>The Dr. Bartender Team</p>
     `),
-    text: `Hi ${name}, your balance of $${Number(balanceDue).toFixed(2)} for your ${eventTypeLabel} is ${daysLate} ${daysLate === 1 ? 'day' : 'days'} past due. Pay here: ${proposalUrl}. ${firm ? 'Please reach out so we can sort this out together.' : 'Reach out if you need help.'} — The Dr. Bartender Team`,
+    text: `Hi ${name}, your balance of $${Number(balanceDue).toFixed(2)} for your ${eventTypeLabel} is ${daysLate} ${daysLate === 1 ? 'day' : 'days'} past due. Pay here: ${proposalUrl}. ${firm ? 'Please reach out so we can sort this out together.' : 'Reach out if you need help.'} Cheers, The Dr. Bartender Team`,
   };
 }
 ```
@@ -377,10 +392,10 @@ function refundNotificationClient({ clientName, refundAmount, last4, newBalance 
       <p>Hi ${esc(name)},</p>
       <p>We've refunded <strong>$${Number(refundAmount).toFixed(2)}</strong>${cardLine}. It should arrive in 5-10 business days depending on your bank.</p>
       ${balanceLine}
-      <p style="font-size:14px;color:${BRAND.secondary};">Let me know if you have any questions — just reply to this email.</p>
+      <p style="font-size:14px;color:${BRAND.secondary};">Let me know if you have any questions, just reply to this email.</p>
       <p>Cheers,<br/>The Dr. Bartender Team</p>
     `),
-    text: `Hi ${name}, we've refunded $${Number(refundAmount).toFixed(2)}${cardLineText}. It should arrive in 5-10 business days. ${balanceLineText} — The Dr. Bartender Team`,
+    text: `Hi ${name}, we've refunded $${Number(refundAmount).toFixed(2)}${cardLineText}. It should arrive in 5-10 business days. ${balanceLineText} Cheers, The Dr. Bartender Team`,
   };
 }
 ```
@@ -438,7 +453,7 @@ function paymentFailedClient({ clientName, eventTypeLabel = 'event', last4, prop
       <p>If you have any questions or need help, reply to this email or call me.</p>
       <p>Cheers,<br/>The Dr. Bartender Team</p>
     `),
-    text: `Hi ${name}, your payment for the ${eventTypeLabel} didn't go through${cardClauseText}. Update payment method: ${proposalUrl}. Reach out if you need help. — The Dr. Bartender Team`,
+    text: `Hi ${name}, your payment for the ${eventTypeLabel} didn't go through${cardClauseText}. Update payment method: ${proposalUrl}. Reach out if you need help. Cheers, The Dr. Bartender Team`,
   };
 }
 ```
@@ -487,7 +502,7 @@ function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, p
     const eventBit = eventDateLabel ? ` on ${esc(eventDateLabel)}` : '';
     const cardBit = last4 ? ` on the card ending in ${esc(String(last4))}` : ' on your card on file';
     return {
-      subject: `Balance charged — you're paid in full${eventDateLabel ? ` for ${esc(eventDateLabel)}` : ''}`,
+      subject: `Balance charged: you're paid in full${eventDateLabel ? ` for ${esc(eventDateLabel)}` : ''}`,
       html: wrapEmail(`
         <h2 style="color:${BRAND.primary};margin-top:0;">You're Paid in Full</h2>
         <p>Hi ${esc(name)},</p>
@@ -496,7 +511,7 @@ function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, p
         <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
         <p>Cheers,<br/>The Dr. Bartender Team</p>
       `),
-      text: `Hi ${name}, your remaining balance of $${amount} for your ${eventTypeLabel}${eventBit} just ran${last4 ? ` on the card ending in ${last4}` : ' on your card on file'}. You're paid in full. — The Dr. Bartender Team`,
+      text: `Hi ${name}, your remaining balance of $${amount} for your ${eventTypeLabel}${eventBit} just ran${last4 ? ` on the card ending in ${last4}` : ' on your card on file'}. You're paid in full. Cheers, The Dr. Bartender Team`,
     };
   }
   // Default (non-autopay) flow — preserves the existing copy
@@ -702,7 +717,9 @@ async function scheduleMessage({
     `INSERT INTO scheduled_messages
        (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT ON CONSTRAINT idx_scheduled_messages_pending_uniq DO NOTHING
+     ON CONFLICT (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
+       WHERE status = 'pending'
+     DO NOTHING
      RETURNING id, status`,
     [entityId, entityType, messageType, recipientType, recipientId, channel, scheduledFor]
   );
@@ -714,7 +731,7 @@ async function scheduleMessage({
 module.exports = { scheduleMessage };
 ```
 
-Note on the ON CONFLICT clause: PostgreSQL allows referring to a constraint by name even for partial unique indexes; the named target keeps the conflict resolution precise (no surprise hits on the other indexes).
+Note on the ON CONFLICT clause: PostgreSQL only accepts named CONSTRAINTS in `ON CONFLICT ON CONSTRAINT`, not named partial unique INDEXES. So we use the column-list inference form with the `WHERE status = 'pending'` predicate to match the partial unique index. The column order matches the index definition in Task 1.
 
 - [ ] **Step 4: Run test to verify pass**
 
@@ -966,15 +983,28 @@ let testClientId;
 let testProposalId;
 
 before(async () => {
-  const c = await pool.query(
-    `INSERT INTO clients (name, email, phone) VALUES ('Dispatcher Test', 'dispatcher-test@example.com', '5555550100')
-     ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
-     RETURNING id`
+  // proposals has NO client_name / client_email columns — those live on `clients`
+  // and are joined via proposals.client_id. We create the clients row first, then
+  // the proposals row. `clients` has no UNIQUE constraint on email, so we look up
+  // any existing test row before inserting to avoid orphaning rows across runs.
+  const existing = await pool.query(
+    "SELECT id FROM clients WHERE email = 'dispatcher-test@example.com' LIMIT 1"
   );
-  testClientId = c.rows[0].id;
+  if (existing.rowCount > 0) {
+    testClientId = existing.rows[0].id;
+  } else {
+    const c = await pool.query(
+      `INSERT INTO clients (name, email, phone) VALUES ('Dispatcher Test', 'dispatcher-test@example.com', '5555550100')
+       RETURNING id`
+    );
+    testClientId = c.rows[0].id;
+  }
+  // proposals.token is UUID with default gen_random_uuid() — omit it so the
+  // default fires (a string literal would error with `invalid input syntax for
+  // type uuid`).
   const p = await pool.query(
-    `INSERT INTO proposals (client_id, client_name, client_email, status, event_date, event_type, total_price, amount_paid, balance_due_date, token)
-     VALUES ($1, 'Dispatcher Test', 'dispatcher-test@example.com', 'deposit_paid', CURRENT_DATE + INTERVAL '30 days', 'birthday-party', 100000, 10000, CURRENT_DATE + INTERVAL '14 days', 'dispatcher-test-token-' || extract(epoch from now()))
+    `INSERT INTO proposals (client_id, status, event_date, event_type, total_price, amount_paid, balance_due_date)
+     VALUES ($1, 'deposit_paid', CURRENT_DATE + INTERVAL '30 days', 'birthday-party', 100000, 10000, CURRENT_DATE + INTERVAL '14 days')
      RETURNING id`,
     [testClientId]
   );
@@ -1136,6 +1166,41 @@ test('dispatcher > marks failed with "no handler registered" when handler is mis
   );
   assert.strictEqual(rows[0].status, 'failed');
   assert.match(rows[0].error_message, /no handler/i);
+});
+
+test('dispatcher > suppresses marketing-category handler when marketing_enabled=false', async () => {
+  // Gemini Finding 5: marketing-category messages are gated on
+  // communication_preferences.marketing_enabled. Operational messages bypass
+  // this gate; marketing messages flip to 'suppressed' with reason
+  // 'marketing_disabled'. Plan 2d's drip touches register with
+  // category='marketing'; we simulate that here.
+  const handler = mock.fn(async () => undefined);
+  registerHandler('disp_test_marketing', handler, { category: 'marketing', anchor: 'created_at', offsetFromEventDate: null });
+
+  await pool.query(
+    `UPDATE clients SET communication_preferences = jsonb_set(communication_preferences, '{marketing_enabled}', 'false'::jsonb) WHERE id = $1`,
+    [testClientId]
+  );
+
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_marketing', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 0);
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_marketing'"
+  );
+  assert.strictEqual(rows[0].status, 'suppressed');
+  assert.match(rows[0].error_message, /marketing_disabled/);
+
+  // restore
+  await pool.query(
+    `UPDATE clients SET communication_preferences = jsonb_set(communication_preferences, '{marketing_enabled}', 'true'::jsonb) WHERE id = $1`,
+    [testClientId]
+  );
 });
 ```
 
@@ -1311,9 +1376,12 @@ async function lookupRecipient(recipientType, recipientId) {
     );
     return r.rows[0] || null;
   }
-  // staff / admin live in users table
+  // staff / admin live in users table. NOTE: `users` has no `phone` column —
+  // staff phone numbers live on `contractor_profiles`. Plan 2b/2d handlers
+  // that need staff phone numbers must join contractor_profiles themselves;
+  // the dispatcher only loads the minimal recipient row here.
   const r = await pool.query(
-    `SELECT id, email, phone, role, communication_preferences
+    `SELECT id, email, role, communication_preferences
      FROM users WHERE id = $1`,
     [recipientId]
   );
@@ -1518,7 +1586,7 @@ module.exports = {
 node --test server/utils/scheduledMessageDispatcher.test.js
 ```
 
-Expected: all 7 tests pass.
+Expected: all 8 tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -1652,7 +1720,14 @@ async function scheduleBalanceReminders(proposalId) {
 
     const dueDate = new Date(p.balance_due_date);
     if (Number.isNaN(dueDate.getTime())) return;
-    if (dueDate.getTime() < Date.now()) return; // balance due already past — admin handles manually
+    // Only skip when the due date is strictly BEFORE today (UTC). Using
+    // `dueDate.getTime() < Date.now()` would silently drop the
+    // balance_due_today reminder for last-minute bookings that deposit on
+    // the same day the balance is due — because by the time the post-commit
+    // notifier runs, `Date.now()` is already past midnight of the due date.
+    const now = new Date();
+    const startOfTodayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    if (dueDate.getTime() < startOfTodayUtc) return; // balance due strictly in the past — admin handles manually
 
     const dayMs = 24 * 60 * 60 * 1000;
     const t3Before = new Date(dueDate.getTime() - 3 * dayMs);
@@ -1983,6 +2058,11 @@ git commit -m "feat(comms): fire refundNotificationClient after admin refund suc
 - Modify: `.claude/CLAUDE.md`
 - Modify: `README.md`
 
+Plan 2a introduces two env-var concerns:
+
+1. **`RUN_MESSAGE_DISPATCHER_SCHEDULER`** — new per-scheduler control toggle for the dispatcher registered in Task 10.
+2. **`ADMIN_EMAIL`** — already present in `.env.example` (seed-account email) and the README seed table, but Task 2 now reads it inside `sendEmail` to default `replyTo` for every client-facing email. That elevates it from a one-time seed value to a runtime dependency. CLAUDE.md's env table currently has no row for it.
+
 - [ ] **Step 1: Append to `.env.example`**
 
 Add at the end of `.env.example` (near the other per-scheduler entries added by Plan 1):
@@ -1991,7 +2071,7 @@ Add at the end of `.env.example` (near the other per-scheduler entries added by 
 # RUN_MESSAGE_DISPATCHER_SCHEDULER=true
 ```
 
-Within the existing scheduler-controls block, so the var sits alongside the others.
+Within the existing scheduler-controls block, so the var sits alongside the others. `ADMIN_EMAIL` is already present in `.env.example` — no change needed there.
 
 - [ ] **Step 2: Update `.claude/CLAUDE.md` env table**
 
@@ -2001,15 +2081,25 @@ Find the Environment Variables table (after the `## Environment Variables` heade
 | `RUN_MESSAGE_DISPATCHER_SCHEDULER` | Optional. Set to `false` to disable the scheduled-message dispatcher (balance reminders, future drip / event-week / etc. handlers). Defaults on. Subject to `RUN_SCHEDULERS=false` global override. |
 ```
 
+Also add a row for `ADMIN_EMAIL` — it isn't in the CLAUDE.md env table today, and Task 2 makes it a runtime requirement for client-facing reply-routing:
+
+```markdown
+| `ADMIN_EMAIL` | Admin inbox address. Used as the seed account email AND as the default `Reply-To` on every client-facing email sent via `sendEmail` (Plan 2a). Falls through to no `Reply-To` header when unset. Set to a monitored inbox in prod so client replies don't bounce. |
+```
+
 - [ ] **Step 3: Update README.md env table**
 
-Same row in `README.md`'s environment variable table.
+Add the `RUN_MESSAGE_DISPATCHER_SCHEDULER` row in `README.md`'s environment variable table. `ADMIN_EMAIL` is already in the README table (line ~92, "For seed | Admin account email") — update that row's description to reflect the new runtime use:
+
+```markdown
+| `ADMIN_EMAIL` | Required | Admin account email — used for seed and as the default `Reply-To` on client-facing emails (Plan 2a). |
+```
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add .env.example .claude/CLAUDE.md README.md
-git commit -m "docs(env): document RUN_MESSAGE_DISPATCHER_SCHEDULER"
+git commit -m "docs(env): document RUN_MESSAGE_DISPATCHER_SCHEDULER and ADMIN_EMAIL runtime use"
 ```
 
 ---
@@ -2043,7 +2133,7 @@ Expected: one row, `last_status = 'ok'`.
 - [ ] **Step 3: Verify all unit tests pass**
 
 ```bash
-node --test server/utils/messageScheduling.test.js server/utils/scheduledMessageDispatcher.test.js
+node --test server/utils/messageScheduling.test.js server/utils/messageSuppression.test.js server/utils/scheduledMessageDispatcher.test.js
 ```
 
 Expected: all pass.
@@ -2097,7 +2187,7 @@ Ctrl-C. No commit needed for verification.
 - [ ] All commits land cleanly on `main` with single-line messages (Rule 4)
 - [ ] `git status` shows a clean working tree
 - [ ] `npm run lint` passes
-- [ ] All four new test files pass (`messageScheduling.test.js`, `scheduledMessageDispatcher.test.js`)
+- [ ] All three new test files pass (`messageScheduling.test.js`, `messageSuppression.test.js`, `scheduledMessageDispatcher.test.js`)
 - [ ] `psql "$DATABASE_URL" -c "\\d scheduled_messages"` shows the new partial unique index
 - [ ] `scheduler_health` has a `message_dispatcher` row populated within ~4 min of boot
 - [ ] A test deposit-paid proposal correctly enrolls balance-reminder rows
