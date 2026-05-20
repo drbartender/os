@@ -72,7 +72,9 @@ Photo print services (Walgreens, Costco, online printing) typically only accept 
 
 ### 4.4 Fonts and palette
 
-The HTML preview and the PNG export both inherit IM Fell English typography from the existing planner CSS. The menu surface uses parchment background (`#EDE6D6`), brass (`#B8924A`) for hairlines and decorative elements, and deep-brown (`#1C1610`) for text. Same apothecary register as the rest of the planner reskin.
+The HTML preview and the PNG export both inherit IM Fell English typography from the existing planner CSS. **The menu surface is the planner's stage palette translated to a printable artifact: chalkboard background (`#12161C`), brass-bright (`#D6AE65`) for section labels and decorative elements, brass (`#B8924A`) for hairlines and the title eyebrow, cream (`#F0E8D6`) for drink names.** Reads as a craft-bar chalkboard menu when framed, on-brand with the rest of the planner's dark surfaces.
+
+**Print workflow implication.** A full-coverage dark background at 8×10 means the printed PNG is mostly dark ink/toner. Photo print services (Walgreens, Costco, online printing) handle this fine. Home printers struggle with flat dark coverage. The operator's print workflow effectively requires a photo print service for the Dark Ink menu. Not a blocker; just the path of least resistance.
 
 ### 4.5 Visual design pass
 
@@ -165,12 +167,50 @@ When `menuStyle === 'none'` or `null`: no preview, no logo field.
 
 ### 6.4 Visual constraints (for the Claude Design pass)
 
+**Direction:** Dark Ink. Chalkboard surface, cream type, brass accents. Two-column layout for Cocktails and Mocktails with Beer & Wine as a sash across the bottom (the D2 hierarchy from the design canvas).
+
+**Format:**
 - Portrait, 4:5 aspect ratio, 8 x 10 inches at print scale.
-- Parchment background (`#EDE6D6`), brass hairlines, deep-brown text.
-- IM Fell English throughout.
-- DRB logo + client's uploaded logo (if present) at the bottom of the menu surface.
+- Solid chalkboard background (`#12161C`) flooded across the full 8x10 page.
+- IM Fell English throughout (Display + SC variants).
+
+**Palette:**
+- Background: `#12161C` (chalkboard)
+- Drink names: `#F0E8D6` (cream)
+- Section labels and title eyebrow: `#D6AE65` (brass-bright) for legibility on dark
+- Hairlines and dividers: `#B8924A` (brass)
+- No deep-brown anywhere on this surface (deep-brown is the on-parchment text color elsewhere in the planner; it would be invisible here)
+
+**Type scale (print pt, 72 DPI):**
+
+| Element | Size | Style |
+|---|---|---|
+| Title eyebrow | 11 pt | IM Fell English SC, tracked 0.32em, brass |
+| Section labels (Cocktails, Mocktails, Beer & Wine) | 13 pt | IM Fell English SC, tracked 0.22em, brass-bright |
+| Drink names (the heroes) | 26 pt | IM Fell English SC, cream, line-height 1.4× |
+| Beer & Wine inline labels (Beer · Seltzer · Red · White · Sparkling) | 16 pt | IM Fell English SC, tracked 0.18em, cream |
+| Footer wordmark (DR. BARTENDER) | 14 pt | IM Fell English SC, tracked 0.32em, cream |
+
+The ratios that matter: drink-name to section-label is **2×**; drink-name to eyebrow title is **2.4×**; drink-name to body line-height is **1.4×**. These are the relationships that were drifting in the earlier variants.
+
+**Spatial scale (print pt):**
+- Page margins: 36 pt (0.5 inch) all four sides
+- Gap between title eyebrow and first section: 20 pt
+- Gap between sections in the same column: 28 pt
+- Column gutter (two-column block): 32 pt
+- Beer & Wine sash height: ~60 pt (including label + items)
+- Footer band height: ~80 pt
+- Brass hairline above footer: 1 pt rule, full-width minus margins
+
+**Logos at footer:**
+- DRB medallion + "DR. BARTENDER" wordmark left-aligned in the footer band.
+- Client logo (if present) right-aligned, separated from the DRB lockup by a thin vertical brass rule.
+- Client logo capped at max box **200 x 100 px** (in print-render dimensions) with `object-fit: contain` so a wide corporate logo doesn't squish the DRB lockup or break the footer.
+
+**Other constraints:**
 - No event name, no event date, no flavor descriptions (drink names only).
-- Client logo capped at max box `200 x 100 px` (in print-render dimensions) with `object-fit: contain` so a wide corporate logo doesn't squish the DRB logo or break the bottom layout.
+- No box-shadow or backdrop-filter effects on text (so html2canvas captures cleanly).
+- Section dividers as thin brass hairlines, not ornament strings.
 
 ### 6.5 Update behavior
 
