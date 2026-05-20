@@ -2,13 +2,36 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## What This Resolves (Pre-execution review pass, 2026-05-20)
+
+Eleven additional findings landed during a pre-execution review and are now baked into this plan. The Gemini design-review findings below are still authoritative; these supplement them.
+
+**BLOCKERs resolved:**
+
+- **B1 — Schema mismatches in `bartenderTipHandlesForSingleBartenderEvent` (Task 6).** The original query JOINed a non-existent `shift_assignments` table and read a non-existent `payment_profiles.zelle_handle` column. Schema verification: the canonical shifts-to-staff linkage is `shift_requests` (status: 'pending' | 'approved' | 'denied'); `shifts.proposal_id` exists; `payment_profiles` has `venmo_handle`, `cashapp_handle`, `paypal_url` (NO `zelle_handle`). Query rewritten to `FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id ... WHERE s.proposal_id = $1 AND sr.status = 'approved'`. Zelle dropped from the review-request template + test; comment marker explains deferral. Adding a `zelle_handle` migration is out of scope for Plan 2d.
+- **B2 — Test fixtures and `proposals.token`.** Schema verification: `proposals.token UUID UNIQUE NOT NULL DEFAULT gen_random_uuid()`. Fixtures that omit `token` work because the default fires. Comments added at each `INSERT INTO proposals (...)` call site documenting this, plus the `RETURNING id, token` pattern where downstream tests use the token.
+- **B3 — `stripeWebhook.js` doesn't exist.** Renamed every reference to `server/routes/stripe.js` (the actual file) across the File Structure section, Tasks 6/7/9, and Sentry tag values.
+- **B4 — Email-sequence engine coexistence / double-sends.** New Task 0 added at the start of the plan: `UPDATE email_campaigns SET status = 'paused' WHERE name = 'Abandoned Quote Followup' AND type = 'sequence' AND status <> 'paused'`. Documents the engine-boundary going forward: old engine handles raw `email_leads` nurture only; new dispatcher handles proposal-anchored touches.
+- **B5 — `scheduleNewYearHello` wiring conflict with Plan 2c hook.** Task 9 rewritten to be explicit: Plan 2d's marketing-schedule try/catch goes IMMEDIATELY AFTER Plan 2c's `schedulePreEventReminders` try/catch in the same Stripe `payment_intent.succeeded` post-commit notifier. Two adjacent try/catch blocks (not one combined helper), with an inline comment explaining why.
+
+**WARNINGs resolved:**
+
+- **W1 — Drip suppression on sign+pay missing.** Plan 2d's `cancelMarketingForProposal` only fires on archive, so pending drip touches would still send after the client signs and pays. Added Step 3 to Task 9: a separate non-blocking try/catch that `UPDATE scheduled_messages SET status = 'suppressed', error_message = 'proposal signed and paid' WHERE ... AND message_type IN ('drip_touch_2', 'drip_touch_4', 'drip_touch_5_email')` in the same Stripe post-commit notifier.
+- **W2 — `new_year_hello` cascade re-anchoring broken at year boundary.** Plan 2c's generic cascade leaves `offsetFromEventDate: null` rows alone, so a year-boundary reschedule would strand `new_year_hello` at the OLD Jan 2. Resolution: Plan 2d exports a new `recomputeNewYearHelloForProposal(proposalId)` helper (DELETE pending row + re-evaluate eligibility via `scheduleNewYearHello`). Cross-plan contract added to `.plan-2-contract.md`: Plan 2c's `reanchorPendingMessages` must detect `{ anchor: 'event_date', offsetFromEventDate: null }` and dispatch to per-type recompute helpers.
+- **W3 — Em dashes in client copy.** The `FeedbackPage.jsx` alert text and `placeholder` text used em dashes; replaced with periods. (Em-dashes elsewhere in the plan are either prose comments or admin-facing copy and are left alone.)
+- **W4 — env var name / dispatcher function / cadence wrong (Task 7).** Per the shared contract, the correct bootstrap shape is `RUN_MESSAGE_DISPATCHER_SCHEDULER` env var, `dispatchPending` function, `message_dispatcher` health row, 300s cadence (5min), 180s initial delay. Updated.
+- **W5 — `MARKETING_MESSAGE_TYPES` constant drift risk.** Removed the exported constant entirely. The single source of truth is now the `category` metadata passed to `registerHandler()`. The corresponding test was rewritten to assert against `getHandlerMeta(messageType).category` directly. Self-review checklist updated.
+- **W6 — `reviewRequestClient` unsubscribe footer mismatch.** Template was registered as `category: 'operational'` (CAN-SPAM transactional follow-up) but rendered via `wrapMarketingEmail` (which adds an unsubscribe footer). Switched to `wrapEmail` (no unsubscribe footer) so the template matches its operational classification.
+
+---
+
 ## What This Resolves (Gemini design-review pass, 2026-05-20)
 
 Four findings land in this plan:
 
 - **Finding 1 (BLOCKER) — Shared message-type registry.** Every marketing handler registers with metadata via Plan 2a's expanded `registerHandler(messageType, fn, { offsetFromEventDate, anchor, category })` API. Anchor-independent touches like drip (anchored to proposal-sent moment, not event_date) pass `offsetFromEventDate: null` so Plan 2c's reschedule cascade leaves them alone. Event-anchored touches (new_year_hello, six_months_out, retention_nudge, review_request) carry the correct offset+anchor so the cascade re-anchors them on reschedule.
 - **Finding 4 (WARNING) — Marketing TZ uses event TZ, not hardcoded Chicago.** The send-time helpers in `retentionEligibility.js` accept an event timezone (defaulting to `America/Chicago` ONLY when no proposal context is provided) and use `resolveEventTimezone(proposal)` from Plan 1's `server/utils/eventTimezone.js` at call sites. Spec 7.2 mandates event-local sends.
-- **Finding 5 (WARNING) — Marketing gating handled by dispatcher metadata.** All marketing-class types (drip_touch_2, drip_touch_4, drip_touch_5_email, new_year_hello, six_months_out, retention_nudge) register with `category: 'marketing'`. The dispatcher's marketing-gate check (Plan 2a Task 9) reads handler metadata at fire time and suppresses with reason `'marketing_disabled'` when the client's `communication_preferences.marketing_enabled === false`. Plan 2d's `MARKETING_MESSAGE_TYPES` export is kept as a convenience constant but is no longer the source of truth; the dispatcher uses handler metadata. `review_request` registers with `category: 'operational'` (transactional under CAN-SPAM).
+- **Finding 5 (WARNING) — Marketing gating handled by dispatcher metadata.** All marketing-class types (drip_touch_2, drip_touch_4, drip_touch_5_email, new_year_hello, six_months_out, retention_nudge) register with `category: 'marketing'`. The dispatcher's marketing-gate check (Plan 2a Task 9) reads handler metadata at fire time and suppresses with reason `'marketing_disabled'` when the client's `communication_preferences.marketing_enabled === false`. Plan 2d intentionally does NOT export a `MARKETING_MESSAGE_TYPES` constant — the single source of truth is the metadata passed to `registerHandler()`. `review_request` registers with `category: 'operational'` (transactional under CAN-SPAM).
 - **Finding 6 (SUGGESTION) — `publicFeedback` POST handler logic is now unit-tested.** Task 4 extracts the POST handler's logic (validate + record + admin-email-on-low-rating) into a named exported `handleFeedbackSubmission(ctx)` function that accepts injectable `sendEmail` + `now` dependencies. The test scaffold covers both branches: low rating (rating <= 3) triggers exactly one admin email; high rating (rating >= 4) triggers zero admin emails. Express wiring stays thin and is covered by manual smoke testing in Task 13. No `supertest` dependency added.
 
 ---
@@ -52,7 +75,7 @@ Four findings land in this plan:
 - `server/index.js` — mount the new `/api/public/feedback` router, register marketing-handler registrations on boot
 - `server/routes/proposals/crud.js` — on `status = 'sent'` transition, call `scheduleDripForProposal`. On `status = 'completed'` (manual), call `scheduleReviewRequest` + `scheduleRetentionNudge`. On signed (Stripe webhook is the canonical sign-pay trigger — see Task 14), call `scheduleNewYearHello` + `scheduleSixMonthsOut`. On status = 'archived', call `cancelMarketingForProposal`.
 - `server/utils/balanceScheduler.js` — after the `processEventCompletions` auto-complete loop, call `scheduleReviewRequest` and `scheduleRetentionNudge` for each newly-completed proposal
-- `server/routes/stripeWebhook.js` (or wherever sign+pay completes today) — on first-deposit success, call `scheduleNewYearHello` and `scheduleSixMonthsOut`
+- `server/routes/stripe.js` — on first-deposit success in the `payment_intent.succeeded` post-commit notifier, IMMEDIATELY AFTER Plan 2c's `schedulePreEventReminders(proposalId)` try/catch block, call `scheduleNewYearHello(proposalId)` and `scheduleSixMonthsOut(proposalId)` in a SEPARATE try/catch (see Task 9 for the explicit placement contract)
 - `client/src/App.js` — add `<Route path="/feedback/:token" element={<FeedbackPage />} />` to the public-domain SPA route block
 
 **Files referenced (no edits):**
@@ -62,6 +85,77 @@ Four findings land in this plan:
 - `server/utils/urls.js` for `PUBLIC_SITE_URL`, `ADMIN_URL`, `API_URL`
 - `server/utils/messageScheduling.js` and `scheduledMessageDispatcher.js` from Plan 2a
 - `server/middleware/rateLimiters.js` for `publicLimiter` / `publicReadLimiter`
+
+---
+
+## Task 0: Pause the legacy "Abandoned Quote Followup" sequence campaign
+
+**Files:**
+- Modify: `server/db/schema.sql` — append a small idempotent UPDATE at end of file
+
+**Why this exists.** The existing `email_sequence_enrollments` engine (driven by
+`emailSequenceScheduler.js`) is currently running the seeded **"Abandoned Quote
+Followup"** campaign (schema.sql lines 1561-1601), which sends emails on a
+parallel drip cadence for unsigned proposals. Plan 2d's new dispatcher-driven
+drip (drip_touch_2/4/5_email) targets the same audience — every "sent" proposal
+the client hasn't signed yet — and would cause **double sends** if both engines
+run simultaneously.
+
+**Boundary going forward (document in code comment too):**
+- **Old engine** (`emailSequenceScheduler.js` + `email_sequence_enrollments`):
+  handles raw lead nurture only (the `email_leads` table — pre-proposal,
+  no `proposals` row yet). The "Abandoned Quote Followup" campaign is
+  PAUSED; if/when we want a pre-proposal nurture drip in the future, we
+  can seed a NEW campaign that targets only `email_leads`.
+- **New dispatcher** (`scheduledMessageDispatcher.js` + `scheduled_messages`):
+  handles proposal-anchored touches. Drip touches 2/4/5_email fire only
+  for proposals at `status='sent'` (i.e., a real `proposals` row exists).
+
+The pre-existing `emailSequenceScheduler.js` keeps running — it just finds no
+active campaigns to process for proposal drips once this UPDATE lands. No code
+removal needed; deactivation is purely data-driven.
+
+- [ ] **Step 1: Append the idempotent UPDATE to `schema.sql`**
+
+```sql
+-- ─── Plan 2d: Decommission legacy proposal-drip campaign ──────────
+-- Plan 2d's dispatcher-driven drip (drip_touch_2/4/5_email) replaces the
+-- email_sequence_enrollments-driven "Abandoned Quote Followup" campaign for
+-- unsigned proposals. Pause the old campaign to avoid double sends.
+--
+-- Engine boundary going forward:
+--   * Old engine (emailSequenceScheduler.js) → raw lead nurture only
+--     (email_leads table, pre-proposal). Inactive after this UPDATE.
+--   * New dispatcher (scheduledMessageDispatcher.js) → proposal-anchored
+--     touches via scheduled_messages.
+--
+-- Idempotent: pausing an already-paused campaign is a no-op. The campaign row
+-- is not deleted so the historical step bodies remain available for reference
+-- or a future un-pause.
+
+UPDATE email_campaigns
+   SET status = 'paused'
+ WHERE name = 'Abandoned Quote Followup'
+   AND type = 'sequence'
+   AND status <> 'paused';
+```
+
+- [ ] **Step 2: Apply and verify**
+
+Restart the dev server (which loads `schema.sql`), then:
+
+```bash
+psql "$DATABASE_URL" -c "SELECT name, type, status FROM email_campaigns WHERE name = 'Abandoned Quote Followup';"
+```
+
+Expected: a single row with `status = 'paused'`.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add server/db/schema.sql
+git commit -m "feat(comms): pause legacy Abandoned Quote Followup drip campaign"
+```
 
 ---
 
@@ -284,6 +378,11 @@ after(async () => {
 afterEach(async () => {
   await pool.query('DELETE FROM proposals WHERE client_id = $1', [retentionClientId]);
 });
+
+// Schema note: proposals.token is UUID NOT NULL DEFAULT gen_random_uuid().
+// These fixtures omit `token` and let the default fire — downstream tests in
+// this block don't read the token. If a future test needs it, use
+// `RETURNING id, token` instead of a string literal.
 
 test('clientHasUpcomingEvent > returns true when client has another non-archived future event', async () => {
   const p = await pool.query(
@@ -579,6 +678,10 @@ test('dripTouch5Client > includes the proposal URL', () => {
 });
 
 // ── reviewRequestClient ──
+// NOTE: payment_profiles has NO zelle_handle column today (only venmo_handle,
+// cashapp_handle, paypal_url). Plan 2d deliberately defers Zelle support — the
+// tip-handle section is Venmo + Cash App only. If/when a Zelle migration is
+// added later, expand this test and the template together.
 const reviewParams = {
   ...baseParams,
   dayOfWeek: 'Saturday',
@@ -586,7 +689,6 @@ const reviewParams = {
   bartenderName: 'Alex',
   venmoHandle: '@alex-bartender',
   cashappHandle: '$alexb',
-  zelleHandle: 'alex@example.com',
 };
 
 test('reviewRequestClient > renders subject with event date', () => {
@@ -600,7 +702,6 @@ test('reviewRequestClient > includes feedback URL and bartender tip handles when
   assert.ok(out.html.includes('Alex'));
   assert.ok(out.html.includes('@alex-bartender'));
   assert.ok(out.html.includes('$alexb'));
-  assert.ok(out.html.includes('alex@example.com'));
 });
 
 test('reviewRequestClient > omits the tip-handle line when bartenderName is null (multi-bartender)', () => {
@@ -612,6 +713,11 @@ test('reviewRequestClient > omits a single tip handle when it is missing', () =>
   const out = tpl.reviewRequestClient({ ...reviewParams, cashappHandle: null });
   assert.ok(!out.html.includes('Cash App'));
   assert.ok(out.html.includes('@alex-bartender'));
+});
+
+test('reviewRequestClient > never references Zelle (column not in schema)', () => {
+  const out = tpl.reviewRequestClient(reviewParams);
+  assert.ok(!out.html.toLowerCase().includes('zelle'));
 });
 
 // ── newYearHelloClient ──
@@ -763,7 +869,7 @@ function dripTouch4Client(params) {
       <p>Let me know if you have any questions or need any changes.</p>
       <p>Cheers,<br/>Dallas</p>
     `, d.unsubscribeUrl),
-    text: `Hi ${d.clientFirstName}, checking back in on your ${d.eventTypeLabel}. Proposal: ${d.proposalUrl}. If BYOB isn't quite right, we also offer Hosted packages — happy to send numbers. Cheers, Dallas`,
+    text: `Hi ${d.clientFirstName}, checking back in on your ${d.eventTypeLabel}. Proposal: ${d.proposalUrl}. If BYOB isn't quite right, we also offer Hosted packages, happy to send numbers. Cheers, Dallas`,
   };
 }
 
@@ -793,14 +899,16 @@ function reviewRequestClient(params) {
   const bartenderName = params.bartenderName;
   const venmoHandle = params.venmoHandle;
   const cashappHandle = params.cashappHandle;
-  const zelleHandle = params.zelleHandle;
+  // Zelle intentionally omitted — payment_profiles.zelle_handle does not
+  // exist in the current schema (only venmo_handle, cashapp_handle,
+  // paypal_url). Plan 2d defers Zelle support; add a migration later if
+  // we want to introduce it.
 
   let tipSection = '';
   if (bartenderName) {
     const handles = [];
     if (venmoHandle) handles.push(`Venmo: <strong>${esc(venmoHandle)}</strong>`);
     if (cashappHandle) handles.push(`Cash App: <strong>${esc(cashappHandle)}</strong>`);
-    if (zelleHandle) handles.push(`Zelle: <strong>${esc(zelleHandle)}</strong>`);
     if (handles.length > 0) {
       tipSection = `
         <p style="background:${BRAND_BG};padding:14px 18px;border-left:4px solid ${BRAND_SECONDARY};border-radius:4px;font-size:14px;">
@@ -811,17 +919,22 @@ function reviewRequestClient(params) {
     }
   }
 
+  // W6 fix: review_request is registered with `category: 'operational'`
+  // (transactional CAN-SPAM follow-up). Use `wrapEmail` (no unsubscribe
+  // footer) instead of `wrapMarketingEmail` — including an unsubscribe footer
+  // on a transactional email would be inconsistent with the operational
+  // classification and confuse clients.
   return {
     subject: `How was your ${d.eventDateDisplay} event?`,
-    html: wrapMarketingEmail(`
+    html: wrapEmail(`
       <p>Hi ${esc(d.clientFirstName)},</p>
       <p>Thanks again for having us at your <strong>${esc(d.eventTypeLabel)}</strong> last ${esc(dayOfWeek)}. Hope you and your guests had a great time.</p>
       <p>If you have a moment, we'd love to hear how it went:</p>
       ${ctaButton(feedbackUrl, 'Rate your experience')}
       ${tipSection}
       <p>Cheers,<br/>Dallas</p>
-    `, d.unsubscribeUrl),
-    text: `Hi ${d.clientFirstName}, thanks again for having us at your ${d.eventTypeLabel} last ${dayOfWeek}. Rate your experience: ${feedbackUrl}${bartenderName ? `. Tip ${bartenderName}${venmoHandle ? ` at Venmo ${venmoHandle}` : ''}${cashappHandle ? `, Cash App ${cashappHandle}` : ''}${zelleHandle ? `, Zelle ${zelleHandle}` : ''}` : ''}. Cheers, Dallas`,
+    `),
+    text: `Hi ${d.clientFirstName}, thanks again for having us at your ${d.eventTypeLabel} last ${dayOfWeek}. Rate your experience: ${feedbackUrl}${bartenderName ? `. Tip ${bartenderName}${venmoHandle ? ` at Venmo ${venmoHandle}` : ''}${cashappHandle ? `, Cash App ${cashappHandle}` : ''}` : ''}. Cheers, Dallas`,
   };
 }
 
@@ -977,6 +1090,9 @@ before(async () => {
     "INSERT INTO clients (name, email) VALUES ('Feedback Test Client', 'feedback-test@example.com') RETURNING id"
   );
   clientId = c.rows[0].id;
+  // Schema note: proposals.token is UUID NOT NULL DEFAULT gen_random_uuid().
+  // We omit `token` and let the default fire, then RETURNING captures the
+  // generated value for use in feedback URL tests below.
   const p = await pool.query(
     `INSERT INTO proposals (client_id, event_date, status, event_type)
      VALUES ($1, CURRENT_DATE - INTERVAL '2 days', 'completed', 'birthday-party')
@@ -1624,7 +1740,7 @@ export default function FeedbackPage() {
           setDone(true);
         } else {
           // eslint-disable-next-line no-alert
-          alert('Could not submit feedback — please try again in a moment.');
+          alert('Could not submit feedback. Please try again in a moment.');
           setStars(0);
         }
       } finally {
@@ -1645,7 +1761,7 @@ export default function FeedbackPage() {
         setDone(true);
       } else {
         // eslint-disable-next-line no-alert
-        alert('Could not submit feedback — please try again in a moment.');
+        alert('Could not submit feedback. Please try again in a moment.');
       }
     } finally {
       setSubmitting(false);
@@ -1691,7 +1807,7 @@ export default function FeedbackPage() {
             onChange={e => setComment(e.target.value)}
             maxLength={2000}
             rows={5}
-            placeholder="Optional — anything you want Dallas to know."
+            placeholder="Optional. Anything you want Dallas to know."
           />
           <button type="submit" disabled={submitting}>
             {submitting ? 'Sending…' : 'Send feedback'}
@@ -1870,9 +1986,10 @@ This is the integration layer between the dispatcher (Plan 2a's `registerHandler
 
 **Key design decisions:**
 
-- **Marketing gating:** the dispatcher itself doesn't know which messages are marketing-class. We make every handler self-suppress by re-checking `clients.communication_preferences.marketing_enabled` at fire time. This is defense-in-depth alongside the scheduler-level skip (Plan 2a's dispatcher reads a `MARKETING_MESSAGE_TYPES` set exported by this file).
+- **Marketing gating:** the dispatcher's marketing-gate (Plan 2a Task 9) reads `getHandlerMeta(messageType).category === 'marketing'` from the dispatcher's handler registry, NOT a separately exported constant. This file therefore does NOT export a `MARKETING_MESSAGE_TYPES` constant — the single source of truth is the metadata passed to `registerHandler()`. The handlers also self-suppress on `clients.communication_preferences.marketing_enabled` at fire time as defense-in-depth.
 - **Token-based URLs:** the proposal token (`proposals.token` UUID) is the canonical client-facing identifier. The `unsubscribe` link uses the existing `emailMarketing` JWT pattern (`UNSUBSCRIBE_SECRET`).
 - **Idempotent scheduling:** `scheduleMessage` from Plan 2a is itself idempotent on (entity_type, entity_id, message_type, recipient_id, channel) — re-calling it for a proposal that already has the row doesn't duplicate.
+- **Reschedule cascade for computed-anchor types (W2 fix):** `new_year_hello`'s scheduled_for is computed via calendar math (Jan 2 of event_year at 10am event-local), which cannot be expressed as a fixed `offsetFromEventDate`. Plan 2c's generic cascade (`reanchorPendingMessages`) MUST detect message_types registered with `{ anchor: 'event_date', offsetFromEventDate: null }` and dispatch to a per-type recompute helper instead of leaving the row alone. Plan 2d exports `recomputeNewYearHelloForProposal(proposalId)` for that purpose (DELETE + re-evaluate eligibility via `scheduleNewYearHello`). **Cross-plan contract:** Plan 2c's `rescheduleProposalInTx` (or `reanchorPendingMessages`) must be updated to call `recomputeNewYearHelloForProposal(proposalId)` for every pending `new_year_hello` row when `event_date` changes. Document this in `.plan-2-contract.md`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1883,7 +2000,6 @@ const { test, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const {
-  MARKETING_MESSAGE_TYPES,
   registerMarketingHandlers,
   scheduleDripForProposal,
   scheduleReviewRequest,
@@ -1904,6 +2020,9 @@ before(async () => {
 });
 
 beforeEach(async () => {
+  // Schema note: proposals.token is UUID NOT NULL DEFAULT gen_random_uuid();
+  // omitting it lets the default fire. This test reads `proposalId` only, not
+  // the token — so omitting `RETURNING token` is fine.
   const p = await pool.query(
     `INSERT INTO proposals (client_id, event_date, status, event_type)
      VALUES ($1, CURRENT_DATE + INTERVAL '365 days', 'sent', 'birthday-party')
@@ -1923,8 +2042,14 @@ after(async () => {
   await pool.end();
 });
 
-// ── MARKETING_MESSAGE_TYPES ──
-test('MARKETING_MESSAGE_TYPES > contains every marketing-class type the dispatcher should gate', () => {
+// ── handler metadata (single source of truth) ──
+// The dispatcher's marketing gate reads `getHandlerMeta(messageType).category`,
+// not a separately exported list. After registration, every marketing-class
+// type must report category 'marketing', and review_request must report
+// 'operational' (CAN-SPAM transactional post-sale follow-up).
+test('handler metadata > marketing types register with category=marketing', () => {
+  registerMarketingHandlers();
+  const { getHandlerMeta } = require('./scheduledMessageDispatcher');
   for (const t of [
     'drip_touch_2',
     'drip_touch_4',
@@ -1933,11 +2058,13 @@ test('MARKETING_MESSAGE_TYPES > contains every marketing-class type the dispatch
     'six_months_out',
     'retention_nudge',
   ]) {
-    assert.ok(MARKETING_MESSAGE_TYPES.includes(t), `expected ${t}`);
+    const meta = getHandlerMeta(t);
+    assert.ok(meta, `expected handler meta for ${t}`);
+    assert.strictEqual(meta.category, 'marketing', `expected ${t} category=marketing`);
   }
-  // review_request is intentionally NOT marketing — it's transactional per CAN-SPAM
-  // (post-sale follow-up about a completed service). marketing_enabled does NOT gate it.
-  assert.ok(!MARKETING_MESSAGE_TYPES.includes('review_request'));
+  const reviewMeta = getHandlerMeta('review_request');
+  assert.ok(reviewMeta);
+  assert.strictEqual(reviewMeta.category, 'operational');
 });
 
 // ── scheduleDripForProposal ──
@@ -2157,22 +2284,15 @@ const {
 const { scheduleMessage } = require('./messageScheduling'); // from Plan 2a
 const { registerHandler } = require('./scheduledMessageDispatcher'); // from Plan 2a
 
-/**
- * Marketing-class message types: dispatcher skips these when the client has
- * marketing_enabled = false on their communication_preferences. The review
- * request is intentionally NOT in this list — it's a transactional follow-up
- * about a service the client paid for, so CAN-SPAM allows it regardless of
- * marketing opt-out. (Self-suppression on individual unsubscribe still applies
- * if we ever add a transactional opt-out, but that's not in this plan.)
- */
-const MARKETING_MESSAGE_TYPES = [
-  'drip_touch_2',
-  'drip_touch_4',
-  'drip_touch_5_email',
-  'new_year_hello',
-  'six_months_out',
-  'retention_nudge',
-];
+// NOTE: there is intentionally NO exported MARKETING_MESSAGE_TYPES list here.
+// The single source of truth for marketing-class gating is the `category`
+// option passed to `registerHandler(messageType, fn, { category })` below;
+// the dispatcher's marketing-gate reads `getHandlerMeta(messageType).category`
+// at fire time. Keeping a parallel constant would drift — leave it out.
+//
+// review_request is registered with category: 'operational' (transactional
+// post-sale follow-up under CAN-SPAM); the dispatcher does NOT gate it on
+// marketing_enabled. The other six handlers are 'marketing'.
 
 function formatEventDateDisplay(eventDate) {
   if (!eventDate) return 'your upcoming event';
@@ -2316,6 +2436,57 @@ async function scheduleNewYearHello(proposalId) {
 }
 
 /**
+ * W2 fix — reschedule-cascade hook for new_year_hello.
+ *
+ * The `new_year_hello` row is anchored to "Jan 2 of event_year at 10am
+ * event-local" (computed via `computeNewYearSendAt(eventDate, tz)`). This is
+ * NOT expressible as a fixed offsetFromEventDate, so Plan 2c's generic
+ * `reanchorPendingMessages` cascade — which uses `eventDateMs + offset*1000`
+ * — would leave the row stuck at the OLD Jan 2 if admin moves the event
+ * across a year boundary. Worse, when registered with
+ * `offsetFromEventDate: null`, Plan 2c's cascade explicitly skips the row.
+ *
+ * This helper is the per-message-type re-anchor entrypoint Plan 2c's
+ * cascade calls for any message_type registered with
+ * `{ anchor: 'event_date', offsetFromEventDate: null }`. Plan 2c MUST be
+ * updated to detect this combination in `reanchorPendingMessages` and
+ * invoke a per-type recompute helper (see the contract note below). For
+ * Plan 2d, only new_year_hello falls into this bucket today.
+ *
+ * Strategy: DELETE the pending row (if any) and re-evaluate eligibility for
+ * the new event_date via `scheduleNewYearHello`. If still eligible, a new
+ * row is inserted via `scheduleMessage` with the freshly-computed
+ * scheduled_for. If no longer eligible (event now in the same year or > 1
+ * year out), the row is simply gone.
+ *
+ * Idempotent: safe to call multiple times.
+ *
+ * @returns {Promise<{deleted: boolean, rescheduled: boolean}>}
+ */
+async function recomputeNewYearHelloForProposal(proposalId) {
+  const del = await pool.query(
+    `DELETE FROM scheduled_messages
+      WHERE entity_type = 'proposal'
+        AND entity_id = $1
+        AND message_type = 'new_year_hello'
+        AND status = 'pending'`,
+    [proposalId]
+  );
+  const deleted = del.rowCount > 0;
+  await scheduleNewYearHello(proposalId);
+  const post = await pool.query(
+    `SELECT 1 FROM scheduled_messages
+      WHERE entity_type = 'proposal'
+        AND entity_id = $1
+        AND message_type = 'new_year_hello'
+        AND status = 'pending'
+      LIMIT 1`,
+    [proposalId]
+  );
+  return { deleted, rescheduled: post.rowCount > 0 };
+}
+
+/**
  * On sign+pay (Stripe webhook), schedule a 6-months-out touch if eligible.
  * Eligible: booking lead time strictly > 6 months.
  * Send time uses event timezone (Gemini Finding 4).
@@ -2426,19 +2597,30 @@ function handler(messageType, renderFn) {
 
 async function bartenderTipHandlesForSingleBartenderEvent(proposalId) {
   // Look up the proposal's shift(s) and the assigned bartenders' tip handles.
-  // Returns { bartenderName, venmoHandle, cashappHandle, zelleHandle } when
-  // the event had exactly one bartender; otherwise returns null so the
-  // template omits the tip line.
+  // Returns { bartenderName, venmoHandle, cashappHandle } when the event had
+  // exactly one approved bartender; otherwise returns null so the template
+  // omits the tip line.
+  //
+  // Schema notes (verified against server/db/schema.sql, 2026-05-20):
+  //   - There is NO `shift_assignments` table. Staff-to-shift linkage uses
+  //     `shift_requests` (sr.shift_id, sr.user_id, sr.status). Status values:
+  //     'pending' | 'approved' | 'denied'. 'approved' is the post-confirm state.
+  //   - `shifts.proposal_id` exists (ALTER TABLE shifts ADD COLUMN proposal_id).
+  //   - `payment_profiles` columns: `venmo_handle`, `cashapp_handle`,
+  //     `paypal_url`. There is NO `zelle_handle` column. Zelle support is
+  //     intentionally OUT OF SCOPE for Plan 2d. If we later want Zelle, add
+  //     a separate migration: ALTER TABLE payment_profiles ADD COLUMN
+  //     IF NOT EXISTS zelle_handle TEXT. For now, omit Zelle from the tip
+  //     handles entirely.
   const { rows } = await pool.query(`
-    SELECT u.id, cp.preferred_name AS bartender_name,
-           pp.venmo_handle, pp.cashapp_handle, pp.zelle_handle
-    FROM shift_assignments sa
-    JOIN shifts s ON s.id = sa.shift_id
-    LEFT JOIN users u ON u.id = sa.user_id
-    LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
-    LEFT JOIN payment_profiles pp ON pp.user_id = u.id
+    SELECT sr.user_id, cp.preferred_name AS bartender_name,
+           pp.venmo_handle, pp.cashapp_handle
+    FROM shift_requests sr
+    JOIN shifts s ON s.id = sr.shift_id
+    LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
+    LEFT JOIN payment_profiles pp ON pp.user_id = sr.user_id
     WHERE s.proposal_id = $1
-      AND sa.status = 'confirmed'
+      AND sr.status = 'approved'
   `, [proposalId]);
 
   if (rows.length !== 1) return null;
@@ -2447,7 +2629,6 @@ async function bartenderTipHandlesForSingleBartenderEvent(proposalId) {
     bartenderName: r.bartender_name,
     venmoHandle: r.venmo_handle,
     cashappHandle: r.cashapp_handle,
-    zelleHandle: r.zelle_handle,
   };
 }
 
@@ -2491,10 +2672,18 @@ function registerMarketingHandlers() {
   registerHandler(
     'new_year_hello',
     handler('new_year_hello', (p) => tpl.newYearHelloClient(makeMarketingTemplateContext(p))),
-    // Anchored on event_date but uses calendar math (Jan 2 of event year) at
-    // compute time. The simple offset arithmetic can't express that exactly,
-    // so the cascade re-anchors via the compute helpers when the event_date
-    // changes years. The offset value here is approximate.
+    // Anchored on event_date but the scheduled_for is computed via calendar
+    // math (Jan 2 of event_year at 10am event-local) — NOT expressible as a
+    // fixed offset. We register with `offsetFromEventDate: null` so Plan 2c's
+    // generic offset-based reanchor MUST NOT touch this row directly.
+    //
+    // W2: Plan 2c's reschedule cascade MUST instead detect message_types with
+    // `{ anchor: 'event_date', offsetFromEventDate: null }` and dispatch to
+    // the per-type helper `recomputeNewYearHelloForProposal(proposalId)`,
+    // which DELETEs the pending row and calls `scheduleNewYearHello` again
+    // with the new event_date (re-evaluating eligibility). Without this hook
+    // the row stays pinned to the OLD Jan 2 when admin moves an event across
+    // a year boundary. See `.plan-2-contract.md` for the cross-plan contract.
     { offsetFromEventDate: null, anchor: 'event_date', category: 'marketing' }
   );
   registerHandler(
@@ -2550,13 +2739,13 @@ function registerMarketingHandlers() {
 }
 
 module.exports = {
-  MARKETING_MESSAGE_TYPES,
   registerMarketingHandlers,
   scheduleDripForProposal,
   scheduleReviewRequest,
   scheduleNewYearHello,
   scheduleSixMonthsOut,
   scheduleRetentionNudge,
+  recomputeNewYearHelloForProposal,
   cancelMarketingForProposal,
 };
 ```
@@ -2587,27 +2776,34 @@ The dispatcher utilities from Plan 2a expect every handler to be registered once
 
 - [ ] **Step 1: Find the scheduler bootstrap block**
 
-Read `server/index.js` around the `RUN_SCHEDULED_MESSAGES_SCHEDULER` block (added in Plan 2a; if Plan 2a hasn't yet wired it, locate the per-scheduler block from Plan 1 around line 247).
+Read `server/index.js` around the `RUN_MESSAGE_DISPATCHER_SCHEDULER` block (added in Plan 2a; if Plan 2a hasn't yet wired it, locate the per-scheduler block from Plan 1 around line 247).
 
 - [ ] **Step 2: Add the registration call just before the scheduler starts**
 
-Find where the dispatcher's poll loop is launched. The pattern (sketched, adapt to actual code from Plan 2a):
+Find where the dispatcher's poll loop is launched. Per the shared Plan 2 contract, the canonical bootstrap shape is:
+
+- Env var: `RUN_MESSAGE_DISPATCHER_SCHEDULER` (NOT `RUN_SCHEDULED_MESSAGES_SCHEDULER`)
+- Wrapped function: `wrapScheduler('message_dispatcher', 300, dispatchPending)` (NOT `processScheduledMessages`, NOT health row `scheduled_messages`)
+- Cadence: 300 seconds / 5 minutes (NOT 60s)
+- Initial delay: 180 seconds (stagger past existing schedulers)
+- `clearHealthRow('message_dispatcher')` in the else branch
 
 ```javascript
-if (enabled('RUN_SCHEDULED_MESSAGES_SCHEDULER')) {
+if (enabled('RUN_MESSAGE_DISPATCHER_SCHEDULER')) {
   const { registerMarketingHandlers } = require('./utils/marketingHandlers');
   registerMarketingHandlers();
   // ... existing Plan 2a registration calls for money-path handlers ...
-  const { processScheduledMessages } = require('./utils/scheduledMessageDispatcher');
-  const wrapped = wrapScheduler('scheduled_messages', 60, processScheduledMessages);
-  setTimeout(wrapped, 30000);
-  setInterval(wrapped, 60 * 1000);
+  // ... and Plan 2c's pre-event handlers (registerPreEventHandlers()) ...
+  const { dispatchPending } = require('./utils/scheduledMessageDispatcher');
+  const wrapped = wrapScheduler('message_dispatcher', 300, dispatchPending);
+  setTimeout(wrapped, 180_000);
+  setInterval(wrapped, 300_000);
 } else {
-  clearHealthRow('scheduled_messages');
+  clearHealthRow('message_dispatcher');
 }
 ```
 
-If Plan 2a's registration block already exists for the money-path handlers (`payment_failure`, `balance_reminder_t3`, etc.), add `registerMarketingHandlers()` next to it. Don't duplicate the dispatcher launch.
+If Plan 2a's registration block already exists for the money-path handlers (`payment_failure`, `balance_reminder_autopay_t3`, etc.), add `registerMarketingHandlers()` next to it. Don't duplicate the dispatcher launch.
 
 - [ ] **Step 3: Boot the server and confirm registration log lines**
 
@@ -2711,12 +2907,17 @@ git commit -m "feat(comms): enroll drip on proposal sent, cancel on archive"
 
 ---
 
-## Task 9: Wire New Year + 6-months-out on sign+pay
+## Task 9: Wire New Year + 6-months-out + drip-suppression on sign+pay
 
 **Files:**
-- Modify: the Stripe webhook handler (find via grep)
+- Modify: `server/routes/stripe.js` (the file is `stripe.js`, NOT `stripeWebhook.js` — that filename does not exist)
 
-Sign+pay completes in the Stripe webhook flow when the deposit (or first/only payment) succeeds. The natural hook is the point where the proposal status flips to `deposit_paid` (or `signed`/`accepted` depending on the existing flow). The same hook will be used by Plan 2b/2c for orientation email; Plan 2d only adds the two marketing scheduling calls.
+Sign+pay completes in the Stripe webhook (`payment_intent.succeeded`) flow when the deposit (or first/only payment) succeeds. Plan 2a already wires the deposit-paid post-commit notifier; Plan 2c adds a `schedulePreEventReminders(proposalId)` non-blocking try/catch at the same hook. Plan 2d adds:
+
+1. A SEPARATE non-blocking try/catch IMMEDIATELY AFTER Plan 2c's block that calls `scheduleNewYearHello(proposalId)` and `scheduleSixMonthsOut(proposalId)`.
+2. Drip suppression — pending `drip_touch_*` rows for the proposal must be marked `suppressed` so they don't fire after the client has already signed and paid (W1 — see Step 3 below). Without this, a client who signs on day 5 still gets touch_2 on day 7.
+
+**Why two separate try/catch blocks (not a single combined helper).** Plans 2c and 2d ship independently and could be re-ordered or one chunk could be deferred. A single combined `scheduleAllProposalMessages` helper would couple them. Two adjacent blocks with a short comment is simpler and lets either chunk be reverted without touching the other. (If we later want to fold them together, refactor as a follow-up — for now, keep them explicit.)
 
 - [ ] **Step 1: Locate the Stripe webhook handler and its deposit-paid branch**
 
@@ -2724,35 +2925,76 @@ Sign+pay completes in the Stripe webhook flow when the deposit (or first/only pa
 grep -rn "deposit_paid\|signed.*paid\|charge.succeeded" server/routes/ server/utils/ --include="*.js" | head -20
 ```
 
-Likely files: `server/routes/stripeWebhook.js`, `server/utils/stripeWebhook*.js`, or a `signedAndPaid` handler. Read the relevant block to find where the proposal transitions to `deposit_paid` and the existing client email fires.
+Canonical file: `server/routes/stripe.js`. Read the relevant block to find where the proposal transitions to `deposit_paid`. Plan 2c added a `schedulePreEventReminders(proposalId)` non-blocking try/catch in this same notifier; Plan 2d's blocks go IMMEDIATELY AFTER it.
 
-- [ ] **Step 2: Add the marketing scheduling calls right after the proposal transitions**
+- [ ] **Step 2: Add the marketing scheduling calls right AFTER Plan 2c's block**
 
-After the proposal status update and the existing email send (best-effort, non-blocking pattern):
+After the existing Plan 2c `schedulePreEventReminders(proposalId)` try/catch:
 
 ```javascript
-  // Schedule long-lead-time marketing touches (New Year, 6-months-out) for this proposal.
-  // Both helpers check their own eligibility and no-op if conditions aren't met.
+  // Plan 2d: schedule long-lead-time marketing touches (New Year, 6-months-out).
+  // Separate try/catch from Plan 2c's schedulePreEventReminders block so a
+  // marketing failure can't mask a pre-event-reminder failure (and vice versa)
+  // in Sentry tags. Both helpers check their own eligibility and no-op when
+  // conditions aren't met (e.g. event in same calendar year → no New Year touch).
+  //
+  // Why two adjacent try/catch blocks and not a single combined helper: Plans
+  // 2c and 2d ship as separate chunks, and one chunk could be reverted without
+  // touching the other. A combined helper would couple them.
   try {
     const {
       scheduleNewYearHello,
       scheduleSixMonthsOut,
-    } = require('../utils/marketingHandlers'); // adjust path to match actual file
+    } = require('../utils/marketingHandlers');
     await scheduleNewYearHello(proposalId);
     await scheduleSixMonthsOut(proposalId);
   } catch (marketingErr) {
     if (process.env.SENTRY_DSN_SERVER) {
-      Sentry.captureException(marketingErr, { tags: { route: 'stripeWebhook', issue: 'marketing-enroll' } });
+      Sentry.captureException(marketingErr, { tags: { route: 'stripe', issue: 'marketing-enroll' } });
     }
     console.error('Marketing enroll on sign+pay failed (non-blocking):', marketingErr);
   }
 ```
 
-The path to `marketingHandlers` depends on where the webhook handler lives (`../utils/...` from `server/routes/`, or `./utils/...` from `server/`).
+The require path is `../utils/marketingHandlers` from `server/routes/stripe.js`.
+
+- [ ] **Step 3: Suppress any pending drip touches now that the client has signed (W1 fix)**
+
+Plan 2d's `cancelMarketingForProposal` only fires on `status='archived'`. On a successful sign+pay the status moves to `deposit_paid`, not archived — so pending drip rows (drip_touch_2/4/5_email scheduled +7/+14/+21 days after status='sent') would still fire even after the client paid. Suppress them here.
+
+In the SAME post-commit notifier, AFTER Plan 2d's marketing-schedule try/catch above, add a third try/catch:
+
+```javascript
+  // Plan 2d / W1: suppress any pending unsigned-proposal drip rows for this
+  // proposal — the client has signed and paid, so the "still thinking about
+  // your event?" touches are no longer appropriate. We only suppress drip
+  // touches, NOT marketing touches added in Step 2 (those are still wanted —
+  // the client has signed but the event is still upcoming). And we leave
+  // already-sent rows alone (status='sent' rows stay 'sent'; only pending
+  // rows are flipped).
+  try {
+    const { pool } = require('../db');
+    await pool.query(
+      `UPDATE scheduled_messages
+          SET status = 'suppressed',
+              error_message = 'proposal signed and paid'
+        WHERE entity_type = 'proposal'
+          AND entity_id = $1
+          AND status = 'pending'
+          AND message_type IN ('drip_touch_2', 'drip_touch_4', 'drip_touch_5_email')`,
+      [proposalId]
+    );
+  } catch (suppressErr) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(suppressErr, { tags: { route: 'stripe', issue: 'drip-suppress' } });
+    }
+    console.error('Drip suppression on sign+pay failed (non-blocking):', suppressErr);
+  }
+```
 
 - [ ] **Step 3: Smoke test with a fake first-deposit event**
 
-If the project has a Stripe webhook test fixture (look for `server/utils/stripeWebhook.test.js` or similar), run it. Otherwise, insert a manual test:
+If the project has a Stripe webhook test fixture (look for `server/routes/stripe.test.js` or similar), run it. Otherwise, insert a manual test:
 
 ```bash
 psql "$DATABASE_URL" << 'EOF'
@@ -2803,7 +3045,7 @@ Expected: two rows printed — one for `six_months_out` (today + ~40 days) and o
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/routes/stripeWebhook.js  # or wherever the change actually landed
+git add server/routes/stripe.js
 git commit -m "feat(comms): enroll New Year + 6mo-out marketing touches on sign+pay"
 ```
 
@@ -3360,7 +3602,7 @@ No commit needed for verification.
 
 - [ ] Placeholder scan: no TBD, no "implement later", every step has actual code or actual SQL or actual commands. Verified.
 
-- [ ] Type consistency: `scheduleMessage` from Plan 2a is called with the same shape (`{entityType, entityId, messageType, recipientType, recipientId, channel, scheduledFor}`) at every site. `registerHandler('<type>', handlerFn)` is called consistently. Message type identifiers are stable across files: `drip_touch_2`, `drip_touch_4`, `drip_touch_5_email`, `new_year_hello`, `six_months_out`, `retention_nudge`, `review_request`. `MARKETING_MESSAGE_TYPES` exports from `marketingHandlers.js` and is imported by the dispatcher in Task 11.
+- [ ] Type consistency: `scheduleMessage` from Plan 2a is called with the same shape (`{entityType, entityId, messageType, recipientType, recipientId, channel, scheduledFor}`) at every site. `registerHandler('<type>', handlerFn, { offsetFromEventDate, anchor, category })` is called consistently with the full metadata triple. Message type identifiers are stable across files: `drip_touch_2`, `drip_touch_4`, `drip_touch_5_email`, `new_year_hello`, `six_months_out`, `retention_nudge`, `review_request`. The dispatcher's marketing gate (Plan 2a Task 9) reads `getHandlerMeta(messageType).category` — there is no exported `MARKETING_MESSAGE_TYPES` constant in this plan (single source of truth = handler metadata).
 
 - [ ] Tests precede implementation in every Task (red → green → commit). Verified.
 
