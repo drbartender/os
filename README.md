@@ -222,7 +222,8 @@ dr-bartender/
 │   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, KebabMenu,
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal, MetricsFilterBar,
 │   │   │   │                   # format, nav, shifts; drawers/{ClientDrawer,InvoicesDrawer,ShiftDrawer})
-│   │   │   └── ShoppingList/   # Shopping list generator (PDF export, ConsultationForm admin-input modal)
+│   │   │   ├── ShoppingList/   # Shopping list generator (PDF export, ConsultationForm admin-input modal)
+│   │   │   └── MenuPNG/        # Standard Menu PNG export (html2canvas-driven, lazy-loaded; renders hidden MenuPreview at print scale 768x960 and downloads as 2304x2880 PNG)
 │   │   ├── data/               # Shared data (addonCategories, eventTypes, menuSamples, packages, syrups)
 │   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam, useFormValidation, useWizardHistory, useMetricsFilter)
 │   │   ├── pages/
@@ -232,7 +233,7 @@ dr-bartender/
 │   │   │   ├── (admin)         # AdminDashboard (AdminUserDetail moved into admin/userDetail/, AdminApplicationDetail moved into admin/applicationDetail/)
 │   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/)
 │   │   │   ├── staff/          # Staff portal (StaffDashboard, StaffShifts, StaffSchedule, StaffEvents, StaffResources, StaffProfile, MyTipPage tip-page settings, PrintTipCard printable QR card with PrintTipCard.layouts.jsx + PrintTipCard.css)
-│   │   │   ├── plan/           # PotionPlanningLab — public post-booking event questionnaire (single flow, created only after deposit; with steps/, components/, data/; components/ScopeBanner + components/WelcomeRoadmap = apothecary-reskin shared UI; steps/HostedGuestPrefsStep.js = compact hosted-package guest-preferences step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test)
+│   │   │   ├── plan/           # PotionPlanningLab — public post-booking event questionnaire (single flow, created only after deposit; with steps/, components/, data/; components/ScopeBanner + components/WelcomeRoadmap + components/MenuPreview + components/LogoUploadField = apothecary-reskin + Standard Menu shared UI; steps/HostedGuestPrefsStep.js = compact hosted-package guest-preferences step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test; data/menuSections.js = Standard Menu section extractor with menuSections.test.js Jest unit suite)
 │   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment
 │   │   │   ├── proposal/       # ProposalView (public client-facing) — split into proposalView/ folder (parent + ProposalHeader + ProposalPricingBreakdown + SignAndPaySection + PaymentForm + helpers + styles)
 │   │   │   ├── public/         # Client portal (ClientLogin, ClientDashboard, ClientShoppingList, Blog, BlogPost) + tip flow (TipPage with TipPage.atoms.jsx + TipPage.css, TipPageThanks post-tip feedback)

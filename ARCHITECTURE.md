@@ -214,7 +214,11 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | DELETE | `/:id` | Admin | Delete a plan |
 | GET | `/t/:token` | Public | Fetch questionnaire by token (JOINs proposal for guest_count, num_bartenders, pricing_snapshot). Returns a locked payload `{ locked: true, proposalToken }` when the linked proposal is pre-deposit, so a stale emailed `/plan/:token` link renders a lock screen instead of the wizard (`isDrinkPlanPreBooking` allowlist, fails safe) |
 | PUT | `/t/:token` | Public | Save draft or submit selections (on submit: processes addOns into proposal_addons, recalculates pricing, sends admin email, auto-generates pending_review shopping list) |
-| GET | `/t/:token/shopping-list` | Public | Client read-only view — returns the list only once admin has approved it |
+| GET | `/t/:token/shopping-list` | Public | Client read-only view, returns the list only once admin has approved it |
+| POST | `/t/:token/logo` | Public | Standard Menu logo upload (PNG/JPG, 5 MB cap, magic-bytes validation). Uploads to R2 and atomically merges `companyLogo` + `_logoFilename` into `selections` via the Postgres jsonb `\|\|` operator |
+| GET | `/t/:token/logo` | Public | Proxies the uploaded logo from R2 with `Content-Type` + `Cache-Control: public, max-age=86400`. Same-origin so `html2canvas` can capture it without CORS taint |
+| POST | `/:id/logo` | Admin | Admin upload/replace for a specific plan's logo. Same validation + atomic JSONB merge as the token-gated route |
+| DELETE | `/:id/logo` | Admin | Clears `selections.companyLogo` + `_logoFilename` via Postgres jsonb `-` operator. R2 file is not deleted |
 
 ### Cocktails — `/api/cocktails`
 | Method | Path | Auth | Description |
