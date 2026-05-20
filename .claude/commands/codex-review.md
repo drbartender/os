@@ -21,6 +21,7 @@ Resolve `$ARGUMENTS` against the table below, **in order — first match wins**:
 | *(empty)* | `codex review --uncommitted` — holistic "anything look off?" |
 | `tests` | `codex review --uncommitted "What tests SHOULD exist for the changes in this diff but don't? Identify missing unit tests, integration tests, and edge cases. Skip critiquing existing test quality — only flag gaps."` |
 | `pricing` | `codex review --uncommitted "Verify the pricing math. This project stores money as integer cents — flag any float arithmetic. Hosted (per_guest) packages have a load-bearing rule: additional bartenders are \$0 line items with \$0 gratuity via BOTH the num_bartenders override AND the additional-bartender addon — use isHostedPackage(pkg) from server/utils/pricingEngine.js. Check rounding, tax/gratuity handling, and any arithmetic the diff touches."` |
+| `risk-areas` | `codex review --uncommitted "Audit this diff for the high-risk patterns this codebase has been bitten by before: (1) OTP / auth flow edge cases — expired codes, race conditions on verify, rate-limit gaps, brute-force surfaces. (2) Stripe webhook idempotency — event.id dedup, signature verification, replay safety, partial-failure recovery on multi-step webhook handlers. (3) DB transactions — multi-table writes that should be wrapped in BEGIN/COMMIT but aren't, partial-failure rollback safety. (4) 'You forgot to handle X' class — missing null checks, missing error paths, missing edge-case branches. For each finding, file:line and one-line concern."` |
 | `intent` | `codex review --uncommitted "Does this diff actually do what the most recent commit message (or stated intent in the branch) claims? Flag any mismatch between stated intent and actual behavior, including changes that go beyond what the commit message advertises."` |
 | `architecture` | `codex review --uncommitted "Architectural review only. Look for leaky abstractions, violated module boundaries, tight coupling, design decisions that will be hard to change, and places where the structure obscures intent. Skip narrow code-quality nits — the Claude code-review agent covers those."` |
 | `staged` | `codex review` — staged changes only (Codex default) |
@@ -55,9 +56,19 @@ If Codex output includes a suggested patch or diff, **present it to the user as 
 
 When Codex finishes:
 
-1. **Relay the raw Codex output verbatim** so the user sees the exact reasoning, not a filtered paraphrase.
-2. **Summarize** findings grouped by severity: **blockers**, **warnings**, **suggestions**. For each, give file:line and a one-line concern.
-3. **Cross-check with any Claude review agents that ran earlier in this session**: if Codex flags something a Claude agent already flagged, note "Also flagged by @<agent>" — convergence across independent LLMs is a stronger signal than either alone.
+1. **Relay the raw Codex output verbatim, wrapped in the `═══ CODEX ═══` envelope** so the user sees the exact reasoning AND can tell at a glance which tool produced what. The prose itself stays untouched — only the wrapper is added:
+
+   ```
+   ═══ CODEX (code review) ═══
+
+   <verbatim Codex output here, prose intact>
+
+   ═══════════════════════════
+   ```
+
+   This pairs with `/gemini-spec`'s templated output (which uses the same `═══` envelope shape) so when both run in the same session you can spot which findings came from which LLM without reading any text.
+2. **Summarize** findings grouped by severity below the envelope: **blockers**, **warnings**, **suggestions**. For each, give file:line and a one-line concern.
+3. **Cross-check with any Claude review agents or `/gemini-spec` runs from earlier in this session**: if Codex flags something already flagged elsewhere, note "Also flagged by @<agent>" or "Also flagged by Gemini" — convergence across independent LLMs is a stronger signal than any one alone.
 4. **Do NOT auto-fix anything.** Report only. Wait for the user to direct fixes.
 
 ## Notes on using it alongside the existing Claude review flow
