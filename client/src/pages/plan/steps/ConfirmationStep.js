@@ -88,7 +88,7 @@ function DrinkPlanPaymentForm({ onSubmit, payLabel, disabled }) {
 
 // ─── Main component ───────────────────────────────────────────────
 
-export default function ConfirmationStep({ plan, quickPickChoice, activeModules, selections, cocktails = [], mocktails = [], addOns = {}, addonPricing = [], guestCount, numBars = 0, pricingSnapshot = null, proposalSyrups = [], onSubmit, onSubmitForPayment, proposalPaymentInfo, token, saving, error }) {
+export default function ConfirmationStep({ plan, quickPickChoice, activeModules, selections, cocktails = [], mocktails = [], addOns = {}, addonPricing = [], guestCount, numBars = 0, pricingSnapshot = null, proposalSyrups = [], onSubmit, onSubmitForPayment, onChange, proposalPaymentInfo, token, saving, error }) {
   const pick = QUICK_PICKS.find(p => p.key === quickPickChoice);
   const selectedDrinks = cocktails.filter(d => (selections.signatureDrinks || []).includes(d.id));
   const selectedMocktails = mocktails.filter(d => (selections.mocktails || []).includes(d.id));
@@ -403,24 +403,29 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           </div>
         )}
 
-        {/* Menu Design */}
-        {selections.customMenuDesign === true && (
+        {/* Menu Design (three-way) */}
+        {selections.menuStyle === 'custom' && (
           <div className="mb-2">
             <strong>Custom Menu Design:</strong> Yes
             {selections.menuTheme && (
-              <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>Theme: {selections.menuTheme}</p>
+              <p className="text-muted" style={{ color: 'var(--text-muted)' }}>Theme: {selections.menuTheme}</p>
             )}
             {selections.drinkNaming && (
-              <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>Custom naming: {selections.drinkNaming}</p>
+              <p className="text-muted" style={{ color: 'var(--text-muted)' }}>Custom naming: {selections.drinkNaming}</p>
             )}
             {selections.menuDesignNotes && (
-              <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>Design notes: {selections.menuDesignNotes}</p>
+              <p className="text-muted" style={{ color: 'var(--text-muted)' }}>Design notes: {selections.menuDesignNotes}</p>
             )}
           </div>
         )}
-        {selections.customMenuDesign === false && (
+        {selections.menuStyle === 'house' && (
           <div className="mb-2">
-            <strong>Custom Menu Design:</strong> No
+            <strong>Menu Design:</strong> Standard menu (Dr. Bartender branded, printed and framed for the bar)
+          </div>
+        )}
+        {selections.menuStyle === 'none' && (
+          <div className="mb-2">
+            <strong>Menu Design:</strong> No menu card
           </div>
         )}
 
@@ -471,6 +476,25 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
             </p>
           )}
         </div>
+      </div>
+
+      {/* Catch-all "Anything else?" card. Gives clients a home for the
+          by-the-way stuff (allergies, family stories, special requests)
+          that would otherwise get jammed into a scoped notes field. */}
+      <div className="card mb-2">
+        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
+          Anything else we should know?
+        </h3>
+        <p className="text-muted" style={{ color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+          One last chance to mention anything we should know about your event or your guests. Allergies, family stories, dietary needs, special requests, the stuff you've been meaning to bring up.
+        </p>
+        <textarea
+          className="form-textarea"
+          rows={4}
+          placeholder="E.g., my dad has a nut allergy; the groom wants his old fashioned with extra orange peel; please introduce yourself to my mother-in-law when you arrive."
+          value={selections.additionalNotes || ''}
+          onChange={(e) => onChange('additionalNotes', e.target.value)}
+        />
       </div>
 
       {/* Estimated Extras */}

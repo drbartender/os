@@ -905,6 +905,7 @@ export default function PotionPlanningLab() {
             proposalSyrups={proposalSyrups}
             onSubmit={handleSubmit}
             onSubmitForPayment={() => submitDrinkPlan(true)}
+            onChange={updateSelections}
             proposalPaymentInfo={proposalPaymentInfo}
             token={token}
             saving={saving}
