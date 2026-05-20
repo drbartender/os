@@ -2,6 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## What This Resolves (Gemini design-review pass, 2026-05-20)
+
+Coordinated revisions across Plans 2a/b/c/d apply five Gemini design-stage findings. Plan 2a is the load-bearing piece that owns the cross-cutting fixes:
+
+- **Finding 1 (BLOCKER) — Shared message-type registry.** `registerHandler(messageType, handlerFn, options)` now accepts `{ offsetFromEventDate, category, anchor }` metadata so Plan 2c's reschedule cascade can look up the offset for ANY message type (including Plan 2d marketing rows) via a new `getHandlerMeta(messageType)` lookup.
+- **Finding 3 (WARNING) — Shared suppression check.** Plan 2a exports `shouldSendImmediate({ proposal, client, channel })` so every immediate-send code path (orientation, post-consult, reschedule-notification, etc.) honors archive cascade + per-channel comm prefs + bad-contact status before it sends.
+- **Finding 5 (WARNING) — Dispatcher marketing gate.** The dispatcher checks handler metadata at fire-time and suppresses with `'marketing_disabled'` when `category === 'marketing'` and `client.communication_preferences.marketing_enabled === false`.
+
+The remaining two findings (Finding 2 atomic reschedule, Finding 4 retention TZ) live in Plans 2c and 2d respectively.
+
+---
+
 **Goal:** Ship the money-path client emails (balance reminders, autopay success, payment failure, refund notification) and the dispatcher infrastructure that all other Plan 2 chunks (drink-plan touches, event-week/eve, post-event) will build on. Plan 2a is the load-bearing piece of Phase 1 from the spec — it introduces the scheduling helper, the dispatcher loop, handler registration, suppression checks, and the first batch of registered handlers (balance reminders).
 
 **Architecture:** Three concentric layers. (1) Template surface — new `refundNotificationClient`, new `paymentFailedClient`, variant-aware `paymentReminderClient` (autopay vs manual) plus new `paymentReminderLate` (T+1 / T+3), tightened autopay-specific copy on `paymentReceivedClient`. (2) Scheduling helper `messageScheduling.scheduleMessage(...)` that inserts idempotent rows into the existing `scheduled_messages` table (Plan 1). (3) Dispatcher utility `scheduledMessageDispatcher` that runs every 5 min, picks pending rows, joins entity + recipient, runs suppression checks (archive cascade, comm-prefs, email_status), and calls a handler registered by message_type. Stripe webhook on `payment_intent.succeeded` (deposit-paid transition) schedules the appropriate balance reminders; refund and payment-failure paths fire client emails immediately.
@@ -17,8 +29,10 @@
 **Files to create:**
 - `server/utils/messageScheduling.js` — `scheduleMessage(...)` helper, idempotent insert into `scheduled_messages`
 - `server/utils/messageScheduling.test.js` — unit tests against live DB (insert / duplicate / no-op pattern)
-- `server/utils/scheduledMessageDispatcher.js` — pending-row loop, suppression checks, handler registry, built-in money-path handlers
-- `server/utils/scheduledMessageDispatcher.test.js` — unit tests for handler registry + suppression + dispatch
+- `server/utils/messageSuppression.js` — `shouldSendImmediate({ proposal, client, channel })` shared check used by every immediate-send path across Plans 2b / 2c (archive cascade, per-channel comm prefs, bad-contact status). Single source of truth so Plans 2b's orientation/postConsult and 2c's rescheduleNotificationClient honor the same rules the dispatcher applies on scheduled rows.
+- `server/utils/messageSuppression.test.js` — unit tests for each suppression branch
+- `server/utils/scheduledMessageDispatcher.js` — pending-row loop, suppression checks, handler registry with metadata, marketing-class gate, built-in money-path handlers
+- `server/utils/scheduledMessageDispatcher.test.js` — unit tests for handler registry + metadata + suppression + marketing gate + dispatch
 
 **Files to modify:**
 - `server/utils/email.js` — default `replyTo` to `process.env.ADMIN_EMAIL` for client-facing emails
@@ -719,6 +733,203 @@ git commit -m "feat(comms): messageScheduling helper for idempotent scheduled_me
 
 ---
 
+## Task 8.5: Build `messageSuppression.js` — shared immediate-send check (Gemini Finding 3)
+
+**Files:**
+- Create: `server/utils/messageSuppression.js`
+- Create: `server/utils/messageSuppression.test.js`
+
+Plans 2b and 2c each have immediate-send code paths (orientation email, post-consult, rescheduleNotificationClient, drink-plan-submitted confirmations) that today bypass the suppression rules the dispatcher enforces on scheduled rows. That's a hole — an archived proposal could still receive an orientation email, and a client with `email_enabled: false` could still receive a reschedule notification.
+
+This task adds a single source-of-truth function those immediate-send paths must call before invoking `sendEmail`. The dispatcher's own suppression check (the `checkSuppression` function inside `scheduledMessageDispatcher.js`) is kept in sync with this utility.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `server/utils/messageSuppression.test.js`:
+
+```javascript
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { shouldSendImmediate } = require('./messageSuppression');
+
+const okProposal = { id: 1, status: 'deposit_paid' };
+const okClient = {
+  id: 99,
+  email: 'ok@example.com',
+  phone: '+15551234567',
+  communication_preferences: { email_enabled: true, sms_enabled: true, marketing_enabled: true },
+  email_status: 'ok',
+  phone_status: 'ok',
+};
+
+test('shouldSendImmediate > returns ok when everything is fine (email)', async () => {
+  const result = await shouldSendImmediate({ proposal: okProposal, client: okClient, channel: 'email' });
+  assert.deepStrictEqual(result, { ok: true });
+});
+
+test('shouldSendImmediate > returns ok when everything is fine (sms)', async () => {
+  const result = await shouldSendImmediate({ proposal: okProposal, client: okClient, channel: 'sms' });
+  assert.deepStrictEqual(result, { ok: true });
+});
+
+test('shouldSendImmediate > archived proposal blocks everything', async () => {
+  const result = await shouldSendImmediate({
+    proposal: { ...okProposal, status: 'archived' },
+    client: okClient,
+    channel: 'email',
+  });
+  assert.deepStrictEqual(result, { ok: false, reason: 'archived' });
+});
+
+test('shouldSendImmediate > email_enabled=false blocks email', async () => {
+  const result = await shouldSendImmediate({
+    proposal: okProposal,
+    client: { ...okClient, communication_preferences: { ...okClient.communication_preferences, email_enabled: false } },
+    channel: 'email',
+  });
+  assert.deepStrictEqual(result, { ok: false, reason: 'channel_disabled' });
+});
+
+test('shouldSendImmediate > email_enabled=false does NOT block sms', async () => {
+  const result = await shouldSendImmediate({
+    proposal: okProposal,
+    client: { ...okClient, communication_preferences: { ...okClient.communication_preferences, email_enabled: false } },
+    channel: 'sms',
+  });
+  assert.deepStrictEqual(result, { ok: true });
+});
+
+test('shouldSendImmediate > sms_enabled=false blocks sms', async () => {
+  const result = await shouldSendImmediate({
+    proposal: okProposal,
+    client: { ...okClient, communication_preferences: { ...okClient.communication_preferences, sms_enabled: false } },
+    channel: 'sms',
+  });
+  assert.deepStrictEqual(result, { ok: false, reason: 'channel_disabled' });
+});
+
+test('shouldSendImmediate > email_status=bad blocks email', async () => {
+  const result = await shouldSendImmediate({
+    proposal: okProposal,
+    client: { ...okClient, email_status: 'bad' },
+    channel: 'email',
+  });
+  assert.deepStrictEqual(result, { ok: false, reason: 'bad_contact' });
+});
+
+test('shouldSendImmediate > phone_status=bad blocks sms', async () => {
+  const result = await shouldSendImmediate({
+    proposal: okProposal,
+    client: { ...okClient, phone_status: 'bad' },
+    channel: 'sms',
+  });
+  assert.deepStrictEqual(result, { ok: false, reason: 'bad_contact' });
+});
+
+test('shouldSendImmediate > null client.communication_preferences treated as all-enabled', async () => {
+  // Defensive default — if prefs JSON is null (legacy clients pre-Plan 1
+  // migration), assume opt-in. Plan 1 backfilled defaults but the check
+  // stays for safety.
+  const result = await shouldSendImmediate({
+    proposal: okProposal,
+    client: { ...okClient, communication_preferences: null },
+    channel: 'email',
+  });
+  assert.deepStrictEqual(result, { ok: true });
+});
+
+test('shouldSendImmediate > missing client returns ok:false with bad_contact', async () => {
+  const result = await shouldSendImmediate({
+    proposal: okProposal,
+    client: null,
+    channel: 'email',
+  });
+  assert.deepStrictEqual(result, { ok: false, reason: 'bad_contact' });
+});
+
+test('shouldSendImmediate > unknown channel throws', async () => {
+  await assert.rejects(
+    () => shouldSendImmediate({ proposal: okProposal, client: okClient, channel: 'fax' }),
+    /channel/i
+  );
+});
+```
+
+- [ ] **Step 2: Verify failing**
+
+```bash
+node --test server/utils/messageSuppression.test.js
+```
+
+Expected: FAIL with `Cannot find module './messageSuppression'`.
+
+- [ ] **Step 3: Implement the utility**
+
+Create `server/utils/messageSuppression.js`:
+
+```javascript
+const VALID_CHANNELS = new Set(['email', 'sms']);
+
+/**
+ * Decide whether an immediate-send code path should proceed.
+ *
+ * Single source of truth for archive cascade + comm-prefs + bad-contact
+ * checks. Plans 2b and 2c immediate sends MUST call this before invoking
+ * sendEmail / sendSMS. The dispatcher's own suppression check (in
+ * scheduledMessageDispatcher.checkSuppression) enforces the same rules
+ * on scheduled rows — keep the two in sync if a rule changes.
+ *
+ * @param {Object} args
+ * @param {Object} args.proposal - must include `.status` (one of the
+ *   proposal_status enum values). Pass the row you already loaded; this
+ *   function does no I/O.
+ * @param {Object|null} args.client - clients row, must include
+ *   `.communication_preferences`, `.email_status`, `.phone_status`.
+ *   Missing client → bad_contact (no one to send to).
+ * @param {'email'|'sms'} args.channel
+ * @returns {Promise<{ok: true} | {ok: false, reason: 'archived' | 'channel_disabled' | 'bad_contact'}>}
+ */
+async function shouldSendImmediate({ proposal, client, channel }) {
+  if (!VALID_CHANNELS.has(channel)) {
+    throw new Error(`shouldSendImmediate: invalid channel '${channel}'`);
+  }
+  if (proposal && proposal.status === 'archived') {
+    return { ok: false, reason: 'archived' };
+  }
+  if (!client) {
+    return { ok: false, reason: 'bad_contact' };
+  }
+  const prefs = client.communication_preferences || {};
+  if (channel === 'email') {
+    if (prefs.email_enabled === false) return { ok: false, reason: 'channel_disabled' };
+    if (client.email_status === 'bad') return { ok: false, reason: 'bad_contact' };
+  } else if (channel === 'sms') {
+    if (prefs.sms_enabled === false) return { ok: false, reason: 'channel_disabled' };
+    if (client.phone_status === 'bad') return { ok: false, reason: 'bad_contact' };
+  }
+  return { ok: true };
+}
+
+module.exports = { shouldSendImmediate };
+```
+
+- [ ] **Step 4: Run tests, verify pass**
+
+```bash
+node --test server/utils/messageSuppression.test.js
+```
+
+Expected: all 11 tests pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/utils/messageSuppression.js server/utils/messageSuppression.test.js
+git commit -m "feat(comms): shared shouldSendImmediate suppression check for immediate-send paths"
+```
+
+---
+
 ## Task 9: Build `scheduledMessageDispatcher` (TDD)
 
 **Files:**
@@ -952,18 +1163,81 @@ const { PUBLIC_SITE_URL } = require('./urls');
 // Keyed by message_type. Handler signature:
 //   async ({ entity, recipient, scheduledMessage }) => void
 // Throwing flips the row to 'failed'.
+//
+// Each registered handler carries metadata used by:
+//   - Plan 2c rescheduleProposal to look up the offset and recompute
+//     scheduled_for when an event date / balance due date changes
+//   - The dispatcher itself to gate marketing-class messages on the
+//     client's communication_preferences.marketing_enabled flag
 
 const handlers = new Map();
+const handlerMeta = new Map();
 
-function registerHandler(messageType, handlerFn) {
+const VALID_ANCHORS = new Set(['event_date', 'balance_due_date', 'created_at', 'completed_at']);
+const VALID_CATEGORIES = new Set(['operational', 'marketing']);
+
+/**
+ * Register a handler with optional metadata.
+ *
+ * @param {string} messageType
+ * @param {Function} handlerFn  async ({ entity, recipient, scheduledMessage }) => void
+ * @param {Object} [options]
+ * @param {number|null} [options.offsetFromEventDate]
+ *   Seconds offset from the anchor (negative = before, positive = after).
+ *   null means the message is anchor-independent (e.g., drip touches anchored
+ *   to proposal-sent timestamp, not event date) and is NOT re-anchored on
+ *   reschedule.
+ * @param {'event_date'|'balance_due_date'|'created_at'|'completed_at'} [options.anchor='event_date']
+ *   Which field on the entity the offset is measured from. Plan 2c's
+ *   reschedule cascade uses this to know whether to recompute from
+ *   the new event_date, the new balance_due_date, etc.
+ * @param {'operational'|'marketing'} [options.category='operational']
+ *   Operational messages bypass the marketing-enabled gate (transactional
+ *   under CAN-SPAM). Marketing messages are suppressed when the recipient
+ *   has marketing_enabled = false.
+ */
+function registerHandler(messageType, handlerFn, options = {}) {
   if (typeof handlerFn !== 'function') {
     throw new Error(`registerHandler: handlerFn for '${messageType}' must be a function`);
   }
+  const meta = {
+    offsetFromEventDate: options.offsetFromEventDate == null ? null : Number(options.offsetFromEventDate),
+    anchor: options.anchor || 'event_date',
+    category: options.category || 'operational',
+  };
+  if (!VALID_ANCHORS.has(meta.anchor)) {
+    throw new Error(`registerHandler: invalid anchor '${meta.anchor}' for '${messageType}'`);
+  }
+  if (!VALID_CATEGORIES.has(meta.category)) {
+    throw new Error(`registerHandler: invalid category '${meta.category}' for '${messageType}'`);
+  }
+  if (meta.offsetFromEventDate !== null && !Number.isFinite(meta.offsetFromEventDate)) {
+    throw new Error(`registerHandler: offsetFromEventDate must be a finite number or null for '${messageType}'`);
+  }
   handlers.set(messageType, handlerFn);
+  handlerMeta.set(messageType, meta);
+}
+
+/**
+ * Look up the metadata for a registered message_type. Returns null when no
+ * handler is registered (caller should treat that as "leave the row alone").
+ *
+ * Consumed primarily by Plan 2c's `reanchorPendingMessages` so the reschedule
+ * cascade can recompute scheduled_for for every pending row regardless of
+ * which plan registered it (2a balance reminders, 2c event-week / T-30, 2d
+ * marketing). This replaces Plan 2c's local `messageOffsets` constant per
+ * Gemini Finding 1.
+ *
+ * @param {string} messageType
+ * @returns {{offsetFromEventDate: number|null, anchor: string, category: string} | null}
+ */
+function getHandlerMeta(messageType) {
+  return handlerMeta.get(messageType) || null;
 }
 
 function _clearHandlersForTest() {
   handlers.clear();
+  handlerMeta.clear();
 }
 
 function _handlersForTest() {
@@ -1073,6 +1347,25 @@ async function dispatchRow(row) {
       return;
     }
 
+    // Marketing-class gate (Gemini Finding 5). The handler registry carries a
+    // `category` metadata field; marketing-class messages are suppressed when
+    // the client opted out of marketing comms. Operational messages bypass
+    // this gate (CAN-SPAM allows transactional follow-ups regardless of
+    // marketing preference). Plan 2d's marketing handlers all register with
+    // category='marketing'; review_request stays operational because it's a
+    // post-sale transactional follow-up.
+    const meta = handlerMeta.get(row.message_type);
+    if (meta?.category === 'marketing' && row.recipient_type === 'client') {
+      const prefs = recipient.communication_preferences || {};
+      if (prefs.marketing_enabled === false) {
+        await pool.query(
+          "UPDATE scheduled_messages SET status = 'suppressed', error_message = $2 WHERE id = $1",
+          [row.id, 'marketing_disabled: client.communication_preferences.marketing_enabled is false']
+        );
+        return;
+      }
+    }
+
     const handler = handlers.get(row.message_type);
     if (!handler) {
       await pool.query(
@@ -1178,24 +1471,41 @@ async function sendBalanceLate({ entity, recipient, daysLate }) {
   await sendEmail({ to: recipient.email, ...tpl });
 }
 
-registerHandler('balance_reminder_autopay_t3', ({ entity, recipient }) =>
-  sendBalanceReminder({ entity, recipient, paymentMode: 'autopay' })
+// All money-path handlers are anchored on balance_due_date (NOT event_date)
+// so Plan 2c's reschedule cascade re-anchors them correctly when admin updates
+// the balance due date (Gemini Finding 1 + 6 — balance-due-date updates on
+// reschedule are tracked as a follow-up in Plan 2c).
+const DAY_SECONDS = 86400;
+
+registerHandler(
+  'balance_reminder_autopay_t3',
+  ({ entity, recipient }) => sendBalanceReminder({ entity, recipient, paymentMode: 'autopay' }),
+  { offsetFromEventDate: -3 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational' }
 );
-registerHandler('balance_reminder_non_autopay_t3', ({ entity, recipient }) =>
-  sendBalanceReminder({ entity, recipient, paymentMode: 'manual' })
+registerHandler(
+  'balance_reminder_non_autopay_t3',
+  ({ entity, recipient }) => sendBalanceReminder({ entity, recipient, paymentMode: 'manual' }),
+  { offsetFromEventDate: -3 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational' }
 );
-registerHandler('balance_due_today', ({ entity, recipient }) =>
-  sendBalanceDueToday({ entity, recipient })
+registerHandler(
+  'balance_due_today',
+  ({ entity, recipient }) => sendBalanceDueToday({ entity, recipient }),
+  { offsetFromEventDate: 0, anchor: 'balance_due_date', category: 'operational' }
 );
-registerHandler('balance_late_t1', ({ entity, recipient }) =>
-  sendBalanceLate({ entity, recipient, daysLate: 1 })
+registerHandler(
+  'balance_late_t1',
+  ({ entity, recipient }) => sendBalanceLate({ entity, recipient, daysLate: 1 }),
+  { offsetFromEventDate: 1 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational' }
 );
-registerHandler('balance_late_t3', ({ entity, recipient }) =>
-  sendBalanceLate({ entity, recipient, daysLate: 3 })
+registerHandler(
+  'balance_late_t3',
+  ({ entity, recipient }) => sendBalanceLate({ entity, recipient, daysLate: 3 }),
+  { offsetFromEventDate: 3 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational' }
 );
 
 module.exports = {
   registerHandler,
+  getHandlerMeta,
   dispatchPending,
   _clearHandlersForTest,
   _handlersForTest,

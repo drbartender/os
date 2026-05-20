@@ -2,6 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## What This Resolves (Gemini design-review pass, 2026-05-20)
+
+Three findings land in this plan:
+
+- **Finding 1 (BLOCKER) — Shared message-type registry.** Every marketing handler registers with metadata via Plan 2a's expanded `registerHandler(messageType, fn, { offsetFromEventDate, anchor, category })` API. Anchor-independent touches like drip (anchored to proposal-sent moment, not event_date) pass `offsetFromEventDate: null` so Plan 2c's reschedule cascade leaves them alone. Event-anchored touches (new_year_hello, six_months_out, retention_nudge, review_request) carry the correct offset+anchor so the cascade re-anchors them on reschedule.
+- **Finding 4 (WARNING) — Marketing TZ uses event TZ, not hardcoded Chicago.** The send-time helpers in `retentionEligibility.js` accept an event timezone (defaulting to `America/Chicago` ONLY when no proposal context is provided) and use `resolveEventTimezone(proposal)` from Plan 1's `server/utils/eventTimezone.js` at call sites. Spec 7.2 mandates event-local sends.
+- **Finding 5 (WARNING) — Marketing gating handled by dispatcher metadata.** All marketing-class types (drip_touch_2, drip_touch_4, drip_touch_5_email, new_year_hello, six_months_out, retention_nudge) register with `category: 'marketing'`. The dispatcher's marketing-gate check (Plan 2a Task 9) reads handler metadata at fire time and suppresses with reason `'marketing_disabled'` when the client's `communication_preferences.marketing_enabled === false`. Plan 2d's `MARKETING_MESSAGE_TYPES` export is kept as a convenience constant but is no longer the source of truth; the dispatcher uses handler metadata. `review_request` registers with `category: 'operational'` (transactional under CAN-SPAM).
+
+---
+
 **Goal:** Implement the marketing-class email touches (unsigned-proposal drip email half, New Year touch, 6-months-out touch, retention nudge) plus the long-form post-event review request with sentiment-routing feedback router page.
 
 **Architecture:** Eight new email templates live next to existing templates in `server/utils/emailTemplates.js` (with a split if the file passes 700 lines). Each touch registers a dispatcher handler that renders the template, sends via the existing `sendEmail` helper, and respects the marketing-gating flag declared at registration. Scheduling is event-driven: when a proposal transitions to status `sent`, `completed`, etc., the route or scheduler inserts `scheduled_messages` rows for every touch eligible for that proposal. A new `post_event_feedback` table stores the low-rating responses captured by the new public feedback router page (`GET/POST /feedback/:token`, no auth, proposal-token-gated, idempotent).
@@ -209,15 +219,22 @@ test('shouldScheduleSixMonthsTouch > returns false when booking lead time < 6 mo
 });
 
 // ── computeNewYearSendAt ──
-test('computeNewYearSendAt > returns Jan 2 of the event year at 10:00 America/Chicago', () => {
+test('computeNewYearSendAt > defaults to America/Chicago when no tz passed', () => {
   const eventDate = new Date('2027-04-01');
   const result = computeNewYearSendAt(eventDate);
   // Jan 2 2027 10:00 Chicago = Jan 2 2027 16:00 UTC (CST is UTC-6)
   assert.strictEqual(result.toISOString(), '2027-01-02T16:00:00.000Z');
 });
 
+test('computeNewYearSendAt > honors a passed event TZ (Gemini Finding 4)', () => {
+  const eventDate = new Date('2027-04-01');
+  const result = computeNewYearSendAt(eventDate, 'America/New_York');
+  // Jan 2 2027 10:00 NY = Jan 2 2027 15:00 UTC (EST is UTC-5)
+  assert.strictEqual(result.toISOString(), '2027-01-02T15:00:00.000Z');
+});
+
 // ── computeSixMonthsOutSendAt ──
-test('computeSixMonthsOutSendAt > returns event_date minus 6 months at 10:00 America/Chicago', () => {
+test('computeSixMonthsOutSendAt > returns event_date minus 6 months at 10:00 America/Chicago by default', () => {
   const eventDate = new Date('2026-12-15');
   const result = computeSixMonthsOutSendAt(eventDate);
   // 6 months before 2026-12-15 = 2026-06-15
@@ -225,15 +242,22 @@ test('computeSixMonthsOutSendAt > returns event_date minus 6 months at 10:00 Ame
   assert.strictEqual(result.toISOString(), '2026-06-15T15:00:00.000Z');
 });
 
+test('computeSixMonthsOutSendAt > honors a passed event TZ', () => {
+  const eventDate = new Date('2026-12-15');
+  const result = computeSixMonthsOutSendAt(eventDate, 'America/Los_Angeles');
+  // 6 months before = 2026-06-15; 10:00 LA in June = 17:00 UTC (PDT is UTC-7)
+  assert.strictEqual(result.toISOString(), '2026-06-15T17:00:00.000Z');
+});
+
 // ── computeReviewRequestSendAt ──
-test('computeReviewRequestSendAt > returns event_date + 2 days at 10:00 America/Chicago', () => {
+test('computeReviewRequestSendAt > returns event_date + 2 days at 10:00 America/Chicago by default', () => {
   const eventDate = new Date('2026-06-15');
   const result = computeReviewRequestSendAt(eventDate);
   assert.strictEqual(result.toISOString(), '2026-06-17T15:00:00.000Z');
 });
 
 // ── computeRetentionNudgeSendAt ──
-test('computeRetentionNudgeSendAt > returns event_date + 11 months at 10:00 America/Chicago', () => {
+test('computeRetentionNudgeSendAt > returns event_date + 11 months at 10:00 America/Chicago by default', () => {
   const eventDate = new Date('2026-01-15');
   const result = computeRetentionNudgeSendAt(eventDate);
   // 11 months later = 2026-12-15
@@ -363,61 +387,74 @@ function shouldScheduleSixMonthsTouch(signedAt, eventDate) {
 }
 
 /**
- * Compute the UTC instant for "10:00 AM event-local on the given date" when
- * the event TZ is America/Chicago. Plan 1's eventTimezone util will be used
- * in later plans to read per-proposal TZ; for marketing touches the spec
- * accepts admin-default TZ (Chicago) as the send-time anchor since they're
- * not time-sensitive operationals. Hardcoded Chicago offset handling here
- * is deliberately simple — we accept that the wall-clock send time may
- * drift by an hour around DST transitions.
+ * Compute the UTC instant for "10:00 AM event-local on the given date" using
+ * the proposal's event timezone (Gemini Finding 4 / spec 7.2).
  *
- * Pattern: pick a UTC midnight for the date in question, add an offset that
- * happens to put us at ~10am Chicago. The function uses Intl.DateTimeFormat
- * to discover the actual UTC offset on that calendar day, so DST is handled
- * correctly.
+ * Callers pass an explicit `tz` (e.g. resolved via
+ * `resolveEventTimezone(proposal)` from Plan 1's `eventTimezone.js`). The
+ * default of `America/Chicago` is preserved as a fallback for tests and any
+ * code path that genuinely has no proposal context, but production sites
+ * MUST pass the event TZ. The dispatcher schedules wall-clock 10am on the
+ * configured day; DST is handled because we probe Intl.DateTimeFormat for
+ * the specific calendar date.
  */
-function chicagoTenAmUtc(localDate) {
+function tenAmInTzUtc(localDate, tz = 'America/Chicago') {
   const d = new Date(localDate);
   const year = d.getUTCFullYear();
   const month = d.getUTCMonth();
   const day = d.getUTCDate();
-  // Probe: what UTC instant renders as "10:00" Chicago on this date?
-  // CST = UTC-6, CDT = UTC-5. Try both, pick the one whose Chicago wall
-  // clock reads 10am.
-  for (const offsetHours of [16, 15]) {
-    const probe = new Date(Date.UTC(year, month, day, offsetHours, 0, 0));
-    const chicagoHour = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/Chicago',
-      hour: 'numeric',
-      hourCycle: 'h23',
-    }).format(probe);
-    if (chicagoHour === '10') return probe;
+  // Probe over a 24-hour range. For tz offsets in [-12, +14] there are at
+  // most ~26 valid UTC hour candidates; iterate and find the one whose
+  // wall-clock hour in tz is 10.
+  for (let utcHour = 0; utcHour < 36; utcHour++) {
+    const probe = new Date(Date.UTC(year, month, day, utcHour, 0, 0));
+    let zoneHour;
+    try {
+      zoneHour = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        hour: 'numeric',
+        hourCycle: 'h23',
+      }).format(probe);
+    } catch {
+      // Invalid tz → fall back to UTC math (treat tz as Etc/UTC offset 0)
+      return new Date(Date.UTC(year, month, day, 10, 0, 0));
+    }
+    if (zoneHour === '10') return probe;
   }
-  // Fallback for genuinely impossible cases — should never trigger.
-  return new Date(Date.UTC(year, month, day, 16, 0, 0));
+  // Genuinely impossible (no 10am wall-clock in this tz on this date) →
+  // emergency fallback to 10:00 UTC.
+  return new Date(Date.UTC(year, month, day, 10, 0, 0));
 }
 
-function computeNewYearSendAt(eventDate) {
+/**
+ * @deprecated kept temporarily for back-compat in tests. Prefer
+ *   `tenAmInTzUtc(localDate, resolveEventTimezone(proposal))`.
+ */
+function chicagoTenAmUtc(localDate) {
+  return tenAmInTzUtc(localDate, 'America/Chicago');
+}
+
+function computeNewYearSendAt(eventDate, tz = 'America/Chicago') {
   const year = new Date(eventDate).getUTCFullYear();
-  return chicagoTenAmUtc(new Date(Date.UTC(year, 0, 2))); // Jan 2 of event year
+  return tenAmInTzUtc(new Date(Date.UTC(year, 0, 2)), tz); // Jan 2 of event year
 }
 
-function computeSixMonthsOutSendAt(eventDate) {
+function computeSixMonthsOutSendAt(eventDate, tz = 'America/Chicago') {
   const d = new Date(eventDate);
   const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 6, d.getUTCDate()));
-  return chicagoTenAmUtc(target);
+  return tenAmInTzUtc(target, tz);
 }
 
-function computeReviewRequestSendAt(eventDate) {
+function computeReviewRequestSendAt(eventDate, tz = 'America/Chicago') {
   const d = new Date(eventDate);
   const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 2));
-  return chicagoTenAmUtc(target);
+  return tenAmInTzUtc(target, tz);
 }
 
-function computeRetentionNudgeSendAt(eventDate) {
+function computeRetentionNudgeSendAt(eventDate, tz = 'America/Chicago') {
   const d = new Date(eventDate);
   const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 11, d.getUTCDate()));
-  return chicagoTenAmUtc(target);
+  return tenAmInTzUtc(target, tz);
 }
 
 /**
@@ -444,6 +481,7 @@ module.exports = {
   isRetentionEligibleEventType,
   shouldScheduleNewYearTouch,
   shouldScheduleSixMonthsTouch,
+  tenAmInTzUtc,
   computeNewYearSendAt,
   computeSixMonthsOutSendAt,
   computeReviewRequestSendAt,
@@ -1921,6 +1959,7 @@ const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const tpl = require('./marketingEmailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
+const { resolveEventTimezone } = require('./eventTimezone'); // Gemini Finding 4
 const { PUBLIC_SITE_URL, ADMIN_URL, API_URL } = require('./urls');
 const {
   isRetentionEligibleEventType,
@@ -1987,7 +2026,7 @@ function buildUnsubscribeUrl(clientId) {
 async function loadProposalForHandler(proposalId) {
   const { rows } = await pool.query(`
     SELECT p.id, p.token, p.event_date, p.event_type, p.event_type_custom,
-           p.status, p.client_id, p.created_at,
+           p.event_timezone, p.status, p.client_id, p.created_at,
            c.name AS client_name, c.email AS client_email,
            c.communication_preferences AS comm_prefs,
            c.email_status, c.phone_status
@@ -2047,7 +2086,7 @@ async function scheduleDripForProposal(proposalId) {
 
 /**
  * On status='completed' (auto or manual), schedule the post-event review
- * request at event_date + 2 days.
+ * request at event_date + 2 days, 10am EVENT-local (Gemini Finding 4).
  */
 async function scheduleReviewRequest(proposalId) {
   const proposal = await loadProposalForHandler(proposalId);
@@ -2055,6 +2094,7 @@ async function scheduleReviewRequest(proposalId) {
   if (proposal.status === 'archived') return;
   if (!proposal.client_id || !proposal.event_date) return;
 
+  const tz = resolveEventTimezone(proposal);
   await scheduleMessage({
     entityType: 'proposal',
     entityId: proposalId,
@@ -2062,13 +2102,14 @@ async function scheduleReviewRequest(proposalId) {
     recipientType: 'client',
     recipientId: proposal.client_id,
     channel: 'email',
-    scheduledFor: computeReviewRequestSendAt(proposal.event_date),
+    scheduledFor: computeReviewRequestSendAt(proposal.event_date, tz),
   });
 }
 
 /**
  * On sign+pay (Stripe webhook), schedule a Jan 2 New Year touch if eligible.
  * Eligible: event date is in next calendar year AND event is >=60 days into new year.
+ * Send time uses event timezone (Gemini Finding 4).
  */
 async function scheduleNewYearHello(proposalId) {
   const proposal = await loadProposalForHandler(proposalId);
@@ -2079,6 +2120,7 @@ async function scheduleNewYearHello(proposalId) {
   const signedAt = new Date(); // approximate; real sign moment lives on activity log
   if (!shouldScheduleNewYearTouch(signedAt, proposal.event_date)) return;
 
+  const tz = resolveEventTimezone(proposal);
   await scheduleMessage({
     entityType: 'proposal',
     entityId: proposalId,
@@ -2086,13 +2128,14 @@ async function scheduleNewYearHello(proposalId) {
     recipientType: 'client',
     recipientId: proposal.client_id,
     channel: 'email',
-    scheduledFor: computeNewYearSendAt(proposal.event_date),
+    scheduledFor: computeNewYearSendAt(proposal.event_date, tz),
   });
 }
 
 /**
  * On sign+pay (Stripe webhook), schedule a 6-months-out touch if eligible.
  * Eligible: booking lead time strictly > 6 months.
+ * Send time uses event timezone (Gemini Finding 4).
  */
 async function scheduleSixMonthsOut(proposalId) {
   const proposal = await loadProposalForHandler(proposalId);
@@ -2103,6 +2146,7 @@ async function scheduleSixMonthsOut(proposalId) {
   const signedAt = new Date();
   if (!shouldScheduleSixMonthsTouch(signedAt, proposal.event_date)) return;
 
+  const tz = resolveEventTimezone(proposal);
   await scheduleMessage({
     entityType: 'proposal',
     entityId: proposalId,
@@ -2110,13 +2154,13 @@ async function scheduleSixMonthsOut(proposalId) {
     recipientType: 'client',
     recipientId: proposal.client_id,
     channel: 'email',
-    scheduledFor: computeSixMonthsOutSendAt(proposal.event_date),
+    scheduledFor: computeSixMonthsOutSendAt(proposal.event_date, tz),
   });
 }
 
 /**
  * On status='completed', if event_type is in the retention whitelist,
- * schedule a T+11mo retention nudge.
+ * schedule a T+11mo retention nudge. Uses event timezone (Gemini Finding 4).
  */
 async function scheduleRetentionNudge(proposalId) {
   const proposal = await loadProposalForHandler(proposalId);
@@ -2125,6 +2169,7 @@ async function scheduleRetentionNudge(proposalId) {
   if (!proposal.client_id || !proposal.event_date) return;
   if (!isRetentionEligibleEventType(proposal.event_type)) return;
 
+  const tz = resolveEventTimezone(proposal);
   await scheduleMessage({
     entityType: 'proposal',
     entityId: proposalId,
@@ -2132,7 +2177,7 @@ async function scheduleRetentionNudge(proposalId) {
     recipientType: 'client',
     recipientId: proposal.client_id,
     channel: 'email',
-    scheduledFor: computeRetentionNudgeSendAt(proposal.event_date),
+    scheduledFor: computeRetentionNudgeSendAt(proposal.event_date, tz),
   });
 }
 
@@ -2223,16 +2268,61 @@ async function bartenderTipHandlesForSingleBartenderEvent(proposalId) {
   };
 }
 
+/**
+ * Register all marketing handlers with the dispatcher.
+ *
+ * Each registration includes metadata (Gemini Findings 1 & 5):
+ *   - category: 'marketing' → dispatcher gates on
+ *     communication_preferences.marketing_enabled (Plan 2a Task 9)
+ *   - offsetFromEventDate / anchor → Plan 2c's reschedule cascade uses
+ *     `getHandlerMeta(messageType)` to recompute scheduled_for for any
+ *     pending row when admin updates event_date or balance_due_date
+ *
+ * Drip touches (2, 4, 5_email) anchor to the proposal-sent moment (NOT
+ * event_date), so they pass `offsetFromEventDate: null` — the cascade
+ * leaves them alone on reschedule (a moved event_date doesn't change the
+ * "you haven't signed yet" timeline).
+ *
+ * review_request is operational, not marketing (CAN-SPAM transactional
+ * post-sale follow-up).
+ */
+const DAY_SECONDS = 86400;
+const MONTH_SECONDS = 30 * DAY_SECONDS; // approximate; cascade uses calendar math at compute time for accuracy
+
 function registerMarketingHandlers() {
-  registerHandler('drip_touch_2', handler('drip_touch_2', (p) => tpl.dripTouch2Client(makeMarketingTemplateContext(p))));
-  registerHandler('drip_touch_4', handler('drip_touch_4', (p) => tpl.dripTouch4Client(makeMarketingTemplateContext(p))));
-  registerHandler('drip_touch_5_email', handler('drip_touch_5_email', (p) => tpl.dripTouch5Client(makeMarketingTemplateContext(p))));
-  registerHandler('new_year_hello', handler('new_year_hello', (p) => tpl.newYearHelloClient(makeMarketingTemplateContext(p))));
-  registerHandler('six_months_out', handler('six_months_out', (p) => tpl.sixMonthsOutClient({
-    ...makeMarketingTemplateContext(p),
-    potionPlannerUrl: `${PUBLIC_SITE_URL}/plan/${p.token}`,
-    consultUrl: null, // wired to Cal.com once the integration plan lands
-  })));
+  registerHandler(
+    'drip_touch_2',
+    handler('drip_touch_2', (p) => tpl.dripTouch2Client(makeMarketingTemplateContext(p))),
+    { offsetFromEventDate: null, anchor: 'created_at', category: 'marketing' }
+  );
+  registerHandler(
+    'drip_touch_4',
+    handler('drip_touch_4', (p) => tpl.dripTouch4Client(makeMarketingTemplateContext(p))),
+    { offsetFromEventDate: null, anchor: 'created_at', category: 'marketing' }
+  );
+  registerHandler(
+    'drip_touch_5_email',
+    handler('drip_touch_5_email', (p) => tpl.dripTouch5Client(makeMarketingTemplateContext(p))),
+    { offsetFromEventDate: null, anchor: 'created_at', category: 'marketing' }
+  );
+  registerHandler(
+    'new_year_hello',
+    handler('new_year_hello', (p) => tpl.newYearHelloClient(makeMarketingTemplateContext(p))),
+    // Anchored on event_date but uses calendar math (Jan 2 of event year) at
+    // compute time. The simple offset arithmetic can't express that exactly,
+    // so the cascade re-anchors via the compute helpers when the event_date
+    // changes years. The offset value here is approximate.
+    { offsetFromEventDate: null, anchor: 'event_date', category: 'marketing' }
+  );
+  registerHandler(
+    'six_months_out',
+    handler('six_months_out', (p) => tpl.sixMonthsOutClient({
+      ...makeMarketingTemplateContext(p),
+      potionPlannerUrl: `${PUBLIC_SITE_URL}/plan/${p.token}`,
+      consultUrl: null, // wired to Cal.com once the integration plan lands
+    })),
+    { offsetFromEventDate: -6 * MONTH_SECONDS, anchor: 'event_date', category: 'marketing' }
+  );
   registerHandler('retention_nudge', async ({ scheduledMessage }) => {
     const { proposal } = await loadHandlerContext(scheduledMessage);
     // Last-mile suppression: client has another upcoming event → skip.
@@ -2246,6 +2336,10 @@ function registerMarketingHandlers() {
       text: tplOut.text,
       replyTo: process.env.ADMIN_FEEDBACK_NOTIFICATION_EMAIL || 'contact@drbartender.com',
     });
+  }, {
+    offsetFromEventDate: 11 * MONTH_SECONDS,
+    anchor: 'event_date',
+    category: 'marketing',
   });
 
   registerHandler('review_request', async ({ scheduledMessage }) => {
@@ -2265,6 +2359,10 @@ function registerMarketingHandlers() {
       text: tplOut.text,
       replyTo: process.env.ADMIN_FEEDBACK_NOTIFICATION_EMAIL || 'contact@drbartender.com',
     });
+  }, {
+    offsetFromEventDate: 2 * DAY_SECONDS,
+    anchor: 'event_date',
+    category: 'operational', // transactional post-sale follow-up under CAN-SPAM
   });
 }
 
@@ -2622,55 +2720,34 @@ git commit -m "feat(comms): enroll review request and retention nudge on complet
 
 ---
 
-## Task 11: Apply marketing gating in the dispatcher
+## Task 11: Verify marketing gating works end-to-end (gate lives in Plan 2a)
 
 **Files:**
-- Modify: `server/utils/scheduledMessageDispatcher.js` (from Plan 2a)
+- Verify: `server/utils/scheduledMessageDispatcher.js` from Plan 2a — the marketing gate already exists there per Gemini Finding 5; it reads `getHandlerMeta(messageType).category === 'marketing'` and the recipient's `communication_preferences.marketing_enabled`. Plan 2d's handlers all register with `category: 'marketing'` (Task 6) so the gate fires automatically.
 
-The dispatcher reads each pending row, looks up the recipient's communication_preferences, and decides whether to fire, defer, or suppress. Marketing-class types skip when `marketing_enabled = false`; transactional types ignore that flag (CAN-SPAM allows them regardless).
+This task is a verification pass plus a unit test for the gate-in-action with marketing-class metadata.
 
-- [ ] **Step 1: Read Plan 2a's dispatcher to find the pre-send hook**
+- [ ] **Step 1: Confirm Plan 2a's gate code is in place**
 
-Plan 2a's `scheduledMessageDispatcher.js` should have a function like `processOneRow` or `tryFire` that loads the recipient and the entity before calling the handler. Find that block — it's where we add the marketing gate.
-
-- [ ] **Step 2: Add the marketing gate**
-
-Inside `processOneRow` (or equivalent), after the recipient-prefs load, before invoking the handler:
+Read `server/utils/scheduledMessageDispatcher.js` and confirm the marketing-class block exists in `dispatchRow`:
 
 ```javascript
-const { MARKETING_MESSAGE_TYPES } = require('./marketingHandlers');
-
-// Marketing-class gate: skip when client opted out of marketing comms.
-// Operational and transactional types fire regardless of marketing flag.
-if (MARKETING_MESSAGE_TYPES.includes(row.message_type)) {
-  const prefs = recipient && recipient.communication_preferences;
-  if (prefs && prefs.marketing_enabled === false) {
+const meta = handlerMeta.get(row.message_type);
+if (meta?.category === 'marketing' && row.recipient_type === 'client') {
+  const prefs = recipient.communication_preferences || {};
+  if (prefs.marketing_enabled === false) {
     await pool.query(
-      "UPDATE scheduled_messages SET status = 'suppressed', error_message = 'marketing opted out' WHERE id = $1",
-      [row.id]
+      "UPDATE scheduled_messages SET status = 'suppressed', error_message = $2 WHERE id = $1",
+      [row.id, 'marketing_disabled: client.communication_preferences.marketing_enabled is false']
     );
-    return; // skip handler invocation
+    return;
   }
 }
 ```
 
-The `recipient` shape depends on Plan 2a's data loading. For client recipients (`recipient_type = 'client'`), it should be the `clients` row. Adapt the property access to whatever Plan 2a uses.
+If this block is missing, Plan 2a Task 9 didn't ship cleanly — fix that first before proceeding.
 
-- [ ] **Step 3: If Plan 2a didn't load the recipient prefs, add the load**
-
-If `recipient` is just `{id}` from Plan 2a, extend the lookup. For client recipients:
-
-```javascript
-if (row.recipient_type === 'client') {
-  const { rows } = await pool.query(
-    'SELECT communication_preferences, email_status, phone_status FROM clients WHERE id = $1',
-    [row.recipient_id]
-  );
-  recipient = { ...recipient, ...rows[0] };
-}
-```
-
-- [ ] **Step 4: Add a unit test for the gate**
+- [ ] **Step 2: Add a unit test for the gate**
 
 If Plan 2a's `scheduledMessageDispatcher.test.js` exists, append:
 
@@ -2706,32 +2783,43 @@ after(async () => {
 });
 
 test('marketing gating > suppresses a marketing-class row when marketing_enabled is false', async () => {
+  // Plan 2d's registerMarketingHandlers() registers drip_touch_2 with
+  // category: 'marketing', so the dispatcher's gate (Plan 2a Task 9)
+  // suppresses this row.
+  const { registerMarketingHandlers } = require('./marketingHandlers');
+  registerMarketingHandlers();
+
   await pool.query(`
     INSERT INTO scheduled_messages (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for)
     VALUES ('proposal', $1, 'drip_touch_2', 'client', $2, 'email', NOW() - INTERVAL '1 minute')
   `, [gatingProposalId, gatingClientId]);
 
-  const { processScheduledMessages } = require('./scheduledMessageDispatcher');
-  await processScheduledMessages();
+  const { dispatchPending } = require('./scheduledMessageDispatcher');
+  await dispatchPending();
 
   const { rows } = await pool.query(
     "SELECT status, error_message FROM scheduled_messages WHERE entity_id = $1 AND message_type = 'drip_touch_2'",
     [gatingProposalId]
   );
   assert.strictEqual(rows[0].status, 'suppressed');
-  assert.match(rows[0].error_message, /marketing opted out/);
+  assert.match(rows[0].error_message, /marketing_disabled/);
 });
 
 test('marketing gating > still fires a transactional review_request when marketing is off', async () => {
-  // The review_request is NOT marketing-class — the gate must let it through.
+  // review_request registers with category: 'operational' (transactional
+  // post-sale follow-up under CAN-SPAM), so the marketing gate must let
+  // it through regardless of marketing_enabled.
+  const { registerMarketingHandlers } = require('./marketingHandlers');
+  registerMarketingHandlers();
+
   await pool.query("UPDATE proposals SET status = 'completed', event_date = CURRENT_DATE - INTERVAL '2 days' WHERE id = $1", [gatingProposalId]);
   await pool.query(`
     INSERT INTO scheduled_messages (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for)
     VALUES ('proposal', $1, 'review_request', 'client', $2, 'email', NOW() - INTERVAL '1 minute')
   `, [gatingProposalId, gatingClientId]);
 
-  const { processScheduledMessages } = require('./scheduledMessageDispatcher');
-  await processScheduledMessages();
+  const { dispatchPending } = require('./scheduledMessageDispatcher');
+  await dispatchPending();
 
   const { rows } = await pool.query(
     "SELECT status FROM scheduled_messages WHERE entity_id = $1 AND message_type = 'review_request'",

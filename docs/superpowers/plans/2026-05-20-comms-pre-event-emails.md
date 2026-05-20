@@ -2,6 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## What This Resolves (Gemini design-review pass, 2026-05-20)
+
+Three Gemini findings land here:
+
+- **Finding 1 (BLOCKER) — Reschedule cascade incomplete.** Task 6's `reanchorPendingMessages` no longer relies on a local `messageOffsets` constant; it calls `getHandlerMeta(messageType)` exported by Plan 2a's `scheduledMessageDispatcher.js`. Every registered handler (Plan 2a balance reminders, Plan 2c event-week / T-30, Plan 2d marketing touches) carries its own metadata so the cascade re-anchors the full set of pending rows when admin updates event_date OR balance_due_date.
+- **Finding 2 (BLOCKER) — `rescheduleProposal` must be atomic.** Task 6 wraps the proposal UPDATE + scheduled_messages re-anchor inside a single `BEGIN/COMMIT` transaction. The reschedule email fires AFTER the commit (email send is not idempotent-safe; the inverse ordering would leave the DB out of sync if the commit failed after the send).
+- **Finding 3 (WARNING) — Immediate sends respect suppression.** `sendRescheduleEmail` calls `shouldSendImmediate({ proposal, client, channel: 'email' })` from `server/utils/messageSuppression.js` (Plan 2a Task 8.5) before invoking sendEmail.
+
+**Deferred (Gemini SUGGESTION, not in scope here):** Updating `proposals.balance_due_date` on reschedule. Today the date stays fixed at the original deposit moment. If the new event_date moves the balance-due into the past or into the wrong window, admin handles manually. A follow-up plan will tie balance_due_date to event_date via a configurable lead policy.
+
+---
+
 **Goal:** Wire up the three pre-event client-email touches: the T-7 event-week reminder, the T-30 long-lead recap (only for proposals booked 90+ days out), and the immediate reschedule notification email that also re-anchors every other pending scheduled message on the proposal to the new event date.
 
 **Architecture:** Three pieces. (1) Two new email templates in `server/utils/emailTemplates.js` rendered with event-local times via the Plan 1 `eventTimezone` utility. (2) Two new dispatcher handlers (`event_week_reminder`, `long_lead_t30_recap`) registered against the Plan 2a `registerHandler` API, plus a scheduling helper that inserts pending `scheduled_messages` rows from the Stripe `payment_intent.succeeded` first-deposit branch. (3) A new `rescheduleProposal` helper invoked from the proposal PATCH handler when `event_date`, `event_start_time`, or `event_location` changes post-sign+pay — fires the reschedule email immediately and re-anchors every pending row in `scheduled_messages` for the proposal using a per-message-type offset mapping.
@@ -33,11 +45,11 @@ registerHandler('event_week_reminder', async ({ entity, recipient, scheduledMess
 ## File Structure
 
 **Files to create:**
-- `server/utils/rescheduleProposal.js` — orchestrates the immediate reschedule email + cascade re-anchor of pending `scheduled_messages` rows
-- `server/utils/rescheduleProposal.test.js` — unit tests for re-anchor offset math and skip-on-archived
-- `server/utils/preEventScheduling.js` — pure scheduler helpers: `schedulePreEventReminders(proposalId)` inserts the event-week + (conditional) T-30 recap rows. Also exposes the `messageOffsets` mapping consumed by the reschedule re-anchor.
+- `server/utils/rescheduleProposal.js` — orchestrates the immediate reschedule email + cascade re-anchor of pending `scheduled_messages` rows, all inside a single transaction
+- `server/utils/rescheduleProposal.test.js` — unit tests for re-anchor offset math, atomicity, skip-on-archived
+- `server/utils/preEventScheduling.js` — pure scheduler helpers: `schedulePreEventReminders(proposalId)` inserts the event-week + (conditional) T-30 recap rows.
 - `server/utils/preEventScheduling.test.js` — unit tests for offset math, long-lead gating, idempotency
-- `server/utils/preEventHandlers.js` — `registerHandler(...)` calls for `event_week_reminder` and `long_lead_t30_recap`, plus a one-line `registerAll()` export wired from `server/index.js`
+- `server/utils/preEventHandlers.js` — `registerHandler(...)` calls for `event_week_reminder` and `long_lead_t30_recap` (with offset metadata so Plan 2c's reschedule cascade can re-anchor them), plus a one-line `registerAll()` export wired from `server/index.js`
 
 **Files to modify:**
 - `server/utils/emailTemplates.js` — add `eventWeekReminderClient`, `rescheduleNotificationClient`, `longLeadT30RecapClient` template functions
@@ -461,18 +473,21 @@ const { scheduleMessage } = require('./messageScheduling');
 const { resolveEventTimezone } = require('./eventTimezone');
 
 /**
- * Per-message-type schedule offset from event_date. All times are computed at
- * 10:00 in the proposal's event timezone (a tame morning hour that won't wake
- * anyone overseas and lands well before lunch in CT/ET).
+ * Per-message-type schedule offset for the pre-event family. Used by
+ * `schedulePreEventReminders` (this file) AND, via metadata registered on
+ * `preEventHandlers.registerAll()`, by Plan 2c's reschedule cascade through
+ * Plan 2a's `getHandlerMeta(messageType)` lookup.
  *
- * Consumed by:
- * - `schedulePreEventReminders` to insert new rows on deposit_paid
- * - `rescheduleProposal` to recompute `scheduled_for` on every pending row
+ * The dispatcher carries the canonical offset/anchor/category in its handler
+ * registry (see Plan 2a Task 9). This local map is the convenience reference
+ * for the initial-schedule code in this file; keep it in sync with the
+ * metadata passed to `registerHandler` in `preEventHandlers.js`.
  *
- * The keys are the canonical `message_type` strings used in `scheduled_messages`.
- * Anchored on event date — NOT on shift start time — because these are
- * client-facing reminders that should land in the morning regardless of the
- * actual event start time.
+ * All times are computed at 10:00 in the proposal's event timezone (a tame
+ * morning hour that won't wake anyone overseas and lands well before lunch in
+ * CT/ET). Anchored on event date — NOT on shift start time — because these
+ * are client-facing reminders that should land in the morning regardless of
+ * the actual event start time.
  */
 const messageOffsets = {
   event_week_reminder: { daysBeforeEvent: 7, atHourLocal: 10 },
@@ -846,10 +861,25 @@ async function handleLongLeadT30Recap({ entity, recipient, scheduledMessage: _sm
 
 /**
  * Idempotent registration entry point. Call once from server bootstrap.
+ *
+ * Both handlers register with metadata so Plan 2c's reschedule cascade can
+ * recompute scheduled_for via `getHandlerMeta(messageType)` (Plan 2a Task 9).
+ * Offset is in SECONDS (negative = before anchor). Anchor is `event_date`
+ * because these are the pre-event reminder ladder; balance reminders use
+ * `balance_due_date` (registered in Plan 2a).
  */
+const DAY_SECONDS = 86400;
 function registerAll() {
-  registerHandler('event_week_reminder', handleEventWeekReminder);
-  registerHandler('long_lead_t30_recap', handleLongLeadT30Recap);
+  registerHandler('event_week_reminder', handleEventWeekReminder, {
+    offsetFromEventDate: -7 * DAY_SECONDS,
+    anchor: 'event_date',
+    category: 'operational',
+  });
+  registerHandler('long_lead_t30_recap', handleLongLeadT30Recap, {
+    offsetFromEventDate: -30 * DAY_SECONDS,
+    anchor: 'event_date',
+    category: 'operational',
+  });
 }
 
 module.exports = {
@@ -1104,7 +1134,12 @@ test('hasReschedulableChange > returns false when none of the three fields chang
 });
 
 // ── reanchorPendingMessages ──
+// Note: signature now takes (client, proposalId) — Gemini Finding 2. The
+// test acquires a client and runs the call inside a transaction since the
+// production code does.
 test('reanchorPendingMessages > updates scheduled_for on pending event_week_reminder rows', async () => {
+  // Register handler metadata so getHandlerMeta returns it.
+  // In test setup, call preEventHandlers.registerAll() once in before().
   await pool.query(
     `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
      VALUES ($1, $2, 'deposit_paid', '2026-09-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
@@ -1119,7 +1154,15 @@ test('reanchorPendingMessages > updates scheduled_for on pending event_week_remi
     [TEST_PROPOSAL_ID, TEST_CLIENT_ID, oldScheduledFor]
   );
 
-  const updated = await reanchorPendingMessages(TEST_PROPOSAL_ID);
+  const client = await pool.connect();
+  let updated = 0;
+  try {
+    await client.query('BEGIN');
+    updated = await reanchorPendingMessages(client, TEST_PROPOSAL_ID);
+    await client.query('COMMIT');
+  } finally {
+    client.release();
+  }
   assert.ok(updated > 0);
 
   const { rows } = await pool.query(
@@ -1145,7 +1188,14 @@ test('reanchorPendingMessages > skips sent rows — only pending re-anchored', a
     [TEST_PROPOSAL_ID, TEST_CLIENT_ID, stableSent]
   );
 
-  await reanchorPendingMessages(TEST_PROPOSAL_ID);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await reanchorPendingMessages(client, TEST_PROPOSAL_ID);
+    await client.query('COMMIT');
+  } finally {
+    client.release();
+  }
 
   const { rows } = await pool.query(
     `SELECT scheduled_for FROM scheduled_messages
@@ -1238,11 +1288,13 @@ Expected: FAIL with `Cannot find module './rescheduleProposal'`.
 Create `server/utils/rescheduleProposal.js`:
 
 ```javascript
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const emailTemplates = require('./emailTemplates');
 const { resolveEventTimezone, formatEventLocalTime } = require('./eventTimezone');
-const { messageOffsets, computeScheduledFor } = require('./preEventScheduling');
+const { getHandlerMeta } = require('./scheduledMessageDispatcher');
+const { shouldSendImmediate } = require('./messageSuppression');
 
 /**
  * Returns true when any of the three reschedule-triggering fields changed.
@@ -1258,31 +1310,61 @@ function hasReschedulableChange(oldRow, newRow) {
 }
 
 /**
- * Re-anchor all pending scheduled_messages rows for the proposal so each row's
- * scheduled_for matches the proposal's NEW event_date + the message_type's
- * offset (from preEventScheduling.messageOffsets).
+ * Compute the new scheduled_for for a pending row given the proposal's NEW
+ * event_date / balance_due_date and the handler's registered offset metadata.
+ *
+ * Returns null when the handler isn't registered, has a null offset (e.g.,
+ * drip touches anchored to the proposal-sent moment rather than event_date),
+ * or the required anchor field is missing on the proposal.
+ *
+ * @param {object} proposal - includes event_date, balance_due_date, etc.
+ * @param {{offsetFromEventDate: number|null, anchor: string, category: string}} meta
+ * @returns {Date|null}
+ */
+function computeReanchoredScheduledFor(proposal, meta) {
+  if (!meta) return null;
+  if (meta.offsetFromEventDate == null) return null; // anchor-independent
+  const anchorField = meta.anchor === 'balance_due_date'
+    ? proposal.balance_due_date
+    : meta.anchor === 'event_date'
+      ? proposal.event_date
+      : null;
+  if (!anchorField) return null;
+  const anchorMs = new Date(String(anchorField).slice(0, 10) + 'T00:00:00Z').getTime();
+  if (!Number.isFinite(anchorMs)) return null;
+  return new Date(anchorMs + meta.offsetFromEventDate * 1000);
+}
+
+/**
+ * Re-anchor all pending scheduled_messages rows for the proposal. Each row's
+ * scheduled_for is recomputed from the NEW proposal anchor field (event_date
+ * or balance_due_date) plus the handler's offset (looked up via
+ * `getHandlerMeta` from Plan 2a's dispatcher registry).
  *
  * Only touches rows where status = 'pending'. Sent / failed / suppressed rows
- * are left alone (history is preserved).
+ * are left alone.
  *
- * Unknown message_types are skipped silently with a console.warn so a future
- * touch type (added by Plan 2b/2d) doesn't break a reschedule before this map
- * is updated. Add new offsets to `preEventScheduling.messageOffsets` to bring
- * them into the cascade.
+ * Unknown / no-offset message_types are skipped (anchor-independent touches
+ * like drip stay where they are).
  *
+ * REQUIRES a `pg` client (pool client checked out by the caller) — the caller
+ * MUST run this inside its own transaction so the reschedule is atomic with
+ * the proposal UPDATE (Gemini Finding 2).
+ *
+ * @param {import('pg').PoolClient} client
  * @param {number|string} proposalId
- * @returns {number} count of rows updated
+ * @returns {Promise<number>} count of rows updated
  */
-async function reanchorPendingMessages(proposalId) {
-  const propRes = await pool.query(
-    `SELECT id, event_date, event_start_time, event_timezone
+async function reanchorPendingMessages(client, proposalId) {
+  const propRes = await client.query(
+    `SELECT id, event_date, event_start_time, event_timezone, balance_due_date
        FROM proposals WHERE id = $1`,
     [proposalId]
   );
   const proposal = propRes.rows[0];
   if (!proposal || !proposal.event_date) return 0;
 
-  const pendingRes = await pool.query(
+  const pendingRes = await client.query(
     `SELECT id, message_type
        FROM scheduled_messages
       WHERE entity_type = 'proposal' AND entity_id = $1
@@ -1292,18 +1374,18 @@ async function reanchorPendingMessages(proposalId) {
 
   let updated = 0;
   for (const row of pendingRes.rows) {
-    if (!messageOffsets[row.message_type]) {
-      console.warn(`[rescheduleProposal] no offset registered for message_type=${row.message_type} (row id=${row.id}); leaving scheduled_for unchanged`);
+    const meta = getHandlerMeta(row.message_type);
+    if (!meta) {
+      console.warn(`[rescheduleProposal] no handler metadata for message_type=${row.message_type} (row id=${row.id}); leaving scheduled_for unchanged`);
       continue;
     }
-    let newScheduledFor;
-    try {
-      newScheduledFor = computeScheduledFor(proposal, row.message_type);
-    } catch (err) {
-      console.warn(`[rescheduleProposal] computeScheduledFor failed for row ${row.id}: ${err.message}`);
+    const newScheduledFor = computeReanchoredScheduledFor(proposal, meta);
+    if (!newScheduledFor) {
+      // Anchor-independent (offsetFromEventDate === null) or missing anchor
+      // field — leave the row alone.
       continue;
     }
-    await pool.query(
+    await client.query(
       `UPDATE scheduled_messages SET scheduled_for = $1 WHERE id = $2`,
       [newScheduledFor, row.id]
     );
@@ -1315,6 +1397,10 @@ async function reanchorPendingMessages(proposalId) {
 /**
  * Send the reschedule notification email immediately. SMS deferred to Phase 3
  * per spec section 10.
+ *
+ * Runs AFTER the DB transaction commits (Gemini Finding 2). The DB-side
+ * reschedule is atomic; the email is fired non-blockingly afterwards because
+ * an email failure should not roll back the proposal UPDATE.
  *
  * Inputs:
  *   - `old`: the proposal row BEFORE the PATCH (must include event_date,
@@ -1329,7 +1415,8 @@ async function sendRescheduleEmail({ proposalId, old, updated }) {
     `SELECT p.id, p.token, p.status, p.event_date, p.event_start_time, p.event_location,
             p.event_timezone, p.guest_count, p.total_price, p.balance_due_date,
             p.autopay_enrolled,
-            c.name AS client_name, c.email AS client_email,
+            c.id AS client_id, c.name AS client_name, c.email AS client_email,
+            c.communication_preferences, c.email_status, c.phone_status,
             sp.name AS package_name
        FROM proposals p
        LEFT JOIN clients c ON c.id = p.client_id
@@ -1340,6 +1427,21 @@ async function sendRescheduleEmail({ proposalId, old, updated }) {
   const ctx = rows[0];
   if (!ctx) throw new Error(`rescheduleProposal: proposal ${proposalId} not found`);
   if (!ctx.client_email) throw new Error(`rescheduleProposal: proposal ${proposalId} client has no email`);
+
+  // Gemini Finding 3: respect suppression rules on this immediate send.
+  const sendCheck = await shouldSendImmediate({
+    proposal: { id: ctx.id, status: ctx.status },
+    client: {
+      communication_preferences: ctx.communication_preferences,
+      email_status: ctx.email_status,
+      phone_status: ctx.phone_status,
+    },
+    channel: 'email',
+  });
+  if (!sendCheck.ok) {
+    console.log(`[rescheduleNotification] suppressed for proposal ${proposalId}: ${sendCheck.reason}`);
+    return;
+  }
 
   const tz = resolveEventTimezone(ctx);
 
@@ -1387,45 +1489,109 @@ async function sendRescheduleEmail({ proposalId, old, updated }) {
 }
 
 /**
- * Top-level orchestrator. Called from `server/routes/proposals/crud.js`
- * PATCH handler after a successful UPDATE.
+ * In-transaction reschedule (Gemini Finding 2): re-anchor all pending
+ * scheduled_messages rows for the proposal in the same DB transaction as
+ * the proposal UPDATE. The CALLER manages the transaction (BEGIN/COMMIT)
+ * because the caller is also updating the proposal row.
  *
- * Steps:
- *   1. Verify a reschedulable field actually changed (no-op otherwise)
- *   2. Bail if proposal is archived
- *   3. Send the reschedule email
- *   4. Re-anchor all pending scheduled_messages rows for this proposal
+ * Caller pattern (see Task 7):
  *
- * Errors are thrown — the caller (PATCH handler) is responsible for catching
- * and logging non-blockingly so the HTTP response still succeeds.
+ *   const client = await pool.connect();
+ *   try {
+ *     await client.query('BEGIN');
+ *     await client.query('UPDATE proposals SET event_date=$1 ... WHERE id=$2', [...]);
+ *     await rescheduleProposalInTx(client, { proposalId, old, updated });
+ *     await client.query('COMMIT');
+ *   } catch (err) {
+ *     await client.query('ROLLBACK');
+ *     throw err;
+ *   } finally {
+ *     client.release();
+ *   }
+ *   // Post-commit, fire the email non-blockingly:
+ *   sendRescheduleEmail({ proposalId, old, updated }).catch(/* sentry + log */);
  *
+ * This split keeps the DB state consistent under all failure modes:
+ *   - If anything before COMMIT throws → ROLLBACK; no email, no DB change
+ *   - If COMMIT succeeds → DB is updated; email fires best-effort
+ *   - If email send fails after COMMIT → admin can manually re-send; DB is
+ *     already consistent
+ *
+ * @param {import('pg').PoolClient} client - pg client already inside a tx
  * @param {object} args
  * @param {number|string} args.proposalId
- * @param {object} args.old - proposal row BEFORE the PATCH
- * @param {object} args.updated - proposal row AFTER the PATCH
+ * @param {object} args.old - proposal row BEFORE the UPDATE
+ * @param {object} args.updated - proposal row AFTER the UPDATE
+ * @returns {Promise<{shouldSendEmail: boolean}>} caller uses shouldSendEmail
+ *   to decide whether to dispatch the email after COMMIT
  */
-async function rescheduleProposal({ proposalId, old, updated }) {
-  if (!hasReschedulableChange(old, updated)) return;
+async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
+  if (!hasReschedulableChange(old, updated)) return { shouldSendEmail: false };
 
-  const statusRow = await pool.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
+  const statusRow = await client.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
   const status = statusRow.rows[0]?.status;
-  if (!status) return;
+  if (!status) return { shouldSendEmail: false };
 
   // Gate post-sign+pay: only meaningful for proposals at or past deposit_paid.
   // Pre-sign+pay date/time edits don't need a reschedule email — the proposal
   // hasn't been sent yet (or has been sent but not signed, in which case the
   // next status-driven email replaces it).
   const POST_SIGNPAY = new Set(['deposit_paid', 'balance_paid', 'confirmed', 'completed']);
-  if (status === 'archived' || !POST_SIGNPAY.has(status)) return;
+  if (status === 'archived' || !POST_SIGNPAY.has(status)) return { shouldSendEmail: false };
 
-  await sendRescheduleEmail({ proposalId, old, updated });
-  await reanchorPendingMessages(proposalId);
+  await reanchorPendingMessages(client, proposalId);
+  return { shouldSendEmail: true };
+}
+
+/**
+ * Convenience orchestrator used by tests and any caller that doesn't already
+ * hold a transaction. Acquires its own client, runs the UPDATE re-anchor
+ * inside BEGIN/COMMIT, then fires the email. The PATCH handler in
+ * routes/proposals/crud.js uses the in-tx helpers directly because it has
+ * its own transaction; this function is the simple-path version.
+ *
+ * Errors are thrown — the caller is responsible for catching and logging
+ * non-blockingly.
+ */
+async function rescheduleProposal({ proposalId, old, updated }) {
+  const client = await pool.connect();
+  let shouldSendEmail = false;
+  try {
+    await client.query('BEGIN');
+    const result = await rescheduleProposalInTx(client, { proposalId, old, updated });
+    shouldSendEmail = result.shouldSendEmail;
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  // Email runs OUTSIDE the transaction so a Resend failure can't roll back
+  // the DB changes. Email send is not idempotent-safe — better ordering is
+  // DB commits first, then email; on email failure the DB is still consistent
+  // and admin can re-send manually.
+  if (shouldSendEmail) {
+    try {
+      await sendRescheduleEmail({ proposalId, old, updated });
+    } catch (emailErr) {
+      Sentry.captureException(emailErr, {
+        tags: { component: 'rescheduleProposal', step: 'post_commit_email' },
+        extra: { proposalId },
+      });
+      console.error('[rescheduleProposal] post-commit email failed (non-fatal):', emailErr.message);
+      // Don't rethrow — DB is consistent, admin can manually resend.
+    }
+  }
 }
 
 module.exports = {
   rescheduleProposal,
+  rescheduleProposalInTx,
   hasReschedulableChange,
   reanchorPendingMessages,
+  computeReanchoredScheduledFor,
   sendRescheduleEmail,
 };
 ```
@@ -1465,41 +1631,62 @@ Read `server/routes/proposals/crud.js` lines 249-435 (the `router.patch('/:id', 
 
 The reschedule logic must run AFTER the COMMIT (so the new event_date is persisted), and non-blockingly (so a comms failure doesn't break the PATCH response).
 
-- [ ] **Step 2: Add the import**
+- [ ] **Step 2: Add the imports**
 
 At the top of `server/routes/proposals/crud.js`, alongside other utility imports:
 
 ```javascript
-const { rescheduleProposal } = require('../../utils/rescheduleProposal');
+const { rescheduleProposalInTx, sendRescheduleEmail } = require('../../utils/rescheduleProposal');
 ```
 
-- [ ] **Step 3: Invoke `rescheduleProposal` after the invoice-refresh block**
+- [ ] **Step 3: Run reanchor inside the existing PATCH transaction (Gemini Finding 2)**
 
-Find the invoice-refresh block in `server/routes/proposals/crud.js` (lines 410-425, the block beginning with `// Refresh unlocked invoices with new pricing` and ending in its `finally { invClient.release(); }`).
+The PATCH handler already runs the UPDATE inside its own transaction (via the `dbClient` checked out from the pool). Gemini Finding 2 says the reschedule re-anchor MUST happen in the SAME transaction so the proposal row and the scheduled_messages rows commit together. The email goes AFTER the commit.
 
-Immediately AFTER that block's closing brace, BEFORE `res.json(updatedRow.rows[0]);`, add:
+In the PATCH handler, find the block that runs the UPDATE inside `dbClient.query('BEGIN')` / `COMMIT`. After the UPDATE succeeds and BEFORE `dbClient.query('COMMIT')`, add:
 
 ```javascript
-    // Reschedule comms — fire client email + re-anchor pending scheduled_messages
-    // when event_date / event_start_time / event_location changed on a
-    // post-sign+pay proposal. Non-blocking on failure — the PATCH response still
-    // succeeds, but the comms failure surfaces to Sentry for follow-up.
-    try {
-      await rescheduleProposal({
-        proposalId: parseInt(req.params.id, 10),
-        old,                          // pre-UPDATE row from line 267
-        updated: updatedRow.rows[0],  // post-UPDATE row from line 378
-      });
-    } catch (rescheduleErr) {
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(rescheduleErr, {
-          tags: { route: 'proposals/update', issue: 'reschedule-comms' },
-          extra: { proposalId: req.params.id },
+      // Gemini Finding 2: reschedule re-anchor runs INSIDE the same tx as
+      // the proposal UPDATE so DB state is atomic. The email fires after
+      // COMMIT (best-effort, non-blocking).
+      let shouldSendRescheduleEmail = false;
+      try {
+        const result = await rescheduleProposalInTx(dbClient, {
+          proposalId: parseInt(req.params.id, 10),
+          old,                          // pre-UPDATE row
+          updated: updatedRow.rows[0],  // post-UPDATE row
         });
+        shouldSendRescheduleEmail = result.shouldSendEmail;
+      } catch (rescheduleErr) {
+        // A failure here ROLLs BACK the whole PATCH so DB state stays
+        // consistent. Re-throw to land in the existing catch block.
+        throw rescheduleErr;
       }
-      console.error('Reschedule comms failed (non-blocking):', rescheduleErr);
+```
+
+Then immediately AFTER `await dbClient.query('COMMIT')` and OUTSIDE the try/catch around the tx, fire the email best-effort:
+
+```javascript
+    if (shouldSendRescheduleEmail) {
+      try {
+        await sendRescheduleEmail({
+          proposalId: parseInt(req.params.id, 10),
+          old,
+          updated: updatedRow.rows[0],
+        });
+      } catch (emailErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(emailErr, {
+            tags: { route: 'proposals/update', issue: 'reschedule-email' },
+            extra: { proposalId: req.params.id },
+          });
+        }
+        console.error('Reschedule email failed (non-blocking, DB already committed):', emailErr);
+      }
     }
 ```
+
+Hoist `shouldSendRescheduleEmail` to the outer scope (declare with `let shouldSendRescheduleEmail = false;` near where `old` is captured) so the post-commit block can read it.
 
 - [ ] **Step 4: Lint**
 

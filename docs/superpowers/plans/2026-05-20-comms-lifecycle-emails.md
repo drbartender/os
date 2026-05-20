@@ -2,6 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## What This Resolves (Gemini design-review pass, 2026-05-20)
+
+This plan picks up two findings from the Gemini cross-plan review:
+
+- **Finding 3 (WARNING) — Immediate sends bypass suppression rules.** Every immediate-send code block here (orientation in Task 8, drink-plan submit confirmations in Task 9, post-consult in Task 10) now calls `shouldSendImmediate({ proposal, client, channel })` from `server/utils/messageSuppression.js` (built in Plan 2a Task 8.5) before invoking `sendEmail`. Archived proposals, channel-disabled clients, and bad-contact-status recipients are skipped with a one-line log; the dispatcher's suppression check stays the source of truth and this utility mirrors it for non-scheduled paths.
+- **Finding 1 (BLOCKER) participation — Handler metadata.** Plan 2b is mostly immediate sends and does NOT register dispatcher handlers. The one historical edge case (a `drink_plan_submitted` handler if scheduled via the dispatcher) is not in scope for 2b; if it ever lands here it will register with metadata via Plan 2a's `registerHandler(messageType, fn, { offsetFromEventDate, anchor, category })` API.
+
+---
+
 **Goal:** Land the four immediate, user-action-triggered confirmation emails in the automated comms spec: (1) the expanded orientation email replacing the standalone `signedAndPaidClient` + `drinkPlanLink` pair on Stripe sign+pay coupling, with a real `.ics` calendar attachment and an event-detail / receipt / Potion Planner / timeline body; (2) the drink-plan-submitted confirmation expanded to always fire with a BYOB-only shopping-list-timing warning and conditional balance language; (3) the shopping-list-ready email updated with the same freshness warning and skipped entirely for Hosted; and (4) a new post-consult recap email fired when the admin saves consult notes.
 
 **Architecture:** Three layers. (1) Pure helpers (`server/utils/icsCalendar.js`, render-time helpers on the templates themselves) that take plain objects and return strings or buffers, fully unit-testable with `node:test`. (2) Template surface additions in `server/utils/emailTemplates.js`: expand `signedAndPaidClient` into a full-orientation renderer, expand `drinkPlanBalanceUpdate` to take a `bar_option` + always-fire conditional, expand `shoppingListReady` with the freshness warning, add a new `postConsultClient` template. (3) Call-site rewires in `server/routes/stripe.js` (orientation now sends `.ics`, drops the parallel `drinkPlanLink` send path in `eventCreation.js`), `server/routes/drinkPlans.js` (drink-plan submit + shopping-list-approve), and `server/routes/drinkPlanConsult.js` (new send on `consult_filled_at` flip). All sends remain immediate; no scheduler involvement, no `scheduled_messages` rows for this plan.
@@ -1585,6 +1594,7 @@ Add these requires near the top of `stripe.js`:
 const { renderEventIcs } = require('../utils/icsCalendar');
 const { buildOrientationPayload } = require('../utils/orientationData');
 const { effectiveSetupMinutes } = require('../utils/setupTime');
+const { shouldSendImmediate } = require('../utils/messageSuppression');
 ```
 
 Inside `sendPaymentNotifications`, replace the entire `if (pi?.client_email) { ... }` client branch with this:
@@ -1596,7 +1606,27 @@ if (pi?.client_email) {
   // caveat to the first-payment client email when the booking is ≤72h out.
   const lastMinute = !!pi?.last_minute_hold;
 
-  if (isCoupledSigning) {
+  // Gemini Finding 3: respect the same suppression rules the dispatcher
+  // applies on scheduled rows. We need the proposal + client rows to make
+  // the call; the post-commit notifier already loaded them via payInfo.
+  // Build a tiny shape so messageSuppression has what it needs.
+  const proposalForCheck = { id: proposalId, status: pi.status || 'deposit_paid' };
+  const clientForCheck = {
+    id: pi.client_id,
+    communication_preferences: pi.communication_preferences,
+    email_status: pi.email_status,
+    phone_status: pi.phone_status,
+  };
+  const sendCheck = await shouldSendImmediate({
+    proposal: proposalForCheck,
+    client: clientForCheck,
+    channel: 'email',
+  });
+  if (!sendCheck.ok) {
+    console.log(`[orientation] suppressed for proposal ${proposalId}: ${sendCheck.reason}`);
+    // Skip the entire client-email branch but allow downstream admin email
+    // to still fire (admin emails are NOT gated by client comm prefs).
+  } else if (isCoupledSigning) {
     // FULL ORIENTATION: assemble payload, build .ics, send with attachment.
     try {
       const payload = await buildOrientationPayload(proposalId, { publicSiteUrl: PUBLIC_SITE_URL });
@@ -1681,7 +1711,9 @@ if (pi?.client_email) {
       await sendEmail({ to: pi.client_email, ...tpl });
     }
   } else {
-    // Non-coupled payment: existing paymentReceivedClient path, unchanged.
+    // Non-coupled payment: existing paymentReceivedClient path, still gated
+    // by the same shouldSendImmediate check above (this branch only runs when
+    // sendCheck.ok === true).
     const tpl = emailTemplates.paymentReceivedClient({
       clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute,
     });
@@ -1689,6 +1721,12 @@ if (pi?.client_email) {
   }
 }
 ```
+
+The post-commit payInfo SELECT in `stripe.js` (around line 820) needs to also pull
+`p.client_id`, `c.communication_preferences`, `c.email_status`, `c.phone_status`
+so the suppression check has the data it needs. Extend the existing SELECT
+when wiring this task (the autopay-enrolled column added in Plan 2a Task 12
+already sets the precedent for extending this query).
 
 A few important notes:
 - `effectiveSetupMinutes` requires `pkg` and `override`. We don't have the package row in scope here, but the fallback `|| 60` is the default for non-hosted. If the package is hosted (90 min default), the email will under-state by 30 min for the timeline copy. Acceptable for V1; refine later if needed.
@@ -1809,6 +1847,7 @@ if (addBarRental) addonNames.push('Portable Bar Rental');
 pendingNotifications = {
   proposal: {
     id: proposal.id,
+    status: proposal.status,
     event_date: proposal.event_date,
     event_type: existing.rows[0]?.event_type || proposal.event_type,
     event_type_custom: existing.rows[0]?.event_type_custom || proposal.event_type_custom,
@@ -1820,6 +1859,15 @@ pendingNotifications = {
   addonNames,
   clientName: existing.rows[0]?.client_name || 'Client',
   clientEmail: existing.rows[0]?.client_email || proposal.client_email,
+  // Gemini Finding 3: capture comm-prefs + email/phone status for the
+  // post-commit suppression check. Extend the `existing` SELECT (line ~250)
+  // to also pull these from `clients`:
+  //   c.communication_preferences, c.email_status, c.phone_status
+  clientForCheck: {
+    communication_preferences: existing.rows[0]?.communication_preferences,
+    email_status: existing.rows[0]?.email_status,
+    phone_status: existing.rows[0]?.phone_status,
+  },
   barOption: pkg && pkg.pricing_type === 'per_guest' ? 'hosted' : 'byob',
   balanceChanged,
 };
@@ -1829,23 +1877,35 @@ Then update the post-commit send (around line 369-382) to use the new shape:
 
 ```javascript
 if (clientEmail) {
-  const { proposal: pn, snapshot, amountPaid, clientName, barOption, balanceChanged } = pendingNotifications;
-  const extrasAmount = balanceChanged ? snapshot.total - pn.prevTotal : 0;
-  const balanceDue = balanceChanged ? snapshot.total - amountPaid : 0;
-  const tpl = emailTemplates.drinkPlanBalanceUpdate({
-    clientName,
-    eventTypeLabel: getEventTypeLabel({ event_type: pn.event_type, event_type_custom: pn.event_type_custom }),
-    barOption,
-    balanceChanged,
-    extrasAmount,
-    newTotal: snapshot.total,
-    amountPaid,
-    balanceDue,
-    balanceDueDate: pn.balance_due_date,
+  const { proposal: pn, snapshot, amountPaid, clientName, barOption, balanceChanged, clientForCheck } = pendingNotifications;
+  // Gemini Finding 3: respect suppression rules on immediate sends.
+  const sendCheck = await shouldSendImmediate({
+    proposal: { id: pn.id, status: pn.status || 'deposit_paid' },
+    client: clientForCheck,
+    channel: 'email',
   });
-  sendEmail({ to: clientEmail, ...tpl }).catch(emailErr => console.error('Client drink-plan confirmation email failed:', emailErr));
+  if (!sendCheck.ok) {
+    console.log(`[drinkPlanSubmit] suppressed for proposal ${pn.id}: ${sendCheck.reason}`);
+  } else {
+    const extrasAmount = balanceChanged ? snapshot.total - pn.prevTotal : 0;
+    const balanceDue = balanceChanged ? snapshot.total - amountPaid : 0;
+    const tpl = emailTemplates.drinkPlanBalanceUpdate({
+      clientName,
+      eventTypeLabel: getEventTypeLabel({ event_type: pn.event_type, event_type_custom: pn.event_type_custom }),
+      barOption,
+      balanceChanged,
+      extrasAmount,
+      newTotal: snapshot.total,
+      amountPaid,
+      balanceDue,
+      balanceDueDate: pn.balance_due_date,
+    });
+    sendEmail({ to: clientEmail, ...tpl }).catch(emailErr => console.error('Client drink-plan confirmation email failed:', emailErr));
+  }
 }
 ```
+
+Add `const { shouldSendImmediate } = require('../utils/messageSuppression');` to the top of `drinkPlans.js`. Extend the existing `pendingNotifications.clientForCheck` capture to include `{ communication_preferences, email_status, phone_status }` from the proposal-side SELECT; if the existing SELECT doesn't already pull these from `clients`, extend it.
 
 The admin-side notification still only fires when add-ons changed the balance (existing throttle behavior is fine; admin doesn't need a heads-up for a zero-impact submit).
 
@@ -1864,9 +1924,11 @@ Insert a SELECT that pulls the joined info needed (proposal + package + client) 
 if (newStatus === 'submitted' && result.rows[0]?.id) {
   try {
     const r = await pool.query(`
-      SELECT p.id, p.event_type, p.event_type_custom, p.balance_due_date,
+      SELECT p.id, p.status AS proposal_status,
+             p.event_type, p.event_type_custom, p.balance_due_date,
              p.total_price, p.amount_paid,
              c.name AS client_name, c.email AS client_email,
+             c.communication_preferences, c.email_status, c.phone_status,
              sp.pricing_type AS package_pricing_type
       FROM drink_plans dp
       LEFT JOIN proposals p ON p.id = dp.proposal_id
@@ -1877,19 +1939,33 @@ if (newStatus === 'submitted' && result.rows[0]?.id) {
     `, [result.rows[0].id]);
     if (r.rows[0]?.client_email) {
       const row = r.rows[0];
-      const barOption = row.package_pricing_type === 'per_guest' ? 'hosted' : 'byob';
-      const tpl = emailTemplates.drinkPlanBalanceUpdate({
-        clientName: row.client_name || 'Client',
-        eventTypeLabel: getEventTypeLabel({ event_type: row.event_type, event_type_custom: row.event_type_custom }),
-        barOption,
-        balanceChanged: false,
-        extrasAmount: 0,
-        newTotal: Number(row.total_price) || 0,
-        amountPaid: Number(row.amount_paid) || 0,
-        balanceDue: 0,
-        balanceDueDate: row.balance_due_date,
+      // Gemini Finding 3: respect suppression rules on immediate sends.
+      const sendCheck = await shouldSendImmediate({
+        proposal: { id: row.id, status: row.proposal_status || 'deposit_paid' },
+        client: {
+          communication_preferences: row.communication_preferences,
+          email_status: row.email_status,
+          phone_status: row.phone_status,
+        },
+        channel: 'email',
       });
-      sendEmail({ to: row.client_email, ...tpl }).catch(e => console.error('Drink-plan submit fast-path email failed:', e));
+      if (!sendCheck.ok) {
+        console.log(`[drinkPlanSubmitFastPath] suppressed for plan ${result.rows[0].id}: ${sendCheck.reason}`);
+      } else {
+        const barOption = row.package_pricing_type === 'per_guest' ? 'hosted' : 'byob';
+        const tpl = emailTemplates.drinkPlanBalanceUpdate({
+          clientName: row.client_name || 'Client',
+          eventTypeLabel: getEventTypeLabel({ event_type: row.event_type, event_type_custom: row.event_type_custom }),
+          barOption,
+          balanceChanged: false,
+          extrasAmount: 0,
+          newTotal: Number(row.total_price) || 0,
+          amountPaid: Number(row.amount_paid) || 0,
+          balanceDue: 0,
+          balanceDueDate: row.balance_due_date,
+        });
+        sendEmail({ to: row.client_email, ...tpl }).catch(e => console.error('Drink-plan submit fast-path email failed:', e));
+      }
     }
   } catch (e) {
     console.error('Drink-plan submit fast-path notification lookup failed (non-fatal):', e);
@@ -1991,41 +2067,59 @@ if (isFirstTimeConsultSave) {
     const { getEventTypeLabel } = require('../utils/eventTypes');
     const { formatConsultRecap, pickNextStepLine } = require('../utils/consultRecap');
 
-    // Look up client email, package pricing_type, and event-display fields.
+    // Look up client email, package pricing_type, comm-prefs, and event-display fields.
+    const { shouldSendImmediate } = require('../utils/messageSuppression');
     const lookup = await pool.query(`
       SELECT dp.client_email, dp.client_name, dp.event_type, dp.event_type_custom, dp.event_date,
+             p.id AS proposal_id, p.status AS proposal_status,
+             c.communication_preferences, c.email_status, c.phone_status,
              sp.pricing_type AS package_pricing_type
       FROM drink_plans dp
       LEFT JOIN proposals p ON p.id = dp.proposal_id
+      LEFT JOIN clients c ON c.id = p.client_id
       LEFT JOIN service_packages sp ON sp.id = p.package_id
       WHERE dp.id = $1
     `, [req.params.id]);
 
     if (lookup.rows[0]?.client_email) {
       const row = lookup.rows[0];
-      const barOption = row.package_pricing_type === 'per_guest' ? 'hosted' : 'byob';
-      const formattedEventDate = row.event_date
-        ? new Date(row.event_date).toLocaleDateString('en-US', {
-            timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
-          })
-        : null;
-      const tpl = emailTemplates.postConsultClient({
-        clientName: row.client_name || 'there',
-        eventTypeLabel: getEventTypeLabel({ event_type: row.event_type, event_type_custom: row.event_type_custom }),
-        formattedEventDate,
-        drinkRecapLines: formatConsultRecap(consult),
-        nextStepLine: pickNextStepLine(barOption),
+      // Gemini Finding 3: respect suppression rules on immediate sends.
+      const sendCheck = await shouldSendImmediate({
+        proposal: { id: row.proposal_id, status: row.proposal_status || 'deposit_paid' },
+        client: {
+          communication_preferences: row.communication_preferences,
+          email_status: row.email_status,
+          phone_status: row.phone_status,
+        },
+        channel: 'email',
       });
-      sendEmail({ to: row.client_email, ...tpl }).catch(emailErr => {
-        console.error('[postConsultClient] send failed (non-fatal):', emailErr);
-        if (process.env.SENTRY_DSN_SERVER) {
-          const Sentry = require('@sentry/node');
-          Sentry.captureException(emailErr, {
-            tags: { route: 'drinkPlanConsult/putConsult', step: 'postConsultClient' },
-            extra: { planId: req.params.id },
-          });
-        }
-      });
+      if (!sendCheck.ok) {
+        console.log(`[postConsultClient] suppressed for plan ${req.params.id}: ${sendCheck.reason}`);
+      } else {
+        const barOption = row.package_pricing_type === 'per_guest' ? 'hosted' : 'byob';
+        const formattedEventDate = row.event_date
+          ? new Date(row.event_date).toLocaleDateString('en-US', {
+              timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+            })
+          : null;
+        const tpl = emailTemplates.postConsultClient({
+          clientName: row.client_name || 'there',
+          eventTypeLabel: getEventTypeLabel({ event_type: row.event_type, event_type_custom: row.event_type_custom }),
+          formattedEventDate,
+          drinkRecapLines: formatConsultRecap(consult),
+          nextStepLine: pickNextStepLine(barOption),
+        });
+        sendEmail({ to: row.client_email, ...tpl }).catch(emailErr => {
+          console.error('[postConsultClient] send failed (non-fatal):', emailErr);
+          if (process.env.SENTRY_DSN_SERVER) {
+            const Sentry = require('@sentry/node');
+            Sentry.captureException(emailErr, {
+              tags: { route: 'drinkPlanConsult/putConsult', step: 'postConsultClient' },
+              extra: { planId: req.params.id },
+            });
+          }
+        });
+      }
     }
   } catch (recapErr) {
     // Anything that throws during lookup/templating gets logged but doesn't
