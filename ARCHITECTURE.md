@@ -681,12 +681,13 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 
 ### Messaging
 
-**sms_messages** — Outbound SMS message log
+**sms_messages** — SMS message log (inbound + outbound)
 - `id` SERIAL PK
 - `user_id` FK → users (recipient)
 - `shift_id` FK → shifts (nullable, for shift invitations)
 - `group_id` UUID — groups messages from the same batch send
 - `message_type` — e.g. general, shift_invitation
+- `direction` TEXT NOT NULL DEFAULT 'outbound' CHECK (`inbound`, `outbound`) — added for two-way SMS via Automated Communication Foundation
 - `to_phone`, `body`
 - `twilio_sid`, `status` — delivery tracking
 - `sent_by` FK → users (admin who sent)

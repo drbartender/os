@@ -2252,3 +2252,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_preferences JSONB
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS communication_preferences JSONB
   NOT NULL DEFAULT '{"sms_enabled":true,"email_enabled":true,"marketing_enabled":true}'::jsonb;
+
+-- ─── Automated Communication: sms_messages additions ─────────────
+
+ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS direction TEXT NOT NULL DEFAULT 'outbound';
+
+DO $$ BEGIN
+  ALTER TABLE sms_messages DROP CONSTRAINT IF EXISTS sms_messages_direction_check;
+  ALTER TABLE sms_messages ADD CONSTRAINT sms_messages_direction_check
+    CHECK (direction IN ('inbound','outbound'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
