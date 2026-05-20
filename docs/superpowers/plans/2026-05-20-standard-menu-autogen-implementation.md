@@ -666,279 +666,457 @@ git commit -m "feat(planner): menuSections.js helper with unit tests for section
 
 ---
 
-## Task 5: Client: create MenuPreview component with placeholder visual
+## Task 5: Client: create MenuPreview component (canonical Dark Ink render)
 
-The shared React component that renders the menu visually. Ships with a placeholder Dark Ink visual that satisfies the proportions table from spec §6.4. The visual gets refined in a Claude Design session later; the structure and the section conditional logic are what this task locks down.
+The shared React component that renders the menu visually. **This task ports the canonical render directly from the locked Claude Design output.** Inline-style React component (no CSS classes, same pattern as `ClientShoppingList.js`) that draws the menu at exact 768 x 960 px ("print" variant) or wraps the same render in a responsive transform-scaled container ("screen" variant). The print variant feeds html2canvas for the admin PNG export in Task 10.
+
+**Two new asset files** are required and must be in place before this code can render correctly:
+1. Pirata One TTF/WOFF2 (for the "The Bar Menu" title crest)
+2. The Dr. Bartender gold-rimmed logo PNG (for the footer lockup)
 
 **Files:**
+- Create: `client/src/fonts/PirataOne-Regular.woff2` (download from Google Fonts; ~32 KB)
+- Create: `client/public/images/menu-logo-gold.png` (extract from the Claude Design bundle at `potion-planner/styles/assets/logo-gold.png` or use whichever DRB gold-rimmed medallion asset matches the brand)
 - Create: `client/src/pages/plan/components/MenuPreview.js`
-- Modify: `client/src/index.css` (append menu-preview CSS at the end, all under `.potion-app` scope)
+- Modify: `client/src/index.css` (append one `@font-face` declaration for Pirata One)
 
-- [ ] **Step 1: Create the component**
+- [ ] **Step 1: Place the font and logo assets**
 
-Create `client/src/pages/plan/components/MenuPreview.js` with:
+Download the Pirata One Regular font from `https://fonts.google.com/specimen/Pirata+One` as a TTF. Convert to WOFF2 (smaller, browser-friendly) using any TTF-to-WOFF2 converter (e.g., the `woff2` CLI tool, or an online converter). Save the resulting file to:
+
+```
+client/src/fonts/PirataOne-Regular.woff2
+```
+
+Place the Dr. Bartender gold-rimmed logo PNG at:
+
+```
+client/public/images/menu-logo-gold.png
+```
+
+(The file is referenced from the design bundle's `potion-planner/styles/assets/logo-gold.png`. If you don't have that file at hand, any 256×256-or-larger PNG of the DRB medallion will do; the exact asset can be swapped in later.)
+
+- [ ] **Step 2: Add the `@font-face` for Pirata One**
+
+Open `client/src/index.css`. Find the existing `@font-face` block for IM Fell English at the top of the file (lines ~5-19). Immediately AFTER the last existing `@font-face` declaration and BEFORE the `:root` block, append:
+
+```css
+@font-face {
+  font-family: 'Pirata One';
+  src: url('./fonts/PirataOne-Regular.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+```
+
+This makes the font available globally so the menu component picks it up, and so html2canvas captures it correctly during the admin PNG export.
+
+- [ ] **Step 3: Create the MenuPreview component**
+
+Create `client/src/pages/plan/components/MenuPreview.js` with the following content. This is a direct port of the canonical render from the Claude Design output, adapted for our planner integration (uses our `extractMenuSections` helper from Task 4 and matches our prop contract):
 
 ```jsx
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { extractMenuSections } from '../data/menuSections';
 
-const DRB_LOGO_SRC = process.env.PUBLIC_URL + '/shopping-list-logo.png';
+/* Standard Menu, Dark Ink direction. Single canonical visual used in two
+   variants: 'screen' (responsive, scaled-down preview shown to the client on
+   MenuDesignStep) and 'print' (exact 768x960 at 96 DPI screen scale, fed to
+   html2canvas by the admin PNG export at scale:3 to produce a 2304x2880 PNG).
 
-/**
- * Shared menu visual. Renders the Dark Ink direction defined by spec §6.4.
- * Used inline on MenuDesignStep for the client preview and off-screen at
- * print dimensions on the admin EventDetailPage for html2canvas capture.
- *
- * Props:
- *   selections          - the full selections object
- *   activeModules       - { signatureDrinks, mocktails, fullBar, beerWineOnly }
- *   cocktails           - [{ id, name }] for resolving signatureDrinks IDs
- *   mocktails           - [{ id, name }] for resolving mocktails IDs
- *   companyLogo         - string URL or '' (uploaded logo)
- *   variant             - 'screen' (responsive, max 400px) | 'print' (fixed 768x960)
- */
-export default function MenuPreview({
+   Inline-style React (no CSS classes) matches the ClientShoppingList.js
+   pattern. All sizes are in print-px on the 768x960 canvas. */
+
+const PRINT = {
+  W: 768,
+  H: 960,
+  bg: '#12161C',
+  cream: '#F0E8D6',
+  brass: '#B8924A',
+  brassBright: '#D6AE65',
+  rule: '1px solid #B8924A',
+  fontDisplay: "'IM Fell English SC', Georgia, serif",
+  fontBody: "'IM Fell English', Georgia, serif",
+  fontTitle: "'Pirata One', 'IM Fell English SC', Georgia, serif",
+};
+
+const DRB_LOGO_SRC = process.env.PUBLIC_URL + '/images/menu-logo-gold.png';
+
+/* ─────────────────────────────────────────────────────────
+   Public component (default export). Dispatches by variant.
+   ───────────────────────────────────────────────────────── */
+export default function MenuPreview(props) {
+  const { variant = 'screen' } = props;
+  if (variant === 'print') {
+    return <MenuCard {...props} />;
+  }
+  return <ResponsiveScreenWrapper {...props} />;
+}
+
+/* ─────────────────────────────────────────────────────────
+   ResponsiveScreenWrapper. Scales the 768x960 card to fit
+   the parent container's width while preserving the 4:5
+   aspect ratio. Uses ResizeObserver so the preview always
+   fits MenuDesignStep's card width, on any viewport.
+   ───────────────────────────────────────────────────────── */
+function ResponsiveScreenWrapper(props) {
+  const containerRef = useRef(null);
+  const [scale, setScale] = useState(0.521);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const update = () => {
+      const w = containerRef.current?.offsetWidth || PRINT.W;
+      setScale(Math.min(w / PRINT.W, 1));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        width: '100%',
+        maxWidth: 400,
+        aspectRatio: '4 / 5',
+        position: 'relative',
+        overflow: 'hidden',
+        margin: '18px 0 4px',
+      }}
+    >
+      <div
+        style={{
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+        }}
+      >
+        <MenuCard {...props} />
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────
+   MenuCard. The canonical render at 768x960.
+   ───────────────────────────────────────────────────────── */
+function MenuCard({
   selections = {},
   activeModules = {},
   cocktails = [],
   mocktails = [],
   companyLogo = '',
-  variant = 'screen',
 }) {
   const { sections, isEmpty } = extractMenuSections(selections, activeModules, cocktails, mocktails);
 
-  const containerClass = variant === 'print' ? 'menu-preview menu-preview-print' : 'menu-preview menu-preview-screen';
-
   return (
-    <div className={containerClass} role="img" aria-label="Standard menu preview">
-      <div className="menu-preview-eyebrow">Cocktail Menu</div>
-
-      <div className="menu-preview-body">
-        {isEmpty && (
-          <p className="menu-preview-empty">
-            No drinks selected yet. Go back and pick something to serve.
-          </p>
-        )}
-
-        {!isEmpty && (
-          <div className="menu-preview-sections">
-            {sections.map((section) => (
-              <section key={section.kind} className={`menu-section menu-section-${section.kind}`}>
-                <h3 className="menu-section-title">{section.title}</h3>
-                {section.kind === 'beer-wine' ? (
-                  <p className="menu-section-inline">{section.items.join(' · ')}</p>
-                ) : (
-                  <ul className="menu-section-list">
-                    {section.items.map((name, i) => (
-                      <li key={`${section.kind}-${i}`}>{name}</li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-            ))}
-          </div>
-        )}
+    <div
+      style={{
+        width: PRINT.W,
+        height: PRINT.H,
+        background: PRINT.bg,
+        color: PRINT.cream,
+        fontFamily: PRINT.fontBody,
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+      role="img"
+      aria-label="Standard menu preview"
+    >
+      {/* Content area. Page margins 48px (36pt). */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 48,
+          left: 48,
+          right: 48,
+          bottom: 107, // footer band height
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <TitleCrest text="The Bar Menu" />
+        {isEmpty ? <EmptyBody /> : <Body sections={sections} />}
       </div>
 
-      <div className="menu-preview-footer">
-        <div className="menu-preview-footer-rule" />
-        <div className="menu-preview-footer-marks">
-          <div className="menu-preview-drb">
-            <img src={DRB_LOGO_SRC} alt="Dr. Bartender" className="menu-preview-drb-mark" />
-            <span className="menu-preview-drb-wordmark">DR. BARTENDER</span>
+      {/* Footer band. Absolute, full-width. */}
+      <div
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 107,
+          borderTop: PRINT.rule,
+          display: 'flex',
+          alignItems: 'center',
+          paddingLeft: 48,
+          paddingRight: 48,
+          gap: 24,
+        }}
+      >
+        <DrbLockup />
+        <div style={{ flex: 1 }} />
+        {companyLogo && (
+          <>
+            <div style={{ width: 1, height: 64, background: PRINT.brass }} />
+            <img
+              src={companyLogo}
+              alt=""
+              style={{
+                maxWidth: 160,
+                maxHeight: 72,
+                width: 'auto',
+                height: 'auto',
+                objectFit: 'contain',
+                display: 'block',
+              }}
+            />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────
+   TitleCrest. Anchor of the menu. Pirata One at 72px,
+   flanked by brass hairlines + diamond ornaments.
+   ───────────────────────────────────────────────────────── */
+function TitleCrest({ text }) {
+  return (
+    <div style={{ textAlign: 'center', marginBottom: 38 }}>
+      <CrestHRule />
+      <h1
+        style={{
+          margin: '14px 0',
+          fontFamily: PRINT.fontTitle,
+          fontWeight: 400,
+          fontSize: 72,
+          lineHeight: 1,
+          letterSpacing: '0.02em',
+          color: PRINT.cream,
+        }}
+      >
+        {text}
+      </h1>
+      <CrestHRule />
+    </div>
+  );
+}
+
+function CrestHRule() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 14,
+      }}
+    >
+      <span style={{ flex: 1, maxWidth: 160, height: 1, background: PRINT.brass }} />
+      <span
+        style={{
+          color: PRINT.brass,
+          fontSize: 14,
+          lineHeight: 1,
+          transform: 'translateY(-1px)',
+        }}
+      >
+        {'◆'}
+      </span>
+      <span style={{ flex: 1, maxWidth: 160, height: 1, background: PRINT.brass }} />
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────
+   Body. Sections stacked vertically in spec order.
+   ───────────────────────────────────────────────────────── */
+function Body({ sections }) {
+  const isOnly = sections.length === 1;
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 30,
+      }}
+    >
+      {sections.map((section) => (
+        <StackedSection key={section.kind} section={section} isOnly={isOnly} />
+      ))}
+    </div>
+  );
+}
+
+function StackedSection({ section, isOnly }) {
+  // Beer & Wine inline when it accompanies other sections; stacked like a
+  // drink list when it is the only section on the menu.
+  const inline = section.kind === 'beer-wine' && !isOnly;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      <SectionLabel>{section.title}</SectionLabel>
+      <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', gap: 0 }}>
+        {inline ? (
+          <div
+            style={{
+              fontFamily: PRINT.fontDisplay,
+              fontSize: 21,
+              letterSpacing: '0.18em',
+              textTransform: 'uppercase',
+              color: PRINT.cream,
+              textAlign: 'center',
+            }}
+          >
+            {section.items.join('   ·   ')}
           </div>
-          {companyLogo && (
-            <>
-              <div className="menu-preview-footer-divider" />
-              <img
-                src={companyLogo}
-                alt="Client logo"
-                className="menu-preview-client-logo"
-              />
-            </>
-          )}
-        </div>
+        ) : (
+          section.items.map((name, i) => (
+            <DrinkName key={`${section.kind}-${i}`}>{name}</DrinkName>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SectionLabel({ children }) {
+  return (
+    <div style={{ paddingBottom: 12, borderBottom: PRINT.rule }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 14,
+          fontFamily: PRINT.fontDisplay,
+          fontSize: 17,
+          letterSpacing: '0.22em',
+          textTransform: 'uppercase',
+          color: PRINT.brassBright,
+          lineHeight: 1,
+        }}
+      >
+        <span style={{ color: PRINT.brass, fontSize: 11, lineHeight: 1, transform: 'translateY(-1px)' }}>
+          {'◆'}
+        </span>
+        <span>{children}</span>
+        <span style={{ color: PRINT.brass, fontSize: 11, lineHeight: 1, transform: 'translateY(-1px)' }}>
+          {'◆'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function DrinkName({ children }) {
+  return (
+    <div
+      style={{
+        fontFamily: PRINT.fontDisplay,
+        fontSize: 35,
+        lineHeight: 1.4,
+        letterSpacing: '0.04em',
+        color: PRINT.cream,
+        textAlign: 'center',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function EmptyBody() {
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '0 48px',
+      }}
+    >
+      <p
+        style={{
+          fontFamily: PRINT.fontBody,
+          fontStyle: 'italic',
+          fontSize: 22,
+          color: 'rgba(240,232,214,0.65)',
+          textAlign: 'center',
+          lineHeight: 1.5,
+          margin: 0,
+        }}
+      >
+        No drinks selected yet. <br />
+        Go back and pick something to serve.
+      </p>
+    </div>
+  );
+}
+
+function DrbLockup() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <img
+        src={DRB_LOGO_SRC}
+        alt="Dr. Bartender"
+        style={{
+          width: 64,
+          height: 64,
+          objectFit: 'contain',
+          display: 'block',
+          flexShrink: 0,
+        }}
+      />
+      <div
+        style={{
+          fontFamily: PRINT.fontDisplay,
+          fontSize: 19,
+          letterSpacing: '0.32em',
+          lineHeight: 1,
+          textTransform: 'uppercase',
+          color: PRINT.cream,
+        }}
+      >
+        Dr.&nbsp;Bartender
       </div>
     </div>
   );
 }
 ```
 
-- [ ] **Step 2: Append placeholder Dark Ink CSS to `client/src/index.css`**
+A few notes on the port:
 
-Open `client/src/index.css`. Scroll to the end. Append:
+- `'◆'` is the Unicode escape for the `◆` diamond character. Using the escape keeps the source ASCII-safe.
+- `'   ·   '` is the middot separator between Beer & Wine labels (three em-spaces, middot, three em-spaces). Using the escape so the spacing is unambiguous in source.
+- The `ResponsiveScreenWrapper` uses `ResizeObserver` to track the parent width and scale the inner 768-px-wide card to fit. Falls back to scale 0.521 (which is 400/768) before the first measurement.
+- `process.env.PUBLIC_URL` resolves to the dev/prod base path for static assets in `client/public/`. The DRB medallion at `/images/menu-logo-gold.png` must be in place from Step 1 before the component renders correctly.
 
-```css
-
-/* Standard Menu preview (Dark Ink direction per spec §6.4)
-   Placeholder visual sufficient to verify the section conditional logic
-   and the data path; final visual gets iterated in a separate Claude
-   Design session against the live <MenuPreview> component. */
-.potion-app .menu-preview {
-  background: var(--chalkboard);
-  color: var(--cream-text);
-  font-family: var(--font-body);
-  border-radius: 6px;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  overflow: hidden;
-}
-
-/* Screen variant: responsive width, 4:5 aspect ratio, max 400px on desktop */
-.potion-app .menu-preview-screen {
-  width: 100%;
-  max-width: 400px;
-  aspect-ratio: 4 / 5;
-  margin: 18px 0 4px;
-  padding: 7%;
-  font-size: 11px;
-}
-
-/* Print variant: fixed 768x960 (8x10 inches at 96 DPI screen scale).
-   html2canvas captures at scale: 3 to produce 2304x2880 px PNG. */
-.potion-app .menu-preview-print {
-  width: 768px;
-  height: 960px;
-  padding: 36px;
-  font-size: 13pt;
-}
-
-/* Eyebrow title (tiny brass tracked SC at top per spec §6.4) */
-.potion-app .menu-preview-eyebrow {
-  font-family: var(--font-display);
-  text-align: center;
-  color: var(--brass);
-  text-transform: uppercase;
-  letter-spacing: 0.32em;
-  font-size: 0.85em;
-  margin-bottom: 1.8em;
-}
-
-/* Body region */
-.potion-app .menu-preview-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-}
-
-.potion-app .menu-preview-empty {
-  color: var(--brass);
-  font-style: italic;
-  font-size: 0.9em;
-  text-align: center;
-  margin-top: 30%;
-}
-
-.potion-app .menu-preview-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 1.8em;
-}
-
-/* Section title (brass-bright tracked SC, ~13pt at print) */
-.potion-app .menu-section-title {
-  font-family: var(--font-display);
-  color: var(--brass-bright);
-  text-transform: uppercase;
-  letter-spacing: 0.22em;
-  font-size: 1em;
-  margin: 0 0 0.6em;
-  font-weight: 400;
-}
-
-/* Drink names (cream IM Fell SC, ~26pt at print). Line-height 1.4 per spec. */
-.potion-app .menu-section-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2em;
-}
-.potion-app .menu-section-list li {
-  font-family: var(--font-display);
-  color: var(--cream-text);
-  font-size: 2em;
-  line-height: 1.4;
-  letter-spacing: 0.02em;
-}
-
-/* Beer & Wine inline labels (cream SC, slightly larger than section labels) */
-.potion-app .menu-section-inline {
-  font-family: var(--font-display);
-  color: var(--cream-text);
-  font-size: 1.25em;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  margin: 0;
-  text-align: center;
-}
-
-/* Footer band */
-.potion-app .menu-preview-footer {
-  margin-top: auto;
-  padding-top: 1.2em;
-}
-.potion-app .menu-preview-footer-rule {
-  height: 1px;
-  background: var(--brass);
-  opacity: 0.55;
-  margin-bottom: 0.8em;
-}
-.potion-app .menu-preview-footer-marks {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1em;
-}
-.potion-app .menu-preview-drb {
-  display: flex;
-  align-items: center;
-  gap: 0.5em;
-}
-.potion-app .menu-preview-drb-mark {
-  height: 2.5em;
-  width: auto;
-}
-.potion-app .menu-preview-drb-wordmark {
-  font-family: var(--font-display);
-  color: var(--cream-text);
-  text-transform: uppercase;
-  letter-spacing: 0.32em;
-  font-size: 1em;
-}
-.potion-app .menu-preview-footer-divider {
-  width: 1px;
-  height: 2em;
-  background: var(--brass);
-  opacity: 0.5;
-}
-.potion-app .menu-preview-client-logo {
-  max-width: 100px;
-  max-height: 50px;
-  object-fit: contain;
-}
-```
-
-- [ ] **Step 3: Verify the component file parses and CSS is balanced**
+- [ ] **Step 4: Verify the component file parses**
 
 The component is not yet mounted anywhere; it cannot be visually verified yet. Verify mechanically:
 
 ```
 cd client
 npx eslint src/pages/plan/components/MenuPreview.js
-# Expected: no errors (warnings are fine)
+# Expected: no errors (warnings about React hooks are fine if any appear)
 ```
 
-Brace check on the appended CSS block: should balance. Count `{` and `}` in the appended CSS.
+If eslint flags any issues, fix them before commit.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```
-git add client/src/pages/plan/components/MenuPreview.js client/src/index.css
-git commit -m "feat(planner): MenuPreview component with placeholder Dark Ink visual"
+git add client/src/fonts/PirataOne-Regular.woff2 client/public/images/menu-logo-gold.png client/src/pages/plan/components/MenuPreview.js client/src/index.css
+git commit -m "feat(planner): canonical MenuPreview component (Dark Ink, Pirata One title, diamond ornaments)"
 ```
 
 ---

@@ -167,50 +167,89 @@ When `menuStyle === 'none'` or `null`: no preview, no logo field.
 
 ### 6.4 Visual constraints (for the Claude Design pass)
 
-**Direction:** Dark Ink. Chalkboard surface, cream type, brass accents. Two-column layout for Cocktails and Mocktails with Beer & Wine as a sash across the bottom (the D2 hierarchy from the design canvas).
+**Direction:** Dark Ink. Chalkboard surface, cream type, brass accents. **Vertical single-column stacked layout** (the Claude Design iteration moved away from two-column after the first pass): Cocktails → Mocktails → Beer & Wine → Bar Service, each with its own label + brass hairline + items block.
 
 **Format:**
 - Portrait, 4:5 aspect ratio, 8 x 10 inches at print scale.
-- Solid chalkboard background (`#12161C`) flooded across the full 8x10 page.
-- IM Fell English throughout (Display + SC variants).
+- Print canvas: exactly 768 x 960 px at 96 DPI screen scale. html2canvas captures at `scale: 3` to produce a 2304 x 2880 PNG.
+- Solid chalkboard background (`#12161C`) flooded across the full surface.
 
-**Palette:**
+**Palette and one-rule-token discipline:**
 - Background: `#12161C` (chalkboard)
 - Drink names: `#F0E8D6` (cream)
-- Section labels and title eyebrow: `#D6AE65` (brass-bright) for legibility on dark
-- Hairlines and dividers: `#B8924A` (brass)
-- No deep-brown anywhere on this surface (deep-brown is the on-parchment text color elsewhere in the planner; it would be invisible here)
+- Section labels: `#D6AE65` (brass-bright)
+- Hairlines, ornaments, vertical footer divider, brass diamonds: `#B8924A` (brass)
+- **Single rule token:** all hairlines on the menu render as `1px solid #B8924A`. No opacity drift, no subpixel variation. One token applied to title hairlines, section-label hairlines, footer top border, and footer's vertical divider.
 
-**Type scale (print pt, 72 DPI):**
+**Typography:**
 
-| Element | Size | Style |
-|---|---|---|
-| Title eyebrow | 11 pt | IM Fell English SC, tracked 0.32em, brass |
-| Section labels (Cocktails, Mocktails, Beer & Wine) | 13 pt | IM Fell English SC, tracked 0.22em, brass-bright |
-| Drink names (the heroes) | 26 pt | IM Fell English SC, cream, line-height 1.4× |
-| Beer & Wine inline labels (Beer · Seltzer · Red · White · Sparkling) | 16 pt | IM Fell English SC, tracked 0.18em, cream |
-| Footer wordmark (DR. BARTENDER) | 14 pt | IM Fell English SC, tracked 0.32em, cream |
+| Element | Size (print px) | Font | Style |
+|---|---|---|---|
+| Title crest "The Bar Menu" | 72 px | **Pirata One** (NEW dependency, blackletter-adjacent display serif) | weight 400, letter-spacing 0.02em, cream |
+| Section labels (Cocktails, Mocktails, Beer & Wine, Bar Service) | 17 px | IM Fell English SC | letter-spacing 0.22em, uppercase, brass-bright |
+| Drink names (the heroes) | 35 px | IM Fell English SC | letter-spacing 0.04em, line-height 1.4, cream, centered |
+| Beer & Wine inline labels | 21 px | IM Fell English SC | letter-spacing 0.18em, uppercase, cream, centered, joined by `   ·   ` (three em-spaces + middot + three em-spaces) |
+| Empty-state copy | 22 px | IM Fell English (body, italic) | line-height 1.5, cream at 65% alpha |
+| Footer wordmark (Dr. Bartender) | 19 px | IM Fell English SC | letter-spacing 0.32em, uppercase, cream |
+| Diamond ornament `◆` flanking title | 14 px | system, brass | translateY(-1px) for optical center |
+| Diamond ornament `◆` flanking section labels | 11 px | system, brass | translateY(-1px) for optical center |
 
-The ratios that matter: drink-name to section-label is **2×**; drink-name to eyebrow title is **2.4×**; drink-name to body line-height is **1.4×**. These are the relationships that were drifting in the earlier variants.
+**Pirata One** is loaded as a local `@font-face` in `client/src/index.css` from a TTF asset shipped under `client/src/fonts/PirataOne-Regular.ttf` (or the implementer's chosen subdirectory). Local-font load matches the existing IM Fell pattern and ensures html2canvas captures cleanly without any external Google Fonts fetch during PNG generation.
 
-**Spatial scale (print pt):**
-- Page margins: 36 pt (0.5 inch) all four sides
-- Gap between title eyebrow and first section: 20 pt
-- Gap between sections in the same column: 28 pt
-- Column gutter (two-column block): 32 pt
-- Beer & Wine sash height: ~60 pt (including label + items)
-- Footer band height: ~80 pt
-- Brass hairline above footer: 1 pt rule, full-width minus margins
+**Spatial scale (print px):**
+- Page margins: 48 px on all four sides
+- Title crest bottom margin (before first section): 38 px
+- Vertical gap between stacked sections: 30 px
+- Section label bottom-padding (above the hairline): 12 px
+- Gap between section hairline and drink list: 18 px
+- Footer band height: 107 px (fixed at the bottom)
+- Footer paddingInline: 48 px
+- Footer DRB-to-client-logo gap: 24 px (with vertical brass rule between)
 
-**Logos at footer:**
-- DRB medallion + "DR. BARTENDER" wordmark left-aligned in the footer band.
-- Client logo (if present) right-aligned, separated from the DRB lockup by a thin vertical brass rule.
-- Client logo capped at max box **200 x 100 px** (in print-render dimensions) with `object-fit: contain` so a wide corporate logo doesn't squish the DRB lockup or break the footer.
+**Title crest structure:**
+
+```
+[HRule with ◆ centered (line, 14px diamond, line)]
+   The Bar Menu        ← 72px Pirata One, cream
+[HRule with ◆ centered (line, 14px diamond, line)]
+```
+
+Each `HRule` is a flex row: `[flex:1 1px line; max 160px width]  ◆  [flex:1 1px line; max 160px width]`. The diamond sits between the two line segments.
+
+**Section structure:**
+
+Every section uses identical chrome:
+
+```
+   ◆  COCKTAILS  ◆       ← brass-bright SC, 17px, with brass diamond flankers
+─────────────────────    ← brass 1px hairline (the bottom-border of the label cell)
+
+   Drink Name 1          ← 35px IM Fell SC cream, centered
+   Drink Name 2
+   Drink Name 3
+```
+
+The diamond+label+hairline together form the section header. The diamond markers (11px) sit on either side of the label text, separated by 14px gaps, centered above the hairline.
+
+**Beer & Wine layout (conditional):**
+
+- **When Beer & Wine is NOT the only section** (accompanying Cocktails or Mocktails): items render inline as one centered tracked SC line at 21px: `BEER   ·   SELTZER   ·   RED   ·   WHITE   ·   SPARKLING` (three em-spaces, middot, three em-spaces between labels).
+- **When Beer & Wine IS the only section on the menu**: items render stacked vertically as hero lines at 35px IM Fell SC cream, the same treatment as drink names. The inline pill row reads as a footnote with nothing above it; promoting it to hero-stacked gives it visual weight when it carries the whole menu.
+
+**Footer band:**
+
+- Absolute-positioned at the bottom, full-width, 107 px tall, with `borderTop: 1px solid #B8924A`.
+- Left side: DRB lockup = medallion image (64×64 px, `objectFit: contain`) + "Dr. Bartender" wordmark (19px IM Fell SC, 0.32em tracking, cream), separated by a 16px gap.
+- Center: empty flex spacer.
+- Right side (only when `companyLogo` is present): a 1px brass vertical rule (64 px tall) followed by the client logo, capped at **160 × 72 px** with `objectFit: contain` so the visual mass balances the 64-px DRB medallion next to it.
+
+**Logo asset path:** the DRB medallion uses `/images/menu-logo-gold.png` (a new asset the operator places in `client/public/images/`). Path defined as `process.env.PUBLIC_URL + '/images/menu-logo-gold.png'` in `<MenuPreview>` so it works in both dev and prod bundles.
 
 **Other constraints:**
 - No event name, no event date, no flavor descriptions (drink names only).
 - No box-shadow or backdrop-filter effects on text (so html2canvas captures cleanly).
-- Section dividers as thin brass hairlines, not ornament strings.
+- No CSS borders that would be visible during print (all dividers are explicit hairline blocks).
+- Diamonds use the Unicode `◆` character (U+25C6) in the system color emoji-free; no SVG, no icon library.
 
 ### 6.5 Update behavior
 
