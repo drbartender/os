@@ -641,7 +641,7 @@ export default function PotionPlanningLab() {
   // Loading / error states
   if (loading) {
     return (
-      <div className="auth-page">
+      <div className="auth-page potion-app">
         <div className="page-container" style={{ textAlign: 'center', paddingTop: '4rem' }}>
           <div role="status" aria-live="polite">
             <div className="spinner" />
@@ -654,7 +654,7 @@ export default function PotionPlanningLab() {
 
   if (plan?.locked) {
     return (
-      <div className="auth-page">
+      <div className="auth-page potion-app">
         <div className="page-container" style={{ textAlign: 'center', paddingTop: '4rem' }}>
           <div className="card">
             <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
@@ -681,7 +681,7 @@ export default function PotionPlanningLab() {
 
   if (error && !plan) {
     return (
-      <div className="auth-page">
+      <div className="auth-page potion-app">
         <div className="page-container" style={{ textAlign: 'center', paddingTop: '4rem' }}>
           <div className="card">
             <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>&#9879;&#65039;</div>
@@ -699,7 +699,7 @@ export default function PotionPlanningLab() {
   // Submitted celebration screen
   if (step === 'submitted') {
     return (
-      <div className="auth-page">
+      <div className="auth-page potion-app">
         <div className="page-container" style={{ textAlign: 'center', paddingTop: '3rem' }}>
           <div className="card">
             <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>&#127881;</div>
@@ -906,7 +906,7 @@ export default function PotionPlanningLab() {
   };
 
   return (
-    <div className="auth-page">
+    <div className="auth-page potion-app">
       <div className="page-container">
         {progressStep && (
           <div style={{ textAlign: 'center', marginBottom: '0.5rem', fontSize: '0.85rem', color: 'var(--parchment)' }}>
