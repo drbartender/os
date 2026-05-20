@@ -263,8 +263,8 @@ async function start() {
         const wrapped = wrapScheduler('autopay', 3600, processAutopayCharges);
         setTimeout(wrapped, 30000);
         setInterval(wrapped, 60 * 60 * 1000);
-      } else {
-        clearHealthRow('autopay'); // prevent stale-monitor alerts for a disabled job
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('autopay'); // disabled via per-scheduler flag; clear stale-monitor row
       }
 
       // Auto-complete events — check hourly for ended, fully-paid events
@@ -272,7 +272,7 @@ async function start() {
         const wrapped = wrapScheduler('autocomplete', 3600, processEventCompletions);
         setTimeout(wrapped, 45000);
         setInterval(wrapped, 60 * 60 * 1000);
-      } else {
+      } else if (!globalScheduleDisabled) {
         clearHealthRow('autocomplete');
       }
 
@@ -281,7 +281,7 @@ async function start() {
         const wrapped = wrapScheduler('auto_assign', 3600, processScheduledAutoAssigns);
         setTimeout(wrapped, 60000);
         setInterval(wrapped, 60 * 60 * 1000);
-      } else {
+      } else if (!globalScheduleDisabled) {
         clearHealthRow('auto_assign');
       }
 
@@ -290,7 +290,7 @@ async function start() {
         const wrapped = wrapScheduler('email_sequence', 900, processSequenceSteps);
         setTimeout(wrapped, 90000);
         setInterval(wrapped, 15 * 60 * 1000);
-      } else {
+      } else if (!globalScheduleDisabled) {
         clearHealthRow('email_sequence');
       }
 
@@ -299,7 +299,7 @@ async function start() {
         const wrapped = wrapScheduler('quote_draft_cleanup', 86400, expireStaleQuoteDrafts);
         setTimeout(wrapped, 120000);
         setInterval(wrapped, 24 * 60 * 60 * 1000);
-      } else {
+      } else if (!globalScheduleDisabled) {
         clearHealthRow('quote_draft_cleanup');
       }
 
@@ -308,7 +308,7 @@ async function start() {
         const wrapped = wrapScheduler('labrat_purge', 3600, purgeLabratTestData);
         setTimeout(wrapped, 150000);
         setInterval(wrapped, 60 * 60 * 1000);
-      } else {
+      } else if (!globalScheduleDisabled) {
         clearHealthRow('labrat_purge');
       }
 
