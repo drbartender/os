@@ -643,6 +643,9 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `name`, `email`, `phone`
 - `source`: direct | thumbtack | referral | website
 - `notes`
+- `communication_preferences` JSONB — `{sms_enabled, email_enabled, marketing_enabled}` (defaults true). Drives the Automated Communication system's send gating.
+- `email_status` (`ok` | `bad`), `phone_status` (`ok` | `bad`) — channel deliverability flags flipped on bounce/blocked-list signals.
+- `email_harvest_status` (`not_needed` | `pending` | `harvested` | `failed`), `email_harvest_attempted_at` — track the email-harvest flow for SMS-only leads. Partial index `idx_clients_email_harvest_pending` powers the scheduler's pending sweep.
 
 ### Menu
 

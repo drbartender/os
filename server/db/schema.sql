@@ -2201,3 +2201,34 @@ DO $$ BEGIN
   ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
     CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed','archived'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- ─── Automated Communication: clients additions ──────────────────
+
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS communication_preferences JSONB
+  NOT NULL DEFAULT '{"sms_enabled":true,"email_enabled":true,"marketing_enabled":true}'::jsonb;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS email_status TEXT NOT NULL DEFAULT 'ok';
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS phone_status TEXT NOT NULL DEFAULT 'ok';
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS email_harvest_status TEXT NOT NULL DEFAULT 'not_needed';
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS email_harvest_attempted_at TIMESTAMPTZ;
+
+DO $$ BEGIN
+  ALTER TABLE clients DROP CONSTRAINT IF EXISTS clients_email_status_check;
+  ALTER TABLE clients ADD CONSTRAINT clients_email_status_check
+    CHECK (email_status IN ('ok','bad'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE clients DROP CONSTRAINT IF EXISTS clients_phone_status_check;
+  ALTER TABLE clients ADD CONSTRAINT clients_phone_status_check
+    CHECK (phone_status IN ('ok','bad'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE clients DROP CONSTRAINT IF EXISTS clients_email_harvest_status_check;
+  ALTER TABLE clients ADD CONSTRAINT clients_email_harvest_status_check
+    CHECK (email_harvest_status IN ('not_needed','pending','harvested','failed'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_clients_email_harvest_pending
+  ON clients(email_harvest_attempted_at)
+  WHERE email_harvest_status = 'pending';
