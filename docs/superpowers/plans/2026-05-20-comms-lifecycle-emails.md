@@ -2,11 +2,29 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## What This Resolves (Pre-execution review, 2026-05-20)
+
+A pre-execution review against the actual codebase surfaced 4 BLOCKERs and 4 WARNINGs. Each was traced to a concrete spot in the plan; resolution lives next to the affected task.
+
+**Blockers (would silently break the feature on the first real send):**
+
+- **B1 — Stripe webhook call order is inverted.** In current code, `sendPaymentNotifications` runs BEFORE `createEventShifts` (stripe.js:1133-1137). The orientation email queries `drink_plans.token` and `createEventShifts` is what creates that row, so on every real send the token was `null` and the orientation silently fell back to its no-CTA branch. **Fix:** Task 9 now opens with an explicit "Step 1: Swap the post-commit call order" + a follow-up grep-verify step BEFORE the orientation rewire. Subsequent steps in Task 9 renumbered accordingly.
+- **B2 — `pi.status` missing from payInfo SELECT.** The post-commit notifier's payInfo SELECT pulled six columns but not `p.status`. The orientation code reads `pi.status || 'deposit_paid'` for the suppression check, so it always fell back to `'deposit_paid'` and never recognized an archived proposal. The same SELECT was also missing the three client columns (`communication_preferences`, `email_status`, `phone_status`) that `shouldSendImmediate` needs. **Fix:** Task 9 Step 3 now extends the SELECT to include `p.status`, `p.client_id`, and the three client suppression columns up front (instead of as an end-of-step footnote).
+- **B3 — Drink-plan slow-path `existing` SELECT doesn't JOIN clients.** That SELECT (drinkPlans.js:104-107) only queries `drink_plans`. Without the JOIN, `existing.rows[0].communication_preferences` is always `undefined`, `shouldSendImmediate` sees a client with no opt-outs, and the suppression check is silently bypassed. Same problem for `proposals.status`. **Fix:** Task 10 Step 3 now rewrites the `existing` SELECT to JOIN both `proposals` and `clients` and pull `proposal_status`, `client_id`, and the three suppression columns.
+- **B4 — Post-consult email block placed inside outer try/catch.** A throw in the new block would trigger ROLLBACK on an already-committed transaction AND surface as a 5xx for a save that succeeded. **Fix:** Task 11 Step 1 now explicitly moves the post-commit email work to AFTER the `} finally { client.release(); }` boundary, wrapped in its own try/catch that never rethrows. `isFirstTimeConsultSave` is hoisted to function scope so it's still in view after the finally.
+
+**Warnings (correctness issues short of breaking the send):**
+
+- **W1 — `if (skipEmail || clientEmail) { /* no-op */ }` is dead code.** Task 9's `eventCreation.js` change kept a no-op `if` block as a placeholder. **Fix:** the block is now deleted entirely; the `skipEmail` parameter stays on the function signature for callers but the body is gone.
+- **W2 — `effectiveSetupMinutes` arg order swapped.** The signature is `(proposal, pkg)` but the plan called it with `({ pricing_type: undefined }, null)` — first arg shape suggests "pkg", second arg shape suggests "override". **Fix:** Task 9 Step 3 now calls `effectiveSetupMinutes(payload, null)` (proposal first, pkg/override second) with a code comment locking the order in.
+- **W3 — `per_guest_timed` test pinning.** The test that pins `deriveBarOption({ pricing_type: 'per_guest_timed' }) → 'byob'` looks counter-intuitive — a future audit could "fix" it the wrong way and silently send hosted copy to BYOB clients. **Fix:** Task 3 now includes a strong DELIBERATE PIN comment explaining the constraint (mirrors `isHostedPackage`, which checks `per_guest` only) and what to do if a real change is needed (flip `isHostedPackage` in lockstep). The test name now ends with "(DELIBERATE PIN, do not 'fix')" so it can't be missed.
+- **W4 — `emailTemplates.js` will breach the 1000-line cap.** Plan 2b alone adds ~200 lines on top of 756, and Plan 2c pushes it over. **Fix:** a new Task 1 ("Split lifecycle templates into `lifecycleEmailTemplates.js`") now runs FIRST. Mirrors Plan 2d's `marketingEmailTemplates.js` pattern: move `signedAndPaidClient`, `drinkPlanLink`, `drinkPlanBalanceUpdate`, `shoppingListReady`, and the new `postConsultClient` into a sibling file; re-export from `emailTemplates.js` so consumers don't change. Tasks 2-13 follow.
+
 ## What This Resolves (Gemini design-review pass, 2026-05-20)
 
-This plan picks up two findings from the Gemini cross-plan review:
+This plan also picks up two findings from the earlier Gemini cross-plan review:
 
-- **Finding 3 (WARNING) — Immediate sends bypass suppression rules.** Every immediate-send code block here (orientation in Task 8, drink-plan submit confirmations in Task 9, post-consult in Task 10) now calls `shouldSendImmediate({ proposal, client, channel })` from `server/utils/messageSuppression.js` (built in Plan 2a Task 8.5) before invoking `sendEmail`. Archived proposals, channel-disabled clients, and bad-contact-status recipients are skipped with a one-line log; the dispatcher's suppression check stays the source of truth and this utility mirrors it for non-scheduled paths.
+- **Finding 3 (WARNING) — Immediate sends bypass suppression rules.** Every immediate-send code block here (orientation in Task 9, drink-plan submit confirmations in Task 10, post-consult in Task 11) now calls `shouldSendImmediate({ proposal, client, channel })` from `server/utils/messageSuppression.js` (built in Plan 2a Task 8.5) before invoking `sendEmail`. Archived proposals, channel-disabled clients, and bad-contact-status recipients are skipped with a one-line log; the dispatcher's suppression check stays the source of truth and this utility mirrors it for non-scheduled paths.
 - **Finding 1 (BLOCKER) participation — Handler metadata.** Plan 2b is mostly immediate sends and does NOT register dispatcher handlers. The one historical edge case (a `drink_plan_submitted` handler if scheduled via the dispatcher) is not in scope for 2b; if it ever lands here it will register with metadata via Plan 2a's `registerHandler(messageType, fn, { offsetFromEventDate, anchor, category })` API.
 
 ---
@@ -32,7 +50,7 @@ This codebase uses `node:test` + `node:assert/strict` for unit tests. Run with `
 
 **Em dashes.** Do not introduce em dashes in copy. Use commas, periods, colons, or parentheticals. The existing templates use ` — ` in a couple of subject lines (e.g. `Signed & Paid — your event`); preserve those literal strings when copying old code into new fallback branches, but new copy follows the no-em-dash rule.
 
-**Dependency on Plan 2a.** Plan 2a delivers the Reply-To header plumbing on `sendEmail`. If 2a hasn't merged yet when 2b lands, the orientation email will still send; it just won't have the `Reply-To: <admin>` header on the wire. The orientation tests written here pass either way; the integration check is in Task 11. Don't block on 2a, but flag if 2a lands later and Reply-To isn't being applied.
+**Dependency on Plan 2a.** Plan 2a delivers the Reply-To header plumbing on `sendEmail`. If 2a hasn't merged yet when 2b lands, the orientation email will still send; it just won't have the `Reply-To: <admin>` header on the wire. The orientation tests written here pass either way; the integration check is in Task 12. Don't block on 2a, but flag if 2a lands later and Reply-To isn't being applied.
 
 **`bar_option` resolution.** The spec calls the BYOB-vs-Hosted column `proposals.bar_option`. The actual schema doesn't have that column; the value is derived from the linked `service_packages.pricing_type` (`'per_guest'` means Hosted; anything else means BYOB). Use `isHostedPackage(pkg)` from `server/utils/pricingEngine.js` everywhere this plan branches. The template signatures take a literal `barOption: 'byob' | 'hosted'` so the templates stay testable without joining the pricing engine.
 
@@ -45,7 +63,8 @@ server/utils/icsCalendar.js                                  # (create) pure iCa
 server/utils/icsCalendar.test.js                             # (create) node:test for ics rendering
 server/utils/orientationData.js                              # (create) gather + shape the orientation payload (DB + helpers)
 server/utils/orientationData.test.js                         # (create) node:test for shaping
-server/utils/emailTemplates.js                               # expand signedAndPaidClient; expand drinkPlanBalanceUpdate; expand shoppingListReady; add postConsultClient; export new helpers
+server/utils/lifecycleEmailTemplates.js                      # (create — Task 1) sibling file holding signedAndPaidClient, drinkPlanLink, drinkPlanBalanceUpdate, shoppingListReady, postConsultClient (keeps emailTemplates.js under the 1000-line cap)
+server/utils/emailTemplates.js                               # Task 1 moves four bodies out + adds re-exports; keeps the public surface for consumers
 server/utils/emailTemplates.test.js                          # (create) node:test for the 4 templates (no DB)
 server/routes/stripe.js                                      # rewire isCoupledSigning email to call new orientation flow with .ics attachment; drop the standalone drink-plan-link path (handled by orientation now)
 server/utils/eventCreation.js                                # remove the drinkPlanLink send (orientation covers it post-booking); keep drink plan creation
@@ -56,7 +75,134 @@ README.md                                                    # bump templates se
 
 ---
 
-## Task 1: Build the iCalendar renderer (`icsCalendar.js`)
+## Task 1: Split lifecycle templates into `lifecycleEmailTemplates.js` (file-size budget)
+
+**Why this is first.** `server/utils/emailTemplates.js` is 756 lines today (per the shared contract). The `.husky/check-file-size.sh` pre-commit hook fails any source file at 1000 lines. Plan 2b expands `signedAndPaidClient` (currently ~17 lines) into a full orientation renderer (~120 lines), expands `drinkPlanBalanceUpdate` (~25 → ~55 lines), expands `shoppingListReady` (~16 → ~20 lines), and adds a brand-new `postConsultClient` (~40 lines). Net add: ~200 lines on top of 756 → ~956 lines, dangerously close to the cap. Plan 2c's pre-event templates push it over.
+
+The fix: carve out a sibling file BEFORE adding the new template bodies. This mirrors what Plan 2d does for `marketingEmailTemplates.js`.
+
+**Files:**
+- Create: `server/utils/lifecycleEmailTemplates.js`
+- Modify: `server/utils/emailTemplates.js` (move four functions out, re-export them for backwards compatibility, drop their bodies from the file)
+- Modify: existing consumers if they import the moved functions directly by name (most consumers import via `const emailTemplates = require('./emailTemplates')` and access by property — those keep working through the re-export)
+
+- [ ] **Step 1: Create `lifecycleEmailTemplates.js` and move the four functions**
+
+Create `server/utils/lifecycleEmailTemplates.js`. Copy the CURRENT bodies of these four functions out of `emailTemplates.js`:
+- `signedAndPaidClient` (will be expanded in Task 4)
+- `drinkPlanLink` (deprecated by Task 9 but kept exported for safety during the rewire)
+- `drinkPlanBalanceUpdate` (will be expanded in Task 5)
+- `shoppingListReady` (will be expanded in Task 6)
+
+Also move the shared helpers these functions need: `esc`, `wrapEmail`, `ctaButton`, `BRAND`, `lastMinuteCaveatHtml`, `lastMinuteCaveatText`. Two options:
+
+a) Duplicate the helpers in the new file (simple, but two sources of truth — drift risk).
+b) Export the helpers from `emailTemplates.js` and import them from the new file (one source of truth, slight indirection).
+
+Pick (b): export `esc`, `wrapEmail`, `ctaButton`, `BRAND`, `lastMinuteCaveatHtml`, `lastMinuteCaveatText` from `emailTemplates.js` (add them to its `module.exports`), then `require` them at the top of `lifecycleEmailTemplates.js`. This keeps the BRAND palette and the email shell in one place.
+
+The new file's top:
+
+```javascript
+const {
+  esc, wrapEmail, ctaButton, BRAND,
+  lastMinuteCaveatHtml, lastMinuteCaveatText,
+} = require('./emailTemplates');
+
+function signedAndPaidClient(/* current short-form body */) { /* ... */ }
+function drinkPlanLink(/* current body */) { /* ... */ }
+function drinkPlanBalanceUpdate(/* current body */) { /* ... */ }
+function shoppingListReady(/* current body */) { /* ... */ }
+
+// New template added in Task 7; declare it here so the export list stays stable.
+function postConsultClient(/* implemented in Task 7 */) { /* placeholder */ }
+
+module.exports = {
+  signedAndPaidClient,
+  drinkPlanLink,
+  drinkPlanBalanceUpdate,
+  shoppingListReady,
+  postConsultClient,
+};
+```
+
+Yes, this means `lifecycleEmailTemplates.js` requires `emailTemplates.js` and `emailTemplates.js` will (per the next step) re-export from `lifecycleEmailTemplates.js`. CommonJS handles circular requires as long as we don't access the re-exports at top-of-module-load. Both files reference each other's exports only inside function bodies (lazy, called later), so the cycle is safe. If a runtime error like "X is not a function" surfaces, switch to inlining the BRAND/helpers in `lifecycleEmailTemplates.js` (option a) to break the cycle.
+
+- [ ] **Step 2: Update `emailTemplates.js` to re-export from `lifecycleEmailTemplates.js`**
+
+Delete the four function definitions from `emailTemplates.js` (their bodies, not their export entries). At the top of the module.exports block (or just before it), add:
+
+```javascript
+const lifecycle = require('./lifecycleEmailTemplates');
+```
+
+Then in `module.exports`, replace the four direct exports with re-exports:
+
+```javascript
+module.exports = {
+  // ...existing exports stay...
+  signedAndPaidClient: lifecycle.signedAndPaidClient,
+  drinkPlanLink: lifecycle.drinkPlanLink,
+  drinkPlanBalanceUpdate: lifecycle.drinkPlanBalanceUpdate,
+  shoppingListReady: lifecycle.shoppingListReady,
+  postConsultClient: lifecycle.postConsultClient,
+  // also re-export the helpers so the new file can require them
+  esc, wrapEmail, ctaButton, BRAND,
+  lastMinuteCaveatHtml, lastMinuteCaveatText,
+};
+```
+
+`emailTemplates.js` should drop ~120 lines (the four function bodies) and gain ~10 lines (the require + re-exports). Net: ~110 lines smaller, comfortably under the cap with room to grow.
+
+- [ ] **Step 3: Verify nothing else imports the moved functions directly**
+
+```bash
+grep -rn "require.*emailTemplates" server/
+```
+
+Confirm every consumer accesses these functions as `emailTemplates.signedAndPaidClient(...)` (property access on the imported object), NOT via destructured `const { signedAndPaidClient } = require('./emailTemplates')`. The re-export pattern preserves property-access consumers; destructured consumers would break. Search for the patterns:
+
+```bash
+grep -rn "{ *signedAndPaidClient" server/
+grep -rn "{ *drinkPlanLink" server/
+grep -rn "{ *drinkPlanBalanceUpdate" server/
+grep -rn "{ *shoppingListReady" server/
+```
+
+If any destructured imports exist, either (a) switch them to property-access on `emailTemplates`, or (b) require the new functions directly from `./lifecycleEmailTemplates`. Either works.
+
+- [ ] **Step 4: Run existing tests + smoke**
+
+```bash
+node --test server/utils/
+npx eslint server/utils/emailTemplates.js server/utils/lifecycleEmailTemplates.js
+```
+
+Expected: no test regressions (the move is pure refactor; behavior unchanged), no lint errors.
+
+The new template test file `server/utils/emailTemplates.test.js` (Task 4 onwards) will be updated to require from `./lifecycleEmailTemplates` directly, so the rest of this plan's test imports just need to point at the right file. Specifically, Task 4 Step 1's test file uses:
+
+```javascript
+const {
+  signedAndPaidClient,
+  drinkPlanBalanceUpdate,
+  shoppingListReady,
+  postConsultClient,
+} = require('./emailTemplates');
+```
+
+After Task 1, this destructure works through the re-export. Keep it that way (so the test file matches what real consumers do), but be aware that during local development, requiring directly from `./lifecycleEmailTemplates` is equivalent. Tests should NOT be renamed to `lifecycleEmailTemplates.test.js`; the test file stays as `emailTemplates.test.js` because the public surface it tests is the `emailTemplates` module.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/utils/lifecycleEmailTemplates.js server/utils/emailTemplates.js
+git commit -m "refactor(comms): split lifecycle templates into sibling file ahead of expansion"
+```
+
+---
+
+## Task 2: Build the iCalendar renderer (`icsCalendar.js`)
 
 Generates a single-event VCALENDAR string that Resend can deliver as a `.ics` attachment. Pure function (no DB, no I/O). Tested with `node:test`.
 
@@ -313,7 +459,7 @@ git commit -m "feat(comms): pure iCalendar VEVENT renderer for booking attachmen
 
 ---
 
-## Task 2: Build the orientation data assembler (`orientationData.js`)
+## Task 3: Build the orientation data assembler (`orientationData.js`)
 
 Single function that takes a proposal id and the database pool and returns the fully-shaped payload the orientation template + ics needs. Pulls proposal, client, package, balance fields, computes balance remaining, computes UTC start/end, returns a plain object.
 
@@ -323,7 +469,7 @@ Single function that takes a proposal id and the database pool and returns the f
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `server/utils/orientationData.test.js`. These are shape-only tests against pure helpers (timezone parsing, balance math, UTC start/end derivation). The DB-dependent `buildOrientationPayload` gets exercised in Task 11's integration smoke; here we test only the pure helpers.
+Create `server/utils/orientationData.test.js`. These are shape-only tests against pure helpers (timezone parsing, balance math, UTC start/end derivation). The DB-dependent `buildOrientationPayload` gets exercised in Task 12's integration smoke; here we test only the pure helpers.
 
 ```javascript
 const { test } = require('node:test');
@@ -385,9 +531,23 @@ test('deriveBarOption: pricing_type "per_guest" → "hosted"', () => {
 test('deriveBarOption: pricing_type "flat" → "byob"', () => {
   assert.equal(deriveBarOption({ pricing_type: 'flat' }), 'byob');
 });
-test('deriveBarOption: pricing_type "per_guest_timed" → "hosted"', () => {
-  // per_guest_timed is also a hosted variant (isHostedPackage checks 'per_guest' only,
-  // but verify our spec-level intent matches reality. Adjust if pricingEngine changes.)
+test('deriveBarOption: pricing_type "per_guest_timed" → "byob" (DELIBERATE PIN, do not "fix")', () => {
+  // DELIBERATE PIN — do not flip this to return 'hosted'.
+  //
+  // The pricing engine's `isHostedPackage(pkg)` checks ONLY
+  // `pkg.pricing_type === 'per_guest'`. It does NOT include 'per_guest_timed'.
+  // Plan 2b's `deriveBarOption` mirrors that exact check so the bar-option
+  // branch in the orientation / drink-plan-submit / shopping-list emails
+  // stays in lockstep with the pricing engine's bar-option branch. If the
+  // two drift, BYOB clients get hosted copy or vice versa — and the
+  // shopping-list email Hosted-skip in Task 10 starts firing on the wrong
+  // events.
+  //
+  // If a future audit flags this as "per_guest_timed sounds hosted, shouldn't
+  // it return 'hosted'?" — STOP. Check `isHostedPackage` in
+  // server/utils/pricingEngine.js FIRST. Only flip this test if
+  // isHostedPackage is also being extended to cover per_guest_timed; the
+  // two MUST move together. See open question #1 at the bottom of this plan.
   assert.equal(deriveBarOption({ pricing_type: 'per_guest_timed' }), 'byob');
 });
 test('deriveBarOption: null package → "byob" (safe default)', () => {
@@ -695,7 +855,7 @@ module.exports = {
 node --test server/utils/orientationData.test.js
 ```
 
-Expected: all helper tests pass. (The DB function isn't unit-tested here; integration check is in Task 11.)
+Expected: all helper tests pass. (The DB function isn't unit-tested here; integration check is in Task 12.)
 
 - [ ] **Step 5: Note the per_guest_timed test outcome**
 
@@ -710,12 +870,14 @@ git commit -m "feat(comms): orientation data assembler with pure helpers"
 
 ---
 
-## Task 3: Expand `signedAndPaidClient` template into the full orientation email
+## Task 4: Expand `signedAndPaidClient` template into the full orientation email
 
 The existing template is a 4-line "thanks for paying" note. The new one is the full orientation: booking block, receipt block, Potion Planner CTA, timeline, optional last-minute caveat. Same export name to avoid disturbing the rest of the call sites; they'll get the expanded body for free.
 
+After Task 1 the body of `signedAndPaidClient` lives in `lifecycleEmailTemplates.js`; edit it there. The re-export from `emailTemplates.js` continues to point at the new function transparently, so call-site consumers don't need to change.
+
 **Files:**
-- Modify: `server/utils/emailTemplates.js`
+- Modify: `server/utils/lifecycleEmailTemplates.js` (rewrite `signedAndPaidClient`)
 - Create: `server/utils/emailTemplates.test.js`
 
 - [ ] **Step 1: Write the failing template tests**
@@ -1005,9 +1167,9 @@ node --test server/utils/emailTemplates.test.js
 
 Expected: FAIL for all four template tests with TypeError on signature mismatch / undefined export.
 
-- [ ] **Step 3: Rewrite `signedAndPaidClient` in `server/utils/emailTemplates.js`**
+- [ ] **Step 3: Rewrite `signedAndPaidClient` in `server/utils/lifecycleEmailTemplates.js`**
 
-Locate the current `signedAndPaidClient` (around line 126) and replace it with the full orientation renderer. The function signature changes; callers in `server/routes/stripe.js` will be updated in Task 8. The OLD call-shape props (`clientName`, `eventTypeLabel`, `amount`, `paymentType`, `lastMinute`) are kept compatible by treating the new orientation fields as additive: if `bookingBlock` isn't passed, the old short-form behavior is preserved as the fallback. That lets us land this template change before the Stripe route is rewired.
+Locate the `signedAndPaidClient` function inside `lifecycleEmailTemplates.js` (moved there by Task 1) and replace its body with the full orientation renderer. The function signature changes; callers in `server/routes/stripe.js` will be updated in Task 9. The OLD call-shape props (`clientName`, `eventTypeLabel`, `amount`, `paymentType`, `lastMinute`) are kept compatible by treating the new orientation fields as additive: if `bookingBlock` isn't passed, the old short-form behavior is preserved as the fallback. That lets us land this template change before the Stripe route is rewired.
 
 Replace the function body:
 
@@ -1029,7 +1191,7 @@ function signedAndPaidClient({
   // Fallback: old short-form behavior when caller hasn't migrated to the
   // orientation shape. Lets us ship the template change ahead of the route
   // rewire without breaking the existing send. The Stripe route gets updated
-  // in Task 8 to pass the full payload.
+  // in Task 9 to pass the full payload.
   if (!bookingBlock || !receiptBlock) {
     return {
       subject: `Signed & Paid — your ${eventTypeLabel} — Dr. Bartender`,
@@ -1130,16 +1292,16 @@ Expected: the four `signedAndPaidClient` tests pass. The other tests (`drinkPlan
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/utils/emailTemplates.js server/utils/emailTemplates.test.js
+git add server/utils/lifecycleEmailTemplates.js server/utils/emailTemplates.test.js
 git commit -m "feat(comms): expand signedAndPaidClient into full orientation email"
 ```
 
 ---
 
-## Task 4: Expand `drinkPlanBalanceUpdate` template (always fire, BYOB warning, conditional balance)
+## Task 5: Expand `drinkPlanBalanceUpdate` template (always fire, BYOB warning, conditional balance)
 
 **Files:**
-- Modify: `server/utils/emailTemplates.js`
+- Modify: `server/utils/lifecycleEmailTemplates.js` (rewrite `drinkPlanBalanceUpdate`)
 
 - [ ] **Step 1: Rewrite `drinkPlanBalanceUpdate`**
 
@@ -1212,20 +1374,20 @@ Expected: `drinkPlanBalanceUpdate` tests now pass (4 cases: byob warning, hosted
 - [ ] **Step 3: Commit**
 
 ```bash
-git add server/utils/emailTemplates.js
+git add server/utils/lifecycleEmailTemplates.js
 git commit -m "feat(comms): drinkPlanBalanceUpdate always fires with conditional balance + BYOB warning"
 ```
 
 ---
 
-## Task 5: Expand `shoppingListReady` with freshness/return-window warning
+## Task 6: Expand `shoppingListReady` with freshness/return-window warning
 
 **Files:**
-- Modify: `server/utils/emailTemplates.js`
+- Modify: `server/utils/lifecycleEmailTemplates.js` (rewrite `shoppingListReady`)
 
 - [ ] **Step 1: Rewrite `shoppingListReady`**
 
-Locate the existing function (around line 428) and replace the body. The function signature stays the same so the call site doesn't need to change (skip-when-Hosted happens at the call site in Task 9).
+Locate the existing function (around line 428) and replace the body. The function signature stays the same so the call site doesn't need to change (skip-when-Hosted happens at the call site in Task 10).
 
 ```javascript
 function shoppingListReady({ clientName, eventTypeLabel = 'event', shoppingListUrl }) {
@@ -1257,20 +1419,20 @@ Expected: `shoppingListReady` test passes.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add server/utils/emailTemplates.js
+git add server/utils/lifecycleEmailTemplates.js
 git commit -m "feat(comms): shoppingListReady gets freshness and return-window warning"
 ```
 
 ---
 
-## Task 6: Add new `postConsultClient` template
+## Task 7: Add new `postConsultClient` template
 
 **Files:**
-- Modify: `server/utils/emailTemplates.js`
+- Modify: `server/utils/lifecycleEmailTemplates.js` (add `postConsultClient`)
 
-- [ ] **Step 1: Add the new template + export it**
+- [ ] **Step 1: Replace the placeholder + export it**
 
-Insert the function near the other client-facing templates (after `drinkPlanBalanceUpdate`, around line 224). Then add it to the `module.exports` object at the bottom of the file.
+Task 1 already added a placeholder `postConsultClient` to `lifecycleEmailTemplates.js` and included it in that file's `module.exports`. Replace the placeholder body with the real implementation. Also ensure `emailTemplates.js` re-exports it (Task 1 set this up — verify the line `postConsultClient: lifecycle.postConsultClient` exists in the `emailTemplates.js` module.exports).
 
 ```javascript
 /**
@@ -1321,14 +1483,7 @@ function postConsultClient({
 }
 ```
 
-At the bottom of the file, add `postConsultClient` to the module.exports block so it's importable:
-
-```javascript
-module.exports = {
-  // ... existing exports ...
-  postConsultClient,
-};
-```
+The `module.exports` at the bottom of `lifecycleEmailTemplates.js` already lists `postConsultClient` from the Task 1 scaffolding. No additional export change needed here; the placeholder body is the only thing being replaced. Verify after the edit that `emailTemplates.js` re-exports `postConsultClient: lifecycle.postConsultClient` so consumers of `emailTemplates` continue to resolve it transparently.
 
 - [ ] **Step 2: Run tests**
 
@@ -1341,13 +1496,13 @@ Expected: all `postConsultClient` tests pass. All 11 template tests in the file 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add server/utils/emailTemplates.js
+git add server/utils/lifecycleEmailTemplates.js
 git commit -m "feat(comms): new postConsultClient template for consult-notes-saved recap"
 ```
 
 ---
 
-## Task 7: Build the consult drink recap formatter
+## Task 8: Build the consult drink recap formatter
 
 Hold off on bundling this with the template. The consult selections JSON has a shape that's worth its own pure formatter. Lives in a sibling util so the consult route stays small.
 
@@ -1560,7 +1715,7 @@ git commit -m "feat(comms): consult-selections recap formatter and next-step pic
 
 ---
 
-## Task 8: Rewire the Stripe webhook to send the full orientation email with `.ics` attachment
+## Task 9: Rewire the Stripe webhook to send the full orientation email with `.ics` attachment
 
 This is the integration point. The webhook's existing coupled-signing branch sends the OLD short `signedAndPaidClient`. Swap it for the new orientation pipeline: build the payload via `orientationData`, render the `.ics`, render the template with the full booking + receipt blocks + timeline, attach the `.ics` via Resend's `attachments` parameter, send.
 
@@ -1570,21 +1725,51 @@ The existing `drinkPlanLink` send in `eventCreation.js` becomes redundant (the o
 - Modify: `server/routes/stripe.js` (the `sendPaymentNotifications` helper)
 - Modify: `server/utils/eventCreation.js` (drop the standalone drinkPlanLink send)
 
-- [ ] **Step 1: Confirm dependency order**
+- [ ] **Step 1: Swap the post-commit call order so the drink plan exists first**
 
-`createEventShifts` in `eventCreation.js` is called from inside the Stripe webhook tx (look for `createEventShifts(` in `stripe.js` around the `payment_intent.succeeded` block; currently runs AFTER commit). It internally creates the drink plan and historically sent the `drinkPlanLink` email. We need that drink plan to exist BEFORE `sendPaymentNotifications` runs (because the orientation email links to it). Confirm with a grep:
+In the current code (`server/routes/stripe.js` around lines 1133-1137 of the `payment_intent.succeeded` post-commit block), the order is:
+
+```javascript
+if (isLastMinuteHold) notifyLastMinuteBooking(proposalId);
+sendPaymentNotifications(proposalId, intent.amount, paymentType);
+try {
+  const shift = await createEventShifts(proposalId);
+  ...
+```
+
+The orientation email (rewired in Step 3 below) queries for `drink_plans.token` via `buildOrientationPayload`. Because `createEventShifts` is what creates the `drink_plans` row, the orientation MUST run after `createEventShifts`. With the current order, `drink_plan_token` is always `null` at the moment `sendPaymentNotifications` runs, and the orientation silently falls back to the no-CTA branch on every real send.
+
+Swap the calls so `createEventShifts` runs FIRST and `sendPaymentNotifications` runs SECOND. Keep `notifyLastMinuteBooking` where it is (it doesn't depend on either):
+
+```javascript
+if (isLastMinuteHold) notifyLastMinuteBooking(proposalId);
+try {
+  const shift = await createEventShifts(proposalId);
+  if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
+} catch (shiftErr) {
+  if (process.env.SENTRY_DSN_SERVER) {
+    Sentry.captureException(shiftErr, {
+      tags: { webhook: 'stripe', route: '/webhook' },
+    });
+  }
+  console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+}
+sendPaymentNotifications(proposalId, intent.amount, paymentType);
+```
+
+Verify with `git diff server/routes/stripe.js` that the swap is clean and no other behavior changed in that block. Lock this in BEFORE moving on; the orientation rewire in Step 3 depends on it.
+
+- [ ] **Step 2: Confirm the swap with grep**
 
 ```bash
 grep -n "createEventShifts\|sendPaymentNotifications" server/routes/stripe.js
 ```
 
-Expected: the post-commit notifier currently runs in this order:
-1. `createEventShifts(proposalId, ...)` (creates shifts + drink plan + sends the standalone drinkPlanLink; to be neutered in Step 4)
-2. `sendPaymentNotifications(proposalId, amountCents, paymentType)` (sends the old `signedAndPaidClient`; to be rewired in Step 2)
+Expected after Step 1: the post-commit notifier now runs in this order:
+1. `createEventShifts(proposalId)` (creates shifts + drink plan; to be email-neutered in Step 5)
+2. `sendPaymentNotifications(proposalId, amountCents, paymentType)` (sends the orientation email; rewired in Step 3)
 
-If the order is reversed, swap the calls so the drink plan exists before the orientation email queries for its token.
-
-- [ ] **Step 2: Rewire `sendPaymentNotifications` for the coupled-signing branch**
+- [ ] **Step 3: Rewire `sendPaymentNotifications` for the coupled-signing branch**
 
 In `server/routes/stripe.js`, locate the `sendPaymentNotifications` helper (currently starts around line 817). Inside the `if (pi?.client_email) { ... }` block where `isCoupledSigning` is true, replace the OLD send with the orientation pipeline.
 
@@ -1597,7 +1782,29 @@ const { effectiveSetupMinutes } = require('../utils/setupTime');
 const { shouldSendImmediate } = require('../utils/messageSuppression');
 ```
 
-Inside `sendPaymentNotifications`, replace the entire `if (pi?.client_email) { ... }` client branch with this:
+Extend the existing `payInfo` SELECT (currently at `server/routes/stripe.js` around line 819) to include `p.status`, `p.client_id`, and the three suppression columns from `clients`. The current SELECT looks like:
+
+```sql
+SELECT p.event_type, p.event_type_custom, p.client_signed_at, p.last_minute_hold,
+       c.name AS client_name, c.email AS client_email
+FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+WHERE p.id = $1
+```
+
+Replace with:
+
+```sql
+SELECT p.event_type, p.event_type_custom, p.client_signed_at, p.last_minute_hold,
+       p.status, p.client_id,
+       c.name AS client_name, c.email AS client_email,
+       c.communication_preferences, c.email_status, c.phone_status
+FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+WHERE p.id = $1
+```
+
+This populates `pi.status` so the suppression check below doesn't always fall back to `'deposit_paid'` (which would mask archived proposals), AND it populates the three columns `shouldSendImmediate` needs (`communication_preferences`, `email_status`, `phone_status`).
+
+Then inside `sendPaymentNotifications`, replace the entire `if (pi?.client_email) { ... }` client branch with this:
 
 ```javascript
 if (pi?.client_email) {
@@ -1652,7 +1859,14 @@ if (pi?.client_email) {
 
         // Timeline: spec section 2.1. Renders the bartender-assignment day
         // dynamically from setupTime + auto-assign window.
-        const setupMin = effectiveSetupMinutes({ pricing_type: undefined }, null) || 60;
+        //
+        // effectiveSetupMinutes signature is (proposal, pkg). We don't have
+        // the full proposal/pkg rows loaded here in sendPaymentNotifications;
+        // pass minimal placeholders so the helper falls through to its 60-min
+        // default. If a future revision threads the package row in (via
+        // buildOrientationPayload), pass it positionally — proposal FIRST,
+        // pkg SECOND — so Hosted (90 min) reads correctly.
+        const setupMin = effectiveSetupMinutes(payload, null) || 60;
         const timelineLines = [
           payload.potionPlannerUrl
             ? 'Drink plan: pick yours any time'
@@ -1722,17 +1936,11 @@ if (pi?.client_email) {
 }
 ```
 
-The post-commit payInfo SELECT in `stripe.js` (around line 820) needs to also pull
-`p.client_id`, `c.communication_preferences`, `c.email_status`, `c.phone_status`
-so the suppression check has the data it needs. Extend the existing SELECT
-when wiring this task (the autopay-enrolled column added in Plan 2a Task 12
-already sets the precedent for extending this query).
-
 A few important notes:
-- `effectiveSetupMinutes` requires `pkg` and `override`. We don't have the package row in scope here, but the fallback `|| 60` is the default for non-hosted. If the package is hosted (90 min default), the email will under-state by 30 min for the timeline copy. Acceptable for V1; refine later if needed.
+- `effectiveSetupMinutes` takes `(proposal, pkg)`. With only `payload` (no pkg row) the helper falls through to its 60-minute default, which is correct for BYOB. If the package is hosted (90-minute default) the timeline copy under-states by 30 minutes; acceptable for V1. To refine later, thread the pkg row through `buildOrientationPayload` and pass it as the second arg.
 - The fallback short-form path on orientation failure preserves the customer-facing behavior we have today, so a bad row never blocks the confirmation email.
 
-- [ ] **Step 3: Verify the new send path compiles**
+- [ ] **Step 4: Verify the new send path compiles**
 
 ```bash
 npx eslint server/routes/stripe.js
@@ -1740,22 +1948,11 @@ npx eslint server/routes/stripe.js
 
 Expected: no errors.
 
-- [ ] **Step 4: Neuter the standalone `drinkPlanLink` send in `eventCreation.js`**
+- [ ] **Step 5: Neuter the standalone `drinkPlanLink` send in `eventCreation.js`**
 
 Open `server/utils/eventCreation.js`. The drink plan still has to be created (orientation links to its token), but the email portion is now redundant.
 
-Replace the `if (!skipEmail && clientEmail && drinkPlan.token) { ... }` block (around lines 70-81) with:
-
-```javascript
-// Drink plan link is now folded into the orientation email (see
-// signedAndPaidClient in emailTemplates.js + the Stripe webhook coupled-
-// signing branch in routes/stripe.js). Drop the standalone send.
-//
-// `skipEmail` is preserved as a no-op parameter so callers that still pass
-// it don't break, but the parameter is now effectively unused. Once all
-// callers stop passing it (one cleanup commit later), we can drop the param.
-if (skipEmail || clientEmail) { /* intentional no-op: orientation covers this */ }
-```
+DELETE the `if (!skipEmail && clientEmail && drinkPlan.token) { ... }` block entirely (around lines 70-81). Do not leave a no-op `if` placeholder in its place — dead code rots and confuses future readers. The `skipEmail` parameter on the function signature can stay (callers may still pass it; it just has nothing to gate now) but the body is gone.
 
 Then drop the now-unused `drinkPlanLink` import at the top of the file:
 
@@ -1772,7 +1969,7 @@ grep -n "sendEmail" server/utils/eventCreation.js
 
 If `sendEmail` is unused elsewhere in the file, drop its import line as well.
 
-- [ ] **Step 5: Restart dev server and confirm boot**
+- [ ] **Step 6: Restart dev server and confirm boot**
 
 The Claude-managed dev server needs a restart for the server-side change to take effect (per the auto-memory note about the dev server being a managed background process).
 
@@ -1784,7 +1981,7 @@ The Claude-managed dev server needs a restart for the server-side change to take
 
 Expected: no errors, no missing-module warnings.
 
-- [ ] **Step 6: Smoke test the orientation send (manual)**
+- [ ] **Step 7: Smoke test the orientation send (manual)**
 
 In a separate terminal, run a Stripe test-mode coupled sign+pay against a draft proposal. Verify:
 1. The client receives ONE email (not two; the standalone drinkPlanLink should be gone).
@@ -1795,7 +1992,7 @@ In a separate terminal, run a Stripe test-mode coupled sign+pay against a draft 
 
 If anything looks off, fix in place before committing.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add server/routes/stripe.js server/utils/eventCreation.js
@@ -1804,7 +2001,7 @@ git commit -m "feat(comms): orientation email replaces signedAndPaidClient + dri
 
 ---
 
-## Task 9: Wire the drink-plan submitted confirmation to always fire with bar_option branching
+## Task 10: Wire the drink-plan submitted confirmation to always fire with bar_option branching
 
 The current send in `server/routes/drinkPlans.js` only fires when `amountPaid < snapshot.total` (the "balance changed" path). The spec says it should always fire, with the balance language CONDITIONAL on whether the balance actually changed. The BYOB-vs-Hosted warning also needs to be plumbed in.
 
@@ -1819,7 +2016,40 @@ Read `server/routes/drinkPlans.js` lines 295-385 to find the "Capture data for p
 
 The transaction already loads the proposal and package for pricing. Locate the existing query that loads `service_packages` (around line 261: `SELECT * FROM service_packages WHERE id = $1`). It returns the whole row, so `pricing_type` is already available on `pkg`. Good. No schema change needed.
 
-- [ ] **Step 3: Restructure the post-commit notification to always fire**
+- [ ] **Step 3: Extend the slow-path `existing` SELECT to JOIN clients**
+
+The slow-path origin SELECT (`server/routes/drinkPlans.js` line 104-107) currently queries the `drink_plans` table only:
+
+```javascript
+const existing = await pool.query(
+  'SELECT id, status, proposal_id, client_name, client_email, event_type, event_type_custom FROM drink_plans WHERE token = $1',
+  [req.params.token]
+);
+```
+
+`communication_preferences`, `email_status`, and `phone_status` live on `clients`, not `drink_plans`. With the current SELECT, `existing.rows[0]?.communication_preferences` is always `undefined`, which means `shouldSendImmediate` sees a client with no opt-outs and the suppression check is silently bypassed. Same problem applies for `proposals.status` — needed below so the suppression check doesn't always fall back to `'deposit_paid'` (which would mask archived proposals).
+
+Replace with a JOIN to both `proposals` and `clients`:
+
+```javascript
+const existing = await pool.query(
+  `SELECT dp.id, dp.status, dp.proposal_id,
+          dp.client_name, dp.client_email,
+          dp.event_type, dp.event_type_custom,
+          p.status AS proposal_status,
+          c.id AS client_id,
+          c.communication_preferences, c.email_status, c.phone_status
+   FROM drink_plans dp
+   LEFT JOIN proposals p ON p.id = dp.proposal_id
+   LEFT JOIN clients c ON c.id = p.client_id
+   WHERE dp.token = $1`,
+  [req.params.token]
+);
+```
+
+(The `LEFT JOIN`s keep behavior identical when a plan has no linked proposal or client — `existing.rows[0]` still resolves, just with the joined fields `null`. The shape of the `existing.rows[0].status`, `proposal_id`, `client_name`, `client_email`, `event_type`, and `event_type_custom` keys is preserved so the rest of the route continues to read them by the same names; only the new fields are additive.)
+
+- [ ] **Step 4: Restructure the post-commit notification to always fire**
 
 Replace the existing capture + post-commit block. The change moves `pendingNotifications` capture OUT of the `if (amountPaid < snapshot.total)` guard so it fires unconditionally, and adds `barOption` + `balanceChanged` flags.
 
@@ -1847,7 +2077,10 @@ if (addBarRental) addonNames.push('Portable Bar Rental');
 pendingNotifications = {
   proposal: {
     id: proposal.id,
-    status: proposal.status,
+    // proposal_status was pulled into the slow-path SELECT in Step 3 (above)
+    // and lives on existing.rows[0].proposal_status. Use that — `proposal.status`
+    // from the FOR-UPDATE SELECT * works too and is the more direct source.
+    status: proposal.status || existing.rows[0]?.proposal_status,
     event_date: proposal.event_date,
     event_type: existing.rows[0]?.event_type || proposal.event_type,
     event_type_custom: existing.rows[0]?.event_type_custom || proposal.event_type_custom,
@@ -1859,10 +2092,9 @@ pendingNotifications = {
   addonNames,
   clientName: existing.rows[0]?.client_name || 'Client',
   clientEmail: existing.rows[0]?.client_email || proposal.client_email,
-  // Gemini Finding 3: capture comm-prefs + email/phone status for the
-  // post-commit suppression check. Extend the `existing` SELECT (line ~250)
-  // to also pull these from `clients`:
-  //   c.communication_preferences, c.email_status, c.phone_status
+  // Suppression rules: comm-prefs + email/phone status pulled by the joined
+  // existing SELECT in Step 3. Without that JOIN these were always undefined
+  // and shouldSendImmediate silently passed everything through.
   clientForCheck: {
     communication_preferences: existing.rows[0]?.communication_preferences,
     email_status: existing.rows[0]?.email_status,
@@ -1878,7 +2110,7 @@ Then update the post-commit send (around line 369-382) to use the new shape:
 ```javascript
 if (clientEmail) {
   const { proposal: pn, snapshot, amountPaid, clientName, barOption, balanceChanged, clientForCheck } = pendingNotifications;
-  // Gemini Finding 3: respect suppression rules on immediate sends.
+  // Respect suppression rules on immediate sends.
   const sendCheck = await shouldSendImmediate({
     proposal: { id: pn.id, status: pn.status || 'deposit_paid' },
     client: clientForCheck,
@@ -1905,11 +2137,11 @@ if (clientEmail) {
 }
 ```
 
-Add `const { shouldSendImmediate } = require('../utils/messageSuppression');` to the top of `drinkPlans.js`. Extend the existing `pendingNotifications.clientForCheck` capture to include `{ communication_preferences, email_status, phone_status }` from the proposal-side SELECT; if the existing SELECT doesn't already pull these from `clients`, extend it.
+Add `const { shouldSendImmediate } = require('../utils/messageSuppression');` to the top of `drinkPlans.js`.
 
 The admin-side notification still only fires when add-ons changed the balance (existing throttle behavior is fine; admin doesn't need a heads-up for a zero-impact submit).
 
-- [ ] **Step 4: Handle the submit-without-addons fast path**
+- [ ] **Step 5: Handle the submit-without-addons fast path**
 
 The route has a "Fast path: drafts or submit-without-addons" branch (around line 403-450). When a client submits an existing drink plan with NO addons (which the slow path skips entirely because there are no extras), the client today gets NO drink-plan-submitted email. The spec says always fire, so the fast path needs to fire too.
 
@@ -1973,7 +2205,7 @@ if (newStatus === 'submitted' && result.rows[0]?.id) {
 }
 ```
 
-- [ ] **Step 5: Also branch the shopping-list-approve send to skip Hosted**
+- [ ] **Step 6: Also branch the shopping-list-approve send to skip Hosted**
 
 In the same file, locate the `PATCH /:id/shopping-list/approve` route (around line 860) and its post-update send (around line 901). Hosted events should NOT receive the shopping-list-ready email; we shop, not the client. Update the query to also pull `service_packages.pricing_type`, then branch:
 
@@ -2001,7 +2233,7 @@ if (isHosted) {
 }
 ```
 
-- [ ] **Step 6: Restart dev server and smoke test**
+- [ ] **Step 7: Restart dev server and smoke test**
 
 Test the three scenarios manually with `node` REPL or by running real submit cycles:
 
@@ -2011,7 +2243,7 @@ Test the three scenarios manually with `node` REPL or by running real submit cyc
 4. **Hosted shopping list approve (admin):** Client gets NO email (we shop). Console logs `[shoppingListReady] hosted event, skipping`.
 5. **BYOB shopping list approve:** Client gets shopping-list-ready email with freshness/return-window warning.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add server/routes/drinkPlans.js
@@ -2020,7 +2252,7 @@ git commit -m "feat(comms): drink-plan submit always fires; shoppingListReady sk
 
 ---
 
-## Task 10: Fire the post-consult email when admin saves consult notes
+## Task 11: Fire the post-consult email when admin saves consult notes
 
 **Files:**
 - Modify: `server/routes/drinkPlanConsult.js`
@@ -2029,7 +2261,24 @@ git commit -m "feat(comms): drink-plan submit always fires; shoppingListReady sk
 
 The route currently updates `consult_filled_at = NOW()` and commits. Add a post-commit best-effort email send (same pattern as drink plans, never block the response). The send happens only when `consult_filled_at` transitions from NULL to NOW() (first-time save), NOT on re-submits; otherwise the client gets duplicate emails for every edit.
 
-Locate the PUT handler (around line 127). After `await client.query('COMMIT');` and BEFORE `res.json({ ... })`, add a post-commit step.
+**Transaction-boundary discipline.** The current PUT handler shape is:
+
+```javascript
+const client = await pool.connect();
+try {
+  await client.query('BEGIN');
+  // ...lookup, validate, UPDATE...
+  await client.query('COMMIT');
+  res.json({ success: true, shopping_list_source: 'consult' });
+} catch (err) {
+  try { await client.query('ROLLBACK'); } catch (_) {}
+  throw err;
+} finally {
+  client.release();
+}
+```
+
+If we place the post-commit email block inside the outer `try` (between `COMMIT` and `res.json`, or right after `res.json`), a throw inside that block bubbles to the outer `catch`, which calls `ROLLBACK` on an ALREADY-COMMITTED transaction. ROLLBACK on a committed tx is a no-op at the driver level but it muddies the error path and the row is logged as a failure when it actually succeeded — and worse, the outer `throw err` propagates out so the client sees a 5xx for a save that actually went through. The fix is to move the post-commit block AFTER the `finally { client.release(); }` boundary, in a self-contained try/catch that NEVER rethrows.
 
 First, before the BEGIN, fetch the prior `consult_filled_at` so we know whether this is a first-time save or a re-submit. The existing `planRes` SELECT pulls plan fields but not `consult_filled_at`. Add it:
 
@@ -2048,27 +2297,42 @@ const planRes = await client.query(
 );
 ```
 
-Then after `plan.consult_selections = consult;` capture the first-time flag:
+Then after `plan.consult_selections = consult;` capture the first-time flag (this lives INSIDE the outer try, before the COMMIT — it doesn't touch the DB so it can't throw post-commit):
 
 ```javascript
 const isFirstTimeConsultSave = plan.consult_filled_at == null;
 ```
 
-After the COMMIT, add the post-commit send:
+Now restructure the outer try/catch/finally so the post-commit email send lives OUTSIDE the transaction frame. The new shape:
 
 ```javascript
-// Post-commit, best-effort: send the post-consult recap email to the client
-// ONLY on first-time save. Subsequent edits to the consult don't re-fire the
-// email (a re-edit by admin usually means correcting a typo, not re-confirming).
+let isFirstTimeConsultSave = false;  // hoisted to function scope so the post-commit block can read it
+
+const client = await pool.connect();
+try {
+  await client.query('BEGIN');
+  // ...existing lookup, validate, UPDATE...
+  isFirstTimeConsultSave = plan.consult_filled_at == null;  // assign once `plan` is loaded
+  await client.query('COMMIT');
+  res.json({ success: true, shopping_list_source: 'consult' });
+} catch (err) {
+  try { await client.query('ROLLBACK'); } catch (_) {}
+  throw err;
+} finally {
+  client.release();
+}
+
+// AFTER the finally boundary — post-commit work is fully isolated from the
+// transaction frame. Any throw here is caught locally and never rolls back
+// the (already-committed) consult save or surfaces as a 5xx.
 if (isFirstTimeConsultSave) {
   try {
     const { sendEmail } = require('../utils/email');
     const emailTemplates = require('../utils/emailTemplates');
     const { getEventTypeLabel } = require('../utils/eventTypes');
     const { formatConsultRecap, pickNextStepLine } = require('../utils/consultRecap');
-
-    // Look up client email, package pricing_type, comm-prefs, and event-display fields.
     const { shouldSendImmediate } = require('../utils/messageSuppression');
+
     const lookup = await pool.query(`
       SELECT dp.client_email, dp.client_name, dp.event_type, dp.event_type_custom, dp.event_date,
              p.id AS proposal_id, p.status AS proposal_status,
@@ -2083,7 +2347,6 @@ if (isFirstTimeConsultSave) {
 
     if (lookup.rows[0]?.client_email) {
       const row = lookup.rows[0];
-      // Gemini Finding 3: respect suppression rules on immediate sends.
       const sendCheck = await shouldSendImmediate({
         proposal: { id: row.proposal_id, status: row.proposal_status || 'deposit_paid' },
         client: {
@@ -2109,6 +2372,9 @@ if (isFirstTimeConsultSave) {
           drinkRecapLines: formatConsultRecap(consult),
           nextStepLine: pickNextStepLine(barOption),
         });
+        // Note the .catch on the promise — sendEmail returns a promise that we
+        // intentionally fire-and-forget. The .catch ensures an async rejection
+        // never escapes as an unhandled-rejection warning.
         sendEmail({ to: row.client_email, ...tpl }).catch(emailErr => {
           console.error('[postConsultClient] send failed (non-fatal):', emailErr);
           if (process.env.SENTRY_DSN_SERVER) {
@@ -2122,8 +2388,9 @@ if (isFirstTimeConsultSave) {
       }
     }
   } catch (recapErr) {
-    // Anything that throws during lookup/templating gets logged but doesn't
-    // block the response. The consult save itself succeeded.
+    // Anything that throws during lookup/templating gets logged but NEVER
+    // rethrown. The consult save itself succeeded and the response was
+    // already sent before we got here.
     console.error('[postConsultClient] post-commit step failed (non-fatal):', recapErr);
     if (process.env.SENTRY_DSN_SERVER) {
       const Sentry = require('@sentry/node');
@@ -2135,6 +2402,11 @@ if (isFirstTimeConsultSave) {
   }
 }
 ```
+
+Two practical notes for implementation:
+
+- `isFirstTimeConsultSave` is declared with `let` at function scope (top of the handler) and assigned inside the try once `plan` is loaded. A `const` declaration inside the inner try wouldn't be visible after the `finally`, and the post-commit block needs to read it.
+- The lookup query runs against `pool` (the connection pool), NOT the `client` connection — `client` was already released in `finally`. Using `pool.query` here is correct.
 
 The require()'s are inline (instead of top-of-file) to (a) keep the new code visually self-contained and (b) avoid making the email/template modules load at server start in tests that exercise only the consult route. The pattern matches the existing `sendInterviewConfirmationEmail` wrapper in `emailTemplates.js`.
 
@@ -2160,7 +2432,7 @@ git commit -m "feat(comms): post-consult recap email on first consult-notes save
 
 ---
 
-## Task 11: Integration verification
+## Task 12: Integration verification
 
 This is a verification pass, no code changes. Confirms the four touchpoints work end-to-end against the dev server.
 
@@ -2219,10 +2491,10 @@ No commit for this verification task.
 
 ---
 
-## Task 12: Update README templates table and CLAUDE.md if needed
+## Task 13: Update README templates table and CLAUDE.md if needed
 
 Per CLAUDE.md's mandatory documentation update rule:
-- New utility file (`icsCalendar`, `orientationData`, `consultRecap`) → README folder tree.
+- New utility files (`icsCalendar`, `orientationData`, `consultRecap`, `lifecycleEmailTemplates`) → README folder tree.
 - New template (`postConsultClient`) → it's an internal helper, not an env var or integration, so no CLAUDE.md change.
 
 **Files:**
@@ -2230,12 +2502,13 @@ Per CLAUDE.md's mandatory documentation update rule:
 
 - [ ] **Step 1: Update README.md folder tree**
 
-Locate the `server/utils/` section of the folder tree in `README.md`. Add three lines:
+Locate the `server/utils/` section of the folder tree in `README.md`. Add four lines:
 
 ```
-├── icsCalendar.js        # iCalendar VEVENT renderer for booking attachments
-├── orientationData.js    # Booking + receipt + planner payload assembler
-├── consultRecap.js       # Post-consult selections renderer + next-step picker
+├── icsCalendar.js              # iCalendar VEVENT renderer for booking attachments
+├── orientationData.js          # Booking + receipt + planner payload assembler
+├── consultRecap.js             # Post-consult selections renderer + next-step picker
+├── lifecycleEmailTemplates.js  # Lifecycle email templates split out of emailTemplates.js
 ```
 
 (Adjust to match the actual indentation pattern used in the existing tree.)
@@ -2254,10 +2527,15 @@ git commit -m "docs(readme): document icsCalendar, orientationData, consultRecap
 - [ ] All commits land cleanly on `main` with single-line messages
 - [ ] `git status` shows a clean working tree
 - [ ] `npm run lint` passes
+- [ ] `server/utils/emailTemplates.js` and `server/utils/lifecycleEmailTemplates.js` both under 1000 lines (`wc -l` confirms)
 - [ ] `node --test server/utils/icsCalendar.test.js` passes
 - [ ] `node --test server/utils/orientationData.test.js` passes
-- [ ] `node --test server/utils/emailTemplates.test.js` passes (11 test cases)
+- [ ] `node --test server/utils/emailTemplates.test.js` passes (11 test cases — exercises re-exports from lifecycleEmailTemplates)
 - [ ] `node --test server/utils/consultRecap.test.js` passes
+- [ ] Stripe webhook post-commit call order verified: `createEventShifts` runs BEFORE `sendPaymentNotifications` (drink_plan_token resolves)
+- [ ] payInfo SELECT in `sendPaymentNotifications` includes `p.status` and the three client suppression columns
+- [ ] Drink-plan slow-path `existing` SELECT JOINs `proposals` and `clients`
+- [ ] Post-consult email block lives AFTER the `finally { client.release(); }` boundary, never rethrows
 - [ ] Orientation email sends with `.ics` attachment on a test sign+pay
 - [ ] `.ics` opens cleanly in at least one major calendar app
 - [ ] Drink-plan-submitted email fires on EVERY submit (with + without addons, BYOB + Hosted)
