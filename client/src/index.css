@@ -12071,3 +12071,75 @@ html[data-app="admin-os"] .field-block {
 @media (prefers-reduced-motion: reduce) {
   .potion-app .potion-save::before { animation: none; opacity: 0.7; }
 }
+
+/* Welcome screen */
+.potion-app .potion-welcome-title,
+.potion-app .potion-card .potion-welcome-title {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 4.2vw, 3.2rem);
+  color: var(--deep-brown);
+  margin: 0 0 4px;
+  line-height: 1.04;
+}
+.potion-app .potion-welcome-sub {
+  font-style: italic;
+  color: var(--text-muted);
+  margin: 0 0 18px;
+  font-size: 1.05rem;
+}
+.potion-app .potion-welcome-body {
+  display: grid;
+  grid-template-columns: 120px 1fr 120px;
+  align-items: center;
+  gap: 28px;
+  margin-top: 20px;
+}
+.potion-app .potion-welcome-bartender,
+.potion-app .potion-welcome-drinks {
+  width: 100%;
+  height: 140px;
+  border-radius: 6px;
+  object-fit: contain;
+}
+.potion-app .potion-welcome-text p { color: rgba(28,22,16,0.82); }
+.potion-app .potion-welcome-text strong { color: var(--deep-brown); }
+
+@media (max-width: 720px) {
+  .potion-app .potion-welcome-body {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "bartender drinks"
+      "text text";
+  }
+  .potion-app .potion-welcome-bartender { grid-area: bartender; height: 110px; }
+  .potion-app .potion-welcome-drinks    { grid-area: drinks;    height: 110px; }
+  .potion-app .potion-welcome-text      { grid-area: text; }
+}
+
+/* Hosted "Your package" list with apothecary bullet */
+.potion-app .potion-hosted-list {
+  margin: 8px 0 6px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 18px;
+}
+.potion-app .potion-hosted-list li {
+  font-size: 0.93rem;
+  color: var(--deep-brown);
+  padding-left: 16px;
+  position: relative;
+}
+.potion-app .potion-hosted-list li::before {
+  content: "⚗";
+  position: absolute;
+  left: 0; top: 1px;
+  color: var(--brass);
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 600px) {
+  .potion-app .potion-hosted-list { grid-template-columns: 1fr; }
+}
