@@ -136,8 +136,8 @@ This spec does not modify any HTTP route response shape. The admin `GET /api/dri
 
 ### 7.1 Files to create
 
-- `server/utils/shoppingListAddonCoverage.js` — the coverage map and `computeStripSet` export.
-- `server/utils/shoppingListAddonCoverage.test.js` — unit tests for the helper (see §9 quality gates).
+- `server/utils/shoppingListAddonCoverage.js`: the coverage map and `computeStripSet` export.
+- `server/utils/shoppingListAddonCoverage.test.js`: unit tests for the helper (see §9 quality gates).
 
 ### 7.2 Files to modify
 
@@ -220,5 +220,5 @@ A follow-up spec will cover the cocktail-ingredient-dependent pieces. It will ne
 1. **Cocktail-ingredient data population.** Either an admin UI to edit `cocktails.ingredients` per cocktail, or a SQL UPDATE block in the seed file with the ~25 cocktail recipes, or both. This is the load-bearing prerequisite.
 2. **`signature-mixers-only` coverage**: pick up to 3 mixers needed by the signature cocktails (by frequency, ties broken by `BASIC_MIXERS` array order).
 3. **`the-formula` coverage**: same 3-mixer rule + Lemons + Limes + Oranges + Angostura Bitters + Foundation items.
-4. **Mixer-shortfall warning**: detect when Signature Mixers or The Formula is active AND sig cocktails need more than 3 unique mixers; render warning on planner ConfirmationStep (token-gated server endpoint to compute, banner with `role="alert"` for accessibility) and admin EventDetailPage (server-computed on whichever route the admin page actually calls — verify against `GET /api/drink-plans/by-proposal/:proposalId` since `EventDetailPage.js` calls that, not `/:id`).
+4. **Mixer-shortfall warning**: detect when Signature Mixers or The Formula is active AND sig cocktails need more than 3 unique mixers; render warning on planner ConfirmationStep (token-gated server endpoint to compute, banner with `role="alert"` for accessibility) and admin EventDetailPage (server-computed on whichever route the admin page actually calls; verify against `GET /api/drink-plans/by-proposal/:proposalId` since `EventDetailPage.js` calls that, not `/:id`).
 5. **Upcharge offer copy and button**: optional, can be a third spec if it grows.
