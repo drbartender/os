@@ -914,16 +914,22 @@ export default function PotionPlanningLab() {
           </div>
         )}
 
-        {/* Reserve vertical space so the indicator (when it appears for
-            manual saves or intermittent save failures) doesn't shift layout. */}
-        <div style={{ minHeight: '1.5rem', textAlign: 'center', padding: '0.25rem', fontSize: '0.85rem' }}>
-          {saving && (
-            <span role="status" aria-live="polite" style={{ opacity: 0.6 }}>Saving…</span>
-          )}
-          {saveFailed && !saving && (
-            <span role="alert" style={{ color: '#c0392b' }}>Draft may not be saved. Check your connection.</span>
-          )}
-        </div>
+        {/* Continuous whisper brass pulse on the save indicator. Idle, saving,
+            and failed states share the dot. aria-live="off" on idle so screen
+            readers do not announce "Saved" every save cycle. */}
+        {plan && step !== 'submitted' && (
+          <div className="potion-save-wrap">
+            <span
+              className={`potion-save ${saveFailed ? 'failed' : (saving ? '' : 'saved')}`}
+              role={saveFailed ? 'alert' : 'status'}
+              aria-live={saveFailed ? 'assertive' : (saving ? 'polite' : 'off')}
+            >
+              {saveFailed
+                ? 'Draft may not be saved. Check your connection.'
+                : saving ? 'Saving…' : 'Saved'}
+            </span>
+          </div>
+        )}
 
         <div className="potion-step" key={step}>
           <Suspense fallback={<div style={{ padding: '3rem', textAlign: 'center', color: '#6b5a4e' }}>Loading…</div>}>
