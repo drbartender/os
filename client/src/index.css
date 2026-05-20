@@ -9682,16 +9682,16 @@ html[data-app="admin-os"][data-skin="dark"] .text-muted {
   color: var(--ink-3);
 }
 /* `.card p` / `.card h4` / the base h1–h4 rules explicitly set --deep-brown,
-   beating the inherited .card re-tint above. Re-tint card paragraphs + ALL
-   adminos headings on the dark skin — settings section <h3>s (and similar)
-   are bare semantic headings on .page, not inside a .card. */
+   so they beat the inherited .card re-tint above. Override headings + p
+   inside adminos cards on the dark skin (this is where bare semantic text
+   lives — drink-plan / event detail bodies). */
 html[data-app="admin-os"][data-skin="dark"] .card p,
-html[data-app="admin-os"][data-skin="dark"] h1,
-html[data-app="admin-os"][data-skin="dark"] h2,
-html[data-app="admin-os"][data-skin="dark"] h3,
-html[data-app="admin-os"][data-skin="dark"] h4,
-html[data-app="admin-os"][data-skin="dark"] h5,
-html[data-app="admin-os"][data-skin="dark"] h6 {
+html[data-app="admin-os"][data-skin="dark"] .card h1,
+html[data-app="admin-os"][data-skin="dark"] .card h2,
+html[data-app="admin-os"][data-skin="dark"] .card h3,
+html[data-app="admin-os"][data-skin="dark"] .card h4,
+html[data-app="admin-os"][data-skin="dark"] .card h5,
+html[data-app="admin-os"][data-skin="dark"] .card h6 {
   color: var(--ink-1);
 }
 
