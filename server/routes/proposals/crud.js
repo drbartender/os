@@ -100,7 +100,8 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     client_id, client_name, client_email, client_phone, client_source,
     event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
-    addon_variants, syrup_selections, event_type, event_type_category, event_type_custom
+    addon_variants, syrup_selections, event_type, event_type_category, event_type_custom,
+    venue_name, venue_street, venue_city, venue_state, venue_zip,
   } = req.body;
 
   const fieldErrors = {};
@@ -109,6 +110,19 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   if (Object.keys(fieldErrors).length > 0) {
     throw new ValidationError(fieldErrors);
   }
+
+  // Venue is optional at create-time (admin may add the address later via edit).
+  // Validate only the shape — match PATCH's requireStreet:false, requireCityState:false.
+  const venueErrors = validateVenue(
+    { venue_name, venue_street, venue_city, venue_state, venue_zip },
+    { requireStreet: false, requireCityState: false }
+  );
+  if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
+  // Compose event_location from the structured fields (source of truth). Fall back
+  // to the legacy single-string event_location for callers that still send it.
+  const composedLocation = composeVenueLocation({
+    venue_name, venue_street, venue_city, venue_state, venue_zip,
+  }) || event_location || null;
 
   const dbClient = await pool.connect();
   try {
@@ -161,14 +175,17 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     const proposalResult = await dbClient.query(`
       INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours,
         event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, created_by,
-        event_type, event_type_category, event_type_custom)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        event_type, event_type_category, event_type_custom,
+        venue_name, venue_street, venue_city, venue_state, venue_zip)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
       RETURNING *
     `, [
       finalClientId, event_date || null, event_start_time || null, dh,
-      event_location || null, gc, package_id, nb,
+      composedLocation, gc, package_id, nb,
       snapshot.staffing.actual, JSON.stringify(snapshot), snapshot.total, req.user.id,
-      event_type || null, event_type_category || null, event_type_custom || null
+      event_type || null, event_type_category || null, event_type_custom || null,
+      venue_name || null, venue_street || null, venue_city || null,
+      venue_state || null, venue_zip || null,
     ]);
 
     const proposal = proposalResult.rows[0];

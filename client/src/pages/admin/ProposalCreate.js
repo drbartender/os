@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
-import LocationInput from '../../components/LocationInput';
+import VenueAddressFields from '../../components/VenueAddressFields';
 import useFormValidation from '../../hooks/useFormValidation';
 import EVENT_TYPES from '../../data/eventTypes';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
@@ -111,7 +111,8 @@ export default function ProposalCreate() {
     client_name: '', client_email: '', client_phone: '', client_source: 'thumbtack',
     event_type: '', event_type_category: '', event_type_custom: '',
     event_date: '', event_start_time: '17:00', event_duration_hours: 4,
-    event_location: '', guest_count: 50,
+    venue_name: '', venue_street: '', venue_city: '', venue_state: '', venue_zip: '',
+    guest_count: 50,
     package_id: '', num_bars: 0, num_bartenders: null,
     addon_ids: [], addon_variants: {},
   });
@@ -638,14 +639,20 @@ function EventSection({ form, update, merge, fieldErrors }) {
         </Lbl>
       </div>
 
-      {/* Row 3 — Venue full width */}
-      <Lbl text="Venue / location">
-        <LocationInput
-          className="input"
-          value={form.event_location}
-          onChange={(val) => update('event_location', val)}
+      {/* Row 3 — Venue full width. Not wrapped in <Lbl> (which renders a <label>) — VenueAddressFields renders its own per-field labels, and nested labels are invalid HTML. */}
+      <div>
+        <div className="tiny mono" style={{ color: 'var(--ink-3)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: '0.06em', fontSize: 9.5 }}>
+          Venue / location
+        </div>
+        <VenueAddressFields
+          value={form}
+          onChange={(field, val) => update(field, val)}
+          fieldErrors={fieldErrors}
+          inputClassName="input"
+          selectClassName="select"
+          labelClassName="meta-k"
         />
-      </Lbl>
+      </div>
     </div>
   );
 }
