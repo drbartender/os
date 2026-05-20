@@ -3,6 +3,7 @@ import MenuSamplesModal from '../../../components/MenuSamplesModal';
 import { MENU_SAMPLES } from '../../../data/menuSamples';
 import ScopeBanner from '../components/ScopeBanner';
 import MenuPreview from '../components/MenuPreview';
+import LogoUploadField from '../components/LogoUploadField';
 
 export default function MenuDesignStep({ selections, activeModules, cocktails = [], mocktails = [], onChange }) {
   const selectedDrinks = cocktails.filter(d => (selections.signatureDrinks || []).includes(d.id));
@@ -230,6 +231,23 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
           <span className="potion-field-note">
             No printed menu will be created. Your selections still drive your shopping list.
           </span>
+        )}
+
+        {(selections.menuStyle === 'custom' || selections.menuStyle === 'house') && (
+          <LogoUploadField
+            companyLogo={selections.companyLogo || ''}
+            onUploadSuccess={(updatedSelections) => {
+              // Server returns the FULL updated selections object. Merge in locally
+              // so the field shows the new logo immediately. The server has already
+              // persisted via the atomic upload route (no race), so the next
+              // auto-save is a no-op for the logo fields.
+              Object.keys(updatedSelections).forEach((key) => {
+                if (key !== '_logoFilename') {
+                  onChange(key, updatedSelections[key]);
+                }
+              });
+            }}
+          />
         )}
       </div>
     </div>

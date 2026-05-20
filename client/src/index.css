@@ -12761,3 +12761,50 @@ html[data-app="admin-os"] .field-block {
   margin: 0 auto 16px;
 }
 @keyframes potion-spin { to { transform: rotate(360deg); } }
+
+/* Logo upload widget on MenuDesignStep */
+.potion-app .logo-upload {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(184,146,74,0.32);
+}
+.potion-app .logo-upload-help {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-style: italic;
+  margin: 0 0 0.6rem;
+}
+.potion-app .logo-upload-empty {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.potion-app .logo-upload-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.potion-app .logo-upload-preview {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.potion-app .logo-upload-thumb {
+  width: 80px;
+  height: 80px;
+  object-fit: contain;
+  background: var(--paper);
+  border: 1px solid rgba(28,22,16,0.18);
+  border-radius: 6px;
+  padding: 4px;
+}
+.potion-app .logo-upload-preview-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.potion-app .logo-upload-error {
+  margin-top: 0.6rem;
+  color: var(--rust);
+  font-size: 0.88rem;
+}
