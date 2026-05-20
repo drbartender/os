@@ -2153,3 +2153,24 @@ ALTER TABLE tester_bugs DROP COLUMN IF EXISTS screenshot_url;
 CREATE INDEX IF NOT EXISTS idx_proposals_sent_at ON proposals(sent_at);
 CREATE INDEX IF NOT EXISTS idx_proposals_accepted_at ON proposals(accepted_at);
 CREATE INDEX IF NOT EXISTS idx_proposal_payments_created_at ON proposal_payments(created_at);
+
+-- ─── Automated Communication: proposals additions ────────────────
+-- See docs/superpowers/specs/2026-05-20-automated-communication-design.md
+
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_timezone TEXT NOT NULL DEFAULT 'America/Chicago';
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS archive_reason TEXT;
+
+-- Status enum gets 'archived' added. Existing 'cancelled' values stay valid during migration;
+-- Task 2 migrates them to 'archived' and Task 1 leaves both allowed transiently.
+DO $$ BEGIN
+  ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_status_check;
+  ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
+    CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed','cancelled','archived'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- archive_reason is only meaningful when status = 'archived'
+DO $$ BEGIN
+  ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_archive_reason_check;
+  ALTER TABLE proposals ADD CONSTRAINT proposals_archive_reason_check
+    CHECK (archive_reason IS NULL OR archive_reason IN ('no_hire','client_cancelled','we_cancelled','event_completed','other'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
