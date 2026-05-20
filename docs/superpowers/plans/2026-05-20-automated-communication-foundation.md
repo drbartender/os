@@ -26,7 +26,7 @@
 - `server/utils/balanceScheduler.js` — add archive cascade to WHERE clauses, wrap scheduler calls with heartbeat
 - `server/utils/autoAssignScheduler.js` — same
 - `server/utils/emailSequenceScheduler.js` — same
-- `server/utils/purgeLabrat.js` — wrap with heartbeat
+- `server/utils/labratCleanup.js` — wrap with heartbeat
 - `.env.example` — document new per-scheduler env vars
 
 **Files referenced (no edits):**
@@ -141,27 +141,38 @@ psql "$DATABASE_URL" -c "INSERT INTO proposals (status) VALUES ('archived');"
 
 Expected: error about missing required columns (NOT about the status constraint). If you get a CHECK constraint violation, the migration didn't apply. Tidy up with `DELETE FROM proposals WHERE id = (last inserted)` if needed.
 
-- [ ] **Step 4: Search code for 'cancelled' references and update**
+- [ ] **Step 4: Update existing `cancelled` references in code**
 
-Grep for `status.*cancelled|'cancelled'` in `server/` and update each to `'archived'`:
+Important context: the existing codebase has both `cancelled` (terminal) AND `archived` (recoverable, with `archived → draft` transition) as statuses. This plan replaces `cancelled` semantics with `archived` while **preserving** the existing recovery path. Don't delete the `archived → draft` transition.
 
-```bash
-grep -rn "status.*=.*'cancelled'\|'cancelled'" server/
-```
+Required updates (Codex caught these):
 
-Update each to use `'archived'` instead. Common spots:
-- `server/utils/balanceScheduler.js` WHERE clauses (Task 12 will revisit)
-- `server/utils/refundHelpers.js` if it references cancelled status
-- `server/routes/proposals/*.js` for status display logic
-- `server/utils/metricsQueries.js` for reporting
+**`server/routes/proposals/crud.js`:**
+- Lines 25-37 (`STATUS_TRANSITIONS` map): replace every `'cancelled'` with `'archived'`. Drop the standalone `cancelled: []` entry. Result: every outgoing transition list that had `'cancelled'` now uses `'archived'`. The `archived: ['draft']` recovery transition stays.
+- Line 21-22 (docstring): update comment that says "cancelled is terminal" to describe archived's role.
+- Lines 74-81 (view filters): replace `'cancelled'` with `'archived'` in the archive view, all view, and active view WHERE clauses.
 
-Verify after edits:
+**`server/routes/proposals/publicToken.js`:**
+- Line 178: the `AND status NOT IN (...)` list that blocks signing currently lists `'cancelled'`. Replace with `'archived'` so an archived proposal can't be signed via the public token.
+
+**Other files (grep + manual review):**
 
 ```bash
 grep -rn "'cancelled'" server/
 ```
 
-Expected: no remaining matches in code (matches in `schema.sql` are OK as part of the migration history).
+For each match, decide: is this in active code that needs `'archived'`, or is it a historical artifact in `schema.sql` (those are OK)? Common live spots:
+- `server/utils/refundHelpers.js` if it references cancelled status
+- `server/utils/metricsQueries.js` for reporting
+- `server/utils/balanceScheduler.js` (Task 12 will also revisit)
+
+After edits, verify only `schema.sql` matches remain:
+
+```bash
+grep -rn "'cancelled'" server/ --include="*.js"
+```
+
+Expected: zero matches in `*.js` files.
 
 - [ ] **Step 5: Commit**
 
@@ -605,10 +616,11 @@ describe('schedulerHealth', () => {
       expect(rows[0].last_status).toBe('ok');
     });
 
-    it('records failed heartbeat and re-throws on error', async () => {
+    it('records failed heartbeat and swallows the error', async () => {
       const fn = jest.fn().mockRejectedValue(new Error('kaboom'));
       const wrapped = wrapScheduler('test-wrap-fail', 60, fn);
-      await expect(wrapped()).rejects.toThrow('kaboom');
+      // Wrapper must NOT rethrow — timer callbacks can't handle unhandled rejections
+      await expect(wrapped()).resolves.toBeUndefined();
       const { rows } = await pool.query(
         "SELECT last_status, last_error FROM scheduler_health WHERE scheduler_name = 'test-wrap-fail'"
       );
@@ -691,26 +703,43 @@ async function recordHeartbeat(schedulerName, expectedIntervalSeconds, status, e
 
 /**
  * Wrap a scheduler function so it records heartbeats automatically.
- * The wrapped function preserves the original signature (return value, throws).
+ *
+ * Critical design points:
+ * - The wrapper does NOT rethrow scheduler errors. We're called from setInterval
+ *   timer callbacks; an unhandled rejection there crashes the Node 18+ process.
+ *   The scheduler is expected to log/Sentry its own error before throwing.
+ * - Heartbeat write failures are caught and logged internally. They must never
+ *   propagate out of this wrapper for the same reason.
+ * - To detect scheduler failures, the underlying scheduler function MUST rethrow
+ *   from its top-level catch block. See Tasks 12-14 for the corresponding
+ *   refactors to existing schedulers.
  *
  * @param {string} schedulerName
  * @param {number} expectedIntervalSeconds
  * @param {() => Promise<any>} fn - the scheduler function to wrap
- * @returns {() => Promise<any>}
+ * @returns {() => Promise<void>}
  */
 function wrapScheduler(schedulerName, expectedIntervalSeconds, fn) {
   return async function wrappedScheduler(...args) {
+    let status = 'ok';
+    let errorMessage = null;
     try {
-      const result = await fn(...args);
-      await recordHeartbeat(schedulerName, expectedIntervalSeconds, 'ok');
-      return result;
+      await fn(...args);
     } catch (err) {
-      try {
-        await recordHeartbeat(schedulerName, expectedIntervalSeconds, 'failed', err.message);
-      } catch (heartbeatErr) {
-        console.error('[schedulerHealth] failed to record heartbeat:', heartbeatErr.message);
-      }
-      throw err;
+      status = 'failed';
+      errorMessage = err.message;
+      console.error(`[${schedulerName}] scheduler error:`, err);
+      Sentry.captureException(err, { tags: { scheduler: schedulerName } });
+      // Do NOT rethrow — timer callback would surface an unhandled rejection.
+    }
+    try {
+      await recordHeartbeat(schedulerName, expectedIntervalSeconds, status, errorMessage);
+    } catch (heartbeatErr) {
+      console.error(
+        `[schedulerHealth] heartbeat write failed for ${schedulerName}:`,
+        heartbeatErr.message
+      );
+      // Swallow: a heartbeat write failure must never kill the scheduler timer.
     }
   };
 }
@@ -760,11 +789,29 @@ function startStaleSchedulerMonitor() {
   console.log('[schedulerHealth] stale-scheduler monitor started');
 }
 
+/**
+ * Delete the scheduler_health row for a named scheduler. Called from server
+ * bootstrap when that scheduler is disabled via env var, so the stale-monitor
+ * doesn't alert on a job that was intentionally turned off.
+ *
+ * Safe to call when no row exists (no-op).
+ *
+ * @param {string} schedulerName
+ */
+async function clearHealthRow(schedulerName) {
+  try {
+    await pool.query('DELETE FROM scheduler_health WHERE scheduler_name = $1', [schedulerName]);
+  } catch (err) {
+    console.error(`[schedulerHealth] failed to clear row for ${schedulerName}:`, err.message);
+  }
+}
+
 module.exports = {
   recordHeartbeat,
   wrapScheduler,
   checkStaleSchedulers,
   startStaleSchedulerMonitor,
+  clearHealthRow,
 };
 ```
 
@@ -959,6 +1006,7 @@ Replace the entire `if (process.env.RUN_SCHEDULERS !== 'false') { ... } else { .
       const {
         wrapScheduler,
         startStaleSchedulerMonitor,
+        clearHealthRow,
       } = require('./utils/schedulerHealth');
 
       // Autopay balance scheduler — check hourly for due balances
@@ -966,6 +1014,8 @@ Replace the entire `if (process.env.RUN_SCHEDULERS !== 'false') { ... } else { .
         const wrapped = wrapScheduler('autopay', 3600, processAutopayCharges);
         setTimeout(wrapped, 30000);
         setInterval(wrapped, 60 * 60 * 1000);
+      } else {
+        clearHealthRow('autopay'); // prevent stale-monitor alerts for a disabled job
       }
 
       // Auto-complete events — check hourly for ended, fully-paid events
@@ -973,6 +1023,8 @@ Replace the entire `if (process.env.RUN_SCHEDULERS !== 'false') { ... } else { .
         const wrapped = wrapScheduler('autocomplete', 3600, processEventCompletions);
         setTimeout(wrapped, 45000);
         setInterval(wrapped, 60 * 60 * 1000);
+      } else {
+        clearHealthRow('autocomplete');
       }
 
       // Auto-assign scheduler — check hourly for shifts needing auto-assignment
@@ -980,6 +1032,8 @@ Replace the entire `if (process.env.RUN_SCHEDULERS !== 'false') { ... } else { .
         const wrapped = wrapScheduler('auto_assign', 3600, processScheduledAutoAssigns);
         setTimeout(wrapped, 60000);
         setInterval(wrapped, 60 * 60 * 1000);
+      } else {
+        clearHealthRow('auto_assign');
       }
 
       // Email sequence scheduler — check every 15 min for due drip steps
@@ -987,6 +1041,8 @@ Replace the entire `if (process.env.RUN_SCHEDULERS !== 'false') { ... } else { .
         const wrapped = wrapScheduler('email_sequence', 900, processSequenceSteps);
         setTimeout(wrapped, 90000);
         setInterval(wrapped, 15 * 60 * 1000);
+      } else {
+        clearHealthRow('email_sequence');
       }
 
       // Quote draft cleanup — expire stale drafts daily
@@ -994,6 +1050,8 @@ Replace the entire `if (process.env.RUN_SCHEDULERS !== 'false') { ... } else { .
         const wrapped = wrapScheduler('quote_draft_cleanup', 86400, expireStaleQuoteDrafts);
         setTimeout(wrapped, 120000);
         setInterval(wrapped, 24 * 60 * 60 * 1000);
+      } else {
+        clearHealthRow('quote_draft_cleanup');
       }
 
       // Lab rat test-data purge — every hour
@@ -1001,6 +1059,8 @@ Replace the entire `if (process.env.RUN_SCHEDULERS !== 'false') { ... } else { .
         const wrapped = wrapScheduler('labrat_purge', 3600, purgeLabratTestData);
         setTimeout(wrapped, 150000);
         setInterval(wrapped, 60 * 60 * 1000);
+      } else {
+        clearHealthRow('labrat_purge');
       }
 
       // Start the staleness monitor (runs every 15 min, no per-scheduler toggle)
@@ -1095,7 +1155,41 @@ npx eslint server/utils/balanceScheduler.js
 
 Expected: no errors.
 
-- [ ] **Step 4: Manual smoke test**
+- [ ] **Step 4: Refactor top-level catch blocks to rethrow**
+
+The heartbeat in `wrapScheduler` only detects failures when the underlying function throws. Today, both `processAutopayCharges` and `processEventCompletions` swallow their top-level errors with `console.error(...)` and return normally. That makes the heartbeat misleading (always 'ok' even when the scheduler hit a DB or Stripe error).
+
+Find the top-level `catch (err)` block in `processAutopayCharges` (around line 168 today) and update from:
+
+```javascript
+} catch (err) {
+  Sentry.captureException(err, {...});
+  console.error('[BalanceScheduler] Autopay error:', err);
+}
+```
+
+To:
+
+```javascript
+} catch (err) {
+  Sentry.captureException(err, {...});
+  console.error('[BalanceScheduler] Autopay error:', err);
+  throw err;  // surface to wrapScheduler so heartbeat records 'failed'
+}
+```
+
+Do the same for the top-level catch in `processEventCompletions` (around line 211 today):
+
+```javascript
+} catch (err) {
+  console.error('[BalanceScheduler] Auto-completion error:', err);
+  throw err;  // surface to wrapScheduler so heartbeat records 'failed'
+}
+```
+
+Inner per-row try/catch blocks (e.g., the `chargeOne` per-proposal handler) keep swallowing per-row errors so a single bad row doesn't take down the whole batch. Only the OUTER, function-level catch rethrows.
+
+- [ ] **Step 5: Manual smoke test**
 
 Insert an archived proposal in a transaction, run the auto-complete query, verify it isn't picked up:
 
@@ -1130,11 +1224,11 @@ EOF
 
 Expected: zero rows returned (the archived proposal is correctly excluded).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add server/utils/balanceScheduler.js
-git commit -m "fix(schedulers): explicit archive cascade in balance and auto-complete"
+git commit -m "fix(schedulers): archive cascade and rethrow in balance and auto-complete"
 ```
 
 ---
@@ -1182,7 +1276,28 @@ The `p.id IS NULL` clause keeps the behavior for orphan shifts (shifts without a
 
 If your shift schema uses a different column name for the proposal link (e.g., `event_id`), adapt the JOIN accordingly.
 
-- [ ] **Step 3: Lint**
+- [ ] **Step 3: Refactor top-level catch to rethrow**
+
+Find the top-level `catch (err)` in `processScheduledAutoAssigns` (around line 37 today):
+
+```javascript
+} catch (err) {
+  console.error('[AutoAssignScheduler] Error:', err.message);
+}
+```
+
+Update to rethrow so `wrapScheduler` can record a failed heartbeat:
+
+```javascript
+} catch (err) {
+  console.error('[AutoAssignScheduler] Error:', err.message);
+  throw err;  // surface to wrapScheduler so heartbeat records 'failed'
+}
+```
+
+The inner per-shift try/catch (around line 33) keeps swallowing per-shift errors so one bad shift doesn't kill the batch.
+
+- [ ] **Step 4: Lint**
 
 ```bash
 npx eslint server/utils/autoAssignScheduler.js
@@ -1190,7 +1305,7 @@ npx eslint server/utils/autoAssignScheduler.js
 
 Expected: no errors.
 
-- [ ] **Step 4: Smoke test**
+- [ ] **Step 5: Smoke test**
 
 ```bash
 psql "$DATABASE_URL" << 'EOF'
@@ -1221,11 +1336,11 @@ EOF
 
 Expected: zero rows. The archived proposal's shift is excluded.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add server/utils/autoAssignScheduler.js
-git commit -m "fix(schedulers): exclude shifts attached to archived proposals from auto-assign"
+git commit -m "fix(schedulers): archive cascade and rethrow in auto-assign"
 ```
 
 ---
@@ -1272,17 +1387,49 @@ const dueEnrollments = await pool.query(`
 `);
 ```
 
-If `email_leads` does not have `proposal_id`, the linkage may be via `clients.id`. In that case, join `email_leads` → `clients` → `proposals`:
+If `email_leads` does NOT have a `proposal_id` column (which is the current state — `email_leads` is a generic marketing-leads table, not tied to specific proposals), **skip the archive guard entirely for this scheduler**. Do not attempt an email-address fallback join — that would suppress every drip enrollment for a client's email as soon as any archived proposal exists for that address, including unrelated or newer lead activity.
+
+The drip already stops on sign+pay via the existing `e.status = 'active'` logic and the sequence engine's enrollment lifecycle. The archive guard is a defense-in-depth feature only valuable when a real per-proposal mapping exists. If it doesn't, leave it out.
+
+Document the decision in a comment in the SQL query so the next person understands why the archive guard is missing here:
 
 ```javascript
-LEFT JOIN proposals p ON p.client_email = l.email AND p.status = 'archived'
-WHERE ...
-  AND p.id IS NULL  -- no archived proposal exists for this lead's email
+// NOTE: no archive guard on this scheduler because email_leads has no proposal_id
+// linkage. Drip stops on sign+pay via enrollment lifecycle (e.status flips when the
+// proposal is signed). Don't add an email-address fallback join — it over-suppresses.
 ```
 
-Choose the join path that matches your actual schema. If neither linkage exists, skip the archive guard here (drip already stops on sign+pay via existing logic, and there's no clean way to map a lead back to a proposal without one).
+- [ ] **Step 3: Refactor top-level catch blocks to rethrow**
 
-- [ ] **Step 3: Lint**
+Find the top-level `catch (err)` in `processSequenceSteps` (around line 147 today):
+
+```javascript
+} catch (err) {
+  console.error('[SequenceScheduler] Fatal error:', err);
+}
+```
+
+Update to rethrow:
+
+```javascript
+} catch (err) {
+  console.error('[SequenceScheduler] Fatal error:', err);
+  throw err;  // surface to wrapScheduler so heartbeat records 'failed'
+}
+```
+
+Same treatment for `expireStaleQuoteDrafts` (around line 165):
+
+```javascript
+} catch (err) {
+  console.error('[QuoteDrafts] Cleanup error:', err.message);
+  throw err;
+}
+```
+
+Inner per-enrollment try/catch blocks keep swallowing per-row errors. Only the outer function-level catches rethrow.
+
+- [ ] **Step 4: Lint**
 
 ```bash
 npx eslint server/utils/emailSequenceScheduler.js
@@ -1290,11 +1437,11 @@ npx eslint server/utils/emailSequenceScheduler.js
 
 Expected: no errors.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add server/utils/emailSequenceScheduler.js
-git commit -m "fix(schedulers): exclude enrollments linked to archived proposals"
+git commit -m "fix(schedulers): archive cascade and rethrow in email sequence"
 ```
 
 ---
