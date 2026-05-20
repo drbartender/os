@@ -2262,3 +2262,54 @@ DO $$ BEGIN
   ALTER TABLE sms_messages ADD CONSTRAINT sms_messages_direction_check
     CHECK (direction IN ('inbound','outbound'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- ─── Automated Communication: scheduled_messages table ──────────
+-- One row per (recipient, channel) for each scheduled touch.
+-- Enables per-delivery idempotency, retry, and partial-failure tracking.
+
+CREATE TABLE IF NOT EXISTS scheduled_messages (
+  id SERIAL PRIMARY KEY,
+  entity_id INTEGER NOT NULL,
+  entity_type TEXT NOT NULL,
+  message_type TEXT NOT NULL,
+  recipient_type TEXT NOT NULL,
+  recipient_id INTEGER NOT NULL,
+  channel TEXT NOT NULL,
+  scheduled_for TIMESTAMPTZ NOT NULL,
+  sent_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'pending',
+  error_message TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DO $$ BEGIN
+  ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_entity_type_check;
+  ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_entity_type_check
+    CHECK (entity_type IN ('proposal','shift','client','consult'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_recipient_type_check;
+  ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_recipient_type_check
+    CHECK (recipient_type IN ('client','staff','admin'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_channel_check;
+  ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_channel_check
+    CHECK (channel IN ('email','sms'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+DO $$ BEGIN
+  ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_status_check;
+  ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_status_check
+    CHECK (status IN ('pending','sent','failed','suppressed','deferred'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_pending
+  ON scheduled_messages(scheduled_for)
+  WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_entity
+  ON scheduled_messages(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_recipient
+  ON scheduled_messages(recipient_type, recipient_id);

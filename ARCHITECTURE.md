@@ -692,6 +692,22 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `twilio_sid`, `status` — delivery tracking
 - `sent_by` FK → users (admin who sent)
 
+**scheduled_messages** — Unified per-recipient/per-channel scheduled-message tracking for the Automated Communication Foundation. One row per (recipient, channel) for each scheduled touch so multi-recipient touches (e.g. day-before reminder to two bartenders) and partial failures (email sent, SMS failed) are tracked independently.
+- `id` SERIAL PK
+- `entity_id` INTEGER NOT NULL — id of the underlying record (proposal/shift/client/consult)
+- `entity_type` TEXT NOT NULL CHECK (`proposal`, `shift`, `client`, `consult`)
+- `message_type` TEXT NOT NULL — stable string identifying the touch (e.g. `day_before_reminder`, `payment_reminder_72h`)
+- `recipient_type` TEXT NOT NULL CHECK (`client`, `staff`, `admin`)
+- `recipient_id` INTEGER NOT NULL — client or user id (resolved by `recipient_type`)
+- `channel` TEXT NOT NULL CHECK (`email`, `sms`)
+- `scheduled_for` TIMESTAMPTZ NOT NULL — when the worker should deliver
+- `sent_at` TIMESTAMPTZ — set on successful send
+- `status` TEXT NOT NULL DEFAULT `'pending'` CHECK (`pending`, `sent`, `failed`, `suppressed`, `deferred`)
+- `error_message` TEXT — last error on failure
+- `created_at` TIMESTAMPTZ DEFAULT NOW()
+- Partial index `idx_scheduled_messages_pending(scheduled_for) WHERE status = 'pending'` keeps worker queue scans cheap as the table grows.
+- Lookup indexes on `(entity_type, entity_id)` and `(recipient_type, recipient_id)` for cancellation (e.g. proposal accepted, cancel pending reminders) and per-recipient history.
+
 ### Bartender Tip Pages
 
 **tips** — Successful tip records (one row per `checkout.session.completed` event tagged `metadata.kind = 'tip'`)
