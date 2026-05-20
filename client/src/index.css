@@ -12064,6 +12064,8 @@ html[data-app="admin-os"] .field-block {
   background: var(--rust);
   box-shadow: 0 0 0 0 rgba(160,82,45,0.5);
   animation-play-state: paused;
+  opacity: 1;
+  transform: scale(1);
 }
 
 @media (prefers-reduced-motion: reduce) {
