@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import MenuSamplesModal from '../../../components/MenuSamplesModal';
 import { MENU_SAMPLES } from '../../../data/menuSamples';
 import ScopeBanner from '../components/ScopeBanner';
+import MenuPreview from '../components/MenuPreview';
 
 export default function MenuDesignStep({ selections, activeModules, cocktails = [], mocktails = [], onChange }) {
   const selectedDrinks = cocktails.filter(d => (selections.signatureDrinks || []).includes(d.id));
@@ -210,9 +211,19 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
         )}
 
         {selections.menuStyle === 'house' && (
-          <span className="potion-field-note">
-            Our standard bar menu. Dr. Bartender branded, listing your drinks in plain terms like Vodka Lemonade, Old Fashioned, or Beer and Wine. We bring it printed and framed for the bar. No setup needed from you.
-          </span>
+          <>
+            <span className="potion-field-note">
+              Our standard bar menu. Dr. Bartender branded, listing your drinks in plain terms like Vodka Lemonade, Old Fashioned, or Beer and Wine. We bring it printed and framed for the bar. No setup needed from you.
+            </span>
+            <MenuPreview
+              selections={selections}
+              activeModules={activeModules}
+              cocktails={cocktails}
+              mocktails={mocktails}
+              companyLogo={selections.companyLogo || ''}
+              variant="screen"
+            />
+          </>
         )}
 
         {selections.menuStyle === 'none' && (
