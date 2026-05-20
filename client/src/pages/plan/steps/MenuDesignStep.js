@@ -14,7 +14,7 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
           Menu Design
         </h2>
         <p className="text-muted">
-          Here's a summary of your selections. Below, let us know if you'd like a custom menu graphic.
+          Here's a summary of your selections. Below, choose how you'd like your drink menu displayed at the event.
         </p>
       </div>
 
@@ -33,12 +33,12 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
               ))}
             </ul>
             {selections.signatureDrinkSpirits?.length > 0 && (
-              <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
+              <p className="text-muted text-small" style={{ color: 'var(--text-muted)' }}>
                 Base spirits: {selections.signatureDrinkSpirits.join(', ')}
               </p>
             )}
             {selections.mixersForSignatureDrinks && (
-              <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
+              <p className="text-muted text-small" style={{ color: 'var(--text-muted)' }}>
                 Basic mixers included for simple mixed drinks
               </p>
             )}
@@ -54,7 +54,7 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
               ))}
             </ul>
             {selections.mocktailNotes && (
-              <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
+              <p className="text-muted text-small" style={{ color: 'var(--text-muted)' }}>
                 Notes: {selections.mocktailNotes}
               </p>
             )}
@@ -69,7 +69,7 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
               </p>
             )}
             {selections.mixersForSpirits && (
-              <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
+              <p className="text-muted text-small" style={{ color: 'var(--text-muted)' }}>
                 Mixers requested for bar spirits
               </p>
             )}
@@ -116,17 +116,14 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
         )}
 
         {!activeModules.signatureDrinks && !activeModules.fullBar && !activeModules.beerWineOnly && !activeModules.mocktails && (
-          <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>No drink selections yet.</p>
+          <p className="text-muted" style={{ color: 'var(--text-muted)' }}>No drink selections yet.</p>
         )}
       </div>
 
-      {/* Custom Menu Design Question */}
+      {/* Three-way Menu Design */}
       <div className="card">
         <div className="form-group">
-          <label className="form-label">Would you like us to design a custom drink menu graphic for your event?</label>
-          <p className="text-muted text-small mb-1" style={{ color: 'var(--warm-brown)' }}>
-            We'll create a custom bar menu to match your event's look and feel.
-          </p>
+          <label className="form-label">How would you like your drink menu displayed at the event?</label>
           {MENU_SAMPLES.length > 0 && (
             <button
               type="button"
@@ -140,27 +137,36 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
             <label className="checkbox-label">
               <input
                 type="radio"
-                name="customMenuDesign"
-                checked={selections.customMenuDesign === true}
-                onChange={() => onChange('customMenuDesign', true)}
+                name="menuStyle"
+                checked={selections.menuStyle === 'custom'}
+                onChange={() => onChange('menuStyle', 'custom')}
               />
-              <span>Yes, please!</span>
+              <span>Custom Menu Design (designed for your event's look and feel)</span>
             </label>
             <label className="checkbox-label">
               <input
                 type="radio"
-                name="customMenuDesign"
-                checked={selections.customMenuDesign === false}
-                onChange={() => onChange('customMenuDesign', false)}
+                name="menuStyle"
+                checked={selections.menuStyle === 'house'}
+                onChange={() => onChange('menuStyle', 'house')}
               />
-              <span>No thanks</span>
+              <span>Standard Menu (Dr. Bartender branded, drinks listed in plain terms)</span>
+            </label>
+            <label className="checkbox-label">
+              <input
+                type="radio"
+                name="menuStyle"
+                checked={selections.menuStyle === 'none'}
+                onChange={() => onChange('menuStyle', 'none')}
+              />
+              <span>No Menu Card (we'll skip the printed menu)</span>
             </label>
           </div>
         </div>
 
         <MenuSamplesModal isOpen={samplesOpen} onClose={() => setSamplesOpen(false)} />
 
-        {selections.customMenuDesign === true && (
+        {selections.menuStyle === 'custom' && (
           <>
             <div className="form-group">
               <label className="form-label">Your event theme, colors, or overall vibe</label>
@@ -195,6 +201,18 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
               />
             </div>
           </>
+        )}
+
+        {selections.menuStyle === 'house' && (
+          <span className="potion-field-note">
+            Our standard bar menu. Dr. Bartender branded, listing your drinks in plain terms like Vodka Lemonade, Old Fashioned, or Beer and Wine. We bring it printed and framed for the bar. No setup needed from you.
+          </span>
+        )}
+
+        {selections.menuStyle === 'none' && (
+          <span className="potion-field-note">
+            No printed menu will be created. Your selections still drive your shopping list.
+          </span>
         )}
       </div>
     </div>
