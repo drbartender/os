@@ -132,7 +132,7 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
       <div className="card">
         <div className="form-group">
           <label className="form-label">How would you like your drink menu displayed at the event?</label>
-          {MENU_SAMPLES.length > 0 && (
+          {MENU_SAMPLES.length > 0 && selections.menuStyle === 'custom' && (
             <button
               type="button"
               className="menu-samples-trigger"
