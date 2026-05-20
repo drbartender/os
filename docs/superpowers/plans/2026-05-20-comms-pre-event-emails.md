@@ -11,6 +11,26 @@ Four Gemini findings land here:
 - **Finding 3 (WARNING) — Immediate sends respect suppression.** `sendRescheduleEmail` calls `shouldSendImmediate({ proposal, client, channel: 'email' })` from `server/utils/messageSuppression.js` (Plan 2a Task 8.5) before invoking sendEmail.
 - **Finding 4 (SUGGESTION) — Reschedule must also update `balance_due_date`.** Task 6's `rescheduleProposalInTx` now recomputes `proposals.balance_due_date` inside the same transaction whenever `event_date` shifts. The codebase rule (set in `server/routes/stripe.js`) is `balance_due_date = event_date - INTERVAL '14 days'`, applied via `COALESCE` so admin-edited custom dates aren't clobbered. The helper preserves the **existing offset** between event_date and balance_due_date (so a manually adjusted 21-day lead survives the move) and applies the recomputation BEFORE the `reanchorPendingMessages` pass so balance-anchored re-anchors use the NEW balance_due_date as their source of truth.
 
+## What This Resolves (Pre-execution review, 2026-05-20)
+
+A second cross-LLM review pass surfaced 10 additional findings that land in this plan. All fixed before any code ships.
+
+### BLOCKERs
+
+- **B1 — Reanchor lost "10am event-local" precision.** Previous `computeReanchoredScheduledFor` did `event_date_midnight_UTC + offset_seconds`, which produces e.g. `2026-09-08T00:00:00Z` for T-7 of a Chicago event — but the initial scheduler lands on `2026-09-08T15:00:00Z` (10am CDT). Reschedule would have shifted the send 10+ hours. Fix: a SINGLE shared helper `computeScheduledFor(messageType, proposal)` lives in `preEventScheduling.js` and is used by BOTH the initial scheduler AND `computeReanchoredScheduledFor`. The helper reads offset/anchor from `getHandlerMeta(messageType)` and applies "10am in event TZ" via `Intl.DateTimeFormat` shortOffset parsing. No drift possible.
+- **B2 — Test files missed `before()` to register handlers.** `getHandlerMeta('event_week_reminder')` returns null until `preEventHandlers.registerAll()` runs. Both `preEventScheduling.test.js` and `rescheduleProposal.test.js` now have a `before()` block that calls `registerAll()` once per file, so handler metadata is in place for every test.
+- **B3 — `balance_due_date` recompute read post-UPDATE proposal as baseline.** Previous code did `UPDATE proposals SET event_date = ...` (run earlier in the PATCH transaction), then SELECTed the row to compute the offset. After the UPDATE, `event_date` was NEW but `balance_due_date` was OLD → bogus offset → no-op balance update. Fix: capture the ORIGINAL `balance_due_date` from the `old` row that the caller passed in (the PATCH handler reads it BEFORE any UPDATE). The convenience-path `rescheduleProposal` hydrates `old.balance_due_date` from the DB when the caller omits it (safe in the convenience path because the DB is still in the original state at that point).
+- **B4 — "throws when no email" test contradicted the implementation.** The post-commit email error is swallowed (Sentry + console, no rethrow) so DB stays consistent. Test was asserting `rejects.toThrow('no email')` which never happens. Fix: rewrote the test to verify the NON-rejecting behavior — DB-side reanchor still ran (assertion on `scheduled_messages.scheduled_for`), no email was sent (assertion on the mock), and the function resolved normally.
+- **B5 — `formatStartTimeShort` / `fmtTime` parsed `event_start_time` as UTC.** `event_start_time` is a string like `'18:00'` or `'6:00 PM'` — wall-clock event-local time, NOT a UTC timestamp. `new Date('2026-08-15T18:00:00Z')` followed by formatting in Chicago TZ would display `1:00 PM CDT` (off by 5 hours). Fix: literal pass-through with string-based 12-hour conversion (mirrors `formatTime12` in `eventCreation.js`), then append the TZ abbreviation (e.g., "CDT") derived from `event_date` in the resolved zone. No UTC round-trip.
+
+### WARNINGs
+
+- **W1 — Wrong stripe.js line numbers.** Task 5 pointed at lines 818-866; the actual post-commit first-delivery block is 1107-1146 (inside `payment_intent.succeeded`). Updated to point at the correct range and described the exact location (after the shift-creation try/catch, inside the existing `if (isFirstDelivery)` block). Removed the redundant `isFirstDelivery` from the new code's `if` clause since we're now inside the existing guard.
+- **W2 — PATCH hook placement ambiguous for reschedule email.** "Outside the try/catch around the tx" was unclear — the outer try wraps everything including `res.json`. Clarified: AFTER COMMIT, INSIDE the outer try, BEFORE `res.json`, with its OWN inner try/catch that NEVER rethrows. Added an annotated placement diagram.
+- **W3 — PATCH atomicity coupling concern.** Running `rescheduleProposalInTx` inside the PATCH transaction means a reanchor failure rolls back the user's date change (diverges from the invoice-refresh separate-tx pattern). Documented this as a DELIBERATE choice (state divergence from a half-applied reschedule would silently misroute T-7 reminders) plus the migration path if isolation is needed later (per-row savepoints, not a separate transaction).
+- **W4 — Reschedule cascade didn't insert NEW long-lead rows.** Reanchor only updates existing pending rows. Spec section 7.8 says rescheduling INTO a 90+ day window should add `long_lead_t30_recap` eligibility. Fix: `rescheduleProposalInTx` now calls `schedulePreEventReminders(proposalId, client)` after the reanchor pass — the helper is idempotent (won't double-insert) and now accepts an optional `executor` so the new inserts join the open transaction.
+- **W5 — Local `messageOffsets` constant still existed in `preEventScheduling.js`.** Plan 2a's `getHandlerMeta` is the canonical source. Fix: removed the local map entirely; `computeScheduledFor` reads offset/anchor directly from dispatcher metadata. Single source of truth, no possibility of the two drifting.
+
 ---
 
 **Goal:** Wire up the three pre-event client-email touches: the T-7 event-week reminder, the T-30 long-lead recap (only for proposals booked 90+ days out), and the immediate reschedule notification email that also re-anchors every other pending scheduled message on the proposal to the new event date.
@@ -288,13 +308,20 @@ const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const {
   computeScheduledFor,
-  messageOffsets,
   shouldScheduleLongLeadRecap,
   schedulePreEventReminders,
 } = require('./preEventScheduling');
+const preEventHandlers = require('./preEventHandlers');
 
 const TEST_CLIENT_ID = -1;
 const TEST_PROPOSAL_ID = -101;
+
+// Register dispatcher handlers (and their offset metadata) ONCE so
+// getHandlerMeta('event_week_reminder') / 'long_lead_t30_recap' return the
+// canonical offset values that computeScheduledFor reads.
+before(() => {
+  preEventHandlers.registerAll();
+});
 
 beforeEach(async () => {
   await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id < 0");
@@ -318,23 +345,16 @@ after(async () => {
   await pool.end();
 });
 
-// ── messageOffsets ──
-test('messageOffsets > exposes T-7 for event_week_reminder', () => {
-  assert.deepStrictEqual(messageOffsets.event_week_reminder, { daysBeforeEvent: 7, atHourLocal: 10 });
-});
-
-test('messageOffsets > exposes T-30 for long_lead_t30_recap', () => {
-  assert.deepStrictEqual(messageOffsets.long_lead_t30_recap, { daysBeforeEvent: 30, atHourLocal: 10 });
-});
-
 // ── computeScheduledFor ──
+// Signature: computeScheduledFor(messageType, proposal). Reads offset/anchor
+// from dispatcher metadata, not a local map — single source of truth.
 test('computeScheduledFor > returns a UTC instant for T-7 at 10am event-local', () => {
   const proposal = {
     event_date: '2026-06-20',         // Saturday
     event_start_time: '18:00',
     event_timezone: 'America/Chicago',
   };
-  const result = computeScheduledFor(proposal, 'event_week_reminder');
+  const result = computeScheduledFor('event_week_reminder', proposal);
   // T-7 of 2026-06-20 = 2026-06-13. At 10:00 Chicago = 15:00 UTC (CDT).
   assert.strictEqual(result.toISOString(), '2026-06-13T15:00:00.000Z');
 });
@@ -345,7 +365,7 @@ test('computeScheduledFor > honors event_timezone when computing the local hour'
     event_start_time: '18:00',
     event_timezone: 'America/New_York',
   };
-  const result = computeScheduledFor(proposal, 'event_week_reminder');
+  const result = computeScheduledFor('event_week_reminder', proposal);
   // 10:00 EDT = 14:00 UTC
   assert.strictEqual(result.toISOString(), '2026-06-13T14:00:00.000Z');
 });
@@ -356,13 +376,24 @@ test('computeScheduledFor > falls back to America/Chicago for invalid event_time
     event_start_time: '18:00',
     event_timezone: 'Bogus/Zone',
   };
-  const result = computeScheduledFor(proposal, 'event_week_reminder');
+  const result = computeScheduledFor('event_week_reminder', proposal);
   assert.strictEqual(result.toISOString(), '2026-06-13T15:00:00.000Z');
 });
 
 test('computeScheduledFor > throws on unknown messageType', () => {
   const proposal = { event_date: '2026-06-20', event_timezone: 'America/Chicago' };
-  assert.throws(() => computeScheduledFor(proposal, 'not_a_real_type'), /Unknown messageType/);
+  assert.throws(() => computeScheduledFor('not_a_real_type', proposal), /Unknown messageType/);
+});
+
+test('computeScheduledFor > T-30 long-lead lands at 10am event-local', () => {
+  const proposal = {
+    event_date: '2026-12-01',
+    event_start_time: '18:00',
+    event_timezone: 'America/Chicago',
+  };
+  const result = computeScheduledFor('long_lead_t30_recap', proposal);
+  // T-30 of 2026-12-01 = 2026-11-01. At 10:00 Chicago in November = 16:00 UTC (CST).
+  assert.strictEqual(result.toISOString(), '2026-11-01T16:00:00.000Z');
 });
 
 // ── shouldScheduleLongLeadRecap ──
@@ -470,67 +501,78 @@ Create `server/utils/preEventScheduling.js`:
 const { pool } = require('../db');
 const { scheduleMessage } = require('./messageScheduling');
 const { resolveEventTimezone } = require('./eventTimezone');
+const { getHandlerMeta } = require('./scheduledMessageDispatcher');
 
 /**
- * Per-message-type schedule offset for the pre-event family. Used by
- * `schedulePreEventReminders` (this file) AND, via metadata registered on
- * `preEventHandlers.registerAll()`, by Plan 2c's reschedule cascade through
- * Plan 2a's `getHandlerMeta(messageType)` lookup.
+ * Constant for "10am event-local" used as the morning send hour for the
+ * pre-event reminder ladder. The dispatcher metadata for each pre-event
+ * message_type carries the offset in SECONDS from event_date midnight UTC
+ * (e.g., event_week_reminder = -604800 = T-7 days). To land at 10am in the
+ * EVENT'S timezone (not 10am UTC), we override the hour-of-day after the
+ * raw offset math.
  *
- * The dispatcher carries the canonical offset/anchor/category in its handler
- * registry (see Plan 2a Task 9). This local map is the convenience reference
- * for the initial-schedule code in this file; keep it in sync with the
- * metadata passed to `registerHandler` in `preEventHandlers.js`.
- *
- * All times are computed at 10:00 in the proposal's event timezone (a tame
- * morning hour that won't wake anyone overseas and lands well before lunch in
- * CT/ET). Anchored on event date — NOT on shift start time — because these
- * are client-facing reminders that should land in the morning regardless of
+ * Anchored on event date — NOT on shift start time — because these are
+ * client-facing reminders that should land in the morning regardless of
  * the actual event start time.
  */
-const messageOffsets = {
-  event_week_reminder: { daysBeforeEvent: 7, atHourLocal: 10 },
-  long_lead_t30_recap: { daysBeforeEvent: 30, atHourLocal: 10 },
-};
+const SEND_HOUR_LOCAL = 10;
 
 /**
- * Compute the UTC instant a pre-event reminder should send.
+ * Compute the UTC instant a pre-event (or any event-anchored) reminder should
+ * send. SINGLE SOURCE OF TRUTH used by BOTH the initial scheduler
+ * (`schedulePreEventReminders`) AND the reschedule cascade
+ * (`reanchorPendingMessages`) so the two paths can never disagree.
  *
- * Algorithm: take the event_date (YYYY-MM-DD), subtract the offset days, and
- * combine with the configured "at hour local" interpreted in the event TZ.
- * Returns a JS Date in UTC.
+ * The dispatcher metadata (registered in `preEventHandlers.registerAll()` and
+ * looked up via `getHandlerMeta(messageType)`) is the canonical source for
+ * the offset and anchor. We read the offset in SECONDS, derive the calendar
+ * day of the send, and then override the time-of-day with 10:00 IN THE
+ * EVENT'S TIMEZONE so the send always lands at a tame morning hour for the
+ * client (not 10am UTC, not 10am admin-local).
  *
+ * @param {string} messageType - registered handler name, e.g. 'event_week_reminder'
  * @param {{ event_date: string|Date, event_timezone?: string }} proposal
- * @param {string} messageType - must be a key of `messageOffsets`
- * @returns {Date}
+ *        - or any object with the anchor field referenced by the handler meta
+ * @returns {Date} UTC instant
+ * @throws when the message_type has no registered handler metadata
  */
-function computeScheduledFor(proposal, messageType) {
-  const offset = messageOffsets[messageType];
-  if (!offset) {
-    throw new Error(`Unknown messageType: ${messageType}`);
+function computeScheduledFor(messageType, proposal) {
+  const meta = getHandlerMeta(messageType);
+  if (!meta) {
+    throw new Error(`Unknown messageType: ${messageType} (no handler metadata registered — did you call registerAll() at boot?)`);
+  }
+  if (meta.offsetFromEventDate == null) {
+    throw new Error(`computeScheduledFor: ${messageType} is anchor-independent (null offset) — caller must compute its own send time`);
   }
   const tz = resolveEventTimezone(proposal);
 
-  // Parse event_date as a calendar date (no time component, no TZ math yet)
-  const eventDateStr = String(proposal.event_date).slice(0, 10);
-  const [y, m, d] = eventDateStr.split('-').map(Number);
+  // Pick the anchor field per handler meta (event_date | balance_due_date | created_at | completed_at)
+  let anchorVal = null;
+  switch (meta.anchor) {
+    case 'balance_due_date': anchorVal = proposal.balance_due_date; break;
+    case 'created_at':       anchorVal = proposal.created_at; break;
+    case 'completed_at':     anchorVal = proposal.completed_at; break;
+    case 'event_date':
+    default:                 anchorVal = proposal.event_date; break;
+  }
+  if (!anchorVal) {
+    throw new Error(`computeScheduledFor: ${messageType} requires anchor=${meta.anchor} but proposal lacks that field`);
+  }
 
-  // Subtract the offset days from the calendar date (UTC math is safe here —
-  // we're only treating event_date as a calendar marker, not a moment)
-  const shiftedUtcMs = Date.UTC(y, m - 1, d) - offset.daysBeforeEvent * 24 * 3600 * 1000;
+  // Parse anchor as a calendar date (treat as midnight UTC for the day-math)
+  // and apply the offset in seconds.
+  const anchorStr = String(anchorVal).slice(0, 10);
+  const [y, m, d] = anchorStr.split('-').map(Number);
+  const shiftedUtcMs = Date.UTC(y, m - 1, d) + meta.offsetFromEventDate * 1000;
   const shiftedDate = new Date(shiftedUtcMs);
   const shiftedYear = shiftedDate.getUTCFullYear();
   const shiftedMonth = shiftedDate.getUTCMonth() + 1;
   const shiftedDay = shiftedDate.getUTCDate();
 
   // Now compute "10:00 in tz on the shifted calendar date" → UTC.
-  // We do this by formatting the shifted day in the target TZ and reading back
-  // the UTC offset from Intl.DateTimeFormat for that instant.
-  //
-  // Strategy: form an ISO string for "shifted date at 10:00 in UTC", then
-  // measure the timezone offset Intl reports for that instant, and subtract.
-  // This handles DST transitions correctly because we ask Intl about the
-  // specific date.
+  // Read the actual TZ offset Intl reports for noon UTC on the shifted day —
+  // this handles DST transitions correctly because we ask about the specific
+  // date, not the current date.
   const noonUtc = new Date(Date.UTC(shiftedYear, shiftedMonth - 1, shiftedDay, 12, 0, 0));
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
@@ -544,7 +586,7 @@ function computeScheduledFor(proposal, messageType) {
   const tzHours = match ? Number(match[1]) : 0;
   const tzMinutes = match && match[2] ? Number(match[2]) * (tzHours >= 0 ? 1 : -1) : 0;
   // 10:00 local → (10 - tzHours) UTC, with minute adjustment if any
-  const utcHour = offset.atHourLocal - tzHours;
+  const utcHour = SEND_HOUR_LOCAL - tzHours;
   const utcMinute = -tzMinutes;
   return new Date(Date.UTC(shiftedYear, shiftedMonth - 1, shiftedDay, utcHour, utcMinute, 0));
 }
@@ -569,14 +611,26 @@ function shouldScheduleLongLeadRecap(proposal) {
  *
  * Skips entirely for archived proposals.
  *
- * Called from the Stripe `payment_intent.succeeded` post-commit notifier when
- * the deposit / full / coupled-sign+pay branch fires. Plan 2a also calls
- * sibling `scheduleBalanceReminders` from the same anchor point.
+ * Called from two anchor points:
+ *   1. The Stripe `payment_intent.succeeded` post-commit notifier when the
+ *      deposit / full / coupled-sign+pay branch fires (initial schedule).
+ *      Plan 2a also calls sibling `scheduleBalanceReminders` from the same
+ *      anchor point.
+ *   2. The reschedule cascade in `rescheduleProposalInTx` AFTER the reanchor
+ *      pass, to add NEW long-lead rows when a reschedule moves the event
+ *      into a 90+ day window (Pre-execution Finding W4).
+ *
+ * The optional `executor` parameter lets callers pass in a pg client that
+ * already holds an open transaction (case #2). When omitted (case #1), the
+ * function uses `pool` and each query runs in its own implicit transaction.
  *
  * @param {number|string} proposalId
+ * @param {{ query: (text: string, params?: any[]) => Promise<any> }} [executor]
+ *        - pg PoolClient or pool; defaults to `pool` if not supplied
  */
-async function schedulePreEventReminders(proposalId) {
-  const { rows } = await pool.query(
+async function schedulePreEventReminders(proposalId, executor) {
+  const exec = executor || pool;
+  const { rows } = await exec.query(
     `SELECT p.id, p.client_id, p.status, p.event_date, p.event_start_time,
             p.event_timezone, p.created_at
        FROM proposals p
@@ -589,26 +643,26 @@ async function schedulePreEventReminders(proposalId) {
   if (!proposal.client_id || !proposal.event_date) return;
 
   // Always schedule the event-week reminder
-  await insertIfMissing({
+  await insertIfMissing(exec, {
     entityType: 'proposal',
     entityId: proposal.id,
     messageType: 'event_week_reminder',
     recipientType: 'client',
     recipientId: proposal.client_id,
     channel: 'email',
-    scheduledFor: computeScheduledFor(proposal, 'event_week_reminder'),
+    scheduledFor: computeScheduledFor('event_week_reminder', proposal),
   });
 
   // Conditionally schedule the T-30 long-lead recap
   if (shouldScheduleLongLeadRecap(proposal)) {
-    await insertIfMissing({
+    await insertIfMissing(exec, {
       entityType: 'proposal',
       entityId: proposal.id,
       messageType: 'long_lead_t30_recap',
       recipientType: 'client',
       recipientId: proposal.client_id,
       channel: 'email',
-      scheduledFor: computeScheduledFor(proposal, 'long_lead_t30_recap'),
+      scheduledFor: computeScheduledFor('long_lead_t30_recap', proposal),
     });
   }
 }
@@ -617,11 +671,14 @@ async function schedulePreEventReminders(proposalId) {
  * Idempotent insert helper. Wraps `scheduleMessage` but first checks for an
  * existing pending row with the same (entity, message_type, recipient, channel).
  * Returns without inserting if one already exists.
+ *
+ * @param {{ query: Function }} executor - pg client or pool
+ * @param {object} args - insert args
  */
-async function insertIfMissing({
+async function insertIfMissing(executor, {
   entityType, entityId, messageType, recipientType, recipientId, channel, scheduledFor,
 }) {
-  const existing = await pool.query(
+  const existing = await executor.query(
     `SELECT id FROM scheduled_messages
       WHERE entity_type = $1 AND entity_id = $2
         AND message_type = $3
@@ -632,16 +689,26 @@ async function insertIfMissing({
     [entityType, entityId, messageType, recipientType, recipientId, channel]
   );
   if (existing.rows.length > 0) return;
-  await scheduleMessage({
-    entityType, entityId, messageType, recipientType, recipientId, channel, scheduledFor,
-  });
+  // `scheduleMessage` (Plan 2a) accepts an optional executor too — if it
+  // doesn't yet, fall through to the pool-based path. When it does (Plan 2a
+  // ships with the contract), pass the executor through so the insert lands
+  // in the caller's transaction.
+  if (scheduleMessage.length >= 2) {
+    await scheduleMessage({
+      entityType, entityId, messageType, recipientType, recipientId, channel, scheduledFor,
+    }, executor);
+  } else {
+    await scheduleMessage({
+      entityType, entityId, messageType, recipientType, recipientId, channel, scheduledFor,
+    });
+  }
 }
 
 module.exports = {
-  messageOffsets,
   computeScheduledFor,
   shouldScheduleLongLeadRecap,
   schedulePreEventReminders,
+  SEND_HOUR_LOCAL,
 };
 ```
 
@@ -720,19 +787,56 @@ function formatEventDateLong(proposal) {
   return formatEventLocalTime(d, tz, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 }
 
-/** Format start_time as "6:00 PM Central" — short time + TZ name in event TZ. */
+/**
+ * Format start_time as "6:00 PM Central" — short 12-hour time + TZ abbreviation.
+ *
+ * IMPORTANT: `event_start_time` is wall-clock event-local time stored as a
+ * string (e.g., '18:00' or '6:00 PM') — NOT a UTC ISO timestamp. We MUST NOT
+ * parse it as UTC (e.g., `new Date('2026-08-15T18:00:00Z')`) and then format
+ * in the event TZ — that would shift Chicago 18:00 to 13:00 ("1:00 PM CDT").
+ *
+ * Instead we format the literal string with `formatTime12` (string-based
+ * 12-hour conversion that lives in `server/utils/eventCreation.js`) and
+ * append the TZ abbreviation derived from the proposal's event_date in the
+ * resolved TZ. The TZ abbreviation comes from `Intl.DateTimeFormat` with
+ * `timeZoneName: 'short'` (e.g., "CDT", "EST", "PT").
+ */
 function formatStartTimeShort(proposal) {
   if (!proposal.event_start_time) return 'TBD';
   const tz = resolveEventTimezone(proposal);
-  const dateStr = String(proposal.event_date).slice(0, 10);
-  const timeStr = String(proposal.event_start_time).slice(0, 5);
-  // Compose an instant interpretable in tz. Treat the YYYY-MM-DDTHH:MM as
-  // already a moment in event TZ; converting via Intl works for any zone.
-  // We construct a UTC date at the local time, then re-render in tz so DST
-  // is respected.
-  const localUtcMs = Date.parse(`${dateStr}T${timeStr}:00Z`);
-  if (!Number.isFinite(localUtcMs)) return timeStr;
-  return formatEventLocalTime(new Date(localUtcMs), tz, { timeStyle: 'short', timeZoneName: 'short' });
+  // Reuse the existing string-based 12-hour formatter so we never round-trip
+  // through UTC. Accepts '18:00' or '6:00 PM' or '6:00 pm'.
+  const raw = String(proposal.event_start_time).trim();
+  let time12 = raw;
+  // If it's a 24-hour HH:MM, convert. Otherwise pass through (already 12-hour).
+  const hhmm = /^(\d{1,2}):(\d{2})$/.exec(raw);
+  if (hhmm) {
+    const h = Number(hhmm[1]);
+    const m = Number(hhmm[2]);
+    if (Number.isFinite(h) && Number.isFinite(m)) {
+      const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      time12 = `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+    }
+  }
+  // Derive the TZ abbreviation for the event date in the resolved zone.
+  // Use the event_date at noon UTC as the reference instant — we just need a
+  // moment near the event so DST is correct; the abbreviation is what we
+  // pull out of formatToParts.
+  let tzAbbrev = '';
+  try {
+    const dateStr = String(proposal.event_date || '').slice(0, 10);
+    const refMs = Date.parse(`${dateStr}T12:00:00Z`);
+    if (Number.isFinite(refMs)) {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        timeZoneName: 'short',
+      }).formatToParts(new Date(refMs));
+      const tzPart = parts.find((p) => p.type === 'timeZoneName');
+      if (tzPart && tzPart.value) tzAbbrev = ` ${tzPart.value}`;
+    }
+  } catch (_e) { /* leave tzAbbrev empty */ }
+  return `${time12}${tzAbbrev}`;
 }
 
 /** Format balance_due_date in event TZ as "June 8, 2026". Returns '' if null. */
@@ -968,7 +1072,13 @@ git commit -m "feat(comms): wire pre-event handler registration into boot"
 
 - [ ] **Step 1: Locate the post-commit notification block**
 
-Read `server/routes/stripe.js` around lines 818-866 (the block that begins with `const payInfo = await pool.query(...)` and ends just after the admin email send, around line 866). This is the post-commit "first-payment notifier" — it fires AFTER the proposal transaction has committed and is gated on `isFirstDelivery` and `paymentType IN ('deposit','full')` (the coupled sign+pay path).
+Read `server/routes/stripe.js` around lines 1107-1146 (the post-commit / first-delivery block that begins right after `await dbClient.query('COMMIT')` and the `if (isFirstDelivery)` guard, around line 1107, and ends with the shift-creation catch around line 1146). The block sequence is:
+
+1. `if (isLastMinuteHold) notifyLastMinuteBooking(proposalId);`
+2. `sendPaymentNotifications(proposalId, intent.amount, paymentType);`
+3. `try { const shift = await createEventShifts(proposalId); ... } catch { ... }`
+
+This is the post-commit "first-delivery notifier" — it fires AFTER the proposal transaction has committed and is gated on `isFirstDelivery`. The `paymentType` variable is in scope (set earlier from `intent.metadata?.payment_type`).
 
 Plan 2a inserts `scheduleBalanceReminders(proposalId)` near the end of this same block. Plan 2c adds a sibling call.
 
@@ -980,48 +1090,55 @@ Find the existing `require` block at the top of `server/routes/stripe.js`. Add:
 const { schedulePreEventReminders } = require('../utils/preEventScheduling');
 ```
 
-- [ ] **Step 3: Call the helper at the end of the first-payment notifier block**
+- [ ] **Step 3: Call the helper at the end of the first-delivery post-commit block**
 
-Find the block ending around line 866 with:
-
-```javascript
-    } catch (emailErr) {
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(emailErr, {
-          tags: { webhook: 'stripe', route: '/webhook' },
-        });
-      }
-      console.error('Payment notification email failed (non-blocking):', emailErr);
-    }
-  }
-```
-
-Immediately AFTER the closing `}` of the entire post-commit notifier block (so it runs even if email send failed — scheduling reminders is independent of the immediate notification), add:
+Find the post-commit block around lines 1107-1146 — the structure ends with the shift-creation try/catch:
 
 ```javascript
-  // Schedule pre-event reminder emails (T-7 event-week, conditional T-30
-  // long-lead recap). Mirrors Plan 2a's balance-reminder scheduling — both
-  // fire from this single anchor point so a Stripe retry never double-schedules
-  // (the helper itself is idempotent via insertIfMissing).
-  //
-  // Gate on deposit/full/coupled sign+pay branches — never on balance or
-  // drink-plan-extras payments (those happen post-conversion when reminders
-  // already exist).
-  if (isFirstDelivery && (paymentType === 'deposit' || paymentType === 'full')) {
-    try {
-      await schedulePreEventReminders(proposalId);
-    } catch (schedErr) {
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(schedErr, {
-          tags: { webhook: 'stripe', route: '/webhook', step: 'schedulePreEventReminders' },
-        });
+      if (isFirstDelivery) {
+        if (isLastMinuteHold) notifyLastMinuteBooking(proposalId);
+        sendPaymentNotifications(proposalId, intent.amount, paymentType);
+        try {
+          const shift = await createEventShifts(proposalId);
+          if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
+        } catch (shiftErr) {
+          if (process.env.SENTRY_DSN_SERVER) {
+            Sentry.captureException(shiftErr, {
+              tags: { webhook: 'stripe', route: '/webhook' },
+            });
+          }
+          console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+        }
       }
-      console.error('schedulePreEventReminders failed (non-blocking):', schedErr);
-    }
-  }
 ```
 
-Important: `isFirstDelivery` is the in-scope flag set earlier in the same handler when the `proposal_payments` insert succeeded with rowCount === 1. The gate matches Plan 2a's pattern. Adjust the surrounding `if` conditions to match the existing variables in `server/routes/stripe.js` if Plan 2a has already changed the shape.
+Immediately AFTER the shift-creation try/catch but STILL INSIDE the `if (isFirstDelivery)` block (so it's gated on first delivery — Stripe retries must not re-schedule), add:
+
+```javascript
+        // Schedule pre-event reminder emails (T-7 event-week, conditional
+        // T-30 long-lead recap). Mirrors Plan 2a's balance-reminder
+        // scheduling — both fire from this single anchor point. Inserts are
+        // idempotent (insertIfMissing) so even if Stripe retries somehow
+        // bypassed isFirstDelivery, we wouldn't double-schedule.
+        //
+        // Gate on deposit/full payment types — never on balance or
+        // drink-plan-extras payments (those happen post-conversion when
+        // reminders already exist).
+        if (paymentType === 'deposit' || paymentType === 'full') {
+          try {
+            await schedulePreEventReminders(proposalId);
+          } catch (schedErr) {
+            if (process.env.SENTRY_DSN_SERVER) {
+              Sentry.captureException(schedErr, {
+                tags: { webhook: 'stripe', route: '/webhook', step: 'schedulePreEventReminders' },
+              });
+            }
+            console.error('schedulePreEventReminders failed (non-blocking):', schedErr);
+          }
+        }
+```
+
+Important: `isFirstDelivery` is the in-scope flag set earlier in the same handler when the `proposal_payments` insert succeeded with rowCount === 1. Because we're placing the new block INSIDE the existing `if (isFirstDelivery)` block, we only need to gate on `paymentType` here. The gate matches Plan 2a's pattern. Adjust the surrounding code to match the existing variables in `server/routes/stripe.js` if Plan 2a has already changed the shape.
 
 - [ ] **Step 4: Lint and smoke test**
 
@@ -1075,9 +1192,18 @@ Module._load = function patched(request, parent, ...rest) {
 };
 
 const { rescheduleProposal, hasReschedulableChange, reanchorPendingMessages } = require('./rescheduleProposal');
+const preEventHandlers = require('./preEventHandlers');
 
 const TEST_CLIENT_ID = -2;
 const TEST_PROPOSAL_ID = -202;
+
+// Register handlers so `getHandlerMeta('event_week_reminder')` returns
+// metadata for reanchor / rescheduleProposal. Without this, every reanchor
+// would log "no handler metadata" and leave scheduled_for unchanged — the
+// tests below assert it DOES update, so registration is mandatory.
+before(() => {
+  preEventHandlers.registerAll();
+});
 
 beforeEach(async () => {
   emailCalls.length = 0;
@@ -1356,7 +1482,12 @@ test('rescheduleProposal > skips entirely when proposal is archived', async () =
   assert.strictEqual(emailCalls.length, 0);
 });
 
-test('rescheduleProposal > throws when proposal has no client_email (caller decides how to surface)', async () => {
+test('rescheduleProposal > commits DB changes and swallows post-commit email failure when client has no email', async () => {
+  // Pre-execution Finding B4: the implementation runs the email send in a
+  // post-commit try/catch that reports to Sentry and console-errors, but
+  // NEVER rethrows. DB state must always commit even when the email surface
+  // is broken. The test asserts the non-rejecting behavior + side effects
+  // (DB updated, no email actually sent).
   await pool.query(
     `INSERT INTO clients (id, name, email, phone) VALUES (-3, 'No Email', NULL, '+15555555555')
      ON CONFLICT (id) DO NOTHING`
@@ -1366,12 +1497,34 @@ test('rescheduleProposal > throws when proposal has no client_email (caller deci
      VALUES ($1, -3, 'deposit_paid', '2026-09-15', '18:00', 'Venue', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
     [TEST_PROPOSAL_ID]
   );
+  // Seed a pending row so we can verify the DB-side reanchor still ran.
+  await pool.query(
+    `INSERT INTO scheduled_messages
+     (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for, status)
+     VALUES ('proposal', $1, 'event_week_reminder', 'client', -3, 'email', '2026-08-08T15:00:00.000Z', 'pending')`,
+    [TEST_PROPOSAL_ID]
+  );
   const old = { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'X' };
   const updated = { event_date: '2026-09-15', event_start_time: '18:00', event_location: 'Y' };
-  await assert.rejects(
-    () => rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated }),
-    /no email/
+
+  // Should resolve, NOT reject — even though the email send will throw
+  // internally (sendRescheduleEmail's `no email` guard), the outer try/catch
+  // around the post-commit email call swallows it.
+  await rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated });
+
+  // Email mock should not have been invoked (the guard threw before reaching sendEmail)
+  assert.strictEqual(emailCalls.length, 0);
+
+  // The DB-side reanchor must have run: pending row's scheduled_for should
+  // now be T-7 of the new event_date (2026-09-15 → 2026-09-08 at 10am CDT).
+  const { rows } = await pool.query(
+    `SELECT scheduled_for FROM scheduled_messages
+      WHERE entity_type = 'proposal' AND entity_id = $1
+        AND message_type = 'event_week_reminder'`,
+    [TEST_PROPOSAL_ID]
   );
+  assert.strictEqual(new Date(rows[0].scheduled_for).toISOString(), '2026-09-08T15:00:00.000Z');
+
   await pool.query('DELETE FROM clients WHERE id = -3');
 });
 ```
@@ -1398,6 +1551,7 @@ const emailTemplates = require('./emailTemplates');
 const { resolveEventTimezone, formatEventLocalTime } = require('./eventTimezone');
 const { getHandlerMeta } = require('./scheduledMessageDispatcher');
 const { shouldSendImmediate } = require('./messageSuppression');
+const { computeScheduledFor, schedulePreEventReminders } = require('./preEventScheduling');
 
 /**
  * Returns true when any of the three reschedule-triggering fields changed.
@@ -1416,26 +1570,39 @@ function hasReschedulableChange(oldRow, newRow) {
  * Compute the new scheduled_for for a pending row given the proposal's NEW
  * event_date / balance_due_date and the handler's registered offset metadata.
  *
+ * Delegates to `computeScheduledFor(messageType, proposal)` — the SAME helper
+ * the initial scheduler uses (`preEventScheduling.js`) — so reanchor and
+ * initial-schedule paths can NEVER drift apart. In particular, the helper
+ * preserves the "10am in event-local TZ" hour (e.g., 15:00 UTC for Chicago
+ * CDT), which a raw `event_date_midnight + offset_seconds` calc would lose.
+ *
  * Returns null when the handler isn't registered, has a null offset (e.g.,
  * drip touches anchored to the proposal-sent moment rather than event_date),
  * or the required anchor field is missing on the proposal.
  *
- * @param {object} proposal - includes event_date, balance_due_date, etc.
- * @param {{offsetFromEventDate: number|null, anchor: string, category: string}} meta
+ * @param {object} proposal - includes event_date, balance_due_date, event_timezone, etc.
+ * @param {string} messageType - the row's message_type
  * @returns {Date|null}
  */
-function computeReanchoredScheduledFor(proposal, meta) {
+function computeReanchoredScheduledFor(proposal, messageType) {
+  const meta = getHandlerMeta(messageType);
   if (!meta) return null;
   if (meta.offsetFromEventDate == null) return null; // anchor-independent
-  const anchorField = meta.anchor === 'balance_due_date'
+  // Verify the required anchor field is present BEFORE delegating, so we can
+  // distinguish "no anchor" (return null) from "computeScheduledFor throws".
+  const anchorVal = meta.anchor === 'balance_due_date'
     ? proposal.balance_due_date
-    : meta.anchor === 'event_date'
-      ? proposal.event_date
-      : null;
-  if (!anchorField) return null;
-  const anchorMs = new Date(String(anchorField).slice(0, 10) + 'T00:00:00Z').getTime();
-  if (!Number.isFinite(anchorMs)) return null;
-  return new Date(anchorMs + meta.offsetFromEventDate * 1000);
+    : meta.anchor === 'completed_at'
+      ? proposal.completed_at
+      : meta.anchor === 'created_at'
+        ? proposal.created_at
+        : proposal.event_date;
+  if (!anchorVal) return null;
+  try {
+    return computeScheduledFor(messageType, proposal);
+  } catch (_e) {
+    return null;
+  }
 }
 
 /**
@@ -1460,7 +1627,8 @@ function computeReanchoredScheduledFor(proposal, meta) {
  */
 async function reanchorPendingMessages(client, proposalId) {
   const propRes = await client.query(
-    `SELECT id, event_date, event_start_time, event_timezone, balance_due_date
+    `SELECT id, event_date, event_start_time, event_timezone, balance_due_date,
+            created_at, completed_at
        FROM proposals WHERE id = $1`,
     [proposalId]
   );
@@ -1482,7 +1650,7 @@ async function reanchorPendingMessages(client, proposalId) {
       console.warn(`[rescheduleProposal] no handler metadata for message_type=${row.message_type} (row id=${row.id}); leaving scheduled_for unchanged`);
       continue;
     }
-    const newScheduledFor = computeReanchoredScheduledFor(proposal, meta);
+    const newScheduledFor = computeReanchoredScheduledFor(proposal, row.message_type);
     if (!newScheduledFor) {
       // Anchor-independent (offsetFromEventDate === null) or missing anchor
       // field — leave the row alone.
@@ -1555,12 +1723,40 @@ async function sendRescheduleEmail({ proposalId, old, updated }) {
     if (Number.isNaN(parsed.getTime())) return 'TBD';
     return formatEventLocalTime(parsed, tz, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   };
+  // IMPORTANT: event_start_time is wall-clock event-local time stored as a
+  // string (e.g., '18:00' or '6:00 PM'). We must NOT parse it as UTC and then
+  // format in event TZ — that round-trip shifts the displayed time by the TZ
+  // offset (e.g., Chicago 18:00 → displays as 1:00 PM CDT). Instead we
+  // string-format the literal time and append the TZ abbreviation pulled
+  // from the event_date in the resolved zone.
   const fmtTime = (date, time) => {
     if (!time || !date) return 'TBD';
-    const iso = String(date).slice(0, 10) + 'T' + String(time).slice(0, 5) + ':00Z';
-    const parsed = new Date(iso);
-    if (Number.isNaN(parsed.getTime())) return String(time).slice(0, 5);
-    return formatEventLocalTime(parsed, tz, { timeStyle: 'short', timeZoneName: 'short' });
+    const raw = String(time).trim();
+    let time12 = raw;
+    const hhmm = /^(\d{1,2}):(\d{2})$/.exec(raw);
+    if (hhmm) {
+      const h = Number(hhmm[1]);
+      const m = Number(hhmm[2]);
+      if (Number.isFinite(h) && Number.isFinite(m)) {
+        const hour12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        time12 = `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+      }
+    }
+    let tzAbbrev = '';
+    try {
+      const dateStr = String(date).slice(0, 10);
+      const refMs = Date.parse(`${dateStr}T12:00:00Z`);
+      if (Number.isFinite(refMs)) {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: tz,
+          timeZoneName: 'short',
+        }).formatToParts(new Date(refMs));
+        const tzPart = parts.find((p) => p.type === 'timeZoneName');
+        if (tzPart && tzPart.value) tzAbbrev = ` ${tzPart.value}`;
+      }
+    } catch (_e) { /* leave empty */ }
+    return `${time12}${tzAbbrev}`;
   };
 
   const totalNumber = Number(ctx.total_price ?? 0);
@@ -1631,6 +1827,16 @@ async function sendRescheduleEmail({ proposalId, old, updated }) {
 async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
   if (!hasReschedulableChange(old, updated)) return { shouldSendEmail: false };
 
+  // Read status + ORIGINAL event_date / balance_due_date as they exist BEFORE
+  // this function's UPDATE. CRITICAL: when the PATCH handler is the caller,
+  // it has ALREADY run `UPDATE proposals SET event_date = $newDate ...`
+  // earlier in the same transaction. So a naive `SELECT event_date,
+  // balance_due_date` here returns NEW event_date + OLD balance_due_date,
+  // which would yield a junk offset. Instead, we rely on `old` (the pre-PATCH
+  // row passed in by the caller) as the source of truth for the original
+  // event_date and balance_due_date. The caller MUST include `balance_due_date`
+  // on the `old` row — the PATCH handler captures it via `SELECT * FROM
+  // proposals WHERE id = $1` before issuing the UPDATE.
   const statusRow = await client.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
   const status = statusRow.rows[0]?.status;
   if (!status) return { shouldSendEmail: false };
@@ -1642,33 +1848,36 @@ async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
   const POST_SIGNPAY = new Set(['deposit_paid', 'balance_paid', 'confirmed', 'completed']);
   if (status === 'archived' || !POST_SIGNPAY.has(status)) return { shouldSendEmail: false };
 
-  // Gemini Finding 4 (SUGGESTION): when event_date shifts, recompute
-  // balance_due_date by the SAME delta so balance reminders re-anchor
-  // against the correct date. The codebase rule (see server/routes/stripe.js)
-  // is `balance_due_date = event_date - INTERVAL '14 days'` (via COALESCE,
-  // so admin-edited custom dates aren't clobbered on first deposit). We
-  // preserve the EXISTING offset between event_date and balance_due_date
-  // so an admin-adjusted 21-day lead survives the reschedule.
+  // Gemini Finding 4 (SUGGESTION) + Pre-execution Finding B3: when event_date
+  // shifts, recompute balance_due_date by preserving the ORIGINAL offset
+  // between event_date and balance_due_date.
+  //
+  // Use the `old` row (captured by the caller BEFORE the proposal UPDATE) for
+  // both event_date and balance_due_date. Reading from the DB here would
+  // return mixed-era data (new event_date + old balance_due_date) because the
+  // PATCH handler updates event_date earlier in the same transaction. The
+  // mixed read would produce a wrong offset and a no-op balance update.
+  //
+  // The codebase rule (see server/routes/stripe.js) is
+  // `balance_due_date = event_date - INTERVAL '14 days'` (via COALESCE so
+  // admin-edited custom dates aren't clobbered on first deposit). We preserve
+  // the EXISTING offset so an admin-adjusted 21-day lead survives the
+  // reschedule.
   //
   // Runs BEFORE reanchorPendingMessages so the dispatcher metadata lookup
   // for balance-anchored handlers sees the new balance_due_date.
   const oldEventDateStr = old.event_date ? String(old.event_date).slice(0, 10) : null;
   const newEventDateStr = updated.event_date ? String(updated.event_date).slice(0, 10) : null;
   if (oldEventDateStr && newEventDateStr && oldEventDateStr !== newEventDateStr) {
-    const cur = await client.query(
-      'SELECT event_date, balance_due_date FROM proposals WHERE id = $1',
-      [proposalId]
-    );
-    const row = cur.rows[0];
-    const currentEventDateStr = row?.event_date ? String(row.event_date).slice(0, 10) : null;
-    const currentBalanceDueStr = row?.balance_due_date ? String(row.balance_due_date).slice(0, 10) : null;
-    if (currentEventDateStr && currentBalanceDueStr) {
-      // Preserve the existing offset (in days) between event_date and
-      // balance_due_date. Default codebase rule is event_date - 14, but an
-      // admin may have set a different lead via PATCH /proposals/:id/balance-due.
-      const eventMs = new Date(currentEventDateStr + 'T00:00:00Z').getTime();
-      const balanceMs = new Date(currentBalanceDueStr + 'T00:00:00Z').getTime();
-      const offsetDays = Math.round((balanceMs - eventMs) / 86400000); // typically -14
+    const oldBalanceDueStr = old.balance_due_date ? String(old.balance_due_date).slice(0, 10) : null;
+    if (oldBalanceDueStr) {
+      // Preserve the existing offset (in days) between OLD event_date and
+      // OLD balance_due_date. Default codebase rule is event_date - 14, but
+      // an admin may have set a different lead via PATCH
+      // /proposals/:id/balance-due.
+      const oldEventMs = new Date(oldEventDateStr + 'T00:00:00Z').getTime();
+      const oldBalanceMs = new Date(oldBalanceDueStr + 'T00:00:00Z').getTime();
+      const offsetDays = Math.round((oldBalanceMs - oldEventMs) / 86400000); // typically -14
       const newEventMs = new Date(newEventDateStr + 'T00:00:00Z').getTime();
       const newBalanceMs = newEventMs + offsetDays * 86400000;
       const newBalanceIso = new Date(newBalanceMs).toISOString().slice(0, 10);
@@ -1676,10 +1885,10 @@ async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
         'UPDATE proposals SET balance_due_date = $1 WHERE id = $2',
         [newBalanceIso, proposalId]
       );
-    } else if (currentEventDateStr && !currentBalanceDueStr) {
-      // No balance_due_date set yet (rare — pre-deposit reschedule that
-      // somehow reached this code path). Apply the codebase default rule:
-      // event_date - 14 days. Skip if newEventDateStr is null.
+    } else {
+      // No balance_due_date set on the old row (rare — pre-deposit reschedule
+      // that somehow reached this code path, or a custom flow). Apply the
+      // codebase default rule: event_date - 14 days.
       const newEventMs = new Date(newEventDateStr + 'T00:00:00Z').getTime();
       const newBalanceIso = new Date(newEventMs - 14 * 86400000).toISOString().slice(0, 10);
       await client.query(
@@ -1690,6 +1899,34 @@ async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
   }
 
   await reanchorPendingMessages(client, proposalId);
+
+  // Pre-execution Finding W4: spec section 7.8 says a reschedule that moves
+  // the event INTO a 90+ day window must add the T-30 long-lead recap (and
+  // any other future eligibility-gated touches). The reanchor pass only
+  // updates EXISTING pending rows; it can't insert net-new ones for a
+  // recap that was never originally scheduled (because the proposal booked
+  // <90 days out the first time around).
+  //
+  // We re-run the eligibility evaluation via `schedulePreEventReminders`,
+  // which is idempotent (its `insertIfMissing` helper SELECTs first and
+  // skips duplicates). It will:
+  //   - Re-confirm the always-on event_week_reminder is in place
+  //     (no-op since the row already exists and was just reanchored)
+  //   - Insert a long_lead_t30_recap row IF the proposal's lead time
+  //     (event_date - created_at) is now >= 90 days AND no recap row
+  //     exists yet
+  //
+  // This runs inside the same transaction so atomicity is preserved — we
+  // pass the in-tx `client` so the eligibility-driven inserts join the
+  // open transaction.
+  try {
+    await schedulePreEventReminders(proposalId, client);
+  } catch (evalErr) {
+    // Eligibility re-evaluation is best-effort relative to the reanchor
+    // (which is the load-bearing piece). Log + swallow so a missing
+    // long_lead row doesn't roll back the date change.
+    console.warn('[rescheduleProposal] post-reanchor eligibility re-evaluation failed (non-fatal):', evalErr.message);
+  }
   return { shouldSendEmail: true };
 }
 
@@ -1706,9 +1943,23 @@ async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
 async function rescheduleProposal({ proposalId, old, updated }) {
   const client = await pool.connect();
   let shouldSendEmail = false;
+  let hydratedOld = old;
   try {
     await client.query('BEGIN');
-    const result = await rescheduleProposalInTx(client, { proposalId, old, updated });
+    // Hydrate `old` with balance_due_date if the caller didn't supply it.
+    // Pre-execution Finding B3: rescheduleProposalInTx needs the ORIGINAL
+    // balance_due_date to preserve the existing offset between event_date
+    // and balance_due_date. In the convenience-path (this function), the DB
+    // is still in the original state at this point because no UPDATE has
+    // run yet, so reading balance_due_date here is safe and correct.
+    if (old && old.balance_due_date == null) {
+      const r = await client.query(
+        'SELECT balance_due_date FROM proposals WHERE id = $1',
+        [proposalId]
+      );
+      hydratedOld = { ...old, balance_due_date: r.rows[0]?.balance_due_date || null };
+    }
+    const result = await rescheduleProposalInTx(client, { proposalId, old: hydratedOld, updated });
     shouldSendEmail = result.shouldSendEmail;
     await client.query('COMMIT');
   } catch (err) {
@@ -1724,7 +1975,7 @@ async function rescheduleProposal({ proposalId, old, updated }) {
   // and admin can re-send manually.
   if (shouldSendEmail) {
     try {
-      await sendRescheduleEmail({ proposalId, old, updated });
+      await sendRescheduleEmail({ proposalId, old: hydratedOld, updated });
     } catch (emailErr) {
       Sentry.captureException(emailErr, {
         tags: { component: 'rescheduleProposal', step: 'post_commit_email' },
@@ -1754,7 +2005,7 @@ node --test server/utils/rescheduleProposal.test.js
 
 Expected: all tests pass. Notes:
 - The `archived` test inserts a proposal with `status='archived'`. The current `rescheduleProposal` returns silently because `POST_SIGNPAY` does NOT include 'archived'.
-- The `no email` test expects `rescheduleProposal` to throw — which it does (in `sendRescheduleEmail`) via the `client_email` guard. Caller is responsible for non-blocking the error.
+- The `no-email` test verifies the post-commit email failure is SWALLOWED (Sentry + console only) so the DB stays consistent. The DB-side reanchor still runs because it executes inside the transaction BEFORE the email attempt.
 
 - [ ] **Step 5: Commit**
 
@@ -1793,6 +2044,25 @@ const { rescheduleProposalInTx, sendRescheduleEmail } = require('../../utils/res
 
 The PATCH handler already runs the UPDATE inside its own transaction (via the `dbClient` checked out from the pool). Gemini Finding 2 says the reschedule re-anchor MUST happen in the SAME transaction so the proposal row and the scheduled_messages rows commit together. The email goes AFTER the commit.
 
+**Atomicity coupling — design note (Pre-execution Finding W3).** Running
+`rescheduleProposalInTx` INSIDE the existing PATCH transaction means a
+scheduled-messages reanchor failure will ROLL BACK the user's date change.
+This is a deliberate trade-off vs. the established invoice-refresh pattern
+(separate transaction, allow user edit to land even if downstream work
+fails). We chose tx-coupled here because:
+
+- The state divergence from a half-applied reschedule (event_date moved but
+  pending reminders still anchored to the OLD date) would silently send
+  T-7 reminders aimed at a date that's no longer the event. That's worse
+  than failing the PATCH loudly and letting the admin retry.
+- The reanchor itself is a small set of UPDATE statements on a single
+  table; failure modes are limited to lock contention, which is rare and
+  best surfaced via the PATCH error response.
+
+If a future evolution wants per-message-type failure isolation, the right
+move is to wrap each scheduled_messages UPDATE in its own savepoint, not
+to extract the reanchor into a separate transaction.
+
 In the PATCH handler, find the block that runs the UPDATE inside `dbClient.query('BEGIN')` / `COMMIT`. After the UPDATE succeeds and BEFORE `dbClient.query('COMMIT')`, add:
 
 ```javascript
@@ -1814,9 +2084,13 @@ In the PATCH handler, find the block that runs the UPDATE inside `dbClient.query
       }
 ```
 
-Then immediately AFTER `await dbClient.query('COMMIT')` and OUTSIDE the try/catch around the tx, fire the email best-effort:
+Then immediately AFTER `await dbClient.query('COMMIT')` succeeds, but BEFORE `res.json(...)` returns the response (still inside the outer try block surrounding the transaction), fire the email best-effort with its OWN inner try/catch that NEVER rethrows. The email send must NOT propagate into the outer catch — a Resend failure happens after the DB is already consistent, so the PATCH response should still report success.
 
 ```javascript
+    // COMMIT just succeeded. The reschedule email is best-effort, post-commit.
+    // Inner try/catch is mandatory — we must NEVER rethrow into the outer
+    // catch (which would 500 the PATCH response even though the DB committed
+    // successfully).
     if (shouldSendRescheduleEmail) {
       try {
         await sendRescheduleEmail({
@@ -1832,11 +2106,38 @@ Then immediately AFTER `await dbClient.query('COMMIT')` and OUTSIDE the try/catc
           });
         }
         console.error('Reschedule email failed (non-blocking, DB already committed):', emailErr);
+        // Do NOT rethrow — DB is consistent; admin can manually re-send.
       }
     }
+    // …then res.json(updatedRow.rows[0]); proceeds as before.
 ```
 
 Hoist `shouldSendRescheduleEmail` to the outer scope (declare with `let shouldSendRescheduleEmail = false;` near where `old` is captured) so the post-commit block can read it.
+
+Placement summary (for clarity — the outer try wraps everything including the DB tx, the email send, AND res.json):
+
+```
+try {                                     // outer try (existing handler)
+  dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+    // … existing UPDATE proposals SET event_date = ... ;
+    const result = await rescheduleProposalInTx(dbClient, { ... });
+    shouldSendRescheduleEmail = result.shouldSendEmail;
+    await dbClient.query('COMMIT');       // <— DB is now consistent
+  } catch (txErr) {
+    await dbClient.query('ROLLBACK');
+    throw txErr;
+  } finally {
+    dbClient.release();
+  }
+  if (shouldSendRescheduleEmail) {
+    try { await sendRescheduleEmail(...); }
+    catch (emailErr) { /* sentry + log; never rethrow */ }
+  }
+  res.json(updatedRow.rows[0]);            // <— response goes out
+} catch (err) { /* existing outer catch */ }
+```
 
 - [ ] **Step 4: Lint**
 
