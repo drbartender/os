@@ -4,19 +4,18 @@
 
 ## What This Resolves (Gemini design-review pass, 2026-05-20)
 
-Three Gemini findings land here:
+Four Gemini findings land here:
 
 - **Finding 1 (BLOCKER) — Reschedule cascade incomplete.** Task 6's `reanchorPendingMessages` no longer relies on a local `messageOffsets` constant; it calls `getHandlerMeta(messageType)` exported by Plan 2a's `scheduledMessageDispatcher.js`. Every registered handler (Plan 2a balance reminders, Plan 2c event-week / T-30, Plan 2d marketing touches) carries its own metadata so the cascade re-anchors the full set of pending rows when admin updates event_date OR balance_due_date.
 - **Finding 2 (BLOCKER) — `rescheduleProposal` must be atomic.** Task 6 wraps the proposal UPDATE + scheduled_messages re-anchor inside a single `BEGIN/COMMIT` transaction. The reschedule email fires AFTER the commit (email send is not idempotent-safe; the inverse ordering would leave the DB out of sync if the commit failed after the send).
 - **Finding 3 (WARNING) — Immediate sends respect suppression.** `sendRescheduleEmail` calls `shouldSendImmediate({ proposal, client, channel: 'email' })` from `server/utils/messageSuppression.js` (Plan 2a Task 8.5) before invoking sendEmail.
-
-**Deferred (Gemini SUGGESTION, not in scope here):** Updating `proposals.balance_due_date` on reschedule. Today the date stays fixed at the original deposit moment. If the new event_date moves the balance-due into the past or into the wrong window, admin handles manually. A follow-up plan will tie balance_due_date to event_date via a configurable lead policy.
+- **Finding 4 (SUGGESTION) — Reschedule must also update `balance_due_date`.** Task 6's `rescheduleProposalInTx` now recomputes `proposals.balance_due_date` inside the same transaction whenever `event_date` shifts. The codebase rule (set in `server/routes/stripe.js`) is `balance_due_date = event_date - INTERVAL '14 days'`, applied via `COALESCE` so admin-edited custom dates aren't clobbered. The helper preserves the **existing offset** between event_date and balance_due_date (so a manually adjusted 21-day lead survives the move) and applies the recomputation BEFORE the `reanchorPendingMessages` pass so balance-anchored re-anchors use the NEW balance_due_date as their source of truth.
 
 ---
 
 **Goal:** Wire up the three pre-event client-email touches: the T-7 event-week reminder, the T-30 long-lead recap (only for proposals booked 90+ days out), and the immediate reschedule notification email that also re-anchors every other pending scheduled message on the proposal to the new event date.
 
-**Architecture:** Three pieces. (1) Two new email templates in `server/utils/emailTemplates.js` rendered with event-local times via the Plan 1 `eventTimezone` utility. (2) Two new dispatcher handlers (`event_week_reminder`, `long_lead_t30_recap`) registered against the Plan 2a `registerHandler` API, plus a scheduling helper that inserts pending `scheduled_messages` rows from the Stripe `payment_intent.succeeded` first-deposit branch. (3) A new `rescheduleProposal` helper invoked from the proposal PATCH handler when `event_date`, `event_start_time`, or `event_location` changes post-sign+pay — fires the reschedule email immediately and re-anchors every pending row in `scheduled_messages` for the proposal using a per-message-type offset mapping.
+**Architecture:** Three pieces. (1) Two new email templates in `server/utils/emailTemplates.js` rendered with event-local times via the Plan 1 `eventTimezone` utility. (2) Two new dispatcher handlers (`event_week_reminder`, `long_lead_t30_recap`) registered against the Plan 2a `registerHandler` API, plus a scheduling helper that inserts pending `scheduled_messages` rows from the Stripe `payment_intent.succeeded` first-deposit branch. (3) A new `rescheduleProposal` helper invoked from the proposal PATCH handler when `event_date`, `event_start_time`, or `event_location` changes post-sign+pay — fires the reschedule email immediately, recomputes `balance_due_date` in the same transaction when event_date shifts (preserving the original offset), and re-anchors every pending row in `scheduled_messages` for the proposal using a per-message-type offset mapping.
 
 **Tech Stack:** PostgreSQL (raw SQL via `pg`), Node.js 18+ / Express 4.22, existing `node:test` + `node:assert/strict` pattern from `server/utils/*.test.js`, `@sentry/node` for non-blocking error reporting.
 
@@ -1241,6 +1240,110 @@ test('rescheduleProposal > sends the reschedule email and re-anchors pending row
   assert.strictEqual(new Date(rows[0].scheduled_for).toISOString(), '2026-09-08T15:00:00.000Z');
 });
 
+// ── balance_due_date recomputation (Gemini Finding 4 — SUGGESTION) ──
+test('rescheduleProposal > shifts balance_due_date by the same delta as event_date, preserving offset', async () => {
+  // Original: event_date 2026-08-15, balance_due_date 2026-08-01 (14d before event).
+  // Reschedule to event_date 2026-09-15 (30 days later).
+  // Expect: balance_due_date 2026-09-01 (still 14d before new event).
+  await pool.query(
+    `INSERT INTO proposals
+       (id, client_id, status, event_date, event_start_time, event_timezone,
+        balance_due_date, created_at, total_price)
+     VALUES ($1, $2, 'deposit_paid', '2026-08-15', '18:00', 'America/Chicago',
+        '2026-08-01', '2026-07-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+
+  const old = { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A' };
+  const updated = { event_date: '2026-09-15', event_start_time: '18:00', event_location: 'A' };
+  await rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated });
+
+  const { rows } = await pool.query(
+    'SELECT balance_due_date FROM proposals WHERE id = $1',
+    [TEST_PROPOSAL_ID]
+  );
+  assert.strictEqual(String(rows[0].balance_due_date).slice(0, 10), '2026-09-01');
+});
+
+test('rescheduleProposal > preserves a custom (non-14-day) balance offset on reschedule', async () => {
+  // Admin set a custom 21-day lead: event 2026-08-15, balance due 2026-07-25.
+  // Reschedule event to 2026-09-15. Expect balance due 2026-08-25 (still 21d).
+  await pool.query(
+    `INSERT INTO proposals
+       (id, client_id, status, event_date, event_start_time, event_timezone,
+        balance_due_date, created_at, total_price)
+     VALUES ($1, $2, 'deposit_paid', '2026-08-15', '18:00', 'America/Chicago',
+        '2026-07-25', '2026-07-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+
+  const old = { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A' };
+  const updated = { event_date: '2026-09-15', event_start_time: '18:00', event_location: 'A' };
+  await rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated });
+
+  const { rows } = await pool.query(
+    'SELECT balance_due_date FROM proposals WHERE id = $1',
+    [TEST_PROPOSAL_ID]
+  );
+  assert.strictEqual(String(rows[0].balance_due_date).slice(0, 10), '2026-08-25');
+});
+
+test('rescheduleProposal > re-anchors balance-anchored pending rows against the NEW balance_due_date', async () => {
+  // Event 2026-08-15, balance_due 2026-08-01 (14d before). T-3 balance reminder
+  // pending for 2026-07-29 (3d before balance_due). Reschedule event to
+  // 2026-09-15 → balance_due moves to 2026-09-01 → T-3 reminder should
+  // re-anchor to 2026-08-29.
+  await pool.query(
+    `INSERT INTO proposals
+       (id, client_id, status, event_date, event_start_time, event_timezone,
+        balance_due_date, created_at, total_price)
+     VALUES ($1, $2, 'deposit_paid', '2026-08-15', '18:00', 'America/Chicago',
+        '2026-08-01', '2026-07-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+  // NOTE: this test depends on Plan 2a having registered a handler for
+  // `balance_reminder_t3` with metadata `{ anchor: 'balance_due_date',
+  // offsetFromEventDate: -3 * 86400 }` (or equivalent — value is in seconds
+  // relative to anchor). If Plan 2a hasn't shipped, this assertion is
+  // deferred. Without that registration, `getHandlerMeta(...)` returns
+  // null and the row is left alone.
+  await pool.query(
+    `INSERT INTO scheduled_messages
+       (entity_type, entity_id, message_type, recipient_type, recipient_id,
+        channel, scheduled_for, status)
+     VALUES ('proposal', $1, 'balance_reminder_t3', 'client', $2, 'email',
+        '2026-07-29T15:00:00.000Z', 'pending')`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+
+  const old = { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A' };
+  const updated = { event_date: '2026-09-15', event_start_time: '18:00', event_location: 'A' };
+  await rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated });
+
+  // Confirm balance_due_date moved to 2026-09-01
+  const { rows: propRows } = await pool.query(
+    'SELECT balance_due_date FROM proposals WHERE id = $1',
+    [TEST_PROPOSAL_ID]
+  );
+  assert.strictEqual(String(propRows[0].balance_due_date).slice(0, 10), '2026-09-01');
+
+  // If Plan 2a's handler is registered, the T-3 row should now anchor to
+  // 2026-08-29 (3d before new balance_due_date 2026-09-01). If unregistered,
+  // the row is unchanged at 2026-07-29 — that's the deferred-on-Plan-2a path.
+  const { rows: smRows } = await pool.query(
+    `SELECT scheduled_for FROM scheduled_messages
+       WHERE entity_type = 'proposal' AND entity_id = $1
+         AND message_type = 'balance_reminder_t3'`,
+    [TEST_PROPOSAL_ID]
+  );
+  const scheduledIso = new Date(smRows[0].scheduled_for).toISOString().slice(0, 10);
+  // Accept either 2026-08-29 (Plan 2a registered) OR 2026-07-29 (unregistered).
+  assert.ok(
+    scheduledIso === '2026-08-29' || scheduledIso === '2026-07-29',
+    `expected balance reminder to be re-anchored to 2026-08-29 (or left at 2026-07-29 if Plan 2a handler not registered), got ${scheduledIso}`
+  );
+});
+
 test('rescheduleProposal > skips entirely when proposal is archived', async () => {
   await pool.query(
     `INSERT INTO proposals (id, client_id, status, archive_reason, event_date, event_start_time, event_location, event_timezone, created_at, total_price)
@@ -1539,6 +1642,53 @@ async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
   const POST_SIGNPAY = new Set(['deposit_paid', 'balance_paid', 'confirmed', 'completed']);
   if (status === 'archived' || !POST_SIGNPAY.has(status)) return { shouldSendEmail: false };
 
+  // Gemini Finding 4 (SUGGESTION): when event_date shifts, recompute
+  // balance_due_date by the SAME delta so balance reminders re-anchor
+  // against the correct date. The codebase rule (see server/routes/stripe.js)
+  // is `balance_due_date = event_date - INTERVAL '14 days'` (via COALESCE,
+  // so admin-edited custom dates aren't clobbered on first deposit). We
+  // preserve the EXISTING offset between event_date and balance_due_date
+  // so an admin-adjusted 21-day lead survives the reschedule.
+  //
+  // Runs BEFORE reanchorPendingMessages so the dispatcher metadata lookup
+  // for balance-anchored handlers sees the new balance_due_date.
+  const oldEventDateStr = old.event_date ? String(old.event_date).slice(0, 10) : null;
+  const newEventDateStr = updated.event_date ? String(updated.event_date).slice(0, 10) : null;
+  if (oldEventDateStr && newEventDateStr && oldEventDateStr !== newEventDateStr) {
+    const cur = await client.query(
+      'SELECT event_date, balance_due_date FROM proposals WHERE id = $1',
+      [proposalId]
+    );
+    const row = cur.rows[0];
+    const currentEventDateStr = row?.event_date ? String(row.event_date).slice(0, 10) : null;
+    const currentBalanceDueStr = row?.balance_due_date ? String(row.balance_due_date).slice(0, 10) : null;
+    if (currentEventDateStr && currentBalanceDueStr) {
+      // Preserve the existing offset (in days) between event_date and
+      // balance_due_date. Default codebase rule is event_date - 14, but an
+      // admin may have set a different lead via PATCH /proposals/:id/balance-due.
+      const eventMs = new Date(currentEventDateStr + 'T00:00:00Z').getTime();
+      const balanceMs = new Date(currentBalanceDueStr + 'T00:00:00Z').getTime();
+      const offsetDays = Math.round((balanceMs - eventMs) / 86400000); // typically -14
+      const newEventMs = new Date(newEventDateStr + 'T00:00:00Z').getTime();
+      const newBalanceMs = newEventMs + offsetDays * 86400000;
+      const newBalanceIso = new Date(newBalanceMs).toISOString().slice(0, 10);
+      await client.query(
+        'UPDATE proposals SET balance_due_date = $1 WHERE id = $2',
+        [newBalanceIso, proposalId]
+      );
+    } else if (currentEventDateStr && !currentBalanceDueStr) {
+      // No balance_due_date set yet (rare — pre-deposit reschedule that
+      // somehow reached this code path). Apply the codebase default rule:
+      // event_date - 14 days. Skip if newEventDateStr is null.
+      const newEventMs = new Date(newEventDateStr + 'T00:00:00Z').getTime();
+      const newBalanceIso = new Date(newEventMs - 14 * 86400000).toISOString().slice(0, 10);
+      await client.query(
+        'UPDATE proposals SET balance_due_date = $1 WHERE id = $2',
+        [newBalanceIso, proposalId]
+      );
+    }
+  }
+
   await reanchorPendingMessages(client, proposalId);
   return { shouldSendEmail: true };
 }
@@ -1782,6 +1932,16 @@ ORDER BY message_type;
 
 Expected: every pending row's `scheduled_for` has shifted forward by 30 days (offset by the per-message-type pre-event window).
 
+Also confirm `balance_due_date` shifted by the same delta (Gemini Finding 4):
+
+```bash
+psql "$DATABASE_URL" -c "
+SELECT event_date, balance_due_date FROM proposals WHERE id = <test_proposal_id>;
+"
+```
+
+Expected: `balance_due_date` is now `<new event_date> - <original offset>` (typically `event_date - 14 days`). Balance-anchored scheduled_messages rows should re-anchor against this new date in the same transaction.
+
 - [ ] **Step 4: Confirm the dispatcher would fire the right handler**
 
 ```bash
@@ -1837,7 +1997,7 @@ Find the section of `ARCHITECTURE.md` that lists `server/utils/*.js` files (typi
 ```markdown
 - `server/utils/preEventScheduling.js` — inserts `scheduled_messages` rows for the T-7 event-week reminder and conditional T-30 long-lead recap when a proposal moves to deposit_paid (Plan 2c)
 - `server/utils/preEventHandlers.js` — dispatcher handlers for `event_week_reminder` and `long_lead_t30_recap` message types (Plan 2c)
-- `server/utils/rescheduleProposal.js` — sends the immediate reschedule notification email and re-anchors all pending `scheduled_messages` rows when admin edits event_date/start_time/location on a post-sign+pay proposal (Plan 2c)
+- `server/utils/rescheduleProposal.js` — sends the immediate reschedule notification email, recomputes `proposals.balance_due_date` (preserving the original offset from event_date) when event_date shifts, and re-anchors all pending `scheduled_messages` rows when admin edits event_date/start_time/location on a post-sign+pay proposal (Plan 2c)
 ```
 
 - [ ] **Step 3: Commit**
@@ -1862,6 +2022,7 @@ Run through the following checks before declaring Plan 2c done:
 - [ ] `schedulePreEventReminders` is called from the Stripe webhook deposit/full first-delivery branch
 - [ ] `rescheduleProposal` is called from `server/routes/proposals/crud.js` PATCH handler after commit
 - [ ] Smoke test (Task 8) shows pending rows landing on deposit_paid and re-anchoring on reschedule
+- [ ] Smoke test confirms `proposals.balance_due_date` shifts by the same delta as `event_date` on reschedule (Gemini Finding 4)
 - [ ] No SMS code touched (deferred to Phase 3)
 - [ ] No drink-plan-nudge code touched (Plan 2d)
 
@@ -1875,7 +2036,7 @@ Run through the following checks before declaring Plan 2c done:
 | 1.6 Long-lead T-30 recap | Task 1 (template), Task 2 (gating + scheduler), Task 3 (handler) | 90+ day lead-time gate; BYOB/Hosted conditional shopping block; defers to drink-plan-nudge when artifacts missing |
 | 3.13 Reschedule notification (email) | Task 1 (template), Task 6 (helper), Task 7 (PATCH hook) | Email only — SMS deferred per Phase 3; includes cascade re-anchor |
 | 7.2 Time zones | Task 1 (templates use pre-formatted local times), Task 2 (`computeScheduledFor`), Task 3 (`formatEventDateLong`/`formatStartTimeShort`) | All event-time rendering uses `formatEventLocalTime` from Plan 1 |
-| 7.8 Reschedule handling | Task 6 (re-anchor logic), Task 7 (PATCH hook) | `scheduled_for` recomputed via `computeScheduledFor` for every pending row whose `message_type` has a registered offset |
+| 7.8 Reschedule handling | Task 6 (re-anchor logic + balance_due_date recompute), Task 7 (PATCH hook) | `scheduled_for` recomputed via `computeScheduledFor` for every pending row whose `message_type` has a registered offset; `balance_due_date` recomputed in the same transaction when event_date shifts, preserving the existing offset |
 
 ---
 

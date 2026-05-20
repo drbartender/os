@@ -4,11 +4,12 @@
 
 ## What This Resolves (Gemini design-review pass, 2026-05-20)
 
-Three findings land in this plan:
+Four findings land in this plan:
 
 - **Finding 1 (BLOCKER) — Shared message-type registry.** Every marketing handler registers with metadata via Plan 2a's expanded `registerHandler(messageType, fn, { offsetFromEventDate, anchor, category })` API. Anchor-independent touches like drip (anchored to proposal-sent moment, not event_date) pass `offsetFromEventDate: null` so Plan 2c's reschedule cascade leaves them alone. Event-anchored touches (new_year_hello, six_months_out, retention_nudge, review_request) carry the correct offset+anchor so the cascade re-anchors them on reschedule.
 - **Finding 4 (WARNING) — Marketing TZ uses event TZ, not hardcoded Chicago.** The send-time helpers in `retentionEligibility.js` accept an event timezone (defaulting to `America/Chicago` ONLY when no proposal context is provided) and use `resolveEventTimezone(proposal)` from Plan 1's `server/utils/eventTimezone.js` at call sites. Spec 7.2 mandates event-local sends.
 - **Finding 5 (WARNING) — Marketing gating handled by dispatcher metadata.** All marketing-class types (drip_touch_2, drip_touch_4, drip_touch_5_email, new_year_hello, six_months_out, retention_nudge) register with `category: 'marketing'`. The dispatcher's marketing-gate check (Plan 2a Task 9) reads handler metadata at fire time and suppresses with reason `'marketing_disabled'` when the client's `communication_preferences.marketing_enabled === false`. Plan 2d's `MARKETING_MESSAGE_TYPES` export is kept as a convenience constant but is no longer the source of truth; the dispatcher uses handler metadata. `review_request` registers with `category: 'operational'` (transactional under CAN-SPAM).
+- **Finding 6 (SUGGESTION) — `publicFeedback` POST handler logic is now unit-tested.** Task 4 extracts the POST handler's logic (validate + record + admin-email-on-low-rating) into a named exported `handleFeedbackSubmission(ctx)` function that accepts injectable `sendEmail` + `now` dependencies. The test scaffold covers both branches: low rating (rating <= 3) triggers exactly one admin email; high rating (rating >= 4) triggers zero admin emails. Express wiring stays thin and is covered by manual smoke testing in Task 13. No `supertest` dependency added.
 
 ---
 
@@ -951,7 +952,7 @@ The page is mounted at `GET /api/public/feedback/:token` (display data) and `POS
 
 - [ ] **Step 1: Write the failing unit-style test**
 
-The repo's tests use `node:test` and don't ship `supertest`, so we test the route's helpers / DB behavior directly rather than wiring an HTTP-level integration test. The route exposes a couple of small pure helpers (UUID validation, rating/comment parsing) plus the DB-bound feedback-insert flow. We test all of them at the function boundary; the full HTTP path is covered by manual smoke testing in Task 13.
+The repo's tests use `node:test` and don't ship `supertest`. Gemini Finding 6 calls out that the original scaffold tested the extracted helpers but skipped the POST handler's email-on-low-rating logic. The fix: extract the POST handler's logic into a named exported `handleFeedbackSubmission(ctx)` function that takes injectable `sendEmail` (and `now`) so we can test the email-routing branches directly — no `supertest` dependency, no HTTP framework. The Express handler stays a thin adapter. The full HTTP path (rate limits, middleware ordering, JSON parsing) is still covered by manual smoke testing in Task 13; the handler logic (validation, record insert, low-rating admin email, error-on-Resend-failure) is covered directly below.
 
 Create `server/routes/publicFeedback.test.js`:
 
@@ -964,6 +965,7 @@ const {
   validateFeedbackInput,
   loadFeedbackContext,
   recordFeedback,
+  handleFeedbackSubmission,
 } = require('./publicFeedback');
 
 let clientId;
@@ -1108,16 +1110,143 @@ test('recordFeedback > rejects when the underlying proposal is archived', async 
   );
   await pool.query("UPDATE proposals SET status = 'completed' WHERE id = $1", [proposalId]);
 });
+
+// ── handleFeedbackSubmission (Gemini Finding 6 — SUGGESTION) ──
+// Covers the POST handler's email-on-low-rating branching without going
+// through Express. sendEmail is injected so we count calls; no Resend
+// network I/O. The pure record-only logic is already covered by the
+// recordFeedback tests above; this layer asserts the admin-email side
+// effect on low ratings.
+
+test('handleFeedbackSubmission > low rating (1-3) triggers exactly one admin email', async () => {
+  const emailCalls = [];
+  const sendEmail = async (msg) => { emailCalls.push(msg); return { id: 'mock-msg' }; };
+
+  const result = await handleFeedbackSubmission({
+    token,
+    body: { rating: 2, comment: 'Bartender was late.' },
+    ip: '127.0.0.1',
+    userAgent: 'mocha-test',
+    sendEmail,
+    now: () => new Date('2026-05-20T12:00:00Z'),
+  });
+
+  assert.strictEqual(result.status, 200);
+  assert.strictEqual(result.body.ok, true);
+  assert.strictEqual(result.body.thanks, true);
+  assert.strictEqual(result.body.redirect_url, undefined);
+  assert.strictEqual(emailCalls.length, 1);
+  assert.ok(emailCalls[0].to, 'admin email must have a recipient');
+  assert.match(emailCalls[0].subject, /rating|feedback/i);
+});
+
+test('handleFeedbackSubmission > high rating (4-5) does NOT trigger an admin email and returns redirect_url', async () => {
+  const emailCalls = [];
+  const sendEmail = async (msg) => { emailCalls.push(msg); return { id: 'mock-msg' }; };
+
+  const result = await handleFeedbackSubmission({
+    token,
+    body: { rating: 5, comment: null },
+    ip: '127.0.0.1',
+    userAgent: 'mocha-test',
+    sendEmail,
+    now: () => new Date('2026-05-20T12:00:00Z'),
+  });
+
+  assert.strictEqual(result.status, 200);
+  assert.strictEqual(result.body.ok, true);
+  assert.ok(result.body.redirect_url);
+  assert.strictEqual(emailCalls.length, 0);
+});
+
+test('handleFeedbackSubmission > rating 3 (boundary) is treated as low and triggers admin email', async () => {
+  const emailCalls = [];
+  const sendEmail = async (msg) => { emailCalls.push(msg); return { id: 'mock-msg' }; };
+
+  const result = await handleFeedbackSubmission({
+    token,
+    body: { rating: 3, comment: 'just okay' },
+    ip: null,
+    userAgent: null,
+    sendEmail,
+    now: () => new Date('2026-05-20T12:00:00Z'),
+  });
+
+  assert.strictEqual(result.status, 200);
+  assert.strictEqual(result.body.thanks, true);
+  assert.strictEqual(emailCalls.length, 1);
+});
+
+test('handleFeedbackSubmission > rating 4 (boundary) is treated as high and routes to redirect', async () => {
+  const emailCalls = [];
+  const sendEmail = async (msg) => { emailCalls.push(msg); return { id: 'mock-msg' }; };
+
+  const result = await handleFeedbackSubmission({
+    token,
+    body: { rating: 4, comment: null },
+    ip: null,
+    userAgent: null,
+    sendEmail,
+    now: () => new Date('2026-05-20T12:00:00Z'),
+  });
+
+  assert.strictEqual(result.status, 200);
+  assert.ok(result.body.redirect_url);
+  assert.strictEqual(emailCalls.length, 0);
+});
+
+test('handleFeedbackSubmission > admin email failure does NOT fail the request (low rating)', async () => {
+  // Simulate Resend down — sendEmail rejects. The handler should still
+  // return a 200 success so the client sees a thanks page; Sentry capture
+  // happens inside the handler.
+  const sendEmail = async () => { throw new Error('Resend exploded'); };
+
+  const result = await handleFeedbackSubmission({
+    token,
+    body: { rating: 1, comment: 'never again' },
+    ip: null,
+    userAgent: null,
+    sendEmail,
+    now: () => new Date('2026-05-20T12:00:00Z'),
+  });
+
+  assert.strictEqual(result.status, 200);
+  assert.strictEqual(result.body.ok, true);
+  assert.strictEqual(result.body.thanks, true);
+});
+
+test('handleFeedbackSubmission > invalid rating returns 400 without inserting or emailing', async () => {
+  const emailCalls = [];
+  const sendEmail = async (msg) => { emailCalls.push(msg); };
+
+  const result = await handleFeedbackSubmission({
+    token,
+    body: { rating: 99 },
+    ip: null,
+    userAgent: null,
+    sendEmail,
+    now: () => new Date('2026-05-20T12:00:00Z'),
+  });
+
+  assert.strictEqual(result.status, 400);
+  assert.strictEqual(emailCalls.length, 0);
+  const { rows } = await pool.query(
+    'SELECT COUNT(*)::int AS n FROM post_event_feedback WHERE proposal_id = $1',
+    [proposalId]
+  );
+  assert.strictEqual(rows[0].n, 0);
+});
 ```
 
-Implementation note: this test expects `publicFeedback.js` to export four pure-ish helpers in addition to the Express router:
+Implementation note: this test expects `publicFeedback.js` to export five pure-ish helpers in addition to the Express router:
 
 - `isFeedbackTokenShape(token)` returns `true` iff the token matches the UUID regex.
 - `validateFeedbackInput({ rating, comment })` returns `{rating, comment: comment|null}` or throws a `ValidationError`.
 - `loadFeedbackContext(token)` returns the display payload, or `null` if not found / archived.
 - `recordFeedback({ token, rating, comment, ip, userAgent })` performs the insert + sentiment routing, returns `{routing: 'redirect'|'thanks', redirect_url?}`. Throws `ConflictError` on duplicate submission and `NotFoundError` when the proposal can't be sent feedback for (gone or archived).
+- `handleFeedbackSubmission(ctx)` (Gemini Finding 6) is the POST handler's logic factored into a pure-ish function with injectable `sendEmail`. It calls `validateFeedbackInput`, then `recordFeedback`, then (on low rating) renders the admin-notification template and invokes `ctx.sendEmail`. Returns `{ status, body }` for the route to send back. Email failures are caught + reported to Sentry but do NOT fail the request. The Express handler becomes a thin adapter that maps `req`/`res` to/from this function.
 
-Refactor the route handlers in `publicFeedback.js` to call these helpers — the GET handler calls `loadFeedbackContext`; the POST handler validates input, then calls `recordFeedback`, then forwards the admin email (for low ratings). End-to-end HTTP behavior is verified by manual smoke testing in Task 13.
+Refactor the route handlers in `publicFeedback.js` to call these helpers — the GET handler calls `loadFeedbackContext`; the POST handler is a thin Express adapter that calls `handleFeedbackSubmission(ctx)` with the real `sendEmail` from `server/utils/email`. HTTP-layer wiring is still covered by manual smoke testing in Task 13; the handler logic (validation, record, admin-email branching) is covered directly by the `handleFeedbackSubmission` tests below.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1255,30 +1384,61 @@ async function recordFeedback({ token, rating, comment, ip, userAgent }) {
   return { routing: 'thanks', proposal };
 }
 
-// ── Routes ──
-
-/** GET /api/public/feedback/:token — fetch display data for the feedback page */
-router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
-  const ctx = await loadFeedbackContext(req.params.token);
-  if (!ctx) throw new NotFoundError('Feedback page not found');
-  res.json(ctx);
-}));
-
-/** POST /api/public/feedback/:token — submit a rating */
-router.post('/:token', publicLimiter, submissionLimiter, asyncHandler(async (req, res) => {
-  const { rating, comment } = validateFeedbackInput(req.body || {});
-  const result = await recordFeedback({
-    token: req.params.token,
-    rating,
-    comment,
-    ip: req.ip,
-    userAgent: req.get('user-agent') || '',
-  });
-  if (result.routing === 'redirect') {
-    return res.json({ ok: true, redirect_url: result.redirect_url });
+/**
+ * POST handler logic factored out for direct unit testing (Gemini Finding 6).
+ * Pure-ish: returns `{ status, body }` instead of mutating `res`. Email I/O is
+ * injected via `ctx.sendEmail` so tests can count calls without hitting Resend.
+ *
+ * ctx = {
+ *   token: string,
+ *   body: { rating, comment },
+ *   ip: string | null,
+ *   userAgent: string | null,
+ *   sendEmail: (msg) => Promise<unknown>,
+ *   now: () => Date, // injectable clock — currently unused but kept for future TZ-sensitive logic
+ * }
+ *
+ * Caller (Express route handler) is responsible for mapping `req`/`res`.
+ */
+async function handleFeedbackSubmission(ctx) {
+  // 1. Validate
+  let rating;
+  let comment;
+  try {
+    ({ rating, comment } = validateFeedbackInput(ctx.body || {}));
+  } catch (err) {
+    if (err instanceof ValidationError) {
+      return { status: 400, body: { error: err.message, fields: err.fieldErrors } };
+    }
+    throw err;
   }
 
-  // Low rating: best-effort admin notification, never fail the request on email failure.
+  // 2. Record (insert + sentiment routing)
+  let result;
+  try {
+    result = await recordFeedback({
+      token: ctx.token,
+      rating,
+      comment,
+      ip: ctx.ip,
+      userAgent: ctx.userAgent || '',
+    });
+  } catch (err) {
+    if (err instanceof NotFoundError) {
+      return { status: 404, body: { error: err.message } };
+    }
+    if (err instanceof ConflictError) {
+      return { status: 409, body: { error: err.message, code: 'FEEDBACK_ALREADY_SUBMITTED' } };
+    }
+    throw err;
+  }
+
+  // 3a. High rating: route to Google Review — no admin email.
+  if (result.routing === 'redirect') {
+    return { status: 200, body: { ok: true, redirect_url: result.redirect_url } };
+  }
+
+  // 3b. Low rating (1-3): best-effort admin notification, never fail the request.
   try {
     const tpl = marketingTemplates.lowRatingAdminNotification({
       clientName: result.proposal.client_name || 'A client',
@@ -1295,7 +1455,7 @@ router.post('/:token', publicLimiter, submissionLimiter, asyncHandler(async (req
       comment: comment || null,
       adminUrl: `${ADMIN_URL}/proposals/${result.proposal.id}`,
     });
-    await sendEmail({
+    await ctx.sendEmail({
       to: process.env.ADMIN_FEEDBACK_NOTIFICATION_EMAIL || 'contact@drbartender.com',
       subject: tpl.subject,
       html: tpl.html,
@@ -1308,7 +1468,29 @@ router.post('/:token', publicLimiter, submissionLimiter, asyncHandler(async (req
     });
   }
 
-  res.json({ ok: true, thanks: true });
+  return { status: 200, body: { ok: true, thanks: true } };
+}
+
+// ── Routes ──
+
+/** GET /api/public/feedback/:token — fetch display data for the feedback page */
+router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
+  const ctx = await loadFeedbackContext(req.params.token);
+  if (!ctx) throw new NotFoundError('Feedback page not found');
+  res.json(ctx);
+}));
+
+/** POST /api/public/feedback/:token — submit a rating */
+router.post('/:token', publicLimiter, submissionLimiter, asyncHandler(async (req, res) => {
+  const result = await handleFeedbackSubmission({
+    token: req.params.token,
+    body: req.body || {},
+    ip: req.ip,
+    userAgent: req.get('user-agent') || '',
+    sendEmail,
+    now: () => new Date(),
+  });
+  res.status(result.status).json(result.body);
 }));
 
 module.exports = router;
@@ -1316,6 +1498,7 @@ module.exports.isFeedbackTokenShape = isFeedbackTokenShape;
 module.exports.validateFeedbackInput = validateFeedbackInput;
 module.exports.loadFeedbackContext = loadFeedbackContext;
 module.exports.recordFeedback = recordFeedback;
+module.exports.handleFeedbackSubmission = handleFeedbackSubmission;
 ```
 
 - [ ] **Step 4: Mount the router in `server/index.js`**
