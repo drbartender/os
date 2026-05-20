@@ -2313,3 +2313,24 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_messages_entity
   ON scheduled_messages(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_scheduled_messages_recipient
   ON scheduled_messages(recipient_type, recipient_id);
+
+-- ─── Automated Communication: scheduler_health table ────────────
+-- Each scheduler writes its last_run_at on every tick. A monitoring loop
+-- alerts via Sentry if any scheduler hasn't checked in within 2x its
+-- expected interval.
+
+CREATE TABLE IF NOT EXISTS scheduler_health (
+  scheduler_name TEXT PRIMARY KEY,
+  last_run_at TIMESTAMPTZ NOT NULL,
+  last_status TEXT NOT NULL,
+  expected_interval_seconds INTEGER NOT NULL,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DO $$ BEGIN
+  ALTER TABLE scheduler_health DROP CONSTRAINT IF EXISTS scheduler_health_status_check;
+  ALTER TABLE scheduler_health ADD CONSTRAINT scheduler_health_status_check
+    CHECK (last_status IN ('ok','failed'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;

@@ -708,6 +708,15 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - Partial index `idx_scheduled_messages_pending(scheduled_for) WHERE status = 'pending'` keeps worker queue scans cheap as the table grows.
 - Lookup indexes on `(entity_type, entity_id)` and `(recipient_type, recipient_id)` for cancellation (e.g. proposal accepted, cancel pending reminders) and per-recipient history.
 
+**scheduler_health** — Heartbeat table for the Automated Communication Foundation schedulers. Each scheduler writes its `last_run_at` on every tick; a monitoring loop alerts via Sentry when any scheduler hasn't checked in within 2x its expected interval.
+- `scheduler_name` TEXT PRIMARY KEY — stable identifier (e.g. `proposal_reminders`, `shift_reminders`, `client_messages_dispatcher`)
+- `last_run_at` TIMESTAMPTZ NOT NULL — wall-clock of the most recent tick
+- `last_status` TEXT NOT NULL CHECK (`ok`, `failed`)
+- `expected_interval_seconds` INTEGER NOT NULL — staleness threshold = 2x this value
+- `consecutive_failures` INTEGER NOT NULL DEFAULT 0 — incremented on each failed tick, reset to 0 on success
+- `last_error` TEXT — most recent error string when `last_status = 'failed'`
+- `updated_at` TIMESTAMPTZ DEFAULT NOW()
+
 ### Bartender Tip Pages
 
 **tips** — Successful tip records (one row per `checkout.session.completed` event tagged `metadata.kind = 'tip'`)
