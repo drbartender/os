@@ -499,7 +499,7 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
  * URL + filename into selections.companyLogo via Postgres jsonb || operator.
  * Returns { logoUrl, selections }.
  */
-router.post('/t/:token/logo', drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
+router.post('/t/:token/logo', logoUploadLimiter, asyncHandler(async (req, res) => {
   const planResult = await pool.query(
     'SELECT id, status FROM drink_plans WHERE token = $1',
     [req.params.token]

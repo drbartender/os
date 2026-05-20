@@ -4,15 +4,20 @@ import api from '../../utils/api';
 // Defense in depth: even though the server sanitizes companyLogo on every PUT,
 // admins click `<a href={companyLogo}>` here. A historical `javascript:` value
 // stored before the server-side sanitizer landed could still execute in the
-// admin session. Refuse to render an anchor for anything that isn't an
-// http(s) URL on the logo path.
+// admin session. The check mirrors the server-side allowlist: same-origin
+// `/api/drink-plans/t/` OR absolute URL whose host matches our API origin.
+// Anything else (attacker domain, javascript:, data:, file:, http: on the
+// public internet) is refused.
 function isSafeLogoUrl(url) {
   if (typeof url !== 'string' || !url) return false;
   if (url.startsWith('/api/drink-plans/t/')) return true;
   try {
     const u = new URL(url);
-    return (u.protocol === 'https:' || u.protocol === 'http:')
-      && u.pathname.startsWith('/api/drink-plans/t/');
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    if (!u.pathname.startsWith('/api/drink-plans/t/')) return false;
+    const apiUrl = process.env.REACT_APP_API_URL;
+    if (!apiUrl) return false;
+    return u.host === new URL(apiUrl).host;
   } catch {
     return false;
   }

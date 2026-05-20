@@ -115,9 +115,15 @@ function computeEquipmentScore(profile, requiredItems, willPickup) {
 // ─── Main orchestration ──────────────────────────────────────────
 
 async function autoAssignShift(shiftId, { dryRun = false } = {}) {
-  // 1. Fetch shift
+  // 1. Fetch shift, joining proposal venue_city/venue_state so the
+  // confirmation SMS can include the city/state without exposing the
+  // full street address (which lives only in shift.location as a composed
+  // string and would leak PII into Twilio's indefinite log).
   const shiftResult = await pool.query(
-    `SELECT * FROM shifts WHERE id = $1`,
+    `SELECT s.*, p.venue_city, p.venue_state
+       FROM shifts s
+       LEFT JOIN proposals p ON p.id = s.proposal_id
+      WHERE s.id = $1`,
     [shiftId]
   );
   if (shiftResult.rows.length === 0) {
@@ -315,7 +321,10 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
           // street address (often a private residence) to bartender candidates
           // here — the city/state is enough to confirm geography. Full address
           // is sent later via the dispatch email after they've accepted.
-          const cityState = [shift.city, shift.state].filter(Boolean).join(', ');
+          // venue_city/venue_state come from the LEFT JOIN at the top of this
+          // function; for legacy shifts with no proposal_id they're null and
+          // cityState falls back to empty.
+          const cityState = [shift.venue_city, shift.venue_state].filter(Boolean).join(', ');
           const msg = `Hey ${name}! You've been approved for the ${eventCtx} on ${shift.event_date}.` +
             (shift.start_time ? ` Time: ${shift.start_time}${shift.end_time ? ' - ' + shift.end_time : ''}.` : '') +
             (cityState ? ` In ${cityState}.` : '') +

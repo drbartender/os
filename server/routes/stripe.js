@@ -955,7 +955,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             `, [paidDollars, proposalId]);
             if (upd.rows[0] && Number(upd.rows[0].amount_paid) >= Number(upd.rows[0].total_price)) {
               await dbClient.query(
-                "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed')",
+                "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')",
                 [proposalId]
               );
             }

@@ -763,10 +763,15 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
 
 /** DELETE /api/proposals/:id — delete a proposal */
 router.delete('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  // scheduled_messages has no FK on entity_id (polymorphic across proposal/
-  // shift/client/consult), so the DB won't cascade for us. Clear them
-  // explicitly in the same transaction so a deleted proposal can't trigger
-  // post-delete sends from the comms scheduler.
+  // Existence probe BEFORE the transaction so the 404 path doesn't open a
+  // connection / spurious BEGIN/ROLLBACK pair. scheduled_messages has no FK
+  // on entity_id (polymorphic across proposal/shift/client/consult), so the
+  // DB won't cascade for us — clear them explicitly in the same transaction
+  // so a deleted proposal can't trigger post-delete sends from the comms
+  // scheduler.
+  const probe = await pool.query('SELECT 1 FROM proposals WHERE id = $1', [req.params.id]);
+  if (!probe.rows[0]) throw new NotFoundError('Proposal not found');
+
   const dbClient = await pool.connect();
   try {
     await dbClient.query('BEGIN');
@@ -774,11 +779,7 @@ router.delete('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res)
       `DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1`,
       [req.params.id]
     );
-    const result = await dbClient.query('DELETE FROM proposals WHERE id = $1 RETURNING id', [req.params.id]);
-    if (!result.rows[0]) {
-      await dbClient.query('ROLLBACK');
-      throw new NotFoundError('Proposal not found');
-    }
+    await dbClient.query('DELETE FROM proposals WHERE id = $1', [req.params.id]);
     await dbClient.query('COMMIT');
     res.json({ success: true });
   } catch (err) {
