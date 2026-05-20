@@ -17,6 +17,11 @@ function escapeHtml(str) {
 async function processSequenceSteps() {
   try {
     // Find enrollments where next step is due (LEFT JOIN quote_drafts for resume URL support)
+    //
+    // NOTE: no archive guard on this scheduler because email_leads has no proposal_id
+    // linkage. Drip stops on sign+pay via enrollment lifecycle (e.status flips when the
+    // proposal is signed). Don't add an email-address fallback join — it over-suppresses
+    // by matching unrelated archived proposals that happen to share the lead's email.
     const dueEnrollments = await pool.query(`
       SELECT e.id, e.campaign_id, e.lead_id, e.current_step,
              l.email, l.name, l.status AS lead_status,
@@ -146,6 +151,7 @@ async function processSequenceSteps() {
     }
   } catch (err) {
     console.error('[SequenceScheduler] Fatal error:', err);
+    throw err;  // surface to wrapScheduler so heartbeat records 'failed'
   }
 }
 
@@ -164,6 +170,7 @@ async function expireStaleQuoteDrafts() {
     }
   } catch (err) {
     console.error('[QuoteDrafts] Cleanup error:', err.message);
+    throw err;  // surface to wrapScheduler so heartbeat records 'failed'
   }
 }
 
