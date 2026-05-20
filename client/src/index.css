@@ -12333,3 +12333,77 @@ html[data-app="admin-os"] .field-block {
 @media (max-width: 380px) {
   .potion-app .drink-card-grid { grid-template-columns: 1fr; }
 }
+
+/* Form elements: clean inputs on paper */
+.potion-app .form-group { margin-bottom: 18px; }
+.potion-app .form-label {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 0.75rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.potion-app .form-input,
+.potion-app .form-textarea,
+.potion-app .form-select {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 1rem;
+  background: var(--paper);
+  color: var(--deep-brown);
+  border: 1px solid rgba(28,22,16,0.22);
+  border-radius: var(--radius);
+  padding: 11px 13px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.potion-app .form-input:focus,
+.potion-app .form-textarea:focus,
+.potion-app .form-select:focus {
+  outline: 0;
+  border: 2px solid var(--amber);
+  padding: 10px 12px;
+  box-shadow: 0 0 0 3px rgba(29,140,137,0.18);
+}
+
+.potion-app .checkbox-grid { display: flex; flex-direction: column; gap: 8px; }
+.potion-app .checkbox-label {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px solid rgba(28,22,16,0.18);
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--font-body);
+  color: var(--deep-brown);
+}
+.potion-app .checkbox-label:hover { background: rgba(28,22,16,0.04); }
+.potion-app .checkbox-label input { accent-color: var(--amber); }
+.potion-app .checkbox-label.checked,
+.potion-app .checkbox-label:has(input:checked) {
+  background: rgba(29,140,137,0.10);
+  border-color: var(--amber);
+}
+
+/* Component-rule overrides: beats global h*/p color rules inside parchment surfaces */
+.potion-app .serving-type-card h1,
+.potion-app .serving-type-card h2,
+.potion-app .serving-type-card h3,
+.potion-app .serving-type-card h4,
+.potion-app .drink-tile h1,
+.potion-app .drink-tile h2,
+.potion-app .drink-tile h3,
+.potion-app .drink-card-horizontal h1,
+.potion-app .drink-card-horizontal h2,
+.potion-app .drink-card-horizontal h3 { color: var(--deep-brown); }
+
+.potion-app .serving-type-card p,
+.potion-app .drink-tile p,
+.potion-app .your-menu-item p,
+.potion-app .checkbox-label p { color: rgba(28,22,16,0.78); }
+
+.potion-app .serving-type-label { color: var(--deep-brown); }
+.potion-app .serving-type-desc  { color: rgba(28,22,16,0.7); }
+.potion-app .drink-tile-name    { color: var(--deep-brown); }
+.potion-app .drink-tile-desc    { color: rgba(28,22,16,0.6); }
