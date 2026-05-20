@@ -657,7 +657,37 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     [req.params.id]
   );
   if (!result.rows[0]) throw new NotFoundError('Plan not found.');
-  res.json(result.rows[0]);
+
+  const plan = result.rows[0];
+
+  // Resolve signature-drink and mocktail names so <MenuPreview> on the admin
+  // event detail page can render without a second fetch. Missing IDs (deleted
+  // rows in the source tables) are silently dropped, matching the graceful
+  // degradation pattern used by shoppingListGen.js.
+  const sigIds = Array.isArray(plan.selections?.signatureDrinks) ? plan.selections.signatureDrinks : [];
+  const mocktailIds = Array.isArray(plan.selections?.mocktails) ? plan.selections.mocktails : [];
+
+  let signatureDrinkNames = [];
+  if (sigIds.length > 0) {
+    const sigRows = await pool.query(
+      `SELECT id, name FROM cocktails WHERE id = ANY($1::text[])`,
+      [sigIds]
+    );
+    const nameById = new Map(sigRows.rows.map((r) => [r.id, r.name]));
+    signatureDrinkNames = sigIds.map((id) => nameById.get(id)).filter(Boolean);
+  }
+
+  let mocktailNames = [];
+  if (mocktailIds.length > 0) {
+    const mocktailRows = await pool.query(
+      `SELECT id, name FROM mocktails WHERE id = ANY($1::text[])`,
+      [mocktailIds]
+    );
+    const nameById = new Map(mocktailRows.rows.map((r) => [r.id, r.name]));
+    mocktailNames = mocktailIds.map((id) => nameById.get(id)).filter(Boolean);
+  }
+
+  res.json({ ...plan, signatureDrinkNames, mocktailNames });
 }));
 
 /** PATCH /api/drink-plans/:id/notes — update admin notes */
