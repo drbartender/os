@@ -36,6 +36,21 @@ const drinkPlanWriteLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Logo upload/proxy is keyed by token AND much tighter than the autosave
+// limiter — each POST writes up to 5 MB to R2 (paid storage), each GET
+// proxies bytes through Node from R2 (paid egress). The previous shared
+// publicReadLimiter (100/15min) let a single token burn ~500 MB of R2
+// traffic per window; this cap keeps cost predictable while staying generous
+// for legitimate "upload, preview, replace once, preview again" flows.
+const logoUploadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => req.params?.token || req.ip,
+  message: { error: 'Too many logo requests. Please try again in a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Lab Rat seed endpoint mints real users + clients on every call AND returns
 // a working credential (for the pre-hire-invitation recipe). Tight per-IP cap
 // resists single-IP flooding; secondary global cap caps damage from a
@@ -73,4 +88,4 @@ const labratFeedbackLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter };
+module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter };

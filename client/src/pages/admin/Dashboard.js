@@ -204,7 +204,7 @@ export default function Dashboard() {
           <div className="stat-value" style={{ color: fn.lostValue > 0 ? 'hsl(var(--danger-h) var(--danger-s) 55%)' : '' }}>
             {fmt$(fn.lostValue)}
           </div>
-          <div className="stat-sub"><span>quoted then cancelled</span></div>
+          <div className="stat-sub"><span>quoted, did not book</span></div>
         </div>
       </div>
 

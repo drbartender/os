@@ -6,7 +6,48 @@ const path = require('path');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
-const { publicReadLimiter, drinkPlanWriteLimiter } = require('../middleware/rateLimiters');
+const { publicReadLimiter, drinkPlanWriteLimiter, logoUploadLimiter } = require('../middleware/rateLimiters');
+
+// Token-gated selections PUT accepts arbitrary JSON. To stop attackers from
+// (a) seeding internal-only keys like `_logoFilename` to pivot the logo proxy
+// into reading any R2 object, or (b) writing a `javascript:` URL into
+// `companyLogo` that the admin "Download original" link would then execute,
+// every PUT goes through this sanitizer first.
+const ALLOWED_SELECTIONS_KEYS = new Set([
+  'signatureDrinks', 'signatureDrinkSpirits', 'customCocktails',
+  'mixersForSignatureDrinks', 'mocktails', 'mocktailNotes',
+  'spirits', 'spiritsOther', 'mixersForSpirits',
+  'beerFromFullBar', 'wineFromFullBar', 'wineOtherFullBar', 'beerWineBalanceFullBar',
+  'beerFromBeerWine', 'wineFromBeerWine', 'wineOtherBeerWine', 'beerWineBalanceBeerWine',
+  'syrupSelections', 'syrupSelfProvided',
+  'addOns', 'logistics',
+  'customMenuDesign', 'menuStyle', 'menuTheme', 'drinkNaming', 'menuDesignNotes',
+  'additionalNotes', 'companyLogo',
+  'activeModules', 'exploration',
+  // legacy fields preserved for back-compat with already-saved plans
+  'signatureCocktails', 'barFocus', 'wineStyles', 'beerStyles', 'beerWineBalance',
+  'beerWineNotes', 'fullBarNotes', 'logisticsNotes',
+]);
+
+function sanitizeSelections(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = {};
+  for (const key of Object.keys(raw)) {
+    if (!ALLOWED_SELECTIONS_KEYS.has(key)) continue; // drop unknown keys, including _logoFilename
+    out[key] = raw[key];
+  }
+  // companyLogo must be either empty or a path served by THIS API. Reject
+  // `javascript:`, `data:`, or any cross-origin URL — the admin event-detail
+  // page renders `<a href={companyLogo}>Download original</a>`, which would
+  // otherwise execute attacker-controlled script in an admin session.
+  if (out.companyLogo !== undefined) {
+    const cl = typeof out.companyLogo === 'string' ? out.companyLogo : '';
+    if (cl && !cl.startsWith('/api/drink-plans/t/') && !cl.startsWith(`${API_URL}/api/drink-plans/t/`)) {
+      out.companyLogo = '';
+    }
+  }
+  return out;
+}
 const { calculateProposal } = require('../utils/pricingEngine');
 const { refreshUnlockedInvoices } = require('../utils/invoiceHelpers');
 const { sendEmail } = require('../utils/email');
@@ -14,7 +55,7 @@ const emailTemplates = require('../utils/emailTemplates');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError } = require('../utils/errors');
-const { ADMIN_URL, PUBLIC_SITE_URL } = require('../utils/urls');
+const { ADMIN_URL, PUBLIC_SITE_URL, API_URL } = require('../utils/urls');
 const { autoGenerateShoppingList } = require('../utils/shoppingListGen');
 const { isDrinkPlanPreBooking } = require('../utils/drinkPlanAccess');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
@@ -97,7 +138,8 @@ router.get('/t/:token', publicReadLimiter, asyncHandler(async (req, res) => {
 
 /** PUT /api/drink-plans/t/:token — save draft or submit (public) */
 router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
-  const { serving_type, selections, status, paid_separately } = req.body;
+  const { serving_type, status, paid_separately } = req.body;
+  const selections = sanitizeSelections(req.body.selections);
   const paidSeparately = paid_separately === true;
 
   // Check plan exists and is not already submitted
@@ -479,9 +521,17 @@ router.post('/t/:token/logo', drinkPlanWriteLimiter, asyncHandler(async (req, re
 
   const ext = (path.extname(file.name) || '.png').toLowerCase();
   const safeExt = ['.png', '.jpg', '.jpeg'].includes(ext) ? ext : '.png';
-  const filename = `drink-plan-logos/${plan.id}-${Date.now()}${safeExt}`;
+  // Coerce plan.id to a number defensively — the DB returns an integer today,
+  // but if the column ever migrates to UUID/text, a tainted value would let
+  // an attacker traverse paths in R2 via `..`.
+  const ts = Date.now();
+  const filename = `drink-plan-logos/${Number(plan.id)}-${ts}${safeExt}`;
   await uploadFile(file.data, filename);
-  const logoUrl = `/api/drink-plans/t/${req.params.token}/logo`;
+  // Absolute URL so the admin SPA at admin.drbartender.com (which has no
+  // /api/* rewrite to Render) and the public planner at drbartender.com
+  // (same — Vercel rewrites /(.*) → /index.html) both resolve the image.
+  // ?v=<ts> cache-busts the 24h browser cache when a logo is replaced.
+  const logoUrl = `${API_URL}/api/drink-plans/t/${req.params.token}/logo?v=${ts}`;
 
   // Atomic merge into the selections JSONB column using Postgres's || operator.
   // The merge happens in the database, not in the application, so a concurrent
@@ -521,17 +571,37 @@ router.post('/t/:token/logo', drinkPlanWriteLimiter, asyncHandler(async (req, re
  *   3. Returning bytes directly with Cache-Control: public, max-age=86400
  *      gives us browser caching for free.
  */
-router.get('/t/:token/logo', publicReadLimiter, asyncHandler(async (req, res) => {
+router.get('/t/:token/logo', logoUploadLimiter, asyncHandler(async (req, res) => {
+  // Project just the filename — the full selections JSONB is 50-200 KB and
+  // this route is hit once per pageview on every cache miss.
   const planResult = await pool.query(
-    'SELECT selections FROM drink_plans WHERE token = $1',
+    `SELECT selections->>'_logoFilename' AS filename FROM drink_plans WHERE token = $1`,
     [req.params.token]
   );
   if (!planResult.rows[0]) throw new NotFoundError('Plan not found.');
-  const filename = planResult.rows[0].selections?._logoFilename;
+  const filename = planResult.rows[0].filename;
   if (!filename) throw new NotFoundError('No logo uploaded for this plan.');
+  // Defense in depth: even if _logoFilename leaks past the selections sanitizer
+  // (e.g. a future code path adds it back), refuse any R2 key outside the
+  // dedicated logo prefix so the proxy can't be pivoted into reading
+  // agreements, headshots, W-9s, etc.
+  if (!filename.startsWith('drink-plan-logos/')) {
+    throw new NotFoundError('No logo uploaded for this plan.');
+  }
 
   const url = await getSignedUrl(filename);
-  const upstream = await fetch(url);
+  // Bound the upstream fetch so a slow/hung R2 connection can't tie up an
+  // Express worker indefinitely — slow-loris guard on a public endpoint.
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 8000);
+  let upstream;
+  try {
+    upstream = await fetch(url, { signal: ac.signal });
+  } catch (err) {
+    throw new ExternalServiceError('r2', err, 'Logo is temporarily unavailable.');
+  } finally {
+    clearTimeout(timer);
+  }
   if (!upstream.ok) {
     throw new ExternalServiceError(
       'r2',
@@ -542,7 +612,10 @@ router.get('/t/:token/logo', publicReadLimiter, asyncHandler(async (req, res) =>
   const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
   const buffer = Buffer.from(await upstream.arrayBuffer());
   res.set('Content-Type', contentType);
-  res.set('Cache-Control', 'public, max-age=86400');
+  // private — each plan's logo is tenant-scoped; we don't want CDN/intermediary
+  // caches serving one client's logo to another. Browser caches it for 1 hour;
+  // ?v=<ts> on the URL invalidates that cache after a Replace.
+  res.set('Cache-Control', 'private, max-age=3600');
   res.send(buffer);
 }));
 
@@ -950,9 +1023,10 @@ router.post('/:id/logo', auth, requireAdminOrManager, asyncHandler(async (req, r
 
   const ext = (path.extname(file.name) || '.png').toLowerCase();
   const safeExt = ['.png', '.jpg', '.jpeg'].includes(ext) ? ext : '.png';
-  const filename = `drink-plan-logos/${plan.id}-${Date.now()}${safeExt}`;
+  const ts = Date.now();
+  const filename = `drink-plan-logos/${Number(plan.id)}-${ts}${safeExt}`;
   await uploadFile(file.data, filename);
-  const logoUrl = `/api/drink-plans/t/${plan.token}/logo`;
+  const logoUrl = `${API_URL}/api/drink-plans/t/${plan.token}/logo?v=${ts}`;
 
   // Atomic merge in the database (same pattern as the token-gated route above).
   const patch = { companyLogo: logoUrl, _logoFilename: filename };

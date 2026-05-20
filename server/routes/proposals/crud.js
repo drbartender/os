@@ -763,9 +763,30 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
 
 /** DELETE /api/proposals/:id — delete a proposal */
 router.delete('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const result = await pool.query('DELETE FROM proposals WHERE id = $1 RETURNING id', [req.params.id]);
-  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
-  res.json({ success: true });
+  // scheduled_messages has no FK on entity_id (polymorphic across proposal/
+  // shift/client/consult), so the DB won't cascade for us. Clear them
+  // explicitly in the same transaction so a deleted proposal can't trigger
+  // post-delete sends from the comms scheduler.
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+    await dbClient.query(
+      `DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1`,
+      [req.params.id]
+    );
+    const result = await dbClient.query('DELETE FROM proposals WHERE id = $1 RETURNING id', [req.params.id]);
+    if (!result.rows[0]) {
+      await dbClient.query('ROLLBACK');
+      throw new NotFoundError('Proposal not found');
+    }
+    await dbClient.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    throw err;
+  } finally {
+    dbClient.release();
+  }
 }));
 
 module.exports = router;

@@ -144,6 +144,12 @@ function MenuCard({
             <img
               src={companyLogo}
               alt=""
+              // crossOrigin so the admin html2canvas PNG export can paint a
+              // logo served by the API (absolute cross-origin URL) without
+              // tainting the canvas. CORS middleware on the API already
+              // returns the right Access-Control-Allow-Origin for our
+              // domains, so the browser will hand the pixels to canvas.
+              crossOrigin="anonymous"
               style={{
                 maxWidth: 160,
                 maxHeight: 72,

@@ -1,6 +1,23 @@
 import React, { useRef, useState } from 'react';
 import api from '../../utils/api';
 
+// Defense in depth: even though the server sanitizes companyLogo on every PUT,
+// admins click `<a href={companyLogo}>` here. A historical `javascript:` value
+// stored before the server-side sanitizer landed could still execute in the
+// admin session. Refuse to render an anchor for anything that isn't an
+// http(s) URL on the logo path.
+function isSafeLogoUrl(url) {
+  if (typeof url !== 'string' || !url) return false;
+  if (url.startsWith('/api/drink-plans/t/')) return true;
+  try {
+    const u = new URL(url);
+    return (u.protocol === 'https:' || u.protocol === 'http:')
+      && u.pathname.startsWith('/api/drink-plans/t/');
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Admin-side logo widget on EventDetailPage. Shows the uploaded logo for a
  * drink plan regardless of menu type, with Replace, Remove, and Download
@@ -65,7 +82,7 @@ export default function EventDetailPlanLogo({ planId, companyLogo, onChange }) {
       />
       {companyLogo ? (
         <div className="admin-plan-logo-row">
-          <img src={companyLogo} alt="Client logo" className="admin-plan-logo-thumb" />
+          <img src={isSafeLogoUrl(companyLogo) ? companyLogo : ''} alt="Client logo" className="admin-plan-logo-thumb" />
           <div className="admin-plan-logo-actions">
             <button
               type="button"
@@ -83,14 +100,16 @@ export default function EventDetailPlanLogo({ planId, companyLogo, onChange }) {
             >
               Remove
             </button>
-            <a
-              href={companyLogo}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-ghost btn-sm"
-            >
-              Download original
-            </a>
+            {isSafeLogoUrl(companyLogo) && (
+              <a
+                href={companyLogo}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn btn-ghost btn-sm"
+              >
+                Download original
+              </a>
+            )}
           </div>
         </div>
       ) : (

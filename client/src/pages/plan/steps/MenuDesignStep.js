@@ -177,8 +177,9 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
         {selections.menuStyle === 'custom' && (
           <>
             <div className="form-group">
-              <label className="form-label">Your event theme, colors, or overall vibe</label>
+              <label className="form-label" htmlFor="menu-theme-input">Your event theme, colors, or overall vibe</label>
               <textarea
+                id="menu-theme-input"
                 className="form-textarea"
                 rows={3}
                 placeholder="E.g., rustic fall colors, elegant black and gold, tropical vibes, garden party..."
@@ -188,8 +189,9 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
             </div>
 
             <div className="form-group">
-              <label className="form-label">Any drink names you'd like included?</label>
+              <label className="form-label" htmlFor="drink-naming-input">Any drink names you'd like included?</label>
               <textarea
+                id="drink-naming-input"
                 className="form-textarea"
                 rows={3}
                 placeholder="E.g., rename 'Old Fashioned' to 'The Groom's Go-To', or let us get creative..."
@@ -199,8 +201,9 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
             </div>
 
             <div className="form-group">
-              <label className="form-label">Any other inspiration or preferences for the menu design?</label>
+              <label className="form-label" htmlFor="menu-design-notes-input">Any other inspiration or preferences for the menu design?</label>
               <textarea
+                id="menu-design-notes-input"
                 className="form-textarea"
                 rows={3}
                 placeholder="E.g., we have a Pinterest board, match our invitation style, include our monogram..."

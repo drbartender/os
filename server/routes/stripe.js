@@ -904,9 +904,12 @@ router.post('/webhook', asyncHandler(async (req, res) => {
               SET status = 'balance_paid',
                   amount_paid = total_price,
                   payment_type = 'full'
-              WHERE id = $1 AND status NOT IN ('balance_paid', 'confirmed')
+              WHERE id = $1 AND status NOT IN ('balance_paid', 'confirmed', 'archived')
             `, [proposalId]);
           } else if (paymentType === 'balance') {
+            // Guard archived too — an admin can archive a proposal between the
+            // client opening Stripe and the webhook landing. Reviving it would
+            // break the documented archived → only-draft state machine.
             await dbClient.query(`
               UPDATE proposals
               SET status = 'balance_paid',
@@ -929,7 +932,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
               const totalPrice = Number(updateRes.rows[0].total_price);
               if (newAmountPaid >= totalPrice) {
                 await dbClient.query(
-                  "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed')",
+                  "UPDATE proposals SET status = 'balance_paid' WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')",
                   [proposalId]
                 );
               }
@@ -963,7 +966,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
               SET status = 'deposit_paid',
                   amount_paid = deposit_amount,
                   payment_type = 'deposit'
-              WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')
+              WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'archived')
             `, [proposalId]);
           }
 
@@ -1301,7 +1304,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 
         if (isFirstDelivery) {
           await dbClient.query(
-            "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed')",
+            "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'archived')",
             [proposalId]
           );
           await dbClient.query(

@@ -126,17 +126,34 @@ function NewSelections({ plan, sel, cocktails, mocktails }) {
         </div>
       )}
 
-      {/* Menu Design */}
-      {sel.customMenuDesign === true && (
-        <div className="mb-2">
-          <p className="mb-1"><strong>Custom Menu Design:</strong> Yes</p>
-          {sel.menuTheme && <p className="text-muted mb-1">Theme: {sel.menuTheme}</p>}
-          {sel.drinkNaming && <p className="text-muted mb-1">Custom naming: {sel.drinkNaming}</p>}
-          {sel.menuDesignNotes && <p className="text-muted mb-1">Design notes: {sel.menuDesignNotes}</p>}
-        </div>
-      )}
-      {sel.customMenuDesign === false && (
-        <p className="mb-1"><strong>Custom Menu Design:</strong> No</p>
+      {/* Menu Design — three-way (custom / house / none) post-2026-05-20.
+          Legacy plans wrote `customMenuDesign: true|false` and no `menuStyle`;
+          map them into the new buckets so already-saved plans still render. */}
+      {(() => {
+        const menuStyle = sel.menuStyle
+          ?? (sel.customMenuDesign === true ? 'custom'
+            : sel.customMenuDesign === false ? 'none'
+            : null);
+        if (menuStyle === 'custom') {
+          return (
+            <div className="mb-2">
+              <p className="mb-1"><strong>Menu Design:</strong> Custom Menu Design</p>
+              {sel.menuTheme && <p className="text-muted mb-1">Theme: {sel.menuTheme}</p>}
+              {sel.drinkNaming && <p className="text-muted mb-1">Custom naming: {sel.drinkNaming}</p>}
+              {sel.menuDesignNotes && <p className="text-muted mb-1">Design notes: {sel.menuDesignNotes}</p>}
+            </div>
+          );
+        }
+        if (menuStyle === 'house') {
+          return <p className="mb-1"><strong>Menu Design:</strong> Standard Menu (Dr. Bartender branded)</p>;
+        }
+        if (menuStyle === 'none') {
+          return <p className="mb-1"><strong>Menu Design:</strong> No printed menu</p>;
+        }
+        return null;
+      })()}
+      {sel.additionalNotes && (
+        <p className="mb-1"><strong>Anything else:</strong> <span className="text-muted">{sel.additionalNotes}</span></p>
       )}
 
       {/* Logistics */}

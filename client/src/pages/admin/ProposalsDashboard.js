@@ -12,7 +12,7 @@ import ClickableRow from '../../components/ClickableRow';
 
 // Mirrors `proposals_status_check` in server/db/schema.sql. Keep in sync —
 // the constraint allows draft/sent/viewed/modified/accepted/deposit_paid/
-// balance_paid/confirmed/completed/cancelled. ('declined' is not in the
+// balance_paid/confirmed/completed/archived. ('declined' is not in the
 // constraint but appears here as a safety entry — the sign endpoint never
 // writes it; remove if unused after one full deploy cycle.)
 const STATUS = {
@@ -25,7 +25,7 @@ const STATUS = {
   balance_paid: { label: 'Paid in Full', kind: 'ok' },
   confirmed:    { label: 'Confirmed',    kind: 'ok' },
   completed:    { label: 'Completed',    kind: 'neutral' },
-  cancelled:    { label: 'Cancelled',    kind: 'danger' },
+  archived:     { label: 'Archived',     kind: 'neutral' },
   declined:     { label: 'Declined',     kind: 'danger' },
 };
 
@@ -34,7 +34,7 @@ export default function ProposalsDashboard() {
   const toast = useToast();
 
   const [proposals, setProposals] = useState([]);
-  const [counts, setCounts] = useState({ active: 0, draft: 0, accepted: 0, paid: 0 });
+  const [counts, setCounts] = useState({ active: 0, draft: 0, accepted: 0, paid: 0, archived: 0 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('active');
@@ -44,11 +44,12 @@ export default function ProposalsDashboard() {
   // paid proposals (which migrate to Events) stay reachable via the Paid tab
   // without client-side post-filtering of a giant payload.
   const tabToQuery = useMemo(() => ({
-    active: '?view=active',
-    draft:  '?status=draft',
-    won:    '?status=accepted',
-    paid:   '?view=paid',
-    all:    '?view=all',
+    active:  '?view=active',
+    draft:   '?status=draft',
+    won:     '?status=accepted',
+    paid:    '?view=paid',
+    archive: '?view=archive',
+    all:     '?view=all',
   }), []);
 
   // Tab counts come from /dashboard-stats. Fetched once on mount because the
@@ -65,6 +66,7 @@ export default function ProposalsDashboard() {
           draft:    pipeByKey.draft || 0,
           accepted: pipeByKey.accepted || 0,
           paid:     r.data?.paidCount || 0,
+          archived: r.data?.archivedCount || 0,
         });
       })
       .catch(() => { /* leave counts at zero — graceful degradation */ });
@@ -108,11 +110,12 @@ export default function ProposalsDashboard() {
   }, [proposals, search]);
 
   const tabs = useMemo(() => ([
-    { id: 'active', label: 'Active',   count: counts.active },
-    { id: 'draft',  label: 'Draft',    count: counts.draft },
-    { id: 'won',    label: 'Accepted', count: counts.accepted },
-    { id: 'paid',   label: 'Paid',     count: counts.paid },
-    { id: 'all',    label: 'All' },
+    { id: 'active',  label: 'Active',   count: counts.active },
+    { id: 'draft',   label: 'Draft',    count: counts.draft },
+    { id: 'won',     label: 'Accepted', count: counts.accepted },
+    { id: 'paid',    label: 'Paid',     count: counts.paid },
+    { id: 'archive', label: 'Archived', count: counts.archived },
+    { id: 'all',     label: 'All' },
   ]), [counts]);
 
   // Paid statuses surface a "View event" jump-link so admins can move from a

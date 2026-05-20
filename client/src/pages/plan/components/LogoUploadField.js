@@ -55,10 +55,11 @@ export default function LogoUploadField({ companyLogo, onUploadSuccess }) {
 
   return (
     <div className="logo-upload">
-      <label className="form-label">Add your logo (optional)</label>
+      <label className="form-label" htmlFor="logo-upload-input">Add your logo (optional)</label>
       <p className="logo-upload-help">For corporate events or branded weddings.</p>
 
       <input
+        id="logo-upload-input"
         ref={fileInputRef}
         type="file"
         accept="image/png,image/jpeg"

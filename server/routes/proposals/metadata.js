@@ -167,7 +167,7 @@ router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (
 
   const [
     moneyR, outR, sentR, accR, wrR, ttaR, lostR, pipeOutR, revR,
-    pipelineR, moneyPriorR, outPriorR, paidCntR,
+    pipelineR, moneyPriorR, outPriorR, paidCntR, archivedCntR,
   ] = await Promise.all([
     pool.query(money.sql, money.params),
     pool.query(out.sql, out.params),
@@ -185,6 +185,7 @@ router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (
     moneyPrior ? pool.query(moneyPrior.sql, moneyPrior.params) : Promise.resolve(null),
     outPrior ? pool.query(outPrior.sql, outPrior.params) : Promise.resolve(null),
     pool.query(paidCnt.sql, paidCnt.params),
+    pool.query(`SELECT COUNT(*)::int AS count FROM proposals WHERE status = 'archived'`),
   ]);
 
   const PIPELINE_ORDER = [
@@ -234,6 +235,7 @@ router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (
     revenue: revR.rows,
     pipeline,
     paidCount: paidCntR.rows[0].count,
+    archivedCount: archivedCntR.rows[0].count,
   });
 }));
 

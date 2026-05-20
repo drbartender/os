@@ -310,9 +310,15 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
           const name = candidate.preferred_name || 'Team member';
           const eventTypeLabel = getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom });
           const eventCtx = shift.client_name ? `${eventTypeLabel} at ${shift.client_name}` : `${eventTypeLabel}`;
+          // PII discipline: SMS persists in Twilio's console indefinitely and is
+          // queryable by anyone with Twilio access. Avoid sending the full venue
+          // street address (often a private residence) to bartender candidates
+          // here — the city/state is enough to confirm geography. Full address
+          // is sent later via the dispatch email after they've accepted.
+          const cityState = [shift.city, shift.state].filter(Boolean).join(', ');
           const msg = `Hey ${name}! You've been approved for the ${eventCtx} on ${shift.event_date}.` +
             (shift.start_time ? ` Time: ${shift.start_time}${shift.end_time ? ' - ' + shift.end_time : ''}.` : '') +
-            (shift.location ? ` Location: ${shift.location}.` : '') +
+            (cityState ? ` In ${cityState}.` : '') +
             ` — Dr. Bartender`;
           await sendSMS({ to: phone, body: msg });
         }

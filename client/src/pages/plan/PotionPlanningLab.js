@@ -109,8 +109,11 @@ export default function PotionPlanningLab() {
   const [activeModules, setActiveModules] = useState(DEFAULT_ACTIVE_MODULES);
   const [moduleQueue, setModuleQueue] = useState([]);
 
-  // Form selections
-  const [selections, setSelections] = useState(DEFAULT_SELECTIONS);
+  // Form selections. DEFAULT_SELECTIONS contains nested arrays/objects
+  // (logistics, addOns, syrupSelections); a single shared reference across
+  // mounts would let in-place mutations on those nested values pollute the
+  // module-level default. structuredClone gives every mount its own copy.
+  const [selections, setSelections] = useState(() => structuredClone(DEFAULT_SELECTIONS));
 
   // Load plan + cocktails + mocktails
   useEffect(() => {
