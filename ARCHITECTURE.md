@@ -231,7 +231,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 ### Proposals — `/api/proposals`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/` | Admin | List proposals with filters (status, search). Default excludes paid + cancelled (those appear in Events / archive) |
+| GET | `/` | Admin | List proposals with filters (status, search). Default excludes paid + archived (those appear in Events / archive) |
 | GET | `/financials` | Admin | Aggregated revenue + payments for FinancialsDashboard. Accepts `?from=&to=&basis=` (booked\|scheduled\|paid) for date-range + lens filtering. |
 | GET | `/dashboard-stats` | Admin | Server-side aggregations (booked / collected / outstanding / funnel / pipeline / monthly revenue series) for the admin home. Accepts `?from=&to=&basis=` for date-range + lens filtering; prior-period deltas included. |
 | POST | `/` | Admin | Create proposal (auto-calculates pricing, creates client if needed) |
@@ -581,8 +581,8 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `setup_minutes_before` (nullable INTEGER) — crew arrival/setup lead time before service start. **Back-of-house only — never exposed on public token/proposal/invoice surfaces** (the `/t/:token` allowlist deliberately omits it). NULL ⇒ derive the default at read time: **90 for hosted (per-guest) packages, 60 otherwise** (`server/utils/setupTime.js`, mirrored client-side). Admin-adjustable via `PATCH /:id` (undefined/null sentinel like `total_price_override` — explicit `null` resets to the package default; never COALESCEd). Synced into `shifts.setup_minutes_before` by `createEventShifts` / `syncShiftsFromProposal`. A manual override **persists across package changes**; set it to NULL to fall back to the new package's default (90 hosted / 60 else). `GET /:id` also returns a server-derived `setup_time_display` (service start − effective minutes, 12-hour). Validation: integer 0–600 inclusive.
 - `pricing_snapshot` (JSONB — full pricing breakdown at time of creation)
 - `class_options` (JSONB — nullable) — set for class-category bookings; shape: `{ spirit_category: 'whiskey_bourbon' | 'tequila_mezcal' | null, top_shelf_requested: bool }`. Written only by `POST /api/proposals/public/submit` via a whitelist; other writers must preserve the same shape.
-- `total_price`, `status`: draft | sent | viewed | modified | accepted | deposit_paid | balance_paid | confirmed | completed | cancelled | archived
-- `archive_reason` (TEXT, nullable) — only set when `status = 'archived'`. CHECK-constrained to `no_hire | client_cancelled | we_cancelled | event_completed | other`. Task 2 of the automated-communication migration backfills existing `cancelled` rows to `archived`; both values remain valid in the enum transiently.
+- `total_price`, `status`: draft | sent | viewed | modified | accepted | deposit_paid | balance_paid | confirmed | completed | archived
+- `archive_reason` (TEXT, nullable) — only set when `status = 'archived'`. CHECK-constrained to `no_hire | client_cancelled | we_cancelled | event_completed | other`. The legacy `cancelled` status was migrated to `archived` with `archive_reason = 'client_cancelled'` in Task 2 of the automated-communication rollout; the enum no longer accepts `cancelled`.
 - `event_timezone` (TEXT, NOT NULL, default `'America/Chicago'`) — IANA zone used for scheduling reminder communications and any future local-time renders.
 - Client signature: `client_signed_name`, `client_signature_data`, `client_signed_at`
 - Payment: `payment_type` (deposit | full), `autopay_enrolled`, `deposit_amount`, `amount_paid`, `balance_due_date`

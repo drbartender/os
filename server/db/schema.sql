@@ -2160,8 +2160,10 @@ CREATE INDEX IF NOT EXISTS idx_proposal_payments_created_at ON proposal_payments
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS event_timezone TEXT NOT NULL DEFAULT 'America/Chicago';
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS archive_reason TEXT;
 
--- Status enum gets 'archived' added. Existing 'cancelled' values stay valid during migration;
--- Task 2 migrates them to 'archived' and Task 1 leaves both allowed transiently.
+-- Status enum gets 'archived' added. The transitional constraint below briefly
+-- allows BOTH 'cancelled' and 'archived' so the migration UPDATE further down can
+-- flip existing rows without violating the constraint. The final tightening
+-- block (after the UPDATE) drops 'cancelled' from the enum.
 DO $$ BEGIN
   ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_status_check;
   ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
@@ -2173,4 +2175,29 @@ DO $$ BEGIN
   ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_archive_reason_check;
   ALTER TABLE proposals ADD CONSTRAINT proposals_archive_reason_check
     CHECK (archive_reason IS NULL OR archive_reason IN ('no_hire','client_cancelled','we_cancelled','event_completed','other'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- ─── Automated Communication: migrate cancelled → archived ───────
+-- One-time migration. Idempotent because it filters on status = 'cancelled'.
+-- After this runs, the 'cancelled' value should never appear in proposals.status.
+DO $$
+DECLARE
+  migrated_count INTEGER;
+BEGIN
+  UPDATE proposals
+  SET status = 'archived',
+      archive_reason = 'client_cancelled'
+  WHERE status = 'cancelled';
+
+  GET DIAGNOSTICS migrated_count = ROW_COUNT;
+  IF migrated_count > 0 THEN
+    RAISE NOTICE 'Migrated % cancelled proposals to archived', migrated_count;
+  END IF;
+END $$;
+
+-- Once migration runs, tighten the constraint to drop 'cancelled'
+DO $$ BEGIN
+  ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_status_check;
+  ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
+    CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed','archived'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;

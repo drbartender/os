@@ -175,7 +175,7 @@ router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
       event_location = COALESCE($13, event_location)
     WHERE id = $7
       AND client_signed_at IS NULL
-      AND status NOT IN ('accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'cancelled')
+      AND status NOT IN ('accepted', 'deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived')
     RETURNING id
   `, [
     client_signed_name, client_signature_data, client_signature_method, ip, userAgent,

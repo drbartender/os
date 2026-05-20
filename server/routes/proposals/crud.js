@@ -18,22 +18,22 @@ const router = express.Router();
 
 // Status state machine — enforced on PATCH /:id/status unless ?force=true (admin only).
 // Transitions are one-way except for admin-backed corrections via force.
-// `cancelled` is terminal: archive endpoint for duplicates/abandoned proposals before payment.
-// Not reachable from paid statuses (deposit_paid/balance_paid/confirmed/completed) — those
-// reflect real money and cancelling them via a state transition would desync the ledger.
+// `archived` is the soft-terminal bucket: shelf for duplicates/abandoned/client-cancelled
+// proposals before payment. Recoverable — `archived → draft` brings it back into the active
+// pipeline. Not reachable from paid statuses (deposit_paid/balance_paid/confirmed/completed) —
+// those reflect real money and archiving them via a state transition would desync the ledger.
 // Admins can ?force=true to bypass for ledger-corrected refunds.
 const STATUS_TRANSITIONS = {
-  draft:        ['sent', 'archived', 'cancelled'],
-  sent:         ['viewed', 'accepted', 'modified', 'draft', 'cancelled'],
-  viewed:       ['accepted', 'modified', 'sent', 'cancelled'],
-  modified:     ['sent', 'accepted', 'cancelled'],
-  accepted:     ['deposit_paid', 'confirmed', 'cancelled'],
+  draft:        ['sent', 'archived'],
+  sent:         ['viewed', 'accepted', 'modified', 'draft', 'archived'],
+  viewed:       ['accepted', 'modified', 'sent', 'archived'],
+  modified:     ['sent', 'accepted', 'archived'],
+  accepted:     ['deposit_paid', 'confirmed', 'archived'],
   deposit_paid: ['balance_paid', 'confirmed', 'completed'],
   balance_paid: ['completed'],
   confirmed:    ['completed', 'deposit_paid', 'balance_paid'],
   completed:    [],
   archived:     ['draft'],
-  cancelled:    [],
 };
 
 const TOTAL_PRICE_OVERRIDE_MAX = 1_000_000;
@@ -72,12 +72,12 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   } else if (view === 'paid') {
     query += ` AND p.status IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed')`;
   } else if (view === 'archive') {
-    query += ` AND p.status = 'cancelled'`;
+    query += ` AND p.status = 'archived'`;
   } else if (view === 'all') {
-    query += ` AND p.status != 'cancelled'`;
+    query += ` AND p.status != 'archived'`;
   } else {
-    // Default 'active' bucket — exclude paid (moved to Events) and cancelled (archive).
-    query += ` AND p.status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed', 'cancelled')`;
+    // Default 'active' bucket — exclude paid (moved to Events) and archived.
+    query += ` AND p.status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'completed', 'archived')`;
   }
   if (search) {
     params.push(`%${search}%`);

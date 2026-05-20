@@ -88,7 +88,7 @@ function toDollars(value, { fromCents = false } = {}) {
 
 // ── SQL builders. Each returns { sql, params }. `f` = { from, to, basis }. ──
 
-const NOT_DEAD = "status <> 'cancelled'";
+const NOT_DEAD = "status <> 'archived'";
 
 function qSent(f) {
   const params = [];
@@ -115,8 +115,8 @@ function qWinRate(f) {
   const c = dateClause('sent_at', f.from, f.to, params);
   return {
     sql: `SELECT COUNT(*)::int AS sent_cohort,
-                 COUNT(*) FILTER (WHERE accepted_at IS NOT NULL AND status <> 'cancelled')::int AS accepted_from_cohort,
-                 COUNT(*) FILTER (WHERE accepted_at IS NULL AND status <> 'cancelled')::int AS pending
+                 COUNT(*) FILTER (WHERE accepted_at IS NOT NULL AND status <> 'archived')::int AS accepted_from_cohort,
+                 COUNT(*) FILTER (WHERE accepted_at IS NULL AND status <> 'archived')::int AS pending
           FROM proposals WHERE sent_at IS NOT NULL${c}`,
     params,
   };
@@ -141,7 +141,7 @@ function qLostValue(f) {
   return {
     sql: `SELECT COALESCE(SUM(total_price),0)::float8 AS value
           FROM proposals
-          WHERE sent_at IS NOT NULL AND status = 'cancelled'${c}`,
+          WHERE sent_at IS NOT NULL AND status = 'archived'${c}`,
     params,
   };
 }
