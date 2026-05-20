@@ -314,7 +314,7 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
             (shift.start_time ? ` Time: ${shift.start_time}${shift.end_time ? ' - ' + shift.end_time : ''}.` : '') +
             (shift.location ? ` Location: ${shift.location}.` : '') +
             ` — Dr. Bartender`;
-          await sendSMS(phone, msg);
+          await sendSMS({ to: phone, body: msg });
         }
       } catch (smsErr) {
         console.error(`[AutoAssign] SMS failed for user ${candidate.user_id}:`, smsErr.message);
