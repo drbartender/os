@@ -1,4 +1,5 @@
 import React from 'react';
+import ScopeBanner from '../components/ScopeBanner';
 
 const BALANCE_OPTIONS = [
   { value: 'mostly_beer', label: 'Mostly Beer' },
@@ -38,6 +39,11 @@ export default function HostedGuestPrefsStep({
 
   return (
     <div>
+      <ScopeBanner
+        tone="hosted"
+        title="We're providing"
+        body="Pick what you want served. No beverage shopping on your end."
+      />
       <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
         <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
           Guest Preferences

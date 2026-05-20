@@ -12407,3 +12407,80 @@ html[data-app="admin-os"] .field-block {
 .potion-app .serving-type-desc  { color: rgba(28,22,16,0.7); }
 .potion-app .drink-tile-name    { color: var(--deep-brown); }
 .potion-app .drink-tile-desc    { color: rgba(28,22,16,0.6); }
+
+/* Scope banners: three tones */
+.potion-app .potion-scope {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  align-items: stretch;
+  gap: 14px;
+  padding: 14px 18px 14px 14px;
+  margin: 0 0 14px;
+  background: rgba(184,146,74,0.10);
+  border: 1px solid rgba(184,146,74,0.40);
+  border-radius: var(--radius);
+  color: var(--deep-brown);
+  position: relative;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+}
+.potion-app .potion-scope-seal {
+  display: flex; align-items: center; justify-content: center;
+  width: 44px; min-height: 44px;
+  border-radius: 50%;
+  background: rgba(184,146,74,0.18);
+  border: 1px solid rgba(184,146,74,0.55);
+  color: var(--brass);
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  line-height: 1;
+  align-self: start;
+  margin-top: 2px;
+}
+.potion-app .potion-scope-body { min-width: 0; }
+
+.potion-app .potion-scope h3.potion-scope-title,
+.potion-app .potion-scope .potion-scope-title {
+  font-family: var(--font-display);
+  font-size: 1.08rem;
+  color: var(--deep-brown);
+  margin: 0 0 4px;
+  line-height: 1.2;
+  text-transform: none;
+  letter-spacing: 0.01em;
+}
+.potion-app .potion-scope p.potion-scope-text,
+.potion-app .potion-scope .potion-scope-text {
+  margin: 0;
+  font-size: 0.94rem;
+  line-height: 1.5;
+  color: rgba(28,22,16,0.82);
+}
+.potion-app .potion-scope .potion-scope-text strong { color: var(--deep-brown); }
+
+/* Tone: hosted (we provide) */
+.potion-app .potion-scope.hosted {
+  background: rgba(29,140,137,0.10);
+  border-color: rgba(29,140,137,0.40);
+}
+.potion-app .potion-scope.hosted .potion-scope-seal {
+  background: rgba(29,140,137,0.16);
+  border-color: rgba(29,140,137,0.55);
+  color: var(--amber);
+}
+.potion-app .potion-scope.hosted h3.potion-scope-title,
+.potion-app .potion-scope.hosted .potion-scope-title { color: var(--deep-brown); }
+
+/* Tone: aside (not part of shopping) */
+.potion-app .potion-scope.aside {
+  background: rgba(28,22,16,0.05);
+  border-color: rgba(28,22,16,0.18);
+}
+.potion-app .potion-scope.aside .potion-scope-seal {
+  background: rgba(28,22,16,0.06);
+  border-color: rgba(28,22,16,0.22);
+  color: var(--text-muted);
+}
+.potion-app .potion-scope.aside h3.potion-scope-title,
+.potion-app .potion-scope.aside .potion-scope-title { color: var(--text-muted); }
+.potion-app .potion-scope.aside p.potion-scope-text,
+.potion-app .potion-scope.aside .potion-scope-text { color: rgba(28,22,16,0.66); }

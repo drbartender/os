@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import MenuSamplesModal from '../../../components/MenuSamplesModal';
 import { MENU_SAMPLES } from '../../../data/menuSamples';
+import ScopeBanner from '../components/ScopeBanner';
 
 export default function MenuDesignStep({ selections, activeModules, cocktails = [], mocktails = [], onChange }) {
   const selectedDrinks = cocktails.filter(d => (selections.signatureDrinks || []).includes(d.id));
@@ -9,6 +10,11 @@ export default function MenuDesignStep({ selections, activeModules, cocktails = 
 
   return (
     <div>
+      <ScopeBanner
+        tone="aside"
+        title="Not part of your shopping list"
+        body="How you'd like your drink menu displayed at the event."
+      />
       <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
         <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
           Menu Design

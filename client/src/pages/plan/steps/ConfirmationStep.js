@@ -6,6 +6,7 @@ import { QUICK_PICKS } from '../data/servingTypes';
 import { formatPhoneInput } from '../../../utils/formatPhone';
 import { SYRUPS, calculateSyrupCost, getBottlesPerSyrup, getAllUniqueSyrups } from '../../../data/syrups';
 import { API_BASE_URL as BASE_URL } from '../../../utils/api';
+import ScopeBanner from '../components/ScopeBanner';
 
 // Module-scoped lazy init — fetch the publishable key once and reuse the
 // loadStripe() promise across every mount of this component.
@@ -252,6 +253,19 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
 
   return (
     <div>
+      {plan?.package_category === 'hosted' ? (
+        <ScopeBanner
+          tone="hosted"
+          title="You're all set"
+          body="We'll stock everything based on your picks. No shopping on your end."
+        />
+      ) : (
+        <ScopeBanner
+          tone="shopping"
+          title="Your shopping list"
+          body="After you submit, we'll generate your final shopping list from everything you've picked. Anything you've added as an upgrade will come from us instead. Menu design isn't on the list."
+        />
+      )}
       <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
         <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
           Here's Your Bar Plan

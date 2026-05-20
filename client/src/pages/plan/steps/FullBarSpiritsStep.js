@@ -1,8 +1,9 @@
 import React from 'react';
+import ScopeBanner from '../components/ScopeBanner';
 
 const SPIRITS = ['Vodka', 'Gin', 'Rum', 'Tequila', 'Whiskey', 'Scotch'];
 
-export default function FullBarSpiritsStep({ selections, onChange }) {
+export default function FullBarSpiritsStep({ selections, onChange, plan }) {
   const spirits = selections.spirits || [];
 
   const toggleArray = (field, value) => {
@@ -35,6 +36,19 @@ export default function FullBarSpiritsStep({ selections, onChange }) {
 
   return (
     <div>
+      {plan?.package_category === 'hosted' ? (
+        <ScopeBanner
+          tone="hosted"
+          title="We're providing"
+          body="Pick what you want served. No beverage shopping on your end."
+        />
+      ) : (
+        <ScopeBanner
+          tone="shopping"
+          title="Builds your shopping list"
+          body="Your choices here turn into your shopping list, down to the ice cube. We'll tell you exactly what and how much to buy."
+        />
+      )}
       <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
         <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
           Spirits &amp; Mixers

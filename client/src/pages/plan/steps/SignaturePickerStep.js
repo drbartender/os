@@ -4,6 +4,7 @@ import { getUpgradesForDrink, isUpgradeSelectedForDrink } from '../data/drinkUpg
 import { computeCocktailGap, computeGapCost } from '../data/packageGaps';
 import { useToast } from '../../../context/ToastContext';
 import MakeItYoursPanel from './MakeItYoursPanel';
+import ScopeBanner from '../components/ScopeBanner';
 
 export default function SignaturePickerStep({
   selected,
@@ -122,6 +123,19 @@ export default function SignaturePickerStep({
 
   return (
     <div>
+      {plan?.package_category === 'hosted' ? (
+        <ScopeBanner
+          tone="hosted"
+          title="We're providing"
+          body="Pick what you want served. No beverage shopping on your end."
+        />
+      ) : (
+        <ScopeBanner
+          tone="shopping"
+          title="Builds your shopping list"
+          body="Your choices here turn into your shopping list, down to the ice cube. We'll tell you exactly what and how much to buy."
+        />
+      )}
       <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
         <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
           Signature Cocktails

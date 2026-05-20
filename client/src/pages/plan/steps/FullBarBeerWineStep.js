@@ -1,4 +1,5 @@
 import React from 'react';
+import ScopeBanner from '../components/ScopeBanner';
 
 const BEER_STYLES = ['Light / Easy Drinking', 'Craft / Local', 'IPA', 'Seltzer', 'Non-Alcoholic'];
 const WINE_STYLES = ['Red', 'White', 'Sparkling', 'Other'];
@@ -10,7 +11,7 @@ const BALANCE_OPTIONS = [
   { value: 'help_me_decide', label: 'Help me decide' },
 ];
 
-export default function FullBarBeerWineStep({ selections, onChange }) {
+export default function FullBarBeerWineStep({ selections, onChange, plan }) {
   const beerFromFullBar = selections.beerFromFullBar || [];
   const wineFromFullBar = selections.wineFromFullBar || [];
 
@@ -46,6 +47,19 @@ export default function FullBarBeerWineStep({ selections, onChange }) {
 
   return (
     <div>
+      {plan?.package_category === 'hosted' ? (
+        <ScopeBanner
+          tone="hosted"
+          title="We're providing"
+          body="Pick what you want served. No beverage shopping on your end."
+        />
+      ) : (
+        <ScopeBanner
+          tone="shopping"
+          title="Builds your shopping list"
+          body="Your choices here turn into your shopping list, down to the ice cube. We'll tell you exactly what and how much to buy."
+        />
+      )}
       <div className="card" style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
         <h2 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)' }}>
           Beer &amp; Wine

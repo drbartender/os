@@ -835,6 +835,7 @@ export default function PotionPlanningLab() {
           <FullBarSpiritsStep
             selections={selections}
             onChange={updateSelections}
+            plan={plan}
           />
         );
       case MODULE_STEP_MAP.fullBarBeerWine:
@@ -842,6 +843,7 @@ export default function PotionPlanningLab() {
           <FullBarBeerWineStep
             selections={selections}
             onChange={updateSelections}
+            plan={plan}
           />
         );
       case MODULE_STEP_MAP.beerWineOnly:
@@ -849,6 +851,7 @@ export default function PotionPlanningLab() {
           <BeerWineStep
             selections={selections}
             onChange={updateSelections}
+            plan={plan}
           />
         );
       case MODULE_STEP_MAP.menuDesign:
