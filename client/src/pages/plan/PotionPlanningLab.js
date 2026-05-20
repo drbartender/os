@@ -46,9 +46,11 @@ const DEFAULT_SELECTIONS = {
   syrupSelfProvided: [],
   addOns: {},
   customMenuDesign: null,
+  menuStyle: null,
   menuTheme: '',
   drinkNaming: '',
   menuDesignNotes: '',
+  additionalNotes: '',
   logistics: {
     dayOfContact: { name: '', phone: '' },
     parking: '',
@@ -193,6 +195,15 @@ export default function PotionPlanningLab() {
                 }
               }
             }
+          }
+
+          // Migrate legacy customMenuDesign boolean to three-value menuStyle.
+          // Only runs when menuStyle has not been set yet (idempotent).
+          // customMenuDesign is preserved in the JSON for any consumer reading old plans.
+          if (savedSel.menuStyle === undefined) {
+            if (savedSel.customMenuDesign === true) savedSel.menuStyle = 'custom';
+            else if (savedSel.customMenuDesign === false) savedSel.menuStyle = 'none';
+            else savedSel.menuStyle = null;
           }
 
           // Legacy shim: a few in-flight clients explored under the old
@@ -727,9 +738,9 @@ export default function PotionPlanningLab() {
                 What happens next?
               </p>
               <p className="text-muted text-small">
-                {selections.customMenuDesign === true
-                  ? "We'll use your selections to create a shopping list, custom menu, and BEO (Banquet Event Order) for your event. Expect to hear from us within 2 business days!"
-                  : "We'll use your selections to create a shopping list and BEO (Banquet Event Order) for your event. Expect to hear from us within 2 business days!"}
+                {(selections.menuStyle === 'custom' || selections.menuStyle === 'house')
+                  ? "We'll use your selections to create a shopping list, a menu, and a BEO (Banquet Event Order) for your event. Expect to hear from us within 2 business days!"
+                  : "We'll use your selections to create a shopping list and a BEO (Banquet Event Order) for your event. Expect to hear from us within 2 business days!"}
               </p>
             </div>
           </div>
