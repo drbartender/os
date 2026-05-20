@@ -9,6 +9,7 @@ import { getPackageItems } from '../../data/packages';
 import { SYRUPS } from '../../data/syrups';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import DrinkPlanCard from '../../components/DrinkPlanCard';
+import EventDetailPlanLogo from './EventDetailPlanLogo';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
@@ -393,6 +394,18 @@ export default function EventDetailPage() {
             fullControls
             guestCount={proposal.guest_count}
           />
+          {drinkPlan && (
+            <EventDetailPlanLogo
+              planId={drinkPlan.id}
+              companyLogo={drinkPlan.selections?.companyLogo || ''}
+              onChange={(updatedSelections) => {
+                // Local update of the in-memory drinkPlan so the thumbnail reflects
+                // the new state immediately. The server has already persisted via the
+                // admin upload/delete route (atomic JSONB merge, no race).
+                setDrinkPlan((prev) => prev ? { ...prev, selections: updatedSelections } : prev);
+              }}
+            />
+          )}
         </div>
       </div>
 
