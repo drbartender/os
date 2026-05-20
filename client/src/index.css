@@ -12220,3 +12220,116 @@ html[data-app="admin-os"] .field-block {
   color: rgba(28,22,16,0.7);
   line-height: 1.45;
 }
+
+/* Drink picker: grid variant (chosen by designer) */
+.potion-app .drink-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.potion-app .drink-tile {
+  cursor: pointer;
+  padding: 16px 14px;
+  background: linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%);
+  border: 1px solid rgba(184,146,74,0.4);
+  border-radius: var(--radius);
+  color: var(--deep-brown);
+  font-family: var(--font-body);
+  text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  position: relative;
+  min-height: 134px;
+}
+.potion-app .drink-tile .drink-card-emoji {
+  font-size: 26px;
+  width: 52px; height: 52px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(184,146,74,0.16);
+  border: 1px solid rgba(184,146,74,0.4);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.potion-app .drink-tile.selected {
+  border: 2px solid var(--amber);
+  padding: 15px 13px;
+  background: linear-gradient(180deg, #E8F0EE 0%, #DCEAE7 100%);
+}
+.potion-app .drink-tile.selected .drink-card-emoji {
+  background: rgba(29,140,137,0.18);
+  border-color: var(--amber);
+}
+.potion-app .drink-tile-name {
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+  color: var(--deep-brown);
+}
+.potion-app .drink-tile-desc {
+  font-size: 0.8rem;
+  color: rgba(28,22,16,0.6);
+  line-height: 1.35;
+}
+
+/* Your-menu: list of selected drinks */
+.potion-app .your-menu-list {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: 10px;
+}
+.potion-app .your-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: rgba(184,146,74,0.10);
+  border: 1px solid rgba(184,146,74,0.32);
+  border-radius: 6px;
+  font-family: var(--font-body);
+  color: var(--deep-brown);
+}
+.potion-app .your-menu-number {
+  font-family: var(--font-display);
+  color: var(--brass);
+  width: 22px; flex-shrink: 0;
+}
+.potion-app .your-menu-emoji { font-size: 18px; }
+.potion-app .your-menu-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.potion-app .your-menu-info strong { font-family: var(--font-display); font-weight: 400; font-size: 1.05rem; color: var(--deep-brown); }
+.potion-app .your-menu-info .text-muted { color: rgba(28,22,16,0.6); font-size: 0.82rem; }
+.potion-app .your-menu-remove {
+  background: transparent;
+  border: 1px solid rgba(28,22,16,0.25);
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.potion-app .your-menu-remove:hover {
+  background: rgba(160,82,45,0.18);
+  border-color: var(--rust);
+  color: var(--rust);
+}
+
+/* Per-drink upgrade chips (plum) under selected drinks */
+.potion-app .your-menu-drink-extras {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 6px 12px 10px 44px;
+  margin-top: -8px;
+}
+.potion-app .your-menu-extra-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px;
+  background: rgba(107,77,122,0.16);
+  color: var(--plum);
+  border: 1px solid rgba(107,77,122,0.4);
+  border-radius: 999px;
+  font-size: 0.78rem;
+}
+.potion-app .your-menu-extra-tag.flair {
+  background: rgba(184,146,74,0.16);
+  color: var(--text-muted);
+  border-color: rgba(184,146,74,0.4);
+}
+
+/* Mobile collapses grid to single column (rare; min-width 180 usually keeps 2 columns) */
+@media (max-width: 380px) {
+  .potion-app .drink-card-grid { grid-template-columns: 1fr; }
+}
