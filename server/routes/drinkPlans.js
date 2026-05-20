@@ -1,4 +1,8 @@
+// claude-allow-large-file
+// Reason: single-resource router for drink_plans. Splitting by sub-resource (token/admin/logo)
+// would scatter shared rate limiters, error types, and JSONB merge patterns across files.
 const express = require('express');
+const path = require('path');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
@@ -9,10 +13,12 @@ const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
+const { ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError } = require('../utils/errors');
 const { ADMIN_URL, PUBLIC_SITE_URL } = require('../utils/urls');
 const { autoGenerateShoppingList } = require('../utils/shoppingListGen');
 const { isDrinkPlanPreBooking } = require('../utils/drinkPlanAccess');
+const { uploadFile, getSignedUrl } = require('../utils/storage');
+const { isValidImageUpload } = require('../utils/fileValidation');
 
 const router = express.Router();
 
@@ -444,6 +450,102 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
   res.json(result.rows[0]);
 }));
 
+/** POST /api/drink-plans/t/:token/logo
+ * Public token-gated logo upload. Accepts multipart with field 'logo'.
+ * Validates magic bytes + size + extension. Uploads to R2 under
+ * drink-plan-logos/<plan-id>-<timestamp>.<ext>. Atomically merges the
+ * URL + filename into selections.companyLogo via Postgres jsonb || operator.
+ * Returns { logoUrl, selections }.
+ */
+router.post('/t/:token/logo', drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
+  const planResult = await pool.query(
+    'SELECT id, status FROM drink_plans WHERE token = $1',
+    [req.params.token]
+  );
+  if (!planResult.rows[0]) throw new NotFoundError('Plan not found.');
+  const plan = planResult.rows[0];
+
+  // Pre-deposit plans render as locked in the planner UI; reject uploads.
+  if (plan.status === 'pending') throw new PermissionError('Plan is locked until deposit is paid.');
+
+  const file = req.files?.logo;
+  if (!file) throw new ValidationError({ logo: 'No logo file uploaded. Use the field name "logo".' });
+  if (file.size > 5 * 1024 * 1024) {
+    throw new ValidationError({ logo: 'Logo must be 5 MB or smaller.' });
+  }
+  if (!isValidImageUpload(file)) {
+    throw new ValidationError({ logo: 'Invalid file type. Use PNG or JPG only.' });
+  }
+
+  const ext = (path.extname(file.name) || '.png').toLowerCase();
+  const safeExt = ['.png', '.jpg', '.jpeg'].includes(ext) ? ext : '.png';
+  const filename = `drink-plan-logos/${plan.id}-${Date.now()}${safeExt}`;
+  await uploadFile(file.data, filename);
+  const logoUrl = `/api/drink-plans/t/${req.params.token}/logo`;
+
+  // Atomic merge into the selections JSONB column using Postgres's || operator.
+  // The merge happens in the database, not in the application, so a concurrent
+  // auto-save PUT from the planner cannot lose the companyLogo / _logoFilename
+  // fields via last-write-wins. The auto-save sees the merged result and
+  // preserves it because it merges its own changes into whatever is current at
+  // its write time. (If both writes target the same key in the JSON, the later
+  // one still wins; but companyLogo is only written by these logo routes, so
+  // there is no contention on that specific key.)
+  const patch = { companyLogo: logoUrl, _logoFilename: filename };
+  const updateResult = await pool.query(
+    `UPDATE drink_plans
+        SET selections = COALESCE(selections, '{}'::jsonb) || $1::jsonb,
+            updated_at = NOW()
+      WHERE id = $2
+      RETURNING selections`,
+    [JSON.stringify(patch), plan.id]
+  );
+
+  res.json({ logoUrl, selections: updateResult.rows[0].selections });
+}));
+
+/** GET /api/drink-plans/t/:token/logo
+ * Public token-gated logo proxy. Returns the R2 object bytes with the
+ * appropriate content-type so both the client preview (unauthenticated
+ * token-gated context) and the admin event detail page (and html2canvas
+ * during PNG export) can fetch the image from a same-origin URL.
+ *
+ * Note: this is intentionally a NEW file-serving pattern that differs from
+ * the existing /api/files/:filename at server/index.js:149 (which is
+ * auth-gated and returns a signed URL the client redirects to). Three
+ * reasons:
+ *   1. The planner client has no JWT (token-gated public access), so the
+ *      existing auth-gated route is unreachable from MenuPreview.
+ *   2. html2canvas during PNG export needs the image at a same-origin URL
+ *      with no redirect dance, or the canvas gets tainted by CORS.
+ *   3. Returning bytes directly with Cache-Control: public, max-age=86400
+ *      gives us browser caching for free.
+ */
+router.get('/t/:token/logo', publicReadLimiter, asyncHandler(async (req, res) => {
+  const planResult = await pool.query(
+    'SELECT selections FROM drink_plans WHERE token = $1',
+    [req.params.token]
+  );
+  if (!planResult.rows[0]) throw new NotFoundError('Plan not found.');
+  const filename = planResult.rows[0].selections?._logoFilename;
+  if (!filename) throw new NotFoundError('No logo uploaded for this plan.');
+
+  const url = await getSignedUrl(filename);
+  const upstream = await fetch(url);
+  if (!upstream.ok) {
+    throw new ExternalServiceError(
+      'r2',
+      new Error(`Upstream returned ${upstream.status}`),
+      'Logo is temporarily unavailable.'
+    );
+  }
+  const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+  const buffer = Buffer.from(await upstream.arrayBuffer());
+  res.set('Content-Type', contentType);
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.send(buffer);
+}));
+
 // ─── Admin routes (auth required) ────────────────────────────────
 
 /** GET /api/drink-plans — list all plans. Exclude selections/shopping_list JSONB blobs
@@ -823,6 +925,74 @@ router.patch('/:id/shopping-list/approve', auth, requireAdminOrManager, asyncHan
   }
 
   res.json({ success: true, approved_at: new Date().toISOString() });
+}));
+
+/** POST /api/drink-plans/:id/logo
+ * Admin-authenticated logo upload by plan ID. Same validation + R2 upload +
+ * atomic JSONB merge as the token-gated route.
+ */
+router.post('/:id/logo', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const planResult = await pool.query(
+    'SELECT id, token FROM drink_plans WHERE id = $1',
+    [req.params.id]
+  );
+  if (!planResult.rows[0]) throw new NotFoundError('Plan not found.');
+  const plan = planResult.rows[0];
+
+  const file = req.files?.logo;
+  if (!file) throw new ValidationError({ logo: 'No logo file uploaded. Use the field name "logo".' });
+  if (file.size > 5 * 1024 * 1024) {
+    throw new ValidationError({ logo: 'Logo must be 5 MB or smaller.' });
+  }
+  if (!isValidImageUpload(file)) {
+    throw new ValidationError({ logo: 'Invalid file type. Use PNG or JPG only.' });
+  }
+
+  const ext = (path.extname(file.name) || '.png').toLowerCase();
+  const safeExt = ['.png', '.jpg', '.jpeg'].includes(ext) ? ext : '.png';
+  const filename = `drink-plan-logos/${plan.id}-${Date.now()}${safeExt}`;
+  await uploadFile(file.data, filename);
+  const logoUrl = `/api/drink-plans/t/${plan.token}/logo`;
+
+  // Atomic merge in the database (same pattern as the token-gated route above).
+  const patch = { companyLogo: logoUrl, _logoFilename: filename };
+  const updateResult = await pool.query(
+    `UPDATE drink_plans
+        SET selections = COALESCE(selections, '{}'::jsonb) || $1::jsonb,
+            updated_at = NOW()
+      WHERE id = $2
+      RETURNING selections`,
+    [JSON.stringify(patch), plan.id]
+  );
+
+  res.json({ logoUrl, selections: updateResult.rows[0].selections });
+}));
+
+/** DELETE /api/drink-plans/:id/logo
+ * Admin-authenticated. Clears selections.companyLogo. Does NOT delete the R2
+ * file (storage cost is negligible; no cleanup job in v1).
+ */
+router.delete('/:id/logo', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Verify plan exists; the DELETE itself is also a no-op-on-missing pattern,
+  // but we want a 404 if the ID is wrong so the admin sees a clear error.
+  const planResult = await pool.query(
+    'SELECT id FROM drink_plans WHERE id = $1',
+    [req.params.id]
+  );
+  if (!planResult.rows[0]) throw new NotFoundError('Plan not found.');
+
+  // Atomic key removal via Postgres jsonb - operator. Strips both companyLogo
+  // and _logoFilename in a single statement; concurrent auto-saves can't race.
+  const updateResult = await pool.query(
+    `UPDATE drink_plans
+        SET selections = COALESCE(selections, '{}'::jsonb) - 'companyLogo' - '_logoFilename',
+            updated_at = NOW()
+      WHERE id = $1
+      RETURNING selections`,
+    [req.params.id]
+  );
+
+  res.json({ selections: updateResult.rows[0].selections });
 }));
 
 /** DELETE /api/drink-plans/:id — delete a plan */

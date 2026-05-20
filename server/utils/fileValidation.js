@@ -23,4 +23,16 @@ function isValidUpload(file) {
   return false;
 }
 
-module.exports = { isValidUpload };
+function isValidImageUpload(file) {
+  if (!file || !file.data || !Buffer.isBuffer(file.data)) return false;
+  const buf = file.data;
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  const pngMagic = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (buf.length >= pngMagic.length && buf.slice(0, pngMagic.length).equals(pngMagic)) return true;
+  // JPEG: FF D8 FF
+  const jpegMagic = Buffer.from([0xff, 0xd8, 0xff]);
+  if (buf.length >= jpegMagic.length && buf.slice(0, jpegMagic.length).equals(jpegMagic)) return true;
+  return false;
+}
+
+module.exports = { isValidUpload, isValidImageUpload };
