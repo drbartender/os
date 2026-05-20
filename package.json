@@ -8,6 +8,7 @@
     "build": "cd client && npm run build",
     "install:all": "npm install && cd client && npm install",
     "seed": "node server/db/seed.js",
+    "admin:create": "node server/scripts/createAdmin.js",
     "lint": "eslint server/",
     "lint:fix": "eslint server/ --fix",
     "audit:check": "npm audit --omit=dev || true",
