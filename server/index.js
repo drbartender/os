@@ -243,34 +243,79 @@ async function start() {
       console.log(`✓ Server running on port ${PORT}`);
 
       // Schedulers run by default on the single primary instance. Set RUN_SCHEDULERS=false
-      // on additional web instances to prevent duplicate Stripe charges / emails / writes.
-      if (process.env.RUN_SCHEDULERS !== 'false') {
-        // Autopay balance scheduler — check hourly for due balances
-        setTimeout(processAutopayCharges, 30000); // initial run after 30s
-        setInterval(processAutopayCharges, 60 * 60 * 1000); // then every hour
+      // on additional web instances to disable ALL schedulers, or use the per-scheduler
+      // env vars (RUN_<SCHEDULER>_SCHEDULER=false) to disable individual ones.
 
-        // Auto-complete events — check hourly for ended, fully-paid events
-        setTimeout(processEventCompletions, 45000); // initial run after 45s
-        setInterval(processEventCompletions, 60 * 60 * 1000); // then every hour
+      const globalScheduleDisabled = process.env.RUN_SCHEDULERS === 'false';
+      function enabled(envVar) {
+        if (globalScheduleDisabled) return false;
+        return process.env[envVar] !== 'false';
+      }
 
-        // Auto-assign scheduler — check hourly for shifts needing auto-assignment
-        setTimeout(processScheduledAutoAssigns, 60000); // initial run after 60s
-        setInterval(processScheduledAutoAssigns, 60 * 60 * 1000); // then every hour
+      const {
+        wrapScheduler,
+        startStaleSchedulerMonitor,
+        clearHealthRow,
+      } = require('./utils/schedulerHealth');
 
-        // Email sequence scheduler — check every 15 min for due drip steps
-        setTimeout(processSequenceSteps, 90000); // initial run after 90s
-        setInterval(processSequenceSteps, 15 * 60 * 1000); // then every 15 minutes
+      // Autopay balance scheduler — check hourly for due balances
+      if (enabled('RUN_AUTOPAY_SCHEDULER')) {
+        const wrapped = wrapScheduler('autopay', 3600, processAutopayCharges);
+        setTimeout(wrapped, 30000);
+        setInterval(wrapped, 60 * 60 * 1000);
+      } else {
+        clearHealthRow('autopay'); // prevent stale-monitor alerts for a disabled job
+      }
 
-        // Quote draft cleanup — expire stale drafts daily
-        setInterval(expireStaleQuoteDrafts, 24 * 60 * 60 * 1000);
-        setTimeout(expireStaleQuoteDrafts, 120000); // initial run after 2 min
+      // Auto-complete events — check hourly for ended, fully-paid events
+      if (enabled('RUN_AUTOCOMPLETE_SCHEDULER')) {
+        const wrapped = wrapScheduler('autocomplete', 3600, processEventCompletions);
+        setTimeout(wrapped, 45000);
+        setInterval(wrapped, 60 * 60 * 1000);
+      } else {
+        clearHealthRow('autocomplete');
+      }
 
-        // Lab Rat test-data cleanup — purge @labrat.test rows older than 24h
-        // hourly so seed-endpoint flood damage steady-states near zero.
-        setTimeout(purgeLabratTestData, 150000); // initial run after 2.5 min
-        setInterval(purgeLabratTestData, 60 * 60 * 1000); // then every hour
+      // Auto-assign scheduler — check hourly for shifts needing auto-assignment
+      if (enabled('RUN_AUTO_ASSIGN_SCHEDULER')) {
+        const wrapped = wrapScheduler('auto_assign', 3600, processScheduledAutoAssigns);
+        setTimeout(wrapped, 60000);
+        setInterval(wrapped, 60 * 60 * 1000);
+      } else {
+        clearHealthRow('auto_assign');
+      }
 
-        console.log('[schedulers] started');
+      // Email sequence scheduler — check every 15 min for due drip steps
+      if (enabled('RUN_SEQUENCE_SCHEDULER')) {
+        const wrapped = wrapScheduler('email_sequence', 900, processSequenceSteps);
+        setTimeout(wrapped, 90000);
+        setInterval(wrapped, 15 * 60 * 1000);
+      } else {
+        clearHealthRow('email_sequence');
+      }
+
+      // Quote draft cleanup — expire stale drafts daily
+      if (enabled('RUN_QUOTE_DRAFT_CLEANUP_SCHEDULER')) {
+        const wrapped = wrapScheduler('quote_draft_cleanup', 86400, expireStaleQuoteDrafts);
+        setTimeout(wrapped, 120000);
+        setInterval(wrapped, 24 * 60 * 60 * 1000);
+      } else {
+        clearHealthRow('quote_draft_cleanup');
+      }
+
+      // Lab rat test-data purge — every hour
+      if (enabled('RUN_LABRAT_PURGE_SCHEDULER')) {
+        const wrapped = wrapScheduler('labrat_purge', 3600, purgeLabratTestData);
+        setTimeout(wrapped, 150000);
+        setInterval(wrapped, 60 * 60 * 1000);
+      } else {
+        clearHealthRow('labrat_purge');
+      }
+
+      // Start the staleness monitor (runs every 15 min, no per-scheduler toggle)
+      if (!globalScheduleDisabled) {
+        startStaleSchedulerMonitor();
+        console.log('[schedulers] started with per-scheduler controls');
       } else {
         console.log('[schedulers] disabled via RUN_SCHEDULERS=false');
       }
