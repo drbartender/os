@@ -6,7 +6,7 @@
 
 **Architecture:** Eight new email templates live next to existing templates in `server/utils/emailTemplates.js` (with a split if the file passes 700 lines). Each touch registers a dispatcher handler that renders the template, sends via the existing `sendEmail` helper, and respects the marketing-gating flag declared at registration. Scheduling is event-driven: when a proposal transitions to status `sent`, `completed`, etc., the route or scheduler inserts `scheduled_messages` rows for every touch eligible for that proposal. A new `post_event_feedback` table stores the low-rating responses captured by the new public feedback router page (`GET/POST /feedback/:token`, no auth, proposal-token-gated, idempotent).
 
-**Tech Stack:** PostgreSQL via `pg`, Express 4.22 routers, React 18 + React Router 6 for the public feedback page, Resend (via existing `server/utils/email.js`), the dispatcher utilities from Plan 2a (`server/utils/messageScheduling.js` and `server/utils/scheduledMessageDispatcher.js`), Jest for tests.
+**Tech Stack:** PostgreSQL via `pg`, Express 4.22 routers, React 18 + React Router 6 for the public feedback page, Resend (via existing `server/utils/email.js`), the dispatcher utilities from Plan 2a (`server/utils/messageScheduling.js` and `server/utils/scheduledMessageDispatcher.js`), `node:test` + `node:assert/strict` for tests.
 
 **Related spec:** `docs/superpowers/specs/2026-05-20-automated-communication-design.md` sections 1.3, 1.4, 1.5, 4.1, 4.2, 7.3.
 
@@ -119,6 +119,8 @@ Pure helpers, no DB calls for the per-event-type whitelist. The has-upcoming-eve
 Create `server/utils/retentionEligibility.test.js`:
 
 ```javascript
+const { test, before, after, afterEach } = require('node:test');
+const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const {
   RETENTION_ELIGIBLE_EVENT_TYPES,
@@ -132,180 +134,168 @@ const {
   computeSixMonthsOutSendAt,
 } = require('./retentionEligibility');
 
-describe('retentionEligibility', () => {
-  describe('isRetentionEligibleEventType', () => {
-    it('returns true for whitelisted event types', () => {
-      expect(isRetentionEligibleEventType('holiday-party')).toBe(true);
-      expect(isRetentionEligibleEventType('birthday-party')).toBe(true);
-      expect(isRetentionEligibleEventType('milestone-birthday')).toBe(true);
-      expect(isRetentionEligibleEventType('corporate-event')).toBe(true);
-      expect(isRetentionEligibleEventType('corporate-happy-hour')).toBe(true);
-      expect(isRetentionEligibleEventType('anniversary')).toBe(true);
-    });
+// ── isRetentionEligibleEventType ──
+test('isRetentionEligibleEventType > returns true for whitelisted event types', () => {
+  assert.strictEqual(isRetentionEligibleEventType('holiday-party'), true);
+  assert.strictEqual(isRetentionEligibleEventType('birthday-party'), true);
+  assert.strictEqual(isRetentionEligibleEventType('milestone-birthday'), true);
+  assert.strictEqual(isRetentionEligibleEventType('corporate-event'), true);
+  assert.strictEqual(isRetentionEligibleEventType('corporate-happy-hour'), true);
+  assert.strictEqual(isRetentionEligibleEventType('anniversary'), true);
+});
 
-    it('returns false for excluded event types', () => {
-      expect(isRetentionEligibleEventType('wedding-reception')).toBe(false);
-      expect(isRetentionEligibleEventType('engagement-party')).toBe(false);
-      expect(isRetentionEligibleEventType('baby-shower')).toBe(false);
-      expect(isRetentionEligibleEventType('graduation-party')).toBe(false);
-      expect(isRetentionEligibleEventType('retirement-party')).toBe(false);
-      expect(isRetentionEligibleEventType('bachelor-bachelorette')).toBe(false);
-    });
+test('isRetentionEligibleEventType > returns false for excluded event types', () => {
+  assert.strictEqual(isRetentionEligibleEventType('wedding-reception'), false);
+  assert.strictEqual(isRetentionEligibleEventType('engagement-party'), false);
+  assert.strictEqual(isRetentionEligibleEventType('baby-shower'), false);
+  assert.strictEqual(isRetentionEligibleEventType('graduation-party'), false);
+  assert.strictEqual(isRetentionEligibleEventType('retirement-party'), false);
+  assert.strictEqual(isRetentionEligibleEventType('bachelor-bachelorette'), false);
+});
 
-    it('returns false for null/undefined/unknown', () => {
-      expect(isRetentionEligibleEventType(null)).toBe(false);
-      expect(isRetentionEligibleEventType(undefined)).toBe(false);
-      expect(isRetentionEligibleEventType('not-a-real-type')).toBe(false);
-    });
+test('isRetentionEligibleEventType > returns false for null/undefined/unknown', () => {
+  assert.strictEqual(isRetentionEligibleEventType(null), false);
+  assert.strictEqual(isRetentionEligibleEventType(undefined), false);
+  assert.strictEqual(isRetentionEligibleEventType('not-a-real-type'), false);
+});
 
-    it('exposes the whitelist constant for admin UI later', () => {
-      expect(RETENTION_ELIGIBLE_EVENT_TYPES).toEqual(
-        expect.arrayContaining(['holiday-party', 'birthday-party'])
-      );
-    });
-  });
+test('isRetentionEligibleEventType > exposes the whitelist constant for admin UI later', () => {
+  assert.ok(RETENTION_ELIGIBLE_EVENT_TYPES.includes('holiday-party'));
+  assert.ok(RETENTION_ELIGIBLE_EVENT_TYPES.includes('birthday-party'));
+});
 
-  describe('shouldScheduleNewYearTouch', () => {
-    it('returns true when event is in next calendar year and >= 60 days into new year', () => {
-      const signedAt = new Date('2026-11-15T12:00:00Z');
-      const eventDate = new Date('2027-04-01'); // 90 days into 2027
-      expect(shouldScheduleNewYearTouch(signedAt, eventDate)).toBe(true);
-    });
+// ── shouldScheduleNewYearTouch ──
+test('shouldScheduleNewYearTouch > returns true when event is in next calendar year and >= 60 days into new year', () => {
+  const signedAt = new Date('2026-11-15T12:00:00Z');
+  const eventDate = new Date('2027-04-01'); // 90 days into 2027
+  assert.strictEqual(shouldScheduleNewYearTouch(signedAt, eventDate), true);
+});
 
-    it('returns false when event is in same calendar year as sign', () => {
-      const signedAt = new Date('2026-03-01T12:00:00Z');
-      const eventDate = new Date('2026-12-31');
-      expect(shouldScheduleNewYearTouch(signedAt, eventDate)).toBe(false);
-    });
+test('shouldScheduleNewYearTouch > returns false when event is in same calendar year as sign', () => {
+  const signedAt = new Date('2026-03-01T12:00:00Z');
+  const eventDate = new Date('2026-12-31');
+  assert.strictEqual(shouldScheduleNewYearTouch(signedAt, eventDate), false);
+});
 
-    it('returns false when event is <60 days into the new year', () => {
-      const signedAt = new Date('2026-11-15T12:00:00Z');
-      const eventDate = new Date('2027-01-15'); // 14 days into new year
-      expect(shouldScheduleNewYearTouch(signedAt, eventDate)).toBe(false);
-    });
+test('shouldScheduleNewYearTouch > returns false when event is <60 days into the new year', () => {
+  const signedAt = new Date('2026-11-15T12:00:00Z');
+  const eventDate = new Date('2027-01-15'); // 14 days into new year
+  assert.strictEqual(shouldScheduleNewYearTouch(signedAt, eventDate), false);
+});
 
-    it('returns false when event is in a year beyond next', () => {
-      const signedAt = new Date('2026-11-15T12:00:00Z');
-      const eventDate = new Date('2028-04-01');
-      expect(shouldScheduleNewYearTouch(signedAt, eventDate)).toBe(false);
-    });
-  });
+test('shouldScheduleNewYearTouch > returns false when event is in a year beyond next', () => {
+  const signedAt = new Date('2026-11-15T12:00:00Z');
+  const eventDate = new Date('2028-04-01');
+  assert.strictEqual(shouldScheduleNewYearTouch(signedAt, eventDate), false);
+});
 
-  describe('shouldScheduleSixMonthsTouch', () => {
-    it('returns true when booking lead time > 6 months', () => {
-      const signedAt = new Date('2026-01-15T12:00:00Z');
-      const eventDate = new Date('2026-08-15'); // 7 months later
-      expect(shouldScheduleSixMonthsTouch(signedAt, eventDate)).toBe(true);
-    });
+// ── shouldScheduleSixMonthsTouch ──
+test('shouldScheduleSixMonthsTouch > returns true when booking lead time > 6 months', () => {
+  const signedAt = new Date('2026-01-15T12:00:00Z');
+  const eventDate = new Date('2026-08-15'); // 7 months later
+  assert.strictEqual(shouldScheduleSixMonthsTouch(signedAt, eventDate), true);
+});
 
-    it('returns false when booking lead time exactly 6 months', () => {
-      const signedAt = new Date('2026-02-15T12:00:00Z');
-      const eventDate = new Date('2026-08-15');
-      expect(shouldScheduleSixMonthsTouch(signedAt, eventDate)).toBe(false);
-    });
+test('shouldScheduleSixMonthsTouch > returns false when booking lead time exactly 6 months', () => {
+  const signedAt = new Date('2026-02-15T12:00:00Z');
+  const eventDate = new Date('2026-08-15');
+  assert.strictEqual(shouldScheduleSixMonthsTouch(signedAt, eventDate), false);
+});
 
-    it('returns false when booking lead time < 6 months', () => {
-      const signedAt = new Date('2026-05-15T12:00:00Z');
-      const eventDate = new Date('2026-08-15');
-      expect(shouldScheduleSixMonthsTouch(signedAt, eventDate)).toBe(false);
-    });
-  });
+test('shouldScheduleSixMonthsTouch > returns false when booking lead time < 6 months', () => {
+  const signedAt = new Date('2026-05-15T12:00:00Z');
+  const eventDate = new Date('2026-08-15');
+  assert.strictEqual(shouldScheduleSixMonthsTouch(signedAt, eventDate), false);
+});
 
-  describe('computeNewYearSendAt', () => {
-    it('returns Jan 2 of the event year at 10:00 America/Chicago', () => {
-      const eventDate = new Date('2027-04-01');
-      const result = computeNewYearSendAt(eventDate);
-      // Jan 2 2027 10:00 Chicago = Jan 2 2027 16:00 UTC (CST is UTC-6)
-      expect(result.toISOString()).toBe('2027-01-02T16:00:00.000Z');
-    });
-  });
+// ── computeNewYearSendAt ──
+test('computeNewYearSendAt > returns Jan 2 of the event year at 10:00 America/Chicago', () => {
+  const eventDate = new Date('2027-04-01');
+  const result = computeNewYearSendAt(eventDate);
+  // Jan 2 2027 10:00 Chicago = Jan 2 2027 16:00 UTC (CST is UTC-6)
+  assert.strictEqual(result.toISOString(), '2027-01-02T16:00:00.000Z');
+});
 
-  describe('computeSixMonthsOutSendAt', () => {
-    it('returns event_date minus 6 months at 10:00 America/Chicago', () => {
-      const eventDate = new Date('2026-12-15');
-      const result = computeSixMonthsOutSendAt(eventDate);
-      // 6 months before 2026-12-15 = 2026-06-15
-      // 10:00 Chicago in June = 15:00 UTC (CDT is UTC-5)
-      expect(result.toISOString()).toBe('2026-06-15T15:00:00.000Z');
-    });
-  });
+// ── computeSixMonthsOutSendAt ──
+test('computeSixMonthsOutSendAt > returns event_date minus 6 months at 10:00 America/Chicago', () => {
+  const eventDate = new Date('2026-12-15');
+  const result = computeSixMonthsOutSendAt(eventDate);
+  // 6 months before 2026-12-15 = 2026-06-15
+  // 10:00 Chicago in June = 15:00 UTC (CDT is UTC-5)
+  assert.strictEqual(result.toISOString(), '2026-06-15T15:00:00.000Z');
+});
 
-  describe('computeReviewRequestSendAt', () => {
-    it('returns event_date + 2 days at 10:00 America/Chicago', () => {
-      const eventDate = new Date('2026-06-15');
-      const result = computeReviewRequestSendAt(eventDate);
-      expect(result.toISOString()).toBe('2026-06-17T15:00:00.000Z');
-    });
-  });
+// ── computeReviewRequestSendAt ──
+test('computeReviewRequestSendAt > returns event_date + 2 days at 10:00 America/Chicago', () => {
+  const eventDate = new Date('2026-06-15');
+  const result = computeReviewRequestSendAt(eventDate);
+  assert.strictEqual(result.toISOString(), '2026-06-17T15:00:00.000Z');
+});
 
-  describe('computeRetentionNudgeSendAt', () => {
-    it('returns event_date + 11 months at 10:00 America/Chicago', () => {
-      const eventDate = new Date('2026-01-15');
-      const result = computeRetentionNudgeSendAt(eventDate);
-      // 11 months later = 2026-12-15
-      // 10:00 Chicago in December = 16:00 UTC (CST)
-      expect(result.toISOString()).toBe('2026-12-15T16:00:00.000Z');
-    });
-  });
+// ── computeRetentionNudgeSendAt ──
+test('computeRetentionNudgeSendAt > returns event_date + 11 months at 10:00 America/Chicago', () => {
+  const eventDate = new Date('2026-01-15');
+  const result = computeRetentionNudgeSendAt(eventDate);
+  // 11 months later = 2026-12-15
+  // 10:00 Chicago in December = 16:00 UTC (CST)
+  assert.strictEqual(result.toISOString(), '2026-12-15T16:00:00.000Z');
+});
 
-  describe('clientHasUpcomingEvent', () => {
-    let clientId;
-    let otherProposalId;
+// ── clientHasUpcomingEvent ──
+let retentionClientId;
 
-    beforeAll(async () => {
-      const c = await pool.query(
-        "INSERT INTO clients (name, email) VALUES ('Retention Test', 'retention-test@example.com') RETURNING id"
-      );
-      clientId = c.rows[0].id;
-    });
+before(async () => {
+  const c = await pool.query(
+    "INSERT INTO clients (name, email) VALUES ('Retention Test', 'retention-test@example.com') RETURNING id"
+  );
+  retentionClientId = c.rows[0].id;
+});
 
-    afterAll(async () => {
-      await pool.query('DELETE FROM proposals WHERE client_id = $1', [clientId]);
-      await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
-    });
+after(async () => {
+  await pool.query('DELETE FROM proposals WHERE client_id = $1', [retentionClientId]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [retentionClientId]);
+});
 
-    afterEach(async () => {
-      await pool.query('DELETE FROM proposals WHERE client_id = $1', [clientId]);
-    });
+afterEach(async () => {
+  await pool.query('DELETE FROM proposals WHERE client_id = $1', [retentionClientId]);
+});
 
-    it('returns true when client has another non-archived future event', async () => {
-      const p = await pool.query(
-        `INSERT INTO proposals (client_id, event_date, status)
-         VALUES ($1, CURRENT_DATE + INTERVAL '30 days', 'confirmed') RETURNING id`,
-        [clientId]
-      );
-      otherProposalId = p.rows[0].id;
-      const result = await clientHasUpcomingEvent(clientId, otherProposalId + 1);
-      expect(result).toBe(true);
-    });
+test('clientHasUpcomingEvent > returns true when client has another non-archived future event', async () => {
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status)
+     VALUES ($1, CURRENT_DATE + INTERVAL '30 days', 'confirmed') RETURNING id`,
+    [retentionClientId]
+  );
+  const otherProposalId = p.rows[0].id;
+  const result = await clientHasUpcomingEvent(retentionClientId, otherProposalId + 1);
+  assert.strictEqual(result, true);
+});
 
-    it('returns false when only the excluded proposal exists', async () => {
-      const p = await pool.query(
-        `INSERT INTO proposals (client_id, event_date, status)
-         VALUES ($1, CURRENT_DATE + INTERVAL '30 days', 'confirmed') RETURNING id`,
-        [clientId]
-      );
-      const result = await clientHasUpcomingEvent(clientId, p.rows[0].id);
-      expect(result).toBe(false);
-    });
+test('clientHasUpcomingEvent > returns false when only the excluded proposal exists', async () => {
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status)
+     VALUES ($1, CURRENT_DATE + INTERVAL '30 days', 'confirmed') RETURNING id`,
+    [retentionClientId]
+  );
+  const result = await clientHasUpcomingEvent(retentionClientId, p.rows[0].id);
+  assert.strictEqual(result, false);
+});
 
-    it('returns false when other future events are archived', async () => {
-      await pool.query(
-        `INSERT INTO proposals (client_id, event_date, status, archive_reason)
-         VALUES ($1, CURRENT_DATE + INTERVAL '30 days', 'archived', 'client_cancelled')`,
-        [clientId]
-      );
-      const result = await clientHasUpcomingEvent(clientId, -1);
-      expect(result).toBe(false);
-    });
-  });
+test('clientHasUpcomingEvent > returns false when other future events are archived', async () => {
+  await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status, archive_reason)
+     VALUES ($1, CURRENT_DATE + INTERVAL '30 days', 'archived', 'client_cancelled')`,
+    [retentionClientId]
+  );
+  const result = await clientHasUpcomingEvent(retentionClientId, -1);
+  assert.strictEqual(result, false);
 });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-npx jest server/utils/retentionEligibility.test.js
+node --test server/utils/retentionEligibility.test.js
 ```
 
 Expected: FAIL with `Cannot find module './retentionEligibility'`.
@@ -465,7 +455,7 @@ module.exports = {
 - [ ] **Step 4: Run test to verify pass**
 
 ```bash
-npx jest server/utils/retentionEligibility.test.js
+node --test server/utils/retentionEligibility.test.js
 ```
 
 Expected: all tests pass.
@@ -492,6 +482,8 @@ The templates live in a sibling file rather than appending to `emailTemplates.js
 Create `server/utils/marketingEmailTemplates.test.js`:
 
 ```javascript
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
 const tpl = require('./marketingEmailTemplates');
 
 const baseParams = {
@@ -503,171 +495,163 @@ const baseParams = {
   unsubscribeUrl: 'https://api.drbartender.com/unsubscribe?t=xyz',
 };
 
-describe('marketingEmailTemplates', () => {
-  describe('dripTouch2Client', () => {
-    it('renders subject with first name and event date', () => {
-      const out = tpl.dripTouch2Client(baseParams);
-      expect(out.subject).toBe('Still thinking about your June 15, 2026 event, Jane?');
-    });
+// ── dripTouch2Client ──
+test('dripTouch2Client > renders subject with first name and event date', () => {
+  const out = tpl.dripTouch2Client(baseParams);
+  assert.strictEqual(out.subject, 'Still thinking about your June 15, 2026 event, Jane?');
+});
 
-    it('includes the proposal URL and the unsubscribe footer', () => {
-      const out = tpl.dripTouch2Client(baseParams);
-      expect(out.html).toContain('https://drbartender.com/proposal/abc-token');
-      expect(out.html).toContain('Unsubscribe');
-      expect(out.html).toContain(baseParams.unsubscribeUrl);
-    });
+test('dripTouch2Client > includes the proposal URL and the unsubscribe footer', () => {
+  const out = tpl.dripTouch2Client(baseParams);
+  assert.ok(out.html.includes('https://drbartender.com/proposal/abc-token'));
+  assert.ok(out.html.includes('Unsubscribe'));
+  assert.ok(out.html.includes(baseParams.unsubscribeUrl));
+});
 
-    it('falls back to "there" / "your event" / "soon" when params are missing', () => {
-      const out = tpl.dripTouch2Client({
-        unsubscribeUrl: baseParams.unsubscribeUrl,
-      });
-      expect(out.subject).toMatch(/event/);
-      expect(out.html).toContain('Hi there');
-    });
+test('dripTouch2Client > falls back to "there" / "your event" / "soon" when params are missing', () => {
+  const out = tpl.dripTouch2Client({
+    unsubscribeUrl: baseParams.unsubscribeUrl,
   });
+  assert.match(out.subject, /event/);
+  assert.ok(out.html.includes('Hi there'));
+});
 
-  describe('dripTouch4Client', () => {
-    it('mentions BYOB and Hosted alternative packages', () => {
-      const out = tpl.dripTouch4Client(baseParams);
-      expect(out.html).toMatch(/BYOB/);
-      expect(out.html).toMatch(/Hosted/);
-    });
+// ── dripTouch4Client ──
+test('dripTouch4Client > mentions BYOB and Hosted alternative packages', () => {
+  const out = tpl.dripTouch4Client(baseParams);
+  assert.match(out.html, /BYOB/);
+  assert.match(out.html, /Hosted/);
+});
 
-    it('subject mentions following up and event date', () => {
-      const out = tpl.dripTouch4Client(baseParams);
-      expect(out.subject).toBe('Following up on your June 15, 2026 booking, Jane');
-    });
+test('dripTouch4Client > subject mentions following up and event date', () => {
+  const out = tpl.dripTouch4Client(baseParams);
+  assert.strictEqual(out.subject, 'Following up on your June 15, 2026 booking, Jane');
+});
+
+// ── dripTouch5Client ──
+test('dripTouch5Client > subject says "last call"', () => {
+  const out = tpl.dripTouch5Client(baseParams);
+  assert.strictEqual(out.subject, 'Last call to secure June 15, 2026, Jane');
+});
+
+test('dripTouch5Client > includes the proposal URL', () => {
+  const out = tpl.dripTouch5Client(baseParams);
+  assert.ok(out.html.includes(baseParams.proposalUrl));
+});
+
+// ── reviewRequestClient ──
+const reviewParams = {
+  ...baseParams,
+  dayOfWeek: 'Saturday',
+  feedbackUrl: 'https://drbartender.com/feedback/abc-token',
+  bartenderName: 'Alex',
+  venmoHandle: '@alex-bartender',
+  cashappHandle: '$alexb',
+  zelleHandle: 'alex@example.com',
+};
+
+test('reviewRequestClient > renders subject with event date', () => {
+  const out = tpl.reviewRequestClient(reviewParams);
+  assert.strictEqual(out.subject, 'How was your June 15, 2026 event?');
+});
+
+test('reviewRequestClient > includes feedback URL and bartender tip handles when present', () => {
+  const out = tpl.reviewRequestClient(reviewParams);
+  assert.ok(out.html.includes('https://drbartender.com/feedback/abc-token'));
+  assert.ok(out.html.includes('Alex'));
+  assert.ok(out.html.includes('@alex-bartender'));
+  assert.ok(out.html.includes('$alexb'));
+  assert.ok(out.html.includes('alex@example.com'));
+});
+
+test('reviewRequestClient > omits the tip-handle line when bartenderName is null (multi-bartender)', () => {
+  const out = tpl.reviewRequestClient({ ...reviewParams, bartenderName: null });
+  assert.doesNotMatch(out.html, /tips at/);
+});
+
+test('reviewRequestClient > omits a single tip handle when it is missing', () => {
+  const out = tpl.reviewRequestClient({ ...reviewParams, cashappHandle: null });
+  assert.ok(!out.html.includes('Cash App'));
+  assert.ok(out.html.includes('@alex-bartender'));
+});
+
+// ── newYearHelloClient ──
+test('newYearHelloClient > subject contains "happy new year" and first name', () => {
+  const out = tpl.newYearHelloClient(baseParams);
+  assert.strictEqual(out.subject, 'Happy new year, Jane, looking forward to your event');
+});
+
+test('newYearHelloClient > includes the event type label and date in body', () => {
+  const out = tpl.newYearHelloClient(baseParams);
+  assert.ok(out.html.includes('birthday party'));
+  assert.ok(out.html.includes('June 15, 2026'));
+});
+
+// ── sixMonthsOutClient ──
+test('sixMonthsOutClient > subject says "six months out"', () => {
+  const out = tpl.sixMonthsOutClient({
+    ...baseParams,
+    potionPlannerUrl: 'https://drbartender.com/plan/xyz',
+    consultUrl: 'https://cal.com/drbartender/consult',
   });
+  assert.strictEqual(out.subject, 'Six months out from your June 15, 2026 event');
+});
 
-  describe('dripTouch5Client', () => {
-    it('subject says "last call"', () => {
-      const out = tpl.dripTouch5Client(baseParams);
-      expect(out.subject).toBe('Last call to secure June 15, 2026, Jane');
-    });
-
-    it('includes the proposal URL', () => {
-      const out = tpl.dripTouch5Client(baseParams);
-      expect(out.html).toContain(baseParams.proposalUrl);
-    });
+test('sixMonthsOutClient > includes potion planner URL and consult URL', () => {
+  const out = tpl.sixMonthsOutClient({
+    ...baseParams,
+    potionPlannerUrl: 'https://drbartender.com/plan/xyz',
+    consultUrl: 'https://cal.com/drbartender/consult',
   });
+  assert.ok(out.html.includes('https://drbartender.com/plan/xyz'));
+  assert.ok(out.html.includes('https://cal.com/drbartender/consult'));
+});
 
-  describe('reviewRequestClient', () => {
-    const reviewParams = {
-      ...baseParams,
-      dayOfWeek: 'Saturday',
-      feedbackUrl: 'https://drbartender.com/feedback/abc-token',
-      bartenderName: 'Alex',
-      venmoHandle: '@alex-bartender',
-      cashappHandle: '$alexb',
-      zelleHandle: 'alex@example.com',
-    };
+// ── retentionNudgeClient ──
+test('retentionNudgeClient > subject mentions almost a year and event type', () => {
+  const out = tpl.retentionNudgeClient(baseParams);
+  assert.strictEqual(out.subject, 'Almost a year since your birthday party, Jane');
+});
 
-    it('renders subject with event date', () => {
-      const out = tpl.reviewRequestClient(reviewParams);
-      expect(out.subject).toBe('How was your June 15, 2026 event?');
-    });
+test('retentionNudgeClient > includes unsubscribe footer (this IS marketing-class)', () => {
+  const out = tpl.retentionNudgeClient(baseParams);
+  assert.ok(out.html.includes(baseParams.unsubscribeUrl));
+});
 
-    it('includes feedback URL and bartender tip handles when present', () => {
-      const out = tpl.reviewRequestClient(reviewParams);
-      expect(out.html).toContain('https://drbartender.com/feedback/abc-token');
-      expect(out.html).toContain('Alex');
-      expect(out.html).toContain('@alex-bartender');
-      expect(out.html).toContain('$alexb');
-      expect(out.html).toContain('alex@example.com');
-    });
+// ── lowRatingAdminNotification ──
+const adminParams = {
+  clientName: 'Jane',
+  eventDateDisplay: 'June 15, 2026',
+  eventTypeLabel: 'birthday party',
+  rating: 2,
+  comment: 'Bartender was 30 minutes late.',
+  adminUrl: 'https://admin.drbartender.com/proposals/42',
+};
 
-    it('omits the tip-handle line when bartenderName is null (multi-bartender)', () => {
-      const out = tpl.reviewRequestClient({ ...reviewParams, bartenderName: null });
-      expect(out.html).not.toMatch(/tips at/);
-    });
+test('lowRatingAdminNotification > subject flags low rating', () => {
+  const out = tpl.lowRatingAdminNotification(adminParams);
+  assert.match(out.subject, /Low rating/);
+});
 
-    it('omits a single tip handle when it is missing', () => {
-      const out = tpl.reviewRequestClient({ ...reviewParams, cashappHandle: null });
-      expect(out.html).not.toContain('Cash App');
-      expect(out.html).toContain('@alex-bartender');
-    });
-  });
+test('lowRatingAdminNotification > includes rating, comment, and admin link', () => {
+  const out = tpl.lowRatingAdminNotification(adminParams);
+  assert.ok(out.html.includes('2 / 5'));
+  assert.ok(out.html.includes('Bartender was 30 minutes late.'));
+  assert.ok(out.html.includes(adminParams.adminUrl));
+});
 
-  describe('newYearHelloClient', () => {
-    it('subject contains "happy new year" and first name', () => {
-      const out = tpl.newYearHelloClient(baseParams);
-      expect(out.subject).toBe('Happy new year, Jane — looking forward to your event');
-    });
-
-    it('includes the event type label and date in body', () => {
-      const out = tpl.newYearHelloClient(baseParams);
-      expect(out.html).toContain('birthday party');
-      expect(out.html).toContain('June 15, 2026');
-    });
-  });
-
-  describe('sixMonthsOutClient', () => {
-    it('subject says "six months out"', () => {
-      const out = tpl.sixMonthsOutClient({
-        ...baseParams,
-        potionPlannerUrl: 'https://drbartender.com/plan/xyz',
-        consultUrl: 'https://cal.com/drbartender/consult',
-      });
-      expect(out.subject).toBe('Six months out from your June 15, 2026 event');
-    });
-
-    it('includes potion planner URL and consult URL', () => {
-      const out = tpl.sixMonthsOutClient({
-        ...baseParams,
-        potionPlannerUrl: 'https://drbartender.com/plan/xyz',
-        consultUrl: 'https://cal.com/drbartender/consult',
-      });
-      expect(out.html).toContain('https://drbartender.com/plan/xyz');
-      expect(out.html).toContain('https://cal.com/drbartender/consult');
-    });
-  });
-
-  describe('retentionNudgeClient', () => {
-    it('subject mentions almost a year and event type', () => {
-      const out = tpl.retentionNudgeClient(baseParams);
-      expect(out.subject).toBe('Almost a year since your birthday party, Jane');
-    });
-
-    it('includes unsubscribe footer (this IS marketing-class)', () => {
-      const out = tpl.retentionNudgeClient(baseParams);
-      expect(out.html).toContain(baseParams.unsubscribeUrl);
-    });
-  });
-
-  describe('lowRatingAdminNotification', () => {
-    const adminParams = {
-      clientName: 'Jane',
-      eventDateDisplay: 'June 15, 2026',
-      eventTypeLabel: 'birthday party',
-      rating: 2,
-      comment: 'Bartender was 30 minutes late.',
-      adminUrl: 'https://admin.drbartender.com/proposals/42',
-    };
-
-    it('subject flags low rating', () => {
-      const out = tpl.lowRatingAdminNotification(adminParams);
-      expect(out.subject).toMatch(/Low rating/);
-    });
-
-    it('includes rating, comment, and admin link', () => {
-      const out = tpl.lowRatingAdminNotification(adminParams);
-      expect(out.html).toContain('2 / 5');
-      expect(out.html).toContain('Bartender was 30 minutes late.');
-      expect(out.html).toContain(adminParams.adminUrl);
-    });
-
-    it('renders gracefully when comment is null', () => {
-      const out = tpl.lowRatingAdminNotification({ ...adminParams, comment: null });
-      expect(out.html).not.toContain('null');
-    });
-  });
+test('lowRatingAdminNotification > renders gracefully when comment is null', () => {
+  const out = tpl.lowRatingAdminNotification({ ...adminParams, comment: null });
+  assert.ok(!out.html.includes('null'));
 });
 ```
+
+Note on the newYearHelloClient assertion: the spec-original copy uses an em dash ("Happy new year, Jane — looking forward..."), but project copy preference is to avoid em dashes (see CLAUDE.md memory). The assertion above and the template should use a comma instead. Keep both in sync when the template lands.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-npx jest server/utils/marketingEmailTemplates.test.js
+node --test server/utils/marketingEmailTemplates.test.js
 ```
 
 Expected: FAIL with `Cannot find module './marketingEmailTemplates'`.
@@ -807,7 +791,7 @@ function reviewRequestClient(params) {
 function newYearHelloClient(params) {
   const d = defaults(params);
   return {
-    subject: `Happy new year, ${d.clientFirstName} — looking forward to your event`,
+    subject: `Happy new year, ${d.clientFirstName}, looking forward to your event`,
     html: wrapMarketingEmail(`
       <p>Hi ${esc(d.clientFirstName)}, happy new year from Dr. Bartender.</p>
       <p>Just a quick hello to say we're looking forward to your <strong>${esc(d.eventTypeLabel)}</strong> later this year on ${esc(d.eventDateDisplay)}. Everything's on the books and we'll be in touch with more details as we get closer.</p>
@@ -905,7 +889,7 @@ module.exports = {
 - [ ] **Step 4: Run test to verify pass**
 
 ```bash
-npx jest server/utils/marketingEmailTemplates.test.js
+node --test server/utils/marketingEmailTemplates.test.js
 ```
 
 Expected: all tests pass.
@@ -927,25 +911,28 @@ git commit -m "feat(comms): add marketing and retention email templates"
 
 The page is mounted at `GET /api/public/feedback/:token` (display data) and `POST /api/public/feedback/:token` (submission). The token is the `proposals.token` UUID — already public and used by the existing `/proposal/:token` view, so no separate token table is needed. Submission is idempotent via the unique index on `post_event_feedback(proposal_id)` from Task 1.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing unit-style test**
+
+The repo's tests use `node:test` and don't ship `supertest`, so we test the route's helpers / DB behavior directly rather than wiring an HTTP-level integration test. The route exposes a couple of small pure helpers (UUID validation, rating/comment parsing) plus the DB-bound feedback-insert flow. We test all of them at the function boundary; the full HTTP path is covered by manual smoke testing in Task 13.
 
 Create `server/routes/publicFeedback.test.js`:
 
 ```javascript
-const request = require('supertest');
+const { test, before, after, afterEach } = require('node:test');
+const assert = require('node:assert/strict');
 const { pool } = require('../db');
-
-// Lazy-require the app so the test imports the route under test once it exists.
-let app;
-beforeAll(() => {
-  app = require('../index.js');
-});
+const {
+  isFeedbackTokenShape,
+  validateFeedbackInput,
+  loadFeedbackContext,
+  recordFeedback,
+} = require('./publicFeedback');
 
 let clientId;
 let proposalId;
 let token;
 
-beforeAll(async () => {
+before(async () => {
   const c = await pool.query(
     "INSERT INTO clients (name, email) VALUES ('Feedback Test Client', 'feedback-test@example.com') RETURNING id"
   );
@@ -960,123 +947,147 @@ beforeAll(async () => {
   token = p.rows[0].token;
 });
 
-afterAll(async () => {
+after(async () => {
   await pool.query('DELETE FROM post_event_feedback WHERE proposal_id = $1', [proposalId]);
   await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
   await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
+  await pool.end();
 });
 
 afterEach(async () => {
   await pool.query('DELETE FROM post_event_feedback WHERE proposal_id = $1', [proposalId]);
 });
 
-describe('GET /api/public/feedback/:token', () => {
-  it('returns display data for a valid token', async () => {
-    const res = await request(app).get(`/api/public/feedback/${token}`);
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual(
-      expect.objectContaining({
-        client_first_name: expect.any(String),
-        event_type_label: expect.stringMatching(/Birthday/i),
-        already_submitted: false,
-      })
-    );
-  });
-
-  it('returns 404 for an unknown token', async () => {
-    const res = await request(app).get('/api/public/feedback/00000000-0000-0000-0000-000000000000');
-    expect(res.status).toBe(404);
-  });
-
-  it('returns 400 for a malformed token', async () => {
-    const res = await request(app).get('/api/public/feedback/not-a-uuid');
-    expect(res.status).toBe(404); // shape-validated to look like UUID, falls into NotFoundError path
-  });
-
-  it('reports already_submitted=true when a feedback row exists', async () => {
-    await pool.query(
-      'INSERT INTO post_event_feedback (proposal_id, rating) VALUES ($1, 5)',
-      [proposalId]
-    );
-    const res = await request(app).get(`/api/public/feedback/${token}`);
-    expect(res.body.already_submitted).toBe(true);
-  });
+// ── token shape ──
+test('isFeedbackTokenShape > accepts canonical UUID', () => {
+  assert.strictEqual(isFeedbackTokenShape('00000000-0000-0000-0000-000000000000'), true);
 });
 
-describe('POST /api/public/feedback/:token', () => {
-  it('high rating returns redirect_url to Google Review URL and stores the row', async () => {
-    const res = await request(app)
-      .post(`/api/public/feedback/${token}`)
-      .send({ rating: 5 });
-    expect(res.status).toBe(200);
-    expect(res.body.redirect_url).toBeTruthy();
+test('isFeedbackTokenShape > rejects malformed strings', () => {
+  assert.strictEqual(isFeedbackTokenShape('not-a-uuid'), false);
+  assert.strictEqual(isFeedbackTokenShape(''), false);
+  assert.strictEqual(isFeedbackTokenShape(null), false);
+});
 
-    const { rows } = await pool.query(
-      'SELECT rating FROM post_event_feedback WHERE proposal_id = $1',
-      [proposalId]
-    );
-    expect(rows[0].rating).toBe(5);
-  });
+// ── input validation ──
+test('validateFeedbackInput > accepts rating 1-5 with no comment', () => {
+  const result = validateFeedbackInput({ rating: 4 });
+  assert.deepStrictEqual(result, { rating: 4, comment: null });
+});
 
-  it('low rating stores comment and returns thanks=true (no redirect)', async () => {
-    const res = await request(app)
-      .post(`/api/public/feedback/${token}`)
-      .send({ rating: 2, comment: 'Bartender was late.' });
-    expect(res.status).toBe(200);
-    expect(res.body.redirect_url).toBeFalsy();
-    expect(res.body.thanks).toBe(true);
+test('validateFeedbackInput > accepts a trimmed comment under 2000 chars', () => {
+  const result = validateFeedbackInput({ rating: 2, comment: 'Bartender was late.' });
+  assert.strictEqual(result.rating, 2);
+  assert.strictEqual(result.comment, 'Bartender was late.');
+});
 
-    const { rows } = await pool.query(
-      'SELECT rating, comment FROM post_event_feedback WHERE proposal_id = $1',
-      [proposalId]
-    );
-    expect(rows[0].rating).toBe(2);
-    expect(rows[0].comment).toBe('Bartender was late.');
-  });
+test('validateFeedbackInput > rejects rating outside 1-5', () => {
+  assert.throws(() => validateFeedbackInput({ rating: 0 }), /rating/i);
+  assert.throws(() => validateFeedbackInput({ rating: 6 }), /rating/i);
+  assert.throws(() => validateFeedbackInput({ rating: 'three' }), /rating/i);
+});
 
-  it('rejects rating outside 1-5', async () => {
-    const res = await request(app)
-      .post(`/api/public/feedback/${token}`)
-      .send({ rating: 7 });
-    expect(res.status).toBe(400);
-  });
+test('validateFeedbackInput > rejects oversize comment', () => {
+  assert.throws(() => validateFeedbackInput({ rating: 2, comment: 'x'.repeat(3000) }), /comment/i);
+});
 
-  it('rejects oversize comment', async () => {
-    const res = await request(app)
-      .post(`/api/public/feedback/${token}`)
-      .send({ rating: 2, comment: 'x'.repeat(3000) });
-    expect(res.status).toBe(400);
-  });
+test('validateFeedbackInput > rejects non-string comment', () => {
+  assert.throws(() => validateFeedbackInput({ rating: 2, comment: 42 }), /comment/i);
+});
 
-  it('second submission for the same proposal returns 409 conflict', async () => {
-    await pool.query(
-      'INSERT INTO post_event_feedback (proposal_id, rating) VALUES ($1, 5)',
-      [proposalId]
-    );
-    const res = await request(app)
-      .post(`/api/public/feedback/${token}`)
-      .send({ rating: 3 });
-    expect(res.status).toBe(409);
-  });
+// ── loadFeedbackContext ──
+test('loadFeedbackContext > returns display data for a valid token', async () => {
+  const ctx = await loadFeedbackContext(token);
+  assert.ok(ctx);
+  assert.ok(typeof ctx.client_first_name === 'string');
+  assert.match(ctx.event_type_label, /Birthday/i);
+  assert.strictEqual(ctx.already_submitted, false);
+});
 
-  it('rejects when the underlying proposal is archived', async () => {
-    await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
-    const res = await request(app)
-      .post(`/api/public/feedback/${token}`)
-      .send({ rating: 5 });
-    expect(res.status).toBe(404);
-    await pool.query("UPDATE proposals SET status = 'completed' WHERE id = $1", [proposalId]);
-  });
+test('loadFeedbackContext > returns null for an unknown token', async () => {
+  const ctx = await loadFeedbackContext('00000000-0000-0000-0000-000000000000');
+  assert.strictEqual(ctx, null);
+});
+
+test('loadFeedbackContext > returns null when the proposal is archived', async () => {
+  await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
+  const ctx = await loadFeedbackContext(token);
+  assert.strictEqual(ctx, null);
+  await pool.query("UPDATE proposals SET status = 'completed' WHERE id = $1", [proposalId]);
+});
+
+test('loadFeedbackContext > reports already_submitted=true when a feedback row exists', async () => {
+  await pool.query(
+    'INSERT INTO post_event_feedback (proposal_id, rating) VALUES ($1, 5)',
+    [proposalId]
+  );
+  const ctx = await loadFeedbackContext(token);
+  assert.strictEqual(ctx.already_submitted, true);
+});
+
+// ── recordFeedback ──
+test('recordFeedback > high rating returns a redirect_url and stores the row', async () => {
+  const result = await recordFeedback({ token, rating: 5, comment: null, ip: null, userAgent: null });
+  assert.strictEqual(result.routing, 'redirect');
+  assert.ok(result.redirect_url);
+
+  const { rows } = await pool.query(
+    'SELECT rating FROM post_event_feedback WHERE proposal_id = $1',
+    [proposalId]
+  );
+  assert.strictEqual(rows[0].rating, 5);
+});
+
+test('recordFeedback > low rating stores comment and returns routing=thanks (no redirect)', async () => {
+  const result = await recordFeedback({ token, rating: 2, comment: 'Bartender was late.', ip: null, userAgent: null });
+  assert.strictEqual(result.routing, 'thanks');
+  assert.strictEqual(result.redirect_url, undefined);
+
+  const { rows } = await pool.query(
+    'SELECT rating, comment FROM post_event_feedback WHERE proposal_id = $1',
+    [proposalId]
+  );
+  assert.strictEqual(rows[0].rating, 2);
+  assert.strictEqual(rows[0].comment, 'Bartender was late.');
+});
+
+test('recordFeedback > second submission for the same proposal throws conflict', async () => {
+  await pool.query(
+    'INSERT INTO post_event_feedback (proposal_id, rating) VALUES ($1, 5)',
+    [proposalId]
+  );
+  await assert.rejects(
+    () => recordFeedback({ token, rating: 3, comment: null, ip: null, userAgent: null }),
+    /already/i
+  );
+});
+
+test('recordFeedback > rejects when the underlying proposal is archived', async () => {
+  await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
+  await assert.rejects(
+    () => recordFeedback({ token, rating: 5, comment: null, ip: null, userAgent: null }),
+    /not found/i
+  );
+  await pool.query("UPDATE proposals SET status = 'completed' WHERE id = $1", [proposalId]);
 });
 ```
+
+Implementation note: this test expects `publicFeedback.js` to export four pure-ish helpers in addition to the Express router:
+
+- `isFeedbackTokenShape(token)` returns `true` iff the token matches the UUID regex.
+- `validateFeedbackInput({ rating, comment })` returns `{rating, comment: comment|null}` or throws a `ValidationError`.
+- `loadFeedbackContext(token)` returns the display payload, or `null` if not found / archived.
+- `recordFeedback({ token, rating, comment, ip, userAgent })` performs the insert + sentiment routing, returns `{routing: 'redirect'|'thanks', redirect_url?}`. Throws `ConflictError` on duplicate submission and `NotFoundError` when the proposal can't be sent feedback for (gone or archived).
+
+Refactor the route handlers in `publicFeedback.js` to call these helpers — the GET handler calls `loadFeedbackContext`; the POST handler validates input, then calls `recordFeedback`, then forwards the admin email (for low ratings). End-to-end HTTP behavior is verified by manual smoke testing in Task 13.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-npx jest server/routes/publicFeedback.test.js
+node --test server/routes/publicFeedback.test.js
 ```
 
-Expected: FAIL because the route file doesn't exist yet (the lazy `require('../index.js')` won't include the missing router).
+Expected: FAIL because the route file doesn't exist yet (`Cannot find module './publicFeedback'`).
 
 - [ ] **Step 3: Implement the route**
 
@@ -1109,11 +1120,40 @@ const submissionLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-/** GET /api/public/feedback/:token — fetch display data for the feedback page */
-router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
-  const { token } = req.params;
-  if (!UUID_RE.test(token)) throw new NotFoundError('Feedback page not found');
+// ── Helpers exported for unit tests ──
 
+function isFeedbackTokenShape(token) {
+  return typeof token === 'string' && UUID_RE.test(token);
+}
+
+/**
+ * Validate the POST body. Returns `{rating, comment}` (comment normalized to null).
+ * Throws a ValidationError when input is malformed.
+ */
+function validateFeedbackInput({ rating, comment } = {}) {
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    throw new ValidationError({ rating: 'Rating must be an integer 1-5' });
+  }
+  let normalizedComment = null;
+  if (comment !== undefined && comment !== null) {
+    if (typeof comment !== 'string') {
+      throw new ValidationError({ comment: 'Comment must be a string' });
+    }
+    if (comment.length > 2000) {
+      throw new ValidationError({ comment: 'Comment must be 2000 characters or fewer' });
+    }
+    normalizedComment = comment;
+  }
+  return { rating, comment: normalizedComment };
+}
+
+/**
+ * Load the display payload for the feedback page given a token. Returns the
+ * payload object, or `null` when the proposal is missing/archived so the GET
+ * handler can render a NotFoundError.
+ */
+async function loadFeedbackContext(token) {
+  if (!isFeedbackTokenShape(token)) return null;
   const { rows } = await pool.query(`
     SELECT p.id, p.status, p.event_type, p.event_type_custom, p.event_date,
            c.name AS client_name,
@@ -1122,16 +1162,11 @@ router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
     LEFT JOIN clients c ON c.id = p.client_id
     WHERE p.token = $1
   `, [token]);
-
   const row = rows[0];
-  if (!row) throw new NotFoundError('Feedback page not found');
-  if (row.status === 'archived') throw new NotFoundError('Feedback page not found');
-
-  // Pull only the first word of the client name as a polite, generic "first name"
-  // for the page heading. Falls back to "there" if the column is empty.
+  if (!row) return null;
+  if (row.status === 'archived') return null;
   const clientFirstName = (row.client_name || '').trim().split(/\s+/)[0] || 'there';
-
-  res.json({
+  return {
     client_first_name: clientFirstName,
     event_type_label: getEventTypeLabel({
       event_type: row.event_type,
@@ -1139,27 +1174,18 @@ router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
     }),
     event_date: row.event_date,
     already_submitted: row.already_submitted,
-  });
-}));
+  };
+}
 
-/** POST /api/public/feedback/:token — submit a rating */
-router.post('/:token', publicLimiter, submissionLimiter, asyncHandler(async (req, res) => {
-  const { token } = req.params;
-  if (!UUID_RE.test(token)) throw new NotFoundError('Feedback page not found');
-
-  const { rating, comment } = req.body || {};
-  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
-    throw new ValidationError({ rating: 'Rating must be an integer 1-5' });
-  }
-  if (comment !== undefined && comment !== null) {
-    if (typeof comment !== 'string') {
-      throw new ValidationError({ comment: 'Comment must be a string' });
-    }
-    if (comment.length > 2000) {
-      throw new ValidationError({ comment: 'Comment must be 2000 characters or fewer' });
-    }
-  }
-
+/**
+ * Insert the feedback row + sentiment routing. Returns
+ * `{routing: 'redirect'|'thanks', redirect_url?}`. Caller (route handler) is
+ * responsible for posting any admin email; this helper stays free of email
+ * I/O so unit tests don't have to mock it. Throws NotFoundError / ConflictError
+ * on flow violations.
+ */
+async function recordFeedback({ token, rating, comment, ip, userAgent }) {
+  if (!isFeedbackTokenShape(token)) throw new NotFoundError('Feedback page not found');
   const { rows } = await pool.query(`
     SELECT p.id, p.status, p.event_type, p.event_type_custom, p.event_date,
            c.name AS client_name
@@ -1167,26 +1193,15 @@ router.post('/:token', publicLimiter, submissionLimiter, asyncHandler(async (req
     LEFT JOIN clients c ON c.id = p.client_id
     WHERE p.token = $1
   `, [token]);
-
   const proposal = rows[0];
   if (!proposal) throw new NotFoundError('Feedback page not found');
   if (proposal.status === 'archived') throw new NotFoundError('Feedback page not found');
 
-  // Insert with unique-index conflict detection. The unique index on
-  // post_event_feedback(proposal_id) (Task 1) ensures one row per proposal.
-  let inserted;
   try {
-    inserted = await pool.query(
+    await pool.query(
       `INSERT INTO post_event_feedback (proposal_id, rating, comment, submitter_ip, submitter_user_agent)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id`,
-      [
-        proposal.id,
-        rating,
-        comment || null,
-        req.ip || null,
-        (req.get('user-agent') || '').slice(0, 500),
-      ]
+       VALUES ($1, $2, $3, $4, $5)`,
+      [proposal.id, rating, comment, ip || null, (userAgent || '').slice(0, 500)]
     );
   } catch (err) {
     if (err.code === '23505') {
@@ -1195,28 +1210,52 @@ router.post('/:token', publicLimiter, submissionLimiter, asyncHandler(async (req
     throw err;
   }
 
-  // Sentiment routing
   if (rating >= 4) {
     const redirectUrl = process.env.PUBLIC_GOOGLE_REVIEW_URL || 'https://google.com';
-    return res.json({ ok: true, redirect_url: redirectUrl });
+    return { routing: 'redirect', redirect_url: redirectUrl, proposal };
+  }
+  return { routing: 'thanks', proposal };
+}
+
+// ── Routes ──
+
+/** GET /api/public/feedback/:token — fetch display data for the feedback page */
+router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
+  const ctx = await loadFeedbackContext(req.params.token);
+  if (!ctx) throw new NotFoundError('Feedback page not found');
+  res.json(ctx);
+}));
+
+/** POST /api/public/feedback/:token — submit a rating */
+router.post('/:token', publicLimiter, submissionLimiter, asyncHandler(async (req, res) => {
+  const { rating, comment } = validateFeedbackInput(req.body || {});
+  const result = await recordFeedback({
+    token: req.params.token,
+    rating,
+    comment,
+    ip: req.ip,
+    userAgent: req.get('user-agent') || '',
+  });
+  if (result.routing === 'redirect') {
+    return res.json({ ok: true, redirect_url: result.redirect_url });
   }
 
   // Low rating: best-effort admin notification, never fail the request on email failure.
   try {
     const tpl = marketingTemplates.lowRatingAdminNotification({
-      clientName: proposal.client_name || 'A client',
-      eventDateDisplay: proposal.event_date
-        ? new Date(proposal.event_date).toLocaleDateString('en-US', {
+      clientName: result.proposal.client_name || 'A client',
+      eventDateDisplay: result.proposal.event_date
+        ? new Date(result.proposal.event_date).toLocaleDateString('en-US', {
             weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
           })
         : '',
       eventTypeLabel: getEventTypeLabel({
-        event_type: proposal.event_type,
-        event_type_custom: proposal.event_type_custom,
+        event_type: result.proposal.event_type,
+        event_type_custom: result.proposal.event_type_custom,
       }),
       rating,
       comment: comment || null,
-      adminUrl: `${ADMIN_URL}/proposals/${proposal.id}`,
+      adminUrl: `${ADMIN_URL}/proposals/${result.proposal.id}`,
     });
     await sendEmail({
       to: process.env.ADMIN_FEEDBACK_NOTIFICATION_EMAIL || 'contact@drbartender.com',
@@ -1227,7 +1266,7 @@ router.post('/:token', publicLimiter, submissionLimiter, asyncHandler(async (req
     console.error('[publicFeedback] admin email failed:', err.message);
     Sentry.captureException(err, {
       tags: { route: 'publicFeedback.POST', op: 'admin_email' },
-      extra: { proposalId: proposal.id, rating },
+      extra: { proposalId: result.proposal.id, rating },
     });
   }
 
@@ -1235,6 +1274,10 @@ router.post('/:token', publicLimiter, submissionLimiter, asyncHandler(async (req
 }));
 
 module.exports = router;
+module.exports.isFeedbackTokenShape = isFeedbackTokenShape;
+module.exports.validateFeedbackInput = validateFeedbackInput;
+module.exports.loadFeedbackContext = loadFeedbackContext;
+module.exports.recordFeedback = recordFeedback;
 ```
 
 - [ ] **Step 4: Mount the router in `server/index.js`**
@@ -1248,7 +1291,7 @@ app.use('/api/public/feedback', require('./routes/publicFeedback'));
 - [ ] **Step 5: Run test to verify pass**
 
 ```bash
-npx jest server/routes/publicFeedback.test.js
+node --test server/routes/publicFeedback.test.js
 ```
 
 Expected: all tests pass.
@@ -1615,6 +1658,8 @@ This is the integration layer between the dispatcher (Plan 2a's `registerHandler
 Create `server/utils/marketingHandlers.test.js`:
 
 ```javascript
+const { test, before, after, beforeEach, afterEach } = require('node:test');
+const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const {
   MARKETING_MESSAGE_TYPES,
@@ -1627,248 +1672,240 @@ const {
   cancelMarketingForProposal,
 } = require('./marketingHandlers');
 
-describe('marketingHandlers', () => {
-  let clientId;
-  let proposalId;
+let clientId;
+let proposalId;
 
-  beforeAll(async () => {
-    const c = await pool.query(
-      "INSERT INTO clients (name, email) VALUES ('Handler Test', 'handler-test@example.com') RETURNING id"
-    );
-    clientId = c.rows[0].id;
-  });
+before(async () => {
+  const c = await pool.query(
+    "INSERT INTO clients (name, email) VALUES ('Handler Test', 'handler-test@example.com') RETURNING id"
+  );
+  clientId = c.rows[0].id;
+});
 
-  beforeEach(async () => {
-    const p = await pool.query(
-      `INSERT INTO proposals (client_id, event_date, status, event_type)
-       VALUES ($1, CURRENT_DATE + INTERVAL '365 days', 'sent', 'birthday-party')
-       RETURNING id`,
-      [clientId]
-    );
-    proposalId = p.rows[0].id;
-  });
+beforeEach(async () => {
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status, event_type)
+     VALUES ($1, CURRENT_DATE + INTERVAL '365 days', 'sent', 'birthday-party')
+     RETURNING id`,
+    [clientId]
+  );
+  proposalId = p.rows[0].id;
+});
 
-  afterEach(async () => {
-    await pool.query('DELETE FROM scheduled_messages WHERE entity_type = $1 AND entity_id = $2', ['proposal', proposalId]);
-    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
-  });
+afterEach(async () => {
+  await pool.query('DELETE FROM scheduled_messages WHERE entity_type = $1 AND entity_id = $2', ['proposal', proposalId]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+});
 
-  afterAll(async () => {
-    await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
-  });
+after(async () => {
+  await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
+  await pool.end();
+});
 
-  describe('MARKETING_MESSAGE_TYPES', () => {
-    it('contains every marketing-class type the dispatcher should gate', () => {
-      expect(MARKETING_MESSAGE_TYPES).toEqual(
-        expect.arrayContaining([
-          'drip_touch_2',
-          'drip_touch_4',
-          'drip_touch_5_email',
-          'new_year_hello',
-          'six_months_out',
-          'retention_nudge',
-        ])
-      );
-      // review_request is intentionally NOT marketing — it's transactional per CAN-SPAM
-      // (post-sale follow-up about a completed service). marketing_enabled does NOT gate it.
-      expect(MARKETING_MESSAGE_TYPES).not.toContain('review_request');
-    });
-  });
+// ── MARKETING_MESSAGE_TYPES ──
+test('MARKETING_MESSAGE_TYPES > contains every marketing-class type the dispatcher should gate', () => {
+  for (const t of [
+    'drip_touch_2',
+    'drip_touch_4',
+    'drip_touch_5_email',
+    'new_year_hello',
+    'six_months_out',
+    'retention_nudge',
+  ]) {
+    assert.ok(MARKETING_MESSAGE_TYPES.includes(t), `expected ${t}`);
+  }
+  // review_request is intentionally NOT marketing — it's transactional per CAN-SPAM
+  // (post-sale follow-up about a completed service). marketing_enabled does NOT gate it.
+  assert.ok(!MARKETING_MESSAGE_TYPES.includes('review_request'));
+});
 
-  describe('scheduleDripForProposal', () => {
-    it('inserts touch_2, touch_4, touch_5_email pending rows on the proposal', async () => {
-      await scheduleDripForProposal(proposalId);
-      const { rows } = await pool.query(
-        `SELECT message_type, channel, status FROM scheduled_messages
-         WHERE entity_type = 'proposal' AND entity_id = $1
-         ORDER BY message_type`,
-        [proposalId]
-      );
-      const types = rows.map(r => r.message_type);
-      expect(types).toEqual(['drip_touch_2', 'drip_touch_4', 'drip_touch_5_email']);
-      expect(rows.every(r => r.channel === 'email')).toBe(true);
-      expect(rows.every(r => r.status === 'pending')).toBe(true);
-    });
+// ── scheduleDripForProposal ──
+test('scheduleDripForProposal > inserts touch_2, touch_4, touch_5_email pending rows on the proposal', async () => {
+  await scheduleDripForProposal(proposalId);
+  const { rows } = await pool.query(
+    `SELECT message_type, channel, status FROM scheduled_messages
+     WHERE entity_type = 'proposal' AND entity_id = $1
+     ORDER BY message_type`,
+    [proposalId]
+  );
+  const types = rows.map(r => r.message_type);
+  assert.deepStrictEqual(types, ['drip_touch_2', 'drip_touch_4', 'drip_touch_5_email']);
+  assert.ok(rows.every(r => r.channel === 'email'));
+  assert.ok(rows.every(r => r.status === 'pending'));
+});
 
-    it('is idempotent — second call does not duplicate rows', async () => {
-      await scheduleDripForProposal(proposalId);
-      await scheduleDripForProposal(proposalId);
-      const { rows } = await pool.query(
-        `SELECT count(*) FROM scheduled_messages
-         WHERE entity_type = 'proposal' AND entity_id = $1`,
-        [proposalId]
-      );
-      expect(Number(rows[0].count)).toBe(3);
-    });
+test('scheduleDripForProposal > is idempotent — second call does not duplicate rows', async () => {
+  await scheduleDripForProposal(proposalId);
+  await scheduleDripForProposal(proposalId);
+  const { rows } = await pool.query(
+    `SELECT count(*) FROM scheduled_messages
+     WHERE entity_type = 'proposal' AND entity_id = $1`,
+    [proposalId]
+  );
+  assert.strictEqual(Number(rows[0].count), 3);
+});
 
-    it('uses the proposal status moment as the +7/+14/+21 anchor', async () => {
-      const now = Date.now();
-      await scheduleDripForProposal(proposalId);
-      const { rows } = await pool.query(
-        `SELECT message_type, scheduled_for FROM scheduled_messages
-         WHERE entity_type = 'proposal' AND entity_id = $1
-         ORDER BY message_type`,
-        [proposalId]
-      );
-      const t2 = new Date(rows.find(r => r.message_type === 'drip_touch_2').scheduled_for).getTime();
-      const t4 = new Date(rows.find(r => r.message_type === 'drip_touch_4').scheduled_for).getTime();
-      const t5 = new Date(rows.find(r => r.message_type === 'drip_touch_5_email').scheduled_for).getTime();
-      // Each anchor should be 7/14/21 days from the proposal status-moved-to-sent time.
-      // We don't know the exact baseline so we just check the relative spacing.
-      expect(t4 - t2).toBeGreaterThanOrEqual(6 * 86400000);
-      expect(t4 - t2).toBeLessThanOrEqual(8 * 86400000);
-      expect(t5 - t4).toBeGreaterThanOrEqual(6 * 86400000);
-      expect(t5 - t4).toBeLessThanOrEqual(8 * 86400000);
-      expect(t2).toBeGreaterThan(now);
-    });
-  });
+test('scheduleDripForProposal > uses the proposal status moment as the +7/+14/+21 anchor', async () => {
+  const now = Date.now();
+  await scheduleDripForProposal(proposalId);
+  const { rows } = await pool.query(
+    `SELECT message_type, scheduled_for FROM scheduled_messages
+     WHERE entity_type = 'proposal' AND entity_id = $1
+     ORDER BY message_type`,
+    [proposalId]
+  );
+  const t2 = new Date(rows.find(r => r.message_type === 'drip_touch_2').scheduled_for).getTime();
+  const t4 = new Date(rows.find(r => r.message_type === 'drip_touch_4').scheduled_for).getTime();
+  const t5 = new Date(rows.find(r => r.message_type === 'drip_touch_5_email').scheduled_for).getTime();
+  // Each anchor should be 7/14/21 days from the proposal status-moved-to-sent time.
+  // We don't know the exact baseline so we just check the relative spacing.
+  assert.ok(t4 - t2 >= 6 * 86400000);
+  assert.ok(t4 - t2 <= 8 * 86400000);
+  assert.ok(t5 - t4 >= 6 * 86400000);
+  assert.ok(t5 - t4 <= 8 * 86400000);
+  assert.ok(t2 > now);
+});
 
-  describe('scheduleReviewRequest', () => {
-    it('inserts a review_request row 2 days after event_date', async () => {
-      await scheduleReviewRequest(proposalId);
-      const { rows } = await pool.query(
-        `SELECT message_type, channel, scheduled_for FROM scheduled_messages
-         WHERE entity_type = 'proposal' AND entity_id = $1`,
-        [proposalId]
-      );
-      expect(rows).toHaveLength(1);
-      expect(rows[0].message_type).toBe('review_request');
-      expect(rows[0].channel).toBe('email');
-    });
+// ── scheduleReviewRequest ──
+test('scheduleReviewRequest > inserts a review_request row 2 days after event_date', async () => {
+  await scheduleReviewRequest(proposalId);
+  const { rows } = await pool.query(
+    `SELECT message_type, channel, scheduled_for FROM scheduled_messages
+     WHERE entity_type = 'proposal' AND entity_id = $1`,
+    [proposalId]
+  );
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].message_type, 'review_request');
+  assert.strictEqual(rows[0].channel, 'email');
+});
 
-    it('is idempotent', async () => {
-      await scheduleReviewRequest(proposalId);
-      await scheduleReviewRequest(proposalId);
-      const { rows } = await pool.query(
-        "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
-        [proposalId]
-      );
-      expect(Number(rows[0].count)).toBe(1);
-    });
-  });
+test('scheduleReviewRequest > is idempotent', async () => {
+  await scheduleReviewRequest(proposalId);
+  await scheduleReviewRequest(proposalId);
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
+    [proposalId]
+  );
+  assert.strictEqual(Number(rows[0].count), 1);
+});
 
-  describe('scheduleNewYearHello', () => {
-    it('schedules nothing if event is in same calendar year as sign', async () => {
-      // Move the event to this year
-      await pool.query(
-        "UPDATE proposals SET event_date = CURRENT_DATE + INTERVAL '30 days' WHERE id = $1",
-        [proposalId]
-      );
-      await scheduleNewYearHello(proposalId);
-      const { rows } = await pool.query(
-        "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
-        [proposalId]
-      );
-      expect(Number(rows[0].count)).toBe(0);
-    });
+// ── scheduleNewYearHello ──
+test('scheduleNewYearHello > schedules nothing if event is in same calendar year as sign', async () => {
+  // Move the event to this year
+  await pool.query(
+    "UPDATE proposals SET event_date = CURRENT_DATE + INTERVAL '30 days' WHERE id = $1",
+    [proposalId]
+  );
+  await scheduleNewYearHello(proposalId);
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
+    [proposalId]
+  );
+  assert.strictEqual(Number(rows[0].count), 0);
+});
 
-    it('schedules a row if event is next year and >= 60 days into new year', async () => {
-      const nextYearMar15 = `${new Date().getFullYear() + 1}-03-15`;
-      await pool.query("UPDATE proposals SET event_date = $1 WHERE id = $2", [nextYearMar15, proposalId]);
-      await scheduleNewYearHello(proposalId);
-      const { rows } = await pool.query(
-        "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
-        [proposalId]
-      );
-      expect(Number(rows[0].count)).toBe(1);
-    });
-  });
+test('scheduleNewYearHello > schedules a row if event is next year and >= 60 days into new year', async () => {
+  const nextYearMar15 = `${new Date().getFullYear() + 1}-03-15`;
+  await pool.query("UPDATE proposals SET event_date = $1 WHERE id = $2", [nextYearMar15, proposalId]);
+  await scheduleNewYearHello(proposalId);
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
+    [proposalId]
+  );
+  assert.strictEqual(Number(rows[0].count), 1);
+});
 
-  describe('scheduleSixMonthsOut', () => {
-    it('schedules nothing if booking lead time <= 6 months', async () => {
-      await pool.query(
-        "UPDATE proposals SET event_date = CURRENT_DATE + INTERVAL '90 days' WHERE id = $1",
-        [proposalId]
-      );
-      await scheduleSixMonthsOut(proposalId);
-      const { rows } = await pool.query(
-        "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
-        [proposalId]
-      );
-      expect(Number(rows[0].count)).toBe(0);
-    });
+// ── scheduleSixMonthsOut ──
+test('scheduleSixMonthsOut > schedules nothing if booking lead time <= 6 months', async () => {
+  await pool.query(
+    "UPDATE proposals SET event_date = CURRENT_DATE + INTERVAL '90 days' WHERE id = $1",
+    [proposalId]
+  );
+  await scheduleSixMonthsOut(proposalId);
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
+    [proposalId]
+  );
+  assert.strictEqual(Number(rows[0].count), 0);
+});
 
-    it('schedules a row if booking lead time > 6 months', async () => {
-      await pool.query(
-        "UPDATE proposals SET event_date = CURRENT_DATE + INTERVAL '220 days' WHERE id = $1",
-        [proposalId]
-      );
-      await scheduleSixMonthsOut(proposalId);
-      const { rows } = await pool.query(
-        "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
-        [proposalId]
-      );
-      expect(Number(rows[0].count)).toBe(1);
-    });
-  });
+test('scheduleSixMonthsOut > schedules a row if booking lead time > 6 months', async () => {
+  await pool.query(
+    "UPDATE proposals SET event_date = CURRENT_DATE + INTERVAL '220 days' WHERE id = $1",
+    [proposalId]
+  );
+  await scheduleSixMonthsOut(proposalId);
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
+    [proposalId]
+  );
+  assert.strictEqual(Number(rows[0].count), 1);
+});
 
-  describe('scheduleRetentionNudge', () => {
-    it('schedules nothing for non-whitelisted event types', async () => {
-      await pool.query(
-        "UPDATE proposals SET event_type = 'wedding-reception', status = 'completed' WHERE id = $1",
-        [proposalId]
-      );
-      await scheduleRetentionNudge(proposalId);
-      const { rows } = await pool.query(
-        "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
-        [proposalId]
-      );
-      expect(Number(rows[0].count)).toBe(0);
-    });
+// ── scheduleRetentionNudge ──
+test('scheduleRetentionNudge > schedules nothing for non-whitelisted event types', async () => {
+  await pool.query(
+    "UPDATE proposals SET event_type = 'wedding-reception', status = 'completed' WHERE id = $1",
+    [proposalId]
+  );
+  await scheduleRetentionNudge(proposalId);
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
+    [proposalId]
+  );
+  assert.strictEqual(Number(rows[0].count), 0);
+});
 
-    it('schedules a row for a whitelisted event type', async () => {
-      await pool.query(
-        "UPDATE proposals SET event_type = 'birthday-party', status = 'completed' WHERE id = $1",
-        [proposalId]
-      );
-      await scheduleRetentionNudge(proposalId);
-      const { rows } = await pool.query(
-        "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
-        [proposalId]
-      );
-      expect(Number(rows[0].count)).toBe(1);
-    });
-  });
+test('scheduleRetentionNudge > schedules a row for a whitelisted event type', async () => {
+  await pool.query(
+    "UPDATE proposals SET event_type = 'birthday-party', status = 'completed' WHERE id = $1",
+    [proposalId]
+  );
+  await scheduleRetentionNudge(proposalId);
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
+    [proposalId]
+  );
+  assert.strictEqual(Number(rows[0].count), 1);
+});
 
-  describe('cancelMarketingForProposal', () => {
-    it('marks all pending marketing-class messages as suppressed', async () => {
-      await scheduleDripForProposal(proposalId);
-      await cancelMarketingForProposal(proposalId);
-      const { rows } = await pool.query(
-        `SELECT status FROM scheduled_messages
-         WHERE entity_type='proposal' AND entity_id=$1`,
-        [proposalId]
-      );
-      expect(rows.every(r => r.status === 'suppressed')).toBe(true);
-    });
+// ── cancelMarketingForProposal ──
+test('cancelMarketingForProposal > marks all pending marketing-class messages as suppressed', async () => {
+  await scheduleDripForProposal(proposalId);
+  await cancelMarketingForProposal(proposalId);
+  const { rows } = await pool.query(
+    `SELECT status FROM scheduled_messages
+     WHERE entity_type='proposal' AND entity_id=$1`,
+    [proposalId]
+  );
+  assert.ok(rows.every(r => r.status === 'suppressed'));
+});
 
-    it('leaves already-sent messages alone', async () => {
-      await scheduleDripForProposal(proposalId);
-      await pool.query(
-        `UPDATE scheduled_messages SET status='sent', sent_at=NOW()
-         WHERE entity_type='proposal' AND entity_id=$1 AND message_type='drip_touch_2'`,
-        [proposalId]
-      );
-      await cancelMarketingForProposal(proposalId);
-      const { rows } = await pool.query(
-        `SELECT message_type, status FROM scheduled_messages
-         WHERE entity_type='proposal' AND entity_id=$1
-         ORDER BY message_type`,
-        [proposalId]
-      );
-      const m = Object.fromEntries(rows.map(r => [r.message_type, r.status]));
-      expect(m['drip_touch_2']).toBe('sent');
-      expect(m['drip_touch_4']).toBe('suppressed');
-      expect(m['drip_touch_5_email']).toBe('suppressed');
-    });
-  });
+test('cancelMarketingForProposal > leaves already-sent messages alone', async () => {
+  await scheduleDripForProposal(proposalId);
+  await pool.query(
+    `UPDATE scheduled_messages SET status='sent', sent_at=NOW()
+     WHERE entity_type='proposal' AND entity_id=$1 AND message_type='drip_touch_2'`,
+    [proposalId]
+  );
+  await cancelMarketingForProposal(proposalId);
+  const { rows } = await pool.query(
+    `SELECT message_type, status FROM scheduled_messages
+     WHERE entity_type='proposal' AND entity_id=$1
+     ORDER BY message_type`,
+    [proposalId]
+  );
+  const m = Object.fromEntries(rows.map(r => [r.message_type, r.status]));
+  assert.strictEqual(m['drip_touch_2'], 'sent');
+  assert.strictEqual(m['drip_touch_4'], 'suppressed');
+  assert.strictEqual(m['drip_touch_5_email'], 'suppressed');
 });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-npx jest server/utils/marketingHandlers.test.js
+node --test server/utils/marketingHandlers.test.js
 ```
 
 Expected: FAIL with `Cannot find module './marketingHandlers'`.
@@ -2246,7 +2283,7 @@ module.exports = {
 - [ ] **Step 4: Run test to verify pass**
 
 ```bash
-npx jest server/utils/marketingHandlers.test.js
+node --test server/utils/marketingHandlers.test.js
 ```
 
 Expected: all tests pass.
@@ -2638,74 +2675,77 @@ if (row.recipient_type === 'client') {
 If Plan 2a's `scheduledMessageDispatcher.test.js` exists, append:
 
 ```javascript
-describe('marketing gating', () => {
-  let clientId;
-  let proposalId;
+// Append to server/utils/scheduledMessageDispatcher.test.js
+// (file header at top already imports node:test + node:assert/strict from Plan 2a)
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
 
-  beforeAll(async () => {
-    const c = await pool.query(
-      `INSERT INTO clients (name, email, communication_preferences)
-       VALUES ('Marketing Off Client', 'marketing-off@example.com', '{"marketing_enabled":false,"email_enabled":true,"sms_enabled":true}'::jsonb)
-       RETURNING id`
-    );
-    clientId = c.rows[0].id;
-    const p = await pool.query(
-      `INSERT INTO proposals (client_id, event_date, status, event_type)
-       VALUES ($1, CURRENT_DATE + INTERVAL '365 days', 'sent', 'birthday-party')
-       RETURNING id`,
-      [clientId]
-    );
-    proposalId = p.rows[0].id;
-  });
+let gatingClientId;
+let gatingProposalId;
 
-  afterAll(async () => {
-    await pool.query('DELETE FROM scheduled_messages WHERE entity_id = $1', [proposalId]);
-    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
-    await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
-  });
+before(async () => {
+  const c = await pool.query(
+    `INSERT INTO clients (name, email, communication_preferences)
+     VALUES ('Marketing Off Client', 'marketing-off@example.com', '{"marketing_enabled":false,"email_enabled":true,"sms_enabled":true}'::jsonb)
+     RETURNING id`
+  );
+  gatingClientId = c.rows[0].id;
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status, event_type)
+     VALUES ($1, CURRENT_DATE + INTERVAL '365 days', 'sent', 'birthday-party')
+     RETURNING id`,
+    [gatingClientId]
+  );
+  gatingProposalId = p.rows[0].id;
+});
 
-  it('suppresses a marketing-class row when marketing_enabled is false', async () => {
-    await pool.query(`
-      INSERT INTO scheduled_messages (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for)
-      VALUES ('proposal', $1, 'drip_touch_2', 'client', $2, 'email', NOW() - INTERVAL '1 minute')
-    `, [proposalId, clientId]);
+after(async () => {
+  await pool.query('DELETE FROM scheduled_messages WHERE entity_id = $1', [gatingProposalId]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [gatingProposalId]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [gatingClientId]);
+});
 
-    const { processScheduledMessages } = require('./scheduledMessageDispatcher');
-    await processScheduledMessages();
+test('marketing gating > suppresses a marketing-class row when marketing_enabled is false', async () => {
+  await pool.query(`
+    INSERT INTO scheduled_messages (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for)
+    VALUES ('proposal', $1, 'drip_touch_2', 'client', $2, 'email', NOW() - INTERVAL '1 minute')
+  `, [gatingProposalId, gatingClientId]);
 
-    const { rows } = await pool.query(
-      "SELECT status, error_message FROM scheduled_messages WHERE entity_id = $1 AND message_type = 'drip_touch_2'",
-      [proposalId]
-    );
-    expect(rows[0].status).toBe('suppressed');
-    expect(rows[0].error_message).toMatch(/marketing opted out/);
-  });
+  const { processScheduledMessages } = require('./scheduledMessageDispatcher');
+  await processScheduledMessages();
 
-  it('still fires a transactional review_request when marketing is off', async () => {
-    // The review_request is NOT marketing-class — the gate must let it through.
-    await pool.query("UPDATE proposals SET status = 'completed', event_date = CURRENT_DATE - INTERVAL '2 days' WHERE id = $1", [proposalId]);
-    await pool.query(`
-      INSERT INTO scheduled_messages (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for)
-      VALUES ('proposal', $1, 'review_request', 'client', $2, 'email', NOW() - INTERVAL '1 minute')
-    `, [proposalId, clientId]);
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE entity_id = $1 AND message_type = 'drip_touch_2'",
+    [gatingProposalId]
+  );
+  assert.strictEqual(rows[0].status, 'suppressed');
+  assert.match(rows[0].error_message, /marketing opted out/);
+});
 
-    const { processScheduledMessages } = require('./scheduledMessageDispatcher');
-    await processScheduledMessages();
+test('marketing gating > still fires a transactional review_request when marketing is off', async () => {
+  // The review_request is NOT marketing-class — the gate must let it through.
+  await pool.query("UPDATE proposals SET status = 'completed', event_date = CURRENT_DATE - INTERVAL '2 days' WHERE id = $1", [gatingProposalId]);
+  await pool.query(`
+    INSERT INTO scheduled_messages (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for)
+    VALUES ('proposal', $1, 'review_request', 'client', $2, 'email', NOW() - INTERVAL '1 minute')
+  `, [gatingProposalId, gatingClientId]);
 
-    const { rows } = await pool.query(
-      "SELECT status FROM scheduled_messages WHERE entity_id = $1 AND message_type = 'review_request'",
-      [proposalId]
-    );
-    // Status should be 'sent' (success) or 'failed' (email send error) — but NOT 'suppressed'.
-    expect(rows[0].status).not.toBe('suppressed');
-  });
+  const { processScheduledMessages } = require('./scheduledMessageDispatcher');
+  await processScheduledMessages();
+
+  const { rows } = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE entity_id = $1 AND message_type = 'review_request'",
+    [gatingProposalId]
+  );
+  // Status should be 'sent' (success) or 'failed' (email send error) — but NOT 'suppressed'.
+  assert.notStrictEqual(rows[0].status, 'suppressed');
 });
 ```
 
 - [ ] **Step 5: Run the test**
 
 ```bash
-npx jest server/utils/scheduledMessageDispatcher.test.js
+node --test server/utils/scheduledMessageDispatcher.test.js
 ```
 
 Expected: marketing gating tests pass.
@@ -2986,7 +3026,7 @@ Expected: clean.
 - [ ] **Step 2: All unit tests pass**
 
 ```bash
-npx jest server/utils/marketingEmailTemplates.test.js server/utils/marketingHandlers.test.js server/utils/retentionEligibility.test.js server/routes/publicFeedback.test.js
+node --test server/utils/marketingEmailTemplates.test.js server/utils/marketingHandlers.test.js server/utils/retentionEligibility.test.js server/routes/publicFeedback.test.js
 ```
 
 Expected: all green.

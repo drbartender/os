@@ -6,7 +6,7 @@
 
 **Architecture:** Three concentric layers. (1) Template surface — new `refundNotificationClient`, new `paymentFailedClient`, variant-aware `paymentReminderClient` (autopay vs manual) plus new `paymentReminderLate` (T+1 / T+3), tightened autopay-specific copy on `paymentReceivedClient`. (2) Scheduling helper `messageScheduling.scheduleMessage(...)` that inserts idempotent rows into the existing `scheduled_messages` table (Plan 1). (3) Dispatcher utility `scheduledMessageDispatcher` that runs every 5 min, picks pending rows, joins entity + recipient, runs suppression checks (archive cascade, comm-prefs, email_status), and calls a handler registered by message_type. Stripe webhook on `payment_intent.succeeded` (deposit-paid transition) schedules the appropriate balance reminders; refund and payment-failure paths fire client emails immediately.
 
-**Tech Stack:** Node.js 18+ / Express 4.18, PostgreSQL (raw SQL via `pg`), Resend (server-side email), Jest tests against the live dev DB, Sentry for failure capture.
+**Tech Stack:** Node.js 18+ / Express 4.18, PostgreSQL (raw SQL via `pg`), Resend (server-side email), `node:test` + `node:assert/strict` against the live dev DB, Sentry for failure capture.
 
 **Related:** Spec `docs/superpowers/specs/2026-05-20-automated-communication-design.md` (commit 6d86c0b) sections 3.1–3.6, 3.14, 7.3, 7.5, 8.2. Plan 1 (foundation) `docs/superpowers/plans/2026-05-20-automated-communication-foundation.md` (already shipped — provides `scheduled_messages`, `scheduler_health`, `schedulerHealth.wrapScheduler/clearHealthRow`, `eventTimezone`, archive cascade).
 
@@ -532,98 +532,99 @@ git commit -m "feat(comms): paymentReceivedClient supports autopay-specific fram
 Create `server/utils/messageScheduling.test.js`:
 
 ```javascript
+const { test, before, after, beforeEach } = require('node:test');
+const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const { scheduleMessage } = require('./messageScheduling');
 
-describe('messageScheduling.scheduleMessage', () => {
-  beforeEach(async () => {
-    await pool.query("DELETE FROM scheduled_messages WHERE message_type LIKE 'test_%'");
-  });
+beforeEach(async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE message_type LIKE 'test_%'");
+});
 
-  afterAll(async () => {
-    await pool.query("DELETE FROM scheduled_messages WHERE message_type LIKE 'test_%'");
-    await pool.end();
-  });
+after(async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE message_type LIKE 'test_%'");
+  await pool.end();
+});
 
-  it('inserts a new pending row', async () => {
-    const row = await scheduleMessage({
+test('messageScheduling > inserts a new pending row', async () => {
+  const row = await scheduleMessage({
+    entityType: 'proposal',
+    entityId: 12345,
+    messageType: 'test_balance_t3',
+    recipientType: 'client',
+    recipientId: 999,
+    channel: 'email',
+    scheduledFor: new Date(Date.now() + 24 * 3600 * 1000),
+  });
+  assert.ok(row);
+  assert.ok(row.id > 0);
+  assert.strictEqual(row.status, 'pending');
+
+  const check = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE message_type = 'test_balance_t3' AND entity_id = 12345 AND status = 'pending'"
+  );
+  assert.strictEqual(Number(check.rows[0].count), 1);
+});
+
+test('messageScheduling > returns null on duplicate enrollment for the same pending tuple', async () => {
+  const args = {
+    entityType: 'proposal',
+    entityId: 12346,
+    messageType: 'test_dup',
+    recipientType: 'client',
+    recipientId: 888,
+    channel: 'email',
+    scheduledFor: new Date(Date.now() + 24 * 3600 * 1000),
+  };
+  const first = await scheduleMessage(args);
+  assert.ok(first);
+  const second = await scheduleMessage(args);
+  assert.strictEqual(second, null);
+
+  const check = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE message_type = 'test_dup' AND entity_id = 12346 AND status = 'pending'"
+  );
+  assert.strictEqual(Number(check.rows[0].count), 1);
+});
+
+test('messageScheduling > allows re-scheduling after the prior row moves out of pending', async () => {
+  const args = {
+    entityType: 'proposal',
+    entityId: 12347,
+    messageType: 'test_reschedule',
+    recipientType: 'client',
+    recipientId: 777,
+    channel: 'email',
+    scheduledFor: new Date(Date.now() + 24 * 3600 * 1000),
+  };
+  const first = await scheduleMessage(args);
+  await pool.query("UPDATE scheduled_messages SET status = 'sent', sent_at = NOW() WHERE id = $1", [first.id]);
+
+  const second = await scheduleMessage(args);
+  assert.ok(second);
+  assert.notStrictEqual(second.id, first.id);
+});
+
+test('messageScheduling > rejects an invalid channel before hitting the constraint', async () => {
+  await assert.rejects(
+    () => scheduleMessage({
       entityType: 'proposal',
-      entityId: 12345,
-      messageType: 'test_balance_t3',
+      entityId: 12348,
+      messageType: 'test_bad_channel',
       recipientType: 'client',
-      recipientId: 999,
-      channel: 'email',
-      scheduledFor: new Date(Date.now() + 24 * 3600 * 1000),
-    });
-    expect(row).toBeTruthy();
-    expect(row.id).toBeGreaterThan(0);
-    expect(row.status).toBe('pending');
-
-    const check = await pool.query(
-      "SELECT count(*) FROM scheduled_messages WHERE message_type = 'test_balance_t3' AND entity_id = 12345 AND status = 'pending'"
-    );
-    expect(Number(check.rows[0].count)).toBe(1);
-  });
-
-  it('returns null on duplicate enrollment for the same pending tuple', async () => {
-    const args = {
-      entityType: 'proposal',
-      entityId: 12346,
-      messageType: 'test_dup',
-      recipientType: 'client',
-      recipientId: 888,
-      channel: 'email',
-      scheduledFor: new Date(Date.now() + 24 * 3600 * 1000),
-    };
-    const first = await scheduleMessage(args);
-    expect(first).toBeTruthy();
-    const second = await scheduleMessage(args);
-    expect(second).toBeNull();
-
-    const check = await pool.query(
-      "SELECT count(*) FROM scheduled_messages WHERE message_type = 'test_dup' AND entity_id = 12346 AND status = 'pending'"
-    );
-    expect(Number(check.rows[0].count)).toBe(1);
-  });
-
-  it('allows re-scheduling after the prior row moves out of pending', async () => {
-    const args = {
-      entityType: 'proposal',
-      entityId: 12347,
-      messageType: 'test_reschedule',
-      recipientType: 'client',
-      recipientId: 777,
-      channel: 'email',
-      scheduledFor: new Date(Date.now() + 24 * 3600 * 1000),
-    };
-    const first = await scheduleMessage(args);
-    await pool.query("UPDATE scheduled_messages SET status = 'sent', sent_at = NOW() WHERE id = $1", [first.id]);
-
-    const second = await scheduleMessage(args);
-    expect(second).toBeTruthy();
-    expect(second.id).not.toBe(first.id);
-  });
-
-  it('rejects an invalid channel before hitting the constraint', async () => {
-    await expect(
-      scheduleMessage({
-        entityType: 'proposal',
-        entityId: 12348,
-        messageType: 'test_bad_channel',
-        recipientType: 'client',
-        recipientId: 555,
-        channel: 'fax',
-        scheduledFor: new Date(),
-      })
-    ).rejects.toThrow(/channel/i);
-  });
+      recipientId: 555,
+      channel: 'fax',
+      scheduledFor: new Date(),
+    }),
+    /channel/i
+  );
 });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-npx jest server/utils/messageScheduling.test.js
+node --test server/utils/messageScheduling.test.js
 ```
 
 Expected: FAIL with `Cannot find module './messageScheduling'`.
@@ -704,7 +705,7 @@ Note on the ON CONFLICT clause: PostgreSQL allows referring to a constraint by n
 - [ ] **Step 4: Run test to verify pass**
 
 ```bash
-npx jest server/utils/messageScheduling.test.js
+node --test server/utils/messageScheduling.test.js
 ```
 
 Expected: all 4 tests pass.
@@ -738,6 +739,8 @@ Built-in handlers registered at module load: `balance_reminder_autopay_t3`, `bal
 Create `server/utils/scheduledMessageDispatcher.test.js`:
 
 ```javascript
+const { test, before, after, beforeEach, mock } = require('node:test');
+const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const {
   registerHandler,
@@ -746,191 +749,189 @@ const {
   _handlersForTest,
 } = require('./scheduledMessageDispatcher');
 
-describe('scheduledMessageDispatcher', () => {
-  // Use unique-per-test client/proposal IDs so we don't collide with real data.
-  // Setup: create a throwaway client + proposal once, reuse across tests.
-  let testClientId;
-  let testProposalId;
+// Use unique-per-test client/proposal IDs so we don't collide with real data.
+// Setup: create a throwaway client + proposal once, reuse across tests.
+let testClientId;
+let testProposalId;
 
-  beforeAll(async () => {
-    const c = await pool.query(
-      `INSERT INTO clients (name, email, phone) VALUES ('Dispatcher Test', 'dispatcher-test@example.com', '5555550100')
-       ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
-       RETURNING id`
-    );
-    testClientId = c.rows[0].id;
-    const p = await pool.query(
-      `INSERT INTO proposals (client_id, client_name, client_email, status, event_date, event_type, total_price, amount_paid, balance_due_date, token)
-       VALUES ($1, 'Dispatcher Test', 'dispatcher-test@example.com', 'deposit_paid', CURRENT_DATE + INTERVAL '30 days', 'birthday-party', 100000, 10000, CURRENT_DATE + INTERVAL '14 days', 'dispatcher-test-token-' || extract(epoch from now()))
-       RETURNING id`,
-      [testClientId]
-    );
-    testProposalId = p.rows[0].id;
-  });
+before(async () => {
+  const c = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Dispatcher Test', 'dispatcher-test@example.com', '5555550100')
+     ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
+     RETURNING id`
+  );
+  testClientId = c.rows[0].id;
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, client_name, client_email, status, event_date, event_type, total_price, amount_paid, balance_due_date, token)
+     VALUES ($1, 'Dispatcher Test', 'dispatcher-test@example.com', 'deposit_paid', CURRENT_DATE + INTERVAL '30 days', 'birthday-party', 100000, 10000, CURRENT_DATE + INTERVAL '14 days', 'dispatcher-test-token-' || extract(epoch from now()))
+     RETURNING id`,
+    [testClientId]
+  );
+  testProposalId = p.rows[0].id;
+});
 
-  afterAll(async () => {
-    await pool.query("DELETE FROM scheduled_messages WHERE message_type LIKE 'disp_test_%'");
-    await pool.query('DELETE FROM proposals WHERE id = $1', [testProposalId]);
-    await pool.query('DELETE FROM clients WHERE id = $1', [testClientId]);
-    await pool.end();
-  });
+after(async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE message_type LIKE 'disp_test_%'");
+  await pool.query('DELETE FROM proposals WHERE id = $1', [testProposalId]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [testClientId]);
+  await pool.end();
+});
 
-  beforeEach(async () => {
-    _clearHandlersForTest();
-    await pool.query("DELETE FROM scheduled_messages WHERE message_type LIKE 'disp_test_%'");
-  });
+beforeEach(async () => {
+  _clearHandlersForTest();
+  await pool.query("DELETE FROM scheduled_messages WHERE message_type LIKE 'disp_test_%'");
+});
 
-  it('calls the registered handler and marks status sent', async () => {
-    const handler = jest.fn().mockResolvedValue(undefined);
-    registerHandler('disp_test_simple', handler);
+test('dispatcher > calls the registered handler and marks status sent', async () => {
+  const handler = mock.fn(async () => undefined);
+  registerHandler('disp_test_simple', handler);
 
-    await pool.query(
-      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
-       VALUES ($1, 'proposal', 'disp_test_simple', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
-      [testProposalId, testClientId]
-    );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_simple', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
 
-    await dispatchPending();
-    expect(handler).toHaveBeenCalledTimes(1);
-    const { rows } = await pool.query(
-      "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_simple'"
-    );
-    expect(rows[0].status).toBe('sent');
-  });
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 1);
+  const { rows } = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_simple'"
+  );
+  assert.strictEqual(rows[0].status, 'sent');
+});
 
-  it('marks status failed when handler throws and stores the error', async () => {
-    registerHandler('disp_test_throws', async () => { throw new Error('handler boom'); });
+test('dispatcher > marks status failed when handler throws and stores the error', async () => {
+  registerHandler('disp_test_throws', async () => { throw new Error('handler boom'); });
 
-    await pool.query(
-      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
-       VALUES ($1, 'proposal', 'disp_test_throws', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
-      [testProposalId, testClientId]
-    );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_throws', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
 
-    await dispatchPending();
-    const { rows } = await pool.query(
-      "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_throws'"
-    );
-    expect(rows[0].status).toBe('failed');
-    expect(rows[0].error_message).toContain('handler boom');
-  });
+  await dispatchPending();
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_throws'"
+  );
+  assert.strictEqual(rows[0].status, 'failed');
+  assert.ok(rows[0].error_message.includes('handler boom'));
+});
 
-  it('marks status suppressed when proposal is archived', async () => {
-    const handler = jest.fn().mockResolvedValue(undefined);
-    registerHandler('disp_test_archived', handler);
+test('dispatcher > marks status suppressed when proposal is archived', async () => {
+  const handler = mock.fn(async () => undefined);
+  registerHandler('disp_test_archived', handler);
 
-    // archive the proposal
-    await pool.query("UPDATE proposals SET status = 'archived', archive_reason = 'client_cancelled' WHERE id = $1", [testProposalId]);
+  // archive the proposal
+  await pool.query("UPDATE proposals SET status = 'archived', archive_reason = 'client_cancelled' WHERE id = $1", [testProposalId]);
 
-    await pool.query(
-      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
-       VALUES ($1, 'proposal', 'disp_test_archived', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
-      [testProposalId, testClientId]
-    );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_archived', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
 
-    await dispatchPending();
-    expect(handler).not.toHaveBeenCalled();
-    const { rows } = await pool.query(
-      "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_archived'"
-    );
-    expect(rows[0].status).toBe('suppressed');
-    expect(rows[0].error_message).toMatch(/archived/i);
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 0);
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_archived'"
+  );
+  assert.strictEqual(rows[0].status, 'suppressed');
+  assert.match(rows[0].error_message, /archived/i);
 
-    // restore for the next tests
-    await pool.query("UPDATE proposals SET status = 'deposit_paid', archive_reason = NULL WHERE id = $1", [testProposalId]);
-  });
+  // restore for the next tests
+  await pool.query("UPDATE proposals SET status = 'deposit_paid', archive_reason = NULL WHERE id = $1", [testProposalId]);
+});
 
-  it('marks status suppressed when client has email_enabled=false', async () => {
-    const handler = jest.fn().mockResolvedValue(undefined);
-    registerHandler('disp_test_optout', handler);
+test('dispatcher > marks status suppressed when client has email_enabled=false', async () => {
+  const handler = mock.fn(async () => undefined);
+  registerHandler('disp_test_optout', handler);
 
-    await pool.query(
-      `UPDATE clients SET communication_preferences = jsonb_set(communication_preferences, '{email_enabled}', 'false'::jsonb) WHERE id = $1`,
-      [testClientId]
-    );
+  await pool.query(
+    `UPDATE clients SET communication_preferences = jsonb_set(communication_preferences, '{email_enabled}', 'false'::jsonb) WHERE id = $1`,
+    [testClientId]
+  );
 
-    await pool.query(
-      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
-       VALUES ($1, 'proposal', 'disp_test_optout', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
-      [testProposalId, testClientId]
-    );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_optout', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
 
-    await dispatchPending();
-    expect(handler).not.toHaveBeenCalled();
-    const { rows } = await pool.query(
-      "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_optout'"
-    );
-    expect(rows[0].status).toBe('suppressed');
-    expect(rows[0].error_message).toMatch(/email_enabled/);
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 0);
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_optout'"
+  );
+  assert.strictEqual(rows[0].status, 'suppressed');
+  assert.match(rows[0].error_message, /email_enabled/);
 
-    await pool.query(
-      `UPDATE clients SET communication_preferences = jsonb_set(communication_preferences, '{email_enabled}', 'true'::jsonb) WHERE id = $1`,
-      [testClientId]
-    );
-  });
+  await pool.query(
+    `UPDATE clients SET communication_preferences = jsonb_set(communication_preferences, '{email_enabled}', 'true'::jsonb) WHERE id = $1`,
+    [testClientId]
+  );
+});
 
-  it('marks status suppressed when client.email_status is bad', async () => {
-    const handler = jest.fn().mockResolvedValue(undefined);
-    registerHandler('disp_test_bademail', handler);
+test('dispatcher > marks status suppressed when client.email_status is bad', async () => {
+  const handler = mock.fn(async () => undefined);
+  registerHandler('disp_test_bademail', handler);
 
-    await pool.query("UPDATE clients SET email_status = 'bad' WHERE id = $1", [testClientId]);
+  await pool.query("UPDATE clients SET email_status = 'bad' WHERE id = $1", [testClientId]);
 
-    await pool.query(
-      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
-       VALUES ($1, 'proposal', 'disp_test_bademail', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
-      [testProposalId, testClientId]
-    );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_bademail', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
 
-    await dispatchPending();
-    expect(handler).not.toHaveBeenCalled();
-    const { rows } = await pool.query(
-      "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_bademail'"
-    );
-    expect(rows[0].status).toBe('suppressed');
-    expect(rows[0].error_message).toMatch(/email_status/);
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 0);
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_bademail'"
+  );
+  assert.strictEqual(rows[0].status, 'suppressed');
+  assert.match(rows[0].error_message, /email_status/);
 
-    await pool.query("UPDATE clients SET email_status = 'ok' WHERE id = $1", [testClientId]);
-  });
+  await pool.query("UPDATE clients SET email_status = 'ok' WHERE id = $1", [testClientId]);
+});
 
-  it('skips rows whose scheduled_for is in the future', async () => {
-    const handler = jest.fn().mockResolvedValue(undefined);
-    registerHandler('disp_test_future', handler);
+test('dispatcher > skips rows whose scheduled_for is in the future', async () => {
+  const handler = mock.fn(async () => undefined);
+  registerHandler('disp_test_future', handler);
 
-    await pool.query(
-      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
-       VALUES ($1, 'proposal', 'disp_test_future', 'client', $2, 'email', NOW() + INTERVAL '1 hour')`,
-      [testProposalId, testClientId]
-    );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_future', 'client', $2, 'email', NOW() + INTERVAL '1 hour')`,
+    [testProposalId, testClientId]
+  );
 
-    await dispatchPending();
-    expect(handler).not.toHaveBeenCalled();
-    const { rows } = await pool.query(
-      "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_future'"
-    );
-    expect(rows[0].status).toBe('pending');
-  });
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 0);
+  const { rows } = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_future'"
+  );
+  assert.strictEqual(rows[0].status, 'pending');
+});
 
-  it('marks failed with "no handler registered" when handler is missing', async () => {
-    await pool.query(
-      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
-       VALUES ($1, 'proposal', 'disp_test_nohandler', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
-      [testProposalId, testClientId]
-    );
+test('dispatcher > marks failed with "no handler registered" when handler is missing', async () => {
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_nohandler', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
 
-    await dispatchPending();
-    const { rows } = await pool.query(
-      "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_nohandler'"
-    );
-    expect(rows[0].status).toBe('failed');
-    expect(rows[0].error_message).toMatch(/no handler/i);
-  });
+  await dispatchPending();
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_nohandler'"
+  );
+  assert.strictEqual(rows[0].status, 'failed');
+  assert.match(rows[0].error_message, /no handler/i);
 });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-npx jest server/utils/scheduledMessageDispatcher.test.js
+node --test server/utils/scheduledMessageDispatcher.test.js
 ```
 
 Expected: FAIL with `Cannot find module './scheduledMessageDispatcher'`.
@@ -1204,7 +1205,7 @@ module.exports = {
 - [ ] **Step 4: Run test to verify pass**
 
 ```bash
-npx jest server/utils/scheduledMessageDispatcher.test.js
+node --test server/utils/scheduledMessageDispatcher.test.js
 ```
 
 Expected: all 7 tests pass.
@@ -1732,7 +1733,7 @@ Expected: one row, `last_status = 'ok'`.
 - [ ] **Step 3: Verify all unit tests pass**
 
 ```bash
-npx jest server/utils/messageScheduling.test.js server/utils/scheduledMessageDispatcher.test.js
+node --test server/utils/messageScheduling.test.js server/utils/scheduledMessageDispatcher.test.js
 ```
 
 Expected: all pass.
@@ -1792,7 +1793,7 @@ Ctrl-C. No commit needed for verification.
 - [ ] A test deposit-paid proposal correctly enrolls balance-reminder rows
 - [ ] A test refund fires `refundNotificationClient` (dev log shows the template)
 - [ ] A test failed payment fires `paymentFailedClient` once (and the second attempt within 24h is throttled)
-- [ ] `paymentReminderClient({ paymentMode: 'autopay' })` and `paymentReminderClient({ paymentMode: 'manual' })` both render cleanly (manual sanity-check via Node REPL or jest if a unit test is added)
+- [ ] `paymentReminderClient({ paymentMode: 'autopay' })` and `paymentReminderClient({ paymentMode: 'manual' })` both render cleanly (manual sanity-check via Node REPL or `node --test` if a unit test is added)
 - [ ] No `m-dash` characters introduced in any new copy (project preference — commas / periods only)
 - [ ] All client-facing emails inherit the default `replyTo = process.env.ADMIN_EMAIL`
 

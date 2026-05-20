@@ -6,7 +6,7 @@
 
 **Architecture:** Three pieces. (1) Two new email templates in `server/utils/emailTemplates.js` rendered with event-local times via the Plan 1 `eventTimezone` utility. (2) Two new dispatcher handlers (`event_week_reminder`, `long_lead_t30_recap`) registered against the Plan 2a `registerHandler` API, plus a scheduling helper that inserts pending `scheduled_messages` rows from the Stripe `payment_intent.succeeded` first-deposit branch. (3) A new `rescheduleProposal` helper invoked from the proposal PATCH handler when `event_date`, `event_start_time`, or `event_location` changes post-sign+pay — fires the reschedule email immediately and re-anchors every pending row in `scheduled_messages` for the proposal using a per-message-type offset mapping.
 
-**Tech Stack:** PostgreSQL (raw SQL via `pg`), Node.js 18+ / Express 4.22, existing Jest test pattern from `server/utils/*.test.js`, `@sentry/node` for non-blocking error reporting.
+**Tech Stack:** PostgreSQL (raw SQL via `pg`), Node.js 18+ / Express 4.22, existing `node:test` + `node:assert/strict` pattern from `server/utils/*.test.js`, `@sentry/node` for non-blocking error reporting.
 
 **Related docs:**
 - Spec: `docs/superpowers/specs/2026-05-20-automated-communication-design.md` — sections 3.11 (event-week), 1.6 (long-lead T-30 recap), 3.13 (reschedule), 7.2 (time zones), 7.8 (reschedule handling)
@@ -272,6 +272,8 @@ git commit -m "feat(comms): add event-week, reschedule, and long-lead T-30 email
 Create `server/utils/preEventScheduling.test.js`:
 
 ```javascript
+const { test, before, after, beforeEach, afterEach } = require('node:test');
+const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const {
   computeScheduledFor,
@@ -280,183 +282,171 @@ const {
   schedulePreEventReminders,
 } = require('./preEventScheduling');
 
-describe('preEventScheduling', () => {
-  beforeEach(async () => {
-    await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id < 0");
-    await pool.query("DELETE FROM proposals WHERE id < 0");
-  });
+const TEST_CLIENT_ID = -1;
+const TEST_PROPOSAL_ID = -101;
 
-  afterAll(async () => {
-    await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id < 0");
-    await pool.query("DELETE FROM proposals WHERE id < 0");
-    await pool.end();
-  });
+beforeEach(async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id < 0");
+  await pool.query("DELETE FROM proposals WHERE id < 0");
+  await pool.query(
+    `INSERT INTO clients (id, name, email, phone) VALUES ($1, 'Test Client', 't@example.com', '+15551112222')
+     ON CONFLICT (id) DO NOTHING`,
+    [TEST_CLIENT_ID]
+  );
+});
 
-  describe('messageOffsets', () => {
-    it('exposes T-7 for event_week_reminder', () => {
-      expect(messageOffsets.event_week_reminder).toEqual({ daysBeforeEvent: 7, atHourLocal: 10 });
-    });
+afterEach(async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1", [TEST_PROPOSAL_ID]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [TEST_PROPOSAL_ID]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [TEST_CLIENT_ID]);
+});
 
-    it('exposes T-30 for long_lead_t30_recap', () => {
-      expect(messageOffsets.long_lead_t30_recap).toEqual({ daysBeforeEvent: 30, atHourLocal: 10 });
-    });
-  });
+after(async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id < 0");
+  await pool.query("DELETE FROM proposals WHERE id < 0");
+  await pool.end();
+});
 
-  describe('computeScheduledFor', () => {
-    it('returns a UTC instant for T-7 at 10am event-local', () => {
-      const proposal = {
-        event_date: '2026-06-20',         // Saturday
-        event_start_time: '18:00',
-        event_timezone: 'America/Chicago',
-      };
-      const result = computeScheduledFor(proposal, 'event_week_reminder');
-      // T-7 of 2026-06-20 = 2026-06-13. At 10:00 Chicago = 15:00 UTC (CDT).
-      expect(result.toISOString()).toBe('2026-06-13T15:00:00.000Z');
-    });
+// ── messageOffsets ──
+test('messageOffsets > exposes T-7 for event_week_reminder', () => {
+  assert.deepStrictEqual(messageOffsets.event_week_reminder, { daysBeforeEvent: 7, atHourLocal: 10 });
+});
 
-    it('honors event_timezone when computing the local hour', () => {
-      const proposal = {
-        event_date: '2026-06-20',
-        event_start_time: '18:00',
-        event_timezone: 'America/New_York',
-      };
-      const result = computeScheduledFor(proposal, 'event_week_reminder');
-      // 10:00 EDT = 14:00 UTC
-      expect(result.toISOString()).toBe('2026-06-13T14:00:00.000Z');
-    });
+test('messageOffsets > exposes T-30 for long_lead_t30_recap', () => {
+  assert.deepStrictEqual(messageOffsets.long_lead_t30_recap, { daysBeforeEvent: 30, atHourLocal: 10 });
+});
 
-    it('falls back to America/Chicago for invalid event_timezone', () => {
-      const proposal = {
-        event_date: '2026-06-20',
-        event_start_time: '18:00',
-        event_timezone: 'Bogus/Zone',
-      };
-      const result = computeScheduledFor(proposal, 'event_week_reminder');
-      expect(result.toISOString()).toBe('2026-06-13T15:00:00.000Z');
-    });
+// ── computeScheduledFor ──
+test('computeScheduledFor > returns a UTC instant for T-7 at 10am event-local', () => {
+  const proposal = {
+    event_date: '2026-06-20',         // Saturday
+    event_start_time: '18:00',
+    event_timezone: 'America/Chicago',
+  };
+  const result = computeScheduledFor(proposal, 'event_week_reminder');
+  // T-7 of 2026-06-20 = 2026-06-13. At 10:00 Chicago = 15:00 UTC (CDT).
+  assert.strictEqual(result.toISOString(), '2026-06-13T15:00:00.000Z');
+});
 
-    it('throws on unknown messageType', () => {
-      const proposal = { event_date: '2026-06-20', event_timezone: 'America/Chicago' };
-      expect(() => computeScheduledFor(proposal, 'not_a_real_type')).toThrow(/Unknown messageType/);
-    });
-  });
+test('computeScheduledFor > honors event_timezone when computing the local hour', () => {
+  const proposal = {
+    event_date: '2026-06-20',
+    event_start_time: '18:00',
+    event_timezone: 'America/New_York',
+  };
+  const result = computeScheduledFor(proposal, 'event_week_reminder');
+  // 10:00 EDT = 14:00 UTC
+  assert.strictEqual(result.toISOString(), '2026-06-13T14:00:00.000Z');
+});
 
-  describe('shouldScheduleLongLeadRecap', () => {
-    it('returns true when booking lead time is >= 90 days', () => {
-      const proposal = { event_date: '2026-10-01', created_at: '2026-05-01T12:00:00Z' };
-      // 2026-10-01 - 2026-05-01 = 153 days
-      expect(shouldScheduleLongLeadRecap(proposal)).toBe(true);
-    });
+test('computeScheduledFor > falls back to America/Chicago for invalid event_timezone', () => {
+  const proposal = {
+    event_date: '2026-06-20',
+    event_start_time: '18:00',
+    event_timezone: 'Bogus/Zone',
+  };
+  const result = computeScheduledFor(proposal, 'event_week_reminder');
+  assert.strictEqual(result.toISOString(), '2026-06-13T15:00:00.000Z');
+});
 
-    it('returns false when booking lead time is < 90 days', () => {
-      const proposal = { event_date: '2026-07-15', created_at: '2026-05-01T12:00:00Z' };
-      // 2026-07-15 - 2026-05-01 = 75 days
-      expect(shouldScheduleLongLeadRecap(proposal)).toBe(false);
-    });
+test('computeScheduledFor > throws on unknown messageType', () => {
+  const proposal = { event_date: '2026-06-20', event_timezone: 'America/Chicago' };
+  assert.throws(() => computeScheduledFor(proposal, 'not_a_real_type'), /Unknown messageType/);
+});
 
-    it('returns false when event_date is missing', () => {
-      const proposal = { event_date: null, created_at: '2026-05-01T12:00:00Z' };
-      expect(shouldScheduleLongLeadRecap(proposal)).toBe(false);
-    });
+// ── shouldScheduleLongLeadRecap ──
+test('shouldScheduleLongLeadRecap > returns true when booking lead time is >= 90 days', () => {
+  const proposal = { event_date: '2026-10-01', created_at: '2026-05-01T12:00:00Z' };
+  // 2026-10-01 - 2026-05-01 = 153 days
+  assert.strictEqual(shouldScheduleLongLeadRecap(proposal), true);
+});
 
-    it('returns false when created_at is missing', () => {
-      const proposal = { event_date: '2026-10-01', created_at: null };
-      expect(shouldScheduleLongLeadRecap(proposal)).toBe(false);
-    });
-  });
+test('shouldScheduleLongLeadRecap > returns false when booking lead time is < 90 days', () => {
+  const proposal = { event_date: '2026-07-15', created_at: '2026-05-01T12:00:00Z' };
+  // 2026-07-15 - 2026-05-01 = 75 days
+  assert.strictEqual(shouldScheduleLongLeadRecap(proposal), false);
+});
 
-  describe('schedulePreEventReminders', () => {
-    let testProposalId;
-    let testClientId;
+test('shouldScheduleLongLeadRecap > returns false when event_date is missing', () => {
+  const proposal = { event_date: null, created_at: '2026-05-01T12:00:00Z' };
+  assert.strictEqual(shouldScheduleLongLeadRecap(proposal), false);
+});
 
-    beforeEach(async () => {
-      // Use negative IDs to keep the test data trivially isolated
-      testClientId = -1;
-      testProposalId = -101;
-      await pool.query(
-        `INSERT INTO clients (id, name, email, phone) VALUES ($1, 'Test Client', 't@example.com', '+15551112222')
-         ON CONFLICT (id) DO NOTHING`,
-        [testClientId]
-      );
-    });
+test('shouldScheduleLongLeadRecap > returns false when created_at is missing', () => {
+  const proposal = { event_date: '2026-10-01', created_at: null };
+  assert.strictEqual(shouldScheduleLongLeadRecap(proposal), false);
+});
 
-    afterEach(async () => {
-      await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1", [testProposalId]);
-      await pool.query('DELETE FROM proposals WHERE id = $1', [testProposalId]);
-      await pool.query('DELETE FROM clients WHERE id = $1', [testClientId]);
-    });
+// ── schedulePreEventReminders ──
+test('schedulePreEventReminders > schedules event_week_reminder (T-7) when proposal moves to deposit_paid', async () => {
+  await pool.query(
+    `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
+     VALUES ($1, $2, 'deposit_paid', '2026-08-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+  await schedulePreEventReminders(TEST_PROPOSAL_ID);
+  const { rows } = await pool.query(
+    `SELECT message_type, channel, recipient_type, recipient_id, status, scheduled_for
+     FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 ORDER BY message_type`,
+    [TEST_PROPOSAL_ID]
+  );
+  // Lead time = 2026-08-15 - 2026-07-01 = 45 days. < 90, so only event_week_reminder.
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].message_type, 'event_week_reminder');
+  assert.strictEqual(rows[0].channel, 'email');
+  assert.strictEqual(rows[0].status, 'pending');
+  assert.strictEqual(rows[0].recipient_type, 'client');
+  assert.strictEqual(rows[0].recipient_id, TEST_CLIENT_ID);
+});
 
-    it('schedules event_week_reminder (T-7) when proposal moves to deposit_paid', async () => {
-      await pool.query(
-        `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
-         VALUES ($1, $2, 'deposit_paid', '2026-08-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
-        [testProposalId, testClientId]
-      );
-      await schedulePreEventReminders(testProposalId);
-      const { rows } = await pool.query(
-        `SELECT message_type, channel, recipient_type, recipient_id, status, scheduled_for
-         FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 ORDER BY message_type`,
-        [testProposalId]
-      );
-      // Lead time = 2026-08-15 - 2026-07-01 = 45 days. < 90, so only event_week_reminder.
-      expect(rows).toHaveLength(1);
-      expect(rows[0].message_type).toBe('event_week_reminder');
-      expect(rows[0].channel).toBe('email');
-      expect(rows[0].status).toBe('pending');
-      expect(rows[0].recipient_type).toBe('client');
-      expect(rows[0].recipient_id).toBe(testClientId);
-    });
+test('schedulePreEventReminders > also schedules long_lead_t30_recap when booking lead time >= 90 days', async () => {
+  await pool.query(
+    `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
+     VALUES ($1, $2, 'deposit_paid', '2026-12-01', '18:00', 'America/Chicago', '2026-05-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+  await schedulePreEventReminders(TEST_PROPOSAL_ID);
+  const { rows } = await pool.query(
+    `SELECT message_type FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 ORDER BY message_type`,
+    [TEST_PROPOSAL_ID]
+  );
+  assert.deepStrictEqual(rows.map((r) => r.message_type).sort(), ['event_week_reminder', 'long_lead_t30_recap']);
+});
 
-    it('also schedules long_lead_t30_recap when booking lead time >= 90 days', async () => {
-      await pool.query(
-        `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
-         VALUES ($1, $2, 'deposit_paid', '2026-12-01', '18:00', 'America/Chicago', '2026-05-01T12:00:00Z', 1000)`,
-        [testProposalId, testClientId]
-      );
-      await schedulePreEventReminders(testProposalId);
-      const { rows } = await pool.query(
-        `SELECT message_type FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 ORDER BY message_type`,
-        [testProposalId]
-      );
-      expect(rows.map((r) => r.message_type).sort()).toEqual(['event_week_reminder', 'long_lead_t30_recap']);
-    });
+test('schedulePreEventReminders > is idempotent — calling twice does not duplicate rows', async () => {
+  await pool.query(
+    `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
+     VALUES ($1, $2, 'deposit_paid', '2026-08-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+  await schedulePreEventReminders(TEST_PROPOSAL_ID);
+  await schedulePreEventReminders(TEST_PROPOSAL_ID);
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1`,
+    [TEST_PROPOSAL_ID]
+  );
+  assert.strictEqual(rows[0].n, 1);
+});
 
-    it('is idempotent — calling twice does not duplicate rows', async () => {
-      await pool.query(
-        `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
-         VALUES ($1, $2, 'deposit_paid', '2026-08-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
-        [testProposalId, testClientId]
-      );
-      await schedulePreEventReminders(testProposalId);
-      await schedulePreEventReminders(testProposalId);
-      const { rows } = await pool.query(
-        `SELECT COUNT(*)::int AS n FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1`,
-        [testProposalId]
-      );
-      expect(rows[0].n).toBe(1);
-    });
-
-    it('skips entirely when proposal is archived', async () => {
-      await pool.query(
-        `INSERT INTO proposals (id, client_id, status, archive_reason, event_date, event_start_time, event_timezone, created_at, total_price)
-         VALUES ($1, $2, 'archived', 'client_cancelled', '2026-08-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
-        [testProposalId, testClientId]
-      );
-      await schedulePreEventReminders(testProposalId);
-      const { rows } = await pool.query(
-        `SELECT COUNT(*)::int AS n FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1`,
-        [testProposalId]
-      );
-      expect(rows[0].n).toBe(0);
-    });
-  });
+test('schedulePreEventReminders > skips entirely when proposal is archived', async () => {
+  await pool.query(
+    `INSERT INTO proposals (id, client_id, status, archive_reason, event_date, event_start_time, event_timezone, created_at, total_price)
+     VALUES ($1, $2, 'archived', 'client_cancelled', '2026-08-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+  await schedulePreEventReminders(TEST_PROPOSAL_ID);
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1`,
+    [TEST_PROPOSAL_ID]
+  );
+  assert.strictEqual(rows[0].n, 0);
 });
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-npx jest server/utils/preEventScheduling.test.js
+node --test server/utils/preEventScheduling.test.js
 ```
 
 Expected: FAIL with `Cannot find module './preEventScheduling'`.
@@ -644,7 +634,7 @@ module.exports = {
 - [ ] **Step 4: Run test to verify pass**
 
 ```bash
-npx jest server/utils/preEventScheduling.test.js
+node --test server/utils/preEventScheduling.test.js
 ```
 
 Expected: all tests pass.
@@ -1038,198 +1028,207 @@ git commit -m "feat(comms): schedule pre-event reminders from Stripe deposit web
 Create `server/utils/rescheduleProposal.test.js`:
 
 ```javascript
+const { test, before, after, beforeEach, afterEach, mock } = require('node:test');
+const assert = require('node:assert/strict');
+const Module = require('node:module');
 const { pool } = require('../db');
+
+// Intercept require('./email') so the test doesn't actually call Resend.
+// We track calls via a simple array; assertions read it directly.
+const emailCalls = [];
+const originalResolve = Module._resolveFilename;
+const originalLoad = Module._load;
+const emailModule = { sendEmail: async (args) => { emailCalls.push(args); return { id: 'mock-msg' }; } };
+const emailPath = require.resolve('./email');
+Module._load = function patched(request, parent, ...rest) {
+  if (request === './email' || request === emailPath) return emailModule;
+  return originalLoad.call(this, request, parent, ...rest);
+};
+
 const { rescheduleProposal, hasReschedulableChange, reanchorPendingMessages } = require('./rescheduleProposal');
 
-// Mock sendEmail so the test doesn't actually call Resend
-jest.mock('./email', () => ({ sendEmail: jest.fn().mockResolvedValue({ id: 'mock-msg' }) }));
-const { sendEmail } = require('./email');
+const TEST_CLIENT_ID = -2;
+const TEST_PROPOSAL_ID = -202;
 
-describe('rescheduleProposal', () => {
-  let testClientId;
-  let testProposalId;
+beforeEach(async () => {
+  emailCalls.length = 0;
+  await pool.query(
+    `INSERT INTO clients (id, name, email, phone) VALUES ($1, 'Reschedule Test', 'rs@example.com', '+15553334444')
+     ON CONFLICT (id) DO NOTHING`,
+    [TEST_CLIENT_ID]
+  );
+});
 
-  beforeEach(async () => {
-    sendEmail.mockClear();
-    testClientId = -2;
-    testProposalId = -202;
-    await pool.query(
-      `INSERT INTO clients (id, name, email, phone) VALUES ($1, 'Reschedule Test', 'rs@example.com', '+15553334444')
-       ON CONFLICT (id) DO NOTHING`,
-      [testClientId]
-    );
-  });
+afterEach(async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1", [TEST_PROPOSAL_ID]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [TEST_PROPOSAL_ID]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [TEST_CLIENT_ID]);
+});
 
-  afterEach(async () => {
-    await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1", [testProposalId]);
-    await pool.query('DELETE FROM proposals WHERE id = $1', [testProposalId]);
-    await pool.query('DELETE FROM clients WHERE id = $1', [testClientId]);
-  });
+after(async () => {
+  Module._load = originalLoad;
+  await pool.end();
+});
 
-  describe('hasReschedulableChange', () => {
-    it('returns true when event_date changed', () => {
-      const result = hasReschedulableChange(
-        { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A' },
-        { event_date: '2026-09-15', event_start_time: '18:00', event_location: 'A' }
-      );
-      expect(result).toBe(true);
-    });
+// ── hasReschedulableChange ──
+test('hasReschedulableChange > returns true when event_date changed', () => {
+  const result = hasReschedulableChange(
+    { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A' },
+    { event_date: '2026-09-15', event_start_time: '18:00', event_location: 'A' }
+  );
+  assert.strictEqual(result, true);
+});
 
-    it('returns true when event_start_time changed', () => {
-      const result = hasReschedulableChange(
-        { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A' },
-        { event_date: '2026-08-15', event_start_time: '19:00', event_location: 'A' }
-      );
-      expect(result).toBe(true);
-    });
+test('hasReschedulableChange > returns true when event_start_time changed', () => {
+  const result = hasReschedulableChange(
+    { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A' },
+    { event_date: '2026-08-15', event_start_time: '19:00', event_location: 'A' }
+  );
+  assert.strictEqual(result, true);
+});
 
-    it('returns true when event_location changed', () => {
-      const result = hasReschedulableChange(
-        { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A' },
-        { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'B' }
-      );
-      expect(result).toBe(true);
-    });
+test('hasReschedulableChange > returns true when event_location changed', () => {
+  const result = hasReschedulableChange(
+    { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A' },
+    { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'B' }
+  );
+  assert.strictEqual(result, true);
+});
 
-    it('returns false when none of the three fields changed', () => {
-      const result = hasReschedulableChange(
-        { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A', total_price: 100 },
-        { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A', total_price: 200 }
-      );
-      expect(result).toBe(false);
-    });
-  });
+test('hasReschedulableChange > returns false when none of the three fields changed', () => {
+  const result = hasReschedulableChange(
+    { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A', total_price: 100 },
+    { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'A', total_price: 200 }
+  );
+  assert.strictEqual(result, false);
+});
 
-  describe('reanchorPendingMessages', () => {
-    it('updates scheduled_for on pending event_week_reminder rows', async () => {
-      await pool.query(
-        `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
-         VALUES ($1, $2, 'deposit_paid', '2026-09-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
-        [testProposalId, testClientId]
-      );
-      // Pretend a stale row was inserted when the event was 2026-08-15
-      const oldScheduledFor = new Date(Date.UTC(2026, 7, 8, 15, 0, 0)); // T-7 of 8/15 at 10am CDT
-      await pool.query(
-        `INSERT INTO scheduled_messages
-         (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for, status)
-         VALUES ('proposal', $1, 'event_week_reminder', 'client', $2, 'email', $3, 'pending')`,
-        [testProposalId, testClientId, oldScheduledFor]
-      );
+// ── reanchorPendingMessages ──
+test('reanchorPendingMessages > updates scheduled_for on pending event_week_reminder rows', async () => {
+  await pool.query(
+    `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
+     VALUES ($1, $2, 'deposit_paid', '2026-09-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+  // Pretend a stale row was inserted when the event was 2026-08-15
+  const oldScheduledFor = new Date(Date.UTC(2026, 7, 8, 15, 0, 0)); // T-7 of 8/15 at 10am CDT
+  await pool.query(
+    `INSERT INTO scheduled_messages
+     (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for, status)
+     VALUES ('proposal', $1, 'event_week_reminder', 'client', $2, 'email', $3, 'pending')`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID, oldScheduledFor]
+  );
 
-      const updated = await reanchorPendingMessages(testProposalId);
-      expect(updated).toBeGreaterThan(0);
+  const updated = await reanchorPendingMessages(TEST_PROPOSAL_ID);
+  assert.ok(updated > 0);
 
-      const { rows } = await pool.query(
-        `SELECT scheduled_for FROM scheduled_messages
-          WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type = 'event_week_reminder'`,
-        [testProposalId]
-      );
-      // New event_date 2026-09-15, T-7 = 2026-09-08, 10am CDT = 15:00 UTC
-      expect(new Date(rows[0].scheduled_for).toISOString()).toBe('2026-09-08T15:00:00.000Z');
-    });
+  const { rows } = await pool.query(
+    `SELECT scheduled_for FROM scheduled_messages
+      WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type = 'event_week_reminder'`,
+    [TEST_PROPOSAL_ID]
+  );
+  // New event_date 2026-09-15, T-7 = 2026-09-08, 10am CDT = 15:00 UTC
+  assert.strictEqual(new Date(rows[0].scheduled_for).toISOString(), '2026-09-08T15:00:00.000Z');
+});
 
-    it('skips sent rows — only pending re-anchored', async () => {
-      await pool.query(
-        `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
-         VALUES ($1, $2, 'deposit_paid', '2026-09-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
-        [testProposalId, testClientId]
-      );
-      const stableSent = new Date('2026-08-08T15:00:00.000Z');
-      await pool.query(
-        `INSERT INTO scheduled_messages
-         (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for, sent_at, status)
-         VALUES ('proposal', $1, 'event_week_reminder', 'client', $2, 'email', $3, $3, 'sent')`,
-        [testProposalId, testClientId, stableSent]
-      );
+test('reanchorPendingMessages > skips sent rows — only pending re-anchored', async () => {
+  await pool.query(
+    `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
+     VALUES ($1, $2, 'deposit_paid', '2026-09-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+  const stableSent = new Date('2026-08-08T15:00:00.000Z');
+  await pool.query(
+    `INSERT INTO scheduled_messages
+     (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for, sent_at, status)
+     VALUES ('proposal', $1, 'event_week_reminder', 'client', $2, 'email', $3, $3, 'sent')`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID, stableSent]
+  );
 
-      await reanchorPendingMessages(testProposalId);
+  await reanchorPendingMessages(TEST_PROPOSAL_ID);
 
-      const { rows } = await pool.query(
-        `SELECT scheduled_for FROM scheduled_messages
-          WHERE entity_type = 'proposal' AND entity_id = $1 AND status = 'sent'`,
-        [testProposalId]
-      );
-      // Sent row should NOT have been updated
-      expect(new Date(rows[0].scheduled_for).toISOString()).toBe('2026-08-08T15:00:00.000Z');
-    });
-  });
+  const { rows } = await pool.query(
+    `SELECT scheduled_for FROM scheduled_messages
+      WHERE entity_type = 'proposal' AND entity_id = $1 AND status = 'sent'`,
+    [TEST_PROPOSAL_ID]
+  );
+  // Sent row should NOT have been updated
+  assert.strictEqual(new Date(rows[0].scheduled_for).toISOString(), '2026-08-08T15:00:00.000Z');
+});
 
-  describe('rescheduleProposal', () => {
-    it('sends the reschedule email and re-anchors pending rows', async () => {
-      await pool.query(
-        `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_location, event_timezone, created_at, total_price)
-         VALUES ($1, $2, 'deposit_paid', '2026-09-15', '18:00', 'New Venue', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
-        [testProposalId, testClientId]
-      );
-      await pool.query(
-        `INSERT INTO scheduled_messages
-         (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for, status)
-         VALUES ('proposal', $1, 'event_week_reminder', 'client', $2, 'email', '2026-08-08T15:00:00.000Z', 'pending')`,
-        [testProposalId, testClientId]
-      );
+// ── rescheduleProposal ──
+test('rescheduleProposal > sends the reschedule email and re-anchors pending rows', async () => {
+  await pool.query(
+    `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_location, event_timezone, created_at, total_price)
+     VALUES ($1, $2, 'deposit_paid', '2026-09-15', '18:00', 'New Venue', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+  await pool.query(
+    `INSERT INTO scheduled_messages
+     (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for, status)
+     VALUES ('proposal', $1, 'event_week_reminder', 'client', $2, 'email', '2026-08-08T15:00:00.000Z', 'pending')`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
 
-      const old = {
-        event_date: '2026-08-15', event_start_time: '18:00', event_location: 'Old Venue',
-      };
-      const updated = {
-        event_date: '2026-09-15', event_start_time: '18:00', event_location: 'New Venue',
-      };
-      await rescheduleProposal({ proposalId: testProposalId, old, updated });
+  const old = {
+    event_date: '2026-08-15', event_start_time: '18:00', event_location: 'Old Venue',
+  };
+  const updated = {
+    event_date: '2026-09-15', event_start_time: '18:00', event_location: 'New Venue',
+  };
+  await rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated });
 
-      expect(sendEmail).toHaveBeenCalledTimes(1);
-      const callArg = sendEmail.mock.calls[0][0];
-      expect(callArg.to).toBe('rs@example.com');
-      expect(callArg.subject).toBe('Updated details for your event');
+  assert.strictEqual(emailCalls.length, 1);
+  const callArg = emailCalls[0];
+  assert.strictEqual(callArg.to, 'rs@example.com');
+  assert.strictEqual(callArg.subject, 'Updated details for your event');
 
-      const { rows } = await pool.query(
-        `SELECT scheduled_for FROM scheduled_messages
-          WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type = 'event_week_reminder'`,
-        [testProposalId]
-      );
-      expect(new Date(rows[0].scheduled_for).toISOString()).toBe('2026-09-08T15:00:00.000Z');
-    });
+  const { rows } = await pool.query(
+    `SELECT scheduled_for FROM scheduled_messages
+      WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type = 'event_week_reminder'`,
+    [TEST_PROPOSAL_ID]
+  );
+  assert.strictEqual(new Date(rows[0].scheduled_for).toISOString(), '2026-09-08T15:00:00.000Z');
+});
 
-    it('skips entirely when proposal is archived', async () => {
-      await pool.query(
-        `INSERT INTO proposals (id, client_id, status, archive_reason, event_date, event_start_time, event_location, event_timezone, created_at, total_price)
-         VALUES ($1, $2, 'archived', 'client_cancelled', '2026-09-15', '18:00', 'Venue', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
-        [testProposalId, testClientId]
-      );
-      const old = { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'X' };
-      const updated = { event_date: '2026-09-15', event_start_time: '18:00', event_location: 'Y' };
-      await rescheduleProposal({ proposalId: testProposalId, old, updated });
-      expect(sendEmail).not.toHaveBeenCalled();
-    });
+test('rescheduleProposal > skips entirely when proposal is archived', async () => {
+  await pool.query(
+    `INSERT INTO proposals (id, client_id, status, archive_reason, event_date, event_start_time, event_location, event_timezone, created_at, total_price)
+     VALUES ($1, $2, 'archived', 'client_cancelled', '2026-09-15', '18:00', 'Venue', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+  const old = { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'X' };
+  const updated = { event_date: '2026-09-15', event_start_time: '18:00', event_location: 'Y' };
+  await rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated });
+  assert.strictEqual(emailCalls.length, 0);
+});
 
-    it('throws when proposal has no client_email (caller decides how to surface)', async () => {
-      await pool.query(
-        `INSERT INTO clients (id, name, email, phone) VALUES (-3, 'No Email', NULL, '+15555555555')
-         ON CONFLICT (id) DO NOTHING`
-      );
-      await pool.query(
-        `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_location, event_timezone, created_at, total_price)
-         VALUES ($1, -3, 'deposit_paid', '2026-09-15', '18:00', 'Venue', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
-        [testProposalId]
-      );
-      const old = { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'X' };
-      const updated = { event_date: '2026-09-15', event_start_time: '18:00', event_location: 'Y' };
-      await expect(
-        rescheduleProposal({ proposalId: testProposalId, old, updated })
-      ).rejects.toThrow(/no email/);
-      await pool.query('DELETE FROM clients WHERE id = -3');
-    });
-  });
-
-  afterAll(async () => {
-    await pool.end();
-  });
+test('rescheduleProposal > throws when proposal has no client_email (caller decides how to surface)', async () => {
+  await pool.query(
+    `INSERT INTO clients (id, name, email, phone) VALUES (-3, 'No Email', NULL, '+15555555555')
+     ON CONFLICT (id) DO NOTHING`
+  );
+  await pool.query(
+    `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_location, event_timezone, created_at, total_price)
+     VALUES ($1, -3, 'deposit_paid', '2026-09-15', '18:00', 'Venue', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID]
+  );
+  const old = { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'X' };
+  const updated = { event_date: '2026-09-15', event_start_time: '18:00', event_location: 'Y' };
+  await assert.rejects(
+    () => rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated }),
+    /no email/
+  );
+  await pool.query('DELETE FROM clients WHERE id = -3');
 });
 ```
+
+Note: the email-mock approach above patches `Module._load` to substitute `./email`. node:test does not yet ship a stable module-mock API equivalent to `jest.mock`, so this hand-rolled interception keeps the test self-contained. Run `node --experimental-test-module-mocks` if you prefer the experimental `mock.module()` API instead — both work.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-npx jest server/utils/rescheduleProposal.test.js
+node --test server/utils/rescheduleProposal.test.js
 ```
 
 Expected: FAIL with `Cannot find module './rescheduleProposal'`.
@@ -1434,7 +1433,7 @@ module.exports = {
 - [ ] **Step 4: Run tests to verify pass**
 
 ```bash
-npx jest server/utils/rescheduleProposal.test.js
+node --test server/utils/rescheduleProposal.test.js
 ```
 
 Expected: all tests pass. Notes:
@@ -1670,7 +1669,7 @@ Run through the following checks before declaring Plan 2c done:
 - [ ] All commits land cleanly on `main` with single-line messages
 - [ ] `git status` shows a clean working tree
 - [ ] `npm run lint` passes
-- [ ] All unit tests pass: `npx jest server/utils/preEventScheduling.test.js server/utils/rescheduleProposal.test.js`
+- [ ] All unit tests pass: `node --test server/utils/preEventScheduling.test.js server/utils/rescheduleProposal.test.js`
 - [ ] Three new templates exported from `emailTemplates.js`: `eventWeekReminderClient`, `rescheduleNotificationClient`, `longLeadT30RecapClient`
 - [ ] `preEventHandlers.registerAll()` is invoked in `server/index.js`
 - [ ] `schedulePreEventReminders` is called from the Stripe webhook deposit/full first-delivery branch
