@@ -2232,3 +2232,23 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 CREATE INDEX IF NOT EXISTS idx_clients_email_harvest_pending
   ON clients(email_harvest_attempted_at)
   WHERE email_harvest_status = 'pending';
+
+-- ─── Automated Communication: users additions ────────────────────
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_preferences JSONB
+  NOT NULL DEFAULT '{
+    "urgent_booking": true,
+    "urgent_consult": true,
+    "urgent_staffing": true,
+    "urgent_client_reply": true,
+    "payment_failure": true,
+    "feedback": true,
+    "system_error": true,
+    "routine_admin": true,
+    "routine_thumbtack": true,
+    "routine_hiring": true,
+    "routine_finance": true
+  }'::jsonb;
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS communication_preferences JSONB
+  NOT NULL DEFAULT '{"sms_enabled":true,"email_enabled":true,"marketing_enabled":true}'::jsonb;

@@ -453,6 +453,8 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 - `onboarding_status`: in_progress | applied | interviewing | hired | rejected | submitted | reviewed | approved | deactivated
 - `can_hire`, `can_staff` (boolean permission flags)
 - `notifications_opt_in`
+- `notification_preferences` JSONB — per-category admin alert toggles (`urgent_booking`, `urgent_consult`, `urgent_staffing`, `urgent_client_reply`, `payment_failure`, `feedback`, `system_error`, `routine_admin`, `routine_thumbtack`, `routine_hiring`, `routine_finance`), all default true. Drives the Automated Communication system's per-admin routing.
+- `communication_preferences` JSONB — `{sms_enabled, email_enabled, marketing_enabled}` (defaults true). Channel-level on/off shared by admin alerts and staff notifications.
 
 **Onboarding status lifecycle** — what each value means and what it unlocks
 
