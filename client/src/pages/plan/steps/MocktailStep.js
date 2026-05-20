@@ -164,6 +164,9 @@ export default function MocktailStep({
                     value={notes}
                     onChange={(e) => onNotesChange && onNotesChange(e.target.value)}
                   />
+                  <span className="potion-field-note">
+                    You don't need to tell us what you're providing. Your selections above already settle that. Use this box only for preferences or anything we should know.
+                  </span>
                 </div>
               </div>
 

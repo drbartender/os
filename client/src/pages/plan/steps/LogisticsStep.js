@@ -349,6 +349,9 @@ export default function LogisticsStep({
             value={accessNotes}
             onChange={(e) => update('accessNotes', e.target.value)}
           />
+          <span className="potion-field-note">
+            Anything tricky we should know about the venue, like parking, load-in, stairs, or building rules. You don't need to repeat anything you've selected above.
+          </span>
         </div>
       </div>
     </div>

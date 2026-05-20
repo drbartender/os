@@ -12577,3 +12577,14 @@ html[data-app="admin-os"] .field-block {
   margin-left: auto;
   margin-right: auto;
 }
+
+/* Inline scope footnote under a notes textarea */
+.potion-app .potion-field-note {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.82rem;
+  font-style: italic;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+.potion-app .potion-field-note strong { color: var(--deep-brown); font-style: normal; }
