@@ -51,6 +51,7 @@ const DEFAULT_SELECTIONS = {
   drinkNaming: '',
   menuDesignNotes: '',
   additionalNotes: '',
+  companyLogo: '',
   logistics: {
     dayOfContact: { name: '', phone: '' },
     parking: '',
