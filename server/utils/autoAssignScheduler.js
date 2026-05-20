@@ -12,12 +12,14 @@ const { getEventTypeLabel } = require('./eventTypes');
 async function processScheduledAutoAssigns() {
   try {
     const result = await pool.query(`
-      SELECT id, event_type, event_type_custom, client_name, event_date, auto_assign_days_before
-      FROM shifts
-      WHERE status = 'open'
-        AND auto_assign_days_before IS NOT NULL
-        AND auto_assigned_at IS NULL
-        AND event_date - (auto_assign_days_before * INTERVAL '1 day') <= CURRENT_DATE
+      SELECT s.id, s.event_type, s.event_type_custom, s.client_name, s.event_date, s.auto_assign_days_before
+      FROM shifts s
+      LEFT JOIN proposals p ON p.id = s.proposal_id
+      WHERE s.status = 'open'
+        AND s.auto_assign_days_before IS NOT NULL
+        AND s.auto_assigned_at IS NULL
+        AND s.event_date - (s.auto_assign_days_before * INTERVAL '1 day') <= CURRENT_DATE
+        AND (p.id IS NULL OR p.status != 'archived')
     `);
 
     if (result.rows.length === 0) return;
@@ -36,6 +38,7 @@ async function processScheduledAutoAssigns() {
     }
   } catch (err) {
     console.error('[AutoAssignScheduler] Error:', err.message);
+    throw err; // surface to wrapScheduler so heartbeat records 'failed'
   }
 }
 
