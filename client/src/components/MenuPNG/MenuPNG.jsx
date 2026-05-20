@@ -21,6 +21,9 @@ export default function MenuPNG({ plan }) {
 
   const sanitizeName = (name) => {
     const safe = (name || '')
+      // Intentionally strips ASCII control chars to keep filenames safe
+      // for Windows/macOS download dialogs (filesystems reject these).
+      // eslint-disable-next-line no-control-regex
       .replace(/[/\\:"*?<>|\x00-\x1f]/g, '-')
       .replace(/-+/g, '-')
       .replace(/^-|-$/g, '')

@@ -12391,7 +12391,7 @@ html[data-app="admin-os"] .field-block {
   border-color: var(--amber);
 }
 
-/* Component-rule overrides: beats global h*/p color rules inside parchment surfaces */
+/* Component-rule overrides: beats global heading and paragraph color rules inside parchment surfaces */
 .potion-app .serving-type-card h1,
 .potion-app .serving-type-card h2,
 .potion-app .serving-type-card h3,
