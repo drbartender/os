@@ -295,12 +295,12 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
               ))}
             </ul>
             {selections.signatureDrinkSpirits?.length > 0 && (
-              <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
+              <p className="text-muted text-small" style={{ color: 'var(--text-muted)' }}>
                 Base spirits: {selections.signatureDrinkSpirits.join(', ')}
               </p>
             )}
             {selections.mixersForSignatureDrinks === true && (
-              <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
+              <p className="text-muted text-small" style={{ color: 'var(--text-muted)' }}>
                 Basic mixers included for simple mixed drinks
               </p>
             )}
@@ -317,7 +317,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
               ))}
             </ul>
             {selections.mocktailNotes && (
-              <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
+              <p className="text-muted text-small" style={{ color: 'var(--text-muted)' }}>
                 Notes: {selections.mocktailNotes}
               </p>
             )}
@@ -333,7 +333,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
               </p>
             )}
             {selections.mixersForSpirits === true && (
-              <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
+              <p className="text-muted text-small" style={{ color: 'var(--text-muted)' }}>
                 Mixers included for bar spirits
               </p>
             )}
@@ -380,7 +380,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           return (
             <div className="mb-2">
               <strong>Flavor Add-Ons</strong>
-              <p className="text-muted text-small" style={{ color: 'var(--warm-brown)', marginBottom: '0.25rem' }}>
+              <p className="text-muted text-small" style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
                 Hand-crafted by Dr. Bartender
               </p>
               <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
@@ -396,7 +396,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
                 })}
               </ul>
               {cost.total > 0 && (
-                <p className="text-muted text-small" style={{ color: 'var(--warm-brown)' }}>
+                <p className="text-muted text-small" style={{ color: 'var(--text-muted)' }}>
                   {cost.totalBottles} bottle{cost.totalBottles !== 1 ? 's' : ''} total &mdash; ${cost.total}
                 </p>
               )}
@@ -447,45 +447,45 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
         <div className="mb-2">
           <strong>Logistics</strong>
           {logistics.dayOfContact?.name && (
-            <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
+            <p className="text-muted" style={{ color: 'var(--text-muted)' }}>
               Day-of contact: {logistics.dayOfContact.name}
               {logistics.dayOfContact.phone && ` — ${formatPhoneInput(logistics.dayOfContact.phone)}`}
             </p>
           )}
           {logistics.parking && (
-            <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
+            <p className="text-muted" style={{ color: 'var(--text-muted)' }}>
               Parking: {logistics.parking.replace(/_/g, ' ')}
             </p>
           )}
           {logistics.equipment?.length > 0 && !logistics.equipment.includes('none') && (
-            <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
+            <p className="text-muted" style={{ color: 'var(--text-muted)' }}>
               Equipment: {logistics.equipment.map(e => e.replace(/_/g, ' ')).join(', ')}
               {logistics.equipmentOther && ` (${logistics.equipmentOther})`}
             </p>
           )}
           {logistics.equipment?.includes('none') && (
-            <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
+            <p className="text-muted" style={{ color: 'var(--text-muted)' }}>
               Equipment: None needed
             </p>
           )}
           {logistics.addBarRental && (
-            <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
+            <p className="text-muted" style={{ color: 'var(--text-muted)' }}>
               {numBars >= 1 ? 'Additional portable bar rental' : 'Portable bar rental'}
             </p>
           )}
           {logistics.accessNotes && (
-            <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
+            <p className="text-muted" style={{ color: 'var(--text-muted)' }}>
               Notes: {logistics.accessNotes}
             </p>
           )}
           {/* Backward compat for old logistics format */}
           {logistics.ice && (
-            <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
+            <p className="text-muted" style={{ color: 'var(--text-muted)' }}>
               Ice machine: {logistics.ice}
             </p>
           )}
           {logistics.other && !logistics.accessNotes && (
-            <p className="text-muted" style={{ color: 'var(--warm-brown)' }}>
+            <p className="text-muted" style={{ color: 'var(--text-muted)' }}>
               Notes: {logistics.other}
             </p>
           )}
@@ -496,13 +496,16 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           by-the-way stuff (allergies, family stories, special requests)
           that would otherwise get jammed into a scoped notes field. */}
       <div className="card mb-2">
-        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
+        <h3 id="additional-notes-label" style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
           Anything else we should know?
         </h3>
-        <p className="text-muted" style={{ color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+        <p id="additional-notes-desc" className="text-muted" style={{ color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
           One last chance to mention anything we should know about your event or your guests. Allergies, family stories, dietary needs, special requests, the stuff you've been meaning to bring up.
         </p>
         <textarea
+          id="additional-notes"
+          aria-labelledby="additional-notes-label"
+          aria-describedby="additional-notes-desc"
           className="form-textarea"
           rows={4}
           placeholder="E.g., my dad has a nut allergy; the groom wants his old fashioned with extra orange peel; please introduce yourself to my mother-in-law when you arrive."
@@ -559,7 +562,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
                     ? guestCount ? `$${rate.toFixed(2)}/guest × ${guestCount}` : `$${rate.toFixed(2)}/guest`
                     : `$${rate.toFixed(2)}`;
                   return (
-                    <div key={slug} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '1.25rem', fontSize: '0.9rem', color: 'var(--warm-brown)' }}>
+                    <div key={slug} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '1.25rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
                       <span>+ {pricing.name} · {priceLabel}</span>
                       <span>${lineTotal.toFixed(2)}</span>
                     </div>
@@ -594,7 +597,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
             <span>{fmt(extrasTotal)}</span>
           </div>
           {!showPayment && (
-            <p className="text-muted text-small mt-1" style={{ color: 'var(--warm-brown)', fontStyle: 'italic' }}>
+            <p className="text-muted text-small mt-1" style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>
               Final pricing will be confirmed by your bartender.
             </p>
           )}
@@ -612,7 +615,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           {/* Scenario: extras + outstanding balance (must pay both) */}
           {paymentScenario === 'extras_plus_balance' && (
             <div>
-              <p className="text-muted" style={{ color: 'var(--warm-brown)', marginBottom: '1rem' }}>
+              <p className="text-muted" style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>
                 Your balance is past due. Please pay your extras and outstanding balance to finalize your event.
               </p>
               <div style={{ background: 'rgba(193, 125, 60, 0.06)', borderRadius: '8px', padding: '1rem', marginBottom: '1rem' }}>
@@ -634,7 +637,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
 
           {/* Scenario: extras required (balance already paid) */}
           {paymentScenario === 'extras_required' && (
-            <p className="text-muted" style={{ color: 'var(--warm-brown)', marginBottom: '1rem' }}>
+            <p className="text-muted" style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>
               Payment of {fmt(paymentAmounts.totalCharge)} is required for your extras before submitting.
             </p>
           )}
@@ -642,7 +645,7 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
           {/* Scenario: extras optional (not past due) */}
           {paymentScenario === 'extras_optional' && (
             <div style={{ marginBottom: '1rem' }}>
-              <p className="text-muted" style={{ color: 'var(--warm-brown)', marginBottom: '0.75rem' }}>
+              <p className="text-muted" style={{ color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
                 How would you like to handle payment for your extras?
               </p>
 
