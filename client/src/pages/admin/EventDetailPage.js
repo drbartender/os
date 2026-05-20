@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
@@ -18,6 +18,8 @@ import { parsePositionsCount, approvedCount } from '../../components/adminos/shi
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import EventEditForm from './EventEditForm';
 import BackButton from '../../components/adminos/BackButton';
+
+const MenuPNG = lazy(() => import('../../components/MenuPNG/MenuPNG'));
 
 // "18:00" + 5 → "18:00–23:00 (5 hrs)". Tolerates a 12-hour stored value
 // ("6:00 PM") and falls back to whatever we have if the time can't be parsed.
@@ -405,6 +407,11 @@ export default function EventDetailPage() {
                 setDrinkPlan((prev) => prev ? { ...prev, selections: updatedSelections } : prev);
               }}
             />
+          )}
+          {drinkPlan?.selections?.menuStyle === 'house' && (
+            <Suspense fallback={<button className="btn btn-primary" disabled>Loading...</button>}>
+              <MenuPNG plan={drinkPlan} />
+            </Suspense>
           )}
         </div>
       </div>
