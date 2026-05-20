@@ -12484,3 +12484,96 @@ html[data-app="admin-os"] .field-block {
 .potion-app .potion-scope.aside .potion-scope-title { color: var(--text-muted); }
 .potion-app .potion-scope.aside p.potion-scope-text,
 .potion-app .potion-scope.aside .potion-scope-text { color: rgba(28,22,16,0.66); }
+
+/* Welcome roadmap: three-card journey */
+.potion-app .potion-roadmap {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 18px 0 4px;
+}
+@media (max-width: 720px) {
+  .potion-app .potion-roadmap { grid-template-columns: 1fr; }
+}
+.potion-app .potion-roadmap-step {
+  padding: 14px 16px;
+  background: rgba(184,146,74,0.06);
+  border: 1px solid rgba(184,146,74,0.30);
+  border-radius: var(--radius);
+  position: relative;
+}
+.potion-app .potion-roadmap-step.shopping {
+  background: rgba(184,146,74,0.14);
+  border-color: rgba(184,146,74,0.55);
+}
+.potion-app .potion-roadmap-step.hosted {
+  background: rgba(29,140,137,0.10);
+  border-color: rgba(29,140,137,0.45);
+}
+.potion-app .potion-roadmap-num {
+  font-family: var(--font-display);
+  font-size: 0.72rem; letter-spacing: 0.32em; text-transform: uppercase;
+  color: var(--brass);
+  display: inline-flex; align-items: center; gap: 8px;
+  margin-bottom: 4px;
+}
+.potion-app .potion-roadmap-num::before {
+  content: ""; width: 18px; height: 1px;
+  background: var(--brass); opacity: 0.7;
+}
+.potion-app .potion-roadmap-step.hosted .potion-roadmap-num,
+.potion-app .potion-roadmap-step.hosted .potion-roadmap-num::before {
+  color: var(--amber); background: var(--amber);
+}
+
+.potion-app h4.potion-roadmap-title,
+.potion-app .potion-roadmap-title {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  color: var(--deep-brown);
+  margin: 0 0 4px;
+  text-transform: none;
+  letter-spacing: 0.01em;
+}
+.potion-app .potion-roadmap-body {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: rgba(28,22,16,0.74);
+}
+.potion-app .potion-roadmap-tag {
+  display: inline-block;
+  margin-top: 8px;
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(184,146,74,0.22);
+  color: var(--text-muted);
+  border: 1px solid rgba(184,146,74,0.45);
+  font-family: var(--font-body);
+  font-style: italic;
+}
+.potion-app .potion-roadmap-step.hosted .potion-roadmap-tag {
+  background: rgba(29,140,137,0.18);
+  color: var(--amber);
+  border-color: rgba(29,140,137,0.45);
+}
+
+/* After-submit footer below the three roadmap cards */
+.potion-app .potion-roadmap-footer {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(184,146,74,0.32);
+  text-align: center;
+}
+.potion-app .potion-roadmap-footer p {
+  margin: 0;
+  font-size: 0.88rem;
+  font-style: italic;
+  color: var(--text-muted);
+  line-height: 1.45;
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
+}
