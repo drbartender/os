@@ -2334,3 +2334,29 @@ DO $$ BEGIN
   ALTER TABLE scheduler_health ADD CONSTRAINT scheduler_health_status_check
     CHECK (last_status IN ('ok','failed'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- ─── Automated Communication: consults table ────────────────────
+-- Scheduled phone consults booked via Cal.com (deferred workstream).
+-- This spec creates the empty table so downstream code can reference it
+-- without waiting on Cal.com deployment. Notes themselves live on
+-- drink_plans.consult_selections per existing schema, NOT here.
+
+CREATE TABLE IF NOT EXISTS consults (
+  id SERIAL PRIMARY KEY,
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL,
+  scheduled_at TIMESTAMPTZ NOT NULL,
+  calendly_event_id TEXT,
+  status TEXT NOT NULL DEFAULT 'scheduled',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+DO $$ BEGIN
+  ALTER TABLE consults DROP CONSTRAINT IF EXISTS consults_status_check;
+  ALTER TABLE consults ADD CONSTRAINT consults_status_check
+    CHECK (status IN ('scheduled','completed','cancelled','no_show'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_consults_proposal_id ON consults(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_consults_client_id ON consults(client_id);
+CREATE INDEX IF NOT EXISTS idx_consults_scheduled_at ON consults(scheduled_at) WHERE status = 'scheduled';

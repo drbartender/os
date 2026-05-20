@@ -717,6 +717,16 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `last_error` TEXT — most recent error string when `last_status = 'failed'`
 - `updated_at` TIMESTAMPTZ DEFAULT NOW()
 
+**consults** — Scheduled phone consults booked via Cal.com (deferred workstream). The empty table ships ahead of the integration so downstream code (and `scheduled_messages.entity_type = 'consult'`) can reference it without waiting on Cal.com deployment. Drink-plan notes themselves continue to live on `drink_plans.consult_selections`, not here.
+- `id` SERIAL PK
+- `client_id` FK → clients (ON DELETE SET NULL)
+- `proposal_id` FK → proposals (ON DELETE SET NULL)
+- `scheduled_at` TIMESTAMPTZ NOT NULL — when the consult is booked for
+- `calendly_event_id` TEXT — external Cal.com / Calendly event identifier (nullable until integration lands)
+- `status` TEXT NOT NULL DEFAULT `'scheduled'` CHECK (`scheduled`, `completed`, `cancelled`, `no_show`)
+- `created_at` TIMESTAMPTZ DEFAULT NOW()
+- Lookup indexes on `proposal_id` and `client_id`; partial index `idx_consults_scheduled_at(scheduled_at) WHERE status = 'scheduled'` keeps upcoming-consult queries cheap.
+
 ### Bartender Tip Pages
 
 **tips** — Successful tip records (one row per `checkout.session.completed` event tagged `metadata.kind = 'tip'`)
