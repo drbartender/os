@@ -35,6 +35,7 @@ async function processAutopayCharges() {
       UPDATE proposals
       SET autopay_status = 'in_progress', autopay_attempted_at = NOW()
       WHERE status = 'deposit_paid'
+        AND status != 'archived'
         AND autopay_enrolled = true
         AND balance_due_date <= CURRENT_DATE
         AND stripe_customer_id IS NOT NULL
@@ -167,6 +168,7 @@ async function processAutopayCharges() {
     }
   } catch (err) {
     console.error('[BalanceScheduler] Error:', err);
+    throw err;  // surface to wrapScheduler so heartbeat records 'failed'
   }
 }
 
@@ -181,6 +183,7 @@ async function processEventCompletions() {
       UPDATE proposals
       SET status = 'completed', updated_at = NOW()
       WHERE status IN ('balance_paid', 'confirmed')
+        AND status != 'archived'
         AND event_date IS NOT NULL
         -- event_start_time is free-text VARCHAR with mixed legacy formats:
         -- canonical 24h "HH:MM" plus older 12h "H:MM AM/PM" rows. ::time parses
@@ -210,6 +213,7 @@ async function processEventCompletions() {
     }
   } catch (err) {
     console.error('[BalanceScheduler] Auto-completion error:', err);
+    throw err;  // surface to wrapScheduler so heartbeat records 'failed'
   }
 }
 
