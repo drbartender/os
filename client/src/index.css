@@ -17,6 +17,11 @@
   src: url('./fonts/IMFellEnglish-Italic.woff2') format('woff2');
   font-weight: 400; font-style: italic; font-display: swap;
 }
+@font-face {
+  font-family: 'Pirata One';
+  src: url('./fonts/PirataOne-Regular.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
 
 :root {
   /* Apothecary Press — values per redesign brief §3.1.
