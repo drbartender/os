@@ -97,7 +97,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   let signatureDrinkNames = [];
   if (sigIds.length > 0) {
     const sigRows = await pool.query(
-      `SELECT id, name FROM cocktails WHERE id = ANY($1::int[])`,
+      `SELECT id, name FROM cocktails WHERE id = ANY($1::text[])`,
       [sigIds]
     );
     const nameById = new Map(sigRows.rows.map((r) => [r.id, r.name]));
@@ -107,7 +107,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   let mocktailNames = [];
   if (mocktailIds.length > 0) {
     const mocktailRows = await pool.query(
-      `SELECT id, name FROM mocktails WHERE id = ANY($1::int[])`,
+      `SELECT id, name FROM mocktails WHERE id = ANY($1::text[])`,
       [mocktailIds]
     );
     const nameById = new Map(mocktailRows.rows.map((r) => [r.id, r.name]));
@@ -206,16 +206,25 @@ router.post('/t/:token/logo', drinkPlanWriteLimiter, asyncHandler(async (req, re
   await uploadFile(file.data, filename);
   const logoUrl = `/api/drink-plans/t/${req.params.token}/logo`;
 
-  // Atomic persist: write the new companyLogo into selections in the same
-  // request so a dropped client connection between upload and next auto-save
-  // does not leave an orphaned R2 file with no DB reference.
-  const updated = { ...(plan.selections || {}), companyLogo: logoUrl, _logoFilename: filename };
-  await pool.query(
-    'UPDATE drink_plans SET selections = $1, updated_at = NOW() WHERE id = $2',
-    [updated, plan.id]
+  // Atomic merge into the selections JSONB column using Postgres's || operator.
+  // The merge happens in the database, not in the application, so a concurrent
+  // auto-save PUT from the planner cannot lose the companyLogo / _logoFilename
+  // fields via last-write-wins. The auto-save sees the merged result and
+  // preserves it because it merges its own changes into whatever is current at
+  // its write time. (If both writes target the same key in the JSON, the later
+  // one still wins; but companyLogo is only written by these logo routes, so
+  // there is no contention on that specific key.)
+  const patch = { companyLogo: logoUrl, _logoFilename: filename };
+  const updateResult = await pool.query(
+    `UPDATE drink_plans
+        SET selections = COALESCE(selections, '{}'::jsonb) || $1::jsonb,
+            updated_at = NOW()
+      WHERE id = $2
+      RETURNING selections`,
+    [JSON.stringify(patch), plan.id]
   );
 
-  res.json({ logoUrl, selections: updated });
+  res.json({ logoUrl, selections: updateResult.rows[0].selections });
 }));
 ```
 
@@ -260,13 +269,18 @@ router.post('/:id/logo', auth, requireAdminOrManager, asyncHandler(async (req, r
   await uploadFile(file.data, filename);
   const logoUrl = `/api/drink-plans/t/${plan.token}/logo`;
 
-  const updated = { ...(plan.selections || {}), companyLogo: logoUrl, _logoFilename: filename };
-  await pool.query(
-    'UPDATE drink_plans SET selections = $1, updated_at = NOW() WHERE id = $2',
-    [updated, plan.id]
+  // Atomic merge in the database (same pattern as the token-gated route above).
+  const patch = { companyLogo: logoUrl, _logoFilename: filename };
+  const updateResult = await pool.query(
+    `UPDATE drink_plans
+        SET selections = COALESCE(selections, '{}'::jsonb) || $1::jsonb,
+            updated_at = NOW()
+      WHERE id = $2
+      RETURNING selections`,
+    [JSON.stringify(patch), plan.id]
   );
 
-  res.json({ logoUrl, selections: updated });
+  res.json({ logoUrl, selections: updateResult.rows[0].selections });
 }));
 ```
 
@@ -280,26 +294,38 @@ Immediately after the admin upload route, insert:
  * file (storage cost is negligible; no cleanup job in v1).
  */
 router.delete('/:id/logo', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Verify plan exists; the DELETE itself is also a no-op-on-missing pattern,
+  // but we want a 404 if the ID is wrong so the admin sees a clear error.
   const planResult = await pool.query(
-    'SELECT id, selections FROM drink_plans WHERE id = $1',
+    'SELECT id FROM drink_plans WHERE id = $1',
     [req.params.id]
   );
   if (!planResult.rows[0]) throw new NotFoundError('Plan not found.');
-  const plan = planResult.rows[0];
 
-  const next = { ...(plan.selections || {}) };
-  delete next.companyLogo;
-  delete next._logoFilename;
-  await pool.query(
-    'UPDATE drink_plans SET selections = $1, updated_at = NOW() WHERE id = $2',
-    [next, plan.id]
+  // Atomic key removal via Postgres jsonb - operator. Strips both companyLogo
+  // and _logoFilename in a single statement; concurrent auto-saves can't race.
+  const updateResult = await pool.query(
+    `UPDATE drink_plans
+        SET selections = COALESCE(selections, '{}'::jsonb) - 'companyLogo' - '_logoFilename',
+            updated_at = NOW()
+      WHERE id = $1
+      RETURNING selections`,
+    [req.params.id]
   );
 
-  res.json({ selections: next });
+  res.json({ selections: updateResult.rows[0].selections });
 }));
 ```
 
 - [ ] **Step 5: Add the public GET proxy route**
+
+**Note on the pattern.** This intentionally introduces a new file-serving pattern that differs from the existing `/api/files/:filename` at `server/index.js:149` (which is auth-gated and returns a signed URL the client redirects to). Three reasons for the new pattern:
+
+1. The planner client has no JWT (token-gated public access), so the existing auth-gated `/api/files/` route is unreachable from MenuPreview.
+2. html2canvas during PNG export needs the image at a same-origin URL with no redirect dance, or the canvas gets tainted by CORS.
+3. Returning bytes directly with `Cache-Control: public, max-age=86400` gives us browser caching for free.
+
+If this pattern is later judged the better default, the existing signed-URL route can be migrated in a follow-up. For now the two patterns coexist.
 
 Immediately after the public POST logo route (Step 2), insert:
 
@@ -1229,8 +1255,7 @@ Create `client/src/pages/plan/components/LogoUploadField.js` with:
 ```jsx
 import React, { useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import axios from 'axios';
-import { API_BASE_URL as BASE_URL } from '../../../utils/api';
+import api from '../../../utils/api';
 
 /**
  * Logo upload widget on MenuDesignStep. Renders when selections.menuStyle
@@ -1257,18 +1282,18 @@ export default function LogoUploadField({ companyLogo, onUploadSuccess }) {
     try {
       const form = new FormData();
       form.append('logo', file);
-      const res = await axios.post(`${BASE_URL}/drink-plans/t/${token}/logo`, form, {
+      const res = await api.post(`/drink-plans/t/${token}/logo`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       if (res.data?.selections) {
         onUploadSuccess(res.data.selections);
       }
     } catch (err) {
-      // eslint-disable-next-line no-restricted-syntax
-      const serverMsg = err.response?.data?.error?.logo
-        || err.response?.data?.error
-        || 'Upload failed. Please try again.';
-      setError(typeof serverMsg === 'string' ? serverMsg : 'Upload failed. Please try again.');
+      // The api interceptor (client/src/utils/api.js) normalizes errors to
+      // { message, code, fieldErrors, status }. fieldErrors.logo holds the
+      // server-side validation message for this specific field.
+      const fieldMsg = err.fieldErrors?.logo;
+      setError(typeof fieldMsg === 'string' ? fieldMsg : (err.message || 'Upload failed. Please try again.'));
     } finally {
       setUploading(false);
       // Reset the input so re-uploading the same file fires onChange.
@@ -1524,7 +1549,7 @@ Create `client/src/pages/admin/EventDetailPlanLogo.js` with:
 
 ```jsx
 import React, { useRef, useState } from 'react';
-import { api } from '../../utils/api';
+import api from '../../utils/api';
 
 /**
  * Admin-side logo widget on EventDetailPage. Shows the uploaded logo for a
@@ -1554,11 +1579,9 @@ export default function EventDetailPlanLogo({ planId, companyLogo, onChange }) {
       });
       if (res.data?.selections) onChange(res.data.selections);
     } catch (err) {
-      // eslint-disable-next-line no-restricted-syntax
-      const serverMsg = err.response?.data?.error?.logo
-        || err.response?.data?.error
-        || 'Upload failed.';
-      setError(typeof serverMsg === 'string' ? serverMsg : 'Upload failed.');
+      // api interceptor normalizes the error to { message, fieldErrors, ... }.
+      const fieldMsg = err.fieldErrors?.logo;
+      setError(typeof fieldMsg === 'string' ? fieldMsg : (err.message || 'Upload failed.'));
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -1572,7 +1595,7 @@ export default function EventDetailPlanLogo({ planId, companyLogo, onChange }) {
       const res = await api.delete(`/drink-plans/${planId}/logo`);
       if (res.data?.selections) onChange(res.data.selections);
     } catch (err) {
-      setError('Failed to remove logo.');
+      setError(err.message || 'Failed to remove logo.');
     } finally {
       setUploading(false);
     }
@@ -1698,15 +1721,15 @@ These rules are NOT scoped under `.potion-app` because EventDetailPage is in the
 
 - [ ] **Step 3: Mount the widget in EventDetailPage.js**
 
-Open `client/src/pages/admin/EventDetailPage.js`. Find the drink-plan section in the JSX. Without prescribing an exact location (the file is large and may have evolved), the right spot is wherever the existing drink plan summary or metadata is displayed.
+Open `client/src/pages/admin/EventDetailPage.js`. The page already imports `DrinkPlanCard` at line 11 and renders it around line 388 inside the right-hand column of the event detail grid. **Mount `<EventDetailPlanLogo>` immediately after the `<DrinkPlanCard ... />` element**, inside the same parent container, so the logo subsection sits visually adjacent to the drink-plan summary.
 
-Add the import at the top:
+Add the import at the top of the file, alongside the existing `DrinkPlanCard` import:
 
 ```jsx
 import EventDetailPlanLogo from './EventDetailPlanLogo';
 ```
 
-Find the place where the drink plan object is available in scope (likely a variable named `drinkPlan` or fetched from `/api/drink-plans/by-proposal/<proposalId>`). Mount:
+The drink-plan state variable in this file is `drinkPlan` (a `useState` value populated by the API fetch). It has a corresponding setter `setDrinkPlan`. Mount the widget immediately after the closing `/>` of `<DrinkPlanCard ... />`:
 
 ```jsx
 {drinkPlan && (
@@ -1716,14 +1739,14 @@ Find the place where the drink plan object is available in scope (likely a varia
     onChange={(updatedSelections) => {
       // Local update of the in-memory drinkPlan so the thumbnail reflects
       // the new state immediately. The server has already persisted via the
-      // admin upload/delete route.
+      // admin upload/delete route (atomic JSONB merge, no race).
       setDrinkPlan((prev) => prev ? { ...prev, selections: updatedSelections } : prev);
     }}
   />
 )}
 ```
 
-If the page uses a different state setter or doesn't currently expose `setDrinkPlan`, find the equivalent (e.g., re-fetch the plan on change) and wire it up.
+If the file's state variable is named differently when you open it (e.g., `plan` instead of `drinkPlan`, or the page has been restructured), adapt the names but keep the placement: immediately after `<DrinkPlanCard>`, inside the same JSX block.
 
 - [ ] **Step 4: Verify in the dev server**
 
@@ -1897,7 +1920,7 @@ const MenuPNG = lazy(() => import('../../components/MenuPNG/MenuPNG'));
 
 (If `lazy` and `Suspense` are already imported via the `React` import as `React.lazy` etc., adapt the syntax accordingly.)
 
-Find the drink-plan section in the JSX, near where the EventDetailPlanLogo (Task 9) was mounted. Add:
+Mount the button **immediately after the `<EventDetailPlanLogo ... />` element** added in Task 9. Inside the same JSX block. Add:
 
 ```jsx
 {drinkPlan?.selections?.menuStyle === 'house' && (
