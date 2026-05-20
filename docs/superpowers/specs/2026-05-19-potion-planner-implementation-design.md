@@ -28,6 +28,8 @@ One logical commit/PR covering:
 6. **Continuous whisper brass pulse** on the save indicator. Always-visible while the wizard is mounted. Idle / saving / failed states.
 7. **Hosted welcome polish**: ⚗ bullet style on the existing `package_includes` list, brass divider. Reuses existing plan API fields (`plan.package_name`, `plan.package_includes`); no schema change.
 8. **`.potion-app` scoping wrapper** added as a second class on the existing `<div className="auth-page">` in `PotionPlanningLab.js:909`. Login/Register/ClientLogin and global primitives untouched.
+9. **Catch-all "Anything else?" textarea** on the Confirmation step, between the summary and extras sections. Stored as `selections.additionalNotes`. Captures the by-the-way stuff (allergies, family stories, special requests) that would otherwise get jammed into a notes field where it does not belong. Closes the same UX gap the scope banners address from the other direction: banners tell clients what NOT to put in the scoped notes fields; the catch-all gives them somewhere to put it instead.
+10. **"After submit" footer on the Welcome roadmap.** A small italic line below the three roadmap cards, previewing what the team delivers within 2 business days. Sets the expectation up front instead of only on the submit celebration.
 
 ### Non-goals
 
@@ -264,6 +266,8 @@ Component structure:
 
 See §6.2 for the verbatim Part 1 copy for BYOB versus hosted.
 
+Below the three roadmap cards, render an italic "after submit" footer with the post-submission preview copy (§6.2 footer). Use a `.potion-roadmap-footer` wrapper with a brass top-hairline so it reads as a coda to the three cards, not a fourth card.
+
 Also retune the existing hosted package summary card (lines 6-25) to use the `.potion-hosted-list` styling: ⚗ bullets in brass, brass top-divider. Keep the existing `<ul>` mapping over `plan.package_includes`.
 
 ### 5.4 `client/src/pages/plan/steps/MenuDesignStep.js`
@@ -328,7 +332,9 @@ Mount the scope banner at the top of the step (the `.potion-scope.aside` variant
 
 **(c) Scope banner at the top** (`.potion-scope.shopping` for BYOB, `.potion-scope.hosted` for hosted). Verbatim copy per §6.1.
 
-**(d) Stripe Elements integrity.** No changes to `Elements`, `PaymentElement`, `clientSecret`, `paymentScenario`, `paymentChoice`, or any of the payment-state effects. The new `.potion-app` scope must not introduce any rule that affects `.StripeElement` or its iframe. Verify Elements still mount and confirm post-port.
+**(d) Catch-all "Anything else?" field.** A new card sits between the summary card and the estimated-extras section. Renders the catch-all textarea bound to `selections.additionalNotes`. Copy per §6.6.
+
+**(e) Stripe Elements integrity.** No changes to `Elements`, `PaymentElement`, `clientSecret`, `paymentScenario`, `paymentChoice`, or any of the payment-state effects. The new `.potion-app` scope must not introduce any rule that affects `.StripeElement` or its iframe. Verify Elements still mount and confirm post-port.
 
 ### 5.6 Other step components: scope banner mount
 
@@ -403,6 +409,10 @@ All copy below is em-dash-free by deliberate style. Em dashes read as an AI tell
 **Hosted** *(Part 1 differs; Parts 2 and 3 match BYOB. Hosted-mode copy pass in §3.2.)*
 - Part 1: title *Pick what we serve* / body *Your `{plan.package_name}` is locked in. Choose the specific drinks within it.* / tag *→ we stock everything*
 
+**After-submit footer** (renders below all three cards, both modes)
+
+> *After you submit, we put together your final shopping list, menu, and event order. You'll hear from us within 2 business days.*
+
 ### 6.3 Inline field notes
 
 **Mocktail notes textarea:**
@@ -438,16 +448,38 @@ Two variants, based on whether the client picked a menu at all. The submit scree
 **No menu:**
 *"We'll use your selections to create a shopping list and a BEO (Banquet Event Order) for your event. Expect to hear from us within 2 business days!"*
 
+### 6.6 Catch-all "Anything else?" card on Confirmation
+
+Renders as a `.card` between the summary block and the estimated-extras section. One textarea, no validation, optional. Stored as `selections.additionalNotes`.
+
+**Card heading:**
+*Anything else we should know?*
+
+**Body text under the heading:**
+*One last chance to mention anything we should know about your event or your guests. Allergies, family stories, dietary needs, special requests, the stuff you've been meaning to bring up.*
+
+**Textarea placeholder:**
+*E.g., my dad has a nut allergy; the groom wants his old fashioned with extra orange peel; please introduce yourself to my mother-in-law when you arrive.*
+
+**Textarea attributes:** `rows={4}`, value bound to `selections.additionalNotes`, onChange dispatches `onChange('additionalNotes', e.target.value)`.
+
+This field intentionally has no inline scope-note. It IS the scope-note's other half: the banners tell clients what not to put in scoped notes fields; this card gives them somewhere to put it instead.
+
 ---
 
 ## 7. Data shape
 
-### 7.1 New selection field
+### 7.1 New selection fields
 
 `selections.menuStyle: 'custom' | 'house' | 'none' | null`
 
 - `null` means unanswered. The Menu Design step considers this incomplete (no radio is checked).
 - The legacy `selections.customMenuDesign` boolean is preserved in the JSON (not deleted) but unread by new code.
+
+`selections.additionalNotes: string`
+
+- Default empty string. Optional, no validation.
+- Captured on the Confirmation step via the catch-all card (§6.6). Submitted as part of the selections JSON via the existing PUT to `/drink-plans/t/<token>`. No server-side reads or processing; the admin reviews it when reading the submitted plan.
 
 ### 7.2 Migration (one-time, on plan load)
 
@@ -494,7 +526,8 @@ Adapted from the 2026-05-17 brief's §11. Ship when **all** of these hold:
 - [ ] Continuous brass pulse runs while the wizard is mounted; halts on `prefers-reduced-motion: reduce`. Save state cycles: idle ("Saved") → saving ("Saving…") → saved ("Saved"). Save-failed state shows the rust dot and the alert text.
 - [ ] Three-way Menu Design renders correctly. Custom shows the three textareas. Standard Menu and No Menu Card show their respective field notes. The submit-celebration copy reflects whether any menu was chosen (custom or standard) versus none. Legacy plans with `customMenuDesign === true` migrate to `menuStyle === 'custom'`; `=== false` migrates to `menuStyle === 'none'`.
 - [ ] Scope banners render with correct tone on every listed step. No banner on LogisticsStep. Copy matches §6 verbatim.
-- [ ] Welcome roadmap renders three cards, with BYOB/hosted copy variants. Mobile reflow collapses to single column at ≤720px. Existing bartender/drinks image layout in the parent welcome card is identical (pixel-equivalent on a screenshot diff).
+- [ ] Welcome roadmap renders three cards, with BYOB/hosted copy variants. Mobile reflow collapses to single column at ≤720px. Existing bartender/drinks image layout in the parent welcome card is identical (pixel-equivalent on a screenshot diff). After-submit footer renders below the three cards with the brass top-hairline.
+- [ ] Catch-all "Anything else?" card renders on the Confirmation step between summary and extras. `selections.additionalNotes` saves and restores across page reloads. Empty value is allowed; the field is optional.
 - [ ] No edits leaked into the bare `.auth-page` rule or any global `.card` / `.btn-*` rule. Login, Register, ClientLogin, and ClientShoppingList visually unchanged.
 - [ ] `PotionPlanningLab.js` still under 1000 lines (currently ~952). If JSX additions push it over, extract scope-banner + roadmap to the new `components/` folder rather than fragmenting the state machine.
 - [ ] Stripe extras pay-now still mounts and confirms. The `.potion-app` scope adds no rule that targets `.StripeElement` or its iframe.

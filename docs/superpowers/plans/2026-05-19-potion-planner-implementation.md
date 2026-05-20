@@ -900,7 +900,7 @@ The first JS-logic task. Migrates legacy `customMenuDesign` boolean into the new
 - Modify: `client/src/pages/plan/PotionPlanningLab.js:153-228` (saved-state restoration)
 - Modify: `client/src/pages/plan/PotionPlanningLab.js:730-732` (celebration copy)
 
-- [ ] **Step 1: Add `menuStyle: null` to DEFAULT_SELECTIONS**
+- [ ] **Step 1: Add `menuStyle: null` and `additionalNotes: ''` to DEFAULT_SELECTIONS**
 
 In `client/src/pages/plan/PotionPlanningLab.js` around line 48-51, find:
 
@@ -914,7 +914,7 @@ In `client/src/pages/plan/PotionPlanningLab.js` around line 48-51, find:
   menuDesignNotes: '',
 ```
 
-Replace with (add `menuStyle: null`):
+Replace with:
 
 ```js
   syrupSelections: {},
@@ -925,6 +925,7 @@ Replace with (add `menuStyle: null`):
   menuTheme: '',
   drinkNaming: '',
   menuDesignNotes: '',
+  additionalNotes: '',
 ```
 
 - [ ] **Step 2: Add the migration inside the saved-state restore block**
@@ -1243,14 +1244,40 @@ git commit -m "feat(planner): three-way Menu Design with Custom, Standard, and N
 
 ---
 
-## Task 10: ConfirmationStep three-way Menu Design summary
+## Task 10: ConfirmationStep three-way Menu Design summary + catch-all card
 
-Updates the Menu Design summary in ConfirmationStep from two cases (yes/no) to three cases (custom/standard/none).
+Two ConfirmationStep changes that ride together since they touch the same file: (a) the Menu Design summary forks three ways instead of two, and (b) a new "Anything else?" catch-all card lands between the summary and the estimated-extras section. The catch-all gives clients a home for by-the-way information (allergies, family stories, special requests) that would otherwise be jammed into a scoped notes field where it does not belong.
 
 **Files:**
-- Modify: `client/src/pages/plan/steps/ConfirmationStep.js:407-425`
+- Modify: `client/src/pages/plan/steps/ConfirmationStep.js:91` (signature: accept `onChange` prop)
+- Modify: `client/src/pages/plan/steps/ConfirmationStep.js:407-425` (Menu Design summary)
+- Modify: `client/src/pages/plan/steps/ConfirmationStep.js` (insert catch-all card after the summary block, before the Estimated Extras block at line ~477)
+- Modify: `client/src/pages/plan/PotionPlanningLab.js:882-902` (pass `onChange={updateSelections}` to ConfirmationStep)
 
-- [ ] **Step 1: Replace the Menu Design summary block**
+- [ ] **Step 1: Add `onChange` prop to ConfirmationStep**
+
+In `client/src/pages/plan/steps/ConfirmationStep.js` around line 91, find the component signature:
+
+```jsx
+export default function ConfirmationStep({ plan, quickPickChoice, activeModules, selections, cocktails = [], mocktails = [], addOns = {}, addonPricing = [], guestCount, numBars = 0, pricingSnapshot = null, proposalSyrups = [], onSubmit, onSubmitForPayment, proposalPaymentInfo, token, saving, error }) {
+```
+
+Add `onChange` to the destructured props (insert anywhere reasonable):
+
+```jsx
+export default function ConfirmationStep({ plan, quickPickChoice, activeModules, selections, cocktails = [], mocktails = [], addOns = {}, addonPricing = [], guestCount, numBars = 0, pricingSnapshot = null, proposalSyrups = [], onSubmit, onSubmitForPayment, onChange, proposalPaymentInfo, token, saving, error }) {
+```
+
+Then in `client/src/pages/plan/PotionPlanningLab.js` around line 882-902 where ConfirmationStep is rendered, add `onChange={updateSelections}` to its JSX props. Order does not matter; add it next to `onSubmit`:
+
+```jsx
+            onSubmit={handleSubmit}
+            onSubmitForPayment={() => submitDrinkPlan(true)}
+            onChange={updateSelections}
+            proposalPaymentInfo={proposalPaymentInfo}
+```
+
+- [ ] **Step 2: Replace the Menu Design summary block**
 
 In `client/src/pages/plan/steps/ConfirmationStep.js`, find the block around lines 407-425:
 
@@ -1309,18 +1336,52 @@ Replace with:
 
 Note the `var(--warm-brown)` substitutions to `var(--text-muted)` to match the brown semantic the spec calls out.
 
-- [ ] **Step 2: Verify**
+- [ ] **Step 3: Add the catch-all "Anything else?" card**
 
-Navigate to ConfirmationStep on plans in each of the three states:
+In `client/src/pages/plan/steps/ConfirmationStep.js`, find the closing `</div>` of the summary block (the outer `<div className="card mb-2">` that wraps the entire selections summary, ending around line 474, just before the `Estimated Extras` block that starts around line 477 with `{hasExtras && (() => {`).
+
+Immediately after that closing `</div>` and before `{hasExtras && (() => {`, insert this new card:
+
+```jsx
+      {/* Catch-all "Anything else?" card. Gives clients a home for the
+          by-the-way stuff (allergies, family stories, special requests)
+          that would otherwise get jammed into a scoped notes field. */}
+      <div className="card mb-2">
+        <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
+          Anything else we should know?
+        </h3>
+        <p className="text-muted" style={{ color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+          One last chance to mention anything we should know about your event or your guests. Allergies, family stories, dietary needs, special requests, the stuff you've been meaning to bring up.
+        </p>
+        <textarea
+          className="form-textarea"
+          rows={4}
+          placeholder="E.g., my dad has a nut allergy; the groom wants his old fashioned with extra orange peel; please introduce yourself to my mother-in-law when you arrive."
+          value={selections.additionalNotes || ''}
+          onChange={(e) => onChange('additionalNotes', e.target.value)}
+        />
+      </div>
+```
+
+- [ ] **Step 4: Verify**
+
+Navigate to ConfirmationStep on plans in each of the three menu states:
 - A plan with `menuStyle === 'custom'`: shows "Custom Menu Design: Yes" with any theme/naming/notes details
 - A plan with `menuStyle === 'house'`: shows "Menu Design: Standard menu (Dr. Bartender branded, printed and framed for the bar)"
 - A plan with `menuStyle === 'none'`: shows "Menu Design: No menu card"
 
-- [ ] **Step 3: Commit**
+Also verify the catch-all card:
+- The "Anything else we should know?" card renders between the summary block and the Estimated Extras block
+- Heading in dark brown display font; body in muted brown
+- Textarea is 4 rows, parchment background, with the placeholder text visible when empty
+- Type a few characters; the value persists when navigating away and back (auto-save fires every 30s; or hit Back then Next to round-trip through `selections`)
+- Refresh the page; the textarea contents should be restored from the saved draft
+
+- [ ] **Step 5: Commit**
 
 ```
-git add client/src/pages/plan/steps/ConfirmationStep.js
-git commit -m "feat(planner): three-way Menu Design summary on confirmation"
+git add client/src/pages/plan/steps/ConfirmationStep.js client/src/pages/plan/PotionPlanningLab.js
+git commit -m "feat(planner): three-way Menu Design summary plus catch-all anything-else field"
 ```
 
 ---
@@ -1628,7 +1689,8 @@ Create `client/src/pages/plan/components/WelcomeRoadmap.js` with:
 import React from 'react';
 
 /**
- * Welcome roadmap: three cards showing the journey through the wizard.
+ * Welcome roadmap: three cards showing the journey through the wizard, plus
+ * a footer line previewing what the team delivers after submission.
  * Mounted below the welcome card on RefinementWelcomeStep.
  *
  * - mode: 'byob' | 'hosted'
@@ -1638,38 +1700,46 @@ export default function WelcomeRoadmap({ mode = 'byob', packageName = '' }) {
   const isHosted = mode === 'hosted';
 
   return (
-    <div className="potion-roadmap">
-      <div className={`potion-roadmap-step ${isHosted ? 'hosted' : 'shopping'}`}>
-        <div className="potion-roadmap-num">Part 1</div>
-        <h4 className="potion-roadmap-title">
-          {isHosted ? 'Pick what we serve' : 'Build your drink menu'}
-        </h4>
-        <p className="potion-roadmap-body">
-          {isHosted
-            ? `Your ${packageName || 'package'} is locked in. Choose the specific drinks within it.`
-            : "Cocktails, mocktails, beer and wine, spirits. Whatever you'd like to serve, we'll tally up what you need."}
-        </p>
-        <span className="potion-roadmap-tag">
-          {isHosted ? '→ we stock everything' : '→ becomes your shopping list'}
-        </span>
+    <>
+      <div className="potion-roadmap">
+        <div className={`potion-roadmap-step ${isHosted ? 'hosted' : 'shopping'}`}>
+          <div className="potion-roadmap-num">Part 1</div>
+          <h4 className="potion-roadmap-title">
+            {isHosted ? 'Pick what we serve' : 'Build your drink menu'}
+          </h4>
+          <p className="potion-roadmap-body">
+            {isHosted
+              ? `Your ${packageName || 'package'} is locked in. Choose the specific drinks within it.`
+              : "Cocktails, mocktails, beer and wine, spirits. Whatever you'd like to serve, we'll tally up what you need."}
+          </p>
+          <span className="potion-roadmap-tag">
+            {isHosted ? '→ we stock everything' : '→ becomes your shopping list'}
+          </span>
+        </div>
+
+        <div className="potion-roadmap-step">
+          <div className="potion-roadmap-num">Part 2</div>
+          <h4 className="potion-roadmap-title">Choose menu design</h4>
+          <p className="potion-roadmap-body">
+            Custom, standard, or skip it. We bring the printed and framed menu to display on the bar.
+          </p>
+        </div>
+
+        <div className="potion-roadmap-step">
+          <div className="potion-roadmap-num">Part 3</div>
+          <h4 className="potion-roadmap-title">Confirm logistics</h4>
+          <p className="potion-roadmap-body">
+            Event-day contact, parking, equipment, access notes.
+          </p>
+        </div>
       </div>
 
-      <div className="potion-roadmap-step">
-        <div className="potion-roadmap-num">Part 2</div>
-        <h4 className="potion-roadmap-title">Choose menu design</h4>
-        <p className="potion-roadmap-body">
-          Custom, standard, or skip it. We bring the printed and framed menu to display on the bar.
+      <div className="potion-roadmap-footer">
+        <p>
+          After you submit, we put together your final shopping list, menu, and event order. You'll hear from us within 2 business days.
         </p>
       </div>
-
-      <div className="potion-roadmap-step">
-        <div className="potion-roadmap-num">Part 3</div>
-        <h4 className="potion-roadmap-title">Confirm logistics</h4>
-        <p className="potion-roadmap-body">
-          Event-day contact, parking, equipment, access notes.
-        </p>
-      </div>
-    </div>
+    </>
   );
 }
 ```
@@ -1752,6 +1822,24 @@ export default function WelcomeRoadmap({ mode = 'byob', packageName = '' }) {
   background: rgba(29,140,137,0.18);
   color: var(--amber);
   border-color: rgba(29,140,137,0.45);
+}
+
+/* After-submit footer below the three roadmap cards */
+.potion-app .potion-roadmap-footer {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(184,146,74,0.32);
+  text-align: center;
+}
+.potion-app .potion-roadmap-footer p {
+  margin: 0;
+  font-size: 0.88rem;
+  font-style: italic;
+  color: var(--text-muted);
+  line-height: 1.45;
+  max-width: 640px;
+  margin-left: auto;
+  margin-right: auto;
 }
 ```
 
@@ -1843,12 +1931,14 @@ Load a BYOB plan at `/plan/<token>`. Expected on the welcome screen:
   - Part 1: brass-tinted, "Build your drink menu", body about cocktails / mocktails / beer & wine / spirits, tag "→ becomes your shopping list"
   - Part 2: neutral parchment, "Choose menu design"
   - Part 3: neutral parchment, "Confirm logistics"
-- At ≤720px (DevTools mobile): all three cards stack vertically
+- Below the three cards, a brass-hairline divider with italic muted text: "After you submit, we put together your final shopping list, menu, and event order. You'll hear from us within 2 business days."
+- At ≤720px (DevTools mobile): all three cards stack vertically and the footer text remains below them
 
 Load a hosted plan. Expected:
 - Hosted package summary card above the welcome card, with ⚗ brass bullets on the package includes list
 - Welcome card unchanged
 - Three roadmap cards: Part 1 is teal-tinted, "Pick what we serve", body references the actual package name, tag "→ we stock everything"
+- Same after-submit footer renders below the three cards
 
 - [ ] **Step 5: Commit**
 
