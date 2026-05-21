@@ -266,6 +266,42 @@ function paymentReminderLate({ clientName, eventTypeLabel = 'event', balanceDue,
   };
 }
 
+/**
+ * Refund issued — client confirmation. Always fires when admin issues a refund
+ * (full or partial), no suppression (rare touch, money out, never want it skipped).
+ *
+ * @param {Object} opts
+ * @param {string} opts.clientName
+ * @param {number} opts.refundAmount - dollars
+ * @param {string} [opts.last4] - last 4 of card refunded to (omit line if not available)
+ * @param {number|null} opts.newBalance - dollars; if null or <= 0, render "no balance remaining" line
+ */
+function refundNotificationClient({ clientName, refundAmount, last4, newBalance }) {
+  const name = clientName || 'there';
+  const cardLine = last4
+    ? ` to your card ending in <strong>${esc(String(last4))}</strong>`
+    : '';
+  const cardLineText = last4 ? ` to your card ending in ${last4}` : '';
+  const balanceLine = (newBalance === null || newBalance === undefined || Number(newBalance) <= 0)
+    ? `<p>This refund covers the full amount; no balance remaining.</p>`
+    : `<p>New balance: <strong>$${Number(newBalance).toFixed(2)}</strong>.</p>`;
+  const balanceLineText = (newBalance === null || newBalance === undefined || Number(newBalance) <= 0)
+    ? 'This refund covers the full amount; no balance remaining.'
+    : `New balance: $${Number(newBalance).toFixed(2)}.`;
+  return {
+    subject: `Refund issued for your account`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Refund Issued</h2>
+      <p>Hi ${esc(name)},</p>
+      <p>We've refunded <strong>$${Number(refundAmount).toFixed(2)}</strong>${cardLine}. It should arrive in 5-10 business days depending on your bank.</p>
+      ${balanceLine}
+      <p style="font-size:14px;color:${BRAND.secondary};">Let me know if you have any questions, just reply to this email.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, we've refunded $${Number(refundAmount).toFixed(2)}${cardLineText}. It should arrive in 5-10 business days. ${balanceLineText} Cheers, The Dr. Bartender Team`,
+  };
+}
+
 function drinkPlanBalanceUpdate({ clientName, eventTypeLabel = 'event', extrasAmount, newTotal, amountPaid, balanceDue, balanceDueDate }) {
   const name = clientName || 'there';
   const dueDate = balanceDueDate
@@ -796,6 +832,7 @@ module.exports = {
   drinkPlanBalanceUpdate,
   paymentReminderClient,
   paymentReminderLate,
+  refundNotificationClient,
   clientSignedAdmin,
   paymentReceivedAdmin,
   signedAndPaidAdmin,
