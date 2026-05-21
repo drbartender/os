@@ -175,26 +175,56 @@ function clientOtp({ name, otp }) {
   };
 }
 
-function paymentReminderClient({ clientName, eventTypeLabel = 'event', balanceDue, balanceDueDate, proposalUrl }) {
+/**
+ * Balance reminder T-3 days.
+ *
+ * @param {Object} opts
+ * @param {string} opts.clientName
+ * @param {string} opts.eventTypeLabel
+ * @param {number} opts.balanceDue - dollars (number)
+ * @param {string|Date} opts.balanceDueDate
+ * @param {string} opts.proposalUrl
+ * @param {'autopay'|'manual'} [opts.paymentMode='manual'] - autopay → "no action needed" copy; manual → "log in and pay"
+ * @param {string} [opts.last4] - last 4 digits of saved card; only rendered in autopay mode when provided
+ */
+function paymentReminderClient({ clientName, eventTypeLabel = 'event', balanceDue, balanceDueDate, proposalUrl, paymentMode = 'manual', last4 }) {
   const name = clientName || 'there';
   const dueDate = balanceDueDate
     ? new Date(balanceDueDate).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' })
     : 'before your event';
+  const isAutopay = paymentMode === 'autopay';
+  const subject = isAutopay
+    ? `Heads up: balance for your ${eventTypeLabel} runs in 3 days`
+    : `Balance due in 3 days for your ${eventTypeLabel}`;
+  const cardLine = isAutopay && last4
+    ? `<p>Your card ending in <strong>${esc(String(last4))}</strong> will be charged automatically. No action needed.</p>`
+    : isAutopay
+      ? `<p>Your card on file will be charged automatically. No action needed.</p>`
+      : '';
+  const cta = isAutopay
+    ? ctaButton(proposalUrl, 'Use a different card or pay early')
+    : ctaButton(proposalUrl, 'View &amp; Pay Balance');
+  const intro = isAutopay
+    ? `Your remaining balance of <strong>$${Number(balanceDue).toFixed(2)}</strong> for your <strong>${esc(eventTypeLabel)}</strong> runs on <strong>${dueDate}</strong>.`
+    : `A heads up that your balance of <strong>$${Number(balanceDue).toFixed(2)}</strong> for your <strong>${esc(eventTypeLabel)}</strong> is due on <strong>${dueDate}</strong>.`;
+  const footer = isAutopay
+    ? `<p style="font-size:14px;color:${BRAND.secondary};">We'll send a receipt once it's charged. Reply with any questions.</p>`
+    : `<p style="font-size:14px;color:${BRAND.secondary};">If you've already taken care of this or have any questions, just reply to this email.</p>`;
+  const textIntro = isAutopay
+    ? `Your remaining balance of $${Number(balanceDue).toFixed(2)} for your ${eventTypeLabel} runs on ${dueDate}${last4 ? ` on the card ending in ${last4}` : ' on your card on file'}.`
+    : `A heads up that your balance of $${Number(balanceDue).toFixed(2)} for your ${eventTypeLabel} is due on ${dueDate}.`;
   return {
-    subject: `Friendly reminder — balance due for your ${eventTypeLabel}`,
+    subject,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Balance Reminder</h2>
       <p>Hi ${esc(name)},</p>
-      <p>Just a friendly reminder that the balance for your <strong>${esc(eventTypeLabel)}</strong> is still outstanding. You can review your event details and pay the balance directly from your proposal page.</p>
-      <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
-        <tr><td style="padding:8px 12px;color:${BRAND.primary};font-weight:bold;">Balance Due</td><td style="padding:8px 12px;text-align:right;font-weight:bold;color:${BRAND.primary};">$${Number(balanceDue).toFixed(2)}</td></tr>
-        <tr><td style="padding:8px 12px;color:${BRAND.secondary};">Due By</td><td style="padding:8px 12px;text-align:right;">${dueDate}</td></tr>
-      </table>
-      ${ctaButton(proposalUrl, 'View &amp; Pay Balance')}
-      <p style="font-size:14px;color:${BRAND.secondary};">If you've already taken care of this or have any questions, just reply to this email.</p>
+      <p>${intro}</p>
+      ${cardLine}
+      ${cta}
+      ${footer}
       <p>Cheers,<br/>The Dr. Bartender Team</p>
     `),
-    text: `Hi ${name}, just a friendly reminder that your balance of $${Number(balanceDue).toFixed(2)} for your ${eventTypeLabel} is due by ${dueDate}. View and pay here: ${proposalUrl} — The Dr. Bartender Team`,
+    text: `Hi ${name}, ${textIntro} ${isAutopay ? 'No action needed. Pay early or change card: ' : 'View and pay: '}${proposalUrl}. Cheers, The Dr. Bartender Team`,
   };
 }
 
