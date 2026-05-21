@@ -261,6 +261,7 @@ dr-bartender/
 | `npm run build` | Build React frontend to `client/build/` |
 | `npm run install:all` | Install both server and client dependencies |
 | `npm run seed` | Create admin account from `ADMIN_EMAIL`/`ADMIN_PASSWORD` |
+| `npm run admin:create` | Promote an existing user to admin (or create one) from `ADMIN_EMAIL`/`ADMIN_PASSWORD` |
 | `npm run lint` | Run ESLint on all server code |
 | `npm run lint:fix` | Run ESLint with auto-fix on server code |
 | `npm run audit:check` | Check for known dependency vulnerabilities |
