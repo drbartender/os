@@ -161,6 +161,10 @@ export default function ProposalCreate() {
   // ProposalDetailEditForm.
   useEffect(() => {
     if (!form.package_id) { setPreview(null); return; }
+    // Top Shelf is custom-priced — the admin follows up manually, so there's
+    // no live total to compute. Skip the calculate round-trip and clear any
+    // stale preview. class_options is in the deps so toggling this re-runs.
+    if (form.class_options?.top_shelf_requested) { setPreview(null); return; }
     const timer = setTimeout(() => {
       api.post('/proposals/calculate', {
         package_id: Number(form.package_id),
@@ -186,7 +190,7 @@ export default function ProposalCreate() {
         });
     }, 400);
     return () => clearTimeout(timer);
-  }, [form.package_id, form.guest_count, form.event_duration_hours, form.num_bars, form.num_bartenders, form.addon_ids, form.addon_variants, form.addon_quantities, form.syrup_selections, toast]);
+  }, [form.package_id, form.guest_count, form.event_duration_hours, form.num_bars, form.num_bartenders, form.addon_ids, form.addon_variants, form.addon_quantities, form.syrup_selections, form.class_options, toast]);
 
   // Saved indicator (cosmetic only — no autosave backend)
   useEffect(() => {
@@ -719,6 +723,11 @@ function PackageSection({ form, packages, update, merge, fieldErrors }) {
     return <div className="muted tiny">Loading packages…</div>;
   }
 
+  const selectedPkg = packages.find(p => p.id === Number(form.package_id));
+  // Class packages carry bar_type === 'class' (their category is 'hosted' —
+  // so category would mis-detect). Top Shelf is a class-only flow.
+  const isClassPackage = selectedPkg?.bar_type === 'class';
+
   const rateLabel = (pkg) => {
     if (pkg.pricing_type === 'per_guest') {
       const big = pkg.base_rate_4hr ? `$${Number(pkg.base_rate_4hr)}/guest` : '';
@@ -789,6 +798,46 @@ function PackageSection({ form, packages, update, merge, fieldErrors }) {
         })}
       </div>
       <FieldError error={fieldErrors?.package_id} />
+
+      {/* Top Shelf — class packages only. The spirit category + custom-pricing
+          request live in form.class_options; each control rewrites the whole
+          object so the sibling field is preserved. */}
+      {isClassPackage && (
+        <div style={{
+          marginTop: 10, padding: '10px 12px', borderRadius: 4,
+          border: '1px solid var(--line-1)', background: 'var(--bg-2)',
+          display: 'grid', gap: 8,
+        }}>
+          <Lbl text="Spirit category">
+            <select
+              className="select"
+              value={form.class_options?.spirit_category || ''}
+              onChange={(e) => merge({
+                class_options: { ...form.class_options, spirit_category: e.target.value },
+              })}
+              style={{ width: '100%' }}
+            >
+              <option value="">Choose a spirit…</option>
+              <option value="whiskey_bourbon">Whiskey / Bourbon</option>
+              <option value="tequila_mezcal">Tequila / Mezcal</option>
+            </select>
+          </Lbl>
+          <label style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            cursor: 'pointer', fontSize: 12.5, color: 'var(--ink-1)',
+          }}>
+            <input
+              type="checkbox"
+              checked={!!form.class_options?.top_shelf_requested}
+              onChange={(e) => merge({
+                class_options: { ...form.class_options, top_shelf_requested: e.target.checked },
+              })}
+            />
+            <span>Top Shelf requested (custom pricing)</span>
+          </label>
+        </div>
+      )}
+
       <PackageIncludesModal open={!!infoPkg} pkg={infoPkg} onClose={() => setInfoPkg(null)} />
     </div>
   );
@@ -1151,6 +1200,8 @@ function PricingDock({ form, preview, packages, submitting, error, fieldErrors }
   const total = Number(preview?.total) || 0;
   const subtotal = Number(preview?.subtotal) || 0;
   const breakdown = preview?.breakdown || [];
+  // Top Shelf class bookings are priced by hand later — there's no live total.
+  const isCustomPricing = !!form.class_options?.top_shelf_requested;
 
   return (
     <aside style={{
@@ -1168,9 +1219,15 @@ function PricingDock({ form, preview, packages, submitting, error, fieldErrors }
         <div className="tiny mono" style={{ color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
           Live pricing
         </div>
-        <div className="num" style={{ fontSize: 32, color: 'var(--ink-1)', marginTop: 4, fontWeight: 500 }}>
-          {fmt$2dp(total)}
-        </div>
+        {isCustomPricing ? (
+          <div style={{ fontSize: 15, color: 'var(--ink-1)', marginTop: 6, fontWeight: 500, lineHeight: 1.4 }}>
+            Custom pricing — admin will follow up
+          </div>
+        ) : (
+          <div className="num" style={{ fontSize: 32, color: 'var(--ink-1)', marginTop: 4, fontWeight: 500 }}>
+            {fmt$2dp(total)}
+          </div>
+        )}
         <div className="tiny" style={{ color: 'var(--ink-3)' }}>
           {pkg?.name || 'Choose a package'}
           {form.guest_count ? ` · ${form.guest_count} guests` : ''}
@@ -1180,12 +1237,23 @@ function PricingDock({ form, preview, packages, submitting, error, fieldErrors }
 
       {/* Body */}
       <div className="scroll-thin" style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
-        {!preview && (
+        {!preview && !isCustomPricing && (
           <div className="muted tiny" style={{ padding: '6px 0' }}>
             Choose a package to see pricing.
           </div>
         )}
-        {preview && (
+        {isCustomPricing && (
+          <div style={{
+            padding: '10px 12px', borderRadius: 4,
+            border: '1px solid var(--line-1)', background: 'var(--bg-2)',
+            fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5,
+          }}>
+            <strong style={{ color: 'var(--ink-1)' }}>Top Shelf requested.</strong>
+            {' '}This class booking is custom-priced. No live total — the admin
+            will set the price and follow up after the proposal is created.
+          </div>
+        )}
+        {preview && !isCustomPricing && (
           <div>
             {breakdown.map((item, i) => (
               <Row key={i} label={item.label} value={item.amount} />
