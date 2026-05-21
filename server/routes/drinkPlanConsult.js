@@ -127,12 +127,16 @@ router.get('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
 router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const consult = sanitizeConsult(req.body?.consult);
 
+  // Function scope so the post-commit email block (after the finally) can read it.
+  let isFirstTimeConsultSave = false;
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
     const planRes = await client.query(
       `SELECT dp.id, dp.client_name, dp.event_date, dp.admin_notes,
+              dp.consult_filled_at,
               p.guest_count
        FROM drink_plans dp
        LEFT JOIN proposals p ON p.id = dp.proposal_id
@@ -146,6 +150,9 @@ router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
     }
     const plan = planRes.rows[0];
     plan.consult_selections = consult;
+    // First-time save vs re-submit. Captured before COMMIT (no DB touch here);
+    // read by the post-commit email block after the finally boundary.
+    isFirstTimeConsultSave = (plan.consult_filled_at === null || plan.consult_filled_at === undefined);
 
     const overrideGc = Number(consult.guestCountOverride) || 0;
     if (overrideGc > 0) plan.guest_count = overrideGc;
@@ -180,6 +187,85 @@ router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
     throw err;
   } finally {
     client.release();
+  }
+
+  // AFTER the finally boundary — post-commit work is fully isolated from the
+  // transaction frame. Any throw here is caught locally and never rolls back
+  // the (already-committed) consult save or surfaces as a 5xx.
+  if (isFirstTimeConsultSave) {
+    try {
+      const { sendEmail } = require('../utils/email');
+      const emailTemplates = require('../utils/emailTemplates');
+      const { getEventTypeLabel } = require('../utils/eventTypes');
+      const { formatConsultRecap, pickNextStepLine } = require('../utils/consultRecap');
+      const { shouldSendImmediate } = require('../utils/messageSuppression');
+
+      const lookup = await pool.query(`
+        SELECT dp.client_email, dp.client_name, dp.event_type, dp.event_type_custom, dp.event_date,
+               p.id AS proposal_id, p.status AS proposal_status,
+               c.communication_preferences, c.email_status, c.phone_status,
+               sp.pricing_type AS package_pricing_type
+        FROM drink_plans dp
+        LEFT JOIN proposals p ON p.id = dp.proposal_id
+        LEFT JOIN clients c ON c.id = p.client_id
+        LEFT JOIN service_packages sp ON sp.id = p.package_id
+        WHERE dp.id = $1
+      `, [req.params.id]);
+
+      if (lookup.rows[0]?.client_email) {
+        const row = lookup.rows[0];
+        const sendCheck = await shouldSendImmediate({
+          proposal: { id: row.proposal_id, status: row.proposal_status || 'deposit_paid' },
+          client: {
+            communication_preferences: row.communication_preferences,
+            email_status: row.email_status,
+            phone_status: row.phone_status,
+          },
+          channel: 'email',
+        });
+        if (!sendCheck.ok) {
+          console.log(`[postConsultClient] suppressed for plan ${req.params.id}: ${sendCheck.reason}`);
+        } else {
+          const barOption = row.package_pricing_type === 'per_guest' ? 'hosted' : 'byob';
+          const formattedEventDate = row.event_date
+            ? new Date(row.event_date).toLocaleDateString('en-US', {
+                timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+              })
+            : null;
+          const tpl = emailTemplates.postConsultClient({
+            clientName: row.client_name || 'there',
+            eventTypeLabel: getEventTypeLabel({ event_type: row.event_type, event_type_custom: row.event_type_custom }),
+            formattedEventDate,
+            drinkRecapLines: formatConsultRecap(consult),
+            nextStepLine: pickNextStepLine(barOption),
+          });
+          // Fire-and-forget — the .catch keeps an async rejection from
+          // escaping as an unhandled-rejection warning.
+          sendEmail({ to: row.client_email, ...tpl }).catch(emailErr => {
+            console.error('[postConsultClient] send failed (non-fatal):', emailErr);
+            if (process.env.SENTRY_DSN_SERVER) {
+              const Sentry = require('@sentry/node');
+              Sentry.captureException(emailErr, {
+                tags: { route: 'drinkPlanConsult/putConsult', step: 'postConsultClient' },
+                extra: { planId: req.params.id },
+              });
+            }
+          });
+        }
+      }
+    } catch (recapErr) {
+      // Anything that throws during lookup/templating gets logged but NEVER
+      // rethrown. The consult save itself succeeded and the response was
+      // already sent before we got here.
+      console.error('[postConsultClient] post-commit step failed (non-fatal):', recapErr);
+      if (process.env.SENTRY_DSN_SERVER) {
+        const Sentry = require('@sentry/node');
+        Sentry.captureException(recapErr, {
+          tags: { route: 'drinkPlanConsult/putConsult', step: 'postConsult_lookup' },
+          extra: { planId: req.params.id },
+        });
+      }
+    }
   }
 }));
 
