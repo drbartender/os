@@ -62,6 +62,9 @@ async function buildPlannerGeneratorInput(plan, dbClient) {
     beerSelections,
     wineSelections,
     mixersForSignatureDrinks: sel.mixersForSignatureDrinks ?? null,
+    activeAddonSlugs: Object.entries(sel.addOns || {})
+      .filter(([, meta]) => meta && meta.enabled)
+      .map(([slug]) => slug),
   };
 }
 
@@ -74,7 +77,7 @@ async function buildConsultGeneratorInput(plan, dbClient) {
     resolveCocktailIds(sigIds, dbClient),
     resolveCocktailIds(mockIds, dbClient),
   ]);
-  return buildGeneratorInputFromConsult(
+  const generatorInput = buildGeneratorInputFromConsult(
     consult,
     {
       clientName: plan.client_name,
@@ -84,6 +87,12 @@ async function buildConsultGeneratorInput(plan, dbClient) {
     resolvedSigs,
     resolvedMocktails
   );
+  return {
+    ...generatorInput,
+    activeAddonSlugs: Object.entries(consult.addOns || {})
+      .filter(([, meta]) => meta && meta.enabled)
+      .map(([slug]) => slug),
+  };
 }
 
 // Auto-generate a shopping list for a submitted drink plan and stage it as
