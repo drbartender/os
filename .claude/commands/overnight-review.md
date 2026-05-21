@@ -41,6 +41,14 @@ Single message, five concurrent `Agent` tool calls:
 
 **Do NOT run `@ui-ux-review`** — it needs a browser and dev server you cannot start safely at 3am.
 
+## Step 1.5 — File-size scan (report-only)
+
+Run `npm run check:filesize` and capture its output. This is informational
+only: it never fails the run and produces no fixes. The RED / YELLOW lists go
+verbatim into the `## File-size report` section of the log (Step 4). Do not
+attempt to split any file: that is human-judgment work, never an overnight
+auto-fix.
+
 ## Step 2 — Triage every finding
 
 For each finding (across all 5 agents), classify into **auto-fix** or **flag-for-morning**.
@@ -112,6 +120,13 @@ BLOCKED — M items require human attention. Do NOT push until resolved.
   Disposition: <auto-fixed | flagged | ignored (reason)>
 ...
 (or: "none" if Sentry had zero unresolved issues)
+
+## File-size report
+RED (over 1000): <count>
+- <lines>  <path>
+YELLOW (700-1000): <count>
+- <lines>  <path>
+(verbatim from `npm run check:filesize`)
 
 ## Auto-fixed (committed)
 - [<agent or "sentry">] <severity> <file:line> — <finding summary>
