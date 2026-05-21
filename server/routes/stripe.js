@@ -898,6 +898,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     try {
       const payInfo = await pool.query(`
         SELECT p.event_type, p.event_type_custom, p.client_signed_at, p.last_minute_hold,
+               p.autopay_enrolled,
                c.name AS client_name, c.email AS client_email
         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
         WHERE p.id = $1
@@ -922,14 +923,33 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         // notifier runs, so the flag is readable here. Append the cancellation
         // caveat to the first-payment client email when the booking is ≤72h out.
         const lastMinute = !!pi?.last_minute_hold;
-        const tpl = isCoupledSigning
-          ? emailTemplates.signedAndPaidClient({ clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute })
-          : emailTemplates.paymentReceivedClient({ clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute });
+        let tpl;
+        if (isCoupledSigning) {
+          tpl = emailTemplates.signedAndPaidClient({ clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute });
+        } else {
+          // Detect autopay-driven balance charge: paymentType='balance' AND the
+          // proposal had autopay enrolled (flag from the post-commit SELECT
+          // above). Sends the autopay-specific copy variant of the receipt.
+          const isAutopaySuccess = paymentType === 'balance' && pi?.autopay_enrolled === true;
+          tpl = emailTemplates.paymentReceivedClient({
+            clientName: pi.client_name,
+            eventTypeLabel: eventLabel,
+            amount: amountFormatted,
+            paymentType: payLabel,
+            lastMinute,
+            autopay: isAutopaySuccess,
+          });
+        }
         await sendEmail({ to: pi.client_email, ...tpl });
       }
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
         const adminUrl = `${ADMIN_URL}/proposals/${proposalId}`;
+        // Admin notification consolidation: the standalone clientSignedAdmin fires
+        // from the public-token signing route. In the canonical sign+pay coupled
+        // flow, the payment arrives within ~6 hours of the signature, and the
+        // post-commit notifier here suppresses the standalone paymentReceivedAdmin
+        // in favor of signedAndPaidAdmin. Spec section 6.
         const tpl = isCoupledSigning
           ? emailTemplates.signedAndPaidAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl })
           : emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
@@ -1279,6 +1299,47 @@ router.post('/webhook', asyncHandler(async (req, res) => {
                    <p><strong>Reason:</strong> ${intent.last_payment_error?.message || 'Unknown error'}</p>
                    <p><a href="${ADMIN_URL}/proposals/${proposalId}">View Proposal</a></p>`,
           }).catch(e => console.error('Failed payment notification email error:', e));
+        }
+
+        // Client-side payment-failure email — throttle one per 24h per proposal
+        // to avoid spamming when Stripe retries multiple times against a bad card.
+        try {
+          const propRow = await pool.query(
+            `SELECT p.token, p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
+             FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+             WHERE p.id = $1`,
+            [proposalId]
+          );
+          const pc = propRow.rows[0];
+          if (pc?.client_email) {
+            const throttle = await pool.query(
+              `SELECT 1 FROM proposal_activity_log
+               WHERE proposal_id = $1 AND action = 'payment_failed_email_client'
+                 AND created_at > NOW() - INTERVAL '24 hours'
+               LIMIT 1`,
+              [proposalId]
+            );
+            if (throttle.rowCount === 0) {
+              const tpl = emailTemplates.paymentFailedClient({
+                clientName: pc.client_name,
+                eventTypeLabel: eventLabelFor(pc),
+                last4: null, // not stored today — future task
+                proposalUrl: `${PUBLIC_SITE_URL}/proposal/${pc.token}`,
+              });
+              await sendEmail({ to: pc.client_email, ...tpl });
+              await pool.query(
+                `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'payment_failed_email_client', 'system', $2)`,
+                [proposalId, JSON.stringify({ payment_intent_id: intent.id })]
+              );
+            }
+          }
+        } catch (clientEmailErr) {
+          if (process.env.SENTRY_DSN_SERVER) {
+            Sentry.captureException(clientEmailErr, {
+              tags: { webhook: 'stripe', component: 'paymentFailedClient' },
+            });
+          }
+          console.error('Client payment-failure email failed (non-blocking):', clientEmailErr);
         }
       } catch (err) {
         if (process.env.SENTRY_DSN_SERVER) {
