@@ -6,6 +6,9 @@ const {
   detectOptKeyword,
   detectResponseCode,
   lookupSender,
+  recordInboundMessage,
+  applyOptOut,
+  applyOptIn,
 } = require('./smsInbound');
 
 test('detectOptKeyword > recognizes STOP and equivalents, case-insensitive', () => {
@@ -100,4 +103,56 @@ test('lookupSender > returns unknown for an unmatched number', async () => {
 test('lookupSender > returns unknown for a null/garbage number', async () => {
   assert.strictEqual((await lookupSender(null)).type, 'unknown');
   assert.strictEqual((await lookupSender('not-a-phone')).type, 'unknown');
+});
+
+test('recordInboundMessage > inserts an inbound row linked to a client', async () => {
+  const row = await recordInboundMessage({
+    fromPhone: '+13125550148',
+    body: 'hello from the test',
+    clientId: lsClientId,
+    twilioSid: 'SMtest_record_1',
+  });
+  assert.ok(row.id > 0);
+  assert.strictEqual(row.direction, 'inbound');
+  assert.strictEqual(row.client_id, lsClientId);
+  assert.strictEqual(row.status, 'received');
+  assert.strictEqual(row.read_at, null);
+  await pool.query('DELETE FROM sms_messages WHERE id = $1', [row.id]);
+});
+
+test('recordInboundMessage > tolerates an empty body and a null client', async () => {
+  const row = await recordInboundMessage({
+    fromPhone: '+19998887777',
+    body: '',
+    clientId: null,
+    twilioSid: 'SMtest_record_2',
+  });
+  assert.strictEqual(row.body, '');
+  assert.strictEqual(row.client_id, null);
+  await pool.query('DELETE FROM sms_messages WHERE id = $1', [row.id]);
+});
+
+test('applyOptOut > sets sms_enabled false on a client and records the audit', async () => {
+  await applyOptOut({ type: 'client', client: { id: lsClientId } });
+  const r = await pool.query('SELECT communication_preferences FROM clients WHERE id = $1', [lsClientId]);
+  assert.strictEqual(r.rows[0].communication_preferences.sms_enabled, false);
+  // restore
+  await pool.query(
+    `UPDATE clients SET communication_preferences = jsonb_set(communication_preferences, '{sms_enabled}', 'true') WHERE id = $1`,
+    [lsClientId]
+  );
+});
+
+test('applyOptIn > sets sms_enabled true on a staff user', async () => {
+  await pool.query(
+    `UPDATE users SET communication_preferences = jsonb_set(communication_preferences, '{sms_enabled}', 'false') WHERE id = $1`,
+    [lsStaffUserId]
+  );
+  await applyOptIn({ type: 'staff', staffUserId: lsStaffUserId });
+  const r = await pool.query('SELECT communication_preferences FROM users WHERE id = $1', [lsStaffUserId]);
+  assert.strictEqual(r.rows[0].communication_preferences.sms_enabled, true);
+});
+
+test('applyOptOut > is a no-op for an unknown sender', async () => {
+  await applyOptOut({ type: 'unknown' }); // must not throw
 });

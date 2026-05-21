@@ -91,4 +91,87 @@ async function lookupSender(fromPhone) {
   return { type: 'unknown' };
 }
 
-module.exports = { detectOptKeyword, detectResponseCode, lookupSender };
+/**
+ * Insert an inbound message into sms_messages. For an inbound row,
+ * recipient_phone holds the SENDER's number (the external party) so the
+ * column reads as "the other party's phone" for both directions; client_id
+ * is the canonical link for the thread UI. The body is truncated and the
+ * sender phone is defaulted so a malformed Twilio payload cannot violate the
+ * NOT NULL / length constraints.
+ *
+ * @param {Object} args
+ * @param {string} args.fromPhone - inbound E.164 sender number
+ * @param {string} args.body - message text (may be empty)
+ * @param {number|null} args.clientId - matched clients.id, or null
+ * @param {string} [args.twilioSid] - Twilio MessageSid
+ * @param {Object} [args.metadata] - extra metadata to merge
+ * @returns {Promise<Object>} the inserted row
+ */
+async function recordInboundMessage({ fromPhone, body, clientId, twilioSid, metadata }) {
+  const phone = (fromPhone || 'unknown').slice(0, 50);
+  const text = (body || '').slice(0, 2000);
+  const meta = { from: fromPhone || null, to: process.env.TWILIO_PHONE_NUMBER || null, ...(metadata || {}) };
+  const result = await pool.query(
+    `INSERT INTO sms_messages
+       (direction, client_id, recipient_phone, body, message_type, status, twilio_sid, metadata)
+     VALUES ('inbound', $1, $2, $3, 'general', 'received', $4, $5)
+     RETURNING *`,
+    [clientId || null, phone, text, twilioSid || null, JSON.stringify(meta)]
+  );
+  return result.rows[0];
+}
+
+/**
+ * Set communication_preferences.sms_enabled = <value> for the matched sender
+ * and append a STOP/START audit timestamp. No-op for an unknown sender (a
+ * number with no client/staff row). The audit path is a static literal
+ * (auditPath is a controlled internal constant, not user input) because
+ * jsonb_set requires a text[] path.
+ *
+ * @param {Object} sender - a lookupSender(...) result
+ * @param {boolean} enabled
+ */
+async function setSmsEnabled(sender, enabled) {
+  // Static-literal jsonb path — '{sms_opt_in_at}' or '{sms_opt_out_at}'.
+  const auditPath = enabled ? "'{sms_opt_in_at}'" : "'{sms_opt_out_at}'";
+  // COALESCE guards a NULL communication_preferences column.
+  if (sender.type === 'client') {
+    await pool.query(
+      `UPDATE clients
+       SET communication_preferences = jsonb_set(
+             jsonb_set(COALESCE(communication_preferences, '{"sms_enabled":true,"email_enabled":true,"marketing_enabled":true}'::jsonb), '{sms_enabled}', $2::jsonb),
+             ${auditPath}, to_jsonb(NOW()::text))
+       WHERE id = $1`,
+      [sender.client.id, JSON.stringify(enabled)]
+    );
+  } else if (sender.type === 'staff') {
+    await pool.query(
+      `UPDATE users
+       SET communication_preferences = jsonb_set(
+             jsonb_set(COALESCE(communication_preferences, '{"sms_enabled":true,"email_enabled":true,"marketing_enabled":true}'::jsonb), '{sms_enabled}', $2::jsonb),
+             ${auditPath}, to_jsonb(NOW()::text))
+       WHERE id = $1`,
+      [sender.staffUserId, JSON.stringify(enabled)]
+    );
+  }
+  // sender.type === 'unknown' → nothing to update
+}
+
+/** Opt the sender OUT of SMS (STOP keyword). */
+async function applyOptOut(sender) {
+  await setSmsEnabled(sender, false);
+}
+
+/** Opt the sender back IN to SMS (START keyword). */
+async function applyOptIn(sender) {
+  await setSmsEnabled(sender, true);
+}
+
+module.exports = {
+  detectOptKeyword,
+  detectResponseCode,
+  lookupSender,
+  recordInboundMessage,
+  applyOptOut,
+  applyOptIn,
+};
