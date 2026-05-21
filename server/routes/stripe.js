@@ -19,6 +19,7 @@ const {
 } = require('../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { scheduleMessage } = require('../utils/messageScheduling');
+const { schedulePreEventReminders } = require('../utils/preEventScheduling');
 const { renderEventIcs } = require('../utils/icsCalendar');
 const { buildOrientationPayload } = require('../utils/orientationData');
 const { effectiveSetupMinutes } = require('../utils/setupTime');
@@ -1385,6 +1386,28 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         }
 
         sendPaymentNotifications(proposalId, intent.amount, paymentType);
+
+        // Schedule pre-event reminder emails (T-7 event-week, conditional
+        // T-30 long-lead recap). Mirrors the balance-reminder scheduling
+        // above — both fire from this single first-delivery anchor point.
+        // Inserts are idempotent (insertIfMissing) so even if a Stripe retry
+        // somehow bypassed isFirstDelivery, we wouldn't double-schedule.
+        //
+        // Gate on deposit/full payment types — never on balance or
+        // drink-plan-extras payments (those happen post-conversion when
+        // reminders already exist).
+        if (paymentType === 'deposit' || paymentType === 'full') {
+          try {
+            await schedulePreEventReminders(proposalId);
+          } catch (schedErr) {
+            if (process.env.SENTRY_DSN_SERVER) {
+              Sentry.captureException(schedErr, {
+                tags: { webhook: 'stripe', route: '/webhook', step: 'schedulePreEventReminders' },
+              });
+            }
+            console.error('schedulePreEventReminders failed (non-blocking):', schedErr);
+          }
+        }
       }
     }
   }
