@@ -147,6 +147,7 @@ dr-bartender/
 │   │   │   ├── metadata.js     # /packages, /addons, /calculate, /financials, /dashboard-stats
 │   │   │   └── crud.js         # admin CRUD + status/notes/create-shift/balance-due-date/send-reminder/record-payment
 │   │   ├── shifts.js           # Shift scheduling
+│   │   ├── sms.js              # Twilio inbound-SMS webhook + admin thread API
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
 │   │   ├── emailMarketing.js   # Email marketing leads, campaigns, sequences, conversations
 │   │   ├── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
@@ -163,10 +164,12 @@ dr-bartender/
 │   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
 │   │   ├── balanceScheduler.js # Autopay balance charge scheduler
 │   │   ├── bookingWindow.js    # Pure booking-window math (last-minute ≤14-day full-payment-required predicate)
+│   │   ├── consultRecap.js     # Formats saved consult selections into the post-consult email recap
 │   │   ├── drinkPlanAccess.js  # Pure post-booking drink-plan access guard (fail-safe pre-booking allowlist)
 │   │   ├── email.js            # Resend email wrapper (send + batch)
 │   │   ├── emailSequenceScheduler.js # Drip sequence step processor (every 15 min)
 │   │   ├── emailTemplates.js   # Email template helpers (transactional + marketing)
+│   │   ├── icsCalendar.js      # iCalendar VEVENT renderer for booking-confirmation .ics attachments
 │   │   ├── encryption.js       # AES-256-GCM wrapper for bank PII at rest (fails closed in prod)
 │   │   ├── errors.js           # AppError class hierarchy (ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError, PaymentError)
 │   │   ├── eventCreation.js    # Auto-create shifts from paid proposals
@@ -176,10 +179,12 @@ dr-bartender/
 │   │   ├── globalSearch.js     # Global record search query engine (clients/proposals/events/staff)
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
 │   │   ├── lastMinuteAlert.js  # Last-minute (<72h) booking SMS alert dispatch (admin + broad staff blast, idempotent)
+│   │   ├── lifecycleEmailTemplates.js # Lifecycle email templates split out of emailTemplates.js
 │   │   ├── messageScheduling.js # scheduleMessage(...): idempotent insert of a future touch into the scheduled_messages table
 │   │   ├── messageSuppression.js # shouldSendImmediate(...): shared archive / comm-prefs / bad-contact gate for immediate-send paths
 │   │   ├── refundHelpers.js    # Partial-refund planner (planRefund) + idempotent reconciliation (applyRefundReconciliation, incl. status⟷money + autopay-disarm)
 │   │   ├── metricsQueries.js   # Pure metrics filter parsing + SQL builders (resolveFilters, dateClause, qMoney, qWinRate, etc.)
+│   │   ├── orientationData.js  # Assembles the booking/receipt/planner payload for the orientation email
 │   │   ├── phone.js            # Save-time phone validation (10 digits, strips country code 1)
 │   │   ├── pricingEngine.js    # Pure pricing calculation engine
 │   │   ├── proposalRules.js     # Server twin of client proposalRules.js + validateProposalRules (authoritative bundle/addon/guardrail gate)
@@ -190,6 +195,7 @@ dr-bartender/
 │   │   ├── shoppingListAddonCoverage.js # Maps active BYOB-support add-on slugs to the shopping-list items those add-ons cover (computeStripSet); generateShoppingList strips that set
 │   │   ├── shoppingListGen.js  # Shared helpers: resolveCocktailIds, buildPlannerGeneratorInput, buildConsultGeneratorInput, autoGenerateShoppingList
 │   │   ├── sms.js              # Twilio SMS wrapper
+│   │   ├── smsInbound.js       # Inbound-SMS processing: keyword/response-code detection, sender lookup, orchestrator
 │   │   ├── storage.js          # Cloudflare R2 upload + signed URL helpers
 │   │   ├── stripeClient.js     # Central Stripe client factory (test-mode toggle, fail-closed)
 │   │   ├── tipHandleValidation.js # Validates + normalizes venmo/cashapp handles + paypal.me URLs before persist
@@ -243,7 +249,7 @@ dr-bartender/
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
 │   │   │   ├── (staff)         # Application, ApplicationStatus, HiringLanding, PreHireOnboarding (open pre-hire URL)
 │   │   │   ├── (admin)         # AdminDashboard (AdminUserDetail moved into admin/userDetail/, AdminApplicationDetail moved into admin/applicationDetail/)
-│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/)
+│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/)
 │   │   │   ├── staff/          # Staff portal (StaffDashboard, StaffShifts, StaffSchedule, StaffEvents, StaffResources, StaffProfile, MyTipPage tip-page settings, PrintTipCard printable QR card with PrintTipCard.layouts.jsx + PrintTipCard.css)
 │   │   │   ├── plan/           # PotionPlanningLab, public post-booking event questionnaire (single flow, created only after deposit; with steps/, components/, data/; components/ScopeBanner + components/WelcomeRoadmap + components/MenuPreview + components/LogoUploadField = apothecary-reskin + Standard Menu shared UI; steps/HostedGuestPrefsStep.js = compact hosted-package guest-preferences step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test; data/menuSections.js = Standard Menu section extractor with menuSections.test.js Jest unit suite)
 │   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment
@@ -351,6 +357,7 @@ dr-bartender/
 - Grouped message history with per-recipient delivery tracking
 - Per-user message history on individual staff profiles
 - Filters by SMS consent — only staff who opted in are eligible
+- Two-way SMS: Twilio inbound webhook, STOP/START opt-out, staff CONFIRM/CANT response codes, admin Messages thread UI
 
 ### Shifts & Profile
 - View available shifts and request assignments

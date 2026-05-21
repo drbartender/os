@@ -39,7 +39,7 @@ See `.env.example` for the full list. Key ones:
 | `R2_*` | Cloudflare R2 credentials |
 | `RESEND_API_KEY` | Resend email |
 | `RESEND_WEBHOOK_SECRET` | Resend webhook signing secret (svix) |
-| `TWILIO_*` | Twilio SMS |
+| `TWILIO_*` | Twilio SMS. `TWILIO_AUTH_TOKEN` is also used to verify the inbound-SMS webhook signature (`POST /api/sms/inbound`). |
 | `STRIPE_SECRET_KEY` / `STRIPE_PUBLISHABLE_KEY` / `STRIPE_WEBHOOK_SECRET` | Stripe live payments |
 | `STRIPE_SECRET_KEY_TEST` / `STRIPE_PUBLISHABLE_KEY_TEST` / `STRIPE_WEBHOOK_SECRET_TEST` | Stripe test-mode credentials |
 | `STRIPE_TEST_MODE_UNTIL` | ISO date; while in the future, all Stripe calls use `*_TEST` creds (auto-reverts to live after cutoff) |

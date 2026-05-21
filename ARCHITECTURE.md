@@ -308,6 +308,15 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/user/:userId` | Admin | Message history for a specific staff member |
 | GET | `/shifts` | Admin | Shifts available for invitation picker |
 
+### Two-Way SMS — `/api/sms`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/inbound` | Twilio signature | Twilio inbound-SMS webhook (signature-verified, no JWT) — handles STOP/START opt-out and staff CONFIRM/CANT response codes |
+| GET | `/conversations` | Admin/Manager | List SMS conversations, one row per client with an unread inbound count |
+| GET | `/conversations/:clientId` | Admin/Manager | Full SMS thread for a client |
+| POST | `/conversations/:clientId/reply` | Admin/Manager | Send an outbound SMS reply to a client |
+| PUT | `/conversations/:clientId/read` | Admin/Manager | Mark a client's unread inbound SMS as read |
+
 ### Blog — `/api/blog`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -682,6 +691,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 **shift_requests** — Staff applying for shifts
 - `shift_id` FK, `user_id` FK (unique together)
 - `position`, `status` (pending/approved/rejected), `notes`
+- `acknowledged_at` TIMESTAMPTZ — set when the assigned staff member texts CONFIRM for the shift (Comms Phase 2 two-way SMS). Lives on the per-(shift, staff) row, not on `shifts`. Index `idx_shift_requests_user_id` on `user_id` supports the inbound-SMS nearest-approved-shift lookup.
 
 **app_settings** — Configurable settings (auto-assign weights, max distance, etc.)
 - `key` VARCHAR PK, `value` TEXT, `updated_at`
@@ -696,8 +706,13 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `message_type` — e.g. general, shift_invitation
 - `direction` TEXT NOT NULL DEFAULT 'outbound' CHECK (`inbound`, `outbound`) — added for two-way SMS via Automated Communication Foundation
 - `to_phone`, `body`
-- `twilio_sid`, `status` — delivery tracking
+- `twilio_sid`, `status` — delivery tracking. CHECK now allows `received` (the status for an inbound message) alongside `sent` / `failed` / `queued`.
 - `sent_by` FK → users (admin who sent)
+- Two-way SMS additions (Comms Phase 2):
+  - `client_id` INTEGER FK → clients (ON DELETE SET NULL) — links an inbound text to its client row so the admin thread UI can group by client
+  - `read_at` TIMESTAMPTZ — marks an inbound message as seen; drives the unread badge
+  - `metadata` JSONB NOT NULL DEFAULT `'{}'` — raw Twilio From/To/MessageSid plus the STOP/START opt-out audit record
+  - Index `idx_sms_messages_client_id` on `client_id`; partial index `idx_sms_messages_unread` on `client_id WHERE direction = 'inbound' AND read_at IS NULL` for the unread count; `idx_sms_messages_twilio_sid` on `twilio_sid` for inbound-webhook idempotency (dedupe a repeated Twilio delivery by MessageSid)
 
 **scheduled_messages** — Unified per-recipient/per-channel scheduled-message tracking for the Automated Communication Foundation. One row per (recipient, channel) for each scheduled touch so multi-recipient touches (e.g. day-before reminder to two bartenders) and partial failures (email sent, SMS failed) are tracked independently.
 - `id` SERIAL PK
@@ -1028,7 +1043,8 @@ deliberate scope choice.
 - **Wrapper**: `server/utils/sms.js` (includes `normalizePhone()` for E.164 formatting)
 - **Used for**: Admin-initiated SMS to staff (general messages, shift invitations), shift approval notifications
 - **Consent**: Collected during agreement signing (`sms_consent` flag) — only consented staff appear as eligible recipients
-- **Logging**: All outbound messages logged to `sms_messages` table with delivery status tracking
+- **Logging**: All inbound + outbound messages logged to `sms_messages` table with delivery status tracking
+- **Inbound webhook**: `POST /api/sms/inbound` (`server/routes/sms.js`) receives Twilio inbound messages, signature-verified via `TWILIO_AUTH_TOKEN` (`twilio.validateRequest`, no JWT). `server/utils/smsInbound.js` orchestrates each message: handles STOP/START opt-out, staff CONFIRM/CANT response codes, looks up the sender (client or staff), and routes client texts to the admin Messages thread UI.
 
 ### Thumbtack (Lead Generation)
 - **Integration type**: Custom endpoint webhooks (V4 format with legacy fallback)
