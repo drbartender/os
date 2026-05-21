@@ -781,9 +781,40 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   }
 
   const after = await pool.query(
-    'SELECT total_price, amount_paid FROM proposals WHERE id = $1',
+    `SELECT p.total_price, p.amount_paid,
+            c.name AS client_name, c.email AS client_email
+     FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+     WHERE p.id = $1`,
     [proposalId]
   );
+
+  // Refund client notification — non-blocking. Fires only from the request
+  // that actually performed the reconciliation (recon.applied === true). A
+  // concurrent retry or admin double-submit is the idempotency loser
+  // (recon.applied === false, this request was a recon no-op) and must NOT
+  // send a duplicate notification for the same one real refund.
+  try {
+    const a = after.rows[0];
+    if (recon?.applied && a?.client_email) {
+      const newBalance = Number(a.total_price) - Number(a.amount_paid);
+      const tpl = emailTemplates.refundNotificationClient({
+        clientName: a.client_name,
+        refundAmount: plan.amountCents / 100,
+        last4: null, // not stored on payments today
+        newBalance,
+      });
+      await sendEmail({ to: a.client_email, ...tpl });
+    }
+  } catch (refundEmailErr) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(refundEmailErr, {
+        tags: { route: '/stripe/refund', component: 'refundNotificationClient' },
+        extra: { proposalId },
+      });
+    }
+    console.error('Refund client notification email failed (non-blocking):', refundEmailErr);
+  }
+
   res.json({
     refunded: plan.amountCents,
     total_price: Number(after.rows[0].total_price),
