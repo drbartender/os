@@ -238,13 +238,13 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/` | Admin | List proposals with filters (status, search). Default excludes paid + archived (those appear in Events / archive) |
 | GET | `/financials` | Admin | Aggregated revenue + payments for FinancialsDashboard. Accepts `?from=&to=&basis=` (booked\|scheduled\|paid) for date-range + lens filtering. |
 | GET | `/dashboard-stats` | Admin | Server-side aggregations (booked / collected / outstanding / funnel / pipeline / monthly revenue series) for the admin home. Accepts `?from=&to=&basis=` for date-range + lens filtering; prior-period deltas included. |
-| POST | `/` | Admin | Create proposal (auto-calculates pricing, creates client if needed) |
+| POST | `/` | Admin | Create proposal (auto-calculates pricing, creates client if needed). Rules are re-validated server-side via `validateProposalRules`. `send_now: true` creates the proposal as `sent`, creates its invoice in-transaction, and emails the client; otherwise it lands as a `draft`. `send_now` is fail-safe: anything but an explicit `true` is a draft. Rate-limited per admin via `adminWriteLimiter` (10/min). |
 | POST | `/calculate` | Admin | Preview pricing without saving |
 | GET | `/packages` | Admin | List service packages |
 | GET | `/addons` | Admin | List add-ons |
 | GET | `/:id` | Admin | Get single proposal with addons + activity log |
-| PATCH | `/:id` | Admin | Update event details, recalculate pricing, and re-sync the linked event shift (date/time/location/client) when the proposal has been converted |
-| PATCH | `/:id/status` | Admin | Update proposal status |
+| PATCH | `/:id` | Admin | Update event details, recalculate pricing, and re-sync the linked event shift (date/time/location/client) when the proposal has been converted. A draft→sent transition creates the proposal's invoice in the same DB transaction. |
+| PATCH | `/:id/status` | Admin | Update proposal status. On a →sent transition, creates the invoice in-transaction (idempotent on `proposal_id`) and emails the client via `sendProposalSentEmail`. Rate-limited per admin via `adminWriteLimiter` (10/min). |
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | DELETE | `/:id` | Admin | Delete a proposal |
 | GET | `/t/:token` | Public | Fetch proposal by token (tracks views + geolocation) |
@@ -634,6 +634,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `status`: draft | sent | paid | partially_paid | void
 - `locked` (boolean), `locked_at` — freezes line items on payment
 - `due_date`, `notes`
+- A proposal's first invoice is created when the proposal enters the `sent` state. `createInvoiceOnSend` (in `server/utils/invoiceHelpers.js`, idempotent on `proposal_id`) runs inside the same DB transaction as the status change on every →sent path: admin `POST /proposals` with `send_now`, admin `PATCH /:id` and `PATCH /:id/status`, and the public `POST /api/proposals/public/submit` quote-wizard submission. Client notification (`sendProposalSentEmail`) fires post-commit and is best-effort.
 
 **invoice_line_items** — Line items per invoice
 - `invoice_id` FK, `description`, `quantity`, `unit_price` (cents), `line_total` (cents)
@@ -924,6 +925,16 @@ Located in `server/utils/pricingEngine.js`. Pure functions, no database dependen
 6. **Total**: Sum of all components
 
 The result is stored as a `pricing_snapshot` JSONB on the proposal for historical accuracy.
+
+## Proposal Rules & Send Flow
+
+Proposal business rules (BYOB bundle logic, add-on filtering, and selection guardrails) live in a pair of mirrored modules, following the same manual-twin discipline as `eventTypes.js`.
+
+- **`client/src/utils/proposalRules.js`**: shared client rules consumed by both the public Quote Wizard and the admin proposal cockpit (`ProposalCreate.js`). Pure functions, no React or state. Provides bundle-slug resolution, `stripIncludedAddons` (drops bundle-covered add-ons), and the guardrail checks the UI enforces.
+- **`server/utils/proposalRules.js`**: the CJS server twin. Exposes `validateProposalRules`, the authoritative rule gate. Every rule the wizard UI enforces is re-checked here (bundle mutex, mixer mutex, hosted-package guest minimum, glassware-dependent add-ons, parent-addon requirements, guest-count ceilings) so a stale browser tab or a scripted POST cannot bypass them. It throws `ValidationError` on a bad selection. Wired into admin `POST /proposals` and the public `POST /api/proposals/public/submit`.
+- **`server/utils/sendProposalSentEmail.js`**: post-commit, best-effort helper that emails the client when a proposal enters the `sent` state. It never throws (the proposal and its invoice are already committed, so an email failure is recoverable; the admin resends from the detail page) and reports failures to Sentry. Invoice creation is not here. It runs inside the caller's DB transaction via `createInvoiceOnSend`.
+
+`adminWriteLimiter` (`server/middleware/rateLimiters.js`) caps the proposal-write endpoints that can fire client emails (`POST /proposals` and `PATCH /:id/status`) at 10 requests/minute, keyed by admin user id (not IP, so an office NAT does not share a bucket). That is far above any human admin workflow while capping the email-spam blast radius of a compromised admin token.
 
 ## Potion Planning Lab (post-booking only)
 

@@ -111,7 +111,8 @@ dr-bartender/
 │   │   └── seedTestData.js     # Test data seeder (staff, clients, proposals)
 │   ├── middleware/
 │   │   ├── asyncHandler.js     # 3-line wrapper that funnels async-handler rejections to the global error middleware
-│   │   └── auth.js             # JWT verification + role guards (auth, adminOnly)
+│   │   ├── auth.js             # JWT verification + role guards (auth, adminOnly)
+│   │   └── rateLimiters.js     # Shared express-rate-limit instances (publicLimiter, signLimiter, adminWriteLimiter for admin proposal writes, etc.)
 │   ├── routes/
 │   │   ├── admin/              # Admin endpoints (users/applications/hiring/managers/blog/settings sub-routers)
 │   │   │   ├── index.js        # Composition router
@@ -179,7 +180,9 @@ dr-bartender/
 │   │   ├── metricsQueries.js   # Pure metrics filter parsing + SQL builders (resolveFilters, dateClause, qMoney, qWinRate, etc.)
 │   │   ├── phone.js            # Save-time phone validation (10 digits, strips country code 1)
 │   │   ├── pricingEngine.js    # Pure pricing calculation engine
+│   │   ├── proposalRules.js     # Server twin of client proposalRules.js + validateProposalRules (authoritative bundle/addon/guardrail gate)
 │   │   ├── scheduledMessageDispatcher.js # 5-minute scheduler: drains pending scheduled_messages rows, applies suppression, invokes per-message-type handlers
+│   │   ├── sendProposalSentEmail.js # Post-commit best-effort client email when a proposal enters the 'sent' state (never throws)
 │   │   ├── setupTime.js        # Pure back-of-house setup-time math (parse/subtract, effectiveSetupMinutes); client twin
 │   │   ├── shoppingList.js     # Shopping-list generator (mirrors client generateShoppingList.js); also includes consult-mode branch + buildGeneratorInputFromConsult translator
 │   │   ├── shoppingListGen.js  # Shared helpers: resolveCocktailIds, buildPlannerGeneratorInput, buildConsultGeneratorInput, autoGenerateShoppingList
@@ -212,6 +215,7 @@ dr-bartender/
 │   │   │   ├── eventTypes.js   # Event type id→label resolver (mirrors server)
 │   │   │   ├── formatPhone.js  # Phone number formatting
 │   │   │   ├── leadSources.js  # Lead source enum (mirrors schema CHECK + server validator)
+│   │   │   ├── proposalRules.js # Shared client proposal business rules (bundle/addon/guardrail logic); CJS twin at server/utils/proposalRules.js
 │   │   │   ├── setupTime.js    # Back-of-house setup-time formatting (twin of server/utils/setupTime.js)
 │   │   │   ├── timeOptions.js  # Time option generator + 12h formatter + input parser
 │   │   │   └── tipCardMarks.js # Derives printable QR-card payment marks from saved handles (Stripe link + handles → mark list)
@@ -221,7 +225,8 @@ dr-bartender/
 │   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,
 │   │   │                       # TimePicker, NumberStepper, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler,
 │   │   │                       # VenueAddressFields (structured venue address — sign+pay gate & admin edit),
-│   │   │                       # ClickableRow (table <tr> wrapper: plain click navigates, drag selects/copies text)
+│   │   │                       # ClickableRow (table <tr> wrapper: plain click navigates, drag selects/copies text),
+│   │   │                       # AddonControls (shared add-on UI controls: quantity stepper + greyed bundle badge, used by ProposalCreate + ProposalDetailEditForm)
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
 │   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, KebabMenu,
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal, MetricsFilterBar,
