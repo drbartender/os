@@ -1300,6 +1300,14 @@ function PricingDock({ form, preview, packages, submitting, submitLabel, submitB
             )}
             <Row label="Total" value={total} primary big />
             <Row label="Deposit" value={DEPOSIT_AMOUNT} muted />
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {['Stripe · sign & pay electronically', '$100 deposit locks the date'].map((line) => (
+                <div key={line} className="tiny" style={{ display: 'flex', alignItems: 'baseline', gap: 6, color: 'var(--ink-3)' }}>
+                  <span className="mono" aria-hidden="true" style={{ color: 'var(--accent)' }}>⚗</span>
+                  <span>{line}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
