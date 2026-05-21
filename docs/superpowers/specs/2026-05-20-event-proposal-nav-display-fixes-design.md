@@ -36,6 +36,12 @@ Out of scope:
   entirely by the existing `full_payment_required` flag, because balance-due
   dates almost always use the default (14 days before the event), which is
   exactly when the flag flips.
+- Dateless manual proposals (follow-up, deferred 2026-05-21). The manual create
+  route does not require an `event_date`, so a proposal can be saved as a draft
+  with no date and later sent. With no date, `getBookingWindow` returns
+  `full_payment_required: false` and the rule silently does not fire. Closing it
+  would need a server-side guard requiring `event_date` before a proposal can
+  move to `sent`. Tracked as a follow-up, not addressed here.
 
 ## Shared component: AddressLink
 
@@ -54,9 +60,8 @@ Behavior:
   `https://www.google.com/maps/search/?api=1&query=<encodeURIComponent(address)>`
   with `target="_blank"` and `rel="noopener noreferrer"`.
 - When `address` is empty or falsy: renders `fallback`.
-- The anchor calls `e.stopPropagation()` on click, so the component is safe
-  inside the clickable Events-list row (clicking the address opens Maps without
-  also opening the event).
+- The anchor calls `e.stopPropagation()` on click as a defensive guard, so a
+  link click does not bubble to a clickable parent container.
 - Link styling is subtle and inherits the surrounding text color, with an
   underline on hover.
 
@@ -193,6 +198,13 @@ passes.
   render the existing three rows unchanged.
 
 Both payment surfaces then read the same server flag and cannot disagree.
+
+This covers manually-created (admin cockpit) proposals as well as wizard-created
+ones. Both are served by the same `GET /proposals/t/:token` route and rendered
+by the same `ProposalView` / `ProposalPricingBreakdown`, and
+`payment_policy.full_payment_required` is computed from the event date with no
+branching on how the proposal was created, so no manual-proposal-specific change
+is needed.
 
 ### Verification
 

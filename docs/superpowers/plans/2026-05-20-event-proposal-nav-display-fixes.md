@@ -114,7 +114,7 @@ git commit -m "fix: drawer state replaces history so Back exits the page instead
 - Modify: `client/src/pages/admin/EventDetailPage.js` (import; line 218)
 - Modify: `client/src/pages/admin/EventsDashboard.js` (import; line 414)
 - Modify: `client/src/pages/admin/ProposalDetail.js` (import; line 339)
-- Modify: `README.md:222`
+- Modify: `README.md:226`
 
 - [ ] **Step 1: Create the `AddressLink` component**
 
@@ -125,8 +125,8 @@ import React from 'react';
 
 // Renders an address as a Google Maps search link that opens in a new tab.
 // Used wherever an event address is shown in the admin UI. When `address` is
-// empty, renders `fallback` instead. The anchor stops click propagation so it
-// is safe inside a clickable table row (for example the Events dashboard).
+// empty, renders `fallback` instead. The anchor calls stopPropagation on click
+// as a defensive guard so a link click does not bubble to a clickable parent.
 export default function AddressLink({ address, fallback = '—' }) {
   const text = typeof address === 'string' ? address.trim() : '';
   if (!text) return fallback;
