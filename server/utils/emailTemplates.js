@@ -106,8 +106,38 @@ function lastMinuteCaveatText(lastMinute) {
     : '';
 }
 
-function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, paymentType, lastMinute = false }) {
+/**
+ * Payment received — client confirmation.
+ *
+ * @param {Object} opts
+ * @param {string} opts.clientName
+ * @param {string} opts.eventTypeLabel
+ * @param {string|number} opts.amount - dollar amount paid (string OK, formatted by caller)
+ * @param {string} opts.paymentType - e.g. 'deposit', 'balance payment', 'autopay balance'
+ * @param {boolean} [opts.lastMinute=false] - append the <72h cancellation caveat
+ * @param {string} [opts.eventDateLabel] - optional formatted event date (e.g. "June 12")
+ * @param {string} [opts.last4] - last 4 of card charged; rendered in autopay mode
+ * @param {boolean} [opts.autopay=false] - autopay-success framing (tighter copy, you're-paid-in-full focus)
+ */
+function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, paymentType, lastMinute = false, eventDateLabel, last4, autopay = false }) {
   const name = clientName || 'there';
+  if (autopay) {
+    const eventBit = eventDateLabel ? ` on ${esc(eventDateLabel)}` : '';
+    const cardBit = last4 ? ` on the card ending in ${esc(String(last4))}` : ' on your card on file';
+    return {
+      subject: `Balance charged: you're paid in full${eventDateLabel ? ` for ${esc(eventDateLabel)}` : ''}`,
+      html: wrapEmail(`
+        <h2 style="color:${BRAND.primary};margin-top:0;">You're Paid in Full</h2>
+        <p>Hi ${esc(name)},</p>
+        <p>Your remaining balance of <strong>$${amount}</strong> for your <strong>${esc(eventTypeLabel)}</strong>${eventBit} just ran${cardBit}. You're paid in full.</p>
+        <p>Looking forward to the event.</p>
+        <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
+        <p>Cheers,<br/>The Dr. Bartender Team</p>
+      `),
+      text: `Hi ${name}, your remaining balance of $${amount} for your ${eventTypeLabel}${eventBit} just ran${last4 ? ` on the card ending in ${last4}` : ' on your card on file'}. You're paid in full. Cheers, The Dr. Bartender Team`,
+    };
+  }
+  // Default (non-autopay) flow — preserves the existing copy
   return {
     subject: `Payment Received — your ${eventTypeLabel} — Dr. Bartender`,
     html: wrapEmail(`
