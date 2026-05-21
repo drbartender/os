@@ -30,13 +30,14 @@ async function sendEmail({ to, subject, html, text, from, replyTo, attachments }
     return { id: 'dev-skipped' };
   }
 
+  const effectiveReplyTo = replyTo || process.env.ADMIN_EMAIL || null;
   const { data, error } = await resend.emails.send({
     from: from || FROM_EMAIL,
     to: Array.isArray(to) ? to : [to],
     subject,
     html,
     ...(text && { text }),
-    ...(replyTo && { reply_to: replyTo }),
+    ...(effectiveReplyTo && { reply_to: effectiveReplyTo }),
     ...(attachments && attachments.length && { attachments }),
   });
 
@@ -65,7 +66,7 @@ async function sendBatchEmails(emails) {
     subject: e.subject,
     html: e.html,
     ...(e.text && { text: e.text }),
-    ...(e.reply_to && { reply_to: e.reply_to }),
+    reply_to: e.reply_to || process.env.ADMIN_EMAIL || undefined,
   }));
 
   const { data, error } = await resend.batch.send(formatted);
