@@ -30,6 +30,7 @@ require('dotenv').config();
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+const crypto = require('node:crypto');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 
@@ -64,6 +65,11 @@ const realSendProposalSentEmail = require('../../utils/sendProposalSentEmail').s
 // Track every row this suite creates so after() can purge precisely.
 const createdProposalIds = new Set();
 const createdClientIds = new Set();
+// Test admin users minted by makeFreshAdmin() — the PATCH /:id/status cases
+// (10, 11) each need their OWN adminWriteLimiter bucket: primaryToken and
+// rateLimitToken are both already at their 10/min ceiling from cases 1-9, and
+// PATCH /:id/status is also adminWriteLimiter-gated. Purged in after().
+const createdUserIds = new Set();
 
 // ─── HTTP helper ────────────────────────────────────────────────────────────
 function request(method, path, { token, body } = {}) {
@@ -125,6 +131,59 @@ function trackResponse(res) {
     createdProposalIds.add(res.body.id);
     if (res.body.client_id) createdClientIds.add(res.body.client_id);
   }
+}
+
+// Mint a brand-new admin user and return a signed JWT for it. The dev DB has
+// only 2 admin/manager users (already spent on primaryToken / rateLimitToken),
+// so cases that PATCH /:id/status — itself adminWriteLimiter-gated — need a
+// fresh user to get a clean 10/min bucket. Each returned token is its own
+// bucket. Tracked in createdUserIds for after() cleanup.
+async function makeFreshAdmin() {
+  const email = `routetest-admin+${Date.now()}-${crypto.randomBytes(4).toString('hex')}@example.test`;
+  const u = await pool.query(
+    `INSERT INTO users (email, password_hash, role, token_version)
+     VALUES ($1, $2, 'admin', 0) RETURNING id, token_version`,
+    [email, 'x']
+  );
+  createdUserIds.add(u.rows[0].id);
+  return jwt.sign(
+    { userId: u.rows[0].id, tokenVersion: u.rows[0].token_version },
+    process.env.JWT_SECRET, { expiresIn: '1h' }
+  );
+}
+
+// Insert a draft proposal (and its client) directly — bypasses POST / so it
+// does NOT consume an adminWriteLimiter slot. Gives the PATCH /:id/status
+// cases a draft to transition. A minimal pricing_snapshot + total_price is
+// enough for createInvoiceOnSend to build the first invoice on →sent.
+async function insertDraftProposal(overrides = {}) {
+  const client = await pool.query(
+    `INSERT INTO clients (name, email, source) VALUES ($1, $2, 'direct') RETURNING id`,
+    [
+      'PATCH Status Test Client',
+      `patchstatus+${Date.now()}-${crypto.randomBytes(4).toString('hex')}@example.test`,
+    ]
+  );
+  createdClientIds.add(client.rows[0].id);
+  const snapshot = JSON.stringify({ package: { name: 'Test Package', base_cost: 500 } });
+  const prop = await pool.query(
+    `INSERT INTO proposals
+       (client_id, package_id, guest_count, event_duration_hours, num_bars,
+        pricing_snapshot, total_price, payment_type, status, event_type, created_by)
+     VALUES ($1, $2, 120, 4, 1, $3, $4, $5, $6, 'Wedding', $7)
+     RETURNING id, status`,
+    [
+      client.rows[0].id,
+      HOSTED_PKG_ID,
+      snapshot,
+      overrides.total_price ?? 500,
+      overrides.payment_type ?? 'full',
+      overrides.status ?? 'draft',
+      overrides.created_by ?? null,
+    ]
+  );
+  createdProposalIds.add(prop.rows[0].id);
+  return prop.rows[0].id;
 }
 
 // ─── Setup ──────────────────────────────────────────────────────────────────
@@ -233,6 +292,13 @@ after(async () => {
   }
   if (createdClientIds.size > 0) {
     await pool.query('DELETE FROM clients WHERE id = ANY($1)', [[...createdClientIds]]);
+  }
+  // Test admin users minted by makeFreshAdmin(). proposals.created_by is
+  // ON DELETE SET NULL, so order vs. proposals doesn't matter — but the
+  // proposals are already gone above. proposal_activity_log.actor_id is a
+  // plain integer (no FK), so a deleted user leaves no dangling reference.
+  if (createdUserIds.size > 0) {
+    await pool.query('DELETE FROM users WHERE id = ANY($1)', [[...createdUserIds]]);
   }
   // Restore real deps and close the server / pool.
   crudRouter.__setDeps({
@@ -446,6 +512,79 @@ test('Case 9: top_shelf on a non-class package → 400, zero proposals created',
   assert.equal(res.body.code, 'VALIDATION_ERROR');
   const after = await proposalCount();
   assert.equal(after, before, 'no proposal row should be created when Top Shelf hits a non-class package');
+});
+
+// ─── Case 10 — PATCH /:id/status → 'sent' on a draft ────────────────────────
+// Fresh admin token (its own adminWriteLimiter bucket — primaryToken is spent).
+test('Case 10: PATCH status draft→sent → sent, invoice row exists, email sent once', async () => {
+  emailCalls = 0;
+  lastEmailProposal = null;
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal();
+
+  const res = await request('PATCH', `/api/proposals/${proposalId}/status`, {
+    token, body: { status: 'sent' },
+  });
+  assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
+  assert.equal(res.body.status, 'sent');
+
+  const inv = await pool.query(
+    'SELECT id FROM invoices WHERE proposal_id = $1', [proposalId]
+  );
+  assert.equal(inv.rows.length, 1, 'exactly one invoice row should exist after →sent');
+  assert.equal(emailCalls, 1, 'sendProposalSentEmail should fire exactly once on →sent');
+
+  // The email step must receive an ENRICHED proposal — the bare proposals row
+  // has no client_email (that column lives on `clients`), so a non-empty
+  // client_email proves the handler re-fetched joined to `clients`.
+  assert.ok(lastEmailProposal, 'the email stub should have captured a proposal');
+  assert.equal(typeof lastEmailProposal.client_email, 'string',
+    'the enriched proposal must carry a client_email string');
+  assert.ok(lastEmailProposal.client_email.length > 0,
+    'client_email must be non-empty — the handler must JOIN clients before sending');
+});
+
+// ─── Case 11 — PATCH /:id/status re-send: sent→modified→sent ────────────────
+// The email must fire on EVERY →sent transition (no sent_at skip), so a
+// modified→sent re-send still notifies the client. Fresh admin token: this
+// case makes 4 PATCH calls, well under a clean bucket's 10/min.
+test('Case 11: draft→sent→modified→sent re-sends the email (no sent_at gate)', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal();
+
+  // draft → sent (first send): email #1, invoice created.
+  emailCalls = 0;
+  const r1 = await request('PATCH', `/api/proposals/${proposalId}/status`, {
+    token, body: { status: 'sent' },
+  });
+  assert.equal(r1.status, 200, `draft→sent expected 200, got ${r1.status}: ${r1.raw}`);
+  assert.equal(emailCalls, 1, 'first →sent should fire the email once');
+
+  // sent → modified.
+  const r2 = await request('PATCH', `/api/proposals/${proposalId}/status`, {
+    token, body: { status: 'modified' },
+  });
+  assert.equal(r2.status, 200, `sent→modified expected 200, got ${r2.status}: ${r2.raw}`);
+
+  // modified → sent (re-send): the proposal's sent_at is ALREADY set from the
+  // first send. The email must fire AGAIN — there is no sent_at skip.
+  emailCalls = 0;
+  lastEmailProposal = null;
+  const r3 = await request('PATCH', `/api/proposals/${proposalId}/status`, {
+    token, body: { status: 'sent' },
+  });
+  assert.equal(r3.status, 200, `modified→sent expected 200, got ${r3.status}: ${r3.raw}`);
+  assert.equal(r3.body.status, 'sent');
+  assert.equal(emailCalls, 1,
+    're-send (modified→sent) must fire the email again — no sent_at skip');
+  assert.ok(lastEmailProposal && lastEmailProposal.client_email,
+    'the re-send email must still receive an enriched proposal');
+
+  // Still exactly one invoice — createInvoiceOnSend is idempotent on proposal_id.
+  const inv = await pool.query(
+    'SELECT id FROM invoices WHERE proposal_id = $1', [proposalId]
+  );
+  assert.equal(inv.rows.length, 1, 'the re-send must not create a second invoice');
 });
 
 // ─── Case 7 — adminWriteLimiter (run LAST; uses its own user) ───────────────

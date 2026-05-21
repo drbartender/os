@@ -19,10 +19,11 @@ const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
 
 const router = express.Router();
 
-// Dependency seam for tests. createInvoiceOnSend runs INSIDE the POST /
-// transaction; sendProposalSentEmail runs AFTER commit. Tests stub these via
-// __setDeps to (a) assert the email fires exactly once on send_now and (b)
-// force createInvoiceOnSend to throw and verify the txn rolls back.
+// Dependency seam for tests, shared by POST / and PATCH /:id/status.
+// createInvoiceOnSend runs INSIDE each route's transaction; sendProposalSentEmail
+// runs AFTER commit. Tests stub these via __setDeps to (a) assert the email
+// fires exactly once per send and (b) force createInvoiceOnSend to throw and
+// verify the txn rolls back.
 let _deps = { createInvoiceOnSend, sendProposalSentEmail };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
@@ -582,7 +583,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
 }));
 
 /** PATCH /api/proposals/:id/status — update status. Enforce state machine unless ?force=true (admin-only) */
-router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   const { status } = req.body;
   const validStatuses = Object.keys(STATUS_TRANSITIONS);
   if (!validStatuses.includes(status)) {
@@ -591,74 +592,92 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
 
   const force = req.query.force === 'true' && req.user.role === 'admin';
 
-  // Fetch current status for transition check
-  const current = await pool.query('SELECT status FROM proposals WHERE id = $1', [req.params.id]);
-  if (!current.rows[0]) throw new NotFoundError('Proposal not found');
-  const currentStatus = current.rows[0].status;
+  // The whole status change runs in ONE transaction. The current status is read
+  // under a row lock (SELECT ... FOR UPDATE) so two concurrent →sent PATCHes
+  // serialize: the second blocks until the first commits, then re-reads the
+  // now-'sent' status and the transition check rejects the duplicate. Without
+  // the lock, both could read 'draft', both pass the check, and both write a
+  // duplicate activity-log row + send a duplicate client email (the invoice is
+  // safe either way — createInvoiceOnSend is idempotent on proposal_id).
+  const dbClient = await pool.connect();
+  let result;
+  let currentStatus;
+  try {
+    await dbClient.query('BEGIN');
 
-  if (!force && currentStatus !== status) {
-    const allowed = STATUS_TRANSITIONS[currentStatus] || [];
-    if (!allowed.includes(status)) {
-      throw new ValidationError({
-        status: `Cannot transition from '${currentStatus}' to '${status}'. Allowed: [${allowed.join(', ') || 'none'}]. Admins may use ?force=true.`,
-      });
+    const current = await dbClient.query(
+      'SELECT status FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]
+    );
+    if (!current.rows[0]) throw new NotFoundError('Proposal not found');
+    currentStatus = current.rows[0].status;
+
+    if (!force && currentStatus !== status) {
+      const allowed = STATUS_TRANSITIONS[currentStatus] || [];
+      if (!allowed.includes(status)) {
+        throw new ValidationError({
+          status: `Cannot transition from '${currentStatus}' to '${status}'. Allowed: [${allowed.join(', ') || 'none'}]. Admins may use ?force=true.`,
+        });
+      }
     }
+
+    // $1 is cast to text consistently in every position — `status` is a varchar
+    // column, and mixing a bare `$1` with `$1::text` makes Postgres deduce
+    // conflicting types for the same parameter ("inconsistent types deduced").
+    result = await dbClient.query(
+      `UPDATE proposals SET
+         status = $1::text,
+         sent_at     = CASE WHEN $1::text = 'sent'     THEN COALESCE(sent_at, NOW())     ELSE sent_at END,
+         accepted_at = CASE WHEN $1::text = 'accepted' THEN COALESCE(accepted_at, NOW()) ELSE accepted_at END
+       WHERE id = $2 RETURNING *`,
+      [status, req.params.id]
+    );
+
+    const action = force ? 'status_force_changed' : 'status_changed';
+    await dbClient.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, $2, 'admin', $3, $4)`,
+      [req.params.id, action, req.user.id, JSON.stringify({ from: currentStatus, to: status, forced: force })]
+    );
+
+    // Auto-create the first invoice when the proposal is sent. Runs INSIDE this
+    // transaction so a proposal is never committed in 'sent' without its
+    // invoice; createInvoiceOnSend is idempotent on proposal_id (a re-send
+    // finds the existing invoice and no-ops). A throw here rolls back the
+    // status change too.
+    if (status === 'sent') {
+      await _deps.createInvoiceOnSend(req.params.id, dbClient);
+    }
+
+    await dbClient.query('COMMIT');
+  } catch (err) {
+    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    throw err;
+  } finally {
+    dbClient.release();
   }
 
-  const result = await pool.query(
-    `UPDATE proposals SET
-       status = $1,
-       sent_at     = CASE WHEN $1::text = 'sent'     THEN COALESCE(sent_at, NOW())     ELSE sent_at END,
-       accepted_at = CASE WHEN $1::text = 'accepted' THEN COALESCE(accepted_at, NOW()) ELSE accepted_at END
-     WHERE id = $2 RETURNING *`,
-    [status, req.params.id]
-  );
-  if (!result.rows[0]) throw new NotFoundError('Proposal not found');
-
-  const action = force ? 'status_force_changed' : 'status_changed';
-  await pool.query(
-    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, $2, 'admin', $3, $4)`,
-    [req.params.id, action, req.user.id, JSON.stringify({ from: currentStatus, to: status, forced: force })]
-  );
-
-  // Email client when proposal is sent (non-blocking)
+  // Email the client AFTER commit — best-effort, on EVERY →sent transition (no
+  // sent_at check, so a modified→sent re-send still notifies the client). The
+  // proposals row has no client_email / client_name (those live on `clients`),
+  // so we re-fetch joined to `clients` — sendProposalSentEmail needs
+  // client_email / client_name / token / event_type*. Its own try/catch: this
+  // runs post-COMMIT, so a failed SELECT here must never 500 a request whose
+  // status change + invoice are already durably committed. Mirrors the
+  // clients-JOIN email step in POST /.
   if (status === 'sent') {
     try {
       const pd = await pool.query(`
-        SELECT p.token, p.event_type, p.event_type_custom, p.event_date, p.created_by,
+        SELECT p.token, p.event_type, p.event_type_custom,
                c.name AS client_name, c.email AS client_email
         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
-        WHERE p.id = $1
-      `, [req.params.id]);
-      const p = pd.rows[0];
-      if (p?.client_email && p?.token) {
-        const proposalUrl = `${PUBLIC_SITE_URL}/proposal/${p.token}`;
-        const eventTypeLabel = getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom });
-
-        // The drink plan is created only after the client books (deposit paid),
-        // via the Stripe webhook → createEventShifts → createDrinkPlan. No
-        // pre-deposit plan or link. proposalSent() omits the drink-plan CTA
-        // when planUrl is null.
-        const tpl = emailTemplates.proposalSent({ clientName: p.client_name, eventTypeLabel, proposalUrl, planUrl: null });
-        await sendEmail({ to: p.client_email, ...tpl });
+        WHERE p.id = $1`, [req.params.id]);
+      if (pd.rows[0]) {
+        await _deps.sendProposalSentEmail(
+          { ...pd.rows[0], id: Number(req.params.id) },
+          { actorType: 'admin' },
+        );
       }
-    } catch (emailErr) {
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(emailErr, { tags: { route: 'proposals/status', issue: 'email' } });
-      }
-      console.error('Proposal sent email failed (non-blocking):', emailErr);
-    }
-  }
-
-  // Auto-create first invoice when proposal is sent
-  if (status === 'sent') {
-    try {
-      await createInvoiceOnSend(parseInt(req.params.id, 10));
-    } catch (invErr) {
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(invErr, { tags: { route: 'proposals/status', issue: 'invoice-auto-create' } });
-      }
-      console.error('Invoice auto-creation failed (non-blocking):', invErr);
+    } catch (e) {
+      console.error('Post-send email step failed (non-blocking) for proposal', req.params.id);
     }
   }
 
