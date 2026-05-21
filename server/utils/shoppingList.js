@@ -56,10 +56,10 @@ const BASIC_MIXERS = [
   { item: 'Lemon Juice',         size: '31oz',    qty: 1 },
   { item: 'Lime Juice (UNSWEET)',size: '15oz',    qty: 1 },
   { item: 'Simple Syrup',        size: '1L',      qty: 2 },
+  { item: 'Angostura Bitters',   size: '4oz',     qty: 1 },
 ];
 
 const GARNISHES = [
-  { item: 'Angostura Bitters',   size: '4oz',     qty: 1 },
   { item: 'Premium Cherries',    size: 'ea.',     qty: 1 },
   { item: 'Lemons',              size: 'ea.',     qty: 4 },
   { item: 'Limes',               size: 'ea.',     qty: 12 },
