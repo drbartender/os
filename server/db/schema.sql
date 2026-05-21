@@ -2422,3 +2422,36 @@ CREATE INDEX IF NOT EXISTS idx_shift_requests_user_id ON shift_requests(user_id)
 -- (mirrors idx_clients_phone_normalized).
 CREATE INDEX IF NOT EXISTS idx_contractor_profiles_phone_normalized
   ON contractor_profiles (RIGHT(REGEXP_REPLACE(phone, '\D', '', 'g'), 10));
+
+-- ─── Plan 2d: Decommission legacy proposal-drip campaign ──────────
+-- Plan 2d's dispatcher-driven drip (drip_touch_2/4/5_email) replaces the
+-- email_sequence_enrollments-driven "Abandoned Quote Followup" campaign for
+-- unsigned proposals. Pause the old campaign to avoid double sends.
+-- Idempotent: pausing an already-paused campaign is a no-op.
+
+UPDATE email_campaigns
+   SET status = 'paused'
+ WHERE name = 'Abandoned Quote Followup'
+   AND type = 'sequence'
+   AND status <> 'paused';
+
+-- ─── Automated Communication: post_event_feedback table ─────────
+-- Captures low-rating (1-3 star) responses from the post-event review
+-- router page. 4-5 stars route directly to the Google Review URL and never
+-- hit this table. The unique index on proposal_id means a client can submit
+-- only once per proposal.
+
+CREATE TABLE IF NOT EXISTS post_event_feedback (
+  id SERIAL PRIMARY KEY,
+  proposal_id INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+  rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT,
+  submitter_ip TEXT,
+  submitter_user_agent TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_post_event_feedback_proposal
+  ON post_event_feedback(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_post_event_feedback_created_at
+  ON post_event_feedback(created_at DESC);
