@@ -10,6 +10,7 @@ const {
   applyOptOut,
   applyOptIn,
   handleConfirm,
+  handleCant,
 } = require('./smsInbound');
 
 test('detectOptKeyword > recognizes STOP and equivalents, case-insensitive', () => {
@@ -186,6 +187,42 @@ test('handleConfirm > stamps acknowledged_at on the nearest approved shift', asy
 
 test('handleConfirm > returns ok:false reason no_shift when staff has no approved upcoming shift', async () => {
   const result = await handleConfirm(lsStaffUserId);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.reason, 'no_shift');
+});
+
+test('handleCant > un-assigns the staffer and re-opens the shift', async () => {
+  const sh = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, auto_assigned_at)
+     VALUES (CURRENT_DATE + INTERVAL '12 days', '17:00', 'filled', NOW())
+     RETURNING id`
+  );
+  const shiftId = sh.rows[0].id;
+  const sr = await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved') RETURNING id`,
+    [shiftId, lsStaffUserId]
+  );
+  const requestId = sr.rows[0].id;
+
+  const result = await handleCant(lsStaffUserId);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.shiftId, shiftId);
+
+  const reqAfter = await pool.query('SELECT status, notes FROM shift_requests WHERE id = $1', [requestId]);
+  assert.strictEqual(reqAfter.rows[0].status, 'denied');
+  assert.match(reqAfter.rows[0].notes || '', /CANT/i);
+
+  const shiftAfter = await pool.query('SELECT status, auto_assigned_at FROM shifts WHERE id = $1', [shiftId]);
+  assert.strictEqual(shiftAfter.rows[0].status, 'open');
+  // auto_assigned_at is deliberately left set so the scheduler does NOT re-staff
+  assert.ok(shiftAfter.rows[0].auto_assigned_at instanceof Date);
+
+  await pool.query('DELETE FROM shift_requests WHERE id = $1', [requestId]);
+  await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+});
+
+test('handleCant > returns ok:false reason no_shift when staff has no approved upcoming shift', async () => {
+  const result = await handleCant(lsStaffUserId);
   assert.strictEqual(result.ok, false);
   assert.strictEqual(result.reason, 'no_shift');
 });

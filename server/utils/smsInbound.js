@@ -209,6 +209,57 @@ async function handleConfirm(staffUserId) {
   return { ok: true, shiftId: shift.shift_id, eventDate: shift.event_date, clientName: shift.client_name || null };
 }
 
+/**
+ * Handle a staff CANT response code: un-assign the staffer from their nearest
+ * upcoming approved shift and re-open that shift. Does NOT clear
+ * shifts.auto_assigned_at — re-staffing is left to the admin (decision: CANT
+ * is flag-and-alert, not auto-restaff). Returns shift info for the alert.
+ *
+ * @param {number} staffUserId
+ * @returns {Promise<
+ *   {ok:true, shiftId:number, requestId:number, eventDate:string, clientName:string|null, eventType:string|null, eventTypeCustom:string|null} |
+ *   {ok:false, reason:'no_shift'}
+ * >}
+ */
+async function handleCant(staffUserId) {
+  const shift = await findNearestApprovedShift(staffUserId);
+  if (!shift) return { ok: false, reason: 'no_shift' };
+
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+    await dbClient.query(
+      `UPDATE shift_requests
+       SET status = 'denied',
+           notes = TRIM(COALESCE(notes, '') || ' [Staff texted CANT ' || NOW()::date || ']')
+       WHERE id = $1`,
+      [shift.request_id]
+    );
+    // Re-open the shift so it shows as unstaffed. auto_assigned_at is left as-is
+    // on purpose so processScheduledAutoAssigns does not auto-re-staff it.
+    await dbClient.query(
+      "UPDATE shifts SET status = 'open' WHERE id = $1 AND status <> 'cancelled'",
+      [shift.shift_id]
+    );
+    await dbClient.query('COMMIT');
+  } catch (err) {
+    await dbClient.query('ROLLBACK');
+    throw err;
+  } finally {
+    dbClient.release();
+  }
+
+  return {
+    ok: true,
+    shiftId: shift.shift_id,
+    requestId: shift.request_id,
+    eventDate: shift.event_date,
+    clientName: shift.client_name || null,
+    eventType: shift.event_type || null,
+    eventTypeCustom: shift.event_type_custom || null,
+  };
+}
+
 module.exports = {
   detectOptKeyword,
   detectResponseCode,
@@ -218,4 +269,5 @@ module.exports = {
   applyOptIn,
   handleConfirm,
   findNearestApprovedShift,
+  handleCant,
 };
