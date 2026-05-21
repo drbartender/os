@@ -82,21 +82,109 @@ function lastMinuteCaveatText(lastMinute) {
     : '';
 }
 
-function signedAndPaidClient({ clientName, eventTypeLabel = 'event', amount, paymentType, lastMinute = false }) {
+function signedAndPaidClient({
+  clientName,
+  eventTypeLabel = 'event',
+  amount,
+  paymentType,
+  lastMinute = false,
+  // New orientation fields (additive; old call shape still works without these)
+  bookingBlock,
+  receiptBlock,
+  potionPlannerUrl,
+  timelineLines,
+}) {
   const name = clientName || 'there';
-  return {
-    subject: `Signed & Paid — your ${eventTypeLabel} — Dr. Bartender`,
-    html: wrapEmail(`
-      <h2 style="color:${BRAND.primary};margin-top:0;">You're Locked In!</h2>
-      <p>Hi ${name},</p>
-      <p>We've received your signed proposal <em>and</em> your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${eventTypeLabel}</strong>. Your date is officially on the books.</p>
-      ${lastMinuteCaveatHtml(lastMinute)}
-      <p>We'll be in touch with next steps as your event date approaches.</p>
-      <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
-    `),
-    text: `Hi ${name}, we've received your signed proposal and your ${paymentType} of $${amount} for your ${eventTypeLabel}. Your date is officially on the books.${lastMinuteCaveatText(lastMinute)} — The Dr. Bartender Team`,
-  };
+
+  // Fallback: old short-form behavior when caller hasn't migrated to the
+  // orientation shape. Lets us ship the template change ahead of the route
+  // rewire without breaking the existing send.
+  if (!bookingBlock || !receiptBlock) {
+    return {
+      subject: `Signed & Paid — your ${eventTypeLabel} — Dr. Bartender`,
+      html: wrapEmail(`
+        <h2 style="color:${BRAND.primary};margin-top:0;">You're Locked In!</h2>
+        <p>Hi ${name},</p>
+        <p>We've received your signed proposal <em>and</em> your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${eventTypeLabel}</strong>. Your date is officially on the books.</p>
+        ${lastMinuteCaveatHtml(lastMinute)}
+        <p>We'll be in touch with next steps as your event date approaches.</p>
+        <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
+        <p>Cheers,<br/>The Dr. Bartender Team</p>
+      `),
+      text: `Hi ${name}, we've received your signed proposal and your ${paymentType} of $${amount} for your ${eventTypeLabel}. Your date is officially on the books.${lastMinuteCaveatText(lastMinute)} — The Dr. Bartender Team`,
+    };
+  }
+
+  // Full orientation rendering.
+  const bb = bookingBlock;
+  const rb = receiptBlock;
+
+  const bookingTable = `
+    <table style="width:100%;border-collapse:collapse;margin:1.25rem 0;">
+      <tr><td style="padding:6px 12px;color:${BRAND.secondary};width:140px;">Date</td><td style="padding:6px 12px;font-weight:bold;">${esc(bb.formattedEventDate || 'TBD')}</td></tr>
+      <tr><td style="padding:6px 12px;color:${BRAND.secondary};">Start time</td><td style="padding:6px 12px;font-weight:bold;">${esc(bb.formattedStartTime || 'TBD')}</td></tr>
+      <tr><td style="padding:6px 12px;color:${BRAND.secondary};">Location</td><td style="padding:6px 12px;">${esc(bb.eventLocation || 'TBD')}</td></tr>
+      <tr><td style="padding:6px 12px;color:${BRAND.secondary};">Guest count</td><td style="padding:6px 12px;">${esc(String(bb.guestCount || ''))}</td></tr>
+      <tr><td style="padding:6px 12px;color:${BRAND.secondary};">Package</td><td style="padding:6px 12px;">${esc(bb.packageName || '')}</td></tr>
+    </table>`;
+
+  const receiptTable = rb.paidInFull
+    ? `<p style="margin:1rem 0;font-weight:bold;color:${BRAND.primary};">Paid in full: $${esc(rb.depositPaid || amount || '')}</p>`
+    : `
+      <table style="width:100%;border-collapse:collapse;margin:1.25rem 0;">
+        <tr><td style="padding:6px 12px;color:${BRAND.secondary};">${esc(paymentType || 'Deposit')} paid</td><td style="padding:6px 12px;text-align:right;font-weight:bold;">$${esc(rb.depositPaid || amount || '')}</td></tr>
+        <tr><td style="padding:6px 12px;color:${BRAND.primary};font-weight:bold;">Balance remaining</td><td style="padding:6px 12px;text-align:right;font-weight:bold;">$${esc(rb.balanceRemaining || '')}</td></tr>
+        ${rb.formattedBalanceDueDate ? `<tr><td style="padding:6px 12px;color:${BRAND.secondary};">Balance ${esc(rb.dueLabel || 'due on')}</td><td style="padding:6px 12px;text-align:right;">${esc(rb.formattedBalanceDueDate)}</td></tr>` : ''}
+      </table>`;
+
+  const plannerCta = potionPlannerUrl
+    ? `<p>Next up: pick your drinks. The Potion Planner walks you through it in about 5 minutes.</p>${ctaButton(potionPlannerUrl, 'Pick your drinks')}`
+    : '';
+
+  const timelineHtml = Array.isArray(timelineLines) && timelineLines.length
+    ? `<h3 style="color:${BRAND.primary};margin-top:1.5rem;">What to expect</h3>
+       <ul style="line-height:1.7;color:${BRAND.primary};padding-left:1.25rem;">${timelineLines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>`
+    : '';
+
+  const subject = bb.formattedEventDate
+    ? `You're booked: ${bb.formattedEventDate} ${eventTypeLabel}`
+    : `You're booked for your ${eventTypeLabel}`;
+
+  const html = wrapEmail(`
+    <h2 style="color:${BRAND.primary};margin-top:0;">You're booked!</h2>
+    <p>Hi ${esc(name)},</p>
+    <p>Thanks for booking with Dr. Bartender. Everything's locked in for your <strong>${esc(eventTypeLabel)}</strong>.</p>
+    <h3 style="color:${BRAND.primary};margin-top:1.5rem;">Booking</h3>
+    ${bookingTable}
+    <h3 style="color:${BRAND.primary};margin-top:1.5rem;">Receipt</h3>
+    ${receiptTable}
+    ${plannerCta}
+    ${timelineHtml}
+    ${lastMinuteCaveatHtml(lastMinute)}
+    <p style="font-size:14px;color:${BRAND.secondary};margin-top:1.5rem;">A calendar invite is attached. If you have any questions, just reply to this email.</p>
+    <p>Cheers, Dallas</p>
+  `);
+
+  // Plain-text fallback.
+  const textLines = [
+    `Hi ${name}, you're booked for your ${eventTypeLabel}.`,
+    bb.formattedEventDate ? `Date: ${bb.formattedEventDate}` : null,
+    bb.formattedStartTime ? `Start time: ${bb.formattedStartTime}` : null,
+    bb.eventLocation ? `Location: ${bb.eventLocation}` : null,
+    bb.guestCount ? `Guest count: ${bb.guestCount}` : null,
+    bb.packageName ? `Package: ${bb.packageName}` : null,
+    '',
+    rb.paidInFull
+      ? `Paid in full: $${rb.depositPaid || amount || ''}`
+      : `${paymentType || 'Deposit'} paid: $${rb.depositPaid || amount || ''}. Balance: $${rb.balanceRemaining || ''}${rb.formattedBalanceDueDate ? `, ${rb.dueLabel || 'due on'} ${rb.formattedBalanceDueDate}` : ''}.`,
+    potionPlannerUrl ? `Pick your drinks: ${potionPlannerUrl}` : null,
+    ...(timelineLines || []),
+    lastMinuteCaveatText(lastMinute).trim(),
+    '',
+    'Cheers, Dallas',
+  ].filter(Boolean);
+
+  return { subject, html, text: textLines.join('\n') };
 }
 
 function drinkPlanLink({ clientName, eventTypeLabel = 'event', planUrl }) {
