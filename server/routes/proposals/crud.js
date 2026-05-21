@@ -10,11 +10,33 @@ const emailTemplates = require('../../utils/emailTemplates');
 const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, linkPaymentToInvoice } = require('../../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const { setupTimeDisplay } = require('../../utils/setupTime');
+const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules');
+const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
+const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
 
 const router = express.Router();
+
+// Dependency seam for tests. createInvoiceOnSend runs INSIDE the POST /
+// transaction; sendProposalSentEmail runs AFTER commit. Tests stub these via
+// __setDeps to (a) assert the email fires exactly once on send_now and (b)
+// force createInvoiceOnSend to throw and verify the txn rolls back.
+let _deps = { createInvoiceOnSend, sendProposalSentEmail };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
+
+// Coerce a client-supplied addon quantity into a bounded positive integer.
+// Mirrors public.js safeAddonQty — untrusted body input (admin cockpit), so a
+// negative/fractional/NaN/non-scalar value must not flow into pricing money
+// math. Cap at 20 to bound any single addon line.
+const MAX_ADDON_QTY = 20;
+function safeAddonQty(raw) {
+  if (typeof raw !== 'number' && typeof raw !== 'string') return 1;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(MAX_ADDON_QTY, n);
+}
 
 // Status state machine — enforced on PATCH /:id/status unless ?force=true (admin only).
 // Transitions are one-way except for admin-backed corrections via force.
@@ -94,13 +116,18 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   res.json(result.rows);
 }));
 
-/** POST /api/proposals — create a new proposal */
-router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+/** POST /api/proposals — create a new proposal.
+ *  send_now (default true) decides status: true → 'sent' (creates the first
+ *  invoice inside the txn + emails the client after commit); false → 'draft'.
+ *  A Top Shelf class request always lands as a draft regardless of send_now —
+ *  pricing is TBD, so no invoice and no client email. */
+router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   const {
     client_id, client_name, client_email, client_phone, client_source,
     event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
-    addon_variants, syrup_selections, event_type, event_type_category, event_type_custom,
+    addon_variants, addon_quantities, syrup_selections, class_options, client_provides_glassware,
+    send_now, event_type, event_type_category, event_type_custom,
     venue_name, venue_street, venue_city, venue_state, venue_zip,
   } = req.body;
 
@@ -143,46 +170,111 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     if (!pkgResult.rows[0]) {
       throw new ValidationError({ package_id: 'Package not found' });
     }
+    const pkg = pkgResult.rows[0];
 
-    // Fetch add-ons
-    let addons = [];
-    if (addon_ids && addon_ids.length > 0) {
-      const addonResult = await dbClient.query(
-        'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
-        [addon_ids]
-      );
-      addons = addonResult.rows.map(a => ({
+    // Fetch the FULL active add-on set once — needed both for the validator
+    // (requires_addon_slug parent lookups, bundle detection) and for the
+    // bundle-strip below.
+    const allAddonsResult = await dbClient.query(
+      'SELECT * FROM service_addons WHERE is_active = true'
+    );
+    const allActiveAddons = allAddonsResult.rows;
+
+    // Strip bundle-covered add-ons SERVER-SIDE. The wizard client strips before
+    // submit, but a stale tab or scripted POST may not — without this, e.g.
+    // the-formula + signature-mixers-only both get priced even though Formula
+    // already includes signature mixers (double-charge).
+    const strippedIds = stripIncludedAddons(addon_ids || [], allActiveAddons);
+    const selectedAddons = allActiveAddons
+      .filter(a => strippedIds.includes(a.id))
+      .map(a => ({
         ...a,
         variant: addon_variants?.[String(a.id)] || null,
+        quantity: safeAddonQty(addon_quantities?.[String(a.id)]),
       }));
-    }
 
-    // Calculate pricing
+    // Calculate pricing inputs
     const gc = guest_count || 50;
     const dh = event_duration_hours || 4;
     const nb = num_bars ?? 1;
-    const snapshot = calculateProposal({
-      pkg: pkgResult.rows[0],
-      guestCount: gc,
-      durationHours: dh,
-      numBars: nb,
-      numBartenders: num_bartenders,
-      addons,
-      syrupSelections: syrup_selections || [],
-    });
+
+    // Top Shelf is a class-only flow: a draft with no pricing that the admin
+    // prices later. Reject any attempt to flag Top Shelf against a non-class
+    // package — otherwise a scripted POST could mint $0 drafts for premium
+    // packages.
+    const isTopShelfClass =
+      pkg.bar_type === 'class'
+      && !!class_options && class_options.top_shelf_requested === true;
+
+    if (class_options && class_options.top_shelf_requested === true
+        && pkg.bar_type !== 'class') {
+      throw new ValidationError({ class_options: 'Top Shelf is only valid for class packages' });
+    }
+
+    // Authoritative rule gate — re-checks every rule the wizard UI enforces
+    // (a stale tab / scripted POST bypasses the client). Skipped for Top Shelf
+    // (no pricing inputs yet). A thrown ValidationError triggers the catch →
+    // ROLLBACK below; harmless since only SELECTs have run so far.
+    if (!isTopShelfClass) {
+      validateProposalRules({
+        pkg,
+        guestCount: gc,
+        addonIds: strippedIds,
+        addons: allActiveAddons,
+        clientProvidesGlassware: !!client_provides_glassware,
+      });
+    }
+
+    // Normalize class_options — only persist recognized keys, only for class
+    // bookings. Mirrors public.js cleanClassOptions: spirit_category is
+    // allowlisted, top_shelf_requested coerced to a strict boolean. The raw
+    // request body is never persisted.
+    const isClassBooking = pkg.bar_type === 'class';
+    const cleanClassOptions = isClassBooking && class_options && typeof class_options === 'object'
+      ? {
+          spirit_category: ['whiskey_bourbon', 'tequila_mezcal'].includes(class_options.spirit_category)
+            ? class_options.spirit_category : null,
+          top_shelf_requested: class_options.top_shelf_requested === true,
+        }
+      : null;
+
+    // Status branch — send_now defaults true. Top Shelf always forces 'draft'
+    // (pricing TBD: no invoice, no client email).
+    const sendNow = send_now !== false;
+    const proposalStatus = (sendNow && !isTopShelfClass) ? 'sent' : 'draft';
+
+    // Snapshot — skipped for Top Shelf (pricing TBD; admin prices later).
+    const snapshot = isTopShelfClass
+      ? null
+      : calculateProposal({
+          pkg,
+          guestCount: gc,
+          durationHours: dh,
+          numBars: nb,
+          numBartenders: num_bartenders,
+          addons: selectedAddons,
+          syrupSelections: syrup_selections || [],
+        });
+    const snapshotJson = snapshot ? JSON.stringify(snapshot) : '{}';
+    const totalPrice = snapshot ? snapshot.total : 0;
+    const numBartenders = snapshot ? snapshot.staffing.actual : 1;
+    const sentAt = proposalStatus === 'sent' ? new Date() : null;
 
     // Insert proposal
     const proposalResult = await dbClient.query(`
       INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours,
         event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, created_by,
+        status, sent_at, class_options, client_provides_glassware,
         event_type, event_type_category, event_type_custom,
         venue_name, venue_street, venue_city, venue_state, venue_zip)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
       RETURNING *
     `, [
       finalClientId, event_date || null, event_start_time || null, dh,
       composedLocation, gc, package_id, nb,
-      snapshot.staffing.actual, JSON.stringify(snapshot), snapshot.total, req.user.id,
+      numBartenders, snapshotJson, totalPrice, req.user.id,
+      proposalStatus, sentAt, cleanClassOptions ? JSON.stringify(cleanClassOptions) : null,
+      !!client_provides_glassware,
       event_type || null, event_type_category || null, event_type_custom || null,
       venue_name || null, venue_street || null, venue_city || null,
       venue_state || null, venue_zip || null,
@@ -191,7 +283,7 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     const proposal = proposalResult.rows[0];
 
     // Insert proposal add-ons — single bulk INSERT
-    if (snapshot.addons.length) {
+    if (snapshot && snapshot.addons.length) {
       const placeholders = snapshot.addons.map((_, i) => {
         const b = i * 8;
         return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`;
@@ -206,12 +298,31 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     }
 
     // Log creation
+    const logDetails = snapshot
+      ? { total: snapshot.total, package: snapshot.package.name }
+      : { top_shelf_requested: true, package: pkg.name, spirit_category: cleanClassOptions?.spirit_category || null };
     await dbClient.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, 'created', 'admin', $2, $3)`,
-      [proposal.id, req.user.id, JSON.stringify({ total: snapshot.total, package: snapshot.package.name })]
+      [proposal.id, req.user.id, JSON.stringify(logDetails)]
     );
 
+    // Auto-create the first invoice when the proposal is sent. Runs INSIDE this
+    // transaction (unlike PATCH /:id/status, where the proposal already exists)
+    // so a proposal is never committed in the 'sent' state without its invoice.
+    // If invoice creation throws, the catch below rolls back the whole insert.
+    if (proposalStatus === 'sent') {
+      await _deps.createInvoiceOnSend(proposal.id, dbClient);
+    }
+
     await dbClient.query('COMMIT');
+
+    // Email the client AFTER commit — best-effort, never throws. The proposal +
+    // invoice are already durably committed, so an email failure is recoverable
+    // (admin resends from the detail page).
+    if (proposalStatus === 'sent') {
+      await _deps.sendProposalSentEmail(proposal, { actorType: 'admin' });
+    }
+
     res.status(201).json(proposal);
   } catch (err) {
     try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
@@ -791,3 +902,6 @@ router.delete('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res)
 }));
 
 module.exports = router;
+// Dependency seam for tests — attached to the router export so the proposals
+// composition router still mounts cleanly (Express ignores extra properties).
+module.exports.__setDeps = __setDeps;

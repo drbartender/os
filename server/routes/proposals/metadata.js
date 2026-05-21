@@ -2,11 +2,23 @@ const express = require('express');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const { calculateProposal } = require('../../utils/pricingEngine');
+const { stripIncludedAddons } = require('../../utils/proposalRules');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError } = require('../../utils/errors');
 const metrics = require('../../utils/metricsQueries');
 
 const router = express.Router();
+
+// Coerce a client-supplied addon quantity into a bounded positive integer.
+// Mirrors public.js / crud.js safeAddonQty — keeps the /calculate preview's
+// money math identical to the persist path.
+const MAX_ADDON_QTY = 20;
+function safeAddonQty(raw) {
+  if (typeof raw !== 'number' && typeof raw !== 'string') return 1;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(MAX_ADDON_QTY, n);
+}
 
 // ─── Package & add-on listing (auth required) ────────────────────
 
@@ -26,9 +38,12 @@ router.get('/addons', auth, requireAdminOrManager, asyncHandler(async (req, res)
   res.json(result.rows);
 }));
 
-/** POST /api/proposals/calculate — preview pricing without saving */
+/** POST /api/proposals/calculate — preview pricing without saving.
+ *  Mirrors the POST / persist path: add-ons run through stripIncludedAddons
+ *  (bundle-covered add-ons dropped) and carry a bounded quantity, so the
+ *  preview total matches what the proposal would actually be saved at. */
 router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, addon_variants, syrup_selections, adjustments, total_price_override } = req.body;
+  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, addon_variants, addon_quantities, syrup_selections, adjustments, total_price_override } = req.body;
   if (!package_id) {
     throw new ValidationError({ package_id: 'Package is required' });
   }
@@ -38,16 +53,22 @@ router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, 
     throw new ValidationError({ package_id: 'Package not found' });
   }
 
+  // Fetch the FULL active add-on set so stripIncludedAddons can detect bundles
+  // and resolve covered slugs — then build priced rows from the STRIPPED ids.
   let addons = [];
   if (addon_ids && addon_ids.length > 0) {
     const addonResult = await pool.query(
-      'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
-      [addon_ids]
+      'SELECT * FROM service_addons WHERE is_active = true'
     );
-    addons = addonResult.rows.map(a => ({
-      ...a,
-      variant: addon_variants?.[String(a.id)] || null,
-    }));
+    const allActiveAddons = addonResult.rows;
+    const strippedIds = stripIncludedAddons(addon_ids, allActiveAddons);
+    addons = allActiveAddons
+      .filter(a => strippedIds.includes(a.id))
+      .map(a => ({
+        ...a,
+        variant: addon_variants?.[String(a.id)] || null,
+        quantity: safeAddonQty(addon_quantities?.[String(a.id)]),
+      }));
   }
 
   const snapshot = calculateProposal({
