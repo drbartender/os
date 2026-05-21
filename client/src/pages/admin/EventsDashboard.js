@@ -18,6 +18,7 @@ import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
 import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
 import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip } from '../../components/adminos/shifts';
+import AddressLink from '../../components/adminos/AddressLink';
 
 const TIME_SLOTS = [];
 for (let h = 6; h < 24; h++) {
@@ -411,7 +412,7 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
         <div>{fmtDate(e.event_date && e.event_date.slice(0, 10))}</div>
         <div className="sub">{e.event_date ? `${relDay(e.event_date.slice(0, 10))}${e.start_time ? ' · ' + e.start_time : ''}` : '—'}</div>
       </td>
-      <td className="muted">{e.location || '—'}</td>
+      <td className="muted"><AddressLink address={e.location} /></td>
       <td className="num">{guestCount || '—'}</td>
       <td><StaffPills positions={shiftPositions(e)} /></td>
       <td>{e.proposal_id ? eventStatusChip(e) : <StatusChip kind="neutral">Manual</StatusChip>}</td>

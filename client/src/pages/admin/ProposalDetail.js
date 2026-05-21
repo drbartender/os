@@ -15,6 +15,7 @@ import { fmtDateFull } from '../../components/adminos/format';
 import ProposalDetailEditForm from './ProposalDetailEditForm';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import BackButton from '../../components/adminos/BackButton';
+import AddressLink from '../../components/adminos/AddressLink';
 
 const STATUS = {
   draft: { label: 'Draft', kind: 'neutral' },
@@ -336,7 +337,7 @@ export default function ProposalDetail() {
                         ? ` · ${proposal.event_duration_hours} ${Number(proposal.event_duration_hours) === 1 ? 'hour' : 'hours'}`
                         : ''}
                     </dd>
-                    <dt>Location</dt><dd>{proposal.event_location || '—'}</dd>
+                    <dt>Location</dt><dd><AddressLink address={proposal.event_location} /></dd>
                     <dt>Guests</dt><dd className="num">{proposal.guest_count || '—'}</dd>
                     {proposal.num_bars > 0 && <><dt>Portable bars</dt><dd className="num">{proposal.num_bars}</dd></>}
                     {proposal.client_provides_glassware && (
