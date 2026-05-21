@@ -2,6 +2,7 @@ import React from 'react';
 import SyrupPicker from '../../../../components/SyrupPicker';
 import { ADDON_ICONS } from '../../../../data/addonCategories';
 import { ADDON_TAGLINES } from '../helpers';
+import { isQuantityCapable } from '../../../../utils/proposalRules';
 
 export default function ExtrasStep({
   form,
@@ -47,7 +48,7 @@ export default function ExtrasStep({
               <div className="wz-addon-list">
                 {group.addons.map(addon => {
                   const isSyrupAddon = addon.slug === 'handcrafted-syrups';
-                  const hasQty = addon.slug === 'banquet-server' || addon.slug === 'barback' || addon.slug === 'pre-batched-mocktail' || addon.slug === 'additional-bartender';
+                  const hasQty = isQuantityCapable(addon);
                   const isSelected = form.addon_ids.includes(addon.id);
                   const isIncluded = isIncludedByBundle(addon.slug);
                   const isUnavailable = isUnavailableByBundle(addon.slug);

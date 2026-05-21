@@ -7,12 +7,14 @@ import useFormValidation from '../../../hooks/useFormValidation';
 import useWizardHistory from '../../../hooks/useWizardHistory';
 import EVENT_TYPES from '../../../data/eventTypes';
 import {
-  BYOB_BUNDLE_SLUGS,
-  MIXER_SLUGS,
-  BUNDLE_INCLUDED,
-  BUNDLE_UNAVAILABLE,
-  BUNDLE_COVERED,
-} from './bundleConfig';
+  stripIncludedAddons,
+  isIncludedByBundle,
+  isUnavailableByBundle,
+  toggleAddonWithRules,
+  reconcileFlavorBlaster,
+  enforceHostedMinimum,
+  filterAddons,
+} from '../../../utils/proposalRules';
 import { getSteps, formatCurrency } from './helpers';
 import EventDetailsStep from './steps/EventDetailsStep';
 import YourInfoStep from './steps/YourInfoStep';
@@ -75,25 +77,6 @@ export default function QuoteWizard() {
   stepRef.current = step;
 
   const steps = getSteps(form.alcohol_provider);
-
-  const getSelectedBundleSlug = useCallback((ids) => {
-    for (const id of ids) {
-      const a = addons.find(x => x.id === id);
-      if (a && BYOB_BUNDLE_SLUGS.includes(a.slug)) return a.slug;
-    }
-    return null;
-  }, [addons]);
-
-  // Drop addon_ids covered by the active bundle (used for pricing preview, submit, review)
-  const stripIncludedAddons = useCallback((ids) => {
-    const bundle = getSelectedBundleSlug(ids);
-    if (!bundle) return ids;
-    const covered = new Set(BUNDLE_COVERED[bundle]);
-    return ids.filter(id => {
-      const a = addons.find(x => x.id === id);
-      return !a || !covered.has(a.slug) || BYOB_BUNDLE_SLUGS.includes(a.slug);
-    });
-  }, [addons, getSelectedBundleSlug]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -261,15 +244,10 @@ export default function QuoteWizard() {
 
   // Auto-deselect Flavor Blaster when glassware requirement is no longer met
   useEffect(() => {
-    const flavorBlaster = addons.find(a => a.slug === 'flavor-blaster-rental');
-    const realGlassware = addons.find(a => a.slug === 'real-glassware');
-    if (!flavorBlaster) return;
-    const hasFB = form.addon_ids.includes(flavorBlaster.id);
-    if (!hasFB) return;
-    const hasGlassware = (realGlassware && form.addon_ids.includes(realGlassware.id)) || form.client_provides_glassware;
-    if (!hasGlassware) {
-      setForm(f => ({ ...f, addon_ids: f.addon_ids.filter(id => id !== flavorBlaster.id) }));
-    }
+    setForm(f => {
+      const next = reconcileFlavorBlaster(f.addon_ids, addons, f.client_provides_glassware);
+      return next === f.addon_ids ? f : { ...f, addon_ids: next };
+    });
   }, [form.addon_ids, form.client_provides_glassware, addons]);
 
   const numBars = form.needs_bar ? 1 : 0;
@@ -285,7 +263,7 @@ export default function QuoteWizard() {
           guest_count: Number(form.guest_count) || 50,
           duration_hours: Number(form.event_duration_hours) || 4,
           num_bars: numBars,
-          addon_ids: stripIncludedAddons(form.addon_ids).map(Number),
+          addon_ids: stripIncludedAddons(form.addon_ids, addons).map(Number),
           addon_quantities: form.addon_quantities,
           syrup_selections: form.syrup_selections,
         }),
@@ -295,53 +273,21 @@ export default function QuoteWizard() {
       if (data && data.total != null) setPreview(data);
       else setPreview(null);
     } catch { setPreview(null); }
-  }, [form.package_id, form.guest_count, form.event_duration_hours, numBars, form.addon_ids, form.addon_quantities, form.syrup_selections, stripIncludedAddons]);
+  }, [form.package_id, form.guest_count, form.event_duration_hours, numBars, form.addon_ids, form.addon_quantities, form.syrup_selections, addons]);
 
   useEffect(() => { fetchPreview(); }, [fetchPreview]);
 
   const update = (field, value) => { setForm(f => ({ ...f, [field]: value })); clearField(field); };
 
   const toggleAddon = (id) => {
-    // No-op if this addon is blocked by the selected bundle (either included or unavailable)
-    const clicked = addons.find(a => a.id === id);
-    const bundle = getSelectedBundleSlug(form.addon_ids);
-    if (clicked && bundle && !BYOB_BUNDLE_SLUGS.includes(clicked.slug) && BUNDLE_COVERED[bundle].includes(clicked.slug)) {
-      return;
-    }
-    setForm(f => {
-      const isRemoving = f.addon_ids.includes(id);
-      let newIds;
-      const updates = {};
-      if (isRemoving) {
-        const removedAddon = addons.find(a => a.id === id);
-        const dependentIds = addons
-          .filter(a => a.requires_addon_slug === removedAddon?.slug)
-          .map(a => a.id);
-        newIds = f.addon_ids.filter(a => a !== id && !dependentIds.includes(a));
-        // Clear syrup selections when unchecking the syrup add-on
-        if (removedAddon?.slug === 'handcrafted-syrups') {
-          updates.syrup_selections = [];
-        }
-      } else {
-        const addedAddon = addons.find(a => a.id === id);
-        newIds = [...f.addon_ids, id];
-        // BYOB bundles are mutually exclusive — remove other bundles when selecting one
-        if (addedAddon && BYOB_BUNDLE_SLUGS.includes(addedAddon.slug)) {
-          const otherBundleIds = addons
-            .filter(a => BYOB_BUNDLE_SLUGS.includes(a.slug) && a.id !== id)
-            .map(a => a.id);
-          newIds = newIds.filter(a => !otherBundleIds.includes(a));
-        }
-        // Signature / Full Mixers are mutually exclusive — radio-swap
-        if (addedAddon && MIXER_SLUGS.includes(addedAddon.slug)) {
-          const otherMixerIds = addons
-            .filter(a => MIXER_SLUGS.includes(a.slug) && a.id !== id)
-            .map(a => a.id);
-          newIds = newIds.filter(a => !otherMixerIds.includes(a));
-        }
-      }
-      return { ...f, ...updates, addon_ids: newIds };
-    });
+    setForm(f => ({
+      ...f,
+      ...toggleAddonWithRules(
+        { addonIds: f.addon_ids, syrupSelections: f.syrup_selections },
+        id,
+        addons,
+      ),
+    }));
   };
 
   // When alcohol_provider changes, reset downstream selections
@@ -354,7 +300,7 @@ export default function QuoteWizard() {
       addon_ids: [],
       syrup_selections: [],
       // Enforce minimum 25 guests for hosted packages
-      guest_count: value === 'hosted' && Number(f.guest_count) < 25 ? 25 : f.guest_count,
+      guest_count: enforceHostedMinimum(f.guest_count, value === 'hosted'),
     }));
   };
 
@@ -378,17 +324,6 @@ export default function QuoteWizard() {
     return false;
   });
 
-  // Helper: check if a specific addon slug is selected
-  const hasAddon = (slug) => form.addon_ids.some(id => {
-    const addon = addons.find(x => x.id === id);
-    return addon && addon.slug === slug;
-  });
-
-  const selectedBundle = getSelectedBundleSlug(form.addon_ids);
-  const isIncludedByBundle = (slug) =>
-    !!selectedBundle && (BUNDLE_INCLUDED[selectedBundle] || []).includes(slug) && !BYOB_BUNDLE_SLUGS.includes(slug);
-  const isUnavailableByBundle = (slug) =>
-    !!selectedBundle && (BUNDLE_UNAVAILABLE[selectedBundle] || []).includes(slug);
   const guestCount = Number(form.guest_count) || 50;
 
   // Flavor Blaster glassware guardrail
@@ -396,34 +331,12 @@ export default function QuoteWizard() {
   const hasRealGlassware = realGlasswareAddon && form.addon_ids.includes(realGlasswareAddon.id);
   const glasswareRequirementMet = hasRealGlassware || form.client_provides_glassware;
 
-  const filteredAddons = addons.filter(a => {
-    // Basic applies_to check
-    if (a.applies_to !== 'all' && (!selectedPkg || a.applies_to !== selectedPkg.category)) return false;
-
-    // Garnish Package: BYOB only (already included in hosted and Full Compound)
-    if (a.slug === 'garnish-package-only') {
-      if (isHosted) return false;
-    }
-
-    // Mocktail Bar: for BYOB, requires Formula or Full Compound
-    if (a.slug === 'mocktail-bar' && selectedPkg?.category === 'byob') {
-      if (!hasAddon('the-formula') && !hasAddon('the-full-compound')) return false;
-    }
-
-    // Real Glassware & Coupe Upgrade: max 100 guests (public wizard only)
-    if ((a.slug === 'real-glassware' || a.slug === 'champagne-coupe-upgrade') && guestCount > 100) return false;
-
-    // Hide dependent add-ons until parent is selected
-    if (a.requires_addon_slug) {
-      const parentAddon = addons.find(x => x.slug === a.requires_addon_slug);
-      if (!parentAddon || !form.addon_ids.includes(parentAddon.id)) return false;
-    }
-
-    // Hide the 3-pack variant (single is the entry point, picker handles quantity)
-    if (a.slug === 'handcrafted-syrups-3pack') return false;
-    // Parking fee is handled in the Potion Planning Lab, not here
-    if (a.slug === 'parking-fee') return false;
-    return true;
+  const { visibleAddons: filteredAddons } = filterAddons({
+    addons,
+    isHosted,
+    packageCategory: selectedPkg?.category,
+    addonIds: form.addon_ids,
+    guestCount,
   });
 
   // Group add-ons by category
@@ -623,7 +536,7 @@ export default function QuoteWizard() {
           guest_count: Number(form.guest_count) || 50,
           package_id: Number(form.package_id),
           num_bars: numBars,
-          addon_ids: stripIncludedAddons(form.addon_ids).map(Number),
+          addon_ids: stripIncludedAddons(form.addon_ids, addons).map(Number),
           addon_quantities: form.addon_quantities,
           syrup_selections: form.syrup_selections,
           client_provides_glassware: form.client_provides_glassware || false,
@@ -779,8 +692,8 @@ export default function QuoteWizard() {
               realGlasswareAddon={realGlasswareAddon}
               expandedAddons={expandedAddons}
               toggleExpand={toggleExpand}
-              isIncludedByBundle={isIncludedByBundle}
-              isUnavailableByBundle={isUnavailableByBundle}
+              isIncludedByBundle={(slug) => isIncludedByBundle(slug, form.addon_ids, addons)}
+              isUnavailableByBundle={(slug) => isUnavailableByBundle(slug, form.addon_ids, addons)}
               onSkipExtras={skipExtras}
             />
           )}
@@ -792,7 +705,7 @@ export default function QuoteWizard() {
               replaceStep={replaceStep}
               selectedPkg={selectedPkg}
               addons={addons}
-              stripIncludedAddons={stripIncludedAddons}
+              stripIncludedAddons={(ids) => stripIncludedAddons(ids, addons)}
             />
           )}
 
