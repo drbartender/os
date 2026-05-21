@@ -6,6 +6,7 @@ const NAV = [
     { id: 'events',      label: 'Events',    icon: 'calendar',  path: '/events',    badgeKey: 'unstaffed_events' },
     { id: 'proposals',   label: 'Proposals', icon: 'clipboard', path: '/proposals', badgeKey: 'pending_proposals' },
     { id: 'clients',     label: 'Clients',   icon: 'users',     path: '/clients' },
+    { id: 'messages',    label: 'Messages',  icon: 'chat',      path: '/messages',  badgeKey: 'unread_sms' },
     { id: 'staff',       label: 'Staff',     icon: 'userplus',  path: '/staffing' },
     { id: 'hiring',      label: 'Hiring',    icon: 'pen',       path: '/hiring',    badgeKey: 'new_applications' },
   ]},

@@ -12871,3 +12871,78 @@ html[data-app="admin-os"] .field-block {
   color: var(--rust);
   font-size: 0.88rem;
 }
+
+/* Admin SMS Messages page */
+.sms-page { padding: var(--gap, 16px); }
+.sms-page-title { margin: 0 0 var(--gap, 16px); }
+.sms-empty,
+.sms-placeholder { color: var(--ink-2, #667); padding: 2rem; text-align: center; }
+.sms-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: var(--gap, 16px);
+  min-height: 60vh;
+}
+.sms-list {
+  border: 1px solid var(--line-1, #e3e3e8);
+  border-radius: 8px;
+  overflow-y: auto;
+  max-height: 70vh;
+}
+.sms-list-item {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-1, #e3e3e8);
+  cursor: pointer;
+}
+.sms-list-item:hover { background: var(--bg-2, #f5f5f7); }
+.sms-list-item-active { background: var(--bg-2, #f5f5f7); }
+.sms-list-item-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.sms-list-item-sub { font-size: 13px; color: var(--ink-2, #667); }
+.sms-list-item-time { font-size: 12px; color: var(--ink-2, #667); }
+.sms-unread-badge {
+  background: hsl(var(--danger-h, 0) 70% 50%);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 1px 7px;
+  min-width: 18px;
+  text-align: center;
+}
+.sms-thread {
+  border: 1px solid var(--line-1, #e3e3e8);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+}
+.sms-thread-head {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-1, #e3e3e8);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.sms-thread-head h3 { margin: 0; }
+.sms-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 55vh;
+}
+.sms-bubble { max-width: 75%; padding: 8px 12px; border-radius: 12px; }
+.sms-bubble-inbound { align-self: flex-start; background: var(--bg-2, #f0f0f3); }
+.sms-bubble-outbound { align-self: flex-end; background: var(--accent-soft, #e8f0fe); }
+.sms-bubble-body { white-space: pre-wrap; word-break: break-word; }
+.sms-bubble-meta { font-size: 11px; color: var(--ink-2, #667); margin-top: 3px; }
+.sms-reply {
+  border-top: 1px solid var(--line-1, #e3e3e8);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+@media (max-width: 720px) {
+  .sms-layout { grid-template-columns: 1fr; }
+}

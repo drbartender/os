@@ -93,6 +93,7 @@ const EmailCampaignCreate = lazy(() => import('./pages/admin/EmailCampaignCreate
 const EmailCampaignDetail = lazy(() => import('./pages/admin/EmailCampaignDetail'));
 const EmailAnalyticsDashboard = lazy(() => import('./pages/admin/EmailAnalyticsDashboard'));
 const EmailConversations = lazy(() => import('./pages/admin/EmailConversations'));
+const Messages = lazy(() => import('./pages/admin/Messages'));
 const TipsAdmin = lazy(() => import('./pages/admin/TipsAdmin'));
 const LabRatBugsPage = lazy(() => import('./pages/admin/LabRatBugsPage'));
 const ClassWizard = lazy(() => import('./pages/website/ClassWizard'));
@@ -410,6 +411,7 @@ function AppRoutes() {
         <Route path="/events/shift/:id" element={<ShiftDetailRedirect />} />
         <Route path="/clients" element={<ClientsDashboard />} />
         <Route path="/clients/:id" element={<ClientDetail />} />
+        <Route path="/messages" element={<Messages />} />
         <Route path="/financials" element={<FinancialsDashboard />} />
         <Route path="/tips" element={<TipsAdmin />} />
         <Route path="/settings" element={<SettingsDashboard />} />
