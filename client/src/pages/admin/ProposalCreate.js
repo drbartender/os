@@ -13,6 +13,7 @@ import {
   enforceHostedMinimum,
   reconcileFlavorBlaster,
 } from '../../utils/proposalRules';
+import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 import { useToast } from '../../context/ToastContext';
 import FieldError from '../../components/FieldError';
 import TimePicker from '../../components/TimePicker';
@@ -109,6 +110,7 @@ export default function ProposalCreate() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [savedAt, setSavedAt] = useState(Date.now());
   const previewErrorShownRef = useRef(false);
+  const fbRemovedRef = useRef(false);
   const { validate, clearField } = useFormValidation();
 
   const [form, setForm] = useState({
@@ -219,29 +221,45 @@ export default function ProposalCreate() {
   // Flavor Blaster requires real glassware — drop it if neither the
   // real-glassware addon nor client_provides_glassware is set. reconcileFlavorBlaster
   // returns the SAME array reference when nothing changes, so the identity guard
-  // prevents a render loop.
+  // prevents a render loop. The toast fires from a separate effect — a state
+  // updater must stay pure (StrictMode double-invokes it in dev), so the updater
+  // only marks the ref; the toast effect below fires it once per real removal.
   useEffect(() => {
     setForm(f => {
       const next = reconcileFlavorBlaster(f.addon_ids, addons, f.client_provides_glassware);
       if (next === f.addon_ids) return f;
-      toast.info('Flavor Blaster removed — requires real glassware.');
+      fbRemovedRef.current = true;
       return { ...f, addon_ids: next };
     });
-  }, [form.addon_ids, form.client_provides_glassware, addons, toast]);
+  }, [form.addon_ids, form.client_provides_glassware, addons]);
+
+  useEffect(() => {
+    if (fbRemovedRef.current) {
+      fbRemovedRef.current = false;
+      toast.info('Flavor Blaster removed — requires real glassware.');
+    }
+  });
 
   const selectedPkg = packages.find(p => p.id === Number(form.package_id));
-  const isHostedPackage = selectedPkg && selectedPkg.pricing_type === 'per_guest';
+  const isHostedPackage = !!selectedPkg && selectedPkg.pricing_type === 'per_guest';
 
-  const { visibleAddons: filteredAddons } = useMemo(
-    () => filterAddons({
+  // filterAddons covers the applies_to / bundle / glassware rules. Layer the
+  // package-slug exclusion (PACKAGE_EXCLUDED_ADDONS) on top — it's a cockpit-
+  // local UI-visibility concern (e.g. The Clear Reaction hides mocktail-bar +
+  // pre-batched-mocktail, which it already includes). Kept out of the shared
+  // filterAddons so it doesn't leak into the public quote wizard. Mirrors the
+  // same filter in ProposalDetailEditForm.
+  const { visibleAddons: filteredAddons } = useMemo(() => {
+    const result = filterAddons({
       addons,
       isHosted: isHostedPackage,
       packageCategory: selectedPkg?.category,
       addonIds: form.addon_ids,
       guestCount: form.guest_count,
-    }),
-    [addons, isHostedPackage, selectedPkg, form.addon_ids, form.guest_count],
-  );
+    });
+    const excluded = (selectedPkg && PACKAGE_EXCLUDED_ADDONS[selectedPkg.slug]) || [];
+    return { visibleAddons: result.visibleAddons.filter(a => !excluded.includes(a.slug)) };
+  }, [addons, isHostedPackage, selectedPkg, form.addon_ids, form.guest_count]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
