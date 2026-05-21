@@ -88,4 +88,19 @@ const labratFeedbackLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter };
+// Admin proposal writes (POST /proposals, PATCH /:id/status) can fire client
+// emails — every →sent transition emails the client. Keyed by user id, not IP,
+// so an office NAT doesn't share a bucket. 10/min is still far above any human
+// admin workflow (a person creating proposals one at a time never approaches
+// it) while meaningfully capping the email-spam blast radius of a compromised
+// admin token.
+const adminWriteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => (req.user && req.user.id ? `admin-${req.user.id}` : req.ip),
+  message: { error: 'Too many requests. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter, adminWriteLimiter };
