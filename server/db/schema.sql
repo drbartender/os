@@ -2314,6 +2314,15 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_messages_entity
 CREATE INDEX IF NOT EXISTS idx_scheduled_messages_recipient
   ON scheduled_messages(recipient_type, recipient_id);
 
+-- ─── Automated Communication Plan 2a: scheduled_messages idempotency ────
+-- Partial unique index: only enforce uniqueness while the row is still pending.
+-- Once a row flips to 'sent' / 'failed' / 'suppressed', a new pending row for the
+-- same (entity, message_type, recipient, channel) tuple is legal again (e.g.,
+-- a late T+1 reminder after the T-3 reminder already fired).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_messages_pending_uniq
+  ON scheduled_messages (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
+  WHERE status = 'pending';
+
 -- ─── Automated Communication: scheduler_health table ────────────
 -- Each scheduler writes its last_run_at on every tick. A monitoring loop
 -- alerts via Sentry if any scheduler hasn't checked in within 2x its
