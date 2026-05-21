@@ -1,6 +1,3 @@
-// claude-allow-large-file
-// Reason: single-resource router for drink_plans. Splitting by sub-resource (token/admin/logo)
-// would scatter shared rate limiters, error types, and JSONB merge patterns across files.
 const express = require('express');
 const path = require('path');
 const Sentry = require('@sentry/node');

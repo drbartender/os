@@ -1,6 +1,3 @@
-// claude-allow-large-file
-// Reason: verbatim port of the print-tip-card design system (qr-print.jsx) — single concern is the design
-//
 // PrintTipCard.layouts.jsx — print-ready frames for the bartender's QR display.
 // Uses the Dr. Bartender design system (drb-tokens.css):
 //   chalkboard #12161C · paper #EDE6D6 · teal #1D8C89 · brass #B8924A

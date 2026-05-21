@@ -1,5 +1,3 @@
-// claude-allow-large-file
-// Reason: admin proposal-create page bundles the create form, section helpers (Client/Event/Package/Staffing/Send), pricing dock, and field-status logic. Splitting belongs in a separate refactor — not money-math commits.
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';

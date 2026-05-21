@@ -1,5 +1,3 @@
-// claude-allow-large-file
-// Reason: single Stripe surface — customer/intent helpers, deposit/full-pay, drink-plan extras, invoice payments, webhook handler. Splitting deferred; not justified by a 2-line bugfix.
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
