@@ -814,6 +814,104 @@ async function sendPaperworkReminderEmail({ userId }) {
 // so it is fully loaded here and the re-exports below are plain references.
 const lifecycle = require('./lifecycleEmailTemplates');
 
+// ─── Pre-event Reminder Emails (Plan 2c) ────────────────────────
+
+/**
+ * Event-week reminder (T-7 days). Email-only touch, fires from the
+ * scheduled-message dispatcher.
+ */
+function eventWeekReminderClient({
+  clientName, clientFirstName, eventDateLocal, startTimeLocal,
+  location, guestCount, packageName, proposalUrl,
+}) {
+  const first = clientFirstName || clientName || 'there';
+  return {
+    subject: `One week until your ${eventDateLocal} event`,
+    html: wrapEmail(`
+      <p>Hi ${esc(first)}, can't wait for next week. Here's what we have on file:</p>
+      <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
+        <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Date</td><td style="padding:8px 12px;text-align:right;">${esc(eventDateLocal)}</td></tr>
+        <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Time</td><td style="padding:8px 12px;text-align:right;">${esc(startTimeLocal)}</td></tr>
+        <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Location</td><td style="padding:8px 12px;text-align:right;">${esc(location || 'TBD')}</td></tr>
+        <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Guest count</td><td style="padding:8px 12px;text-align:right;">${esc(String(guestCount ?? ''))}</td></tr>
+        <tr><td style="padding:8px 12px;color:${BRAND.secondary};">Package</td><td style="padding:8px 12px;text-align:right;">${esc(packageName || '')}</td></tr>
+      </table>
+      <p>Anything changed? Reply here or call.</p>
+      ${proposalUrl ? ctaButton(proposalUrl, 'View your proposal') : ''}
+      <p>Cheers, Dallas</p>
+    `),
+    text: `Hi ${first}, can't wait for next week. Here's what we have on file:\n\nDate: ${eventDateLocal}\nTime: ${startTimeLocal}\nLocation: ${location || 'TBD'}\nGuest count: ${guestCount ?? ''}\nPackage: ${packageName || ''}\n\nAnything changed? Reply here or call.\n\n${proposalUrl ? `View your proposal: ${proposalUrl}\n\n` : ''}Cheers, Dallas`,
+  };
+}
+
+/**
+ * Reschedule notification — fires immediately when admin updates event_date,
+ * event_start_time, or event_location on a post-sign+pay proposal.
+ */
+function rescheduleNotificationClient({
+  clientName, clientFirstName,
+  oldDateLocal, oldStartTimeLocal, oldLocation,
+  newDateLocal, newStartTimeLocal, newLocation,
+  packageName, guestCount, totalFormatted,
+  balanceDueDateLocal, autopayEnrolled,
+}) {
+  const first = clientFirstName || clientName || 'there';
+  const balanceLine = balanceDueDateLocal
+    ? `<li><strong>${autopayEnrolled ? 'Balance auto-charges' : 'Balance due'}</strong> on ${esc(balanceDueDateLocal)}</li>`
+    : '';
+  const balanceLineText = balanceDueDateLocal
+    ? `${autopayEnrolled ? 'Balance auto-charges' : 'Balance due'} on ${balanceDueDateLocal}\n`
+    : '';
+  return {
+    subject: 'Updated details for your event',
+    html: wrapEmail(`
+      <p>Hi ${esc(first)}, your event has been moved.</p>
+      <p style="margin:1.5rem 0;"><strong>Old details:</strong> ${esc(oldDateLocal)} at ${esc(oldStartTimeLocal)}, ${esc(oldLocation || 'TBD')}<br/>
+         <strong>New details:</strong> ${esc(newDateLocal)} at ${esc(newStartTimeLocal)}, ${esc(newLocation || 'TBD')}</p>
+      <p>Everything else stays the same:</p>
+      <ul>
+        <li>Package: ${esc(packageName || '')}</li>
+        <li>Guest count: ${esc(String(guestCount ?? ''))}</li>
+        <li>Total: $${esc(String(totalFormatted))}</li>
+        ${balanceLine}
+      </ul>
+      <p>Let me know if you have any questions or need to discuss anything.</p>
+      <p>Cheers, Dallas</p>
+    `),
+    text: `Hi ${first}, your event has been moved.\n\nOld details: ${oldDateLocal} at ${oldStartTimeLocal}, ${oldLocation || 'TBD'}\nNew details: ${newDateLocal} at ${newStartTimeLocal}, ${newLocation || 'TBD'}\n\nEverything else stays the same:\nPackage: ${packageName || ''}\nGuest count: ${guestCount ?? ''}\nTotal: $${totalFormatted}\n${balanceLineText}\nLet me know if you have any questions or need to discuss anything.\n\nCheers, Dallas`,
+  };
+}
+
+/**
+ * Long-lead T-30 recap — fires at T-30 days for proposals whose booking lead
+ * time was 90+ days. BYOB variant includes the shopping-list reminder; Hosted
+ * variant omits it (caller passes barOption).
+ */
+function longLeadT30RecapClient({
+  clientName, clientFirstName, eventDateLocal, drinksSummary,
+  shoppingListUrl, barOption,
+}) {
+  const first = clientFirstName || clientName || 'there';
+  const shoppingBlockHtml = barOption === 'byob'
+    ? `<p><strong>Shopping list:</strong> <a href="${esc(shoppingListUrl)}">${esc(shoppingListUrl)}</a></p>
+       <p>Reminder: best to do the actual shopping in the days leading up to the event so things stay fresh and unused items are still returnable.</p>`
+    : '';
+  const shoppingBlockText = barOption === 'byob'
+    ? `\nShopping list: ${shoppingListUrl}\n\nReminder: best to do the actual shopping in the days leading up to the event so things stay fresh and unused items are still returnable.\n`
+    : '';
+  return {
+    subject: `Three weeks out from your ${eventDateLocal} event`,
+    html: wrapEmail(`
+      <p>Hi ${esc(first)}, your event is in about 3 weeks. Quick recap of what you've got teed up:</p>
+      <p><strong>Drinks:</strong> ${esc(drinksSummary || 'Drink plan submitted')}</p>
+      ${shoppingBlockHtml}
+      <p>Anything change? Reply here.</p>
+      <p>Cheers, Dallas</p>
+    `),
+    text: `Hi ${first}, your event is in about 3 weeks. Quick recap of what you've got teed up:\n\nDrinks: ${drinksSummary || 'Drink plan submitted'}\n${shoppingBlockText}\nAnything change? Reply here.\n\nCheers, Dallas`,
+  };
+}
+
 module.exports = {
   wrapEmail,
   wrapMarketingEmail,
@@ -864,4 +962,8 @@ module.exports = {
   drinkPlanBalanceUpdate: lifecycle.drinkPlanBalanceUpdate,
   shoppingListReady: lifecycle.shoppingListReady,
   postConsultClient: lifecycle.postConsultClient,
+  // Pre-event reminder emails (Plan 2c)
+  eventWeekReminderClient,
+  rescheduleNotificationClient,
+  longLeadT30RecapClient,
 };
