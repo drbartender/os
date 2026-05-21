@@ -17,18 +17,23 @@ export default function useDrawerParam() {
   const kind = params.get('drawer');
   const id = params.get('drawerId');
 
+  // Drawer open/close REPLACES the current history entry instead of pushing a
+  // new one. A drawer is page state, not a navigation. Pushing made every open
+  // and every close stack a history entry, so the Back button walked through
+  // drawer-toggle states (re-opening drawers in a loop) instead of returning
+  // to the previous page. Keep both `replace: true`.
   const open = useCallback((newKind, newId) => {
     const next = new URLSearchParams(params);
     next.set('drawer', newKind);
     next.set('drawerId', String(newId));
-    setParams(next, { replace: false });
+    setParams(next, { replace: true });
   }, [params, setParams]);
 
   const close = useCallback(() => {
     const next = new URLSearchParams(params);
     next.delete('drawer');
     next.delete('drawerId');
-    setParams(next, { replace: false });
+    setParams(next, { replace: true });
   }, [params, setParams]);
 
   return { kind, id, open, close };
