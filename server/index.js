@@ -52,6 +52,7 @@ const { processAutopayCharges, processEventCompletions } = require('./utils/bala
 const { processScheduledAutoAssigns } = require('./utils/autoAssignScheduler');
 const { processSequenceSteps, expireStaleQuoteDrafts } = require('./utils/emailSequenceScheduler');
 const { purgeLabratTestData } = require('./utils/labratCleanup');
+const { dispatchPending } = require('./utils/scheduledMessageDispatcher');
 
 // Startup guards — fail fast if critical env vars are missing
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
@@ -310,6 +311,15 @@ async function start() {
         setInterval(wrapped, 60 * 60 * 1000);
       } else if (!globalScheduleDisabled) {
         clearHealthRow('labrat_purge');
+      }
+
+      // Scheduled-messages dispatcher — every 5 min, picks up pending rows
+      if (enabled('RUN_MESSAGE_DISPATCHER_SCHEDULER')) {
+        const wrapped = wrapScheduler('message_dispatcher', 300, dispatchPending);
+        setTimeout(wrapped, 180000); // initial fire 3 min after boot — stagger from other schedulers
+        setInterval(wrapped, 5 * 60 * 1000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('message_dispatcher');
       }
 
       // Start the staleness monitor (runs every 15 min, no per-scheduler toggle)
