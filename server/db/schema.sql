@@ -2370,3 +2370,48 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 CREATE INDEX IF NOT EXISTS idx_consults_proposal_id ON consults(proposal_id);
 CREATE INDEX IF NOT EXISTS idx_consults_client_id ON consults(client_id);
 CREATE INDEX IF NOT EXISTS idx_consults_scheduled_at ON consults(scheduled_at) WHERE status = 'scheduled';
+
+-- ─── Comms Phase 2: Two-way SMS ─────────────────────────────────
+-- sms_messages gains inbound-message support. The table predates inbound
+-- SMS: its FKs (sender_id/recipient_id) point only at users. client_id
+-- links an inbound text to its clients row so the admin thread UI can group
+-- by client. read_at marks an inbound message as seen (drives the unread
+-- badge). metadata holds the raw Twilio From/To/MessageSid and the
+-- STOP/START opt-out audit record.
+ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL;
+ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
+ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- 'received' is the status for an inbound message (sent/failed/queued only
+-- describe an outbound send attempt).
+DO $$ BEGIN
+  ALTER TABLE sms_messages DROP CONSTRAINT IF EXISTS sms_messages_status_check;
+  ALTER TABLE sms_messages ADD CONSTRAINT sms_messages_status_check
+    CHECK (status IN ('sent','failed','queued','received'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+CREATE INDEX IF NOT EXISTS idx_sms_messages_client_id ON sms_messages(client_id);
+-- Partial index keyed on client_id: serves the per-client unread subquery
+-- directly, and the global badge count via a partial-index scan (the unread
+-- set is tiny in steady state).
+CREATE INDEX IF NOT EXISTS idx_sms_messages_unread
+  ON sms_messages(client_id)
+  WHERE direction = 'inbound' AND read_at IS NULL;
+
+-- Inbound-webhook idempotency: dedupe a repeated Twilio delivery by MessageSid.
+CREATE INDEX IF NOT EXISTS idx_sms_messages_twilio_sid ON sms_messages(twilio_sid);
+
+-- shift_requests.acknowledged_at records that the assigned staff member
+-- texted CONFIRM for the shift. shift_requests is the per-(shift,staff) row,
+-- so acknowledgement belongs here, not on shifts (a shift has many staff).
+ALTER TABLE shift_requests ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMPTZ;
+
+-- findNearestApprovedShift filters shift_requests by user_id (the texting
+-- staffer). The table's indexes lead with shift_id; add a user_id index.
+CREATE INDEX IF NOT EXISTS idx_shift_requests_user_id ON shift_requests(user_id);
+
+-- Inbound SMS identifies the sender only by phone number. contractor_profiles
+-- has no phone index; this functional index matches the last 10 digits
+-- (mirrors idx_clients_phone_normalized).
+CREATE INDEX IF NOT EXISTS idx_contractor_profiles_phone_normalized
+  ON contractor_profiles (RIGHT(REGEXP_REPLACE(phone, '\D', '', 'g'), 10));
