@@ -9,6 +9,7 @@ const {
   recordInboundMessage,
   applyOptOut,
   applyOptIn,
+  handleConfirm,
 } = require('./smsInbound');
 
 test('detectOptKeyword > recognizes STOP and equivalents, case-insensitive', () => {
@@ -155,4 +156,36 @@ test('applyOptIn > sets sms_enabled true on a staff user', async () => {
 
 test('applyOptOut > is a no-op for an unknown sender', async () => {
   await applyOptOut({ type: 'unknown' }); // must not throw
+});
+
+let hcShiftId;
+let hcRequestId;
+
+test('handleConfirm > stamps acknowledged_at on the nearest approved shift', async () => {
+  const sh = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status) VALUES (CURRENT_DATE + INTERVAL '10 days', '18:00', 'filled')
+     RETURNING id`
+  );
+  hcShiftId = sh.rows[0].id;
+  const sr = await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved') RETURNING id`,
+    [hcShiftId, lsStaffUserId]
+  );
+  hcRequestId = sr.rows[0].id;
+
+  const result = await handleConfirm(lsStaffUserId);
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.shiftId, hcShiftId);
+
+  const check = await pool.query('SELECT acknowledged_at FROM shift_requests WHERE id = $1', [hcRequestId]);
+  assert.ok(check.rows[0].acknowledged_at instanceof Date);
+
+  await pool.query('DELETE FROM shift_requests WHERE id = $1', [hcRequestId]);
+  await pool.query('DELETE FROM shifts WHERE id = $1', [hcShiftId]);
+});
+
+test('handleConfirm > returns ok:false reason no_shift when staff has no approved upcoming shift', async () => {
+  const result = await handleConfirm(lsStaffUserId);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.reason, 'no_shift');
 });

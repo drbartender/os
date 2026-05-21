@@ -167,6 +167,48 @@ async function applyOptIn(sender) {
   await setSmsEnabled(sender, true);
 }
 
+/**
+ * Find the texting staff member's nearest upcoming approved shift and return
+ * it. `event_date >= CURRENT_DATE` and a non-terminal shift status. start_time
+ * is free-text so the same-day tiebreak is best-effort.
+ *
+ * @param {number} staffUserId
+ * @returns {Promise<Object|null>} the shift_requests+shifts row, or null
+ */
+async function findNearestApprovedShift(staffUserId) {
+  const r = await pool.query(
+    `SELECT sr.id AS request_id, s.id AS shift_id, s.event_date, s.start_time,
+            s.status AS shift_status, s.client_name, s.event_type, s.event_type_custom
+     FROM shift_requests sr
+     JOIN shifts s ON s.id = sr.shift_id
+     WHERE sr.user_id = $1
+       AND sr.status = 'approved'
+       AND s.event_date >= CURRENT_DATE
+       AND s.status NOT IN ('completed', 'cancelled')
+     ORDER BY s.event_date ASC, s.start_time ASC
+     LIMIT 1`,
+    [staffUserId]
+  );
+  return r.rows[0] || null;
+}
+
+/**
+ * Handle a staff CONFIRM response code: stamp acknowledged_at on the nearest
+ * upcoming approved shift_request.
+ *
+ * @param {number} staffUserId
+ * @returns {Promise<{ok:true, shiftId:number, eventDate:string, clientName:string|null} | {ok:false, reason:'no_shift'}>}
+ */
+async function handleConfirm(staffUserId) {
+  const shift = await findNearestApprovedShift(staffUserId);
+  if (!shift) return { ok: false, reason: 'no_shift' };
+  await pool.query(
+    'UPDATE shift_requests SET acknowledged_at = NOW() WHERE id = $1',
+    [shift.request_id]
+  );
+  return { ok: true, shiftId: shift.shift_id, eventDate: shift.event_date, clientName: shift.client_name || null };
+}
+
 module.exports = {
   detectOptKeyword,
   detectResponseCode,
@@ -174,4 +216,6 @@ module.exports = {
   recordInboundMessage,
   applyOptOut,
   applyOptIn,
+  handleConfirm,
+  findNearestApprovedShift,
 };
