@@ -587,6 +587,46 @@ test('Case 11: draft→sent→modified→sent re-sends the email (no sent_at gat
   assert.equal(inv.rows.length, 1, 'the re-send must not create a second invoice');
 });
 
+// ─── Case 12 — PATCH /:id/status invoice failure rolls back the status ──────
+// The PATCH-side mirror of Case 6. createInvoiceOnSend runs INSIDE the status
+// transaction, so a throw must roll back the status change too — the proposal
+// must NOT be left half-'sent' and no orphan invoice may remain. This pins the
+// headline correctness property of the in-transaction-invoice refactor.
+// Fresh admin token (its own adminWriteLimiter bucket).
+test('Case 12: PATCH status invoice failure rolls back — proposal stays draft, no invoice', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal();
+
+  // Arm the stub: the next createInvoiceOnSend call throws. NOTE: the rolled-
+  // back attempt still BURNS an invoice_number_seq value (sequences are non-
+  // transactional in Postgres) — invoice number gaps are expected, not a bug.
+  invoiceThrowsRemaining = 1;
+  const res = await request('PATCH', `/api/proposals/${proposalId}/status`, {
+    token, body: { status: 'sent' },
+  });
+  // Reset the arm in case the assertions below throw before the next case runs.
+  invoiceThrowsRemaining = 0;
+
+  // The request must error — the invoice failure propagates out of the txn.
+  assert.notEqual(res.status, 201, `the request must error; got ${res.status}: ${res.raw}`);
+  assert.ok(res.status >= 400, `expected a non-2xx error, got ${res.status}: ${res.raw}`);
+
+  // The status change must have rolled back — re-SELECT proves it is STILL
+  // 'draft', not left at 'sent'. This is the core property Task 8 must hold.
+  const after = await pool.query(
+    'SELECT status FROM proposals WHERE id = $1', [proposalId]
+  );
+  assert.equal(after.rows[0].status, 'draft',
+    'the status change must roll back when createInvoiceOnSend throws');
+
+  // No orphan invoice — the rolled-back txn must leave zero invoice rows.
+  const inv = await pool.query(
+    'SELECT id FROM invoices WHERE proposal_id = $1', [proposalId]
+  );
+  assert.equal(inv.rows.length, 0,
+    'no invoice row should exist after the txn rolls back');
+});
+
 // ─── Case 7 — adminWriteLimiter (run LAST; uses its own user) ───────────────
 // Placed last so the 11-POST burst can't starve the other cases' shared
 // budget. Uses rateLimitToken (a different admin user) so its bucket is clean.

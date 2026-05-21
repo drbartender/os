@@ -677,7 +677,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
         );
       }
     } catch (e) {
-      console.error('Post-send email step failed (non-blocking) for proposal', req.params.id);
+      console.error('Post-send email re-fetch failed for proposal', req.params.id, e.code || e.name);
     }
   }
 
