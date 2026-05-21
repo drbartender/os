@@ -12,7 +12,9 @@ import {
   filterAddons,
   enforceHostedMinimum,
   reconcileFlavorBlaster,
+  isQuantityCapable,
 } from '../../utils/proposalRules';
+import SyrupPicker from '../../components/SyrupPicker';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 import { useToast } from '../../context/ToastContext';
 import FieldError from '../../components/FieldError';
@@ -168,6 +170,8 @@ export default function ProposalCreate() {
         num_bartenders: form.num_bartenders != null ? Number(form.num_bartenders) : undefined,
         addon_ids: form.addon_ids.map(Number),
         addon_variants: form.addon_variants,
+        addon_quantities: form.addon_quantities,
+        syrup_selections: form.syrup_selections,
       })
         .then(res => {
           setPreview(res.data);
@@ -182,7 +186,7 @@ export default function ProposalCreate() {
         });
     }, 400);
     return () => clearTimeout(timer);
-  }, [form.package_id, form.guest_count, form.event_duration_hours, form.num_bars, form.num_bartenders, form.addon_ids, form.addon_variants, toast]);
+  }, [form.package_id, form.guest_count, form.event_duration_hours, form.num_bars, form.num_bartenders, form.addon_ids, form.addon_variants, form.addon_quantities, form.syrup_selections, toast]);
 
   // Saved indicator (cosmetic only — no autosave backend)
   useEffect(() => {
@@ -249,7 +253,7 @@ export default function ProposalCreate() {
   // pre-batched-mocktail, which it already includes). Kept out of the shared
   // filterAddons so it doesn't leak into the public quote wizard. Mirrors the
   // same filter in ProposalDetailEditForm.
-  const { visibleAddons: filteredAddons } = useMemo(() => {
+  const { visibleAddons: filteredAddons, isIncludedMap, isUnavailableMap } = useMemo(() => {
     const result = filterAddons({
       addons,
       isHosted: isHostedPackage,
@@ -258,7 +262,11 @@ export default function ProposalCreate() {
       guestCount: form.guest_count,
     });
     const excluded = (selectedPkg && PACKAGE_EXCLUDED_ADDONS[selectedPkg.slug]) || [];
-    return { visibleAddons: result.visibleAddons.filter(a => !excluded.includes(a.slug)) };
+    return {
+      visibleAddons: result.visibleAddons.filter(a => !excluded.includes(a.slug)),
+      isIncludedMap: result.isIncludedMap,
+      isUnavailableMap: result.isUnavailableMap,
+    };
   }, [addons, isHostedPackage, selectedPkg, form.addon_ids, form.guest_count]);
 
   const handleSubmit = async (e) => {
@@ -375,7 +383,7 @@ export default function ProposalCreate() {
 
               {form.package_id && filteredAddons.length > 0 && (
                 <FieldBlock id="cockpit-addons" icon="sparkles" title="Add-ons & line items" status={status.addons} span={2}>
-                  <AddonSection form={form} addons={filteredAddons} toggleAddon={toggleAddon} setForm={setForm} update={update} preview={preview} />
+                  <AddonSection form={form} addons={filteredAddons} toggleAddon={toggleAddon} setForm={setForm} update={update} preview={preview} isIncludedMap={isIncludedMap} isUnavailableMap={isUnavailableMap} />
                 </FieldBlock>
               )}
 
@@ -788,9 +796,53 @@ function PackageSection({ form, packages, update, merge, fieldErrors }) {
 
 // ─── Add-on section ─────────────────────────────────────────────────────────
 
-function AddonSection({ form, addons, toggleAddon, setForm, update, preview }) {
+// Greyed bundle badge — shared by selected rows and the quick-add dropdown.
+const BundleBadge = ({ text }) => (
+  <span
+    className="tiny mono"
+    style={{
+      marginLeft: 8, padding: '1px 6px', borderRadius: 3,
+      background: 'var(--bg-2)', border: '1px solid var(--line-2)',
+      color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.04em',
+      whiteSpace: 'nowrap',
+    }}
+  >
+    {text}
+  </span>
+);
+
+// Inline 1–10 quantity stepper for quantity-capable selected add-ons.
+const AddonQtyStepper = ({ value, onChange }) => {
+  const qty = value || 1;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 10 }}>
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm"
+        style={{ width: 20, height: 18, padding: 0 }}
+        disabled={qty <= 1}
+        onClick={() => onChange(qty - 1)}
+        aria-label="Decrease quantity"
+      >−</button>
+      <span className="num tiny" style={{ minWidth: 14, textAlign: 'center', color: 'var(--ink-1)' }}>{qty}</span>
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm"
+        style={{ width: 20, height: 18, padding: 0 }}
+        disabled={qty >= 10}
+        onClick={() => onChange(qty + 1)}
+        aria-label="Increase quantity"
+      >+</button>
+    </span>
+  );
+};
+
+function AddonSection({ form, addons, toggleAddon, setForm, update, preview, isIncludedMap, isUnavailableMap }) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
+
+  const includedMap = isIncludedMap || {};
+  const unavailableMap = isUnavailableMap || {};
 
   const selected = addons.filter(a => form.addon_ids.includes(a.id));
   const available = addons.filter(a => !form.addon_ids.includes(a.id));
@@ -798,6 +850,11 @@ function AddonSection({ form, addons, toggleAddon, setForm, update, preview }) {
     .filter(a => !q || (a.name || '').toLowerCase().includes(q.toLowerCase()) || (a.applies_to || '').toLowerCase().includes(q.toLowerCase()))
     .slice(0, 8);
   const grouped = matches.reduce((g, a) => { (g[a.applies_to || 'Other'] = g[a.applies_to || 'Other'] || []).push(a); return g; }, {});
+
+  const setAddonQty = (id, n) => setForm(f => ({
+    ...f,
+    addon_quantities: { ...f.addon_quantities, [id]: Math.min(10, Math.max(1, n)) },
+  }));
 
   // Lookup snapshot for actual computed total per addon
   const lineTotalFor = (addon) => {
@@ -839,54 +896,90 @@ function AddonSection({ form, addons, toggleAddon, setForm, update, preview }) {
         </div>
       ) : (
         <div style={{ border: '1px solid var(--line-1)', borderRadius: 4, overflow: 'hidden' }}>
-          {selected.map((addon, i) => (
+          {selected.map((addon, i) => {
+            const isIncluded = !!includedMap[addon.slug];
+            const isUnavailable = !!unavailableMap[addon.slug];
+            const isBundleLocked = isIncluded || isUnavailable;
+            const showQty = isQuantityCapable(addon) && !isBundleLocked;
+            const isSyrup = addon.slug === 'handcrafted-syrups';
+            return (
             <div key={addon.id} style={{
-              display: 'grid', gridTemplateColumns: '20px 1fr 110px 90px 24px',
-              alignItems: 'center', gap: 10,
-              padding: '7px 10px', borderTop: i ? '1px solid var(--line-1)' : 'none',
-              background: 'var(--bg-1)', fontSize: 12.5,
+              borderTop: i ? '1px solid var(--line-1)' : 'none',
+              background: 'var(--bg-1)',
             }}>
-              <Icon
-                name={
-                  addon.billing_type === 'per_guest' ? 'users' :
-                  addon.billing_type === 'per_hour' ? 'clock' :
-                  /champagne|toast/i.test(addon.name) ? 'sparkles' :
-                  /mocktail/i.test(addon.name) ? 'flask' :
-                  /bartender|server/i.test(addon.name) ? 'userplus' :
-                  'check'
-                }
-                size={13}
-                style={{ color: 'var(--ink-3)' }}
-              />
-              <div style={{ minWidth: 0 }}>
-                <span style={{ color: 'var(--ink-1)' }}>{addon.name}</span>
-                {addon.applies_to && addon.applies_to !== 'all' && (
-                  <span className="tiny" style={{ color: 'var(--ink-3)', marginLeft: 6 }}>· {addon.applies_to}</span>
-                )}
-                {addon.slug === 'champagne-toast' && (
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 10 }}>
-                    <input
-                      type="checkbox"
-                      checked={form.addon_variants[String(addon.id)] === 'non-alcoholic-bubbles'}
-                      onChange={(e) => setForm(f => ({
-                        ...f,
-                        addon_variants: {
-                          ...f.addon_variants,
-                          [String(addon.id)]: e.target.checked ? 'non-alcoholic-bubbles' : undefined,
-                        },
-                      }))}
+              <div style={{
+                display: 'grid', gridTemplateColumns: '20px 1fr 110px 90px 24px',
+                alignItems: 'center', gap: 10,
+                padding: '7px 10px', fontSize: 12.5,
+              }}>
+                <Icon
+                  name={
+                    addon.billing_type === 'per_guest' ? 'users' :
+                    addon.billing_type === 'per_hour' ? 'clock' :
+                    /champagne|toast/i.test(addon.name) ? 'sparkles' :
+                    /mocktail/i.test(addon.name) ? 'flask' :
+                    /bartender|server/i.test(addon.name) ? 'userplus' :
+                    'check'
+                  }
+                  size={13}
+                  style={{ color: 'var(--ink-3)' }}
+                />
+                <div style={{ minWidth: 0 }}>
+                  <span style={{ color: isBundleLocked ? 'var(--ink-3)' : 'var(--ink-1)' }}>{addon.name}</span>
+                  {addon.applies_to && addon.applies_to !== 'all' && (
+                    <span className="tiny" style={{ color: 'var(--ink-3)', marginLeft: 6 }}>· {addon.applies_to}</span>
+                  )}
+                  {isIncluded && <BundleBadge text="Included with bundle" />}
+                  {isUnavailable && <BundleBadge text="Unavailable with bundle" />}
+                  {addon.slug === 'champagne-toast' && !isBundleLocked && (
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={form.addon_variants[String(addon.id)] === 'non-alcoholic-bubbles'}
+                        onChange={(e) => setForm(f => ({
+                          ...f,
+                          addon_variants: {
+                            ...f.addon_variants,
+                            [String(addon.id)]: e.target.checked ? 'non-alcoholic-bubbles' : undefined,
+                          },
+                        }))}
+                      />
+                      <span className="tiny" style={{ color: 'var(--ink-3)' }}>NA bubbles</span>
+                    </label>
+                  )}
+                  {showQty && (
+                    <AddonQtyStepper
+                      value={form.addon_quantities[addon.id]}
+                      onChange={(n) => setAddonQty(addon.id, n)}
                     />
-                    <span className="tiny" style={{ color: 'var(--ink-3)' }}>NA bubbles</span>
-                  </label>
-                )}
+                  )}
+                </div>
+                <span className="num tiny" style={{ color: 'var(--ink-3)', textAlign: 'right' }}>{labelFor(addon)}</span>
+                <span className="num" style={{ textAlign: 'right', color: isBundleLocked ? 'var(--ink-3)' : 'var(--ink-1)' }}>{fmt$(lineTotalFor(addon))}</span>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => { if (!isBundleLocked) toggleAddon(addon.id); }}
+                  disabled={isBundleLocked}
+                  aria-label={isBundleLocked ? 'Locked by bundle' : 'Remove add-on'}
+                  style={{ padding: 0, width: 24, height: 22 }}
+                >
+                  <Icon name="x" size={10} />
+                </button>
               </div>
-              <span className="num tiny" style={{ color: 'var(--ink-3)', textAlign: 'right' }}>{labelFor(addon)}</span>
-              <span className="num" style={{ textAlign: 'right', color: 'var(--ink-1)' }}>{fmt$(lineTotalFor(addon))}</span>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => toggleAddon(addon.id)} style={{ padding: 0, width: 24, height: 22 }}>
-                <Icon name="x" size={10} />
-              </button>
+              {/* Inline syrup-flavor picker — mirrors the wizard's ExtrasStep */}
+              {isSyrup && !isBundleLocked && (
+                <div style={{ padding: '0 10px 10px 40px' }}>
+                  <SyrupPicker
+                    selected={form.syrup_selections}
+                    onChange={(syrups) => update('syrup_selections', syrups)}
+                    compact
+                  />
+                </div>
+              )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -913,15 +1006,20 @@ function AddonSection({ form, addons, toggleAddon, setForm, update, preview }) {
                 <div className="tiny mono" style={{ color: 'var(--ink-3)', padding: '4px 8px', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
                   {cat}
                 </div>
-                {items.map(a => (
+                {items.map(a => {
+                  const aIncluded = !!includedMap[a.slug];
+                  const aUnavailable = !!unavailableMap[a.slug];
+                  const aBlocked = aIncluded || aUnavailable;
+                  return (
                   <div
                     key={a.id}
-                    onMouseDown={() => { toggleAddon(a.id); setQ(''); setOpen(false); }}
+                    onMouseDown={() => { if (!aBlocked) { toggleAddon(a.id); setQ(''); setOpen(false); } }}
                     style={{
                       display: 'grid', gridTemplateColumns: '18px 1fr auto', alignItems: 'center', gap: 8,
-                      padding: '6px 8px', borderRadius: 3, cursor: 'pointer', fontSize: 12.5,
+                      padding: '6px 8px', borderRadius: 3, cursor: aBlocked ? 'default' : 'pointer', fontSize: 12.5,
+                      opacity: aBlocked ? 0.6 : 1,
                     }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--row-hover)')}
+                    onMouseEnter={(e) => { if (!aBlocked) e.currentTarget.style.background = 'var(--row-hover)'; }}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
                   >
                     <Icon
@@ -936,15 +1034,20 @@ function AddonSection({ form, addons, toggleAddon, setForm, update, preview }) {
                       size={12}
                       style={{ color: 'var(--ink-3)' }}
                     />
-                    <span>{a.name}</span>
+                    <span style={{ color: aBlocked ? 'var(--ink-3)' : undefined }}>
+                      {a.name}
+                      {aIncluded && <BundleBadge text="Included with bundle" />}
+                      {aUnavailable && <BundleBadge text="Unavailable with bundle" />}
+                    </span>
                     <span className="tiny mono" style={{ color: 'var(--ink-3)' }}>
-                      {a.billing_type === 'per_guest'       && `${fmt$(a.rate)}/guest`}
-                      {a.billing_type === 'per_guest_timed' && `${fmt$(a.rate)}/guest`}
-                      {a.billing_type === 'per_hour'        && `${fmt$(a.rate)}/hr`}
-                      {a.billing_type === 'flat'            && (Number(a.rate) ? `${fmt$(a.rate)} flat` : 'included')}
+                      {!aBlocked && a.billing_type === 'per_guest'       && `${fmt$(a.rate)}/guest`}
+                      {!aBlocked && a.billing_type === 'per_guest_timed' && `${fmt$(a.rate)}/guest`}
+                      {!aBlocked && a.billing_type === 'per_hour'        && `${fmt$(a.rate)}/hr`}
+                      {!aBlocked && a.billing_type === 'flat'            && (Number(a.rate) ? `${fmt$(a.rate)} flat` : 'included')}
                     </span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             ))}
           </div>
