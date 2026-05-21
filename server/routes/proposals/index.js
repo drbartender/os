@@ -12,6 +12,7 @@ const router = express.Router();
 router.use('/', require('./publicToken'));
 router.use('/', require('./public'));
 router.use('/', require('./metadata'));
+router.use('/', require('./lifecycle'));
 router.use('/', require('./crud'));
 
 module.exports = router;

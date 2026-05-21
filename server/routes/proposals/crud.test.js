@@ -6,7 +6,7 @@
 // The repo had no Express-route test harness when this file was written —
 // every existing *.test.js exercises a pure util via node:test. There is also
 // no supertest/jest/mocha dependency. So this file stands up a minimal harness
-// itself: it mounts the real `crud` router on a fresh express() app with the
+// itself: it mounts the real `crud` and `lifecycle` routers on a fresh express() app with the
 // real `auth` middleware and the same AppError-aware error handler as
 // server/index.js, then drives it over real HTTP via node's built-in `http`.
 //
@@ -37,6 +37,7 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../../db');
 const { AppError } = require('../../utils/errors');
 const crudRouter = require('./crud');
+const lifecycleRouter = require('./lifecycle');
 
 // ─── Shared harness state ──────────────────────────────────────────────────
 let server;
@@ -235,7 +236,9 @@ before(async () => {
   ADDITIONAL_BARTENDER_ID = bartender.rows[0].id;
 
   // Stub the dependency seam: count emails; optionally fail invoice creation.
-  crudRouter.__setDeps({
+  // Applied to BOTH routers — POST / lives in crud, PATCH /:id/status in
+  // lifecycle, and each carries its own _deps seam.
+  const stubDeps = {
     // Capture-and-inspect stub — does NOT delegate to the real
     // sendProposalSentEmail. The real function early-returns when client_email
     // is missing, so delegating would let a false-green slip through (counter
@@ -253,13 +256,16 @@ before(async () => {
       }
       return realCreateInvoiceOnSend(...args);
     },
-  });
+  };
+  crudRouter.__setDeps(stubDeps);
+  lifecycleRouter.__setDeps(stubDeps);
 
   // Minimal app: real router + real AppError-aware error handler (mirrors
   // server/index.js so a thrown ValidationError becomes a 400 with fieldErrors).
   const app = express();
   app.use(express.json());
   app.use('/api/proposals', crudRouter);
+  app.use('/api/proposals', lifecycleRouter);
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
     if (err instanceof AppError) {
@@ -301,10 +307,12 @@ after(async () => {
     await pool.query('DELETE FROM users WHERE id = ANY($1)', [[...createdUserIds]]);
   }
   // Restore real deps and close the server / pool.
-  crudRouter.__setDeps({
+  const realDeps = {
     sendProposalSentEmail: realSendProposalSentEmail,
     createInvoiceOnSend: realCreateInvoiceOnSend,
-  });
+  };
+  crudRouter.__setDeps(realDeps);
+  lifecycleRouter.__setDeps(realDeps);
   if (server) await new Promise((resolve) => server.close(resolve));
   await pool.end();
 });

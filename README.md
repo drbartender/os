@@ -140,12 +140,13 @@ dr-bartender/
 │   │   ├── mocktails.js        # Mocktail menu CRUD
 │   │   ├── payment.js          # Payment method + W-9 upload
 │   │   ├── progress.js         # Onboarding step tracking
-│   │   ├── proposals/          # Service proposals (publicToken/public/metadata/crud sub-routers)
+│   │   ├── proposals/          # Service proposals (publicToken/public/metadata/lifecycle/crud sub-routers)
 │   │   │   ├── index.js        # Composition router
 │   │   │   ├── publicToken.js  # /t/:token view + sign
 │   │   │   ├── public.js       # /public/* — packages, addons, calculate, capture-lead, quote-draft, submit
 │   │   │   ├── metadata.js     # /packages, /addons, /calculate, /financials, /dashboard-stats
-│   │   │   └── crud.js         # admin CRUD + status/notes/create-shift/balance-due-date/send-reminder/record-payment
+│   │   │   ├── lifecycle.js    # Proposal status state machine (PATCH /:id/status)
+│   │   │   └── crud.js         # admin CRUD + notes/create-shift/balance-due-date/send-reminder/record-payment
 │   │   ├── shifts.js           # Shift scheduling
 │   │   ├── sms.js              # Twilio inbound-SMS webhook + admin thread API
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
