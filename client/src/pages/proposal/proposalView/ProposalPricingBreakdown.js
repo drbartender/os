@@ -10,6 +10,7 @@ export default function ProposalPricingBreakdown({
   snapshot,
   balanceAmount,
   balanceDueDate,
+  fullPaymentRequired,
   showSignAndPay,
   showPayOnly,
 }) {
@@ -160,18 +161,27 @@ export default function ProposalPricingBreakdown({
       <div style={styles.section}>
         <h2 style={styles.sectionTitle}>Payment Terms</h2>
         <div style={styles.paymentSummary}>
-          <div style={styles.paymentRow}>
-            <span style={styles.paymentLabel}>Deposit Due at Signing</span>
-            <span style={styles.paymentValue}>{fmt(DEPOSIT_DOLLARS)}</span>
-          </div>
-          <div style={styles.paymentRow}>
-            <span style={styles.paymentLabel}>Remaining Balance</span>
-            <span style={styles.paymentValue}>{fmt(balanceAmount)}</span>
-          </div>
-          <div style={{ ...styles.paymentRow, borderBottom: 'none' }}>
-            <span style={styles.paymentLabel}>Balance Due By</span>
-            <span style={styles.paymentValue}>{formatDateShort(balanceDueDate)}</span>
-          </div>
+          {fullPaymentRequired ? (
+            <div style={{ ...styles.paymentRow, borderBottom: 'none' }}>
+              <span style={styles.paymentLabel}>Full Payment Due</span>
+              <span style={styles.paymentValue}>{snapshot ? fmt(snapshot.total) : '—'}</span>
+            </div>
+          ) : (
+            <>
+              <div style={styles.paymentRow}>
+                <span style={styles.paymentLabel}>Deposit Due at Signing</span>
+                <span style={styles.paymentValue}>{fmt(DEPOSIT_DOLLARS)}</span>
+              </div>
+              <div style={styles.paymentRow}>
+                <span style={styles.paymentLabel}>Remaining Balance</span>
+                <span style={styles.paymentValue}>{fmt(balanceAmount)}</span>
+              </div>
+              <div style={{ ...styles.paymentRow, borderBottom: 'none' }}>
+                <span style={styles.paymentLabel}>Balance Due By</span>
+                <span style={styles.paymentValue}>{formatDateShort(balanceDueDate)}</span>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Potion Planner Link */}

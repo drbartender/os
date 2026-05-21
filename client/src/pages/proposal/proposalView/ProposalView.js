@@ -365,6 +365,7 @@ export default function ProposalView() {
               snapshot={snapshot}
               balanceAmount={balanceAmount}
               balanceDueDate={balanceDueDate}
+              fullPaymentRequired={fullPaymentRequired}
               showSignAndPay={showSignAndPay}
               showPayOnly={showPayOnly}
             />
