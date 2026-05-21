@@ -339,6 +339,9 @@ export default function ProposalDetail() {
                     <dt>Location</dt><dd>{proposal.event_location || '—'}</dd>
                     <dt>Guests</dt><dd className="num">{proposal.guest_count || '—'}</dd>
                     {proposal.num_bars > 0 && <><dt>Portable bars</dt><dd className="num">{proposal.num_bars}</dd></>}
+                    {proposal.client_provides_glassware && (
+                      <><dt>Glassware</dt><dd>Client provides own glassware</dd></>
+                    )}
                   </dl>
                 </div>
               </div>

@@ -1765,6 +1765,7 @@ ALTER TABLE service_addons ADD CONSTRAINT service_addons_applies_to_check
   CHECK (applies_to IN ('byob', 'hosted', 'all', 'class'));
 
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS class_options JSONB;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_provides_glassware BOOLEAN DEFAULT false;
 
 -- Retire the deprecated "The Doctor's Orders" package.
 -- Soft-delete (keep history for any existing proposals), then hard-delete only if unreferenced.
