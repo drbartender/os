@@ -53,6 +53,7 @@ const { refreshUnlockedInvoices } = require('../utils/invoiceHelpers');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { getEventTypeLabel } = require('../utils/eventTypes');
+const { shouldSendImmediate } = require('../utils/messageSuppression');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError } = require('../utils/errors');
 const { ADMIN_URL, PUBLIC_SITE_URL, API_URL } = require('../utils/urls');
@@ -142,9 +143,22 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
   const selections = sanitizeSelections(req.body.selections);
   const paidSeparately = paid_separately === true;
 
-  // Check plan exists and is not already submitted
+  // Check plan exists and is not already submitted. JOIN proposals + clients
+  // so the post-commit suppression check (shouldSendImmediate) can see the
+  // proposal status and the client's comm-prefs / contact-status. Without the
+  // JOIN those columns are undefined and suppression is silently bypassed.
+  // LEFT JOINs keep behavior identical for plans with no linked proposal/client.
   const existing = await pool.query(
-    'SELECT id, status, proposal_id, client_name, client_email, event_type, event_type_custom FROM drink_plans WHERE token = $1',
+    `SELECT dp.id, dp.status, dp.proposal_id,
+            dp.client_name, dp.client_email,
+            dp.event_type, dp.event_type_custom,
+            p.status AS proposal_status,
+            c.id AS client_id,
+            c.communication_preferences, c.email_status, c.phone_status
+     FROM drink_plans dp
+     LEFT JOIN proposals p ON p.id = dp.proposal_id
+     LEFT JOIN clients c ON c.id = p.client_id
+     WHERE dp.token = $1`,
     [req.params.token]
   );
   if (!existing.rows[0]) throw new NotFoundError('This drink plan link is no longer valid');
@@ -338,26 +352,40 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
 
           // Capture data for post-commit notifications. Don't send inside the
           // transaction — a rollback after sending would leak misleading email.
+          // The client drink-plan-submitted confirmation fires UNCONDITIONALLY
+          // (spec section 3.8); the balance language is conditional on whether
+          // extras actually pushed the total up (`balanceChanged`).
           const amountPaid = Number(proposal.amount_paid) || 0;
-          if (amountPaid < snapshot.total) {
-            const addonNames = resolvedAddons.map(a => a.name);
-            if (addBarRental) addonNames.push('Portable Bar Rental');
-            pendingNotifications = {
-              proposal: {
-                id: proposal.id,
-                event_date: proposal.event_date,
-                event_type: existing.rows[0]?.event_type || proposal.event_type,
-                event_type_custom: existing.rows[0]?.event_type_custom || proposal.event_type_custom,
-                balance_due_date: proposal.balance_due_date,
-                prevTotal: Number(proposal.total_price) || 0,
-              },
-              snapshot,
-              amountPaid,
-              addonNames,
-              clientName: existing.rows[0]?.client_name || 'Client',
-              clientEmail: existing.rows[0]?.client_email || proposal.client_email,
-            };
-          }
+          const balanceChanged = snapshot.total > Number(proposal.total_price); // extras pushed total up
+          const addonNames = resolvedAddons.map(a => a.name);
+          if (addBarRental) addonNames.push('Portable Bar Rental');
+          pendingNotifications = {
+            proposal: {
+              id: proposal.id,
+              // `proposal.status` from the FOR-UPDATE SELECT * is the direct
+              // source; existing.rows[0].proposal_status (Step 3 JOIN) backstops it.
+              status: proposal.status || existing.rows[0]?.proposal_status,
+              event_date: proposal.event_date,
+              event_type: existing.rows[0]?.event_type || proposal.event_type,
+              event_type_custom: existing.rows[0]?.event_type_custom || proposal.event_type_custom,
+              balance_due_date: proposal.balance_due_date,
+              prevTotal: Number(proposal.total_price) || 0,
+            },
+            snapshot,
+            amountPaid,
+            addonNames,
+            clientName: existing.rows[0]?.client_name || 'Client',
+            clientEmail: existing.rows[0]?.client_email || proposal.client_email,
+            // Suppression rules: comm-prefs + email/phone status pulled by the
+            // joined `existing` SELECT in Step 3.
+            clientForCheck: {
+              communication_preferences: existing.rows[0]?.communication_preferences,
+              email_status: existing.rows[0]?.email_status,
+              phone_status: existing.rows[0]?.phone_status,
+            },
+            barOption: pkg && pkg.pricing_type === 'per_guest' ? 'hosted' : 'byob',
+            balanceChanged,
+          };
         }
       }
 
@@ -391,7 +419,9 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
     if (pendingNotifications) {
       const { proposal: pn, snapshot, amountPaid, addonNames, clientName, clientEmail } = pendingNotifications;
       const adminEmail = process.env.ADMIN_EMAIL;
-      if (adminEmail) {
+      // Admin heads-up stays throttled to balance-changing submits — a
+      // zero-impact addon submit (all package-covered) doesn't warrant a ping.
+      if (adminEmail && pendingNotifications.balanceChanged) {
         const daysUntil = pn.event_date
           ? Math.ceil((new Date(pn.event_date) - new Date()) / (1000 * 60 * 60 * 24))
           : null;
@@ -409,18 +439,33 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
         }).catch(emailErr => console.error('Admin notification email failed:', emailErr));
       }
       if (clientEmail) {
-        const extrasAmount = snapshot.total - pn.prevTotal;
-        const balanceDue = snapshot.total - amountPaid;
-        const tpl = emailTemplates.drinkPlanBalanceUpdate({
-          clientName,
-          eventTypeLabel: getEventTypeLabel({ event_type: pn.event_type, event_type_custom: pn.event_type_custom }),
-          extrasAmount,
-          newTotal: snapshot.total,
-          amountPaid,
-          balanceDue,
-          balanceDueDate: pn.balance_due_date,
+        // Always-fire drink-plan-submitted confirmation. Balance language is
+        // conditional on `balanceChanged`; the BYOB-vs-Hosted warning is driven
+        // by `barOption`. Respect suppression rules on the immediate send.
+        const { barOption, balanceChanged, clientForCheck } = pendingNotifications;
+        const sendCheck = await shouldSendImmediate({
+          proposal: { id: pn.id, status: pn.status || 'deposit_paid' },
+          client: clientForCheck,
+          channel: 'email',
         });
-        sendEmail({ to: clientEmail, ...tpl }).catch(emailErr => console.error('Client balance email failed:', emailErr));
+        if (!sendCheck.ok) {
+          console.log(`[drinkPlanSubmit] suppressed for proposal ${pn.id}: ${sendCheck.reason}`);
+        } else {
+          const extrasAmount = balanceChanged ? snapshot.total - pn.prevTotal : 0;
+          const balanceDue = balanceChanged ? snapshot.total - amountPaid : 0;
+          const tpl = emailTemplates.drinkPlanBalanceUpdate({
+            clientName,
+            eventTypeLabel: getEventTypeLabel({ event_type: pn.event_type, event_type_custom: pn.event_type_custom }),
+            barOption,
+            balanceChanged,
+            extrasAmount,
+            newTotal: snapshot.total,
+            amountPaid,
+            balanceDue,
+            balanceDueDate: pn.balance_due_date,
+          });
+          sendEmail({ to: clientEmail, ...tpl }).catch(emailErr => console.error('Client drink-plan confirmation email failed:', emailErr));
+        }
       }
     }
 
@@ -472,6 +517,60 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
   // Draft save silently skipped if plan was already submitted
   if (!result.rows[0] && newStatus === 'draft') {
     return res.json({ status: 'submitted', skipped: true });
+  }
+
+  // Always-fire drink-plan-submitted confirmation. Spec section 3.8: fires on
+  // every submission, with conditional balance language (false here: the fast
+  // path runs when no addons were added, so no balance shift).
+  if (newStatus === 'submitted' && result.rows[0]?.id) {
+    try {
+      const r = await pool.query(`
+        SELECT p.id, p.status AS proposal_status,
+               p.event_type, p.event_type_custom, p.balance_due_date,
+               p.total_price, p.amount_paid,
+               c.name AS client_name, c.email AS client_email,
+               c.communication_preferences, c.email_status, c.phone_status,
+               sp.pricing_type AS package_pricing_type
+        FROM drink_plans dp
+        LEFT JOIN proposals p ON p.id = dp.proposal_id
+        LEFT JOIN clients c ON c.id = p.client_id
+        LEFT JOIN service_packages sp ON sp.id = p.package_id
+        WHERE dp.id = $1
+        LIMIT 1
+      `, [result.rows[0].id]);
+      if (r.rows[0]?.client_email) {
+        const row = r.rows[0];
+        // Respect suppression rules on the immediate send.
+        const sendCheck = await shouldSendImmediate({
+          proposal: { id: row.id, status: row.proposal_status || 'deposit_paid' },
+          client: {
+            communication_preferences: row.communication_preferences,
+            email_status: row.email_status,
+            phone_status: row.phone_status,
+          },
+          channel: 'email',
+        });
+        if (!sendCheck.ok) {
+          console.log(`[drinkPlanSubmitFastPath] suppressed for plan ${result.rows[0].id}: ${sendCheck.reason}`);
+        } else {
+          const barOption = row.package_pricing_type === 'per_guest' ? 'hosted' : 'byob';
+          const tpl = emailTemplates.drinkPlanBalanceUpdate({
+            clientName: row.client_name || 'Client',
+            eventTypeLabel: getEventTypeLabel({ event_type: row.event_type, event_type_custom: row.event_type_custom }),
+            barOption,
+            balanceChanged: false,
+            extrasAmount: 0,
+            newTotal: Number(row.total_price) || 0,
+            amountPaid: Number(row.amount_paid) || 0,
+            balanceDue: 0,
+            balanceDueDate: row.balance_due_date,
+          });
+          sendEmail({ to: row.client_email, ...tpl }).catch(e => console.error('Drink-plan submit fast-path email failed:', e));
+        }
+      }
+    } catch (e) {
+      console.error('Drink-plan submit fast-path notification lookup failed (non-fatal):', e);
+    }
   }
 
   // Fast-path submit (no add-ons) also auto-generates the shopping list draft
@@ -970,8 +1069,21 @@ router.patch('/:id/shopping-list/approve', auth, requireAdminOrManager, asyncHan
 
   const plan = upd.rows[0];
 
-  // Notify the client. Best-effort — never fail the approval if email blows up.
-  if (plan.client_email && plan.token) {
+  // Hosted events: we do the shopping, not the client — so the
+  // shopping-list-ready email does not apply. BYOB events get the email.
+  const pkgRow = await pool.query(`
+    SELECT sp.pricing_type
+    FROM drink_plans dp
+    LEFT JOIN proposals p ON p.id = dp.proposal_id
+    LEFT JOIN service_packages sp ON sp.id = p.package_id
+    WHERE dp.id = $1
+  `, [plan.id]);
+  const isHosted = pkgRow.rows[0]?.pricing_type === 'per_guest';
+
+  if (isHosted) {
+    console.log(`[shoppingListReady] hosted event, skipping client email for plan ${plan.id}`);
+  } else if (plan.client_email && plan.token) {
+    // Notify the client. Best-effort — never fail the approval if email blows up.
     const shoppingListUrl = `${PUBLIC_SITE_URL}/shopping-list/${plan.token}`;
     const eventTypeLabel = getEventTypeLabel({
       event_type: plan.event_type,
