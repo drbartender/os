@@ -488,4 +488,4 @@ function buildGeneratorInputFromConsult(consult, eventCtx, resolvedSigs = [], re
   };
 }
 
-module.exports = { generateShoppingList, getBottlesPerSyrup, buildGeneratorInputFromConsult };
+module.exports = { generateShoppingList, getBottlesPerSyrup, buildGeneratorInputFromConsult, BASIC_MIXERS, GARNISHES };
