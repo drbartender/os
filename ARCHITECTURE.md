@@ -712,6 +712,8 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - Partial index `idx_scheduled_messages_pending(scheduled_for) WHERE status = 'pending'` keeps worker queue scans cheap as the table grows.
 - Lookup indexes on `(entity_type, entity_id)` and `(recipient_type, recipient_id)` for cancellation (e.g. proposal accepted, cancel pending reminders) and per-recipient history.
 
+*Scheduled-message dispatcher:* `server/utils/scheduledMessageDispatcher.js` registers the `message_dispatcher` scheduler, which runs every 5 minutes. Each tick drains due `pending` rows from `scheduled_messages`, applies the shared suppression rules (archive / comm-prefs / bad-contact), and dispatches each row to its registered per-message-type handler (currently the money-path balance reminders). Rows are wired in by `server/utils/messageScheduling.js` (`scheduleMessage`, idempotent insert). Gated by `RUN_MESSAGE_DISPATCHER_SCHEDULER` (suppressed by the global `RUN_SCHEDULERS=false`).
+
 **scheduler_health** — Heartbeat table for the Automated Communication Foundation schedulers. Each scheduler writes its `last_run_at` on every tick; a monitoring loop alerts via Sentry when any scheduler hasn't checked in within 2x its expected interval.
 - `scheduler_name` TEXT PRIMARY KEY — stable identifier (e.g. `proposal_reminders`, `shift_reminders`, `client_messages_dispatcher`)
 - `last_run_at` TIMESTAMPTZ NOT NULL — wall-clock of the most recent tick
