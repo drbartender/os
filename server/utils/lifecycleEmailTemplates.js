@@ -275,21 +275,50 @@ function shoppingListReady({ clientName, eventTypeLabel = 'event', shoppingListU
   };
 }
 
-// Placeholder — the real post-consult orientation email is implemented in a
-// later Plan 2b task. Declared here now so the export list stays stable and an
-// accidental call returns a valid { subject, html, text } shape instead of
-// crashing. Do NOT build the real body here.
-function postConsultClient({ clientName, eventTypeLabel = 'event' } = {}) {
+/**
+ * Sent when admin clicks "complete" / "save" on consult notes in
+ * drink_plans.consult_selections (transition: consult_filled_at NULL to NOW()).
+ * Renders a recap of the drinks captured during the consult so the client
+ * has a written record of what they agreed to, plus a one-line next-step
+ * pointer.
+ *
+ * BYOB events use "We'll send your shopping list shortly."
+ * Hosted events use "Your bartender will prep based on this."
+ * Caller is responsible for picking the right next-step line.
+ */
+function postConsultClient({
+  clientName,
+  eventTypeLabel = 'event',
+  formattedEventDate,
+  drinkRecapLines,
+  nextStepLine,
+}) {
   const name = clientName || 'there';
+  const list = Array.isArray(drinkRecapLines) ? drinkRecapLines : [];
+  const recapHtml = list.length
+    ? `<ul style="line-height:1.7;color:${BRAND.primary};padding-left:1.25rem;">${list.map(l => `<li>${esc(l)}</li>`).join('')}</ul>`
+    : `<p style="color:${BRAND.secondary};font-style:italic;">(notes are on file; reach out if you'd like the full list)</p>`;
+
+  const dateSuffix = formattedEventDate ? ` on ${formattedEventDate}` : '';
+
   return {
-    subject: `Following up on your ${eventTypeLabel} — Dr. Bartender`,
+    subject: `Drink plan recap for your ${eventTypeLabel}`,
     html: wrapEmail(`
-      <h2 style="color:${BRAND.primary};margin-top:0;">Thanks for Chatting</h2>
+      <h2 style="color:${BRAND.primary};margin-top:0;">Drink plan recap</h2>
       <p>Hi ${esc(name)},</p>
-      <p>We'll be in touch with next steps for your <strong>${esc(eventTypeLabel)}</strong>.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Great talking through your drink plan for your <strong>${esc(eventTypeLabel)}</strong>${esc(dateSuffix)}. Here's what we landed on:</p>
+      ${recapHtml}
+      ${nextStepLine ? `<p>${esc(nextStepLine)}</p>` : ''}
+      <p style="font-size:14px;color:${BRAND.secondary};">Let me know if anything needs to change, just reply to this email.</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, thanks for chatting about your ${eventTypeLabel}. We'll be in touch with next steps. — The Dr. Bartender Team`,
+    text: [
+      `Hi ${name}, great talking through your drink plan for your ${eventTypeLabel}${dateSuffix}.`,
+      list.length ? 'Here is what we landed on:' : null,
+      ...list,
+      nextStepLine || null,
+      'Cheers, Dallas',
+    ].filter(Boolean).join('\n'),
   };
 }
 
