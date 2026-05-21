@@ -204,28 +204,57 @@ function drinkPlanLink({ clientName, eventTypeLabel = 'event', planUrl }) {
   };
 }
 
-function drinkPlanBalanceUpdate({ clientName, eventTypeLabel = 'event', extrasAmount, newTotal, amountPaid, balanceDue, balanceDueDate }) {
+function drinkPlanBalanceUpdate({
+  clientName,
+  eventTypeLabel = 'event',
+  barOption,
+  balanceChanged,
+  extrasAmount,
+  newTotal,
+  amountPaid,
+  balanceDue,
+  balanceDueDate,
+}) {
   const name = clientName || 'there';
   const dueDate = balanceDueDate
     ? new Date(balanceDueDate).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' })
-    : 'before your event';
-  return {
-    subject: `Drink Plan Submitted — Updated Balance for your ${eventTypeLabel}`,
-    html: wrapEmail(`
-      <h2 style="color:${BRAND.primary};margin-top:0;">Your Drink Plan is In!</h2>
-      <p>Hi ${name},</p>
-      <p>Thank you for submitting your drink plan for your <strong>${eventTypeLabel}</strong>! Your selections have been added to your event.</p>
+    : null;
+
+  const balanceTable = balanceChanged
+    ? `
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
         <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Extras Added</td><td style="padding:8px 12px;text-align:right;font-weight:bold;">$${Number(extrasAmount).toFixed(2)}</td></tr>
         <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Updated Event Total</td><td style="padding:8px 12px;text-align:right;font-weight:bold;">$${Number(newTotal).toFixed(2)}</td></tr>
         <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Amount Paid</td><td style="padding:8px 12px;text-align:right;">$${Number(amountPaid).toFixed(2)}</td></tr>
         <tr><td style="padding:8px 12px;color:${BRAND.primary};font-weight:bold;">Remaining Balance</td><td style="padding:8px 12px;text-align:right;font-weight:bold;color:${BRAND.primary};">$${Number(balanceDue).toFixed(2)}</td></tr>
       </table>
-      <p>Your remaining balance of <strong>$${Number(balanceDue).toFixed(2)}</strong> is due by <strong>${dueDate}</strong>.</p>
-      <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions about your balance or drink plan, just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      ${dueDate ? `<p>Your remaining balance of <strong>$${Number(balanceDue).toFixed(2)}</strong> is due by <strong>${esc(dueDate)}</strong>.</p>` : ''}
+    `
+    : '';
+
+  // BYOB-only freshness/return-window warning. Hosted events skip this entirely;
+  // we do the shopping. Per spec section 7.6.
+  const shoppingWarning = barOption === 'byob'
+    ? `<p>We'll send your shopping list as soon as it's ready. When it lands, our recommendation is to hold off on the actual shopping until closer to your event date. That keeps ingredients at peak freshness and any unused items stay within most stores' return windows.</p>`
+    : '';
+
+  return {
+    subject: `Got your drink list for your ${eventTypeLabel}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Got your drink list!</h2>
+      <p>Hi ${esc(name)},</p>
+      <p>Got your drink list. We're prepping for your <strong>${esc(eventTypeLabel)}</strong>.</p>
+      ${shoppingWarning}
+      ${balanceTable}
+      <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions about your drink plan or balance, just reply to this email.</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your drink plan for your ${eventTypeLabel} has been submitted! Extras added: $${Number(extrasAmount).toFixed(2)}. Updated total: $${Number(newTotal).toFixed(2)}. Amount paid: $${Number(amountPaid).toFixed(2)}. Balance due: $${Number(balanceDue).toFixed(2)} by ${dueDate}. — The Dr. Bartender Team`,
+    text: [
+      `Hi ${name}, got your drink list for your ${eventTypeLabel}.`,
+      barOption === 'byob' ? "We'll send your shopping list as soon as it's ready. Best to hold off on actual shopping until closer to your event date for freshness and return windows." : null,
+      balanceChanged ? `Updated total: $${Number(newTotal).toFixed(2)}. Amount paid: $${Number(amountPaid).toFixed(2)}. Balance due: $${Number(balanceDue).toFixed(2)}${dueDate ? ` by ${dueDate}` : ''}.` : null,
+      'Cheers, Dallas',
+    ].filter(Boolean).join('\n'),
   };
 }
 
