@@ -1,5 +1,4 @@
 const { pool } = require('../db');
-const { scheduleMessage } = require('./messageScheduling');
 const { resolveEventTimezone } = require('./eventTimezone');
 const { getHandlerMeta } = require('./scheduledMessageDispatcher');
 
@@ -193,9 +192,19 @@ async function schedulePreEventReminders(proposalId, executor) {
 }
 
 /**
- * Idempotent insert helper. Wraps `scheduleMessage` but first checks for an
- * existing pending row with the same (entity, message_type, recipient, channel).
- * Returns without inserting if one already exists.
+ * Idempotent insert helper. First checks for an existing pending/sent/deferred
+ * row with the same (entity, message_type, recipient, channel) and returns
+ * without inserting if one already exists. Otherwise inserts the row.
+ *
+ * The INSERT runs DIRECTLY on the passed `executor` (pg client OR pool) so it
+ * joins the caller's open transaction when one is supplied — `rescheduleProposalInTx`
+ * relies on the new long-lead rows landing inside its transaction. Delegating to
+ * `scheduleMessage` would route the INSERT through the module-level `pool`,
+ * escaping the caller's transaction and breaking atomicity.
+ *
+ * The INSERT mirrors `scheduleMessage`'s statement exactly (same column list and
+ * partial-unique `ON CONFLICT ... DO NOTHING` guard) so the two paths can never
+ * disagree on shape.
  *
  * @param {{ query: Function }} executor - pg client or pool
  * @param {object} args - insert args
@@ -214,19 +223,17 @@ async function insertIfMissing(executor, {
     [entityType, entityId, messageType, recipientType, recipientId, channel]
   );
   if (existing.rows.length > 0) return;
-  // `scheduleMessage` (Plan 2a) accepts an optional executor too — if it
-  // doesn't yet, fall through to the pool-based path. When it does (Plan 2a
-  // ships with the contract), pass the executor through so the insert lands
-  // in the caller's transaction.
-  if (scheduleMessage.length >= 2) {
-    await scheduleMessage({
-      entityType, entityId, messageType, recipientType, recipientId, channel, scheduledFor,
-    }, executor);
-  } else {
-    await scheduleMessage({
-      entityType, entityId, messageType, recipientType, recipientId, channel, scheduledFor,
-    });
-  }
+  // INSERT on `executor` (not `pool`) so the row joins the caller's transaction
+  // when one is open. ON CONFLICT mirrors scheduleMessage's partial-unique guard.
+  await executor.query(
+    `INSERT INTO scheduled_messages
+       (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
+       WHERE status = 'pending'
+     DO NOTHING`,
+    [entityId, entityType, messageType, recipientType, recipientId, channel, scheduledFor]
+  );
 }
 
 module.exports = {

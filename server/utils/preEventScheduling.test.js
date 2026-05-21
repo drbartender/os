@@ -20,8 +20,12 @@ before(() => {
 });
 
 beforeEach(async () => {
-  await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id < 0");
-  await pool.query("DELETE FROM proposals WHERE id < 0");
+  // Scope deletes to THIS file's own fixture IDs only. `node --test` runs test
+  // files in parallel against the shared dev DB, so a blanket `id < 0` delete
+  // would wipe sibling files' negative-ID fixtures (e.g. rescheduleProposal.test.js
+  // uses proposal id -202) and cause non-deterministic cross-file failures.
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1", [TEST_PROPOSAL_ID]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [TEST_PROPOSAL_ID]);
   await pool.query(
     `INSERT INTO clients (id, name, email, phone) VALUES ($1, 'Test Client', 't@example.com', '+15551112222')
      ON CONFLICT (id) DO NOTHING`,
@@ -36,8 +40,10 @@ afterEach(async () => {
 });
 
 after(async () => {
-  await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id < 0");
-  await pool.query("DELETE FROM proposals WHERE id < 0");
+  // Scoped to this file's own fixture IDs — see beforeEach note above.
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1", [TEST_PROPOSAL_ID]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [TEST_PROPOSAL_ID]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [TEST_CLIENT_ID]);
   await pool.end();
 });
 

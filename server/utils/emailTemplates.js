@@ -892,12 +892,19 @@ function longLeadT30RecapClient({
   shoppingListUrl, barOption,
 }) {
   const first = clientFirstName || clientName || 'there';
-  const shoppingBlockHtml = barOption === 'byob'
-    ? `<p><strong>Shopping list:</strong> <a href="${esc(shoppingListUrl)}">${esc(shoppingListUrl)}</a></p>
-       <p>Reminder: best to do the actual shopping in the days leading up to the event so things stay fresh and unused items are still returnable.</p>`
+  // BYOB recap includes the shopping-list reminder; the link line renders only
+  // when shoppingListUrl is truthy (mirrors how eventWeekReminderClient guards
+  // proposalUrl) so an empty value never emits <a href="">. The freshness
+  // reminder still reads sensibly without the link.
+  const shoppingLinkHtml = shoppingListUrl
+    ? `<p><strong>Shopping list:</strong> <a href="${esc(shoppingListUrl)}">${esc(shoppingListUrl)}</a></p>\n       `
     : '';
+  const shoppingBlockHtml = barOption === 'byob'
+    ? `${shoppingLinkHtml}<p>Reminder: best to do the actual shopping in the days leading up to the event so things stay fresh and unused items are still returnable.</p>`
+    : '';
+  const shoppingLinkText = shoppingListUrl ? `\nShopping list: ${shoppingListUrl}\n` : '';
   const shoppingBlockText = barOption === 'byob'
-    ? `\nShopping list: ${shoppingListUrl}\n\nReminder: best to do the actual shopping in the days leading up to the event so things stay fresh and unused items are still returnable.\n`
+    ? `${shoppingLinkText}\nReminder: best to do the actual shopping in the days leading up to the event so things stay fresh and unused items are still returnable.\n`
     : '';
   return {
     subject: `Three weeks out from your ${eventDateLocal} event`,
