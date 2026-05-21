@@ -63,6 +63,12 @@ function git(args) {
     cwd: ROOT,
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
+    // stdin ignored, stdout captured, stderr suppressed. A `git show HEAD:<path>`
+    // miss for a newly added file is an expected non-zero exit (countHeadOrZero
+    // catches it and returns 0); git's raw "fatal:" line must not leak into the
+    // pre-commit hook output. Real failures still throw and are reported by the
+    // top-level catch with a clean message.
+    stdio: ['ignore', 'pipe', 'ignore'],
   });
 }
 

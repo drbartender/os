@@ -1,4 +1,4 @@
 #!/usr/bin/env sh
 bash scripts/check-docs-drift.sh
-sh .husky/check-file-size.sh
+node scripts/check-file-size.js --staged || exit 1
 npx lint-staged

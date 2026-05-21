@@ -262,8 +262,7 @@ dr-bartender/
 │   └── package.json            # React deps, proxy: localhost:5000
 ├── scripts/                    # Build scripts (build-testing-guide.js, check-file-size.js, testing-guide-template.html)
 ├── .claude/agents/             # Claude Code review agents (7 agents)
-├── .husky/pre-commit           # Pre-commit hook (docs-drift check + file-size guard + lint-staged)
-├── .husky/check-file-size.sh   # Pre-commit guard — warns at 700 lines, blocks at 1000
+├── .husky/pre-commit           # Pre-commit hook (docs-drift check + file-size ratchet + lint-staged)
 ├── .env.example                # Environment variable template
 ├── eslint.config.mjs           # ESLint flat config + security plugin
 ├── package.json                # Server deps + npm scripts
@@ -283,6 +282,7 @@ dr-bartender/
 | `npm run lint` | Run ESLint on all server code |
 | `npm run lint:fix` | Run ESLint with auto-fix on server code |
 | `npm run audit:check` | Check for known dependency vulnerabilities |
+| `npm run check:filesize` | Report every source file by line-count zone (RED over 1000, YELLOW 700-1000) |
 | `npm run build:testing-guide` | Build `client/public/testing-guide.html` from `TESTING.md` via `scripts/build-testing-guide.js` |
 | `npm run optimize:assets` | One-shot asset optimization (PNG→WebP at tile size, TTF→WOFF2). Idempotent — skips already-converted outputs. |
 
