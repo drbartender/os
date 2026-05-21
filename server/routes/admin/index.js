@@ -12,5 +12,6 @@ router.use('/', require('./blog'));
 router.use('/', require('./settings'));
 router.use('/', require('./hiring'));
 router.use('/', require('./labratBugs'));
+router.use('/', require('./search'));
 
 module.exports = router;

@@ -187,6 +187,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | POST | `/applications/:userId/reminder` | Admin | Send paperwork-reminder email (24h cooldown per applicant) |
 | GET | `/hiring/summary` | Admin | KPI strip: new apps 7d / need-to-schedule / stalled / in-pipeline |
 | GET | `/hiring/search` | Admin | Cross-state applicant search (Applied/Interview/Onboarding/Active/Rejected/Unfinished) |
+| GET | `/search` | Admin/Manager | Global record search across clients, proposals, events, staff (matches partial name / email / phone) |
 | DELETE | `/notes/:noteId` | Admin | Delete interview note |
 | GET | `/active-staff` | Staffing | Paginated list of onboarded staff |
 | GET | `/managers` | Admin | List all managers |

@@ -11510,6 +11510,7 @@ html[data-app="admin-os"] .palette-item {
 html[data-app="admin-os"] .palette-item:hover, html[data-app="admin-os"] .palette-item.active { background: var(--row-active); }
 html[data-app="admin-os"] .palette-item svg { width: 14px; height: 14px; color: var(--ink-3); }
 html[data-app="admin-os"] .palette-item .shortcut { margin-left: auto; display: flex; gap: 3px; }
+html[data-app="admin-os"] .palette-item-sub { font-size: 11.5px; color: var(--ink-4); margin-top: 1px; }
 
 /* ==========================================================================
    Tweaks panel

@@ -122,7 +122,8 @@ dr-bartender/
 │   │   │   ├── managers.js     # /managers CRUD
 │   │   │   ├── blog.js         # /blog admin endpoints
 │   │   │   ├── settings.js     # /settings + /test-email + /backfill-geocodes + /badge-counts (incl. open_tester_bugs)
-│   │   │   └── labratBugs.js   # /tester-bugs (list + PATCH triage state for the LabRatBugsPage)
+│   │   │   ├── labratBugs.js   # /tester-bugs (list + PATCH triage state for the LabRatBugsPage)
+│   │   │   └── search.js       # /search — global record search across clients/proposals/events/staff
 │   │   ├── agreement.js        # Contractor agreement + digital signature
 │   │   ├── application.js      # Contractor application form
 │   │   ├── auth.js             # POST /register, POST /login, GET /me
@@ -324,6 +325,7 @@ dr-bartender/
 - Configurable algorithm weights and max distance in Settings > Auto-Assign
 
 ### Admin Dashboard
+- **Global Search**: A `Cmd/Ctrl+K` command palette on every admin page searches clients, proposals, events, and staff by partial name, phone number, or email, and jumps straight to the matching record.
 - **Staffing**: Application review, hire/reject, interview notes, user management, SMS messaging (compose, recipient picker, shift invitation templates, grouped message history)
 - **Proposals**: Create, price, send, track views/signatures — paid proposals automatically move to Events
 - **Partial Refunds**: Admin partial refunds via Stripe — Approach-A `total_price` correction + audit ledger (`proposal_refunds`), idempotent `charge.refunded` webhook-backstopped
