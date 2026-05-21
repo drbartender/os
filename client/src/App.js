@@ -49,6 +49,7 @@ const ProposalView = lazy(() => import('./pages/proposal/proposalView/ProposalVi
 const InvoicePage = lazy(() => import('./pages/invoice/InvoicePage'));
 const TipPage = lazy(() => import('./pages/public/TipPage'));
 const TipPageThanks = lazy(() => import('./pages/public/TipPageThanks'));
+const FeedbackPage = lazy(() => import('./pages/public/FeedbackPage'));
 
 // Lazy-loaded: onboarding, staff portal, admin shell — not needed on public marketing site
 const Welcome = lazy(() => import('./pages/Welcome'));
@@ -224,6 +225,7 @@ function PublicWebsiteRoutes() {
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
         <Route path="/tip/:token" element={<TipPage />} />
         <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
+        <Route path="/feedback/:token" element={<FeedbackPage />} />
         <Route path="/labnotes" element={<Blog />} />
         <Route path="/labnotes/:slug" element={<BlogPost />} />
         <Route path="/login" element={<ClientLogin />} />
@@ -282,6 +284,7 @@ function HiringRoutes() {
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
         <Route path="/tip/:token" element={<TipPage />} />
         <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
+        <Route path="/feedback/:token" element={<FeedbackPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
@@ -324,6 +327,7 @@ function StaffSiteRoutes() {
         <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
         <Route path="/tip/:token" element={<TipPage />} />
         <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
+        <Route path="/feedback/:token" element={<FeedbackPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
@@ -354,6 +358,7 @@ function AppRoutes() {
       <Route path="/shopping-list/:token" element={<ClientShoppingList />} />
       <Route path="/tip/:token" element={<TipPage />} />
       <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
+      <Route path="/feedback/:token" element={<FeedbackPage />} />
       {/* Website accessible on admin domain for preview */}
       <Route path="/website" element={<HomePage />} />
       <Route path="/services" element={<ServicesPage />} />

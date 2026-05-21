@@ -1,0 +1,114 @@
+.feedback-page {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 48px 24px;
+  font-family: Georgia, serif;
+  color: #3b2314;
+}
+
+.feedback-hero {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.feedback-hero .kicker {
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-size: 12px;
+  color: #6b4226;
+  margin: 0 0 8px;
+}
+
+.feedback-hero h1 {
+  font-size: 28px;
+  margin: 0 0 8px;
+  line-height: 1.2;
+}
+
+.feedback-hero .hero-sub {
+  color: #6b4226;
+  margin: 0;
+}
+
+.rating-row {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 24px 0;
+}
+
+.star-btn {
+  background: none;
+  border: none;
+  font-size: 44px;
+  cursor: pointer;
+  color: #c0a78f;
+  padding: 4px 8px;
+  transition: transform 120ms ease, color 120ms ease;
+}
+
+.star-btn.active {
+  color: #c17d3c;
+}
+
+.star-btn:hover:not(:disabled) {
+  transform: scale(1.12);
+}
+
+.star-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.low-rating-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.low-rating-form label {
+  font-weight: bold;
+  color: #6b4226;
+}
+
+.low-rating-form textarea {
+  border: 1px solid #d4c5b8;
+  border-radius: 6px;
+  padding: 12px;
+  font-family: inherit;
+  font-size: 15px;
+  resize: vertical;
+}
+
+.low-rating-form button {
+  background: #3b2314;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 14px 24px;
+  font-weight: bold;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.low-rating-form button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.feedback-foot {
+  text-align: center;
+  margin-top: 64px;
+  color: #6b4226;
+  font-size: 13px;
+}
+
+.feedback-foot p {
+  margin: 4px 0;
+}
+
+.feedback-foot .meta {
+  font-size: 11px;
+  opacity: 0.7;
+}
