@@ -386,6 +386,10 @@ function buildPlannerLists(eventData, bottles) {
 }
 
 function generateShoppingList(eventData) {
+  // Lazy require breaks a circular dependency: shoppingListAddonCoverage.js
+  // requires this module for BASIC_MIXERS/GARNISHES, so a top-level require
+  // here would hand it this module's still-incomplete exports.
+  const { computeStripSet } = require('./shoppingListAddonCoverage');
   const {
     clientName,
     guestCount,
@@ -409,14 +413,25 @@ function generateShoppingList(eventData) {
 
   addSelfProvidedSyrups(syrupSelfProvided, syrupNamesById, everythingElse, guestCount);
 
+  // Final pass: subtract items covered by static BYOB-support add-ons.
+  // See server/utils/shoppingListAddonCoverage.js. Empty strip set when
+  // no covering add-ons are active, in which case this is a no-op.
+  const stripSet = computeStripSet({ activeAddonSlugs: eventData.activeAddonSlugs });
+  const filteredLiquorBeerWine = stripSet.size > 0
+    ? liquorBeerWine.filter((i) => !stripSet.has(i.item))
+    : liquorBeerWine;
+  const filteredEverythingElse = stripSet.size > 0
+    ? everythingElse.filter((i) => !stripSet.has(i.item))
+    : everythingElse;
+
   return {
     clientName,
     guestCount,
     eventDate,
     notes,
     signatureCocktailNames: signatureCocktails.map(c => c.name),
-    liquorBeerWine,
-    everythingElse,
+    liquorBeerWine: filteredLiquorBeerWine,
+    everythingElse: filteredEverythingElse,
     serviceStyle,
     beerSelections,
     wineSelections,
