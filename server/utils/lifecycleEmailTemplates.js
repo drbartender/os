@@ -261,16 +261,17 @@ function drinkPlanBalanceUpdate({
 function shoppingListReady({ clientName, eventTypeLabel = 'event', shoppingListUrl }) {
   const name = clientName || 'there';
   return {
-    subject: `Your shopping list is ready — Dr. Bartender`,
+    subject: `Your shopping list for your ${eventTypeLabel}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Shopping List is Ready</h2>
       <p>Hi ${esc(name)},</p>
-      <p>We've finalized the shopping list for your <strong>${esc(eventTypeLabel)}</strong>. Bring this with you when you stock up — quantities are scaled to your guest count.</p>
-      ${ctaButton(shoppingListUrl, 'View Shopping List')}
-      <p style="font-size:14px;color:${BRAND.secondary};">Have questions or need to adjust anything? Just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
+      <p>Your shopping list for your <strong>${esc(eventTypeLabel)}</strong> is ready.</p>
+      ${ctaButton(shoppingListUrl, 'View shopping list')}
+      <p>A heads up: best to do the actual shopping in the days leading up to your event so ingredients stay fresh and any unused items stay within most stores' return windows. No need to rush out today.</p>
+      <p style="font-size:14px;color:${BRAND.secondary};">Reach out with any questions, just reply to this email.</p>
+      <p>Cheers, Dallas</p>
     `),
-    text: `Hi ${name}, your shopping list for your ${eventTypeLabel} is ready. View it here: ${shoppingListUrl}`,
+    text: `Hi ${name}, your shopping list for your ${eventTypeLabel} is ready: ${shoppingListUrl}. A heads up: best to do the actual shopping in the days leading up to your event so ingredients stay fresh and unused items stay within return windows. Cheers, Dallas`,
   };
 }
 
