@@ -23,6 +23,7 @@ import NumberStepper from '../../components/NumberStepper';
 import Icon from '../../components/adminos/Icon';
 import { fmt$, fmt$2dp, fmtDateFull } from '../../components/adminos/format';
 import PackageIncludesModal from '../../components/adminos/PackageIncludesModal';
+import { AddonQtyStepper, BundleBadge, clampAddonQty } from '../../components/AddonControls';
 
 const SOURCES = [
   { value: 'direct',    label: 'Direct' },
@@ -867,47 +868,6 @@ function PackageSection({ form, packages, update, merge, fieldErrors }) {
 
 // ─── Add-on section ─────────────────────────────────────────────────────────
 
-// Greyed bundle badge — shared by selected rows and the quick-add dropdown.
-const BundleBadge = ({ text }) => (
-  <span
-    className="tiny mono"
-    style={{
-      marginLeft: 8, padding: '1px 6px', borderRadius: 3,
-      background: 'var(--bg-2)', border: '1px solid var(--line-2)',
-      color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.04em',
-      whiteSpace: 'nowrap',
-    }}
-  >
-    {text}
-  </span>
-);
-
-// Inline 1–10 quantity stepper for quantity-capable selected add-ons.
-const AddonQtyStepper = ({ value, onChange }) => {
-  const qty = value || 1;
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 10 }}>
-      <button
-        type="button"
-        className="btn btn-secondary btn-sm"
-        style={{ width: 20, height: 18, padding: 0 }}
-        disabled={qty <= 1}
-        onClick={() => onChange(qty - 1)}
-        aria-label="Decrease quantity"
-      >−</button>
-      <span className="num tiny" style={{ minWidth: 14, textAlign: 'center', color: 'var(--ink-1)' }}>{qty}</span>
-      <button
-        type="button"
-        className="btn btn-secondary btn-sm"
-        style={{ width: 20, height: 18, padding: 0 }}
-        disabled={qty >= 10}
-        onClick={() => onChange(qty + 1)}
-        aria-label="Increase quantity"
-      >+</button>
-    </span>
-  );
-};
-
 function AddonSection({ form, addons, toggleAddon, setForm, update, preview, isIncludedMap, isUnavailableMap }) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
@@ -924,7 +884,7 @@ function AddonSection({ form, addons, toggleAddon, setForm, update, preview, isI
 
   const setAddonQty = (id, n) => setForm(f => ({
     ...f,
-    addon_quantities: { ...f.addon_quantities, [id]: Math.min(10, Math.max(1, n)) },
+    addon_quantities: { ...f.addon_quantities, [id]: clampAddonQty(n) },
   }));
 
   // Lookup snapshot for actual computed total per addon

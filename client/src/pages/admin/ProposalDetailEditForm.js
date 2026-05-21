@@ -11,7 +11,9 @@ import TimePicker from '../../components/TimePicker';
 import NumberStepper from '../../components/NumberStepper';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import Icon from '../../components/adminos/Icon';
+import { AddonQtyStepper, clampAddonQty } from '../../components/AddonControls';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
+import { isQuantityCapable } from '../../utils/proposalRules';
 import { formatSetupTime } from '../../utils/setupTime';
 
 // Self-contained edit form for ProposalDetail. Owns:
@@ -41,6 +43,21 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
     ]).then(([pkgRes, addonRes]) => {
       setPackages(pkgRes.data);
       setAddons(addonRes.data);
+      // Seed addon_quantities once the catalog is in hand — recovering the raw
+      // 1–10 stepper count needs each catalog row's slug/billing_type/
+      // minimum_hours (proposal_addons.quantity stores a transformed value).
+      // Also re-baseline initialRef to the seeded form so this fill alone does
+      // NOT trip the dirty/leave-confirm guard. f.addon_quantities is spread
+      // last so a (rare) pre-catalog stepper edit is preserved.
+      const recovered = recoverAddonQuantities(proposal.addons, addonRes.data, {
+        durationHours: proposal.event_duration_hours,
+        guestCount: proposal.guest_count,
+      });
+      initialRef.current = JSON.stringify({
+        ...initialFormFromProposal(proposal),
+        addon_quantities: recovered,
+      });
+      setEditForm(f => ({ ...f, addon_quantities: { ...recovered, ...f.addon_quantities } }));
     }).catch(() => {
       toast.error('Failed to load packages. Try refreshing.');
       setError('Failed to load packages/addons. Please try again.');
@@ -61,6 +78,7 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
         num_bars: Number(editForm.num_bars) || 0,
         addon_ids: (editForm.addon_ids || []).map(Number),
         addon_variants: editForm.addon_variants || {},
+        addon_quantities: editForm.addon_quantities || {},
         syrup_selections: editForm.syrup_selections || [],
         adjustments: editForm.adjustments || [],
         total_price_override: editForm.total_price_override,
@@ -79,6 +97,7 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
     editForm.num_bars,
     editForm.addon_ids,
     editForm.addon_variants,
+    editForm.addon_quantities,
     editForm.syrup_selections,
     editForm.adjustments,
     editForm.total_price_override,
@@ -125,6 +144,11 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
       };
     });
   };
+
+  const setAddonQty = (id, n) => setEditForm(f => ({
+    ...f,
+    addon_quantities: { ...f.addon_quantities, [id]: clampAddonQty(n) },
+  }));
 
   const addAdjustment = (type) => {
     setEditForm(f => ({
@@ -177,6 +201,7 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
         num_bars: Number(editForm.num_bars) || 0,
         addon_ids: (editForm.addon_ids || []).map(Number),
         addon_variants: editForm.addon_variants || {},
+        addon_quantities: editForm.addon_quantities || {},
         syrup_selections: editForm.syrup_selections || [],
         adjustments: editForm.adjustments || [],
         total_price_override: editForm.total_price_override,
@@ -432,6 +457,22 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
                         Non-alcoholic bubbles
                       </label>
                     )}
+                    {/* Quantity stepper — quantity-capable add-ons only (extra
+                        bartenders, barback, etc.). A sibling div (not nested in
+                        the row <label>) so the +/− buttons don't toggle the
+                        checkbox. */}
+                    {isQuantityCapable(addon) && checked && (
+                      <div style={{
+                        display: 'flex', alignItems: 'center', marginLeft: 36,
+                        padding: '4px 8px', fontSize: 12.5, color: 'var(--ink-2)',
+                      }}>
+                        <span>Quantity</span>
+                        <AddonQtyStepper
+                          value={(editForm.addon_quantities || {})[addon.id]}
+                          onChange={(n) => setAddonQty(addon.id, n)}
+                        />
+                      </div>
+                    )}
                   </React.Fragment>
                 );
               })}
@@ -564,6 +605,12 @@ export function initialFormFromProposal(p) {
     num_bars: p.num_bars || 0,
     addon_ids: currentAddonIds,
     addon_variants: currentAddonVariants,
+    // Raw 1–10 stepper counts for quantity-capable add-ons. Seeded empty here
+    // and filled by recoverAddonQuantities() once the add-on catalog loads —
+    // the persisted proposal_addons.quantity is a TRANSFORMED value (hours ×
+    // count for per_hour, guest count for per_guest), so recovering the raw
+    // stepper count needs the catalog row's slug/billing_type/minimum_hours.
+    addon_quantities: {},
     syrup_selections: snapshot.syrups?.selections || [],
     adjustments: p.adjustments || [],
     total_price_override: p.total_price_override ?? null,
@@ -571,4 +618,53 @@ export function initialFormFromProposal(p) {
     // 60 else). A number is an explicit override. Inherited by EventEditForm.
     setup_minutes_before: p.setup_minutes_before ?? '',
   };
+}
+
+// Recover the raw 1–10 stepper count for each quantity-capable add-on on a
+// loaded proposal. proposal_addons.quantity is NOT the raw count — pricingEngine
+// transforms it on the way in:
+//   - additional-bartender : persisted quantity = durationHours × count
+//   - per_hour (barback,
+//     banquet-server)      : persisted quantity = effectiveHours × count,
+//                            effectiveHours = max(durationHours, minimum_hours)
+//   - per_guest (pre-batched
+//     -mocktail)           : persisted quantity = guestCount; the count is
+//                            folded into line_total only (= guestCount×rate×count)
+// So this inverts each transform using the catalog row (slug, billing_type,
+// minimum_hours, rate). `proposalAddons` are the proposal_addons rows; `catalog`
+// is the /proposals/addons response. Returns an addon_quantities map keyed by
+// addon id (number) → recovered count, clamped to 1–10. Addons whose count
+// can't be recovered (missing/zero divisors) are omitted (stepper defaults 1).
+export function recoverAddonQuantities(proposalAddons, catalog, { durationHours, guestCount }) {
+  const out = {};
+  const byId = new Map((catalog || []).map(a => [a.id, a]));
+  const dh = Number(durationHours) || 0;
+  const gc = Number(guestCount) || 0;
+  (proposalAddons || []).forEach(row => {
+    const addon = byId.get(row.addon_id);
+    if (!addon || !isQuantityCapable(addon)) return;
+    const persistedQty = Number(row.quantity);
+    const lineTotal = Number(row.line_total);
+    const rate = Number(addon.rate);
+    let count;
+    if (addon.slug === 'additional-bartender') {
+      // persisted quantity = durationHours × count
+      count = dh > 0 ? persistedQty / dh : null;
+    } else if (addon.billing_type === 'per_hour') {
+      // persisted quantity = effectiveHours × count
+      const effectiveHours = Math.max(dh, Number(addon.minimum_hours) || 0);
+      count = effectiveHours > 0 ? persistedQty / effectiveHours : null;
+    } else if (addon.billing_type === 'per_guest' || addon.billing_type === 'per_guest_timed') {
+      // persisted quantity is guestCount; count lives in line_total only
+      count = (gc > 0 && rate > 0) ? lineTotal / (gc * rate) : null;
+    } else {
+      // flat / per_staff / per_100_guests — persisted quantity IS the raw count
+      count = persistedQty;
+    }
+    if (count == null || !Number.isFinite(count)) return;
+    const rounded = Math.round(count);
+    if (rounded < 1) return;
+    out[addon.id] = Math.min(10, Math.max(1, rounded));
+  });
+  return out;
 }

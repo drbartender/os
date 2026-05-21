@@ -399,7 +399,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   const {
     event_date, event_start_time, event_duration_hours,
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
-    addon_variants, syrup_selections, event_type, event_type_category, event_type_custom,
+    addon_variants, addon_quantities, syrup_selections, event_type, event_type_category, event_type_custom,
     venue_name, venue_street, venue_city, venue_state, venue_zip,
     adjustments, total_price_override, setup_minutes_before
   } = req.body;
@@ -449,6 +449,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       addons = addonResult.rows.map(a => ({
         ...a,
         variant: addon_variants?.[String(a.id)] || null,
+        quantity: safeAddonQty(addon_quantities?.[String(a.id)]),
       }));
     }
 
