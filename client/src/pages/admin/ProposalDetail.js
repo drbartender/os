@@ -236,7 +236,16 @@ export default function ProposalDetail() {
             </div>
             <div className="hstack" style={{ gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
               <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, fontWeight: 500, margin: 0, lineHeight: 1.15 }}>
-                {proposal.client_name || `Proposal #${proposal.id}`}
+                {proposal.client_id ? (
+                  <button
+                    type="button"
+                    className="event-client-link"
+                    onClick={() => navigate(`/clients/${proposal.client_id}`)}
+                    title="Open client"
+                  >
+                    {proposal.client_name || `Proposal #${proposal.id}`}
+                  </button>
+                ) : (proposal.client_name || `Proposal #${proposal.id}`)}
               </h1>
               <StatusChip kind={statusInfo.kind}>{statusInfo.label}</StatusChip>
               {proposal.last_minute_hold && (
