@@ -5,11 +5,14 @@ const { publicLimiter, publicReadLimiter } = require('../../middleware/rateLimit
 const { calculateProposal } = require('../../utils/pricingEngine');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
-const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
+const { ADMIN_URL } = require('../../utils/urls');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../../utils/errors');
 const { composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
+const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules');
+const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
+const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 
 const router = express.Router();
 
@@ -297,23 +300,50 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       throw new ValidationError({ class_options: 'Top Shelf is only valid for class packages' });
     }
 
-    // Fetch add-ons (skipped for Top Shelf — pricing is TBD, no addons billable yet)
-    let addons = [];
-    if (!isTopShelfClass && addon_ids && addon_ids.length > 0) {
-      const addonResult = await dbClient.query(
-        'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true',
-        [addon_ids]
-      );
-      addons = addonResult.rows.map(a => ({
-        ...a,
-        quantity: safeAddonQty(addon_quantities?.[String(a.id)]),
-      }));
-    }
-
-    // Calculate pricing (skipped for Top Shelf — draft with no total, admin prices later)
     const gc = Number(guest_count) || 50;
     const dh = Number(event_duration_hours) || 4;
     const nb = Number(num_bars) || 0;
+
+    // Fetch the FULL active add-on set. validateProposalRules needs it so
+    // requires_addon_slug parent lookups can see parents absent from the
+    // selection, and stripIncludedAddons needs it for bundle detection.
+    const allActiveAddons = (await dbClient.query(
+      'SELECT * FROM service_addons WHERE is_active = true'
+    )).rows;
+
+    // Strip bundle-covered add-ons SERVER-SIDE. The wizard client strips before
+    // submit, but a stale tab or scripted POST may send e.g. the-formula +
+    // signature-mixers-only — without this both get priced even though Formula
+    // already includes signature mixers (double-charge).
+    const strippedIds = stripIncludedAddons(addon_ids || [], allActiveAddons);
+
+    // Authoritative rule gate — re-checks every rule the wizard UI enforces
+    // (a stale tab / scripted POST bypasses the client). Skipped for Top Shelf
+    // (no pricing inputs yet). A thrown ValidationError triggers the catch →
+    // ROLLBACK below; harmless since only SELECTs have run so far.
+    if (!isTopShelfClass) {
+      validateProposalRules({
+        pkg: pkgResult.rows[0],
+        guestCount: gc,
+        addonIds: strippedIds,
+        addons: allActiveAddons,
+        clientProvidesGlassware: !!client_provides_glassware,
+      });
+    }
+
+    // Build priced add-on rows from the STRIPPED set (skipped for Top Shelf —
+    // pricing is TBD, no addons billable yet).
+    let addons = [];
+    if (!isTopShelfClass && strippedIds.length > 0) {
+      addons = allActiveAddons
+        .filter(a => strippedIds.includes(a.id))
+        .map(a => ({
+          ...a,
+          quantity: safeAddonQty(addon_quantities?.[String(a.id)]),
+        }));
+    }
+
+    // Calculate pricing (skipped for Top Shelf — draft with no total, admin prices later)
     const snapshot = isTopShelfClass
       ? null
       : calculateProposal({
@@ -331,12 +361,11 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
     const numBartenders = snapshot ? snapshot.staffing.actual : 1;
 
     // Insert proposal
-    const glasswareNote = client_provides_glassware ? 'Client will provide their own glassware (for Flavor Blaster)' : null;
     const proposalResult = await dbClient.query(`
       INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours,
         event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, status,
-        event_type, event_type_category, event_type_custom, admin_notes, class_options,
-        venue_name, venue_city, venue_state)
+        event_type, event_type_category, event_type_custom, class_options,
+        venue_name, venue_city, venue_state, client_provides_glassware)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
       RETURNING *
     `, [
@@ -344,9 +373,9 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       event_start_time || null, dh, composedLocation, gc, package_id, nb,
       numBartenders, snapshotJson, totalPrice, proposalStatus,
       event_type || null, event_type_category || null, event_type_custom || null,
-      glasswareNote,
       cleanClassOptions ? JSON.stringify(cleanClassOptions) : null,
-      (venue_name || '').trim() || null, (venue_city || '').trim() || null, (venue_state || '').trim() || null
+      (venue_name || '').trim() || null, (venue_city || '').trim() || null, (venue_state || '').trim() || null,
+      !!client_provides_glassware
     ]);
 
     const proposal = proposalResult.rows[0];
@@ -391,6 +420,15 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       [client_email.trim().toLowerCase()]
     );
 
+    // Auto-create the first invoice when the proposal is sent. Runs INSIDE this
+    // transaction so a proposal is never committed in 'sent' without its
+    // invoice; a throw here rolls back the whole insert. Top Shelf submits as
+    // 'draft' (pricing TBD) so no invoice is created. createInvoiceOnSend is
+    // idempotent on proposal_id.
+    if (proposalStatus === 'sent') {
+      await createInvoiceOnSend(proposal.id, dbClient);
+    }
+
     await dbClient.query('COMMIT');
 
     // Send email notifications (non-blocking)
@@ -416,10 +454,16 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
           await sendEmail({ to: adminEmail, ...tpl });
         }
       } else {
-        const proposalUrl = `${PUBLIC_SITE_URL}/proposal/${proposal.token}`;
+        // Client email via the shared helper. sendProposalSentEmail early-returns
+        // unless the passed object has client_email — the INSERT ... RETURNING
+        // proposal row has none (client_email / client_name live on `clients`),
+        // so merge the request-body values onto it. token / event_type* come
+        // from the proposal row.
         const eventTypeLabel = getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom });
-        const tpl = emailTemplates.proposalSent({ clientName: client_name.trim(), eventTypeLabel, proposalUrl });
-        await sendEmail({ to: client_email.trim().toLowerCase(), ...tpl });
+        await sendProposalSentEmail(
+          { ...proposal, client_name: client_name.trim(), client_email: client_email.trim().toLowerCase() },
+          { actorType: 'client' },
+        );
 
         if (adminEmail) {
           const tpl2 = emailTemplates.clientSignedAdmin({
