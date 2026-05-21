@@ -2398,8 +2398,15 @@ CREATE INDEX IF NOT EXISTS idx_sms_messages_unread
   ON sms_messages(client_id)
   WHERE direction = 'inbound' AND read_at IS NULL;
 
--- Inbound-webhook idempotency: dedupe a repeated Twilio delivery by MessageSid.
-CREATE INDEX IF NOT EXISTS idx_sms_messages_twilio_sid ON sms_messages(twilio_sid);
+-- Inbound-webhook idempotency: a partial UNIQUE index on twilio_sid ENFORCES
+-- dedupe of a repeated Twilio delivery. The SELECT-then-INSERT dedup in
+-- processInboundSms has a TOCTOU race under concurrent retries; the unique
+-- index makes the duplicate INSERT fail atomically (the webhook then 500s and
+-- Twilio's next retry is a safe no-op). Partial (WHERE NOT NULL) so rows with
+-- no Twilio SID are unconstrained. DROP-then-CREATE so an existing non-unique
+-- index of this name is upgraded on the next initDb() run.
+DROP INDEX IF EXISTS idx_sms_messages_twilio_sid;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sms_messages_twilio_sid ON sms_messages(twilio_sid) WHERE twilio_sid IS NOT NULL;
 
 -- shift_requests.acknowledged_at records that the assigned staff member
 -- texted CONFIRM for the shift. shift_requests is the per-(shift,staff) row,
