@@ -746,6 +746,7 @@ function PackageSection({ form, packages, update, merge, fieldErrors }) {
       package_id: String(pkg.id),
       addon_ids: [], addon_variants: {},
       guest_count: enforceHostedMinimum(form.guest_count, pkgIsHosted),
+      class_options: pkg.bar_type === 'class' ? form.class_options : null,
     });
   };
 
