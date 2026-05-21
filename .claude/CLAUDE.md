@@ -152,25 +152,40 @@ The rule: **if you change X, search the codebase for everything that depends on 
 
 ## File Size Discipline
 
-After the 2026-04-27 cleanup pass split five 1000+ line mega-files, the codebase enforces line-count limits to prevent backsliding. The pre-commit hook (`.husky/check-file-size.sh`) runs on staged source files (`server/**/*.js`, `client/src/**/*.{js,jsx}`, excluding tests) and:
+The codebase enforces line-count limits to prevent mega-files. A pre-commit hook
+runs `node scripts/check-file-size.js --staged` on staged source files
+(`server/**/*.js`, `client/src/**/*.{js,jsx}`, excluding tests). It is a
+**ratchet**, not a flat cap:
 
-- **Warns at 700 lines** — "plan a split, this is getting big." Doesn't block.
-- **Fails at 1000 lines** — hard floor. Either split the file or add an explicit opt-out.
+- **Soft cap, 700 lines** — warns ("plan a split"). Never blocks.
+- **Hard cap, 1000 lines** — a file over 1000 lines blocks the commit **only if
+  this commit makes it longer than it is at `HEAD`.** A non-growing change
+  (bugfix, refactor, or anything flat or shrinking) to an over-cap file is
+  always allowed. The only way to *add* to an over-cap file is to first extract
+  enough that the file stays flat or shrinks.
 
-When you write a new file or add to an existing one, aim for the soft sweet spot:
-- **<300 lines** — comfortable. Holds in your head, fits on a screen, easy to review.
-- **300–600 lines** — fine for a focused page or route file with one clear concern.
-- **600–700 lines** — yellow zone. Ask: is this one concern, or two?
-- **>700 lines** — actively plan a split (per-tab, per-section, per-endpoint-group, helpers extracted to a sibling file).
+There is no per-file opt-out marker. A file over the cap is frozen at its
+current size, and the ratchet tightens: once a file sheds lines, the lower count
+becomes its new ceiling. For a genuine emergency where a growing commit to an
+over-cap file cannot wait, `git commit --no-verify` is the escape: it is
+per-commit, deliberate, and visible, not a permanent exemption.
 
-When a file genuinely needs to be big (rare — usually the right answer is to split), opt out by adding this in the first 5 lines:
+Run `npm run check:filesize` any time for a full-tree RED / YELLOW report.
 
-```js
-// claude-allow-large-file
-// Reason: <one-line justification — what's special about this file>
-```
+**When you write a new file or add to one, aim for the sweet spot:**
+- **under 300 lines** — comfortable; holds in your head, easy to review.
+- **300 to 600 lines** — fine for a focused page or route file with one concern.
+- **600 to 700 lines** — yellow zone. Ask: is this one concern, or two?
+- **over 700 lines** — actively plan a split.
 
-The marker is intentional friction. If you're reaching for it, double-check that the file isn't actually two files mashed together.
+**How to split, by the patterns already in the codebase:**
+- **Route files** — per-concern files behind a composition router. See
+  `server/routes/proposals/` (`index.js` mounts `crud`, `lifecycle`, `metadata`,
+  `public`, `publicToken`).
+- **Template files** — per-domain sibling files. See
+  `server/utils/lifecycleEmailTemplates.js` and `marketingEmailTemplates.js`
+  alongside `emailTemplates.js`.
+- **Page components** — extract self-contained sections into their own files.
 
 ## Mandatory Documentation Updates
 
