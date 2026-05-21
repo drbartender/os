@@ -228,6 +228,44 @@ function paymentReminderClient({ clientName, eventTypeLabel = 'event', balanceDu
   };
 }
 
+/**
+ * Late balance reminder (T+1 gentle, T+3 firmer). Only for non-autopay path —
+ * autopay clients have the charge run automatically on the due date, so a "late"
+ * touch doesn't apply.
+ *
+ * @param {Object} opts
+ * @param {string} opts.clientName
+ * @param {string} opts.eventTypeLabel
+ * @param {number} opts.balanceDue - dollars
+ * @param {string} opts.proposalUrl
+ * @param {1|3} opts.daysLate - 1 → gentle, 3 → firmer
+ */
+function paymentReminderLate({ clientName, eventTypeLabel = 'event', balanceDue, proposalUrl, daysLate }) {
+  const name = clientName || 'there';
+  const firm = daysLate >= 3;
+  const subject = firm
+    ? `Balance ${daysLate} days past due for your ${eventTypeLabel}, please reach out`
+    : `Balance now ${daysLate} day past due for your ${eventTypeLabel}`;
+  const bodyOpen = firm
+    ? `Your balance of <strong>$${Number(balanceDue).toFixed(2)}</strong> for your <strong>${esc(eventTypeLabel)}</strong> is now <strong>${daysLate} days past due</strong>.`
+    : `Your balance of <strong>$${Number(balanceDue).toFixed(2)}</strong> for your <strong>${esc(eventTypeLabel)}</strong> is <strong>${daysLate} day past due</strong>.`;
+  const closeLine = firm
+    ? `<p>If something has changed or you need to talk through options, please reach out directly so we can sort this out together.</p>`
+    : `<p>Reach out if you need help or want to talk this through.</p>`;
+  return {
+    subject,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">${firm ? 'Balance Past Due' : 'Balance Reminder'}</h2>
+      <p>Hi ${esc(name)},</p>
+      <p>${bodyOpen}</p>
+      ${ctaButton(proposalUrl, 'View &amp; Pay Balance')}
+      ${closeLine}
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, your balance of $${Number(balanceDue).toFixed(2)} for your ${eventTypeLabel} is ${daysLate} ${daysLate === 1 ? 'day' : 'days'} past due. Pay here: ${proposalUrl}. ${firm ? 'Please reach out so we can sort this out together.' : 'Reach out if you need help.'} Cheers, The Dr. Bartender Team`,
+  };
+}
+
 function drinkPlanBalanceUpdate({ clientName, eventTypeLabel = 'event', extrasAmount, newTotal, amountPaid, balanceDue, balanceDueDate }) {
   const name = clientName || 'there';
   const dueDate = balanceDueDate
@@ -757,6 +795,7 @@ module.exports = {
   drinkPlanLink,
   drinkPlanBalanceUpdate,
   paymentReminderClient,
+  paymentReminderLate,
   clientSignedAdmin,
   paymentReceivedAdmin,
   signedAndPaidAdmin,
