@@ -3,6 +3,10 @@
 // in later tasks.
 
 const { pool } = require('../db');
+const Sentry = require('@sentry/node');
+const { sendSMS, normalizePhone } = require('./sms');
+const { sendEmail } = require('./email');
+const { getEventTypeLabel } = require('./eventTypes');
 
 const STOP_WORDS = new Set(['stop', 'unsubscribe', 'end', 'cancel', 'quit']);
 const START_WORDS = new Set(['start', 'unstop', 'yes']);
@@ -260,6 +264,102 @@ async function handleCant(staffUserId) {
   };
 }
 
+/** Escape HTML metacharacters so untrusted inbound text is safe in email HTML. */
+function escapeHtml(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** Run an alert send without letting a failure escape. */
+async function safeAlert(label, fn) {
+  try {
+    await fn();
+  } catch (err) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(err, { tags: { feature: 'sms-inbound-alert', alert: label } });
+    }
+    console.error(`[smsInbound] admin alert "${label}" failed (non-blocking):`, err.message);
+  }
+}
+
+/** SMS the admin that a client texted in. ADMIN_PHONE unset means skipped. */
+async function alertInboundClient(client, body) {
+  await safeAlert('inbound_client', async () => {
+    const adminPhone = normalizePhone(process.env.ADMIN_PHONE || '');
+    if (!adminPhone) {
+      console.log('[smsInbound] ADMIN_PHONE unset — inbound-client alert skipped');
+      return;
+    }
+    const name = client.name || 'A client';
+    // Truncate the inbound text so the outbound alert SMS cannot exceed
+    // Twilio's 1600-char limit and fail to send.
+    const snippet = (body || '').slice(0, 600);
+    await sendSMS({
+      to: adminPhone,
+      body: `${name} texted Dr. Bartender: "${snippet}". Reply in the admin Messages page.`,
+    });
+  });
+}
+
+/**
+ * Alert the admin that a staffer texted CANT. Channel by lead time: event
+ * under 7 days out and ADMIN_PHONE configured fires SMS (urgent); otherwise
+ * fires email. The alert is dropped only if BOTH ADMIN_PHONE and ADMIN_EMAIL
+ * are unset.
+ *
+ * @param {Object} cant - a successful handleCant(...) result
+ */
+async function alertStaffCant(cant) {
+  await safeAlert('staff_cant', async () => {
+    const eventDate = new Date(cant.eventDate);
+    const dayMs = 24 * 60 * 60 * 1000;
+    const daysOut = Math.floor((eventDate.getTime() - Date.now()) / dayMs);
+    const eventLabel = getEventTypeLabel({ event_type: cant.eventType, event_type_custom: cant.eventTypeCustom });
+    const who = cant.clientName ? `${eventLabel} for ${cant.clientName}` : `shift #${cant.shiftId}`;
+    const dateStr = eventDate.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' });
+    const adminPhone = normalizePhone(process.env.ADMIN_PHONE || '');
+
+    // Event under 7 days out fires an urgent SMS, but ONLY if ADMIN_PHONE is set.
+    // If not set, fall through to email rather than dropping the alert.
+    if (daysOut < 7 && adminPhone) {
+      await sendSMS({
+        to: adminPhone,
+        body: `Staffing alert: a bartender dropped the ${who} on ${dateStr} (${daysOut < 0 ? 'past due' : daysOut + ' days out'}). The shift is re-opened and needs restaffing.`,
+      });
+      return;
+    }
+    const adminEmail = process.env.ADMIN_EMAIL;
+    if (!adminEmail) {
+      console.log('[smsInbound] ADMIN_PHONE and ADMIN_EMAIL both unset — staff-CANT alert skipped');
+      return;
+    }
+    await sendEmail({
+      to: adminEmail,
+      subject: `Bartender dropped the ${dateStr} shift`,
+      html: `<p>A bartender texted CANT for the <strong>${escapeHtml(who)}</strong> on <strong>${escapeHtml(dateStr)}</strong> (${daysOut} days out).</p><p>The shift has been re-opened and needs restaffing. It will show as unstaffed on the Events dashboard.</p>`,
+      text: `A bartender texted CANT for the ${who} on ${dateStr} (${daysOut} days out). The shift has been re-opened and needs restaffing.`,
+    });
+  });
+}
+
+/** Email the admin about an inbound text the system took no action on. */
+async function alertAdminEmail(subject, body) {
+  await safeAlert('admin_email', async () => {
+    const adminEmail = process.env.ADMIN_EMAIL;
+    if (!adminEmail) {
+      console.log('[smsInbound] ADMIN_EMAIL unset — admin email skipped');
+      return;
+    }
+    await sendEmail({
+      to: adminEmail,
+      subject,
+      html: `<p>${escapeHtml(body)}</p>`,
+      text: body,
+    });
+  });
+}
+
 module.exports = {
   detectOptKeyword,
   detectResponseCode,
@@ -270,4 +370,7 @@ module.exports = {
   handleConfirm,
   findNearestApprovedShift,
   handleCant,
+  alertInboundClient,
+  alertStaffCant,
+  alertAdminEmail,
 };
