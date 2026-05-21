@@ -172,6 +172,7 @@ dr-bartender/
 │   │   ├── eventTypes.js       # Event type id→label resolver (mirrors client)
 │   │   ├── fileValidation.js   # Magic-byte file type validation
 │   │   ├── geocode.js          # Nominatim geocoding (address → lat/lng)
+│   │   ├── globalSearch.js     # Global record search query engine (clients/proposals/events/staff)
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
 │   │   ├── lastMinuteAlert.js  # Last-minute (<72h) booking SMS alert dispatch (admin + broad staff blast, idempotent)
 │   │   ├── messageScheduling.js # scheduleMessage(...): idempotent insert of a future touch into the scheduled_messages table
