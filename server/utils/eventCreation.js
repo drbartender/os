@@ -1,6 +1,6 @@
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
-const { drinkPlanLink } = require('./emailTemplates');
+const { drinkPlanLink } = require('./lifecycleEmailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
 const { composeVenueLocation } = require('./venueAddress');

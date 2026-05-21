@@ -153,40 +153,6 @@ function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, p
   };
 }
 
-function signedAndPaidClient({ clientName, eventTypeLabel = 'event', amount, paymentType, lastMinute = false }) {
-  const name = clientName || 'there';
-  return {
-    subject: `Signed & Paid — your ${eventTypeLabel} — Dr. Bartender`,
-    html: wrapEmail(`
-      <h2 style="color:${BRAND.primary};margin-top:0;">You're Locked In!</h2>
-      <p>Hi ${name},</p>
-      <p>We've received your signed proposal <em>and</em> your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${eventTypeLabel}</strong>. Your date is officially on the books.</p>
-      ${lastMinuteCaveatHtml(lastMinute)}
-      <p>We'll be in touch with next steps as your event date approaches.</p>
-      <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
-    `),
-    text: `Hi ${name}, we've received your signed proposal and your ${paymentType} of $${amount} for your ${eventTypeLabel}. Your date is officially on the books.${lastMinuteCaveatText(lastMinute)} — The Dr. Bartender Team`,
-  };
-}
-
-function drinkPlanLink({ clientName, eventTypeLabel = 'event', planUrl }) {
-  const name = clientName || 'there';
-  return {
-    subject: `Your Drink Plan for your ${eventTypeLabel} — Dr. Bartender`,
-    html: wrapEmail(`
-      <h2 style="color:${BRAND.primary};margin-top:0;">Your Drink Plan is Ready!</h2>
-      <p>Hi ${name},</p>
-      <p>Thank you for booking with Dr. Bartender! We're excited to help make your <strong>${eventTypeLabel}</strong> unforgettable.</p>
-      <p>We've created a personalized drink planning questionnaire for your event. Use it to tell us your preferences &mdash; signature cocktails, mocktails, beer &amp; wine, and everything in between.</p>
-      ${ctaButton(planUrl, 'Plan Your Drinks')}
-      <p style="font-size:14px;color:${BRAND.secondary};">You can return to this link anytime to save your progress or make changes before submitting.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
-    `),
-    text: `Hi ${name}, your drink plan for your ${eventTypeLabel} is ready! Visit ${planUrl} to plan your drinks. You can return anytime to save progress. — The Dr. Bartender Team`,
-  };
-}
-
 function clientOtp({ name, otp }) {
   const n = name || 'there';
   return {
@@ -361,31 +327,6 @@ function paymentFailedClient({ clientName, eventTypeLabel = 'event', last4, prop
       <p>Cheers,<br/>The Dr. Bartender Team</p>
     `),
     text: `Hi ${name}, your payment for the ${eventTypeLabel} didn't go through${cardClauseText}. Update payment method: ${proposalUrl}. Reach out if you need help. Cheers, The Dr. Bartender Team`,
-  };
-}
-
-function drinkPlanBalanceUpdate({ clientName, eventTypeLabel = 'event', extrasAmount, newTotal, amountPaid, balanceDue, balanceDueDate }) {
-  const name = clientName || 'there';
-  const dueDate = balanceDueDate
-    ? new Date(balanceDueDate).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' })
-    : 'before your event';
-  return {
-    subject: `Drink Plan Submitted — Updated Balance for your ${eventTypeLabel}`,
-    html: wrapEmail(`
-      <h2 style="color:${BRAND.primary};margin-top:0;">Your Drink Plan is In!</h2>
-      <p>Hi ${name},</p>
-      <p>Thank you for submitting your drink plan for your <strong>${eventTypeLabel}</strong>! Your selections have been added to your event.</p>
-      <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
-        <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Extras Added</td><td style="padding:8px 12px;text-align:right;font-weight:bold;">$${Number(extrasAmount).toFixed(2)}</td></tr>
-        <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Updated Event Total</td><td style="padding:8px 12px;text-align:right;font-weight:bold;">$${Number(newTotal).toFixed(2)}</td></tr>
-        <tr style="border-bottom:1px solid #e0d6cf;"><td style="padding:8px 12px;color:${BRAND.secondary};">Amount Paid</td><td style="padding:8px 12px;text-align:right;">$${Number(amountPaid).toFixed(2)}</td></tr>
-        <tr><td style="padding:8px 12px;color:${BRAND.primary};font-weight:bold;">Remaining Balance</td><td style="padding:8px 12px;text-align:right;font-weight:bold;color:${BRAND.primary};">$${Number(balanceDue).toFixed(2)}</td></tr>
-      </table>
-      <p>Your remaining balance of <strong>$${Number(balanceDue).toFixed(2)}</strong> is due by <strong>${dueDate}</strong>.</p>
-      <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions about your balance or drink plan, just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
-    `),
-    text: `Hi ${name}, your drink plan for your ${eventTypeLabel} has been submitted! Extras added: $${Number(extrasAmount).toFixed(2)}. Updated total: $${Number(newTotal).toFixed(2)}. Amount paid: $${Number(amountPaid).toFixed(2)}. Balance due: $${Number(balanceDue).toFixed(2)} by ${dueDate}. — The Dr. Bartender Team`,
   };
 }
 
@@ -588,22 +529,6 @@ function applicationRejected({ applicantName, customMessage }) {
       <p>Cheers,<br/>The Dr. Bartender Team</p>
     `),
     text: `Hi ${name}, thank you for applying to Dr. Bartender. After review, we've decided to move forward with other candidates at this time. ${customMessage ? `Note: ${customMessage}` : ''} We wish you the best. — The Dr. Bartender Team`,
-  };
-}
-
-function shoppingListReady({ clientName, eventTypeLabel = 'event', shoppingListUrl }) {
-  const name = clientName || 'there';
-  return {
-    subject: `Your shopping list is ready — Dr. Bartender`,
-    html: wrapEmail(`
-      <h2 style="color:${BRAND.primary};margin-top:0;">Your Shopping List is Ready</h2>
-      <p>Hi ${esc(name)},</p>
-      <p>We've finalized the shopping list for your <strong>${esc(eventTypeLabel)}</strong>. Bring this with you when you stock up — quantities are scaled to your guest count.</p>
-      ${ctaButton(shoppingListUrl, 'View Shopping List')}
-      <p style="font-size:14px;color:${BRAND.secondary};">Have questions or need to adjust anything? Just reply to this email.</p>
-      <p>Cheers,<br/>The Dr. Bartender Team</p>
-    `),
-    text: `Hi ${name}, your shopping list for your ${eventTypeLabel} is ready. View it here: ${shoppingListUrl}`,
   };
 }
 
@@ -881,6 +806,14 @@ async function sendPaperworkReminderEmail({ userId }) {
   return sendEmail({ to: email, ...tpl });
 }
 
+// Lifecycle templates live in a sibling file to keep this one under the
+// file-size cap. Re-exported below for backwards compatibility — existing
+// consumers that access them by property (emailTemplates.signedAndPaidClient)
+// keep working unchanged. lifecycleEmailTemplates.js is a leaf module (no
+// require back into this file — it duplicates the shared helpers on purpose),
+// so it is fully loaded here and the re-exports below are plain references.
+const lifecycle = require('./lifecycleEmailTemplates');
+
 module.exports = {
   wrapEmail,
   wrapMarketingEmail,
@@ -889,9 +822,6 @@ module.exports = {
   proposalSent,
   proposalSignedConfirmation,
   paymentReceivedClient,
-  signedAndPaidClient,
-  drinkPlanLink,
-  drinkPlanBalanceUpdate,
   paymentReminderClient,
   paymentReminderLate,
   refundNotificationClient,
@@ -908,7 +838,6 @@ module.exports = {
   applicationHired,
   applicationRejected,
   applicationDeactivated,
-  shoppingListReady,
   abandonedQuote,
   newThumbtackLeadAdmin,
   newThumbtackMessageAdmin,
@@ -922,4 +851,17 @@ module.exports = {
   paperworkReminder,
   sendInterviewConfirmationEmail,
   sendPaperworkReminderEmail,
+  // Shared helpers — exported so sibling template files / callers can reuse the
+  // BRAND palette and email shell. (lifecycleEmailTemplates.js keeps its own
+  // copies to stay a leaf module; see the note in that file.)
+  esc,
+  BRAND,
+  lastMinuteCaveatHtml,
+  lastMinuteCaveatText,
+  // Lifecycle templates re-exported from the sibling file for backwards compat.
+  signedAndPaidClient: lifecycle.signedAndPaidClient,
+  drinkPlanLink: lifecycle.drinkPlanLink,
+  drinkPlanBalanceUpdate: lifecycle.drinkPlanBalanceUpdate,
+  shoppingListReady: lifecycle.shoppingListReady,
+  postConsultClient: lifecycle.postConsultClient,
 };
