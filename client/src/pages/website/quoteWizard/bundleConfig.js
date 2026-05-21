@@ -1,6 +1,8 @@
 // BYOB bundle definitions
-// KEEP IN SYNC: server/utils/proposalRules.js re-declares BYOB_BUNDLE_SLUGS and
-// MIXER_SLUGS in CJS. If you edit either array here, update that twin too.
+// KEEP IN SYNC: server/utils/proposalRules.js mirrors the FULL bundle config in
+// CJS — BYOB_BUNDLE_SLUGS, MIXER_SLUGS, BUNDLE_INCLUDED, BUNDLE_UNAVAILABLE
+// (and the derived BUNDLE_COVERED). If you edit any of these here, update that
+// twin too.
 export const BYOB_BUNDLE_SLUGS = ['the-foundation', 'the-formula', 'the-full-compound'];
 export const MIXER_SLUGS = ['signature-mixers-only', 'full-mixers-only'];
 
