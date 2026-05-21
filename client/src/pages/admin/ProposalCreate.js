@@ -7,7 +7,12 @@ import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import VenueAddressFields from '../../components/VenueAddressFields';
 import useFormValidation from '../../hooks/useFormValidation';
 import EVENT_TYPES from '../../data/eventTypes';
-import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
+import {
+  toggleAddonWithRules,
+  filterAddons,
+  enforceHostedMinimum,
+  reconcileFlavorBlaster,
+} from '../../utils/proposalRules';
 import { useToast } from '../../context/ToastContext';
 import FieldError from '../../components/FieldError';
 import TimePicker from '../../components/TimePicker';
@@ -115,6 +120,10 @@ export default function ProposalCreate() {
     guest_count: 50,
     package_id: '', num_bars: 0, num_bartenders: null,
     addon_ids: [], addon_variants: {},
+    client_provides_glassware: false,
+    addon_quantities: {},
+    syrup_selections: [],
+    class_options: null,
   });
 
   // Pre-populate from /clients/:id when ?client_id is passed
@@ -196,26 +205,43 @@ export default function ProposalCreate() {
 
   const toggleAddon = useCallback((id) => {
     setForm(f => {
-      const removing = f.addon_ids.includes(id);
+      const next = toggleAddonWithRules(
+        { addonIds: f.addon_ids, syrupSelections: f.syrup_selections },
+        id, addons,
+      );
+      // preserve the cockpit's addon_variants cleanup for removed addons
       const newVariants = { ...f.addon_variants };
-      if (removing) delete newVariants[String(id)];
-      return {
-        ...f,
-        addon_ids: removing ? f.addon_ids.filter(a => a !== id) : [...f.addon_ids, id],
-        addon_variants: newVariants,
-      };
+      if (!next.addon_ids.includes(id)) delete newVariants[String(id)];
+      return { ...f, ...next, addon_variants: newVariants };
     });
-  }, []);
+  }, [addons]);
+
+  // Flavor Blaster requires real glassware — drop it if neither the
+  // real-glassware addon nor client_provides_glassware is set. reconcileFlavorBlaster
+  // returns the SAME array reference when nothing changes, so the identity guard
+  // prevents a render loop.
+  useEffect(() => {
+    setForm(f => {
+      const next = reconcileFlavorBlaster(f.addon_ids, addons, f.client_provides_glassware);
+      if (next === f.addon_ids) return f;
+      toast.info('Flavor Blaster removed — requires real glassware.');
+      return { ...f, addon_ids: next };
+    });
+  }, [form.addon_ids, form.client_provides_glassware, addons, toast]);
 
   const selectedPkg = packages.find(p => p.id === Number(form.package_id));
   const isHostedPackage = selectedPkg && selectedPkg.pricing_type === 'per_guest';
 
-  const filteredAddons = useMemo(() => addons.filter(a => {
-    if (a.applies_to !== 'all' && (!selectedPkg || a.applies_to !== selectedPkg.category)) return false;
-    const excluded = selectedPkg && PACKAGE_EXCLUDED_ADDONS[selectedPkg.slug];
-    if (excluded && excluded.includes(a.slug)) return false;
-    return true;
-  }), [addons, selectedPkg]);
+  const { visibleAddons: filteredAddons } = useMemo(
+    () => filterAddons({
+      addons,
+      isHosted: isHostedPackage,
+      packageCategory: selectedPkg?.category,
+      addonIds: form.addon_ids,
+      guestCount: form.guest_count,
+    }),
+    [addons, isHostedPackage, selectedPkg, form.addon_ids, form.guest_count],
+  );
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -322,7 +348,7 @@ export default function ProposalCreate() {
               </FieldBlock>
 
               <FieldBlock id="cockpit-event" icon="calendar" title="Event" status={status.event}>
-                <EventSection form={form} update={update} merge={merge} fieldErrors={fieldErrors} />
+                <EventSection form={form} update={update} merge={merge} fieldErrors={fieldErrors} isHostedPackage={isHostedPackage} />
               </FieldBlock>
 
               <FieldBlock id="cockpit-package" icon="flask" title="Package" status={status.package} span={2}>
@@ -331,7 +357,7 @@ export default function ProposalCreate() {
 
               {form.package_id && filteredAddons.length > 0 && (
                 <FieldBlock id="cockpit-addons" icon="sparkles" title="Add-ons & line items" status={status.addons} span={2}>
-                  <AddonSection form={form} addons={filteredAddons} toggleAddon={toggleAddon} setForm={setForm} preview={preview} />
+                  <AddonSection form={form} addons={filteredAddons} toggleAddon={toggleAddon} setForm={setForm} update={update} preview={preview} />
                 </FieldBlock>
               )}
 
@@ -483,7 +509,7 @@ function ClientSection({ form, merge, update, fieldErrors }) {
 
 // ─── Event section ──────────────────────────────────────────────────────────
 
-function EventSection({ form, update, merge, fieldErrors }) {
+function EventSection({ form, update, merge, fieldErrors, isHostedPackage }) {
   const [eventTypeQuery, setEventTypeQuery] = useState(form.event_type || '');
   const [eventTypeOpen, setEventTypeOpen] = useState(false);
   const [eventTypeHighlight, setEventTypeHighlight] = useState(-1);
@@ -623,6 +649,7 @@ function EventSection({ form, update, merge, fieldErrors }) {
             min="1" max="1000"
             value={form.guest_count}
             onChange={(e) => update('guest_count', e.target.value)}
+            onBlur={(e) => update('guest_count', enforceHostedMinimum(e.target.value, isHostedPackage))}
             style={{ width: '100%', textAlign: 'right' }}
           />
         </Lbl>
@@ -679,7 +706,12 @@ function PackageSection({ form, packages, update, merge, fieldErrors }) {
   };
 
   const selectPkg = (pkg) => {
-    merge({ package_id: String(pkg.id), addon_ids: [], addon_variants: {} });
+    const pkgIsHosted = pkg.pricing_type === 'per_guest';
+    merge({
+      package_id: String(pkg.id),
+      addon_ids: [], addon_variants: {},
+      guest_count: enforceHostedMinimum(form.guest_count, pkgIsHosted),
+    });
   };
 
   return (
@@ -738,7 +770,7 @@ function PackageSection({ form, packages, update, merge, fieldErrors }) {
 
 // ─── Add-on section ─────────────────────────────────────────────────────────
 
-function AddonSection({ form, addons, toggleAddon, setForm, preview }) {
+function AddonSection({ form, addons, toggleAddon, setForm, update, preview }) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
 
@@ -768,6 +800,21 @@ function AddonSection({ form, addons, toggleAddon, setForm, preview }) {
 
   return (
     <div>
+      {/* Client-supplied glassware — gates Flavor Blaster availability */}
+      <label style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '7px 10px', marginBottom: 8,
+        border: '1px solid var(--line-1)', borderRadius: 4,
+        background: 'var(--bg-2)', cursor: 'pointer', fontSize: 12.5,
+      }}>
+        <input
+          type="checkbox"
+          checked={!!form.client_provides_glassware}
+          onChange={(e) => update('client_provides_glassware', e.target.checked)}
+        />
+        <span style={{ color: 'var(--ink-1)' }}>Client provides their own glassware</span>
+      </label>
+
       {selected.length === 0 ? (
         <div style={{ padding: '10px 12px', border: '1px dashed var(--line-2)', borderRadius: 4, color: 'var(--ink-3)', fontSize: 12 }}>
           No add-ons. Type below to add — items appear here as line items.
