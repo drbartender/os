@@ -260,7 +260,7 @@ dr-bartender/
 │   │   └── index.css           # Global styles
 │   ├── vercel.json             # SPA rewrite rule for Vercel
 │   └── package.json            # React deps, proxy: localhost:5000
-├── scripts/                    # Build scripts (build-testing-guide.js, testing-guide-template.html)
+├── scripts/                    # Build scripts (build-testing-guide.js, check-file-size.js, testing-guide-template.html)
 ├── .claude/agents/             # Claude Code review agents (7 agents)
 ├── .husky/pre-commit           # Pre-commit hook (docs-drift check + file-size guard + lint-staged)
 ├── .husky/check-file-size.sh   # Pre-commit guard — warns at 700 lines, blocks at 1000
