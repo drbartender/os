@@ -189,6 +189,7 @@ app.use('/api/email-marketing/webhook', require('./routes/emailMarketingWebhook'
 app.use('/api/public/reviews', require('./routes/publicReviews'));
 app.use('/api/public/tip', require('./routes/publicTip'));
 app.use('/api/thumbtack', require('./routes/thumbtack'));
+app.use('/api/sms', require('./routes/sms'));
 app.use('/api/invoices', require('./routes/invoices'));
 app.use('/api/test-feedback', require('./routes/testFeedback'));
 app.use('/api/qa', require('./routes/labrat'));

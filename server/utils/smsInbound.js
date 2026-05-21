@@ -360,6 +360,103 @@ async function alertAdminEmail(subject, body) {
   });
 }
 
+/** Format a date for staff-facing reply copy, e.g. "June 15". */
+function fmtDate(d) {
+  return new Date(d).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' });
+}
+
+/**
+ * Orchestrate one inbound SMS: classify, look up the sender, store the row,
+ * run keyword/response-code actions, dispatch admin alerts. Returns a short
+ * `outcome` for logging plus an optional `reply`. Never throws for an expected
+ * condition. Dedupes on `twilioSid`: a re-delivered MessageSid is a no-op.
+ *
+ * @param {Object} args
+ * @param {string} args.from - inbound E.164 number
+ * @param {string} args.body - message text
+ * @param {string} [args.twilioSid]
+ * @returns {Promise<{outcome:string, reply:string|null}>}
+ */
+async function processInboundSms({ from, body, twilioSid }) {
+  const text = (body || '').trim();
+
+  // Idempotency: Twilio retries an inbound webhook on timeout. If this
+  // MessageSid was already recorded as an inbound row, this delivery is a
+  // retry — do nothing.
+  if (twilioSid) {
+    const dup = await pool.query(
+      "SELECT 1 FROM sms_messages WHERE twilio_sid = $1 AND direction = 'inbound' LIMIT 1",
+      [twilioSid]
+    );
+    if (dup.rowCount > 0) return { outcome: 'duplicate', reply: null };
+  }
+
+  const sender = await lookupSender(from);
+
+  // STOP/START — handled before sender-type branching, for any sender. We
+  // record the preference internally and tag metadata for audit. We do NOT
+  // send our own reply: US carrier rules make Twilio send the mandated
+  // STOP/START compliance reply itself.
+  const optKeyword = detectOptKeyword(text);
+  if (optKeyword) {
+    const clientId = sender.type === 'client' ? sender.client.id : null;
+    await recordInboundMessage({ fromPhone: from, body: text, clientId, twilioSid, metadata: { opt_keyword: optKeyword } });
+    if (optKeyword === 'stop') await applyOptOut(sender);
+    else await applyOptIn(sender);
+    return { outcome: `opt_${optKeyword}`, reply: null };
+  }
+
+  // Record the message (client_id set only for a client sender).
+  const clientId = sender.type === 'client' ? sender.client.id : null;
+  await recordInboundMessage({ fromPhone: from, body: text, clientId, twilioSid });
+
+  if (sender.type === 'client') {
+    // No auto-reply to clients — the admin replies personally from the
+    // Messages page. We just alert the admin a client texted in.
+    await alertInboundClient(sender.client, text);
+    return { outcome: 'client_message', reply: null };
+  }
+
+  if (sender.type === 'staff') {
+    const code = detectResponseCode(text);
+    if (code === 'confirm') {
+      const r = await handleConfirm(sender.staffUserId);
+      const reply = r.ok
+        ? `Confirmed from Dr. Bartender: you're acknowledged for the ${fmtDate(r.eventDate)} shift${r.clientName ? ' (' + r.clientName + ')' : ''}. See you there.`
+        : 'Dr. Bartender: we did not find an upcoming shift to confirm for you. Reach out if that seems wrong.';
+      return { outcome: r.ok ? 'staff_confirm' : 'staff_confirm_no_shift', reply };
+    }
+    if (code === 'cant') {
+      const cant = await handleCant(sender.staffUserId);
+      if (cant.ok) {
+        await alertStaffCant(cant);
+        return {
+          outcome: 'staff_cant',
+          reply: `Got it from Dr. Bartender: you are off the ${fmtDate(cant.eventDate)} shift${cant.clientName ? ' (' + cant.clientName + ')' : ''}. We will take it from here.`,
+        };
+      }
+      await alertAdminEmail('Staff texted CANT but has no upcoming shift',
+        `A staff member texted CANT but the system found no approved upcoming shift for them. Inbound text: "${text}"`);
+      return {
+        outcome: 'staff_cant_no_shift',
+        reply: 'Dr. Bartender: we did not find an upcoming shift to release for you. Reach out if that seems wrong.',
+      };
+    }
+    // Free-form staff text — route to admin, redirect the texter.
+    await alertAdminEmail('Staff texted Dr. Bartender',
+      `A staff member texted: "${text}". No response code matched, so no system action was taken.`);
+    return {
+      outcome: 'staff_freeform',
+      reply: 'Dr. Bartender: this number is automated. For anything else, call or text Dallas directly.',
+    };
+  }
+
+  // Unknown sender.
+  await alertAdminEmail('Text from an unknown number',
+    `An unrecognized number (${from}) texted Dr. Bartender: "${text}".`);
+  return { outcome: 'unknown_sender', reply: null };
+}
+
 module.exports = {
   detectOptKeyword,
   detectResponseCode,
@@ -373,4 +470,5 @@ module.exports = {
   alertInboundClient,
   alertStaffCant,
   alertAdminEmail,
+  processInboundSms,
 };
