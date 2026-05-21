@@ -1001,7 +1001,7 @@ In `server/routes/proposals/crud.js`:
 
 1. Add imports near the top:
 ```js
-const { validateProposalRules } = require('../../utils/proposalRules');
+const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
 const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 // createInvoiceOnSend is already imported (used by PATCH /:id/status).
@@ -1015,23 +1015,29 @@ addon_quantities, syrup_selections, class_options, client_provides_glassware,
 send_now,
 ```
 
-4. **Fetch the FULL active addon set once** (mandatory — not the selected-only fetch). The current handler fetches `service_addons WHERE id = ANY($1)` (selected ids only); replace that with one unconditional fetch that serves BOTH the validator (which needs `requires_addon_slug` parent rows absent from the selection) AND the priced-addon mapping:
+4. **Fetch the FULL active addon set once** (mandatory — not the selected-only fetch). The current handler fetches `service_addons WHERE id = ANY($1)` (selected ids only); replace that with one unconditional fetch that serves BOTH the validator (which needs `requires_addon_slug` parent rows absent from the selection) AND the priced-addon mapping. Then **strip bundle-covered add-ons server-side** before doing anything else with the selection:
 ```js
 const allAddonsResult = await dbClient.query(
   'SELECT * FROM service_addons WHERE is_active = true'
 );
 const allActiveAddons = allAddonsResult.rows;
-// Selected rows for pricing — carry BOTH variant (champagne-toast NA bubbles)
-// and quantity (extra bartenders / barback / etc) onto each addon row.
+// Strip bundle-covered add-ons SERVER-SIDE. The wizard client strips before
+// submit, but a stale tab or scripted POST may not — without this, e.g.
+// the-formula + signature-mixers-only both get priced even though Formula
+// already includes signature mixers (double-charge). stripIncludedAddons
+// drops the covered ids, keeping the bundle id itself.
+const strippedIds = stripIncludedAddons(addon_ids || [], allActiveAddons);
+// Selected rows for pricing — built from the STRIPPED ids — carry BOTH variant
+// (champagne-toast NA bubbles) and quantity (extra bartenders / barback / etc).
 const selectedAddons = allActiveAddons
-  .filter(a => (addon_ids || []).includes(a.id))
+  .filter(a => strippedIds.includes(a.id))
   .map(a => ({
     ...a,
     variant: addon_variants?.[String(a.id)] || null,
     quantity: safeAddonQty(addon_quantities?.[String(a.id)]),
   }));
 ```
-Import `safeAddonQty` from wherever `public.js` imports it (it already uses `safeAddonQty(addon_quantities?.[...])` for exactly this — match that import).
+Import `safeAddonQty` from wherever `public.js` imports it (it already uses `safeAddonQty(addon_quantities?.[...])` for exactly this — match that import). Everything downstream — validator, pricing, `proposal_addons` persistence — uses `strippedIds` / `selectedAddons`, never the raw `addon_ids`.
 
 5. Compute the Top Shelf flag, reject Top-Shelf-against-non-class, and run the authoritative validator:
 ```js
@@ -1049,12 +1055,13 @@ if (class_options && class_options.top_shelf_requested === true
 
 // Authoritative rule gate. A thrown ValidationError here triggers the existing
 // catch → ROLLBACK; only SELECTs have run, so the rollback is harmless.
-// The validator gets the FULL active set for requires_addon_slug parent lookup.
+// Validates the STRIPPED selection (post bundle-strip) against the FULL active
+// addon set (the latter so requires_addon_slug parent lookups can see parents).
 if (!isTopShelfClass) {
   validateProposalRules({
     pkg: pkgResult.rows[0],
     guestCount: gc,
-    addonIds: (addon_ids || []),
+    addonIds: strippedIds,
     addons: allActiveAddons,
     clientProvidesGlassware: !!client_provides_glassware,
   });
@@ -1063,9 +1070,9 @@ if (!isTopShelfClass) {
 
 6. Normalize `class_options` exactly the way `public.js` does. Copy its `cleanClassOptions` logic (`public.js:251-258`): allowlist `spirit_category` to `{'whiskey_bourbon','tequila_mezcal'}` (else `null`), coerce `top_shelf_requested` to a strict boolean, and only keep the object for class bookings. Persist the NORMALIZED object — never the raw request body — so `ProposalDetail.js` (which reads `class_options.spirit_category` / `.top_shelf_requested`) sees the same shape the wizard path produces.
 
-7. Determine status + branch:
+7. Determine status + branch. **`send_now` is fail-safe: it defaults to FALSE** — only an explicit `send_now: true` triggers the send path. A caller that omits the flag gets a `draft` (the old, safe behavior). The cockpit's "Create & send" button sends `send_now: true` explicitly (Task 13), so intended behavior is unchanged; this just prevents an un-updated caller from silently emailing + invoicing.
 ```js
-const sendNow = send_now !== false; // default true
+const sendNow = send_now === true; // fail-safe default: omitted/false/null → draft
 const proposalStatus = (sendNow && !isTopShelfClass) ? 'sent' : 'draft';
 const snapshot = isTopShelfClass
   ? null
@@ -1086,10 +1093,20 @@ if (proposalStatus === 'sent') {
 }
 ```
 
-9. After `COMMIT`, before `res.status(201).json(proposal)`:
+9. After `COMMIT`, before `res.status(201).json(proposal)`, send the client email. The `INSERT ... RETURNING *` proposal row has NO `client_email`/`client_name` (those columns live on `clients`), and `sendProposalSentEmail` early-returns without them — so the row MUST be re-fetched joined to `clients` first. Wrap the fetch + send in their own try/catch: this runs post-COMMIT, so a failed SELECT must not 500 a request whose proposal already committed. Mirrors the `clients`-JOIN the `PATCH /:id/status` email step uses.
 ```js
 if (proposalStatus === 'sent') {
-  await sendProposalSentEmail(proposal, { actorType: 'admin' }); // never throws
+  try {
+    const enriched = await pool.query(
+      `SELECT p.*, c.name AS client_name, c.email AS client_email
+         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+        WHERE p.id = $1`, [proposal.id]);
+    if (enriched.rows[0]) {
+      await sendProposalSentEmail(enriched.rows[0], { actorType: 'admin' }); // never throws
+    }
+  } catch (e) {
+    console.error('Post-send email step failed (non-blocking) for proposal', proposal.id);
+  }
 }
 ```
 
@@ -1101,10 +1118,13 @@ The cockpit's live-pricing dock calls `POST /proposals/calculate`, which is hand
 
 In `metadata.js`'s `/calculate` handler:
 1. Destructure `addon_quantities` and `syrup_selections` from `req.body` alongside the existing `addon_variants`.
-2. When building the addon rows passed to `calculateProposal`, add `quantity: safeAddonQty(addon_quantities?.[String(a.id)])` next to the existing `variant` mapping (import `safeAddonQty` the same way `public.js`/`crud.js` do).
-3. Pass `syrupSelections: syrup_selections || []` into the `calculateProposal` call.
+2. Import `stripIncludedAddons` from `../../utils/proposalRules` and `safeAddonQty` (the same way `public.js`/`crud.js` do). Fetch the active addon set this handler needs, run `addon_ids` through `stripIncludedAddons` first, and build the priced addon rows from the stripped ids — so the preview drops bundle-covered add-ons exactly as the persist path (Step 3) does. Without this, the live dock would show a higher total than the proposal that actually gets created.
+3. When building the addon rows passed to `calculateProposal`, add `quantity: safeAddonQty(addon_quantities?.[String(a.id)])` next to the existing `variant` mapping.
+4. Pass `syrupSelections: syrup_selections || []` into the `calculateProposal` call.
 
 This makes the cockpit preview, the persisted `POST /proposals` snapshot, and the wizard all compute identical totals for identical selections.
+
+`/calculate` deliberately does NOT run `validateProposalRules` — it is a live-preview endpoint, and hard-rejecting transient mid-typing states (e.g. a hosted guest count momentarily below 25) would jank the price dock. The cockpit enforces the rules client-side via the shared `proposalRules.js`; the authoritative save-time gate is `POST /proposals`. `/calculate` only needs the bundle-strip above (money-correctness), not the gate.
 
 - [ ] **Step 5: Run the tests, verify they pass**
 
@@ -1224,26 +1244,30 @@ git commit -m "refactor(proposals): PATCH status uses in-txn invoice + shared em
 
 > **Accepted-risk note (write amplification).** After this task, every successful `POST /public/submit` — an unauthenticated endpoint — also creates an `invoices` row + line items + consumes `nextval('invoice_number_seq')`. `publicLimiter` (20 / 15 min per IP) caps this; 20 invoices per IP per window is a tolerable worst case and the sequence gaps are cosmetic (`invoice_number` has no contiguity requirement). Decision: keep `publicLimiter` as-is, do not add a separate gate. This note records the deliberate accept.
 
-- [ ] **Step 1: Fetch the full active addon set + add the rule gate**
+- [ ] **Step 1: Fetch the full active addon set, strip bundle-covered add-ons, add the rule gate**
 
-`public.js` currently fetches `service_addons WHERE id = ANY($1)` — selected ids only. `validateProposalRules` needs the FULL active set so `requires_addon_slug` parent lookups can see parent rows absent from the selection. Add an unconditional fetch and pass it to the validator (the existing selected-addon fetch + `safeAddonQty` mapping stays, for pricing):
+`public.js` currently fetches `service_addons WHERE id = ANY($1)` — selected ids only — and relies on the wizard client having already stripped bundle-covered add-ons. Two changes:
+- (a) `validateProposalRules` needs the FULL active set so `requires_addon_slug` parent lookups can see parent rows absent from the selection.
+- (b) Strip bundle-covered add-ons SERVER-SIDE — the server must not trust the client did it (a stale tab or scripted POST may send `the-formula` + `signature-mixers-only`, which would otherwise be double-priced). Same fix as Task 7 Step 3 item 4.
 
 ```js
-const { validateProposalRules } = require('../../utils/proposalRules'); // at top of file
+const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules'); // at top
 // ... inside the handler, after pkgResult is fetched ...
 const allActiveAddons = (await dbClient.query(
   'SELECT * FROM service_addons WHERE is_active = true'
 )).rows;
+const strippedIds = stripIncludedAddons(addon_ids || [], allActiveAddons);
 if (!isTopShelfClass) {
   validateProposalRules({
     pkg: pkgResult.rows[0],
     guestCount: gc,
-    addonIds: (addon_ids || []),
+    addonIds: strippedIds,
     addons: allActiveAddons,
     clientProvidesGlassware: !!client_provides_glassware,
   });
 }
 ```
+Then build the priced-addon rows from `strippedIds` — wherever `public.js` currently does the `WHERE id = ANY(addon_ids)` fetch + `safeAddonQty` mapping for `calculateProposal`, source it from `strippedIds` instead of the raw `addon_ids`. Everything downstream (pricing, `proposal_addons` persistence) uses the stripped set. (A normal wizard submit already arrives stripped, so this is a no-op for it; it only bites a bypassing caller.)
 
 - [ ] **Step 2: Add the in-transaction invoice call**
 
@@ -1258,12 +1282,15 @@ Add `const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');` at 
 
 - [ ] **Step 3: Swap the email block for the helper**
 
-Replace the existing post-commit `emailTemplates.proposalSent` + `sendEmail` block in the non-Top-Shelf branch with:
+Replace the existing post-commit `emailTemplates.proposalSent` + `sendEmail` block in the non-Top-Shelf branch with a call to the shared helper. **Important:** `sendProposalSentEmail` early-returns unless the proposal object carries `client_email` — and the `INSERT ... RETURNING *` proposal row has NO `client_email`/`client_name` (those are `clients` columns, not `proposals`). `public.js`'s submit handler already has the client's name + email in scope as request-body variables (the endpoint requires `client_email`). Pass an object that merges them onto the proposal row:
 
 ```js
-await sendProposalSentEmail(proposal, { actorType: 'client' });
+await sendProposalSentEmail(
+  { ...proposal, client_name, client_email },   // body vars supply name/email
+  { actorType: 'client' },
+);
 ```
-Add `const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');` at the top. Leave the Top Shelf branch and its `topShelfClassRequestAdmin` admin email exactly as-is.
+Use the handler's already-validated/normalized client-name and client-email variables (it trims/lowercases them for the client upsert — reuse those exact variables). `token`, `event_type`, `event_type_custom` come from the `proposal` row itself. Add `const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');` at the top. Leave the Top Shelf branch and its `topShelfClassRequestAdmin` admin email exactly as-is.
 
 - [ ] **Step 4: Persist `client_provides_glassware` to the column; drop the `admin_notes` clobber**
 
@@ -1335,20 +1362,23 @@ const toggleAddon = useCallback((id) => {
 
 - [ ] **Step 4: Replace `filteredAddons`**
 
-Replace the `useMemo` `filteredAddons` (currently ~lines 213-218) with:
+Replace the `useMemo` `filteredAddons` (currently ~lines 213-218) with a `filterAddons` call. **The old cockpit `filteredAddons` did TWO filters:** the `applies_to` check (now inside `filterAddons`) AND a package-slug exclusion via `PACKAGE_EXCLUDED_ADDONS` (from `client/src/data/addonCategories.js` — e.g. it hides `mocktail-bar` + `pre-batched-mocktail` on The Clear Reaction). The shared `filterAddons` (extracted from the wizard) does NOT have the second filter — so it must be re-applied **cockpit-local**, layered on top. Do NOT move `PACKAGE_EXCLUDED_ADDONS` into the shared module: per `docs/superpowers/specs/2026-04-16-clear-reaction-addon-cleanup-design.md` that exclusion is scoped to ProposalCreate + ProposalDetail, not the public wizard, and the shared `filterAddons` is wizard-shared.
 
+Keep the `PACKAGE_EXCLUDED_ADDONS` import. Then:
 ```js
-const { visibleAddons: filteredAddons, isIncludedMap, isUnavailableMap } = useMemo(
-  () => filterAddons({
+const { visibleAddons: filteredAddons } = useMemo(() => {
+  const result = filterAddons({
     addons,
     isHosted: isHostedPackage,
     packageCategory: selectedPkg?.category,
     addonIds: form.addon_ids,
     guestCount: form.guest_count,
-  }),
-  [addons, isHostedPackage, selectedPkg, form.addon_ids, form.guest_count],
-);
+  });
+  const excluded = (selectedPkg && PACKAGE_EXCLUDED_ADDONS[selectedPkg.slug]) || [];
+  return { visibleAddons: result.visibleAddons.filter(a => !excluded.includes(a.slug)) };
+}, [addons, isHostedPackage, selectedPkg, form.addon_ids, form.guest_count]);
 ```
+Destructure only `visibleAddons` here — Task 11 widens this `useMemo` to also surface `isIncludedMap` / `isUnavailableMap` when it consumes them (destructuring an unused var now would trip `CI=true`'s `no-unused-vars`).
 
 - [ ] **Step 5: Enforce hosted minimum (on blur + on package select), reconcile Flavor Blaster**
 
@@ -1550,6 +1580,28 @@ git commit -m "feat(proposal-create): Stripe sign-and-pay trust block in pricing
 
 ---
 
+### Task 16: `ProposalDetailEditForm.js` — addon-quantity parity
+
+**Added during execution** (Task 11's review surfaced it). **Execution order: after Task 14, before Task 15 (the verification pass must cover it).**
+
+**Review tier:** 2 (Claude code-review + database-review) — it touches the `PATCH /:id` edit endpoint's pricing recalculation; mirrors the already-reviewed Task 7 POST pattern.
+
+**Files:**
+- Create: `client/src/components/AddonControls.js`
+- Modify: `client/src/pages/admin/ProposalCreate.js`
+- Modify: `client/src/pages/admin/ProposalDetailEditForm.js`
+- Modify: `server/routes/proposals/crud.js` (`PATCH /:id`)
+
+**Why:** Tasks 10–11 gave the create cockpit an `addon_quantities` stepper. But `ProposalDetailEditForm.js` (the post-creation edit form) has no stepper and `PATCH /api/proposals/:id` does not accept `addon_quantities` — so editing a proposal that has, e.g., "barback ×3" re-saves it without quantities and `safeAddonQty(undefined)` silently resets each to 1. A new field needs all its consumers updated (Cross-Cutting Consistency).
+
+- [ ] **Step 1: Extract shared addon controls.** Lift `AddonQtyStepper`, `BundleBadge`, and the quantity-clamp helper out of `ProposalCreate.js` into a new `client/src/components/AddonControls.js`; re-import them in `ProposalCreate.js` (no cockpit behavior change — pure extraction, verify with `CI=true` build).
+- [ ] **Step 2: `PATCH /api/proposals/:id` accepts `addon_quantities`.** In `crud.js`'s `PATCH /:id` handler, destructure `addon_quantities`, map `quantity: safeAddonQty(addon_quantities?.[String(a.id)])` onto the addon rows fed to `calculateProposal`, and persist it on `proposal_addons` — mirroring Task 7's `POST /` handling. (Scope: just the `addon_quantities` flow — do NOT also add the strip/validate gate here; that is the separate, still-out-of-scope `ProposalDetailEditForm` consolidation.)
+- [ ] **Step 3: Edit form stepper.** In `ProposalDetailEditForm.js`, render the shared `AddonQtyStepper` for `isQuantityCapable` addons; seed each from the proposal's existing persisted `proposal_addons.quantity`; include `addon_quantities` in the `PATCH /proposals/:id` save payload.
+- [ ] **Step 4: Build + verify.** `cd client && CI=true npx react-scripts build` succeeds. Manually (or via the Task 15 pass): create a proposal with a quantity ≥2, edit it, save — the quantity must survive.
+- [ ] **Step 5: Commit.** `git add` the four files; `git commit -m "feat(proposals): addon-quantity parity in the proposal edit form"`.
+
+---
+
 ## Phase 4 — Verification
 
 ### Task 15: Full manual test pass
@@ -1596,6 +1648,6 @@ git commit -m "docs: manual proposal overhaul — new utils + schema column"
 
 - **Per-task review tiers.** Each task header carries a **Review tier** (0/1/2) — see the Review Tiers section near the top. After a task's own tests/build pass, run the tiered review (none / one Claude `code-review` subagent / Claude + Codex) before starting the next task. This is separate from and additional to the pre-push agents.
 - **No pushing.** This plan only commits locally. The user controls push timing (CLAUDE.md Rule 4). Pre-push review agents run on the user's push cue, not here.
-- **`send_now` default is `true`.** Once Task 7 ships, `POST /api/proposals` sends emails by default. The cockpit isn't wired to send `send_now` until Task 13 — between Task 7 and Task 13 the cockpit's existing "Create proposal" button would post without `send_now` and therefore default to `true` (sending). If Phase 2 and Phase 3 land in separate pushes, ship Task 13 in the same push as Task 7, or temporarily default the cockpit payload to `send_now: false` until Task 13. Simplest: execute and push Phases 2 + 3 together.
+- **`send_now` defaults to FALSE (fail-safe).** `POST /api/proposals` only runs the send path (status='sent' + in-txn invoice + client email) on an explicit `send_now: true`. A caller that omits the flag — including the current cockpit before Task 13 lands — gets a `draft`, the old safe behavior. The cockpit's "Create & send" button sends `send_now: true` explicitly (Task 13); "Save as draft" sends `false`. This fail-safe default means there is no unintended-send regression window regardless of push ordering.
 - **DB tests.** `crud.test.js` needs a test database. Match the existing route-test harness in the repo for connection/teardown; if no route tests exist yet, the in-transaction-rollback case (#6) and rate-limit case (#7) are the highest-value — prioritize them.
 - **Class package detection** is `bar_type === 'class'` everywhere — never `category` (class packages are seeded `category='hosted'`).
