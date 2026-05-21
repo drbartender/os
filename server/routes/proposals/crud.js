@@ -117,10 +117,11 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
 }));
 
 /** POST /api/proposals — create a new proposal.
- *  send_now (default true) decides status: true → 'sent' (creates the first
- *  invoice inside the txn + emails the client after commit); false → 'draft'.
- *  A Top Shelf class request always lands as a draft regardless of send_now —
- *  pricing is TBD, so no invoice and no client email. */
+ *  send_now decides status and is fail-safe: ONLY an explicit `send_now: true`
+ *  → 'sent' (creates the first invoice inside the txn + emails the client after
+ *  commit). Omitted / false / null → 'draft'. A Top Shelf class request always
+ *  lands as a draft regardless of send_now — pricing is TBD, so no invoice and
+ *  no client email. */
 router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(async (req, res) => {
   const {
     client_id, client_name, client_email, client_phone, client_source,
@@ -238,9 +239,12 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
         }
       : null;
 
-    // Status branch — send_now defaults true. Top Shelf always forces 'draft'
+    // Status branch — send_now is fail-safe: ONLY an explicit `send_now: true`
+    // triggers the send path. Omitted / false / null all create a 'draft', so
+    // an un-flagged caller never silently mints a 'sent' proposal with an
+    // invoice + client email. Top Shelf always forces 'draft' regardless
     // (pricing TBD: no invoice, no client email).
-    const sendNow = send_now !== false;
+    const sendNow = send_now === true;
     const proposalStatus = (sendNow && !isTopShelfClass) ? 'sent' : 'draft';
 
     // Snapshot — skipped for Top Shelf (pricing TBD; admin prices later).
@@ -316,11 +320,26 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
 
     await dbClient.query('COMMIT');
 
-    // Email the client AFTER commit — best-effort, never throws. The proposal +
-    // invoice are already durably committed, so an email failure is recoverable
-    // (admin resends from the detail page).
+    // Email the client AFTER commit — best-effort. The bare INSERT ... RETURNING
+    // row has no client_email / client_name (those live on `clients`, not
+    // `proposals`), and sendProposalSentEmail early-returns without an email —
+    // so we must re-fetch joined to `clients` first. Wrapped in its own
+    // try/catch: this runs post-COMMIT, so a failed SELECT here must never 500
+    // a request whose proposal + invoice are already durably committed (admin
+    // resends from the detail page). Mirrors the clients-JOIN email step in
+    // PATCH /:id/status.
     if (proposalStatus === 'sent') {
-      await _deps.sendProposalSentEmail(proposal, { actorType: 'admin' });
+      try {
+        const enriched = await pool.query(
+          `SELECT p.*, c.name AS client_name, c.email AS client_email
+             FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
+            WHERE p.id = $1`, [proposal.id]);
+        if (enriched.rows[0]) {
+          await _deps.sendProposalSentEmail(enriched.rows[0], { actorType: 'admin' });
+        }
+      } catch (e) {
+        console.error('Post-send email step failed (non-blocking) for proposal', proposal.id);
+      }
     }
 
     res.status(201).json(proposal);

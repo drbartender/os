@@ -20,6 +20,11 @@
 // (excluding the rate-limit case) POST 9 times as ONE admin user — under the
 // 10/min cap. The rate-limit case deliberately uses a SEPARATE admin user so
 // its 11 POSTs get a clean bucket.
+//
+// adminWriteLimiter BUDGET: the shared `primaryToken` is capped at 10 POSTs/min
+// — cases 1-6/8/9 already sit near that ceiling. Any NEW case that POSTs with
+// `primaryToken` should mint a fresh token (a different admin/manager user)
+// instead, or it risks a spurious 429 from a contended bucket.
 
 require('dotenv').config();
 const { test, before, after } = require('node:test');
@@ -44,6 +49,11 @@ let ADDITIONAL_BARTENDER_ID;
 
 // Email-stub call counter — reset per test that cares.
 let emailCalls = 0;
+// The proposal object the email stub last received. Case 1 inspects this to
+// prove the handler ENRICHED the row (joined to `clients`) before sending —
+// the bare proposals INSERT row has no client_email, so a false-green here
+// would mean the client email never actually had a recipient.
+let lastEmailProposal = null;
 // When set, the createInvoiceOnSend stub throws this many more times then
 // reverts to the real helper. Lets case 6 fail the first attempt and a retry
 // succeed.
@@ -167,11 +177,15 @@ before(async () => {
 
   // Stub the dependency seam: count emails; optionally fail invoice creation.
   crudRouter.__setDeps({
-    // Plain (non-async) wrappers that return the underlying promise — the
-    // handler awaits them. Counts the email; optionally fails the invoice.
-    sendProposalSentEmail: (...args) => {
+    // Capture-and-inspect stub — does NOT delegate to the real
+    // sendProposalSentEmail. The real function early-returns when client_email
+    // is missing, so delegating would let a false-green slip through (counter
+    // ticks, zero emails produced). Instead we capture the proposal the handler
+    // passed so Case 1 can assert it was enriched (has a real recipient).
+    sendProposalSentEmail: (proposal) => {
       emailCalls += 1;
-      return realSendProposalSentEmail(...args);
+      lastEmailProposal = proposal;
+      return Promise.resolve();
     },
     createInvoiceOnSend: (...args) => {
       if (invoiceThrowsRemaining > 0) {
@@ -230,8 +244,9 @@ after(async () => {
 });
 
 // ─── Case 1 — send_now:true on a valid payload ──────────────────────────────
-test('Case 1: send_now true → 201 sent, invoice row exists, email sent once', async () => {
+test('Case 1: send_now true → 201 sent, invoice row exists, email sent once with a real recipient', async () => {
   emailCalls = 0;
+  lastEmailProposal = null;
   const res = await request('POST', '/api/proposals', {
     token: primaryToken,
     body: validHostedBody({ send_now: true }),
@@ -245,6 +260,17 @@ test('Case 1: send_now true → 201 sent, invoice row exists, email sent once', 
   );
   assert.equal(inv.rows.length, 1, 'exactly one invoice row should exist');
   assert.equal(emailCalls, 1, 'sendProposalSentEmail should fire exactly once');
+
+  // The email layer must receive an ENRICHED proposal — a non-empty
+  // client_email string. The bare proposals INSERT row has no client_email
+  // (that column lives on `clients`), so this assertion FAILS if the handler
+  // hands the email step the un-joined row. This is the guard that catches the
+  // "email never sends" bug a counter-only check missed.
+  assert.ok(lastEmailProposal, 'the email stub should have captured a proposal');
+  assert.equal(typeof lastEmailProposal.client_email, 'string',
+    'the enriched proposal must carry a client_email string');
+  assert.ok(lastEmailProposal.client_email.length > 0,
+    'client_email must be non-empty — the handler must enrich the row before sending');
 });
 
 // ─── Case 2 — send_now:false ────────────────────────────────────────────────
@@ -325,7 +351,9 @@ test('Case 5: two BYOB bundle ids → 400, zero proposals created', async () => 
 test('Case 6: invoice failure rolls back the whole insert; retry yields exactly one', async () => {
   const before = await proposalCount();
 
-  // Fail the first invoice attempt.
+  // Fail the first invoice attempt. NOTE: the rolled-back attempt still BURNS
+  // an invoice_number_seq value (sequences are non-transactional in Postgres) —
+  // invoice numbers are allowed to have gaps, so this is expected, not a bug.
   invoiceThrowsRemaining = 1;
   const failBody = validHostedBody({ send_now: true });
   const failRes = await request('POST', '/api/proposals', {
@@ -361,10 +389,12 @@ test('Case 6: invoice failure rolls back the whole insert; retry yields exactly 
 // proposal_addons row carries the snapshot quantity through, and the snapshot
 // line_total doubles vs the x1 baseline.
 test('Case 8: addon_quantities x2 doubles the addon line and persists quantity', async () => {
-  // Baseline: same addon at the default quantity (1).
+  // Baseline: same addon at the default quantity (1). send_now:true keeps both
+  // POSTs on the send path — quantity persistence is identical either way, and
+  // staying on one path is consistent with the other send-path cases.
   const baseRes = await request('POST', '/api/proposals', {
     token: primaryToken,
-    body: validHostedBody({ send_now: false, addon_ids: [ADDITIONAL_BARTENDER_ID] }),
+    body: validHostedBody({ send_now: true, addon_ids: [ADDITIONAL_BARTENDER_ID] }),
   });
   trackResponse(baseRes);
   assert.equal(baseRes.status, 201, `baseline expected 201, got ${baseRes.status}: ${baseRes.raw}`);
@@ -376,7 +406,7 @@ test('Case 8: addon_quantities x2 doubles the addon line and persists quantity',
   const x2Res = await request('POST', '/api/proposals', {
     token: primaryToken,
     body: validHostedBody({
-      send_now: false,
+      send_now: true,
       addon_ids: [ADDITIONAL_BARTENDER_ID],
       addon_quantities: { [String(ADDITIONAL_BARTENDER_ID)]: 2 },
     }),
