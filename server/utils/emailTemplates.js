@@ -302,6 +302,38 @@ function refundNotificationClient({ clientName, refundAmount, last4, newBalance 
   };
 }
 
+/**
+ * Payment failure — client notification. Fires immediately on Stripe
+ * `payment_intent.payment_failed`. Separate from the existing admin throttled
+ * email. Throttle (one per 24h per proposal) is enforced by the caller, not
+ * the template.
+ *
+ * @param {Object} opts
+ * @param {string} opts.clientName
+ * @param {string} opts.eventTypeLabel
+ * @param {string} [opts.last4] - last 4 of card that failed (omit if unavailable)
+ * @param {string} opts.proposalUrl - link for the client to update payment method
+ */
+function paymentFailedClient({ clientName, eventTypeLabel = 'event', last4, proposalUrl }) {
+  const name = clientName || 'there';
+  const cardClause = last4
+    ? ` on the card ending in <strong>${esc(String(last4))}</strong>`
+    : '';
+  const cardClauseText = last4 ? ` on the card ending in ${last4}` : '';
+  return {
+    subject: `Payment didn't go through for your ${eventTypeLabel}`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Payment Didn't Go Through</h2>
+      <p>Hi ${esc(name)},</p>
+      <p>Your payment for the <strong>${esc(eventTypeLabel)}</strong> didn't go through${cardClause}.</p>
+      ${ctaButton(proposalUrl, 'Update Payment Method')}
+      <p>If you have any questions or need help, reply to this email or call me.</p>
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${name}, your payment for the ${eventTypeLabel} didn't go through${cardClauseText}. Update payment method: ${proposalUrl}. Reach out if you need help. Cheers, The Dr. Bartender Team`,
+  };
+}
+
 function drinkPlanBalanceUpdate({ clientName, eventTypeLabel = 'event', extrasAmount, newTotal, amountPaid, balanceDue, balanceDueDate }) {
   const name = clientName || 'there';
   const dueDate = balanceDueDate
@@ -833,6 +865,7 @@ module.exports = {
   paymentReminderClient,
   paymentReminderLate,
   refundNotificationClient,
+  paymentFailedClient,
   clientSignedAdmin,
   paymentReceivedAdmin,
   signedAndPaidAdmin,
