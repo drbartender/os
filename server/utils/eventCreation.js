@@ -1,8 +1,4 @@
 const { pool } = require('../db');
-const { sendEmail } = require('./email');
-const { drinkPlanLink } = require('./lifecycleEmailTemplates');
-const { getEventTypeLabel } = require('./eventTypes');
-const { PUBLIC_SITE_URL } = require('./urls');
 const { composeVenueLocation } = require('./venueAddress');
 const { effectiveSetupMinutes } = require('./setupTime');
 
@@ -34,7 +30,9 @@ function formatTime12(timeStr) {
 
 /**
  * Auto-create a drink plan linked to a proposal. Idempotent — skips if one already exists.
- * Sends the drink plan link to the client via email.
+ * No longer emails the client: the Stripe webhook's orientation email carries
+ * the Potion Planner link. The `skipEmail` option is retained for callers that
+ * still pass it but is now a no-op.
  * @param {number} proposalId
  * @param {object} proposal - Proposal row (must include client_name, client_email, event_type, event_type_custom, event_date, created_by)
  * @returns {object|null} The created drink_plan row, or null if skipped
@@ -66,26 +64,17 @@ async function createDrinkPlan(proposalId, proposal, { skipEmail = false } = {})
 
   const drinkPlan = result.rows[0];
 
-  // Email the drink plan link to the client (unless caller handles it)
-  if (!skipEmail && clientEmail && drinkPlan.token) {
-    const planUrl = `${PUBLIC_SITE_URL}/plan/${drinkPlan.token}`;
-    const eventTypeLabel = getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom });
-
-    try {
-      const template = drinkPlanLink({ clientName: proposal.client_name, eventTypeLabel, planUrl });
-      await sendEmail({ to: clientEmail, ...template });
-      console.log(`Drink plan email sent to ${clientEmail} for proposal ${proposalId}`);
-    } catch (emailErr) {
-      console.error('Drink plan email failed (non-blocking):', emailErr);
-    }
-  }
-
+  // The standalone drink-plan-link email has been retired: the Stripe webhook's
+  // orientation email (signedAndPaidClient) now carries the Potion Planner link,
+  // so a separate drinkPlanLink send would duplicate it. The drink_plans row
+  // itself still has to exist here — the orientation payload reads its token.
   return drinkPlan;
 }
 
 /**
  * Auto-create a shift from a paid proposal. Idempotent — skips if shifts already exist for this proposal.
- * Also auto-creates a drink plan and emails the client.
+ * Also auto-creates the linked drink plan (the orientation email, sent from the
+ * Stripe webhook, surfaces its Potion Planner link to the client).
  * @param {number} proposalId
  * @returns {object|null} The created shift row, or null if skipped
  */
@@ -145,7 +134,8 @@ async function createEventShifts(proposalId) {
     proposal.created_by
   ]);
 
-  // Auto-create drink plan and email client (non-blocking)
+  // Auto-create the linked drink plan (non-blocking). No client email here —
+  // the webhook's orientation email carries the Potion Planner link.
   try {
     const drinkPlan = await createDrinkPlan(proposalId, proposal);
     if (drinkPlan) console.log(`Drink plan #${drinkPlan.id} created for proposal ${proposalId}`);

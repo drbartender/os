@@ -19,6 +19,10 @@ const {
 } = require('../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { scheduleMessage } = require('../utils/messageScheduling');
+const { renderEventIcs } = require('../utils/icsCalendar');
+const { buildOrientationPayload } = require('../utils/orientationData');
+const { effectiveSetupMinutes } = require('../utils/setupTime');
+const { shouldSendImmediate } = require('../utils/messageSuppression');
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../utils/urls');
@@ -929,8 +933,9 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     try {
       const payInfo = await pool.query(`
         SELECT p.event_type, p.event_type_custom, p.client_signed_at, p.last_minute_hold,
-               p.autopay_enrolled,
-               c.name AS client_name, c.email AS client_email
+               p.autopay_enrolled, p.status, p.client_id,
+               c.name AS client_name, c.email AS client_email,
+               c.communication_preferences, c.email_status, c.phone_status
         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
         WHERE p.id = $1
       `, [proposalId]);
@@ -954,24 +959,115 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         // notifier runs, so the flag is readable here. Append the cancellation
         // caveat to the first-payment client email when the booking is ≤72h out.
         const lastMinute = !!pi?.last_minute_hold;
-        let tpl;
-        if (isCoupledSigning) {
-          tpl = emailTemplates.signedAndPaidClient({ clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute });
+
+        // Respect the same suppression rules the dispatcher applies on scheduled rows.
+        const proposalForCheck = { id: proposalId, status: pi.status || 'deposit_paid' };
+        const clientForCheck = {
+          id: pi.client_id,
+          communication_preferences: pi.communication_preferences,
+          email_status: pi.email_status,
+          phone_status: pi.phone_status,
+        };
+        const sendCheck = await shouldSendImmediate({
+          proposal: proposalForCheck,
+          client: clientForCheck,
+          channel: 'email',
+        });
+        if (!sendCheck.ok) {
+          console.log(`[orientation] suppressed for proposal ${proposalId}: ${sendCheck.reason}`);
+          // Skip the client-email branch; downstream admin email still fires.
+        } else if (isCoupledSigning) {
+          // FULL ORIENTATION: assemble payload, build .ics, send with attachment.
+          try {
+            const payload = await buildOrientationPayload(proposalId, { publicSiteUrl: PUBLIC_SITE_URL });
+            if (!payload) {
+              console.error(`[orientation] could not load proposal ${proposalId}, skipping`);
+            } else {
+              const bookingBlock = {
+                formattedEventDate: payload.formattedEventDate,
+                formattedStartTime: payload.formattedStartTime,
+                eventLocation: payload.eventLocation,
+                guestCount: payload.guestCount,
+                packageName: payload.packageName,
+              };
+              const receiptBlock = {
+                depositPaid: amountFormatted,
+                balanceRemaining: payload.balance.balanceRemaining.toFixed(2),
+                paidInFull: payload.balance.paidInFull,
+                autopayEnrolled: payload.balance.autopayEnrolled,
+                dueLabel: payload.balance.dueLabel,
+                formattedBalanceDueDate: payload.balance.formattedBalanceDueDate,
+              };
+
+              // effectiveSetupMinutes signature is (proposal, pkg). We pass the
+              // payload and null pkg so it falls through to its 60-min default.
+              const setupMin = effectiveSetupMinutes(payload, null) || 60;
+              const timelineLines = [
+                payload.potionPlannerUrl
+                  ? 'Drink plan: pick yours any time'
+                  : 'Drink plan: we will be in touch with your planner link',
+                payload.balance.paidInFull
+                  ? 'Balance: paid in full'
+                  : `Balance: ${payload.balance.dueLabel}${payload.balance.formattedBalanceDueDate ? ` ${payload.balance.formattedBalanceDueDate}` : ''}`,
+                'Bartender assignment: about 14 days before the event',
+                `Day-of: your bartender arrives ${setupMin} minutes before your start time to set up`,
+              ];
+
+              const attachments = [];
+              if (payload.utc) {
+                const ics = renderEventIcs({
+                  uid: `proposal-${proposalId}@drbartender.com`,
+                  startUtc: payload.utc.startUtc,
+                  endUtc: payload.utc.endUtc,
+                  summary: `${eventLabel} with Dr. Bartender`,
+                  location: payload.eventLocation,
+                  description: `Your booking with Dr. Bartender. Reply to this email with any questions.`,
+                  stampUtc: new Date(),
+                });
+                attachments.push({ filename: 'event.ics', content: Buffer.from(ics, 'utf8') });
+              }
+
+              const tpl = emailTemplates.signedAndPaidClient({
+                clientName: pi.client_name,
+                eventTypeLabel: eventLabel,
+                amount: amountFormatted,
+                paymentType: payLabel,
+                lastMinute,
+                bookingBlock,
+                receiptBlock,
+                potionPlannerUrl: payload.potionPlannerUrl,
+                timelineLines,
+              });
+              await sendEmail({
+                to: pi.client_email,
+                ...tpl,
+                ...(attachments.length ? { attachments } : {}),
+              });
+            }
+          } catch (orientationErr) {
+            if (process.env.SENTRY_DSN_SERVER) {
+              Sentry.captureException(orientationErr, {
+                tags: { route: '/webhook', step: 'orientation_email', proposalId: String(proposalId) },
+              });
+            }
+            console.error('[orientation] failed (non-blocking):', orientationErr);
+            // Fall back to the old short-form path so the client at least hears back.
+            const tpl = emailTemplates.signedAndPaidClient({
+              clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute,
+            });
+            await sendEmail({ to: pi.client_email, ...tpl });
+          }
         } else {
-          // Detect autopay-driven balance charge: paymentType='balance' AND the
-          // proposal had autopay enrolled (flag from the post-commit SELECT
-          // above). Sends the autopay-specific copy variant of the receipt.
+          // Non-coupled payment: existing paymentReceivedClient path, still gated
+          // by the same shouldSendImmediate check above. Detect autopay-driven
+          // balance charge (paymentType='balance' AND autopay enrolled) so the
+          // autopay-specific receipt copy variant still fires.
           const isAutopaySuccess = paymentType === 'balance' && pi?.autopay_enrolled === true;
-          tpl = emailTemplates.paymentReceivedClient({
-            clientName: pi.client_name,
-            eventTypeLabel: eventLabel,
-            amount: amountFormatted,
-            paymentType: payLabel,
-            lastMinute,
-            autopay: isAutopaySuccess,
+          const tpl = emailTemplates.paymentReceivedClient({
+            clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute, autopay: isAutopaySuccess,
           });
+          await sendEmail({ to: pi.client_email, ...tpl });
         }
-        await sendEmail({ to: pi.client_email, ...tpl });
       }
       const adminEmail = process.env.ADMIN_EMAIL;
       if (adminEmail) {
@@ -1265,7 +1361,6 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         // throws). Gated by isLastMinuteHold (set in-tx above) AND
         // isFirstDelivery so a Stripe webhook retry never re-blasts.
         if (isLastMinuteHold) notifyLastMinuteBooking(proposalId);
-        sendPaymentNotifications(proposalId, intent.amount, paymentType);
 
         // Schedule balance-reminder ladder for the deposit-paid → balance-due window.
         // Fires for both 'deposit' and 'full' payments; the helper skips when balance <= 0.
@@ -1274,6 +1369,9 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           await scheduleBalanceReminders(proposalId);
         }
 
+        // Create the shift (and, via createEventShifts, the drink plan) BEFORE
+        // sending the orientation email — the orientation payload reads
+        // drink_plans.token, which only exists once createEventShifts has run.
         try {
           const shift = await createEventShifts(proposalId);
           if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
@@ -1285,6 +1383,8 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           }
           console.error('Shift auto-creation failed (non-blocking):', shiftErr);
         }
+
+        sendPaymentNotifications(proposalId, intent.amount, paymentType);
       }
     }
   }
