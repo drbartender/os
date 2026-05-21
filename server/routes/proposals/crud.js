@@ -12,6 +12,7 @@ const { getEventTypeLabel } = require('../../utils/eventTypes');
 const { setupTimeDisplay } = require('../../utils/setupTime');
 const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
+const { rescheduleProposalInTx, sendRescheduleEmail } = require('../../utils/rescheduleProposal');
 const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
@@ -414,6 +415,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     }
     const old = existing.rows[0];
 
+    // Hoisted so the post-COMMIT reschedule-email block (outside this inner
+    // try) can read whether the in-tx re-anchor decided an email is warranted.
+    let shouldSendRescheduleEmail = false;
+
     const venueProvided = [venue_name, venue_street, venue_city, venue_state, venue_zip]
       .some(v => v !== undefined);
     if (venueProvided) {
@@ -553,6 +558,22 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // Runs in this transaction so the shift never commits out of sync.
     await syncShiftsFromProposal(req.params.id, dbClient);
 
+    // Gemini Finding 2: reschedule re-anchor runs INSIDE the same tx as the
+    // proposal UPDATE so DB state is atomic (proposal row + scheduled_messages
+    // rows commit together). The email fires after COMMIT (best-effort,
+    // non-blocking). A failure here ROLLs BACK the whole PATCH so DB state
+    // stays consistent — re-throw to land in the existing catch block.
+    try {
+      const rescheduleResult = await rescheduleProposalInTx(dbClient, {
+        proposalId: parseInt(req.params.id, 10),
+        old,                          // pre-UPDATE row
+        updated: updatedRow.rows[0],  // post-UPDATE row
+      });
+      shouldSendRescheduleEmail = rescheduleResult.shouldSendEmail;
+    } catch (rescheduleErr) {
+      throw rescheduleErr;
+    }
+
     await dbClient.query('COMMIT');
 
     // Refresh unlocked invoices with new pricing (own transaction for isolation)
@@ -571,6 +592,29 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       console.error('Invoice refresh failed (non-blocking):', invErr);
     } finally {
       invClient.release();
+    }
+
+    // COMMIT already succeeded above. The reschedule email is best-effort,
+    // post-commit. Inner try/catch is mandatory — we must NEVER rethrow into
+    // the outer catch (which would 500 the PATCH response even though the DB
+    // committed successfully). A Resend failure happens after the DB is
+    // already consistent; admin can manually re-send.
+    if (shouldSendRescheduleEmail) {
+      try {
+        await sendRescheduleEmail({
+          proposalId: parseInt(req.params.id, 10),
+          old,
+          updated: updatedRow.rows[0],
+        });
+      } catch (emailErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(emailErr, {
+            tags: { route: 'proposals/update', issue: 'reschedule-email' },
+            extra: { proposalId: req.params.id },
+          });
+        }
+        console.error('Reschedule email failed (non-blocking, DB already committed):', emailErr);
+      }
     }
 
     // Return updated proposal (from the UPDATE ... RETURNING * above)
