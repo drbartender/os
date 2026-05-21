@@ -108,6 +108,7 @@ export default function ProposalCreate() {
   const [addons, setAddons] = useState([]);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [saveAsDraft, setSaveAsDraft] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [savedAt, setSavedAt] = useState(Date.now());
@@ -294,6 +295,12 @@ export default function ProposalCreate() {
         num_bartenders: form.num_bartenders != null ? Number(form.num_bartenders) : undefined,
         addon_ids: form.addon_ids.map(Number),
         addon_variants: form.addon_variants,
+        // addon_quantities / syrup_selections / class_options /
+        // client_provides_glassware ride along in the ...form spread above.
+        // send_now is NOT a form field — it comes from the saveAsDraft toggle.
+        // The server defaults send_now to false (fail-safe), so the cockpit
+        // must send it explicitly: true => create as 'sent' + invoice + email.
+        send_now: !saveAsDraft,
       };
       const res = await api.post('/proposals', payload);
       toast.success('Proposal created!');
@@ -308,6 +315,13 @@ export default function ProposalCreate() {
 
   const status = fieldStatus(form);
   const ago = Math.max(0, Math.floor((Date.now() - savedAt) / 1000));
+
+  // "Create & send" needs client, event, and package complete — sending an
+  // incomplete proposal would email the client a half-built quote. A draft
+  // can be incomplete, so this gate only applies in send mode.
+  const canSend = status.client === 'done' && status.event === 'done' && status.package === 'done';
+  const submitLabel = saveAsDraft ? 'Save as draft' : 'Create & send';
+  const submitBlocked = !saveAsDraft && !canSend;
 
   return (
     <form onSubmit={handleSubmit} style={{ height: '100%', minHeight: 'calc(100dvh - var(--header-h))' }}>
@@ -365,8 +379,13 @@ export default function ProposalCreate() {
             <span className="tiny mono" style={{ color: 'var(--ink-3)' }}>
               <Icon name="check" size={10} /> Saved {ago < 3 ? 'just now' : `${ago}s ago`}
             </span>
-            <button type="submit" className="btn btn-primary btn-sm" disabled={submitting}>
-              <Icon name="send" size={11} />{submitting ? 'Creating…' : 'Create proposal'}
+            <button
+              type="submit"
+              className="btn btn-primary btn-sm"
+              disabled={submitting || submitBlocked}
+              title={submitBlocked ? 'Add client, event date, and package to send.' : undefined}
+            >
+              <Icon name="send" size={11} />{submitting ? 'Creating…' : submitLabel}
             </button>
           </div>
 
@@ -396,7 +415,7 @@ export default function ProposalCreate() {
               </FieldBlock>
 
               <FieldBlock id="cockpit-send" icon="send" title="Send" status={status.send}>
-                <SendSection />
+                <SendSection form={form} saveAsDraft={saveAsDraft} setSaveAsDraft={setSaveAsDraft} />
               </FieldBlock>
             </div>
           </div>
@@ -408,6 +427,8 @@ export default function ProposalCreate() {
           preview={preview}
           packages={packages}
           submitting={submitting}
+          submitLabel={submitLabel}
+          submitBlocked={submitBlocked}
           error={error}
           fieldErrors={fieldErrors}
         />
@@ -1184,10 +1205,24 @@ function StaffingSection({ form, update, preview, isHostedPackage }) {
 
 // ─── Send section ──────────────────────────────────────────────────────────
 
-function SendSection() {
+function SendSection({ form, saveAsDraft, setSaveAsDraft }) {
+  const recipient = form.client_email || "the client's email";
   return (
-    <div className="tiny" style={{ color: 'var(--ink-3)', lineHeight: 1.55 }}>
-      Click <strong style={{ color: 'var(--ink-1)' }}>Create proposal</strong> in the top bar to save the draft. From the proposal page you can write a custom message, send to client, set deposit terms, and capture signature.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div className="tiny" style={{ color: 'var(--ink-3)', lineHeight: 1.55 }}>
+        <strong style={{ color: 'var(--ink-1)' }}>Create &amp; send</strong> → the client gets the proposal email at{' '}
+        <strong style={{ color: 'var(--ink-1)' }}>{recipient}</strong> · Sign &amp; Pay goes live immediately.
+        <br />
+        The first invoice is auto-created.
+      </div>
+      <label className="hstack" style={{ gap: 8, cursor: 'pointer', fontSize: 12.5, color: 'var(--ink-2)' }}>
+        <input
+          type="checkbox"
+          checked={saveAsDraft}
+          onChange={(e) => setSaveAsDraft(e.target.checked)}
+        />
+        <span>Save as draft instead — nothing is sent; finish it later from the proposal page.</span>
+      </label>
     </div>
   );
 }
@@ -1196,7 +1231,7 @@ function SendSection() {
 
 const DEPOSIT_AMOUNT = 100;
 
-function PricingDock({ form, preview, packages, submitting, error, fieldErrors }) {
+function PricingDock({ form, preview, packages, submitting, submitLabel, submitBlocked, error, fieldErrors }) {
   const pkg = packages.find(p => p.id === Number(form.package_id));
   const total = Number(preview?.total) || 0;
   const subtotal = Number(preview?.subtotal) || 0;
@@ -1305,8 +1340,14 @@ function PricingDock({ form, preview, packages, submitting, error, fieldErrors }
 
       {/* Footer */}
       <footer style={{ borderTop: '1px solid var(--line-1)', padding: '10px 16px', display: 'flex', gap: 6 }}>
-        <button type="submit" className="btn btn-primary btn-sm" disabled={submitting} style={{ flex: 1, justifyContent: 'center' }}>
-          <Icon name="send" size={11} />{submitting ? 'Creating…' : 'Create proposal'}
+        <button
+          type="submit"
+          className="btn btn-primary btn-sm"
+          disabled={submitting || submitBlocked}
+          title={submitBlocked ? 'Add client, event date, and package to send.' : undefined}
+          style={{ flex: 1, justifyContent: 'center' }}
+        >
+          <Icon name="send" size={11} />{submitting ? 'Creating…' : submitLabel}
         </button>
       </footer>
     </aside>
