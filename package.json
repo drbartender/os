@@ -16,6 +16,8 @@
     "build:testing-guide": "node scripts/build-testing-guide.js",
     "bugs:list": "node server/scripts/bugsList.js",
     "optimize:assets": "node scripts/optimize-assets.js",
+    "worktree:new": "node scripts/worktree-new.js",
+    "worktree:rm": "node scripts/worktree-rm.js",
     "prepare": "husky"
   },
   "dependencies": {

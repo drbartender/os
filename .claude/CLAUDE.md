@@ -55,11 +55,28 @@ See `.env.example` for the full list. Key ones:
 
 ## Git Workflow
 
-Solo developer, trunk-based, vibe-coded. Code preservation is the #1 priority. Push to `main` = deploy to production via Render + Vercel.
+Solo developer, vibe-coded. Code preservation is the #1 priority. Work runs in parallel across many Claude windows, each project isolated in its own worktree and branch (see Project Worktrees below). Push to `main` = deploy to production via Render + Vercel.
+
+### Project Worktrees
+
+Many Claude windows run at once. Each project gets its own **worktree** (a separate folder) on its own **branch**, so windows never overwrite each other.
+
+- **One project = one worktree = one branch = one window.** Plan and execute that project in that window; its spec, plan, and code all commit to its branch. No separate plan branch, no cross-window handoff.
+- **The `os` folder stays on `main`.** Git will not check out `main` twice, so `os` is the integration station: branches merge into `main` there, and the batched push runs there.
+- Worktrees live in `..\worktrees\<name>\`, a sibling of `os` and outside the repo, so nothing needs gitignoring. Branch names are plain and descriptive, no prefix: `drawer-fix`, `tip-flow`.
+
+**Lifecycle of one project** (creation and integration commands run from the `os` folder):
+
+1. **Create** — `npm run worktree:new -- <name>`. Adds the worktree on a new branch off `main`, with the `node_modules` and husky junctions a worktree needs to commit. Always use this helper. Do NOT use the `EnterWorktree` tool or a bare `git worktree add`: those skip the junctions, and the worktree's commits then fail eslint or silently bypass the pre-commit hook.
+2. **Work** — open a Claude window in the new `..\worktrees\<name>\` folder. It is already isolated and does not create another worktree. Plan, execute, and commit there, all on branch `<name>`.
+3. **Merge** — when the project is done and verified: `git merge <name>`.
+4. **Clean up** — `npm run worktree:rm -- <name>`.
+
+Verification (dev server, client build) happens in `os` after merge. A worktree shares `client/node_modules` with `os` by junction, so do not run a dev server or a client build inside a worktree while one is running in `os`.
 
 ### Twelve Core Rules
 
-1. **Trunk-only by default.** All work on `main`. Claude confirms branch at session start; if not on `main`, stops and asks — never auto-switches.
+1. **Each project in its own worktree.** Project work happens on a per-project branch in its own worktree, never directly on `main`   (see Project Worktrees above). Claude confirms its location at session start: a project window sits in `..\worktrees\<name>\` on      branch `<name>`; the integration window sits in `os` on `main`. If location and branch disagree, stop and ask, never auto-switch.
 2. **Code preservation beats shipping speed.** When a git op could destroy uncommitted or unpushed work, stop and ask.
 3. **Commits are finished, tested work only — and grouped by logical feature, not by step.** "Finished" means either (a) user verified it works in the app, or (b) it's a behavior-inert change (copy, CSS, docs) the user approved. No WIP commits, no checkpoint commits. **Default to one commit per logical feature, not one per file or step.** If a feature touches the AppError class, asyncHandler middleware, and the routes that use them, that's ONE commit, not three. Only split when the pieces are genuinely independent and could be reverted separately.
 4. **Separate cues for commit vs. push.**
@@ -71,6 +88,7 @@ Solo developer, trunk-based, vibe-coded. Code preservation is the #1 priority. P
 7. **Explicit staging only.** `git add <specific-path>` always. Never `git add .`, `-A`, or `-u`. Prevents sweeping in screenshots, `.playwright-mcp/`, `.env`, etc.
 8. **Branches and stashes require approval with a one-line reason.** Claude may propose but never creates silently.
 9. **Undo rules (safe recipes).**
+   - `git reset` is safe inside your own project branch. Never `git reset` on `main`: rewinding shared `main` is the exact collision   the worktree model removes.
    - Unpushed commit: `git reset --soft HEAD~N`
    - Pushed commit: `git revert <sha>` + push (new undo commit — never rewrite pushed history)
    - Unstage without losing work: `git restore --staged <path>`
@@ -84,7 +102,7 @@ When the user gives a push cue, Claude runs this checklist exactly. No steps ski
 
 **0.5 — Confirmation gate (runs BEFORE any other step).** Announce the pending batch in one line: *"N commits / M files. Run agents + push?"* Wait for explicit yes. If the user says *defer / wait / one more thing / hold on*, stand down silently — no agent run, no push, no further pre-push work. Re-ask on the next push cue. This gate ensures agents run AT MOST once per logical push, even when the user is batching work across multiple parallel Claude sessions.
 
-1. **Verify branch.** Confirm current branch = `main`. If not, stop and ask.
+1. **Verify branch.** Confirm this is the `os` folder on `main` (pushes run from the integration window, never from a project worktree). If not, stop and ask.
 2. **Sanity-check working tree.** If there are uncommitted modifications or untracked files other than known-ignored artifacts, pause and ask: *"There are uncommitted changes in X, Y, Z — meant to go in this push or leave them out?"* Not a hard block; user may just say "leave them."
 3. **Inventory the batch.** Run `git log origin/main..HEAD --name-only` to see every file in the pending push.
 4. **Classify code vs. non-code.** If all changed files are `*.md` or `.gitignore`, skip to step 7.

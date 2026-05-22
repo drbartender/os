@@ -261,7 +261,7 @@ dr-bartender/
 │   │   └── index.css           # Global styles
 │   ├── vercel.json             # SPA rewrite rule for Vercel
 │   └── package.json            # React deps, proxy: localhost:5000
-├── scripts/                    # Build scripts (build-testing-guide.js, check-file-size.js, testing-guide-template.html)
+├── scripts/                    # Build + workflow scripts (build-testing-guide.js, check-file-size.js, optimize-assets.js, worktree-new.js, worktree-rm.js)
 ├── .claude/agents/             # Claude Code review agents (7 agents)
 ├── .husky/pre-commit           # Pre-commit hook (docs-drift check + file-size ratchet + lint-staged)
 ├── .env.example                # Environment variable template
@@ -286,6 +286,8 @@ dr-bartender/
 | `npm run check:filesize` | Report every source file by line-count zone (RED over 1000, YELLOW 700-1000) |
 | `npm run build:testing-guide` | Build `client/public/testing-guide.html` from `TESTING.md` via `scripts/build-testing-guide.js` |
 | `npm run optimize:assets` | One-shot asset optimization (PNG→WebP at tile size, TTF→WOFF2). Idempotent — skips already-converted outputs. |
+| `npm run worktree:new -- <name>` | Create a parallel-dev worktree at `../worktrees/<name>` on a new branch off `main`, with `node_modules` + husky junctions wired up |
+| `npm run worktree:rm -- <name>` | Tear down a worktree: remove its junctions, the worktree, then the branch (`--force` to discard an unmerged branch) |
 
 ## Key Features
 
