@@ -250,6 +250,10 @@ async function dispatchRow(row) {
 // ─── Pull pending rows and dispatch ──────────────────────────
 
 const BATCH_LIMIT = 100;
+// Max drain passes per tick — 50 x BATCH_LIMIT = 5000 messages, well above any
+// real backlog. Bounds the drain loop so a row whose terminal-status write
+// keeps failing cannot spin the tick (the remainder carries to the next tick).
+const MAX_DRAIN_PASSES = 50;
 
 // Re-entrancy guard. dispatchPending is fired on a 5-min setInterval, and
 // wrapScheduler does NOT serialize ticks. If one run overruns the interval, the
@@ -268,10 +272,12 @@ async function dispatchPending() {
   try {
     // Drain fully: keep pulling batches while the last one was full, so a
     // backlog larger than BATCH_LIMIT clears within this tick instead of
-    // waiting for the next 5-min interval. dispatchRow always moves a row out
-    // of 'pending' (sent/failed/suppressed), so each pass sees a fresh set and
-    // the loop terminates once a partial batch comes back.
+    // waiting for the next 5-min interval. dispatchRow normally moves a row out
+    // of 'pending' (sent/failed/suppressed); MAX_DRAIN_PASSES bounds the loop so
+    // a row whose terminal-status write itself keeps failing cannot spin the
+    // tick — the remaining backlog just carries to the next interval.
     let batchSize;
+    let passes = 0;
     do {
       const { rows } = await pool.query(
         `SELECT id, entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for
@@ -289,7 +295,11 @@ async function dispatchPending() {
         // Promise queue.
         await dispatchRow(row);
       }
-    } while (batchSize === BATCH_LIMIT);
+      passes += 1;
+    } while (batchSize === BATCH_LIMIT && passes < MAX_DRAIN_PASSES);
+    if (batchSize === BATCH_LIMIT) {
+      console.warn(`[scheduledMessageDispatcher] hit the ${MAX_DRAIN_PASSES}-pass drain cap — remaining backlog carries to the next tick`);
+    }
   } finally {
     _dispatchInFlight = false;
   }
