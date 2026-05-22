@@ -1,4 +1,5 @@
 import React from 'react';
+import VenueSearchInput from './VenueSearchInput';
 
 // VENUE_STATES + formatVenue mirror server/utils/venueAddress.js
 // (VENUE_STATES + composeVenueLocation) — kept in sync manually
@@ -22,12 +23,27 @@ export default function VenueAddressFields({
   const set = (f) => (e) => onChange(f, e.target.value);
   const req = requireStreet ? ' *' : '';
 
+  // Apply a picked venue. The component supplies only the venue_* keys that
+  // have a value, so an out-of-area (name-only) result never wipes an address
+  // the user already entered. Every parent's onChange is a functional setState,
+  // so the per-field calls are safe.
+  const applyVenue = (venue) => {
+    ['venue_name', 'venue_street', 'venue_city', 'venue_state', 'venue_zip']
+      .forEach((k) => { if (venue[k] !== undefined) onChange(k, venue[k]); });
+  };
+
   return (
     <div className="venue-address-fields">
       <div className="form-group">
         <label className={labelClassName} htmlFor={`${idPrefix}-name`}>Venue name (optional)</label>
-        <input id={`${idPrefix}-name`} className={inputClassName} value={v.venue_name || ''}
-          onChange={set('venue_name')} placeholder="e.g. Citadel Banquet Hall" autoComplete="off" />
+        <VenueSearchInput
+          id={`${idPrefix}-name`}
+          value={v.venue_name || ''}
+          onChange={(name) => onChange('venue_name', name)}
+          onSelect={applyVenue}
+          inputClassName={inputClassName}
+          placeholder="e.g. Citadel Banquet Hall"
+        />
         {fieldErrors.venue_name && <div className="field-error">{fieldErrors.venue_name}</div>}
       </div>
       <div className="form-group">

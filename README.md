@@ -239,6 +239,7 @@ dr-bartender/
 │   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,
 │   │   │                       # TimePicker, NumberStepper, Toast, FormBanner, FieldError, ScrollToTop, SessionExpiryHandler,
 │   │   │                       # VenueAddressFields (structured venue address — sign+pay gate & admin edit),
+│   │   │                       # VenueSearchInput (venue-name typeahead (Google Places)),
 │   │   │                       # ClickableRow (table <tr> wrapper: plain click navigates, drag selects/copies text),
 │   │   │                       # AddonControls (shared add-on UI controls: quantity stepper + greyed bundle badge, used by ProposalCreate + ProposalDetailEditForm)
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
