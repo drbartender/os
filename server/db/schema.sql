@@ -2458,14 +2458,23 @@ CREATE INDEX IF NOT EXISTS idx_post_event_feedback_created_at
 
 -- ─── Global-search performance: pg_trgm trigram indexes ─────────
 -- The Cmd/Ctrl+K command palette (server/utils/globalSearch.js) matches typed
--- text with LOWER(col) LIKE '%term%'. Without a trigram index every keystroke
--- is a sequential scan; a GIN gin_trgm_ops index on the SAME LOWER(col)
--- expression backs the LIKE directly. clients is the unbounded-growth table,
--- so its name + email get indexes; users.email covers the staff lookup.
+-- text with LOWER(col) LIKE '%term%' and a digits-only phone LIKE. Without a
+-- trigram index every keystroke is a sequential scan; a GIN gin_trgm_ops index
+-- on the SAME expression the query uses backs the LIKE directly. These cover
+-- every column the four search queries scan — clients name/email/phone, the
+-- staff users.email, and the contractor_profiles / applications staff columns.
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX IF NOT EXISTS idx_clients_name_trgm
   ON clients USING gin (LOWER(name) gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_clients_email_trgm
   ON clients USING gin (LOWER(email) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_clients_phone_trgm
+  ON clients USING gin (regexp_replace(phone, '[^0-9]', '', 'g') gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_users_email_trgm
   ON users USING gin (LOWER(email) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_contractor_profiles_pname_trgm
+  ON contractor_profiles USING gin (LOWER(preferred_name) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_contractor_profiles_email_trgm
+  ON contractor_profiles USING gin (LOWER(email) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_applications_full_name_trgm
+  ON applications USING gin (LOWER(full_name) gin_trgm_ops);
