@@ -154,7 +154,7 @@ async function handleFeedbackSubmission(ctx) {
     ({ rating, comment } = validateFeedbackInput(ctx.body || {}));
   } catch (err) {
     if (err instanceof ValidationError) {
-      return { status: 400, body: { error: err.message, fields: err.fieldErrors } };
+      return { status: 400, body: { error: err.message, code: err.code, fields: err.fieldErrors } };
     }
     throw err;
   }
@@ -171,7 +171,7 @@ async function handleFeedbackSubmission(ctx) {
     });
   } catch (err) {
     if (err instanceof NotFoundError) {
-      return { status: 404, body: { error: err.message } };
+      return { status: 404, body: { error: err.message, code: err.code } };
     }
     if (err instanceof ConflictError) {
       return { status: 409, body: { error: err.message, code: 'FEEDBACK_ALREADY_SUBMITTED' } };
