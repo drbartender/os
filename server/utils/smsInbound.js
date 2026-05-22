@@ -109,20 +109,26 @@ async function lookupSender(fromPhone) {
  * @param {number|null} args.clientId - matched clients.id, or null
  * @param {string} [args.twilioSid] - Twilio MessageSid
  * @param {Object} [args.metadata] - extra metadata to merge
- * @returns {Promise<Object>} the inserted row
+ * @returns {Promise<Object|null>} the inserted row, or null when a concurrent
+ *   retry already recorded this twilio_sid
  */
 async function recordInboundMessage({ fromPhone, body, clientId, twilioSid, metadata }) {
   const phone = (fromPhone || 'unknown').slice(0, 50);
   const text = (body || '').slice(0, 2000);
   const meta = { from: fromPhone || null, to: process.env.TWILIO_PHONE_NUMBER || null, ...(metadata || {}) };
+  // ON CONFLICT makes a concurrent Twilio retry that raced past the
+  // processInboundSms SELECT-dedup a graceful no-op instead of a 23505 → 500.
+  // The partial unique index idx_sms_messages_twilio_sid is the arbiter; a null
+  // twilio_sid can't conflict, so it still inserts. Returns null on a conflict.
   const result = await pool.query(
     `INSERT INTO sms_messages
        (direction, client_id, recipient_phone, body, message_type, status, twilio_sid, metadata)
      VALUES ('inbound', $1, $2, $3, 'general', 'received', $4, $5)
+     ON CONFLICT (twilio_sid) WHERE twilio_sid IS NOT NULL DO NOTHING
      RETURNING *`,
     [clientId || null, phone, text, twilioSid || null, JSON.stringify(meta)]
   );
-  return result.rows[0];
+  return result.rows[0] || null;
 }
 
 /**
@@ -400,7 +406,9 @@ async function processInboundSms({ from, body, twilioSid }) {
   const optKeyword = detectOptKeyword(text);
   if (optKeyword) {
     const clientId = sender.type === 'client' ? sender.client.id : null;
-    await recordInboundMessage({ fromPhone: from, body: text, clientId, twilioSid, metadata: { opt_keyword: optKeyword } });
+    const recorded = await recordInboundMessage({ fromPhone: from, body: text, clientId, twilioSid, metadata: { opt_keyword: optKeyword } });
+    // null = a concurrent retry already recorded this SID — don't double-apply.
+    if (!recorded) return { outcome: 'duplicate', reply: null };
     if (optKeyword === 'stop') await applyOptOut(sender);
     else await applyOptIn(sender);
     return { outcome: `opt_${optKeyword}`, reply: null };
@@ -408,7 +416,9 @@ async function processInboundSms({ from, body, twilioSid }) {
 
   // Record the message (client_id set only for a client sender).
   const clientId = sender.type === 'client' ? sender.client.id : null;
-  await recordInboundMessage({ fromPhone: from, body: text, clientId, twilioSid });
+  const recorded = await recordInboundMessage({ fromPhone: from, body: text, clientId, twilioSid });
+  // null = a concurrent retry already recorded this SID — stop here.
+  if (!recorded) return { outcome: 'duplicate', reply: null };
 
   if (sender.type === 'client') {
     // No auto-reply to clients — the admin replies personally from the
