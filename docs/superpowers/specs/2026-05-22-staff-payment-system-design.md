@@ -175,7 +175,7 @@ Every `tips` row has `tipped_at` (the payment timestamp) and `target_user_id` (t
 
 1. **Accrual.** When an event completes (hooking into the existing auto-complete runner, `processEventCompletions`), the system computes a `payout_events` row for each contractor who worked it and upserts their `payouts` row for the period the event falls in, creating the `payouts` row, and the `pay_periods` row, if needed.
 2. **Live.** While its period is `open`, a payout recomputes when something relevant changes: a card tip is matched, a Stripe fee settles, a shift is edited.
-3. **Freeze.** When the period reaches payday and the admin opens it to process, the period flips to `processing` and its payouts stop auto-recomputing. The admin's manual adjustments still apply; nothing else moves the numbers.
+3. **Freeze.** When the period reaches payday, the admin starts the run with a deliberate "Process Payroll" action; merely viewing the page does not freeze anything. That action flips the period to `processing` and its payouts stop auto-recomputing. The admin's manual adjustments still apply; nothing else moves the numbers.
 4. **Paid.** Marking a payout paid sets `status = 'paid'`, snapshots the payment method and handle, records `paid_at` and `paid_by`, and generates the paystub PDF. When every payout in a period is paid, the period flips to `paid`.
 5. **Late tips.** A card tip matched to an event whose period is already `processing` or `paid` is not lost. It rolls forward as a `payout_events` row on that contractor's next payout, labeled to its original event.
 
@@ -189,7 +189,7 @@ A new admin-only **Payroll** section under Financials. The existing per-contract
   - Venmo or Cash App: a button opens a QR encoding the pre-filled payment (recipient, amount, and a note such as "Dr. Bartender payroll"). The admin scans it with a phone; the app opens filled in.
   - PayPal: the button opens the contractor's paypal.me in a new tab with the amount filled, paid on the desktop.
   - Check, direct deposit, other: no link; the row shows the amount and the details to handle externally.
-- **Marking paid.** Mark Paid records the method and timestamp, freezes the payout, generates the paystub, and moves the row to paid.
+- **Marking paid.** A payout stays `pending` until you explicitly click Mark Paid; nothing marks it for you, and skipping someone simply leaves them on the list. Mark Paid records the method and timestamp, freezes the payout, generates the paystub, and moves the row to paid. Pay and Mark Paid are one cadence: resolving one contractor advances you to the next unpaid row, so a full run is a rhythm, not dozens of separate clicks.
 - **Unassigned tips.** A panel lists card tips the matching could not place. The admin assigns each to its event. A tip left unassigned when the period is processed rolls to the next period (Section 6.5).
 - **History.** Past periods are viewable read-only.
 
@@ -198,7 +198,7 @@ Note on the Venmo deep link: Venmo reliably pre-fills the recipient but is histo
 ## 8. Staff side
 
 - A **My Pay page** in the staff portal, with a small earnings tile on the staff dashboard linking to it.
-- A contractor sees only their own payouts, never the roster. The current period shows as a live preview marked as finalizing on payday. Past periods show as final.
+- A contractor sees only their own payouts, never the roster. The current period shows as a live preview, labeled clearly as an in-progress estimate that is not final until payday. Past periods show as final.
 - Each payout opens to the same itemized breakdown as the admin worklist, including the card fee shown explicitly (gross, fee, net).
 - **Paystub.** Marking a payout paid generates a paystub PDF, stored in R2 and downloadable from My Pay. It carries the full itemized breakdown, the fee lines, the payment method and date, and two short notes: that cash and app tips are settled separately and are not on the document, and that the figures are 1099 income with no taxes withheld.
 - The current-period preview is live; the paystub is the frozen, official record, created only at mark-paid.
