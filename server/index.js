@@ -178,6 +178,7 @@ app.use('/api/cocktails', require('./routes/cocktails'));
 app.use('/api/mocktails', require('./routes/mocktails'));
 app.use('/api/proposals', require('./routes/proposals'));
 app.use('/api/clients', require('./routes/clients'));
+app.use('/api/venues', require('./routes/venues'));
 app.use('/api/messages', require('./routes/messages'));
 app.use('/api/stripe', require('./routes/stripe'));
 app.use('/api/calendar', require('./routes/calendar'));

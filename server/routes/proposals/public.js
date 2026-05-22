@@ -231,7 +231,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   const {
     client_name, client_email, client_phone,
     event_date, event_start_time, event_duration_hours,
-    venue_name, venue_city, venue_state, guest_count, package_id, num_bars, addon_ids,
+    venue_name, venue_street, venue_city, venue_state, venue_zip, guest_count, package_id, num_bars, addon_ids,
     addon_quantities, syrup_selections,
     event_type, event_type_category, event_type_custom,
     client_provides_glassware,
@@ -245,7 +245,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   if (!guest_count || guest_count < 1) fieldErrors.guest_count = 'Guest count is required';
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
-  const venueInput = { venue_name, venue_city, venue_state };
+  const venueInput = { venue_name, venue_street, venue_city, venue_state, venue_zip };
   const venueErrors = validateVenue(venueInput, { requireCityState: true });
   if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
   const composedLocation = composeVenueLocation(venueInput);
@@ -360,8 +360,8 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours,
         event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, status,
         event_type, event_type_category, event_type_custom, class_options,
-        venue_name, venue_city, venue_state, client_provides_glassware)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+        venue_name, venue_city, venue_state, venue_street, venue_zip, client_provides_glassware)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
       RETURNING *
     `, [
       finalClientId, event_date || null,
@@ -370,6 +370,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       event_type || null, event_type_category || null, event_type_custom || null,
       cleanClassOptions ? JSON.stringify(cleanClassOptions) : null,
       (venue_name || '').trim() || null, (venue_city || '').trim() || null, (venue_state || '').trim() || null,
+      (venue_street || '').trim() || null, (venue_zip || '').trim() || null,
       !!client_provides_glassware
     ]);
 

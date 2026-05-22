@@ -116,4 +116,28 @@ const adminSearchLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter, adminWriteLimiter, adminSearchLimiter };
+// Venue-name search proxy (Google Places). Unauthenticated: the quote wizard
+// is public. A real search debounces to a handful of autocomplete calls plus
+// one details call; 60/min per IP is generous for that and curbs scripted
+// abuse of the (paid) Google quota.
+const venueSearchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: { error: 'Too many venue searches. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Global ceiling across all IPs, so an IP-rotating attacker still hits a cap
+// on the paid Google quota. Same pattern as labratSeedGlobalLimiter. Sized for
+// whole-site quote volume, not a single user; raise if real traffic nears it.
+const venueSearchGlobalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 600,
+  keyGenerator: () => 'venue-search-global',
+  message: { error: 'Venue search is busy. Please try again shortly.' },
+  standardHeaders: false,
+  legacyHeaders: false,
+});
+
+module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter, adminWriteLimiter, adminSearchLimiter, venueSearchLimiter, venueSearchGlobalLimiter };

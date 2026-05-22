@@ -2,6 +2,7 @@ import React from 'react';
 import FieldError from '../../../../components/FieldError';
 import TimePicker from '../../../../components/TimePicker';
 import NumberStepper from '../../../../components/NumberStepper';
+import VenueSearchInput from '../../../../components/VenueSearchInput';
 
 export default function EventDetailsStep({
   form,
@@ -88,9 +89,24 @@ export default function EventDetailsStep({
 
         <div className="form-group">
           <label htmlFor="wz-venue_name" className="form-label">Venue name (optional)</label>
-          <input id="wz-venue_name" className="form-input" value={form.venue_name || ''}
-            onChange={e => update('venue_name', e.target.value)}
-            placeholder="e.g. Citadel Banquet Hall (if you know it)" autoComplete="off" />
+          {/* onChange clears venue_street/venue_zip on freehand edits: the wizard
+              has no visible street field, so a silently captured address must not
+              ride along with a name the user has since retyped. VenueAddressFields
+              deliberately does NOT clear, since there those fields are visible. */}
+          <VenueSearchInput
+            id="wz-venue_name"
+            value={form.venue_name || ''}
+            onChange={(name) => setForm(f => ({ ...f, venue_name: name, venue_street: '', venue_zip: '' }))}
+            onSelect={(venue) => setForm(f => ({
+              ...f,
+              venue_name: venue.venue_name || f.venue_name,
+              venue_street: venue.venue_street || '',
+              venue_zip: venue.venue_zip || '',
+              event_city: venue.venue_city || f.event_city,
+              event_state: venue.venue_state || f.event_state,
+            }))}
+            placeholder="e.g. Citadel Banquet Hall (if you know it)"
+          />
         </div>
 
         {/* Alcohol provider */}

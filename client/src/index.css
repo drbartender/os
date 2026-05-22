@@ -5967,6 +5967,45 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   background: var(--parchment, #f5f0e1);
 }
 
+/* Venue-name smart search dropdown */
+.venue-search-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid var(--border, #d8cdb8);
+  border-radius: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: var(--z-dropdown);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+.venue-search-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0.55rem 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.venue-search-option:hover,
+.venue-search-option.highlighted {
+  background: var(--parchment, #f5f0e1);
+}
+.venue-search-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--deep-brown, #3a2a1a);
+}
+.venue-search-address {
+  font-size: 0.8rem;
+  color: var(--ink-3, #8a7d68);
+}
+
 /* Nav buttons — brass dotted divider above */
 .wz-nav {
   display: flex;

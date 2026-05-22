@@ -12,6 +12,7 @@ CLAUDE.md is the **rules doc**. Structural reference (folder tree, route table) 
 - **Payments**: Stripe (server SDK + React Elements)
 - **Email**: Resend
 - **SMS**: Twilio
+- **Venue search**: Google Places API (New) for venue-name autocomplete
 - **Rich Text Editor**: TipTap (ProseMirror-based WYSIWYG) for blog admin
 - **HTML Sanitization**: DOMPurify + jsdom (server-side, for blog post bodies)
 - **Styling**: Vanilla CSS (no Tailwind, no preprocessors)
@@ -49,6 +50,7 @@ See `.env.example` for the full list. Key ones:
 | `ADMIN_EMAIL` | Admin inbox address. Seed-account email, and the default `Reply-To` on every client-facing email sent via `sendEmail`. Set to a monitored inbox in prod so client replies do not bounce. Falls through to no `Reply-To` header when unset. |
 | `ADMIN_PHONE` | Optional. E.164 number for last-minute (<72h) booking SMS alerts. Unset → admin SMS skipped; broad staff blast still fires. |
 | `THUMBTACK_WEBHOOK_SECRET` | Shared secret for Thumbtack webhook auth |
+| `GOOGLE_PLACES_API_KEY` | Google Places API (New) key for venue-name search. Server-only. When unset, venue search degrades to a plain text input. |
 | `REACT_APP_API_URL` | Client-side API base URL (set in client/.env.production) |
 | `SENTRY_DSN_SERVER` | Server-side Sentry DSN (optional in dev; required in prod) |
 | `REACT_APP_SENTRY_DSN_CLIENT` | Client-side Sentry DSN (optional in dev; required in prod) |

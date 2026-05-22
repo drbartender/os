@@ -273,6 +273,12 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/:id` | Admin | Client detail with proposal history |
 | PUT | `/:id` | Admin | Update client |
 
+### Venues — `/api/venues`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/search` | Public | Venue-name autocomplete — proxies Google Places (New), rate-limited |
+| GET | `/details/:placeId` | Public | Place-details lookup — resolves a suggestion to a structured venue address |
+
 ### Shifts — `/api/shifts`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -1070,6 +1076,9 @@ deliberate scope choice.
 - **Upload flow**: Validate file (magic bytes) → Upload to R2 bucket → Store key in DB → Generate signed URL (15-min expiry) for downloads
 - **Files stored**: W-9, resume, headshot, alcohol certification, BASSET certification, bartender tip-page photos
 - **Admin access**: `GET /api/files/:filename` redirects to signed URL (admin/manager only)
+
+### Google Places (Venue Search)
+- **Wrapper**: `server/utils/googlePlaces.js` — server-mediated proxy over the Google Places (New) API powering the proposal venue-name typeahead (autocomplete + place details → structured venue address). Fails soft (returns `[]`/`null`, never throws) so the venue-name field degrades to a plain text input when `GOOGLE_PLACES_API_KEY` is unset or Google is unreachable. The pure `mapPlaceToVenue` mapper drops out-of-area addresses, keeping only `VENUE_STATES` matches.
 
 ### QR Code Rendering (`qrcode.react`)
 - Client-only dependency used by `client/src/pages/staff/PrintTipCard.jsx` and `PrintTipCard.layouts.jsx` to render the bartender's tip-page URL as an SVG QR code on the printable tip card. No server side; rendered in the browser at print time.
