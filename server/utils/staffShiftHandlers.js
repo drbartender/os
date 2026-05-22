@@ -654,6 +654,74 @@ async function runRescheduleStaffHooks({ proposalId, updated, notifyStaff, notif
   }
 }
 
+/**
+ * Re-anchor pending staff-shift scheduled_messages after a proposal is
+ * rescheduled. shift_reminder/staff_thank_you register with
+ * offsetFromEventDate: null, so the generic offset-based reschedule cascade
+ * (reanchorPendingMessages) skips them.
+ *
+ * Two things, per linked shift:
+ *   1. INSERT any MISSING rows by re-running scheduleStaffShiftMessages
+ *      (status-agnostic via insertShiftMessageIfMissing — terminal rows left).
+ *      This is the recovery path for assign-while-TBD: no row was created at
+ *      assignment time because timing returned null; now timing resolves and
+ *      the missing rows finally get inserted.
+ *   2. UPDATE the scheduled_for of pending rows that already existed.
+ *
+ * Best-effort: caller wraps in try/catch + Sentry; this function also guards
+ * its own body. Skips archived proposals.
+ */
+async function reanchorStaffShiftMessages(proposalId) {
+  let reanchored = 0;
+  try {
+    const shiftRes = await pool.query(
+      `SELECT s.id AS shift_id,
+              p.status AS proposal_status,
+              p.event_date, p.event_start_time, p.event_duration_hours,
+              p.event_timezone
+         FROM shifts s
+         LEFT JOIN proposals p ON p.id = s.proposal_id
+        WHERE s.proposal_id = $1`,
+      [proposalId]
+    );
+    for (const shift of shiftRes.rows) {
+      if (shift.proposal_status === 'archived') continue;
+      // Step 1: INSERT missing rows (recovery for assign-while-TBD).
+      await scheduleStaffShiftMessages(shift.shift_id);
+
+      const reminderAt = computeShiftReminderScheduledFor(shift);
+      const thankYouAt = computeStaffThankYouScheduledFor(shift);
+
+      // Step 2: UPDATE pre-existing pending rows' scheduled_for.
+      if (reminderAt) {
+        const u = await pool.query(
+          `UPDATE scheduled_messages SET scheduled_for = $1
+            WHERE entity_type = 'shift' AND entity_id = $2
+              AND message_type = 'shift_reminder' AND status = 'pending'`,
+          [reminderAt, shift.shift_id]
+        );
+        reanchored += u.rowCount;
+      }
+      if (thankYouAt) {
+        const u = await pool.query(
+          `UPDATE scheduled_messages SET scheduled_for = $1
+            WHERE entity_type = 'shift' AND entity_id = $2
+              AND message_type = 'staff_thank_you' AND status = 'pending'`,
+          [thankYouAt, shift.shift_id]
+        );
+        reanchored += u.rowCount;
+      }
+    }
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { component: 'staffShiftHandlers', step: 'reanchorStaffShiftMessages' },
+      extra: { proposalId },
+    });
+    console.error('[staffShiftHandlers] reanchorStaffShiftMessages failed (non-blocking):', err.message);
+  }
+  return { reanchored };
+}
+
 module.exports = {
   toCalendarYmd,
   parseClockTime,
@@ -670,4 +738,5 @@ module.exports = {
   notifyStaffOfCancellation,
   notifyStaffOfScheduleChange,
   runRescheduleStaffHooks,
+  reanchorStaffShiftMessages,
 };

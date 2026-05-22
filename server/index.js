@@ -332,6 +332,11 @@ async function start() {
       require('./utils/balanceSmsHandlers').registerBalanceSmsHandlers();
       require('./utils/eventEveSms').registerEventEveHandler();
 
+      // Phase 4a: register the staff-shift SMS handlers (shift_reminder,
+      // staff_thank_you). Synchronous; must run before the dispatcher's first
+      // tick so it can resolve these staff message types.
+      require('./utils/staffShiftHandlers').registerStaffShiftHandlers();
+
       // Scheduled-messages dispatcher — every 5 min, picks up pending rows
       if (enabled('RUN_MESSAGE_DISPATCHER_SCHEDULER')) {
         const wrapped = wrapScheduler('message_dispatcher', 300, dispatchPending);

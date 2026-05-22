@@ -293,3 +293,67 @@ test('notifyStaffOfScheduleChange > sends nothing when both channels are off', a
   });
   assert.deepStrictEqual(r, { smsSent: 0, emailSent: 0 });
 });
+
+test('reanchorStaffShiftMessages > moves a pending shift_reminder to the new event date', async () => {
+  await seedShift({ eventDateExpr: "CURRENT_DATE + INTERVAL '60 days'" });
+  await scheduleStaffShiftMessages(TEST_SHIFT_ID);
+  const before = await pool.query(
+    "SELECT scheduled_for FROM scheduled_messages WHERE entity_type = 'shift' AND entity_id = $1 AND message_type = 'shift_reminder'",
+    [TEST_SHIFT_ID]
+  );
+  const beforeAt = new Date(before.rows[0].scheduled_for).getTime();
+
+  await pool.query(
+    "UPDATE proposals SET event_date = CURRENT_DATE + INTERVAL '70 days' WHERE id = $1",
+    [TEST_PROPOSAL_ID]
+  );
+  await pool.query(
+    "UPDATE shifts SET event_date = CURRENT_DATE + INTERVAL '70 days' WHERE id = $1",
+    [TEST_SHIFT_ID]
+  );
+
+  const { reanchorStaffShiftMessages } = require('./staffShiftHandlers');
+  await reanchorStaffShiftMessages(TEST_PROPOSAL_ID);
+
+  const after = await pool.query(
+    "SELECT scheduled_for FROM scheduled_messages WHERE entity_type = 'shift' AND entity_id = $1 AND message_type = 'shift_reminder'",
+    [TEST_SHIFT_ID]
+  );
+  const afterAt = new Date(after.rows[0].scheduled_for).getTime();
+  assert.ok(afterAt - beforeAt > 9 * 86400000 && afterAt - beforeAt < 11 * 86400000,
+    `expected ~10-day shift, got ${(afterAt - beforeAt) / 86400000} days`);
+});
+
+test('reanchorStaffShiftMessages > schedules a reminder that was skipped because the event time was TBD at assignment', async () => {
+  await seedShift({ startTime: '' });
+
+  await scheduleStaffShiftMessages(TEST_SHIFT_ID);
+  const atAssign = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type = 'shift' AND entity_id = $1",
+    [TEST_SHIFT_ID]
+  );
+  assert.strictEqual(Number(atAssign.rows[0].count), 0);
+
+  await pool.query(
+    "UPDATE proposals SET event_start_time = '18:00' WHERE id = $1",
+    [TEST_PROPOSAL_ID]
+  );
+  await pool.query(
+    "UPDATE shifts SET start_time = '18:00' WHERE id = $1",
+    [TEST_SHIFT_ID]
+  );
+
+  const { reanchorStaffShiftMessages } = require('./staffShiftHandlers');
+  await reanchorStaffShiftMessages(TEST_PROPOSAL_ID);
+
+  const after = await pool.query(
+    `SELECT message_type, status FROM scheduled_messages
+      WHERE entity_type = 'shift' AND entity_id = $1
+      ORDER BY message_type`,
+    [TEST_SHIFT_ID]
+  );
+  assert.strictEqual(after.rows.length, 2);
+  const byType = Object.fromEntries(after.rows.map((r) => [r.message_type, r.status]));
+  assert.strictEqual(byType.shift_reminder, 'pending');
+  assert.strictEqual(byType.staff_thank_you, 'pending');
+});
