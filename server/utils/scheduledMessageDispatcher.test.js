@@ -386,6 +386,115 @@ test('registerHandler > coerces a non-true multiChannel value to false', () => {
   assert.strictEqual(meta.multiChannel, false);
 });
 
+test('overlap > defers a lower-priority touch when a higher-priority one already fired today', async () => {
+  // A priority-1 balance reminder already sent 1 hour ago. A priority-4 drip
+  // touch on the same client+channel today must be deferred, not sent.
+  registerHandler('disp_test_hi', async () => {}, { priority: 1 });
+  registerHandler('disp_test_lo', mock.fn(async () => {}), { priority: 4 });
+
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, sent_at, status)
+     VALUES ($1, 'proposal', 'disp_test_hi', 'client', $2, 'email', NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour', 'sent')`,
+    [testProposalId, testClientId]
+  );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_lo', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+  const { rows } = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_lo'"
+  );
+  assert.strictEqual(rows[0].status, 'deferred');
+});
+
+test('overlap > a cooldownExempt touch fires even when another touch already fired today', async () => {
+  const exemptHandler = mock.fn(async () => {});
+  registerHandler('disp_test_exempt', exemptHandler, { priority: 1, cooldownExempt: true });
+
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, sent_at, status)
+     VALUES ($1, 'proposal', 'disp_test_other', 'client', $2, 'email', NOW() - INTERVAL '2 hours', NOW() - INTERVAL '2 hours', 'sent')`,
+    [testProposalId, testClientId]
+  );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_exempt', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+  assert.strictEqual(exemptHandler.mock.callCount(), 1);
+  const { rows } = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_exempt'"
+  );
+  assert.strictEqual(rows[0].status, 'sent');
+});
+
+test('overlap > does not defer when the prior touch is on a different channel', async () => {
+  const handler = mock.fn(async () => {});
+  registerHandler('disp_test_otherchan', handler, { priority: 4 });
+
+  // Prior sent touch on SMS; current touch on email, different channel, no collision.
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, sent_at, status)
+     VALUES ($1, 'proposal', 'disp_test_smsprior', 'client', $2, 'sms', NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour', 'sent')`,
+    [testProposalId, testClientId]
+  );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_otherchan', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 1);
+  const { rows } = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_otherchan'"
+  );
+  assert.strictEqual(rows[0].status, 'sent');
+});
+
+test('overlap > within one tick, the higher-priority touch fires and the lower-priority one defers even when the lower-priority one has the earlier scheduled_for', async () => {
+  // Two same-client same-channel rows due in the SAME tick. Lower-priority
+  // (4) has EARLIER scheduled_for, so naive ASC dispatch would send it first.
+  // It would claim the channel. Then priority-1, being strictly higher, would
+  // bypass cooldown and ALSO send, a double-send. The in-memory priority sort
+  // must dispatch the priority-1 row first so the priority-4 row finds a sent
+  // collision and defers.
+  const hiHandler = mock.fn(async () => {});
+  const loHandler = mock.fn(async () => {});
+  registerHandler('disp_test_tick_hi', hiHandler, { priority: 1 });
+  registerHandler('disp_test_tick_lo', loHandler, { priority: 4 });
+
+  // Lower-priority row: earlier scheduled_for (5 minutes ago).
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_tick_lo', 'client', $2, 'email', NOW() - INTERVAL '5 minutes')`,
+    [testProposalId, testClientId]
+  );
+  // Higher-priority row: later scheduled_for (1 minute ago) but still due.
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_tick_hi', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+  assert.strictEqual(hiHandler.mock.callCount(), 1, 'priority-1 touch sent');
+  assert.strictEqual(loHandler.mock.callCount(), 0, 'priority-4 touch deferred, handler never ran');
+  const hi = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_tick_hi'"
+  );
+  const lo = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_tick_lo'"
+  );
+  assert.strictEqual(hi.rows[0].status, 'sent');
+  assert.strictEqual(lo.rows[0].status, 'deferred');
+});
+
 test('retrofit > priority and multiChannel landed on the 14 existing handler registrations', async () => {
   // Marketing + pre-event handlers: re-register via their exported functions
   // (they write into the instance this file imported at its top).

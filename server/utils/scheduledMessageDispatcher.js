@@ -168,6 +168,54 @@ async function checkSuppression({ row, entity, recipient }) {
   return null;
 }
 
+// ─── Overlap prevention (spec 7.4) ───────────────────────────
+// Max 1 scheduled message per channel per client per day. When a lower- or
+// equal-priority touch collides with one that already fired in the trailing
+// 24h on the same client+channel, the current row is deferred 24h. Handlers
+// flagged cooldownExempt (event_eve, balance_due_today) skip this check.
+//
+// Returns true when the row should be deferred, false when it may proceed.
+async function shouldDeferForOverlap(row) {
+  // Cooldown is a client-only rule. Staff/admin touches always proceed.
+  if (row.recipient_type !== 'client') return false;
+
+  const meta = handlerMeta.get(row.message_type);
+  // No metadata, or explicitly exempt: never defer.
+  if (!meta || meta.cooldownExempt === true) return false;
+
+  // Look for another row, same recipient + channel, SENT within the trailing
+  // 24h. Pick the strongest (lowest priority number) colliding type so the
+  // tie-break compares against the best touch that used the channel.
+  const { rows } = await pool.query(
+    `SELECT message_type
+       FROM scheduled_messages
+      WHERE recipient_type = 'client'
+        AND recipient_id = $1
+        AND channel = $2
+        AND status = 'sent'
+        AND sent_at IS NOT NULL
+        AND sent_at > NOW() - INTERVAL '24 hours'
+        AND id <> $3`,
+    [row.recipient_id, row.channel, row.id]
+  );
+  if (rows.length === 0) return false;
+
+  // Strongest colliding priority = lowest priority number among the sent rows.
+  // A sent row whose message_type is no longer registered defaults to 3.
+  let strongestColliding = 5;
+  for (const r of rows) {
+    const m = handlerMeta.get(r.message_type);
+    const p = (m && Number.isInteger(m.priority)) ? m.priority : 3;
+    if (p < strongestColliding) strongestColliding = p;
+  }
+
+  // Current row defers when it is NOT strictly higher priority than the
+  // strongest touch that already used the channel today (i.e. its priority
+  // number is >= the colliding one). A strictly-higher row (lower number)
+  // proceeds, the channel is already spent, deferring would only delay it.
+  return meta.priority >= strongestColliding;
+}
+
 // ─── Entity / recipient lookups ──────────────────────────────
 
 async function lookupEntity(entityType, entityId) {
@@ -262,6 +310,22 @@ async function dispatchRow(row) {
       }
     }
 
+    // Overlap prevention (spec 7.4): defer a colliding lower-priority touch by
+    // 24h. The row goes 'deferred' and its scheduled_for moves forward a day;
+    // the dispatcher's deferred-reactivation pass flips it back to 'pending'
+    // when it next comes due.
+    if (await shouldDeferForOverlap(row)) {
+      await pool.query(
+        `UPDATE scheduled_messages
+            SET status = 'deferred',
+                scheduled_for = scheduled_for + INTERVAL '24 hours',
+                error_message = 'deferred: daily per-channel cooldown (spec 7.4)'
+          WHERE id = $1`,
+        [row.id]
+      );
+      return;
+    }
+
     const handler = handlers.get(row.message_type);
     if (!handler) {
       await pool.query(
@@ -335,6 +399,22 @@ async function dispatchPending() {
         [BATCH_LIMIT]
       );
       batchSize = rows.length;
+
+      // Dispatch the batch highest-priority-first (spec 7.4). The SQL ORDER BY
+      // is scheduled_for ASC, but the overlap rule needs the higher-priority
+      // touch of a same-client+channel+day collision to fire FIRST so it claims
+      // the channel and the lower-priority touch defers. Priority lives in the
+      // in-memory handler registry (handlerMeta), not a scheduled_messages
+      // column, so this is an in-memory sort, not a SQL ORDER BY. An
+      // unregistered message_type (no handlerMeta entry) sorts last.
+      rows.sort((a, b) => {
+        const metaA = handlerMeta.get(a.message_type);
+        const metaB = handlerMeta.get(b.message_type);
+        const prioA = (metaA && Number.isInteger(metaA.priority)) ? metaA.priority : Number.MAX_SAFE_INTEGER;
+        const prioB = (metaB && Number.isInteger(metaB.priority)) ? metaB.priority : Number.MAX_SAFE_INTEGER;
+        if (prioA !== prioB) return prioA - prioB;
+        return new Date(a.scheduled_for) - new Date(b.scheduled_for);
+      });
 
       for (const row of rows) {
         // Sequential dispatch — keeps a single SMTP burst from blowing past
