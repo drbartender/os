@@ -156,6 +156,7 @@ dr-bartender/
 │   │   ├── me.js               # Authenticated self endpoints (tip page settings, my-tips listing)
 │   │   ├── publicReviews.js    # Public cached endpoint for Thumbtack reviews on homepage
 │   │   ├── publicTip.js        # Public tip-page lookup + post-tip feedback (token-gated)
+│   │   ├── publicFeedback.js   # Post-event feedback router (5-star sentiment routing)
 │   │   ├── testFeedback.js     # Receives Lab Rat bug reports — INSERTs into `tester_bugs` (durable) AND fire-and-forget emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` (notification)
 │   │   └── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
 │   ├── utils/

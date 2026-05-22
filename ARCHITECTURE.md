@@ -413,6 +413,12 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | GET | `/:token` | No (token-gated) | Fetch active tip page by token — bartender display name, photo, tip rails (Venmo/CashApp deep links + Stripe Payment Link). Returns 404 for missing or deactivated pages. |
 | POST | `/:token/feedback` | No (token-gated, rate-limited) | Submit post-tip feedback from the thank-you page (rating + free-text). Inserts into `tip_page_feedback` and emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL`. |
 
+### Post-Event Feedback — `/api/public/feedback`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/:token` | No (token-gated) | Display data for the post-event feedback router page (client first name, event type). |
+| POST | `/:token` | No (token-gated) | Submit a rating (1-5). A 4-5 rating returns a Google Reviews redirect URL; a 1-3 rating records the feedback in `post_event_feedback` and emails an admin alert. Idempotent per proposal. |
+
 ### Authenticated Self — `/api/me`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -731,6 +737,8 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - Lookup indexes on `(entity_type, entity_id)` and `(recipient_type, recipient_id)` for cancellation (e.g. proposal accepted, cancel pending reminders) and per-recipient history.
 
 *Scheduled-message dispatcher:* `server/utils/scheduledMessageDispatcher.js` registers the `message_dispatcher` scheduler, which runs every 5 minutes. Each tick drains due `pending` rows from `scheduled_messages`, applies the shared suppression rules (archive / comm-prefs / bad-contact), and dispatches each row to its registered per-message-type handler (currently the money-path balance reminders). Rows are wired in by `server/utils/messageScheduling.js` (`scheduleMessage`, idempotent insert). Gated by `RUN_MESSAGE_DISPATCHER_SCHEDULER` (suppressed by the global `RUN_SCHEDULERS=false`).
+
+*Marketing and retention message types:* the dispatcher handles marketing-class touches registered by `marketingHandlers.js` (`drip_touch_2`, `drip_touch_4`, `drip_touch_5_email`, `new_year_hello`, `six_months_out`, `retention_nudge`), all gated on `clients.communication_preferences.marketing_enabled`, plus `review_request` (operational, a CAN-SPAM transactional follow-up, not gated). They are scheduled by hooks on the proposal status-transition paths: drip enrollment on every path that makes a proposal `sent`, New Year and 6-months-out plus drip-suppression on every sign+pay path, review request and retention nudge on completion, and marketing cancellation on archive.
 
 **scheduler_health** — Heartbeat table for the Automated Communication Foundation schedulers. Each scheduler writes its `last_run_at` on every tick; a monitoring loop alerts via Sentry when any scheduler hasn't checked in within 2x its expected interval.
 - `scheduler_name` TEXT PRIMARY KEY — stable identifier (e.g. `proposal_reminders`, `shift_reminders`, `client_messages_dispatcher`)
