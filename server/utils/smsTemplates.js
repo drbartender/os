@@ -1,8 +1,8 @@
 /**
- * SMS body templates for Dr. Bartender — client-facing automated SMS.
+ * SMS body templates for Dr. Bartender, client-facing automated SMS.
  * One exported function per touch; each returns a plain string (the SMS body).
  * Mirrors emailTemplates.js. Copy is verbatim from the automated-communication
- * spec section 5. NO em dashes (per CLAUDE.md) — commas, periods, parentheticals.
+ * spec section 5. NO em dashes (per CLAUDE.md), commas, periods, parentheticals.
  *
  * Phase 3 creates this file with the client SMS copy. Phase 4a appends staff
  * SMS copy below.
@@ -83,6 +83,46 @@ function rescheduleSms({ newDate, newStartTime, newLocation }) {
   return `Hi, Dallas here. Your event has been updated. New details: ${dt(newDate)} at ${newStartTime || 'a new time'}, ${newLocation || 'the same location'}. Full updated confirmation in your email. Let me know if you have any questions.`;
 }
 
+// ═════════════════════════════════════════════════════════════════
+// Staff-facing SMS copy (Phase 4a). Branded prefix style so staff
+// recognize the automation. Verbatim from spec sections 3.15-3.19.
+// ═════════════════════════════════════════════════════════════════
+
+/**
+ * Staff day-before shift reminder (spec 3.15). Branded prefix style so staff
+ * recognize the automation. Includes CONFIRM / CANT response codes.
+ */
+function staffShiftReminderSms(ctx) {
+  return `Shift Reminder from Dr. Bartender: working ${ctx.eventTypeLabel} at ${ctx.clientName} tomorrow at ${ctx.startTimeLocal}, ${ctx.location}. Setup: ${ctx.setupArrivalTime}. Drink plan and shopping list: ${ctx.link}. Reply CONFIRM to acknowledge or CANT if you have a conflict.`;
+}
+
+/**
+ * Staff post-event thank-you (spec 3.19).
+ */
+function staffThankYouSms(ctx) {
+  return `Thanks from Dr. Bartender for working ${ctx.eventTypeLabel} tonight. Let me know if anything came up. Cheers`;
+}
+
+/**
+ * Staff schedule-change notice (spec 3.17). Admin-toggled.
+ */
+function staffScheduleChangeSms(ctx) {
+  return `Update from Dr. Bartender: ${ctx.eventTypeLabel} on ${ctx.eventDateLocal} has been changed. New: ${ctx.newDetails}. Reply CONFIRM to stay on the shift or call if there is a conflict.`;
+}
+
+/**
+ * Staff cancellation / unassignment notice (spec 3.18). Admin-toggled.
+ * `kind` is 'cancelled' (the event itself was cancelled) or 'unassigned' (the
+ * staffer was removed from a still-running event). Each branch is a complete
+ * grammatical standalone sentence, the verb is NOT shared.
+ */
+function staffCancellationSms(ctx) {
+  const sentence = ctx.kind === 'unassigned'
+    ? `your shift for the ${ctx.eventTypeLabel} on ${ctx.eventDateLocal} is no longer needed`
+    : `the ${ctx.eventTypeLabel} on ${ctx.eventDateLocal} has been cancelled`;
+  return `Update from Dr. Bartender: ${sentence}. Sorry for the disruption. Reach out with questions.`;
+}
+
 module.exports = {
   initialProposalSms,
   signPayConfirmationSms,
@@ -95,4 +135,8 @@ module.exports = {
   paymentFailureSms,
   eventEveSms,
   rescheduleSms,
+  staffShiftReminderSms,
+  staffThankYouSms,
+  staffScheduleChangeSms,
+  staffCancellationSms,
 };
