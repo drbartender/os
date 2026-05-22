@@ -22,9 +22,13 @@
  */
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { resolveEventTimezone } = require('./eventTimezone');
+const { resolveEventTimezone, formatEventLocalTime } = require('./eventTimezone');
 const { getEventTypeLabel } = require('./eventTypes');
+const { subtractMinutesFromTime } = require('./setupTime');
 const { PUBLIC_SITE_URL } = require('./urls');
+const { registerHandler } = require('./scheduledMessageDispatcher');
+const { sendAndLogSms } = require('./sms');
+const smsTemplates = require('./smsTemplates');
 
 // ─── Timing helpers ──────────────────────────────────────────────
 // shift_reminder fires at event start minus 24h; staff_thank_you fires at
@@ -287,6 +291,162 @@ async function scheduleStaffShiftMessages(shiftId, executor) {
   return inserted;
 }
 
+// ─── Dispatcher handlers ─────────────────────────────────────────
+
+/**
+ * Load the shift + linked proposal + recipient staffer contact for a scheduled
+ * staff SMS handler. users has no phone column; staff phone is joined from
+ * contractor_profiles.
+ */
+async function loadStaffShiftContext(shiftId, staffUserId) {
+  const { rows } = await pool.query(
+    `SELECT s.id AS shift_id, s.proposal_id, s.location AS shift_location,
+            s.start_time AS shift_start_time, s.setup_minutes_before,
+            p.status AS proposal_status, p.token AS proposal_token,
+            p.event_date, p.event_start_time, p.event_duration_hours,
+            p.event_timezone, p.event_location,
+            p.event_type, p.event_type_custom,
+            COALESCE(c.name, s.client_name) AS client_name,
+            cp.preferred_name AS staff_name, cp.phone AS staff_phone
+       FROM shifts s
+       LEFT JOIN proposals p ON p.id = s.proposal_id
+       LEFT JOIN clients c ON c.id = p.client_id
+       LEFT JOIN contractor_profiles cp ON cp.user_id = $2
+      WHERE s.id = $1`,
+    [shiftId, staffUserId]
+  );
+  return rows[0] || null;
+}
+
+/** Format event start as "6:00 PM CDT". */
+function formatStartTimeShort(ctx) {
+  const raw = ctx.event_start_time || ctx.shift_start_time;
+  const clock = parseClockTime(raw);
+  if (!clock) return 'TBD';
+  const hour12 = clock.hour % 12 === 0 ? 12 : clock.hour % 12;
+  const ampm = clock.hour >= 12 ? 'PM' : 'AM';
+  const time12 = `${hour12}:${String(clock.minute).padStart(2, '0')} ${ampm}`;
+  let tzAbbrev = '';
+  try {
+    const ymd = toCalendarYmd(ctx.event_date);
+    if (ymd) {
+      const refMs = Date.parse(`${ymd}T12:00:00Z`);
+      if (Number.isFinite(refMs)) {
+        const tz = resolveEventTimezone(ctx);
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: tz, timeZoneName: 'short',
+        }).formatToParts(new Date(refMs));
+        const tzPart = parts.find((p) => p.type === 'timeZoneName');
+        if (tzPart && tzPart.value) tzAbbrev = ` ${tzPart.value}`;
+      }
+    }
+  } catch (_e) { /* leave empty */ }
+  return `${time12}${tzAbbrev}`;
+}
+
+/** Format event_date as "Saturday, August 15" in event TZ. */
+function formatEventDateLong(ctx) {
+  const ymd = toCalendarYmd(ctx.event_date);
+  if (!ymd) return 'your event';
+  const d = new Date(`${ymd}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return 'your event';
+  const tz = resolveEventTimezone(ctx);
+  return formatEventLocalTime(d, tz, { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+/**
+ * Handler: shift_reminder (day-before staff SMS, spec 3.15).
+ * The archived-proposal throw below is defense-in-depth: Task 10 suppresses
+ * archived-proposal shift rows in checkSuppression before dispatch.
+ */
+async function handleShiftReminder({ entity, recipient }) {
+  const ctx = await loadStaffShiftContext(entity.id, recipient.id);
+  if (!ctx) throw new Error(`shift_reminder: shift ${entity.id} not found`);
+  if (!ctx.proposal_id) throw new Error(`shift_reminder: shift ${entity.id} has no linked proposal`);
+  if (ctx.proposal_status === 'archived') {
+    throw new Error(`shift_reminder: proposal archived for shift ${entity.id} — should have been suppressed`);
+  }
+  if (!ctx.staff_phone) {
+    throw new Error(`shift_reminder: staff ${recipient.id} has no phone on contractor_profiles`);
+  }
+
+  const setupArrival = subtractMinutesFromTime(
+    ctx.event_start_time || ctx.shift_start_time,
+    ctx.setup_minutes_before ?? 60
+  ) || 'TBD';
+
+  const link = ctx.proposal_token
+    ? `${PUBLIC_SITE_URL}/shopping-list/${ctx.proposal_token}`
+    : `${PUBLIC_SITE_URL}`;
+
+  const body = smsTemplates.staffShiftReminderSms({
+    eventTypeLabel: getEventTypeLabel({ event_type: ctx.event_type, event_type_custom: ctx.event_type_custom }),
+    clientName: ctx.client_name || 'the host',
+    startTimeLocal: formatStartTimeShort(ctx),
+    location: ctx.event_location || ctx.shift_location || 'TBD',
+    setupArrivalTime: setupArrival,
+    link,
+  });
+
+  await sendAndLogSms({
+    to: ctx.staff_phone,
+    body,
+    clientId: null,
+    messageType: 'shift_reminder',
+    recipientName: ctx.staff_name || null,
+  });
+}
+
+/**
+ * Handler: staff_thank_you (post-event staff SMS, spec 3.19).
+ */
+async function handleStaffThankYou({ entity, recipient }) {
+  const ctx = await loadStaffShiftContext(entity.id, recipient.id);
+  if (!ctx) throw new Error(`staff_thank_you: shift ${entity.id} not found`);
+  if (!ctx.proposal_id) throw new Error(`staff_thank_you: shift ${entity.id} has no linked proposal`);
+  if (ctx.proposal_status === 'archived') {
+    throw new Error(`staff_thank_you: proposal archived for shift ${entity.id} — should have been suppressed`);
+  }
+  if (!ctx.staff_phone) {
+    throw new Error(`staff_thank_you: staff ${recipient.id} has no phone on contractor_profiles`);
+  }
+
+  const body = smsTemplates.staffThankYouSms({
+    eventTypeLabel: getEventTypeLabel({ event_type: ctx.event_type, event_type_custom: ctx.event_type_custom }),
+  });
+
+  await sendAndLogSms({
+    to: ctx.staff_phone,
+    body,
+    clientId: null,
+    messageType: 'staff_thank_you',
+    recipientName: ctx.staff_name || null,
+  });
+}
+
+/**
+ * Idempotent registration entry point. shift_reminder + staff_thank_you both
+ * have BESPOKE timing (T-24h from start, end+30min), so they register with
+ * offsetFromEventDate: null — the generic reschedule cascade skips them and
+ * Task 11 handles their reschedule re-anchor explicitly.
+ *
+ * priority (1 / 3) is per the cross-plan priority ladder; inert until Phase 4b.
+ */
+function registerStaffShiftHandlers() {
+  registerHandler('shift_reminder', handleShiftReminder, {
+    offsetFromEventDate: null,
+    anchor: 'event_date',
+    category: 'operational',
+    priority: 1,
+  });
+  registerHandler('staff_thank_you', handleStaffThankYou, {
+    offsetFromEventDate: null,
+    anchor: 'event_date',
+    category: 'operational',
+    priority: 3,
+  });
+}
+
 module.exports = {
   toCalendarYmd,
   parseClockTime,
@@ -296,4 +456,8 @@ module.exports = {
   computeStaffThankYouScheduledFor,
   insertShiftMessageIfMissing,
   scheduleStaffShiftMessages,
+  loadStaffShiftContext,
+  handleShiftReminder,
+  handleStaffThankYou,
+  registerStaffShiftHandlers,
 };
