@@ -131,7 +131,7 @@ Each `payout_events` line is computed from four parts. The computation lives in 
 
 The event's total gratuity is read from `proposals.pricing_snapshot` (the "Shared Gratuity" figure produced by the pricing engine). It is netted for card fees, then split evenly across the bartenders on the event.
 
-- Fee-netting: `gratuity_net = gratuity_gross - gratuity_fee`, where `gratuity_fee` is the gratuity's pro-rata share of the actual Stripe fees on the client's proposal card payments, computed as `total_card_fee * (gratuity_gross / total_card_payment)`. Proposal amounts paid by a non-card method recorded manually carry no fee.
+- Fee-netting: `gratuity_net = gratuity_gross - gratuity_fee`, where `gratuity_fee` is the gratuity's pro-rata share of the actual Stripe fees on the proposal's card payments, computed as `total_card_fee * (gratuity_gross / total_paid)`. `total_paid` is the total amount paid on the proposal across every method, so the ratio cannot exceed 1 even when part of the bill was settled by cash or check. A proposal with no card payments carries no fee.
 - Split: `gratuity_net` divided evenly among the event's bartenders. See Section 4.5 for who counts and for remainder handling.
 
 ### 4.3 Card-tip share
