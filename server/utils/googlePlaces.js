@@ -13,6 +13,7 @@ const DETAILS_URL = 'https://places.googleapis.com/v1/places/';
 // Length caps on user-supplied input. Enforced in this util so the bound
 // travels with the function, not only with the route handler.
 const MAX_QUERY_LEN = 200;
+const MIN_QUERY_LEN = 3;
 const MAX_PLACE_ID_LEN = 300;
 const MAX_TOKEN_LEN = 100;
 
@@ -79,12 +80,12 @@ function mapPlaceToVenue(place) {
  * query is under 3 characters, or on any error.
  * @param {string} input
  * @param {string} sessionToken
- * @returns {Promise<Array<{placeId:string,name:string,address:string}>>}
+ * @returns {Promise<Array<{place_id:string,name:string,address:string}>>}
  */
 async function searchVenues(input, sessionToken) {
   if (!isConfigured()) return [];
   const q = String(input || '').trim().slice(0, MAX_QUERY_LEN);
-  if (q.length < 3) return [];
+  if (q.length < MIN_QUERY_LEN) return [];
   const token = String(sessionToken || '').slice(0, MAX_TOKEN_LEN);
   try {
     const res = await fetch(AUTOCOMPLETE_URL, {
@@ -111,12 +112,12 @@ async function searchVenues(input, sessionToken) {
         const p = s.placePrediction;
         const sf = p.structuredFormat || {};
         return {
-          placeId: p.placeId || '',
+          place_id: p.placeId || '',
           name: (sf.mainText && sf.mainText.text) || (p.text && p.text.text) || '',
           address: (sf.secondaryText && sf.secondaryText.text) || '',
         };
       })
-      .filter((r) => r.placeId && r.name);
+      .filter((r) => r.place_id && r.name);
   } catch (err) {
     // Log err.message only; never log the API key or the request URL.
     console.error('[googlePlaces] searchVenues error:', err.message);
