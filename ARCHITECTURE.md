@@ -1070,6 +1070,9 @@ deliberate scope choice.
 - **Files stored**: W-9, resume, headshot, alcohol certification, BASSET certification, bartender tip-page photos
 - **Admin access**: `GET /api/files/:filename` redirects to signed URL (admin/manager only)
 
+### Google Places (Venue Search)
+- **Wrapper**: `server/utils/googlePlaces.js` — server-mediated proxy over the Google Places (New) API powering the proposal venue-name typeahead (autocomplete + place details → structured venue address). Fails soft (returns `[]`/`null`, never throws) so the venue-name field degrades to a plain text input when `GOOGLE_PLACES_API_KEY` is unset or Google is unreachable. The pure `mapPlaceToVenue` mapper drops out-of-area addresses, keeping only `VENUE_STATES` matches.
+
 ### QR Code Rendering (`qrcode.react`)
 - Client-only dependency used by `client/src/pages/staff/PrintTipCard.jsx` and `PrintTipCard.layouts.jsx` to render the bartender's tip-page URL as an SVG QR code on the printable tip card. No server side; rendered in the browser at print time.
 

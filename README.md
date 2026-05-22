@@ -179,6 +179,7 @@ dr-bartender/
 │   │   ├── fileValidation.js   # Magic-byte file type validation
 │   │   ├── geocode.js          # Nominatim geocoding (address → lat/lng)
 │   │   ├── globalSearch.js     # Global record search query engine (clients/proposals/events/staff)
+│   │   ├── googlePlaces.js     # Google Places venue-search proxy
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
 │   │   ├── lastMinuteAlert.js  # Last-minute (<72h) booking SMS alert dispatch (admin + broad staff blast, idempotent)
 │   │   ├── lifecycleEmailTemplates.js # Lifecycle email templates split out of emailTemplates.js
