@@ -3,6 +3,7 @@ const { getStripe } = require('./stripeClient');
 const { pool } = require('../db');
 const { getEventTypeLabel } = require('./eventTypes');
 const { sendEmail } = require('./email');
+const { accruePayoutsForProposal } = require('./payrollAccrual');
 
 // Rate-limit the no-stripe-client alert so Sentry isn't spammed every cycle.
 let stripeUnavailableLastLog = 0;
@@ -217,6 +218,14 @@ async function processEventCompletions() {
         } catch (marketingErr) {
           console.error(`[BalanceScheduler] marketing enroll failed for #${proposal.id}:`, marketingErr.message);
           Sentry.captureException(marketingErr, { tags: { scheduler: 'auto-complete', proposalId: proposal.id, issue: 'marketing-enroll' } });
+        }
+        // Accrue payroll for the completed event. Best-effort and isolated: a
+        // failure here must not abort the completion batch.
+        try {
+          await accruePayoutsForProposal(proposal.id);
+        } catch (err) {
+          console.error(`[BalanceScheduler] payout accrual failed for proposal ${proposal.id}:`, err.message);
+          Sentry.captureException(err, { tags: { scheduler: 'autocomplete', step: 'payout_accrual' } });
         }
       }
     }
