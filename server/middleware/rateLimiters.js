@@ -103,4 +103,17 @@ const adminWriteLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter, adminWriteLimiter };
+// Global search (GET /api/admin/search) fires once per debounced keystroke in
+// the command palette — the budget must be generous — but each call runs
+// several cross-table LIKE scans, so a held key or scripted client shouldn't
+// hammer it. 60/min keyed by user id covers real typing comfortably.
+const adminSearchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => (req.user && req.user.id ? `search-${req.user.id}` : req.ip),
+  message: { error: 'Too many searches. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter, adminWriteLimiter, adminSearchLimiter };

@@ -2455,3 +2455,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_post_event_feedback_proposal
   ON post_event_feedback(proposal_id);
 CREATE INDEX IF NOT EXISTS idx_post_event_feedback_created_at
   ON post_event_feedback(created_at DESC);
+
+-- ─── Global-search performance: pg_trgm trigram indexes ─────────
+-- The Cmd/Ctrl+K command palette (server/utils/globalSearch.js) matches typed
+-- text with LOWER(col) LIKE '%term%'. Without a trigram index every keystroke
+-- is a sequential scan; a GIN gin_trgm_ops index on the SAME LOWER(col)
+-- expression backs the LIKE directly. clients is the unbounded-growth table,
+-- so its name + email get indexes; users.email covers the staff lookup.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_clients_name_trgm
+  ON clients USING gin (LOWER(name) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_clients_email_trgm
+  ON clients USING gin (LOWER(email) gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_users_email_trgm
+  ON users USING gin (LOWER(email) gin_trgm_ops);

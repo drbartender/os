@@ -5,12 +5,13 @@
 
 const express = require('express');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
+const { adminSearchLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { runGlobalSearch } = require('../../utils/globalSearch');
 
 const router = express.Router();
 
-router.get('/search', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+router.get('/search', auth, requireAdminOrManager, adminSearchLimiter, asyncHandler(async (req, res) => {
   const results = await runGlobalSearch(req.query.q);
   res.json({ results });
 }));
