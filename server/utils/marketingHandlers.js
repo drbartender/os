@@ -95,8 +95,10 @@ async function scheduleDripForProposal(proposalId) {
 
   const anchor = new Date(); // time-of-send moment
   const day = 86400000;
-  // Three independent idempotent INSERTs — run concurrently (each
-  // scheduleMessage takes its own pooled connection).
+  // Six independent idempotent INSERTs — run concurrently (each
+  // scheduleMessage takes its own pooled connection). Email halves: touches
+  // 2 (+7d), 4 (+14d), 5-email (+21d). SMS halves (Phase 3): touch 1 (+1d),
+  // touch 3 (+10d), touch 5-sms (+21d).
   await Promise.all([
     scheduleMessage({
       entityType: 'proposal',
@@ -123,6 +125,33 @@ async function scheduleDripForProposal(proposalId) {
       recipientType: 'client',
       recipientId: proposal.client_id,
       channel: 'email',
+      scheduledFor: new Date(anchor.getTime() + 21 * day),
+    }),
+    scheduleMessage({
+      entityType: 'proposal',
+      entityId: proposalId,
+      messageType: 'drip_touch_1',
+      recipientType: 'client',
+      recipientId: proposal.client_id,
+      channel: 'sms',
+      scheduledFor: new Date(anchor.getTime() + 1 * day),
+    }),
+    scheduleMessage({
+      entityType: 'proposal',
+      entityId: proposalId,
+      messageType: 'drip_touch_3',
+      recipientType: 'client',
+      recipientId: proposal.client_id,
+      channel: 'sms',
+      scheduledFor: new Date(anchor.getTime() + 10 * day),
+    }),
+    scheduleMessage({
+      entityType: 'proposal',
+      entityId: proposalId,
+      messageType: 'drip_touch_5_sms',
+      recipientType: 'client',
+      recipientId: proposal.client_id,
+      channel: 'sms',
       scheduledFor: new Date(anchor.getTime() + 21 * day),
     }),
   ]);
@@ -500,7 +529,10 @@ async function onProposalSignedAndPaid(proposalId) {
       WHERE entity_type = 'proposal'
         AND entity_id = $1
         AND status = 'pending'
-        AND message_type IN ('drip_touch_2', 'drip_touch_4', 'drip_touch_5_email')`,
+        AND message_type IN (
+          'drip_touch_1', 'drip_touch_2', 'drip_touch_3',
+          'drip_touch_4', 'drip_touch_5_email', 'drip_touch_5_sms'
+        )`,
     [proposalId]
   );
 }

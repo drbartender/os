@@ -326,6 +326,9 @@ async function start() {
       // first tick so it can resolve these message types.
       require('./utils/marketingHandlers').registerMarketingHandlers();
 
+      // Comms Phase 3: client-facing scheduled SMS handlers.
+      require('./utils/dripSmsHandlers').registerDripSmsHandlers();
+
       // Scheduled-messages dispatcher — every 5 min, picks up pending rows
       if (enabled('RUN_MESSAGE_DISPATCHER_SCHEDULER')) {
         const wrapped = wrapScheduler('message_dispatcher', 300, dispatchPending);

@@ -72,7 +72,7 @@ test('handler metadata > marketing types register with category=marketing', () =
 });
 
 // ── scheduleDripForProposal ──
-test('scheduleDripForProposal > inserts touch_2, touch_4, touch_5_email pending rows on the proposal', async () => {
+test('scheduleDripForProposal > inserts the 6 drip rows (3 email, 3 sms) on the proposal', async () => {
   await scheduleDripForProposal(proposalId);
   const { rows } = await pool.query(
     `SELECT message_type, channel, status FROM scheduled_messages
@@ -81,8 +81,17 @@ test('scheduleDripForProposal > inserts touch_2, touch_4, touch_5_email pending 
     [proposalId]
   );
   const types = rows.map(r => r.message_type);
-  assert.deepStrictEqual(types, ['drip_touch_2', 'drip_touch_4', 'drip_touch_5_email']);
-  assert.ok(rows.every(r => r.channel === 'email'));
+  assert.deepStrictEqual(types, [
+    'drip_touch_1', 'drip_touch_2', 'drip_touch_3',
+    'drip_touch_4', 'drip_touch_5_email', 'drip_touch_5_sms',
+  ]);
+  const byType = Object.fromEntries(rows.map(r => [r.message_type, r.channel]));
+  assert.strictEqual(byType['drip_touch_1'], 'sms');
+  assert.strictEqual(byType['drip_touch_2'], 'email');
+  assert.strictEqual(byType['drip_touch_3'], 'sms');
+  assert.strictEqual(byType['drip_touch_4'], 'email');
+  assert.strictEqual(byType['drip_touch_5_email'], 'email');
+  assert.strictEqual(byType['drip_touch_5_sms'], 'sms');
   assert.ok(rows.every(r => r.status === 'pending'));
 });
 
@@ -94,7 +103,7 @@ test('scheduleDripForProposal > is idempotent — second call does not duplicate
      WHERE entity_type = 'proposal' AND entity_id = $1`,
     [proposalId]
   );
-  assert.strictEqual(Number(rows[0].count), 3);
+  assert.strictEqual(Number(rows[0].count), 6);
 });
 
 test('scheduleDripForProposal > uses the proposal status moment as the +7/+14/+21 anchor', async () => {
