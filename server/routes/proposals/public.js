@@ -264,15 +264,17 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   try {
     await dbClient.query('BEGIN');
 
-    // Find-or-create the client by email. An atomic upsert closes the
-    // SELECT-then-INSERT race: two near-simultaneous wizard submits with the
-    // same email could both miss the SELECT, then collide on
-    // idx_clients_email_unique. ON CONFLICT makes it one safe statement.
+    // Find-or-create the client by email. The atomic upsert closes the
+    // SELECT-then-INSERT race (two near-simultaneous wizard submits colliding
+    // on idx_clients_email_unique). This endpoint is UNAUTHENTICATED, so on a
+    // conflict with an existing client it must NOT overwrite that client's
+    // name/phone — a stranger who guesses an email could otherwise rewrite a
+    // real client's identity. The no-op `SET name = clients.name` exists only
+    // so ON CONFLICT returns the existing row's id (DO NOTHING would not).
     const clientResult = await dbClient.query(
       `INSERT INTO clients (name, email, phone, source) VALUES ($1, $2, $3, $4)
        ON CONFLICT (email) WHERE email IS NOT NULL
-       DO UPDATE SET name = COALESCE(NULLIF(EXCLUDED.name, ''), clients.name),
-                     phone = COALESCE(NULLIF(EXCLUDED.phone, ''), clients.phone)
+       DO UPDATE SET name = clients.name
        RETURNING id`,
       [client_name.trim(), client_email.trim().toLowerCase(), client_phone || null, 'website']
     );
