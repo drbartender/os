@@ -16,4 +16,21 @@ function wageCents(hours, rateCents) {
   return Math.round(Number(hours) * Number(rateCents));
 }
 
-module.exports = { contractedHours, wageCents, SETUP_HOURS, BREAKDOWN_HOURS };
+/**
+ * Split `totalCents` into `n` integer shares. The first `remainder` shares
+ * each get one extra cent, so the shares sum to exactly `totalCents` and the
+ * result is deterministic. The caller assigns shares to recipients ordered
+ * by users.id, per the spec's remainder rule.
+ */
+function splitEvenly(totalCents, n) {
+  if (n <= 0) return [];
+  const base = Math.floor(totalCents / n);
+  const remainder = totalCents - base * n;
+  const shares = [];
+  for (let i = 0; i < n; i += 1) {
+    shares.push(base + (i < remainder ? 1 : 0));
+  }
+  return shares;
+}
+
+module.exports = { contractedHours, wageCents, splitEvenly, SETUP_HOURS, BREAKDOWN_HOURS };
