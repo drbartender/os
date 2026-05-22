@@ -7,6 +7,7 @@ const { ValidationError, NotFoundError } = require('../../utils/errors');
 const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
+const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
 
 const router = express.Router();
 
@@ -172,6 +173,11 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
         Sentry.captureException(completeErr, { tags: { route: 'proposals/status', issue: 'completion-enroll' } });
       }
       console.error('Completion enroll failed (non-blocking):', completeErr);
+    }
+    try {
+      await accruePayoutsForProposal(Number(req.params.id));
+    } catch (err) {
+      Sentry.captureException(err, { tags: { route: 'proposal_status', step: 'payout_accrual' } });
     }
   }
 
