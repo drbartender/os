@@ -31,6 +31,14 @@ export default function EventEditForm({ proposal, onSaved, onCancel }) {
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const initialRef = useRef(JSON.stringify(initialFormFromProposal(proposal)));
 
+  // Transient per-edit staff-notification toggles (Phase 4a). Not part of
+  // `form` (which round-trips the pricing payload) and not persisted, they
+  // only ride this one PATCH. All default off. The two channel sub-toggles
+  // are gated by notifyStaff.
+  const [notifyStaff, setNotifyStaff] = useState(false);
+  const [notifyStaffSms, setNotifyStaffSms] = useState(false);
+  const [notifyStaffEmail, setNotifyStaffEmail] = useState(false);
+
   const isDirty = useMemo(
     () => JSON.stringify(form) !== initialRef.current,
     [form]
@@ -95,6 +103,13 @@ export default function EventEditForm({ proposal, onSaved, onCancel }) {
         setup_minutes_before: form.setup_minutes_before === '' || form.setup_minutes_before == null
           ? null
           : Number(form.setup_minutes_before),
+        // Phase 4a transient toggles. Only honored server-side when a real
+        // reschedule (date/time/location change) is detected. Send the
+        // sub-flags only when the parent is on, so an unchecked parent never
+        // leaks a stale sub-flag.
+        notify_assigned_staff: notifyStaff,
+        notify_staff_sms: notifyStaff && notifyStaffSms,
+        notify_staff_email: notifyStaff && notifyStaffEmail,
       });
       toast.success('Event updated.');
       onSaved?.(res.data);
@@ -210,6 +225,53 @@ export default function EventEditForm({ proposal, onSaved, onCancel }) {
               <option value="referral">Referral</option>
               <option value="website">Website</option>
             </select>
+          </div>
+        </div>
+
+        {/* Staff notification — transient per-edit toggle (Phase 4a). Only
+            takes effect when this save is a reschedule (date/time/location
+            change). Both channel sub-toggles default off. */}
+        <div className="meta-k" style={{ marginBottom: 8, marginTop: 8 }}>Notify assigned staff</div>
+        <div style={{ marginBottom: 16 }}>
+          <label className="hstack" style={{ gap: 6, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={notifyStaff}
+              onChange={(e) => {
+                const on = e.target.checked;
+                setNotifyStaff(on);
+                if (!on) { setNotifyStaffSms(false); setNotifyStaffEmail(false); }
+              }}
+            />
+            <span>Notify assigned staff if this save reschedules the event</span>
+          </label>
+          <div
+            style={{
+              display: 'flex', gap: 16, marginTop: 6, marginLeft: 22,
+              opacity: notifyStaff ? 1 : 0.5,
+            }}
+          >
+            <label className="hstack" style={{ gap: 6, cursor: notifyStaff ? 'pointer' : 'default' }}>
+              <input
+                type="checkbox"
+                disabled={!notifyStaff}
+                checked={notifyStaffSms}
+                onChange={(e) => setNotifyStaffSms(e.target.checked)}
+              />
+              <span>Text (SMS)</span>
+            </label>
+            <label className="hstack" style={{ gap: 6, cursor: notifyStaff ? 'pointer' : 'default' }}>
+              <input
+                type="checkbox"
+                disabled={!notifyStaff}
+                checked={notifyStaffEmail}
+                onChange={(e) => setNotifyStaffEmail(e.target.checked)}
+              />
+              <span>Email</span>
+            </label>
+          </div>
+          <div className="tiny muted" style={{ marginTop: 4, marginLeft: 22 }}>
+            Staff are notified only when the date, time, or location actually changes.
           </div>
         </div>
 
