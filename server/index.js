@@ -188,6 +188,7 @@ app.use('/api/email-marketing', require('./routes/emailMarketing'));
 app.use('/api/email-marketing/webhook', require('./routes/emailMarketingWebhook'));
 app.use('/api/public/reviews', require('./routes/publicReviews'));
 app.use('/api/public/tip', require('./routes/publicTip'));
+app.use('/api/public/feedback', require('./routes/publicFeedback'));
 app.use('/api/thumbtack', require('./routes/thumbtack'));
 app.use('/api/sms', require('./routes/sms'));
 app.use('/api/invoices', require('./routes/invoices'));
@@ -317,6 +318,12 @@ async function start() {
       // Pre-event reminder handlers (event_week_reminder, long_lead_t30_recap).
       // Must register before the dispatcher's first tick so it can resolve them.
       require('./utils/preEventHandlers').registerAll();
+
+      // Plan 2d: register the marketing/retention dispatcher handlers (drip,
+      // new_year_hello, six_months_out, retention_nudge, review_request).
+      // Synchronous, like registerAll() above; must run before the dispatcher's
+      // first tick so it can resolve these message types.
+      require('./utils/marketingHandlers').registerMarketingHandlers();
 
       // Scheduled-messages dispatcher — every 5 min, picks up pending rows
       if (enabled('RUN_MESSAGE_DISPATCHER_SCHEDULER')) {
