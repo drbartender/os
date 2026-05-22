@@ -54,10 +54,9 @@ function buildUnsubscribeUrl(clientId) {
     process.env.UNSUBSCRIBE_SECRET || process.env.JWT_SECRET,
     { expiresIn: '365d' }
   );
-  // Reuses existing /api/email-marketing/unsubscribe — that endpoint already
-  // handles a token-bearing GET and flips email_leads.status. For
-  // clients.communication_preferences.marketing_enabled flips we'll add a
-  // sibling endpoint in a later plan (or extend the existing one).
+  // /api/email-marketing/unsubscribe branches on the token shape: this
+  // {clientId, marketing} token flips clients.communication_preferences
+  // .marketing_enabled, which the dispatcher's marketing gate then honors.
   return `${API_URL}/api/email-marketing/unsubscribe?token=${token}`;
 }
 
