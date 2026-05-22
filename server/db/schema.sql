@@ -2264,6 +2264,21 @@ DO $$ BEGIN
     CHECK (direction IN ('inbound','outbound'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
+-- ─── Comms Phase 3: widen sms_messages.message_type ─────────────
+-- The column was VARCHAR(20) with a 4-value CHECK ('general','invitation',
+-- 'reminder','announcement') sized for the old manual-blast UI. Phase 3's
+-- automated SMS touches use descriptive identifiers ('initial_proposal',
+-- 'drink_plan_nudge_sms', 'balance_due_today_sms', etc.) that are both longer
+-- than 20 chars and outside that enum. Widen to TEXT and drop the CHECK so
+-- sendAndLogSms can log any touch's message_type. Existing rows are unaffected
+-- ('general' is still valid free text). idempotent: ALTER TYPE to TEXT is a
+-- no-op once applied; DROP CONSTRAINT IF EXISTS is safe to re-run.
+ALTER TABLE sms_messages ALTER COLUMN message_type TYPE TEXT;
+ALTER TABLE sms_messages ALTER COLUMN message_type SET DEFAULT 'general';
+DO $$ BEGIN
+  ALTER TABLE sms_messages DROP CONSTRAINT IF EXISTS sms_messages_message_type_check;
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
 -- ─── Automated Communication: scheduled_messages table ──────────
 -- One row per (recipient, channel) for each scheduled touch.
 -- Enables per-delivery idempotency, retry, and partial-failure tracking.

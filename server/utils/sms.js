@@ -1,4 +1,5 @@
 const twilio = require('twilio');
+const { pool } = require('../db');
 
 const client = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
   ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
@@ -43,4 +44,68 @@ function normalizePhone(phone) {
   return null;
 }
 
-module.exports = { sendSMS, normalizePhone };
+// Dependency seam for tests. `_realSendSMS` lets a test restore the real
+// sender after injecting a stub.
+const _realSendSMS = sendSMS;
+let _deps = { sendSMS };
+function __setSmsDeps(d) { _deps = { ..._deps, ...d }; }
+
+/**
+ * Send an automated SMS and log it to sms_messages. The single send+log
+ * primitive for ALL automated SMS in Phases 3/4a/4b — scheduled handlers and
+ * immediate hooks alike. Existing manual SMS paths (routes/messages.js,
+ * routes/sms.js reply) are NOT refactored onto it.
+ *
+ * Behavior:
+ *  - normalize `to`; if it is unparseable, log NOTHING and return
+ *    { sid: null, status: 'skipped' } (a missing/garbage phone is not a
+ *    Twilio failure — there is nothing to record).
+ *  - send via sendSMS; on success INSERT an outbound row with status 'sent'.
+ *  - on Twilio failure INSERT an outbound row with status 'failed' +
+ *    error_message, then THROW. A scheduled handler's row then goes 'failed';
+ *    an immediate caller catches it in its own try/catch.
+ *
+ * @param {Object} args
+ * @param {string} args.to - raw phone (any format normalizePhone accepts)
+ * @param {string} args.body - the SMS text
+ * @param {number|null} [args.clientId=null] - clients.id for thread grouping
+ * @param {string} args.messageType - touch identifier, e.g. 'initial_proposal'
+ * @param {string|null} [args.recipientName=null] - display name
+ * @returns {Promise<{sid: string|null, status: 'sent'|'skipped'}>}
+ */
+async function sendAndLogSms({ to, body, clientId = null, messageType, recipientName = null }) {
+  if (!messageType || typeof messageType !== 'string') {
+    throw new Error('sendAndLogSms: messageType is required');
+  }
+  const normalized = normalizePhone(to);
+  if (!normalized) {
+    console.warn(`[sendAndLogSms] unparseable phone for messageType=${messageType} — skipped, nothing logged`);
+    return { sid: null, status: 'skipped' };
+  }
+
+  let sid = null;
+  try {
+    const msg = await _deps.sendSMS({ to: normalized, body });
+    sid = msg && msg.sid ? msg.sid : null;
+  } catch (sendErr) {
+    await pool.query(
+      `INSERT INTO sms_messages
+         (direction, client_id, recipient_phone, recipient_name, body, message_type, twilio_sid, status, error_message)
+       VALUES ('outbound', $1, $2, $3, $4, $5, NULL, 'failed', $6)`,
+      [clientId, normalized, recipientName, body, messageType, String(sendErr.message || sendErr).slice(0, 500)]
+    ).catch((logErr) => {
+      console.error('[sendAndLogSms] failed to log the failed-send row:', logErr.message);
+    });
+    throw sendErr;
+  }
+
+  await pool.query(
+    `INSERT INTO sms_messages
+       (direction, client_id, recipient_phone, recipient_name, body, message_type, twilio_sid, status)
+     VALUES ('outbound', $1, $2, $3, $4, $5, $6, 'sent')`,
+    [clientId, normalized, recipientName, body, messageType, sid]
+  );
+  return { sid, status: 'sent' };
+}
+
+module.exports = { sendSMS, normalizePhone, sendAndLogSms, __setSmsDeps, _realSendSMS };
