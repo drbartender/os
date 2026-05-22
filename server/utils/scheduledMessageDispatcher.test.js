@@ -552,3 +552,23 @@ test('retrofit > priority and multiChannel landed on the 14 existing handler reg
   // eslint-disable-next-line global-require
   require('./scheduledMessageDispatcher');
 });
+
+test('overlap > a deferred row whose new time is due is reactivated and dispatched', async () => {
+  const handler = mock.fn(async () => {});
+  registerHandler('disp_test_reactivate', handler, { priority: 4 });
+
+  // A deferred row whose (already-bumped) scheduled_for is now in the past and
+  // has no colliding sent touch. The next tick should reactivate and send it.
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, status, error_message)
+     VALUES ($1, 'proposal', 'disp_test_reactivate', 'client', $2, 'email', NOW() - INTERVAL '5 minutes', 'deferred', 'deferred: daily per-channel cooldown (spec 7.4)')`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 1);
+  const { rows } = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_reactivate'"
+  );
+  assert.strictEqual(rows[0].status, 'sent');
+});

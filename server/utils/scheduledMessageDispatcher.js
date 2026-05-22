@@ -381,6 +381,16 @@ async function dispatchPending() {
   }
   _dispatchInFlight = true;
   try {
+    // Reactivate deferred rows (spec 7.4): a row deferred by the overlap rule
+    // had its scheduled_for bumped 24h. Flip any deferred row that is now due
+    // back to 'pending' so the drain loop below re-evaluates it (it may defer
+    // again if another touch fired in the new 24h window, or fire if clear).
+    await pool.query(
+      `UPDATE scheduled_messages
+          SET status = 'pending'
+        WHERE status = 'deferred'
+          AND scheduled_for <= NOW()`
+    );
     // Drain fully: keep pulling batches while the last one was full, so a
     // backlog larger than BATCH_LIMIT clears within this tick instead of
     // waiting for the next 5-min interval. dispatchRow normally moves a row out
