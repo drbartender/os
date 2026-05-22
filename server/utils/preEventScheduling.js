@@ -189,6 +189,18 @@ async function schedulePreEventReminders(proposalId, executor) {
       scheduledFor: computeScheduledFor('long_lead_t30_recap', proposal),
     });
   }
+
+  // Comms Phase 3: drink-plan nudge (email + SMS), T-21 days, 10:00 event-local.
+  // Delegated to drinkPlanNudge.js so this file does not grow. require() is
+  // inline to avoid a load-order cycle (drinkPlanNudge.js requires
+  // computeScheduledFor from this file).
+  try {
+    const { scheduleDrinkPlanNudge } = require('./drinkPlanNudge');
+    await scheduleDrinkPlanNudge(proposalId, exec);
+  } catch (nudgeErr) {
+    // Best-effort relative to the always-on event_week_reminder above.
+    console.warn('[schedulePreEventReminders] drink-plan nudge scheduling failed (non-fatal):', nudgeErr.message);
+  }
 }
 
 /**

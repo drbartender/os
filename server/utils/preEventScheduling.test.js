@@ -8,15 +8,20 @@ const {
   schedulePreEventReminders,
 } = require('./preEventScheduling');
 const preEventHandlers = require('./preEventHandlers');
+const { registerDrinkPlanNudgeHandlers } = require('./drinkPlanNudge');
 
 const TEST_CLIENT_ID = -1;
 const TEST_PROPOSAL_ID = -101;
 
 // Register dispatcher handlers (and their offset metadata) ONCE so
-// getHandlerMeta('event_week_reminder') / 'long_lead_t30_recap' return the
-// canonical offset values that computeScheduledFor reads.
+// getHandlerMeta('event_week_reminder') / 'long_lead_t30_recap' / the
+// drink-plan-nudge types return the canonical offset values that
+// computeScheduledFor reads. Mirrors server/index.js boot — schedulePreEventReminders
+// now also schedules the drink-plan nudge (email + SMS) via scheduleDrinkPlanNudge,
+// which calls computeScheduledFor('drink_plan_nudge') and so needs that metadata.
 before(() => {
   preEventHandlers.registerAll();
+  registerDrinkPlanNudgeHandlers();
 });
 
 beforeEach(async () => {
@@ -134,13 +139,19 @@ test('schedulePreEventReminders > schedules event_week_reminder (T-7) when propo
      FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 ORDER BY message_type`,
     [TEST_PROPOSAL_ID]
   );
-  // Lead time = 2026-08-15 - 2026-07-01 = 45 days. < 90, so only event_week_reminder.
-  assert.strictEqual(rows.length, 1);
-  assert.strictEqual(rows[0].message_type, 'event_week_reminder');
-  assert.strictEqual(rows[0].channel, 'email');
-  assert.strictEqual(rows[0].status, 'pending');
-  assert.strictEqual(rows[0].recipient_type, 'client');
-  assert.strictEqual(rows[0].recipient_id, TEST_CLIENT_ID);
+  // Lead time = 2026-08-15 - 2026-07-01 = 45 days. < 90, so no long_lead_t30_recap.
+  // schedulePreEventReminders now also schedules the drink-plan nudge (email + SMS).
+  assert.strictEqual(rows.length, 3);
+  const ewr = rows.find((r) => r.message_type === 'event_week_reminder');
+  assert.ok(ewr, 'event_week_reminder row should exist');
+  assert.strictEqual(ewr.channel, 'email');
+  assert.strictEqual(ewr.status, 'pending');
+  assert.strictEqual(ewr.recipient_type, 'client');
+  assert.strictEqual(ewr.recipient_id, TEST_CLIENT_ID);
+  assert.deepStrictEqual(
+    rows.map((r) => r.message_type).sort(),
+    ['drink_plan_nudge', 'drink_plan_nudge_sms', 'event_week_reminder']
+  );
 });
 
 test('schedulePreEventReminders > also schedules long_lead_t30_recap when booking lead time >= 90 days', async () => {
@@ -154,7 +165,9 @@ test('schedulePreEventReminders > also schedules long_lead_t30_recap when bookin
     `SELECT message_type FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 ORDER BY message_type`,
     [TEST_PROPOSAL_ID]
   );
-  assert.deepStrictEqual(rows.map((r) => r.message_type).sort(), ['event_week_reminder', 'long_lead_t30_recap']);
+  assert.deepStrictEqual(rows.map((r) => r.message_type).sort(), [
+    'drink_plan_nudge', 'drink_plan_nudge_sms', 'event_week_reminder', 'long_lead_t30_recap',
+  ]);
 });
 
 test('schedulePreEventReminders > is idempotent — calling twice does not duplicate rows', async () => {
@@ -169,7 +182,9 @@ test('schedulePreEventReminders > is idempotent — calling twice does not dupli
     `SELECT COUNT(*)::int AS n FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1`,
     [TEST_PROPOSAL_ID]
   );
-  assert.strictEqual(rows[0].n, 1);
+  // 3 rows: event_week_reminder + drink_plan_nudge + drink_plan_nudge_sms
+  // (short-lead proposal → no long_lead_t30_recap). Idempotent across two calls.
+  assert.strictEqual(rows[0].n, 3);
 });
 
 test('schedulePreEventReminders > skips entirely when proposal is archived', async () => {

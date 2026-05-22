@@ -328,6 +328,7 @@ async function start() {
 
       // Comms Phase 3: client-facing scheduled SMS handlers.
       require('./utils/dripSmsHandlers').registerDripSmsHandlers();
+      require('./utils/drinkPlanNudge').registerDrinkPlanNudgeHandlers();
 
       // Scheduled-messages dispatcher — every 5 min, picks up pending rows
       if (enabled('RUN_MESSAGE_DISPATCHER_SCHEDULER')) {
