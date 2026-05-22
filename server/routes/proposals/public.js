@@ -264,26 +264,19 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   try {
     await dbClient.query('BEGIN');
 
-    // Create or find existing client by email
+    // Find-or-create the client by email. An atomic upsert closes the
+    // SELECT-then-INSERT race: two near-simultaneous wizard submits with the
+    // same email could both miss the SELECT, then collide on
+    // idx_clients_email_unique. ON CONFLICT makes it one safe statement.
     const clientResult = await dbClient.query(
-      'SELECT id FROM clients WHERE email = $1 LIMIT 1',
-      [client_email.trim().toLowerCase()]
+      `INSERT INTO clients (name, email, phone, source) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (email) WHERE email IS NOT NULL
+       DO UPDATE SET name = COALESCE(NULLIF(EXCLUDED.name, ''), clients.name),
+                     phone = COALESCE(NULLIF(EXCLUDED.phone, ''), clients.phone)
+       RETURNING id`,
+      [client_name.trim(), client_email.trim().toLowerCase(), client_phone || null, 'website']
     );
-    let finalClientId;
-    if (clientResult.rows[0]) {
-      finalClientId = clientResult.rows[0].id;
-      // Update name/phone if provided
-      await dbClient.query(
-        'UPDATE clients SET name = COALESCE(NULLIF($1, name), name), phone = COALESCE($2, phone) WHERE id = $3',
-        [client_name.trim(), client_phone || null, finalClientId]
-      );
-    } else {
-      const newClient = await dbClient.query(
-        'INSERT INTO clients (name, email, phone, source) VALUES ($1, $2, $3, $4) RETURNING id',
-        [client_name.trim(), client_email.trim().toLowerCase(), client_phone || null, 'website']
-      );
-      finalClientId = newClient.rows[0].id;
-    }
+    const finalClientId = clientResult.rows[0].id;
 
     // Fetch package
     const pkgResult = await dbClient.query('SELECT * FROM service_packages WHERE id = $1 AND is_active = true', [package_id]);

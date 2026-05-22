@@ -638,6 +638,35 @@ test('Case 12: PATCH status invoice failure rolls back — proposal stays draft,
     'no invoice row should exist after the txn rolls back');
 });
 
+// ─── Case 13 — POST with an email that already belongs to a client ─────────
+// Sentry DRBARTENDER-SERVER-J: the admin create path blind-INSERTed the client
+// row, so a proposal whose client_email already belonged to a client hit
+// idx_clients_email_unique (23505) and 500'd. The handler must find-or-create.
+// Fresh admin token — its own adminWriteLimiter bucket.
+test('Case 13: POST with an existing client email reuses the client, no 500', async () => {
+  const token = await makeFreshAdmin();
+  const email = `dupemail+${Date.now()}-${crypto.randomBytes(4).toString('hex')}@example.test`;
+  const seeded = await pool.query(
+    `INSERT INTO clients (name, email, source) VALUES ($1, $2, 'direct') RETURNING id`,
+    ['Existing Client', email]
+  );
+  createdClientIds.add(seeded.rows[0].id);
+
+  const res = await request('POST', '/api/proposals', {
+    token,
+    body: validHostedBody({ send_now: false, client_email: email, client_name: 'Existing Client' }),
+  });
+  trackResponse(res);
+  assert.equal(res.status, 201, `expected 201 (find-or-create), got ${res.status}: ${res.raw}`);
+  assert.equal(res.body.client_id, seeded.rows[0].id,
+    'the proposal must attach to the pre-existing client, not create a duplicate');
+
+  const clients = await pool.query(
+    'SELECT COUNT(*)::int AS n FROM clients WHERE email = $1', [email]
+  );
+  assert.equal(clients.rows[0].n, 1, 'no duplicate client row should be created');
+});
+
 // ─── Case 7 — adminWriteLimiter (run LAST; uses its own user) ───────────────
 // Placed last so the 11-POST burst can't starve the other cases' shared
 // budget. Uses rateLimitToken (a different admin user) so its bucket is clean.
