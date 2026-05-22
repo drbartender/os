@@ -201,6 +201,18 @@ async function schedulePreEventReminders(proposalId, executor) {
     // Best-effort relative to the always-on event_week_reminder above.
     console.warn('[schedulePreEventReminders] drink-plan nudge scheduling failed (non-fatal):', nudgeErr.message);
   }
+
+  // Comms Phase 3: event-eve SMS, T-24h from event start (bespoke timing).
+  // Delegated to eventEveSms.js. scheduleEventEve is reschedule-correct (it
+  // deletes any stale pending row and re-inserts), so re-invoking it from the
+  // reschedule cascade moves the touch even though its null offset means
+  // reanchorPendingMessages skips it.
+  try {
+    const { scheduleEventEve } = require('./eventEveSms');
+    await scheduleEventEve(proposalId, exec);
+  } catch (eveErr) {
+    console.warn('[schedulePreEventReminders] event-eve scheduling failed (non-fatal):', eveErr.message);
+  }
 }
 
 /**

@@ -330,6 +330,7 @@ async function start() {
       require('./utils/dripSmsHandlers').registerDripSmsHandlers();
       require('./utils/drinkPlanNudge').registerDrinkPlanNudgeHandlers();
       require('./utils/balanceSmsHandlers').registerBalanceSmsHandlers();
+      require('./utils/eventEveSms').registerEventEveHandler();
 
       // Scheduled-messages dispatcher — every 5 min, picks up pending rows
       if (enabled('RUN_MESSAGE_DISPATCHER_SCHEDULER')) {

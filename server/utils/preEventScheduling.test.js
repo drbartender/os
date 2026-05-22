@@ -140,8 +140,9 @@ test('schedulePreEventReminders > schedules event_week_reminder (T-7) when propo
     [TEST_PROPOSAL_ID]
   );
   // Lead time = 2026-08-15 - 2026-07-01 = 45 days. < 90, so no long_lead_t30_recap.
-  // schedulePreEventReminders now also schedules the drink-plan nudge (email + SMS).
-  assert.strictEqual(rows.length, 3);
+  // schedulePreEventReminders now also schedules the drink-plan nudge (email +
+  // SMS) and the event-eve SMS.
+  assert.strictEqual(rows.length, 4);
   const ewr = rows.find((r) => r.message_type === 'event_week_reminder');
   assert.ok(ewr, 'event_week_reminder row should exist');
   assert.strictEqual(ewr.channel, 'email');
@@ -150,7 +151,7 @@ test('schedulePreEventReminders > schedules event_week_reminder (T-7) when propo
   assert.strictEqual(ewr.recipient_id, TEST_CLIENT_ID);
   assert.deepStrictEqual(
     rows.map((r) => r.message_type).sort(),
-    ['drink_plan_nudge', 'drink_plan_nudge_sms', 'event_week_reminder']
+    ['drink_plan_nudge', 'drink_plan_nudge_sms', 'event_eve', 'event_week_reminder']
   );
 });
 
@@ -166,7 +167,8 @@ test('schedulePreEventReminders > also schedules long_lead_t30_recap when bookin
     [TEST_PROPOSAL_ID]
   );
   assert.deepStrictEqual(rows.map((r) => r.message_type).sort(), [
-    'drink_plan_nudge', 'drink_plan_nudge_sms', 'event_week_reminder', 'long_lead_t30_recap',
+    'drink_plan_nudge', 'drink_plan_nudge_sms', 'event_eve',
+    'event_week_reminder', 'long_lead_t30_recap',
   ]);
 });
 
@@ -182,9 +184,10 @@ test('schedulePreEventReminders > is idempotent — calling twice does not dupli
     `SELECT COUNT(*)::int AS n FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1`,
     [TEST_PROPOSAL_ID]
   );
-  // 3 rows: event_week_reminder + drink_plan_nudge + drink_plan_nudge_sms
-  // (short-lead proposal → no long_lead_t30_recap). Idempotent across two calls.
-  assert.strictEqual(rows[0].n, 3);
+  // 4 rows: event_week_reminder + drink_plan_nudge + drink_plan_nudge_sms +
+  // event_eve (short-lead proposal → no long_lead_t30_recap). Idempotent across
+  // two calls.
+  assert.strictEqual(rows[0].n, 4);
 });
 
 test('schedulePreEventReminders > skips entirely when proposal is archived', async () => {
