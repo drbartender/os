@@ -9,12 +9,7 @@ const { notifyLastMinuteBooking } = require('../utils/lastMinuteAlert');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { calculateSyrupCost } = require('../utils/pricingEngine');
-const {
-  createBalanceInvoice,
-  linkPaymentToInvoice,
-  createDrinkPlanExtrasInvoice,
-  findOpenInvoiceForBalance,
-} = require('../utils/invoiceHelpers');
+const { createBalanceInvoice, linkPaymentToInvoice, createDrinkPlanExtrasInvoice, findOpenInvoiceForBalance } = require('../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { scheduleMessage } = require('../utils/messageScheduling');
 const { schedulePreEventReminders } = require('../utils/preEventScheduling');
@@ -26,6 +21,7 @@ const { notifyClientPaymentFailed } = require('../utils/paymentFailedClientNotif
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../utils/urls');
+const { matchTipToEvent } = require('../utils/payrollTips');
 
 const router = express.Router();
 
@@ -1546,22 +1542,23 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         });
       }
 
-      await pool.query(`
+      const inserted = await pool.query(`
         INSERT INTO tips (tip_page_token, target_user_id, amount_cents,
                           stripe_payment_intent_id, stripe_session_id,
                           customer_email, tipped_at)
         VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7))
         ON CONFLICT (stripe_payment_intent_id) DO NOTHING
+        RETURNING id
       `, [
-        token,
-        dbUserId,
-        session.amount_total,
-        piId,
-        session.id,
-        session.customer_details && session.customer_details.email ? session.customer_details.email : null,
-        session.created,
+        token, dbUserId, session.amount_total, piId, session.id,
+        session.customer_details?.email || null, session.created,
       ]);
+      // Best-effort match the tip to its event; must not fail the webhook.
       // Tip session handled — do NOT fall through to proposal deposit logic.
+      if (inserted.rows.length) {
+        try { await matchTipToEvent(inserted.rows[0].id); }
+        catch (err) { Sentry.captureException(err, { tags: { webhook: 'tip', step: 'tip_match' } }); }
+      }
       return res.json({ received: true });
     }
 
