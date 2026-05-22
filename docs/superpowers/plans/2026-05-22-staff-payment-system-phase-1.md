@@ -119,7 +119,7 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 CREATE TABLE IF NOT EXISTS payout_events (
   id SERIAL PRIMARY KEY,
   payout_id INTEGER NOT NULL REFERENCES payouts(id) ON DELETE CASCADE,
-  shift_id INTEGER NOT NULL REFERENCES shifts(id),
+  shift_id INTEGER NOT NULL REFERENCES shifts(id) ON DELETE RESTRICT,
   contracted_hours NUMERIC(5,2) NOT NULL,
   hours NUMERIC(5,2) NOT NULL,
   rate_cents INTEGER NOT NULL,
@@ -140,13 +140,13 @@ CREATE INDEX IF NOT EXISTS idx_payouts_pay_period ON payouts(pay_period_id);
 CREATE INDEX IF NOT EXISTS idx_payout_events_payout ON payout_events(payout_id);
 
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS fee_cents INTEGER;
-ALTER TABLE tips ADD COLUMN IF NOT EXISTS shift_id INTEGER REFERENCES shifts(id);
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_tips_shift ON tips(shift_id);
 
 ALTER TABLE proposal_payments ADD COLUMN IF NOT EXISTS fee_cents INTEGER;
 ```
 
-The `UNIQUE (payout_id, shift_id)` on `payout_events` makes accrual idempotent: re-running it `ON CONFLICT` updates rather than duplicates.
+The `UNIQUE (payout_id, shift_id)` on `payout_events` makes accrual idempotent: re-running it `ON CONFLICT` updates rather than duplicates. The FK delete rules are deliberate: `payout_events.shift_id` is `ON DELETE RESTRICT` — a shift with payroll accrued against it cannot be deleted out from under the ledger — while `tips.shift_id` is `ON DELETE SET NULL`, since a tip is real money that must outlive a shift deletion and simply fall back to unmatched.
 
 - [ ] **Step 2: Apply and verify the schema**
 
@@ -620,6 +620,11 @@ test('proRataFeeCents > the gratuity slice carries its share of the payment fee'
 test('proRataFeeCents > returns 0 when the payment total is 0 (non-card payment)', () => {
   assert.equal(proRataFeeCents(20000, 0, 0), 0);
 });
+
+test('proRataFeeCents > clamps the ratio at 1 so a slice never over-nets the fee', () => {
+  // A slice larger than the payment total must still carry at most the whole fee.
+  assert.equal(proRataFeeCents(150000, 100000, 3200), 3200);
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -655,7 +660,11 @@ function extractGratuityCents(pricingSnapshot) {
  */
 function proRataFeeCents(grossCents, paymentTotalCents, paymentFeeCents) {
   if (!paymentTotalCents || paymentTotalCents <= 0) return 0;
-  return Math.round(Number(paymentFeeCents) * (grossCents / paymentTotalCents));
+  // Clamp the ratio at 1: a slice can never carry more than the whole fee.
+  // The gratuity slice should always be <= the payment total, but data drift
+  // between pricing_snapshot and total_price must never over-net the fee.
+  const ratio = Math.min(1, grossCents / paymentTotalCents);
+  return Math.round(Number(paymentFeeCents) * ratio);
 }
 ```
 
@@ -765,7 +774,7 @@ git commit -m "feat(payroll): tip-to-shift window matching"
 - Create: `server/utils/payrollTips.js`
 - Test: `server/utils/payrollTips.test.js`
 
-This module touches the DB and Stripe, so it is integration-tested against a real database (the `marketingHandlers.test.js` pattern). The Stripe call in `captureTipFee` is exercised manually, not in the automated test; the test covers `matchTipToEvent`, which is pure-DB.
+This module touches the DB and Stripe, so it is integration-tested against a real database (the `marketingHandlers.test.js` pattern). The Stripe fee-capture functions are exercised manually, not in the automated test; the test covers `matchTipToEvent`, which is pure DB.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -852,48 +861,43 @@ Create `server/utils/payrollTips.js`:
 
 ```js
 /**
- * DB-side tip helpers for payroll: capture the real Stripe fee on a tip, and
- * match a tip to the shift (event) it belongs to by its timestamp.
+ * DB-side tip helpers for payroll: match a tip to the shift (event) it belongs
+ * to, and capture the real Stripe processing fee for tips and proposal
+ * payments. Fee capture runs at accrual time, not in the tip webhook: when the
+ * webhook fires the Stripe charge has usually not settled, so the
+ * balance-transaction fee is not yet available.
  */
 const { pool } = require('../db');
+const Sentry = require('@sentry/node');
 const { getStripe } = require('./stripeClient');
 const { matchTipToShift } = require('./payrollMath');
 
-// A tip belongs to a shift whose service window contains the tip timestamp:
-// from the event's setup start (event start minus the shift's setup lead) to
-// 3 hours after the scheduled end. Boundaries are computed in the event's own
-// timezone, then converted to an absolute epoch to compare against tipped_at.
 const POST_GRACE = "INTERVAL '3 hours'";
 
 /**
- * Capture the actual Stripe processing fee for a tip and store it on
- * tips.fee_cents. Safe to call more than once. Best-effort: a Stripe failure
- * throws, so callers wrap it.
+ * The actual Stripe processing fee for a payment intent, in cents, or null
+ * when the charge has not settled yet (no balance transaction available).
  */
-async function captureTipFee(tipId) {
-  const { rows } = await pool.query(
-    'SELECT stripe_payment_intent_id, fee_cents FROM tips WHERE id = $1',
-    [tipId]
-  );
-  if (!rows.length) return;
-  if (rows[0].fee_cents != null) return; // already captured
-  const piId = rows[0].stripe_payment_intent_id;
+async function stripeFeeFor(paymentIntentId) {
   const stripe = getStripe();
-  const pi = await stripe.paymentIntents.retrieve(piId, {
+  const pi = await stripe.paymentIntents.retrieve(paymentIntentId, {
     expand: ['latest_charge.balance_transaction'],
   });
   const fee = pi
     && pi.latest_charge
     && pi.latest_charge.balance_transaction
     && pi.latest_charge.balance_transaction.fee;
-  if (fee == null) return;
-  await pool.query('UPDATE tips SET fee_cents = $1 WHERE id = $2', [fee, tipId]);
+  return fee == null ? null : fee;
 }
 
 /**
  * Match a tip to the shift whose service window contains tipped_at, among the
  * shifts the tipped bartender worked. Sets tips.shift_id, or leaves it NULL
- * (unassigned) when no window matches.
+ * (unassigned) when no window matches. Called from the tip webhook.
+ *
+ * The service window runs from the event's setup start (event start minus the
+ * shift's setup lead) to 3 hours after the scheduled end, computed in the
+ * event's own timezone. ORDER BY s.id makes the overlap tie-break deterministic.
  */
 async function matchTipToEvent(tipId) {
   const tipRes = await pool.query(
@@ -903,9 +907,6 @@ async function matchTipToEvent(tipId) {
   const tip = tipRes.rows[0];
   if (!tip) return;
 
-  // Build each candidate shift's service window in epoch ms, anchored on the
-  // proposal's event start, interpreted in the event's own timezone and padded
-  // by the shift's setup lead and a post-event grace.
   const windowRes = await pool.query(
     `SELECT s.id AS shift_id,
             EXTRACT(EPOCH FROM (
@@ -924,7 +925,8 @@ async function matchTipToEvent(tipId) {
      JOIN proposals p ON p.id = s.proposal_id
      WHERE sr.user_id = $1
        AND sr.status = 'approved'
-       AND p.event_start_time ~* '^[0-9]{1,2}:[0-9]{2}( ?[AP]M)?$'`,
+       AND p.event_start_time ~* '^[0-9]{1,2}:[0-9]{2}( ?[AP]M)?$'
+     ORDER BY s.id`,
     [tip.target_user_id]
   );
 
@@ -934,6 +936,7 @@ async function matchTipToEvent(tipId) {
     endMs: Number(r.end_ms),
   }));
   const tippedAtMs = new Date(tip.tipped_at).getTime();
+  if (!Number.isFinite(tippedAtMs)) return;
   const shiftId = matchTipToShift(tippedAtMs, windows);
   if (shiftId != null) {
     await pool.query('UPDATE tips SET shift_id = $1 WHERE id = $2', [shiftId, tipId]);
@@ -941,10 +944,33 @@ async function matchTipToEvent(tipId) {
 }
 
 /**
- * Capture the real Stripe fee for each of a proposal's card payments that has
- * not been captured yet, storing it on proposal_payments.fee_cents. Payments
- * with no Stripe payment intent (cash, manually recorded) are skipped and
- * correctly carry no fee. Best-effort per payment.
+ * Capture missing Stripe fees for the credit-card tips matched to a proposal's
+ * shifts, storing each on tips.fee_cents. Run at accrual time, by which point
+ * the charges have settled. Best-effort per tip.
+ */
+async function captureTipFeesForProposal(proposalId) {
+  const { rows } = await pool.query(
+    `SELECT t.id, t.stripe_payment_intent_id
+     FROM tips t JOIN shifts s ON s.id = t.shift_id
+     WHERE s.proposal_id = $1 AND t.fee_cents IS NULL`,
+    [proposalId]
+  );
+  for (const row of rows) {
+    try {
+      const fee = await stripeFeeFor(row.stripe_payment_intent_id);
+      if (fee != null) {
+        await pool.query('UPDATE tips SET fee_cents = $1 WHERE id = $2', [fee, row.id]);
+      }
+    } catch (err) {
+      Sentry.captureException(err, { tags: { step: 'tip_fee_capture' } });
+    }
+  }
+}
+
+/**
+ * Capture missing Stripe fees for a proposal's card payments, storing each on
+ * proposal_payments.fee_cents. Payments with no Stripe payment intent (cash,
+ * check) are skipped and correctly carry no fee. Best-effort per payment.
  */
 async function captureProposalPaymentFees(proposalId) {
   const { rows } = await pool.query(
@@ -953,15 +979,9 @@ async function captureProposalPaymentFees(proposalId) {
        AND stripe_payment_intent_id IS NOT NULL`,
     [proposalId]
   );
-  if (!rows.length) return;
-  const stripe = getStripe();
   for (const row of rows) {
     try {
-      const pi = await stripe.paymentIntents.retrieve(row.stripe_payment_intent_id, {
-        expand: ['latest_charge.balance_transaction'],
-      });
-      const fee = pi && pi.latest_charge && pi.latest_charge.balance_transaction
-        && pi.latest_charge.balance_transaction.fee;
+      const fee = await stripeFeeFor(row.stripe_payment_intent_id);
       if (fee != null) {
         await pool.query(
           'UPDATE proposal_payments SET fee_cents = $1 WHERE id = $2',
@@ -969,12 +989,14 @@ async function captureProposalPaymentFees(proposalId) {
         );
       }
     } catch (err) {
-      console.error(`[payroll] proposal payment fee capture failed for payment ${row.id}:`, err.message);
+      Sentry.captureException(err, { tags: { step: 'proposal_payment_fee_capture' } });
     }
   }
 }
 
-module.exports = { captureTipFee, matchTipToEvent, captureProposalPaymentFees };
+module.exports = {
+  matchTipToEvent, captureTipFeesForProposal, captureProposalPaymentFees,
+};
 ```
 
 Note: `getStripe()` is the central Stripe client factory (`server/utils/stripeClient.js`), already used by `balanceScheduler.js`.
@@ -999,7 +1021,7 @@ git commit -m "feat(payroll): tip and payment fee capture, event matching"
 - Create: `server/utils/payrollAccrual.js`
 - Test: `server/utils/payrollAccrual.test.js`
 
-`accruePayoutsForProposal(proposalId)` is the orchestrator. It computes one `payout_events` row per contractor who worked the event, attached to that contractor's `payouts` row for the event's pay period, and is idempotent (re-running recomputes via `ON CONFLICT`).
+`accruePayoutsForProposal(proposalId)` is the orchestrator. It computes one `payout_events` row per contractor who worked the event, attached to that contractor's `payouts` row for the event's pay period. It is transactional (a partial failure rolls back) and idempotent: re-running refreshes the system-owned fields and preserves any portal edits to hours, rate, late, and adjustment.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1011,6 +1033,10 @@ const { test, before, beforeEach, afterEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const { accruePayoutsForProposal } = require('./payrollAccrual');
+
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('payrollAccrual.test.js refuses to run against production');
+}
 
 let userId, proposalId, shiftId;
 
@@ -1028,15 +1054,18 @@ before(async () => {
 
 beforeEach(async () => {
   const p = await pool.query(
-    `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time, event_duration_hours, pricing_snapshot)
-     VALUES (NULL, CURRENT_DATE, 'completed', 'birthday-party', '6:00 PM', 4,
+    `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time,
+                            event_duration_hours, total_price, pricing_snapshot)
+     VALUES (NULL, CURRENT_DATE, 'completed', 'birthday-party', '6:00 PM', 4, 1000,
              '{"breakdown":[{"label":"Shared Gratuity","amount":100}]}')
      RETURNING id`
   );
   proposalId = p.rows[0].id;
+  // The shift deliberately omits event_duration_hours: it is NULL on real
+  // production shifts, so accrual must read the duration from the proposal.
   const s = await pool.query(
-    `INSERT INTO shifts (event_date, start_time, status, proposal_id, event_duration_hours)
-     VALUES (CURRENT_DATE, '6:00 PM', 'open', $1, 4) RETURNING id`,
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES (CURRENT_DATE, '6:00 PM', 'open', $1) RETURNING id`,
     [proposalId]
   );
   shiftId = s.rows[0].id;
@@ -1074,7 +1103,8 @@ test('accruePayoutsForProposal > creates a payout and a payout_event for the bar
     [userId]
   );
   assert.equal(rows.length, 1);
-  // 5.5 contracted hours @ $20.00 = $110.00; gratuity $100 to the one bartender.
+  // Duration 4h read from the proposal -> 5.5 contracted hours @ $20.00 = $110.00.
+  // Gratuity $100 to the one bartender; no card payments, so no fee netted.
   assert.equal(rows[0].wage_cents, 11000);
   assert.equal(rows[0].gratuity_share_cents, 10000);
   assert.equal(rows[0].line_total_cents, 21000);
@@ -1094,9 +1124,9 @@ test('accruePayoutsForProposal > is idempotent: a second call does not duplicate
 
 test('accruePayoutsForProposal > re-accrual preserves an admin edit to hours', async () => {
   await accruePayoutsForProposal(proposalId);
-  // Simulate an admin adjusting the line in the portal.
+  // Simulate an admin adjusting hours in the portal.
   await pool.query(
-    `UPDATE payout_events SET hours = 9, wage_cents = 18000
+    `UPDATE payout_events SET hours = 9
      WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id = $1)`,
     [userId]
   );
@@ -1112,7 +1142,8 @@ test('accruePayoutsForProposal > re-accrual preserves an admin edit to hours', a
 });
 
 test('accruePayoutsForProposal > nets the card fee out of the gratuity share', async () => {
-  // One card payment of $1000 (100000c) carrying a $32.00 (3200c) Stripe fee.
+  // A card payment carrying a $32.00 (3200c) Stripe fee. The proposal's
+  // total_price is $1000, so the $100 gratuity bears 10% of that fee.
   await pool.query(
     `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status, fee_cents, stripe_payment_intent_id)
      VALUES ($1, 'full', 100000, 'succeeded', 3200, 'pi_grat_fee')`,
@@ -1126,6 +1157,44 @@ test('accruePayoutsForProposal > nets the card fee out of the gratuity share', a
   );
   // Gratuity 10000c; fee share = 3200 * (10000 / 100000) = 320c; net = 9680c.
   assert.equal(rows[0].gratuity_share_cents, 9680);
+});
+
+test('accruePayoutsForProposal > splits gratuity evenly across two bartenders', async () => {
+  const u2 = await pool.query(
+    "INSERT INTO users (email, password_hash, role) VALUES ('accrue2@example.com','x','staff') RETURNING id"
+  );
+  const user2 = u2.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, hourly_rate) VALUES ($1, 20.00)
+     ON CONFLICT (user_id) DO UPDATE SET hourly_rate = 20.00`,
+    [user2]
+  );
+  await pool.query(
+    "INSERT INTO shift_requests (shift_id, user_id, position, status) VALUES ($1,$2,'Bartender','approved')",
+    [shiftId, user2]
+  );
+  try {
+    await accruePayoutsForProposal(proposalId);
+    const { rows } = await pool.query(
+      `SELECT pe.gratuity_share_cents FROM payout_events pe
+       JOIN payouts po ON po.id = pe.payout_id
+       WHERE po.contractor_id IN ($1,$2) ORDER BY po.contractor_id`,
+      [userId, user2]
+    );
+    // $100 gratuity split two ways: 5000c each, summing to the full 10000c.
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].gratuity_share_cents + rows[1].gratuity_share_cents, 10000);
+    assert.equal(rows[0].gratuity_share_cents, 5000);
+  } finally {
+    await pool.query(
+      `DELETE FROM payout_events WHERE payout_id IN
+         (SELECT id FROM payouts WHERE contractor_id = $1)`,
+      [user2]
+    );
+    await pool.query('DELETE FROM payouts WHERE contractor_id = $1', [user2]);
+    await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [user2]);
+    await pool.query('DELETE FROM users WHERE id = $1', [user2]);
+  }
 });
 ```
 
@@ -1141,21 +1210,24 @@ Create `server/utils/payrollAccrual.js`:
 ```js
 /**
  * Accrue payout records for a completed event. Idempotent: re-running
- * recomputes the rows rather than duplicating them.
+ * recomputes the system-owned money fields rather than duplicating rows,
+ * and never clobbers an admin's edits to hours, rate, late, or adjustments.
  */
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { payPeriodForDate, computePayday } = require('./payrollPeriods');
 const {
   contractedHours, wageCents, splitEvenly,
   extractGratuityCents, proRataFeeCents,
 } = require('./payrollMath');
-const { captureProposalPaymentFees } = require('./payrollTips');
+const { captureProposalPaymentFees, captureTipFeesForProposal } = require('./payrollTips');
 
 // Safe calendar date of a pg DATE value as 'YYYY-MM-DD'. node-postgres parses
 // a DATE at local midnight, so .toISOString() drifts the day on positive-offset
 // servers; read the local components instead. Mirrors toCalendarYmd in
 // preEventScheduling.js.
 function toCalendarYmd(value) {
+  if (!value) return null;
   if (value instanceof Date) {
     const y = value.getFullYear();
     const m = String(value.getMonth() + 1).padStart(2, '0');
@@ -1165,14 +1237,21 @@ function toCalendarYmd(value) {
   return String(value).slice(0, 10);
 }
 
-/** Ensure the pay_periods row for an event date exists; return { id, status }. */
-async function ensurePayPeriod(eventDate) {
+/**
+ * Ensure the pay_periods row for an event date exists; return { id, status }.
+ * Runs on the caller's transaction client. `end_date` and `payday` are pure
+ * functions of `start_date`, so the ON CONFLICT update is a no-op write whose
+ * only job is to make RETURNING fire for an already-existing row.
+ */
+async function ensurePayPeriod(client, eventDate) {
   const { startDate, endDate } = payPeriodForDate(eventDate);
   const payday = computePayday(endDate);
-  const { rows } = await pool.query(
+  const { rows } = await client.query(
     `INSERT INTO pay_periods (start_date, end_date, payday)
      VALUES ($1, $2, $3)
-     ON CONFLICT (start_date) DO UPDATE SET start_date = EXCLUDED.start_date
+     ON CONFLICT (start_date) DO UPDATE SET
+       end_date = EXCLUDED.end_date,
+       payday = EXCLUDED.payday
      RETURNING id, status`,
     [startDate, endDate, payday]
   );
@@ -1181,11 +1260,12 @@ async function ensurePayPeriod(eventDate) {
 
 /**
  * Compute and upsert payout_events (and their parent payouts) for every
- * contractor who worked the given proposal's event.
+ * contractor who worked the given proposal's event. Safe to call repeatedly.
  */
 async function accruePayoutsForProposal(proposalId) {
   const propRes = await pool.query(
-    `SELECT id, event_date, status, pricing_snapshot FROM proposals WHERE id = $1`,
+    `SELECT id, event_date, status, event_duration_hours, total_price, pricing_snapshot
+       FROM proposals WHERE id = $1`,
     [proposalId]
   );
   const proposal = propRes.rows[0];
@@ -1193,133 +1273,200 @@ async function accruePayoutsForProposal(proposalId) {
   // Accrual is for completed events only, so it is a safe no-op when called
   // before the event has run (e.g. defensively from elsewhere).
   if (proposal.status !== 'completed') return;
-
   const eventDate = toCalendarYmd(proposal.event_date);
-  const payPeriod = await ensurePayPeriod(eventDate);
-  // Never write into a frozen period. Once Phase 2 introduces processing/paid
-  // periods, a late accrual into a closed period would corrupt settled
-  // payroll; rolling it into the open period is a Phase 2 concern.
-  if (payPeriod.status !== 'open') return;
-  const payPeriodId = payPeriod.id;
 
-  // Everyone who worked this event, with their shift, position, and rate.
-  const workers = await pool.query(
-    `SELECT sr.user_id, sr.position, s.id AS shift_id,
-            s.event_duration_hours,
-            COALESCE(cp.hourly_rate, 20.00) AS hourly_rate
-     FROM shift_requests sr
-     JOIN shifts s ON s.id = sr.shift_id
-     LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-     WHERE s.proposal_id = $1 AND sr.status = 'approved'
-     ORDER BY sr.user_id`,
-    [proposalId]
-  );
-  if (!workers.rows.length) return;
-
-  // Bartenders share gratuity and card tips; barbacks/servers do not.
-  // Case-insensitive: production seeds the position as 'Bartender' (capital B).
-  const bartenders = workers.rows.filter(w => (w.position || '').toLowerCase() === 'bartender');
-
-  // Gratuity pool, net of the pro-rata card fee on the proposal's payments.
-  // Capture any missing payment fees from Stripe first so the netting is real.
-  const grossGratuity = extractGratuityCents(proposal.pricing_snapshot);
-  await captureProposalPaymentFees(proposalId);
-  const payRes = await pool.query(
-    `SELECT COALESCE(SUM(amount), 0) AS total, COALESCE(SUM(fee_cents), 0) AS fee
-     FROM proposal_payments WHERE proposal_id = $1 AND status = 'succeeded'`,
-    [proposalId]
-  );
-  const gratuityFee = proRataFeeCents(
-    grossGratuity, Number(payRes.rows[0].total), Number(payRes.rows[0].fee)
-  );
-  const netGratuity = Math.max(0, grossGratuity - gratuityFee);
-
-  // Card-tip pools (gross and fee) from tips matched to this event's shifts.
-  const tipRes = await pool.query(
-    `SELECT COALESCE(SUM(t.amount_cents), 0) AS gross,
-            COALESCE(SUM(t.fee_cents), 0) AS fee
-     FROM tips t JOIN shifts s ON s.id = t.shift_id
-     WHERE s.proposal_id = $1`,
-    [proposalId]
-  );
-  const tipGross = Number(tipRes.rows[0].gross);
-  const tipFee = Number(tipRes.rows[0].fee);
-
-  const n = bartenders.length;
-  const gratuityShares = splitEvenly(netGratuity, n);
-  const tipGrossShares = splitEvenly(tipGross, n);
-  const tipFeeShares = splitEvenly(tipFee, n);
-  const bartenderShare = {};
-  bartenders.forEach((b, i) => {
-    bartenderShare[b.user_id] = {
-      gratuity: gratuityShares[i],
-      tipGross: tipGrossShares[i],
-      tipFee: tipFeeShares[i],
-    };
-  });
-
-  for (const w of workers.rows) {
-    const hours = contractedHours(w.event_duration_hours || 0);
-    const rateCents = Math.round(Number(w.hourly_rate) * 100);
-    const wage = wageCents(hours, rateCents);
-    const share = bartenderShare[w.user_id] || { gratuity: 0, tipGross: 0, tipFee: 0 };
-    const tipNet = share.tipGross - share.tipFee;
-    const lineTotal = Math.max(0, wage + share.gratuity + tipNet);
-
-    // Upsert the contractor's payout for this period.
-    const payoutRes = await pool.query(
-      `INSERT INTO payouts (pay_period_id, contractor_id)
-       VALUES ($1, $2)
-       ON CONFLICT (pay_period_id, contractor_id) DO UPDATE
-         SET pay_period_id = EXCLUDED.pay_period_id
-       RETURNING id`,
-      [payPeriodId, w.user_id]
-    );
-    const payoutId = payoutRes.rows[0].id;
-
-    // Upsert the payout_event line for this shift.
-    await pool.query(
-      `INSERT INTO payout_events
-         (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
-          gratuity_share_cents, card_tip_gross_cents, card_tip_fee_cents,
-          card_tip_net_cents, line_total_cents)
-       VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT (payout_id, shift_id) DO UPDATE SET
-         contracted_hours = EXCLUDED.contracted_hours,
-         gratuity_share_cents = EXCLUDED.gratuity_share_cents,
-         card_tip_gross_cents = EXCLUDED.card_tip_gross_cents,
-         card_tip_fee_cents = EXCLUDED.card_tip_fee_cents,
-         card_tip_net_cents = EXCLUDED.card_tip_net_cents,
-         wage_cents = ROUND(payout_events.hours * payout_events.rate_cents),
-         line_total_cents = GREATEST(0,
-           ROUND(payout_events.hours * payout_events.rate_cents)
-           + EXCLUDED.gratuity_share_cents
-           + EXCLUDED.card_tip_net_cents
-           + payout_events.adjustment_cents)`,
-      [payoutId, w.shift_id, hours, rateCents, wage,
-       share.gratuity, share.tipGross, share.tipFee, tipNet, lineTotal]
-    );
+  // Capture any missing Stripe fees BEFORE opening the transaction: these are
+  // network calls and must not hold a DB transaction open. Best-effort — if
+  // Stripe is unreachable, accrue with the fees already on record and let a
+  // later re-accrual backfill. A Stripe outage must never block payroll.
+  try {
+    await captureProposalPaymentFees(proposalId);
+    await captureTipFeesForProposal(proposalId);
+  } catch (err) {
+    Sentry.captureException(err);
   }
 
-  // Recompute every touched payout's total from its line items.
-  await pool.query(
-    `UPDATE payouts po SET total_cents = COALESCE((
-       SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
-     ), 0)
-     WHERE po.pay_period_id = $1`,
-    [payPeriodId]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const payPeriod = await ensurePayPeriod(client, eventDate);
+    // Never write into a frozen period. Once Phase 2 introduces processing/paid
+    // periods, a late accrual into a closed period would corrupt settled
+    // payroll; rolling it into the open period is a Phase 2 concern.
+    if (payPeriod.status !== 'open') {
+      await client.query('COMMIT');
+      return;
+    }
+    const payPeriodId = payPeriod.id;
+
+    // Everyone who worked this event, with their shift, position, and rate.
+    // ORDER BY user_id makes the even-split remainder distribution deterministic.
+    const workers = await client.query(
+      `SELECT sr.user_id, sr.position, s.id AS shift_id,
+              COALESCE(cp.hourly_rate, 20.00) AS hourly_rate
+       FROM shift_requests sr
+       JOIN shifts s ON s.id = sr.shift_id
+       LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
+       WHERE s.proposal_id = $1 AND sr.status = 'approved'
+       ORDER BY sr.user_id`,
+      [proposalId]
+    );
+    if (!workers.rows.length) {
+      await client.query('COMMIT');
+      return;
+    }
+
+    // Bartenders share gratuity and card tips; barbacks/servers do not.
+    // Case-insensitive: production seeds the position as 'Bartender'.
+    const bartenders = workers.rows.filter(
+      w => (w.position || '').toLowerCase() === 'bartender'
+    );
+
+    // Gratuity pool, net of the card fee. Per spec section 4.2 the fee
+    // denominator is the proposal's full contracted price (proposals.total_price),
+    // of which the gratuity is always a part — so the ratio cannot exceed 1.
+    const grossGratuity = extractGratuityCents(proposal.pricing_snapshot);
+    const proposalTotalCents = Math.round(Number(proposal.total_price || 0) * 100);
+    const feeRes = await client.query(
+      `SELECT COALESCE(SUM(fee_cents), 0) AS fee
+       FROM proposal_payments WHERE proposal_id = $1 AND status = 'succeeded'`,
+      [proposalId]
+    );
+    const gratuityFee = proRataFeeCents(
+      grossGratuity, proposalTotalCents, Number(feeRes.rows[0].fee)
+    );
+    const netGratuity = Math.max(0, grossGratuity - gratuityFee);
+
+    // Card-tip pools (gross and fee) from tips matched to this event's shifts.
+    const tipRes = await client.query(
+      `SELECT COALESCE(SUM(t.amount_cents), 0) AS gross,
+              COALESCE(SUM(t.fee_cents), 0) AS fee
+       FROM tips t JOIN shifts s ON s.id = t.shift_id
+       WHERE s.proposal_id = $1`,
+      [proposalId]
+    );
+    const tipGross = Number(tipRes.rows[0].gross);
+    const tipFee = Number(tipRes.rows[0].fee);
+
+    const n = bartenders.length;
+    const gratuityShares = splitEvenly(netGratuity, n);
+    const tipGrossShares = splitEvenly(tipGross, n);
+    const tipFeeShares = splitEvenly(tipFee, n);
+    const bartenderShare = {};
+    bartenders.forEach((b, i) => {
+      bartenderShare[b.user_id] = {
+        gratuity: gratuityShares[i],
+        tipGross: tipGrossShares[i],
+        tipFee: tipFeeShares[i],
+      };
+    });
+
+    // Existing line items for this event, keyed by contractor+shift, so a
+    // re-accrual preserves admin edits (hours, rate, late, adjustment) and
+    // recomputes only the system-owned money fields.
+    const existingRes = await client.query(
+      `SELECT pe.*, po.contractor_id
+       FROM payout_events pe
+       JOIN payouts po ON po.id = pe.payout_id
+       JOIN shifts s ON s.id = pe.shift_id
+       WHERE s.proposal_id = $1`,
+      [proposalId]
+    );
+    const existing = new Map(
+      existingRes.rows.map(r => [`${r.contractor_id}:${r.shift_id}`, r])
+    );
+
+    const touchedPayoutIds = new Set();
+
+    for (const w of workers.rows) {
+      const prior = existing.get(`${w.user_id}:${w.shift_id}`);
+      // First accrual seeds contracted_hours/hours/rate from the contract;
+      // afterwards the admin owns them, so re-accrual preserves the prior row.
+      const contractedHrs = prior
+        ? Number(prior.contracted_hours)
+        : contractedHours(Number(proposal.event_duration_hours) || 0);
+      const hours = prior ? Number(prior.hours) : contractedHrs;
+      const rateCents = prior
+        ? Number(prior.rate_cents)
+        : Math.round(Number(w.hourly_rate) * 100);
+      const late = prior ? prior.late : false;
+      const adjustment = prior ? Number(prior.adjustment_cents) : 0;
+      const adjustmentNote = prior ? prior.adjustment_note : null;
+
+      // All money is computed here, in JS, and written identically on INSERT
+      // and on UPDATE — the two paths can never disagree.
+      const wage = wageCents(hours, rateCents);
+      const share = bartenderShare[w.user_id] || { gratuity: 0, tipGross: 0, tipFee: 0 };
+      const tipNet = share.tipGross - share.tipFee;
+      const lineTotal = Math.max(0, wage + share.gratuity + tipNet + adjustment);
+
+      // Upsert the contractor's payout for this period.
+      const payoutRes = await client.query(
+        `INSERT INTO payouts (pay_period_id, contractor_id)
+         VALUES ($1, $2)
+         ON CONFLICT (pay_period_id, contractor_id) DO UPDATE
+           SET pay_period_id = EXCLUDED.pay_period_id
+         RETURNING id`,
+        [payPeriodId, w.user_id]
+      );
+      const payoutId = payoutRes.rows[0].id;
+      touchedPayoutIds.add(payoutId);
+
+      // Upsert the payout_event line. Every column is set from EXCLUDED, so the
+      // recompute uses the same JS-computed values as the insert.
+      await client.query(
+        `INSERT INTO payout_events
+           (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
+            late, gratuity_share_cents, card_tip_gross_cents, card_tip_fee_cents,
+            card_tip_net_cents, adjustment_cents, adjustment_note, line_total_cents)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         ON CONFLICT (payout_id, shift_id) DO UPDATE SET
+           contracted_hours = EXCLUDED.contracted_hours,
+           hours = EXCLUDED.hours,
+           rate_cents = EXCLUDED.rate_cents,
+           wage_cents = EXCLUDED.wage_cents,
+           late = EXCLUDED.late,
+           gratuity_share_cents = EXCLUDED.gratuity_share_cents,
+           card_tip_gross_cents = EXCLUDED.card_tip_gross_cents,
+           card_tip_fee_cents = EXCLUDED.card_tip_fee_cents,
+           card_tip_net_cents = EXCLUDED.card_tip_net_cents,
+           adjustment_cents = EXCLUDED.adjustment_cents,
+           adjustment_note = EXCLUDED.adjustment_note,
+           line_total_cents = EXCLUDED.line_total_cents`,
+        [payoutId, w.shift_id, contractedHrs, hours, rateCents, wage,
+         late, share.gratuity, share.tipGross, share.tipFee,
+         tipNet, adjustment, adjustmentNote, lineTotal]
+      );
+    }
+
+    // Recompute every touched payout's total from its line items.
+    await client.query(
+      `UPDATE payouts po SET total_cents = COALESCE((
+         SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
+       ), 0)
+       WHERE po.id = ANY($1)`,
+      [Array.from(touchedPayoutIds)]
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 module.exports = { accruePayoutsForProposal, ensurePayPeriod };
 ```
 
-Note on the conflict clause: on first insert, `contracted_hours` and `hours` both start at the contracted value (`$3` passed twice). On re-accrual the `ON CONFLICT` clause deliberately does NOT touch `hours`, `rate_cents`, `late`, or the adjustment columns, so a portal edit survives a recompute; `wage_cents` and `line_total_cents` are recomputed from the existing (possibly edited) row, while the gratuity and card-tip shares refresh from the new computation.
+Note on the upsert: the accrual reads any existing `payout_events` row first (the `existing` Map) and, when one is found, carries forward the admin-editable fields — `contracted_hours`, `hours`, `rate_cents`, `late`, `adjustment_cents`, `adjustment_note` — so a portal edit survives a recompute. `wage_cents` is then re-derived in JS from the carried-forward `hours`/`rate`, and `line_total_cents` from that wage plus the freshly split gratuity/tip shares plus the carried-forward adjustment. Every column in the `ON CONFLICT` clause is set from `EXCLUDED`, so the recompute path writes the exact JS-computed values the insert path would — there is no SQL-side arithmetic that could drift from the JS. The whole pass runs inside one `BEGIN`/`COMMIT`; the Stripe fee captures run before it, since they are network calls that must not hold a transaction open.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test server/utils/payrollAccrual.test.js`
-Expected: PASS, 4 tests.
+Expected: PASS, 5 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1377,19 +1524,19 @@ git commit -m "feat(payroll): accrue payouts when an event auto-completes"
 
 ---
 
-## Task 12: Capture fee and match tip in the Stripe webhook
+## Task 12: Match the tip to its event in the Stripe webhook
 
 **Files:**
 - Modify: `server/routes/stripe.js` (the tip branch of the `checkout.session.completed` handler, around lines 1549-1563)
 
-- [ ] **Step 1: Add fee capture and matching after the tip insert**
+- [ ] **Step 1: Match the tip after the insert**
 
-In `server/routes/stripe.js`, the tip webhook branch inserts the `tips` row with `ON CONFLICT (stripe_payment_intent_id) DO NOTHING`, then `return res.json({ received: true })`. Change that insert to return the row id, and run fee capture and matching before responding.
+In `server/routes/stripe.js`, the tip webhook branch inserts the `tips` row with `ON CONFLICT (stripe_payment_intent_id) DO NOTHING`, then `return res.json({ received: true })`. Change that insert to return the row id, and match the tip to its event before responding. Fee capture is deliberately NOT done in the webhook: at `checkout.session.completed` the Stripe charge has usually not settled, so the balance-transaction fee is not yet available. Tip fees are captured later, at accrual time, by `captureTipFeesForProposal`.
 
 Add the import near the top of `server/routes/stripe.js` with the other requires:
 
 ```js
-const { captureTipFee, matchTipToEvent } = require('../utils/payrollTips');
+const { matchTipToEvent } = require('../utils/payrollTips');
 ```
 
 Replace the tip insert and its `return` with:
@@ -1409,16 +1556,10 @@ Replace the tip insert and its `return` with:
         session.created,
       ]);
 
-      // Best-effort: fee capture and event matching must not fail the webhook.
+      // Best-effort: match the tip to its event. Must not fail the webhook.
       if (inserted.rows.length) {
-        const tipId = inserted.rows[0].id;
         try {
-          await captureTipFee(tipId);
-        } catch (err) {
-          Sentry.captureException(err, { tags: { webhook: 'tip', step: 'fee_capture' } });
-        }
-        try {
-          await matchTipToEvent(tipId);
+          await matchTipToEvent(inserted.rows[0].id);
         } catch (err) {
           Sentry.captureException(err, { tags: { webhook: 'tip', step: 'tip_match' } });
         }
@@ -1426,7 +1567,7 @@ Replace the tip insert and its `return` with:
       return res.json({ received: true });
 ```
 
-`inserted.rows.length` is 0 when the `ON CONFLICT` skipped a duplicate, so fee capture and matching run only on a genuinely new tip.
+`inserted.rows.length` is 0 when the `ON CONFLICT` skipped a duplicate, so matching runs only on a genuinely new tip. `matchTipToEvent` is pure DB with no Stripe call, so it does not risk the webhook's response budget.
 
 - [ ] **Step 2: Verify the module loads**
 
@@ -1442,7 +1583,7 @@ Expected: all tests pass.
 
 ```bash
 git add server/routes/stripe.js
-git commit -m "feat(payroll): capture fee and match event on tip webhook"
+git commit -m "feat(payroll): match the tip to its event on the tip webhook"
 ```
 
 ---
@@ -1452,11 +1593,11 @@ git commit -m "feat(payroll): capture fee and match event on tip webhook"
 **Files:**
 - Modify: `server/routes/proposals/lifecycle.js` (the `PATCH /:id/status` handler)
 
-- [ ] **Step 1: Locate the completion transition**
+- [ ] **Step 1: Find the existing completion block**
 
-Open `server/routes/proposals/lifecycle.js`. Find where `PATCH /:id/status` applies the new status to the proposal (the `UPDATE proposals SET status = ...`). Confirm whether an admin can set status to `'completed'` here. If the route cannot reach `'completed'`, this task needs no code change; mark it done and move to the next plan. If it can, continue with Step 2.
+Open `server/routes/proposals/lifecycle.js`. `PATCH /:id/status` already has a post-commit block, guarded by `if (status === 'completed')` (around lines 165-176), that fires the marketing handlers (`scheduleReviewRequest`, `scheduleRetentionNudge`). The accrual call belongs inside that existing block, not in a new one. Confirm the block is there before continuing.
 
-- [ ] **Step 2: Add the accrual call**
+- [ ] **Step 2: Add the accrual call to that block**
 
 Add the import near the other requires at the top of `lifecycle.js`:
 
@@ -1464,19 +1605,17 @@ Add the import near the other requires at the top of `lifecycle.js`:
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
 ```
 
-After the status `UPDATE` commits, when the new status is `'completed'`, add a best-effort block (place it after the transaction `COMMIT`, alongside any other post-commit side-effects in the handler):
+Inside the existing `if (status === 'completed')` post-commit block, alongside the marketing-handler calls, add a best-effort accrual call:
 
 ```js
-    if (newStatus === 'completed') {
       try {
-        await accruePayoutsForProposal(proposalId);
+        await accruePayoutsForProposal(Number(req.params.id));
       } catch (err) {
         Sentry.captureException(err, { tags: { route: 'proposal_status', step: 'payout_accrual' } });
       }
-    }
 ```
 
-Use the handler's existing variable names for the new status and the proposal id (they may differ from `newStatus` / `proposalId`; match what the file already uses). `accruePayoutsForProposal` is idempotent, so it is safe even if the event later also runs through `processEventCompletions`.
+Match the block's existing variable names (it uses `status` and `req.params.id`, not `newStatus` / `proposalId`). `accruePayoutsForProposal` is idempotent and guards on the proposal being `completed`, so it is safe even if the event later also runs through `processEventCompletions`.
 
 - [ ] **Step 3: Verify the module loads**
 
