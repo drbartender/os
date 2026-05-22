@@ -1,0 +1,178 @@
+/**
+ * Staff-shift SMS timing + dispatcher handlers (Phase 4a). Two touches:
+ *
+ *   1. shift_reminder — fires at the event START instant minus 24 hours, in
+ *      the EVENT timezone. NOT the 10:00-event-local convention of
+ *      computeScheduledFor; this touch computes its own send instant via
+ *      computeShiftReminderScheduledFor.
+ *
+ *   2. staff_thank_you — fires at the event END instant plus 30 minutes,
+ *      in the EVENT timezone. Same bespoke-timing rationale.
+ *
+ * shifts has no timezone of its own. The event TZ, event_date,
+ * event_start_time, and event_duration_hours come from the linked proposals
+ * row via shifts.proposal_id. event_start_time is wall-clock event-local
+ * text ("18:00" or "6:00 PM"); it must NOT be parsed as UTC.
+ *
+ * The timezone math in this module is the same shape Phase 3's eventEveSms.js
+ * used and was reviewer-verified for summer AND winter dates.
+ *
+ * Task 2 ships the pure timing helpers only. Task 3 will add the scheduling
+ * helper; Task 5 will add the dispatcher handlers to this same file.
+ */
+const Sentry = require('@sentry/node');
+const { pool } = require('../db');
+const { resolveEventTimezone } = require('./eventTimezone');
+const { getEventTypeLabel } = require('./eventTypes');
+const { PUBLIC_SITE_URL } = require('./urls');
+
+// ─── Timing helpers ──────────────────────────────────────────────
+// shift_reminder fires at event start minus 24h; staff_thank_you fires at
+// event end plus 30 min. Both compute in the EVENT timezone. event_start_time
+// is wall-clock event-local text, never a UTC ISO string.
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const THANK_YOU_OFFSET_MS = 30 * 60 * 1000;
+
+/**
+ * Coerce a date-like value to a calendar YYYY-MM-DD string using its LOCAL
+ * components (no timezone shift). Accepts a Date instance, an ISO date
+ * string, or any string whose first 10 characters are already YYYY-MM-DD.
+ * Returns null for null / undefined / empty / invalid Date inputs.
+ *
+ * @param {Date|string|null|undefined} value
+ * @returns {string|null}
+ */
+function toCalendarYmd(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(value).slice(0, 10);
+}
+
+/**
+ * Parse an event-local wall-clock start time string into 24-hour
+ * { hour, minute } numbers. Accepts either 24-hour "HH:MM" (e.g. "18:00")
+ * or 12-hour "H:MM AM/PM" (e.g. "6:00 PM"). Returns null on any malformed
+ * input — callers treat null as "cannot schedule" rather than substituting
+ * a default time.
+ *
+ * @param {string|null|undefined} raw
+ * @returns {{ hour: number, minute: number }|null}
+ */
+function parseClockTime(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  // 24-hour HH:MM
+  let m = /^(\d{1,2}):(\d{2})$/.exec(s);
+  if (m) {
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return { hour: h, minute: min };
+    return null;
+  }
+  // 12-hour H:MM AM/PM
+  m = /^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/.exec(s);
+  if (m) {
+    let h = Number(m[1]);
+    const min = Number(m[2]);
+    const pm = /p/i.test(m[3]);
+    if (h < 1 || h > 12 || min < 0 || min > 59) return null;
+    if (h === 12) h = 0;
+    if (pm) h += 12;
+    return { hour: h, minute: min };
+  }
+  return null;
+}
+
+/**
+ * Convert a calendar date + wall-clock time in an event-local timezone to
+ * the corresponding UTC instant. Uses Intl.DateTimeFormat with
+ * timeZoneName: 'shortOffset' to read the offset that applies on the given
+ * date in the given zone (so summer / winter DST are both honored).
+ *
+ * @param {string} ymd YYYY-MM-DD calendar date
+ * @param {number} hour 0-23 event-local hour
+ * @param {number} minute 0-59 event-local minute
+ * @param {string} tz IANA timezone identifier (e.g. "America/Chicago")
+ * @returns {Date} UTC instant
+ */
+function eventLocalToUtc(ymd, hour, minute, tz) {
+  const [y, mo, d] = ymd.split('-').map(Number);
+  const noonUtc = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0));
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    timeZoneName: 'shortOffset',
+    hour: '2-digit',
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(noonUtc);
+  const offsetPart = parts.find((p) => p.type === 'timeZoneName').value;
+  const match = /GMT([+-]?\d{1,2})(?::(\d{2}))?/.exec(offsetPart);
+  const tzHours = match ? Number(match[1]) : 0;
+  const tzMinutes = match && match[2] ? Number(match[2]) * (tzHours >= 0 ? 1 : -1) : 0;
+  return new Date(Date.UTC(y, mo - 1, d, hour - tzHours, minute - tzMinutes, 0));
+}
+
+/**
+ * Compute the UTC instant of an event's START moment from an event/proposal
+ * row carrying event_date, event_start_time, and optionally event_timezone.
+ * Returns null when event_date or event_start_time is missing/malformed.
+ *
+ * @param {{ event_date: string|Date, event_start_time: string, event_timezone?: string }} ev
+ * @returns {Date|null}
+ */
+function computeEventStartUtc(ev) {
+  const ymd = toCalendarYmd(ev.event_date);
+  if (!ymd) return null;
+  const clock = parseClockTime(ev.event_start_time);
+  if (!clock) return null;
+  const tz = resolveEventTimezone(ev);
+  return eventLocalToUtc(ymd, clock.hour, clock.minute, tz);
+}
+
+/**
+ * Compute the UTC instant the shift_reminder SMS should send: the event
+ * start moment minus 24 hours. Returns null when the event's start instant
+ * cannot be resolved.
+ *
+ * @param {{ event_date: string|Date, event_start_time: string, event_timezone?: string }} ev
+ * @returns {Date|null}
+ */
+function computeShiftReminderScheduledFor(ev) {
+  const start = computeEventStartUtc(ev);
+  if (!start) return null;
+  return new Date(start.getTime() - DAY_MS);
+}
+
+/**
+ * Compute the UTC instant the staff_thank_you SMS should send: the event
+ * end moment plus 30 minutes. End = start + event_duration_hours. Returns
+ * null when the event's start instant cannot be resolved or when
+ * event_duration_hours is missing / not a positive finite number.
+ *
+ * @param {{ event_date: string|Date, event_start_time: string, event_duration_hours: number|string, event_timezone?: string }} ev
+ * @returns {Date|null}
+ */
+function computeStaffThankYouScheduledFor(ev) {
+  const start = computeEventStartUtc(ev);
+  if (!start) return null;
+  const durationHours = Number(ev.event_duration_hours);
+  if (!Number.isFinite(durationHours) || durationHours <= 0) return null;
+  const end = start.getTime() + durationHours * 60 * 60 * 1000;
+  return new Date(end + THANK_YOU_OFFSET_MS);
+}
+
+module.exports = {
+  toCalendarYmd,
+  parseClockTime,
+  eventLocalToUtc,
+  computeEventStartUtc,
+  computeShiftReminderScheduledFor,
+  computeStaffThankYouScheduledFor,
+};
