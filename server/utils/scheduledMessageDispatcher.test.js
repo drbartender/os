@@ -232,3 +232,50 @@ test('dispatcher > suppresses marketing-category handler when marketing_enabled=
     [testClientId]
   );
 });
+
+test('dispatcher > skips a concurrent tick while a prior dispatch is still in flight', async () => {
+  // Reproduces the overlap bug: dispatchPending is fired on a 5-min setInterval;
+  // if one run overruns the interval, the next tick re-SELECTs rows the prior
+  // run has sent-but-not-yet-marked and sends them again. A handler that blocks
+  // on a gate lets us hold one run "in flight" and fire a second, overlapping one.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const handler = mock.fn(async () => { await gate; });
+  registerHandler('disp_test_reentrancy', handler);
+
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_reentrancy', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
+
+  // First run — not awaited; it parks inside the handler.
+  const first = dispatchPending();
+  const enterDeadline = Date.now() + 3000;
+  while (handler.mock.callCount() === 0 && Date.now() < enterDeadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.strictEqual(handler.mock.callCount(), 1, 'first run should have entered the handler');
+
+  // Second run fires while the first is still parked. The re-entrancy guard must
+  // return it immediately without re-selecting the still-'pending' row. Unguarded,
+  // it re-enters the handler (callCount -> 2) and blocks on the gate.
+  const second = dispatchPending();
+  let secondReturned = false;
+  second.then(() => { secondReturned = true; });
+  const settleDeadline = Date.now() + 3000;
+  while (!secondReturned && handler.mock.callCount() < 2 && Date.now() < settleDeadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+
+  assert.strictEqual(handler.mock.callCount(), 1, 'concurrent tick must not re-dispatch the row');
+  assert.ok(secondReturned, 'guarded tick should return immediately, not block on the handler');
+
+  release();
+  await Promise.all([first, second]);
+
+  const { rows } = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_reentrancy'"
+  );
+  assert.strictEqual(rows[0].status, 'sent');
+});

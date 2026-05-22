@@ -251,20 +251,37 @@ async function dispatchRow(row) {
 
 const BATCH_LIMIT = 100;
 
-async function dispatchPending() {
-  const { rows } = await pool.query(
-    `SELECT id, entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for
-     FROM scheduled_messages
-     WHERE status = 'pending' AND scheduled_for <= NOW()
-     ORDER BY scheduled_for ASC
-     LIMIT $1`,
-    [BATCH_LIMIT]
-  );
+// Re-entrancy guard. dispatchPending is fired on a 5-min setInterval, and
+// wrapScheduler does NOT serialize ticks. If one run overruns the interval, the
+// next tick would re-SELECT rows the prior run has already sent but not yet
+// marked 'sent' (dispatchRow sends, THEN updates) and send them again —
+// duplicate balance reminders / autopay receipts. A module-level in-flight flag
+// makes an overlapping tick a no-op until the prior run finishes.
+let _dispatchInFlight = false;
 
-  for (const row of rows) {
-    // Sequential dispatch — keeps a single SMTP burst from blowing past Resend's
-    // rate limit. If volume grows, swap to a concurrency-limited Promise queue.
-    await dispatchRow(row);
+async function dispatchPending() {
+  if (_dispatchInFlight) {
+    console.warn('[scheduledMessageDispatcher] previous dispatch still in flight — skipping this tick');
+    return;
+  }
+  _dispatchInFlight = true;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for
+       FROM scheduled_messages
+       WHERE status = 'pending' AND scheduled_for <= NOW()
+       ORDER BY scheduled_for ASC
+       LIMIT $1`,
+      [BATCH_LIMIT]
+    );
+
+    for (const row of rows) {
+      // Sequential dispatch — keeps a single SMTP burst from blowing past Resend's
+      // rate limit. If volume grows, swap to a concurrency-limited Promise queue.
+      await dispatchRow(row);
+    }
+  } finally {
+    _dispatchInFlight = false;
   }
 }
 
