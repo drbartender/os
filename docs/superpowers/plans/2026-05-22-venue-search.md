@@ -582,7 +582,7 @@ export default function VenueSearchInput({
     onChange(suggestion.name);
     try {
       const res = await api.get(
-        `/venues/details/${encodeURIComponent(suggestion.placeId)}`,
+        `/venues/details/${encodeURIComponent(suggestion.place_id)}`,
         { params: { token: sessionToken() } },
       );
       const venue = (res.data && res.data.venue) || {};
@@ -632,7 +632,7 @@ export default function VenueSearchInput({
         <ul className="venue-search-dropdown" role="listbox" id={`${id}-listbox`}>
           {suggestions.map((s, i) => (
             <li
-              key={s.placeId}
+              key={s.place_id}
               id={`${id}-opt-${i}`}
               className={`venue-search-option${i === highlight ? ' highlighted' : ''}`}
               role="option"

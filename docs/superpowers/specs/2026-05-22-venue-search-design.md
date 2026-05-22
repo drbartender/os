@@ -109,7 +109,7 @@ never throws. This is what makes the front-end degrade gracefully.
     precise gate for what counts as in service area.
 - From the response `suggestions` array, keep only entries with a
   `placePrediction` (ignore `queryPrediction`). Map each to
-  `{ placeId, name, address }` where `name` is
+  `{ place_id, name, address }` where `name` is
   `placePrediction.structuredFormat.mainText.text` and `address` is
   `placePrediction.structuredFormat.secondaryText.text` (fall back to
   `placePrediction.text.text`).
