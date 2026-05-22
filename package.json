@@ -11,6 +11,7 @@
     "admin:create": "node server/scripts/createAdmin.js",
     "lint": "eslint server/",
     "lint:fix": "eslint server/ --fix",
+    "test": "node --test \"server/**/*.test.js\"",
     "audit:check": "npm audit --omit=dev || true",
     "check:filesize": "node scripts/check-file-size.js --all",
     "build:testing-guide": "node scripts/build-testing-guide.js",
