@@ -294,6 +294,9 @@ after(async () => {
     await pool.query('DELETE FROM invoice_payments WHERE invoice_id IN (SELECT id FROM invoices WHERE proposal_id = ANY($1))', [ids]);
     await pool.query('DELETE FROM invoices WHERE proposal_id = ANY($1)', [ids]);
     await pool.query('DELETE FROM proposal_payments WHERE proposal_id = ANY($1)', [ids]);
+    // Plan 2d hooks schedule drip rows on a →sent transition; scheduled_messages
+    // has no FK cascade to proposals, so sweep them before deleting proposals.
+    await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = ANY($1)", [ids]);
     await pool.query('DELETE FROM proposals WHERE id = ANY($1)', [ids]);
   }
   if (createdClientIds.size > 0) {

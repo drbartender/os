@@ -1,4 +1,5 @@
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
@@ -133,6 +134,44 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
       }
     } catch (e) {
       console.error('Post-send email re-fetch failed for proposal', req.params.id, e.code || e.name);
+    }
+  }
+
+  // Plan 2d: comms hooks on the status transition. All best-effort and
+  // non-blocking — a scheduling failure must never break the status change.
+  // The marketing helpers are idempotent, so a same-status re-PATCH is safe.
+  if (status === 'sent') {
+    try {
+      const { scheduleDripForProposal } = require('../../utils/marketingHandlers');
+      await scheduleDripForProposal(Number(req.params.id));
+    } catch (dripErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(dripErr, { tags: { route: 'proposals/status', issue: 'drip-enroll' } });
+      }
+      console.error('Drip enrollment failed (non-blocking):', dripErr);
+    }
+  }
+  if (status === 'archived') {
+    try {
+      const { cancelMarketingForProposal } = require('../../utils/marketingHandlers');
+      await cancelMarketingForProposal(Number(req.params.id));
+    } catch (cancelErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(cancelErr, { tags: { route: 'proposals/status', issue: 'archive-cancel' } });
+      }
+      console.error('Marketing cancel on archive failed (non-blocking):', cancelErr);
+    }
+  }
+  if (status === 'completed') {
+    try {
+      const { scheduleReviewRequest, scheduleRetentionNudge } = require('../../utils/marketingHandlers');
+      await scheduleReviewRequest(Number(req.params.id));
+      await scheduleRetentionNudge(Number(req.params.id));
+    } catch (completeErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(completeErr, { tags: { route: 'proposals/status', issue: 'completion-enroll' } });
+      }
+      console.error('Completion enroll failed (non-blocking):', completeErr);
     }
   }
 
