@@ -204,6 +204,10 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
         syrup_selections: editForm.syrup_selections || [],
         adjustments: editForm.adjustments || [],
         total_price_override: editForm.total_price_override,
+        client_provides_glassware: !!editForm.client_provides_glassware,
+        // Top Shelf is class-only — only send class_options for a class package
+        // so switching to a non-class package can't trip the server-side guard.
+        class_options: selectedPkg?.bar_type === 'class' ? editForm.class_options : null,
         // Blank → explicit null (reset to package default); else a number.
         // Server uses the undefined/null sentinel — sending null is the reset.
         setup_minutes_before: editForm.setup_minutes_before === '' || editForm.setup_minutes_before == null
@@ -479,6 +483,49 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
           </>
         )}
 
+        {/* Glassware — gates Flavor Blaster validity in the server rule check */}
+        <div style={{ marginBottom: 16 }}>
+          <label className="hstack" style={{ gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
+            <input type="checkbox"
+              checked={!!editForm.client_provides_glassware}
+              onChange={e => update('client_provides_glassware', e.target.checked)} />
+            Client provides their own glassware
+          </label>
+        </div>
+
+        {/* Class options — class packages only */}
+        {selectedPkg?.bar_type === 'class' && (
+          <>
+            <div className="meta-k" style={{ marginBottom: 8 }}>Class options</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
+              <div>
+                <label className="meta-k" style={{ display: 'block', marginBottom: 4 }}>Spirit focus</label>
+                <select className="select" style={{ width: '100%' }}
+                  value={editForm.class_options?.spirit_category || ''}
+                  onChange={e => update('class_options', {
+                    ...editForm.class_options,
+                    spirit_category: e.target.value || null,
+                  })}>
+                  <option value="">Not specified</option>
+                  <option value="whiskey_bourbon">Whiskey / Bourbon</option>
+                  <option value="tequila_mezcal">Tequila / Mezcal</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                <label className="hstack" style={{ gap: 8, fontSize: 12.5, cursor: 'pointer', paddingBottom: 6 }}>
+                  <input type="checkbox"
+                    checked={editForm.class_options?.top_shelf_requested === true}
+                    onChange={e => update('class_options', {
+                      ...editForm.class_options,
+                      top_shelf_requested: e.target.checked,
+                    })} />
+                  Top Shelf
+                </label>
+              </div>
+            </div>
+          </>
+        )}
+
         {/* Syrups */}
         <div className="meta-k" style={{ marginBottom: 8 }}>Handcrafted syrups</div>
         <div style={{ marginBottom: 16 }}>
@@ -591,6 +638,8 @@ export function initialFormFromProposal(p) {
     client_email: p.client_email || '',
     client_phone: p.client_phone || '',
     client_source: p.client_source || 'thumbtack',
+    client_provides_glassware: !!p.client_provides_glassware,
+    class_options: p.class_options || null,
     event_date: p.event_date ? p.event_date.slice(0, 10) : '',
     event_start_time: p.event_start_time || '',
     event_duration_hours: Number(p.event_duration_hours) || 4,
