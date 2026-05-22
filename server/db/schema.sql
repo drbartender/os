@@ -2478,3 +2478,10 @@ CREATE INDEX IF NOT EXISTS idx_contractor_profiles_email_trgm
   ON contractor_profiles USING gin (LOWER(email) gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_applications_full_name_trgm
   ON applications USING gin (LOWER(full_name) gin_trgm_ops);
+
+-- The client payment-failure email is sent once per proposal. This partial
+-- unique index makes the throttle in paymentFailedClientNotify.js a true atomic
+-- ON CONFLICT claim, so concurrent Stripe payment_failed retries can't both win.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_activity_payment_failed_client
+  ON proposal_activity_log (proposal_id)
+  WHERE action = 'payment_failed_email_client';
