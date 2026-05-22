@@ -279,3 +279,74 @@ test('dispatcher > skips a concurrent tick while a prior dispatch is still in fl
   );
   assert.strictEqual(rows[0].status, 'sent');
 });
+
+test('dispatcher > suppresses a staff SMS row when staff sms_enabled is false', async () => {
+  registerHandler('disp_test_staff_sms', async () => { throw new Error('should not send'); });
+
+  const u = await pool.query(
+    `INSERT INTO users (email, password_hash, role, communication_preferences)
+     VALUES ('disp-staff-optout@example.com', 'x', 'staff',
+             '{"sms_enabled":false,"email_enabled":true,"marketing_enabled":true}'::jsonb)
+     RETURNING id`
+  );
+  const staffUserId = u.rows[0].id;
+
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_staff_sms', 'staff', $2, 'sms', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, staffUserId]
+  );
+
+  await dispatchPending();
+
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_staff_sms'"
+  );
+  assert.strictEqual(rows[0].status, 'suppressed');
+  assert.ok(rows[0].error_message.includes('sms_enabled is false'));
+
+  await pool.query('DELETE FROM users WHERE id = $1', [staffUserId]);
+});
+
+test('dispatcher > suppresses a staff shift row when its linked proposal is archived', async () => {
+  registerHandler('disp_test_shift_archived', async () => { throw new Error('should not send'); });
+
+  const ARCH_PROPOSAL_ID = -7601;
+  const ARCH_SHIFT_ID = -7602;
+  const u = await pool.query(
+    `INSERT INTO users (email, password_hash, role)
+     VALUES ('disp-shift-arch-staff@example.com', 'x', 'staff')
+     RETURNING id`
+  );
+  const staffUserId = u.rows[0].id;
+  try {
+    await pool.query(
+      `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_duration_hours, event_timezone, event_type)
+       VALUES ($1, $2, 'archived', CURRENT_DATE + INTERVAL '30 days', '18:00', 4, 'America/Chicago', 'birthday-party')`,
+      [ARCH_PROPOSAL_ID, testClientId]
+    );
+    await pool.query(
+      `INSERT INTO shifts (id, proposal_id, event_date, start_time, positions_needed, status)
+       VALUES ($1, $2, CURRENT_DATE + INTERVAL '30 days', '18:00', '["Bartender"]', 'open')`,
+      [ARCH_SHIFT_ID, ARCH_PROPOSAL_ID]
+    );
+    await pool.query(
+      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+       VALUES ($1, 'shift', 'disp_test_shift_archived', 'staff', $2, 'sms', NOW() - INTERVAL '1 minute')`,
+      [ARCH_SHIFT_ID, staffUserId]
+    );
+
+    await dispatchPending();
+
+    const { rows } = await pool.query(
+      "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_shift_archived'"
+    );
+    assert.strictEqual(rows[0].status, 'suppressed');
+    assert.ok(rows[0].error_message.includes('archived'));
+  } finally {
+    await pool.query("DELETE FROM scheduled_messages WHERE entity_type = 'shift' AND entity_id = $1", [ARCH_SHIFT_ID]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [ARCH_SHIFT_ID]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [ARCH_PROPOSAL_ID]);
+    await pool.query('DELETE FROM users WHERE id = $1', [staffUserId]);
+  }
+});

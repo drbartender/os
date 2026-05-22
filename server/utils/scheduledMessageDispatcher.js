@@ -97,6 +97,21 @@ async function checkSuppression({ row, entity, recipient }) {
   if (row.entity_type === 'proposal' && entity && entity.status === 'archived') {
     return 'archived: proposal is archived, cascade rule applies';
   }
+  // Same cascade for staff shift rows (Phase 4a): a shift_reminder /
+  // staff_thank_you row carries entity_type='shift'. lookupEntity returns the
+  // shifts row, which has proposal_id but not the linked proposal's status,
+  // so join to proposals here. Archived linked proposal -> suppressed (not
+  // failed). Runs before the handler, so it does not rely on the handler's
+  // own archived guard.
+  if (row.entity_type === 'shift' && entity && entity.proposal_id) {
+    const pr = await pool.query(
+      'SELECT status FROM proposals WHERE id = $1',
+      [entity.proposal_id]
+    );
+    if (pr.rows[0] && pr.rows[0].status === 'archived') {
+      return 'archived: linked proposal is archived, cascade rule applies';
+    }
+  }
   // Per-channel comm-prefs (clients only — staff/admin prefs handled by later plans).
   if (row.recipient_type === 'client' && recipient) {
     if (row.channel === 'email') {
@@ -116,6 +131,20 @@ async function checkSuppression({ row, entity, recipient }) {
       if (recipient.phone_status === 'bad') {
         return 'suppressed: client.phone_status is bad';
       }
+    }
+  }
+  // Per-channel comm-prefs for staff and admin recipients (Phase 4a). Staff
+  // SMS opt-out is set by the STOP keyword flipping
+  // users.communication_preferences.sms_enabled. `users` has no
+  // email_status / phone_status columns, so only the prefs flags are checked
+  // here — there is no bad-contact branch for staff/admin.
+  if ((row.recipient_type === 'staff' || row.recipient_type === 'admin') && recipient) {
+    const prefs = recipient.communication_preferences || {};
+    if (row.channel === 'sms' && prefs.sms_enabled === false) {
+      return `suppressed: ${row.recipient_type}.communication_preferences.sms_enabled is false`;
+    }
+    if (row.channel === 'email' && prefs.email_enabled === false) {
+      return `suppressed: ${row.recipient_type}.communication_preferences.email_enabled is false`;
     }
   }
   return null;
