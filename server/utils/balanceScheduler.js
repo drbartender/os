@@ -207,6 +207,17 @@ async function processEventCompletions() {
           console.error(`[BalanceScheduler] activity-log insert failed for #${proposal.id}:`, logErr);
           Sentry.captureException(logErr, { tags: { scheduler: 'auto-complete', proposalId: proposal.id } });
         }
+        // Plan 2d: schedule the post-event review request and retention nudge.
+        // Best-effort and isolated, so a marketing failure never aborts the
+        // auto-completion batch.
+        try {
+          const { scheduleReviewRequest, scheduleRetentionNudge } = require('./marketingHandlers');
+          await scheduleReviewRequest(proposal.id);
+          await scheduleRetentionNudge(proposal.id);
+        } catch (marketingErr) {
+          console.error(`[BalanceScheduler] marketing enroll failed for #${proposal.id}:`, marketingErr.message);
+          Sentry.captureException(marketingErr, { tags: { scheduler: 'auto-complete', proposalId: proposal.id, issue: 'marketing-enroll' } });
+        }
       }
     }
   } catch (err) {
