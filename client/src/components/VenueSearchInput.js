@@ -16,6 +16,7 @@ import api from '../utils/api';
 // dropdown never appears and the field behaves as a plain text input.
 
 const DEBOUNCE_MS = 250;
+// Mirrors MIN_QUERY_LEN in server/utils/googlePlaces.js (the server re-checks).
 const MIN_CHARS = 3;
 
 export default function VenueSearchInput({
@@ -95,17 +96,23 @@ export default function VenueSearchInput({
     setSuggestions([]);
     // Show the picked name immediately, before the details round-trip resolves.
     onChange(suggestion.name);
+    // Same stale guard as runSearch: a slow details call must not overwrite a
+    // newer selection, or a newer search the user started after picking.
+    const seq = ++reqSeqRef.current;
     try {
       const res = await api.get(
         `/venues/details/${encodeURIComponent(suggestion.place_id)}`,
         { params: { token: sessionToken() } },
       );
+      if (seq !== reqSeqRef.current) return;
       const venue = (res.data && res.data.venue) || {};
       onSelect({ ...venue, venue_name: venue.venue_name || suggestion.name });
     } catch {
+      if (seq !== reqSeqRef.current) return;
       onSelect({ venue_name: suggestion.name });
+    } finally {
+      sessionTokenRef.current = ''; // next keystroke starts a fresh billing session
     }
-    sessionTokenRef.current = ''; // next keystroke starts a fresh billing session
   };
 
   const handleKeyDown = (e) => {

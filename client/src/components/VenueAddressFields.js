@@ -43,6 +43,7 @@ export default function VenueAddressFields({
           onSelect={applyVenue}
           inputClassName={inputClassName}
           placeholder="e.g. Citadel Banquet Hall"
+          ariaInvalid={!!fieldErrors.venue_name}
         />
         {fieldErrors.venue_name && <div className="field-error">{fieldErrors.venue_name}</div>}
       </div>
