@@ -1,11 +1,11 @@
 // Add-on category display order and labels
 export const ADDON_CATEGORIES = [
-  { key: 'byob_support', label: 'BYOB Support Options', icon: '\ud83e\uddca' },
-  { key: 'premium', label: 'Premium Enhancements', icon: '\u2728' },
-  { key: 'beverage', label: 'Beverage Options', icon: '\ud83e\udd64' },
-  { key: 'craft_ingredients', label: 'Craft Upgrades', icon: '\ud83e\uddea' },
-  { key: 'staffing', label: 'Staffing & Equipment', icon: '\ud83d\udc64' },
-  { key: 'logistics', label: 'Event Logistics', icon: '\ud83d\udce6' },
+  { key: 'byob_support', label: 'BYOB Support Options', icon: '\ud83e\uddca', glyph: '\u2697', blurb: 'Ice, cups, mixers and garnishes, \u00e0 la carte' },
+  { key: 'premium', label: 'Premium Enhancements', icon: '\u2728', glyph: '\u2726', blurb: 'Glass, bubbles, fanfare' },
+  { key: 'beverage', label: 'Beverage Options', icon: '\ud83e\udd64', glyph: '\u25c9', blurb: 'Mocktails and non-alcoholic options' },
+  { key: 'craft_ingredients', label: 'Craft Upgrades', icon: '\ud83e\uddea', glyph: '\u273a', blurb: 'Smoke, syrups, novelty' },
+  { key: 'staffing', label: 'Staffing & Equipment', icon: '\ud83d\udc64', glyph: '\u273b', blurb: 'Extra hands at the bar' },
+  { key: 'logistics', label: 'Event Logistics', icon: '\ud83d\udce6', glyph: '\u2b21', blurb: 'Parking and the practical details' },
 ];
 
 // Per-addon placeholder icons (keyed by slug, replaceable with images later)
