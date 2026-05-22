@@ -4,22 +4,17 @@
 
 **Goal:** Reskin the Quote Wizard's Extras step to the apothecary "Lab Add-Ons" design, preserving every business rule and behavior.
 
-**Architecture:** Presentation-only restructure. `ExtrasStep.js` becomes a thin orchestrator that splits add-ons into bundles vs a-la-carte, plus three new components under `steps/extras/` (`BundlePicker`, `AddonAccordion`, `AddonTile`). All selection logic stays in `proposalRules.js` and routes through the existing `toggleAddon`. New `wz-*` CSS ports the mockup's `ex-*` styles; the apothecary tokens already live in `index.css`.
+**Architecture:** Presentation-only restructure. `ExtrasStep.js` becomes a thin orchestrator plus three new components under `steps/extras/` (`BundlePicker`, `AddonAccordion`, `AddonTile`). All selection logic stays in `proposalRules.js` and routes through the existing `toggleAddon`. The existing `SyrupPicker` is reused inside the syrup tile. New `wz-*` CSS ports the mockup's `ex-*` styles; the apothecary tokens already live in `index.css`.
 
-**Tech Stack:** React 18 (Create React App), vanilla CSS in `client/src/index.css`. No new dependencies.
+**Tech Stack:** React 18 (Create React App), vanilla CSS in `client/src/index.css`. No new dependencies, no server changes.
 
-**Verification approach:** This is a presentation reskin with zero business-logic changes, and the codebase does not unit-test wizard step components, so there are no failing-test cycles. Tasks 1 to 5 are behavior-inert (data, CSS, and component files nothing imports yet) and commit safely under the project's commit rule. Task 6 is the behavior swap and is verified with `CI=true react-scripts build` plus a dev-server walkthrough before its commit. Builds and the dev server run inside the worktree only when no dev server is running in `os`.
+**Verification approach:** Presentation reskin with zero business-logic changes; the codebase does not unit-test wizard step components, so there are no failing-test cycles. Tasks 1 to 5 are behavior-inert (data, CSS, and component files nothing imports yet) and commit safely. Task 6 is the behavior swap, verified with `CI=true react-scripts build` plus a dev-server walkthrough before its commit. Builds and the dev server run inside the worktree only when no dev server is running in `os`.
 
-**Reference mockup:** `C:\Users\dalla\Downloads\Dr Bartender Marketing (4)\`
-- `apothecary/PageExtras.jsx` — component structure (`BundlePicker` lines 391-447, `Tile` 451-518, `ALaCarte` 522-567)
-- `extras-explorations.html` — inline `ex-*` CSS, lines 14-601
-- `styles/redesign.css` — `drb-*` base classes
+**Reference mockup:** `C:\Users\dalla\Downloads\Dr Bartender Marketing (4)\` — `apothecary/PageExtras.jsx` (`BundlePicker` 391-447, `Tile` 451-518, `ALaCarte` 522-567), `extras-explorations.html` (inline `ex-*` CSS, lines 14-601), `styles/redesign.css` (`drb-*` base).
 
 ---
 
 ## Task 1: Prep — category display fields and shared price-label helper
-
-Two small, behavior-inert additions the new components depend on.
 
 **Files:**
 - Modify: `client/src/data/addonCategories.js`
@@ -27,7 +22,7 @@ Two small, behavior-inert additions the new components depend on.
 
 - [ ] **Step 1: Add `glyph` and `blurb` to each `ADDON_CATEGORIES` entry**
 
-In `addonCategories.js`, add two string fields to each of the 6 entries. Do NOT touch `key`, `label`, or `icon` (the admin cockpit reads `label`/`icon`).
+In `addonCategories.js`, add two string fields to each of the 6 entries. Do not touch `key`, `label`, or `icon`. (`ADDON_CATEGORIES` is consumed only by `QuoteWizard.js`; the admin pages import only `PACKAGE_EXCLUDED_ADDONS` from this file. The change is additive regardless.)
 
 | key | glyph | blurb |
 |---|---|---|
@@ -38,15 +33,16 @@ In `addonCategories.js`, add two string fields to each of the 6 entries. Do NOT 
 | `staffing` | `✻` | `Extra hands at the bar` |
 | `logistics` | `⬡` | `Parking and the practical details` |
 
-Each entry becomes e.g. `{ key: 'premium', label: 'Premium Enhancements', icon: '<existing>', glyph: '✦', blurb: 'Glass, bubbles, fanfare' }`.
-
 - [ ] **Step 2: Add `priceLabel` to `helpers.js`**
 
-Append to `client/src/pages/website/quoteWizard/helpers.js` (this is the existing per-add-on price logic from the current `ExtrasStep.js` lines 61-72, minus the now-removed syrup special case):
+Append to `client/src/pages/website/quoteWizard/helpers.js`. This is the existing per-add-on price logic from the current `ExtrasStep.js` lines 61-72, including the handcrafted-syrups special case.
 
 ```js
 // Per-add-on price label (Extras step tiles + bundle cards).
 export function priceLabel(addon) {
+  // Syrups price via calculateSyrupCost (flavor count + 3-for-$75 tier), not the
+  // flat add-on rate; show the tier explicitly, matching the current step.
+  if (addon.slug === 'handcrafted-syrups') return '$30/bottle · 3 for $75';
   switch (addon.billing_type) {
     case 'per_guest':
     case 'per_guest_timed': return `$${Number(addon.rate)}/guest`;
@@ -73,34 +69,22 @@ git commit -m "feat(wizard): add category display fields and price-label helper 
 Port the mockup's step-content styles into `index.css`. The mockup namespaces everything `ex-*`; production uses `wz-*`.
 
 **Files:**
-- Modify: `client/src/index.css` (append after the existing `wz-addon-*` block, around line 5731)
+- Modify: `client/src/index.css` (append after the existing `wz-addon-*` block, which ends around line 5740)
 
 - [ ] **Step 1: Port the step-content classes**
 
-Read the `<style>` block in `extras-explorations.html` (lines 14-601). Port the rule groups below into `index.css`, renaming the `ex-` prefix to `wz-` on every selector. All `var(--...)` tokens they use (`--amber`, `--brass`, `--paper`, `--paper-dark`, `--deep-brown`, `--warm-brown`, `--text-muted`, `--border-dark`, `--cream-text`, `--font-display`, `--font-body`) already exist in the production `:root`, so no value changes.
+Read the `<style>` block in `extras-explorations.html` (lines 14-601). Port the rule groups below into `index.css`, renaming the `ex-` prefix to `wz-` on every selector. All `var(--...)` tokens already exist in the production `:root`, so no value changes.
 
-PORT these groups:
-- `.ex-tile` and every `.ex-tile-*`, `.ex-tile.selected/.included/.unavailable`, `.ex-tile.has-desc`, `.ex-tile-info`, `.ex-tile-desc`, `.ex-tile-qty-row`
-- `.ex-pill-included`, `.ex-pill-unavailable`
-- `.ex-bundle-band` (with `::before`), `.ex-bundle-band-head`, `.ex-bundle-grid`
-- `.ex-bundle`, `.ex-bundle.selected`, `.ex-bundle.popular` (with `::after`), `.ex-bundle-head/-name/-tag/-glyph/-foot`, `.ex-bundle ul/li`
-- `.ex-link-button`
-- `.ex-accordion`, `.ex-acc-row`, `.ex-acc-head` (+ `-icon`), `.ex-acc-meta`, `.ex-acc-chev`, `.ex-acc-body`, `.ex-acc-list`, `.ex-acc-pill`
-- `.ex-title-row`, `.ex-skip-inline`
-- `.ex-reassure` (+ `em`, `-glyph`)
-- `.ex-acla`, `.ex-acla-lede`
-- `.ex-qty`
-- `.ex-step-eyebrow`
+PORT: `.ex-tile` and every `.ex-tile-*`, `.ex-tile.selected/.included/.unavailable/.has-desc/.expanded`, `.ex-tile-info`, `.ex-tile-desc`, `.ex-tile-qty-row`; `.ex-pill-included`, `.ex-pill-unavailable`; `.ex-bundle-band` (+ `::before`), `.ex-bundle-band-head`, `.ex-bundle-grid`; `.ex-bundle`, `.ex-bundle.selected`, `.ex-bundle.popular` (+ `::after`), `.ex-bundle-head/-name/-tag/-glyph/-foot`, `.ex-bundle ul/li`; `.ex-link-button`; `.ex-accordion`, `.ex-acc-row`, `.ex-acc-head` (+ `-icon`), `.ex-acc-meta`, `.ex-acc-chev`, `.ex-acc-body`, `.ex-acc-list`, `.ex-acc-pill`; `.ex-title-row`, `.ex-skip-inline`; `.ex-reassure` (+ `em`, `-glyph`); `.ex-acla`, `.ex-acla-lede`; `.ex-qty`; `.ex-step-eyebrow`.
 
-SKIP these (wizard chrome already styled in production, or unused mockup variations): `.ex-hero*`, `.ex-stepper*`, `.ex-body`, `.ex-sidebar`, `.ex-step`, `.ex-nav`, `.ex-side-*`, `.ex-skip` (the hero skip), `.ex-tabs/.ex-tab*`, `.ex-featured-band*`, `.ex-bundle-customize`, `.ex-bundle-browse*`, `.ex-grid`, `.ex-section-head`, `.ex-tile.compact`.
+SKIP (wizard chrome already styled, or unused mockup variations): `.ex-hero*`, `.ex-stepper*`, `.ex-body`, `.ex-sidebar`, `.ex-step`, `.ex-nav`, `.ex-side-*`, `.ex-skip` (hero skip), `.ex-tabs/.ex-tab*`, `.ex-featured-band*`, `.ex-bundle-customize`, `.ex-bundle-browse*`, `.ex-grid`, `.ex-section-head`, `.ex-tile.compact`.
 
-Apply these deltas during the port:
-- `.ex-acc-body` in the mockup uses `display: none` toggled by `.open`. `AddonAccordion` conditionally renders the body instead, so drop the `display` rules and keep only the padding on `.wz-acc-body`.
-- The mockup's `.ex-step h2` (font-size 1.8rem) styles the step heading. We render an `<h3>`, so add `.wz-title-row h3 { font-size: 1.8rem; color: var(--deep-brown); margin: 0; }`.
+Deltas during the port:
+- `.ex-acc-body` in the mockup uses `display: none` toggled by `.open`. `AddonAccordion` conditionally renders the body, so drop the `display` rules and keep only the padding on `.wz-acc-body`.
+- The mockup's `.ex-step h2` (font-size 1.8rem) styles the step heading. We render an `<h3>`, so add `.wz-card .wz-title-row h3 { font-size: 1.8rem; color: var(--deep-brown); margin: 0; }`. Scoping it under `.wz-card` makes it win over the existing `.wz-card h3` rule regardless of source order.
+- Add a `syrup` row to the `.wz-tile` `grid-template-areas` (one extra full-width row after `qty`) so the syrup section has a grid slot.
 
 - [ ] **Step 2: Add the new classes the mockup did not have**
-
-Append these (no mockup equivalent):
 
 ```css
 /* Extras: Flavor Blaster locked tile (glassware requirement unmet) */
@@ -123,6 +107,17 @@ Append these (no mockup equivalent):
   border-top: 1px dotted rgba(28,22,16,0.18);
 }
 .wz-tile-unlock .btn-sm { font-size: 0.78rem; padding: 7px 12px; }
+
+/* Extras: in-tile syrup picker section */
+.wz-tile-syrup {
+  grid-area: syrup;
+  margin-top: 8px; padding-top: 10px;
+  border-top: 1px dotted rgba(28,22,16,0.18);
+}
+.wz-tile-syrup-note {
+  font-size: 0.84rem; font-style: italic; color: var(--text-muted);
+  margin: 0 0 8px;
+}
 
 /* Extras: small helpers replacing mockup inline styles */
 .wz-tile-qty-label { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
@@ -148,7 +143,7 @@ git commit -m "feat(wizard): add wz-* extras styling for the redesign"
 
 ## Task 3: AddonTile component
 
-One add-on tile, including the Flavor Blaster locked variant and the quantity stepper. Ported from the mockup `Tile` (`PageExtras.jsx:451-518`) with production data wiring.
+One add-on tile, including the Flavor Blaster locked variant, the quantity stepper, and the handcrafted-syrups picker branch. Ported from the mockup `Tile` (`PageExtras.jsx:451-518`).
 
 **Files:**
 - Create: `client/src/pages/website/quoteWizard/steps/extras/AddonTile.js`
@@ -160,12 +155,14 @@ import React, { useState } from 'react';
 import { ADDON_ICONS } from '../../../../../data/addonCategories';
 import { ADDON_TAGLINES, priceLabel } from '../../helpers';
 import { isQuantityCapable } from '../../../../../utils/proposalRules';
+import SyrupPicker from '../../../../../components/SyrupPicker';
 
-// One add-on tile. The whole tile is the toggle control; the info chevron and
-// quantity stepper stop propagation so they do not also toggle selection.
+// One add-on tile. The whole tile is the toggle control; the info chevron,
+// quantity stepper, and syrup section stop propagation so they do not also
+// toggle selection.
 export default function AddonTile({
   addon, selected, included, unavailable, onToggle,
-  quantities, setForm,
+  quantities, setForm, syrupSelections,
   guestCount, glasswareRequirementMet, realGlasswareAddon,
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -198,6 +195,7 @@ export default function AddonTile({
     );
   }
 
+  const isSyrup = addon.slug === 'handcrafted-syrups';
   const isLocked = included || unavailable;
   const hasDesc = !!addon.description;
   const hasQty = isQuantityCapable(addon);
@@ -222,7 +220,7 @@ export default function AddonTile({
       role="button"
       tabIndex={isLocked ? -1 : 0}
       aria-disabled={isLocked || undefined}
-      aria-pressed={isLocked ? undefined : (selected && !unavailable)}
+      aria-pressed={isLocked ? (included || undefined) : (selected && !unavailable)}
       onClick={() => !isLocked && onToggle(addon.id)}
       onKeyDown={(e) => {
         if (!isLocked && (e.key === 'Enter' || e.key === ' ')) {
@@ -278,12 +276,25 @@ export default function AddonTile({
           </div>
         </div>
       )}
+      {isSyrup && selected && !unavailable && (
+        <div className="wz-tile-syrup" onClick={(e) => e.stopPropagation()}>
+          <p className="wz-tile-syrup-note">
+            Choose your flavors now, or skip and pick them later at your Potion
+            Planning consult.
+          </p>
+          <SyrupPicker
+            selected={syrupSelections}
+            onChange={(s) => setForm(f => ({ ...f, syrup_selections: s }))}
+            compact
+          />
+        </div>
+      )}
     </div>
   );
 }
 ```
 
-Deltas from the mockup `Tile`: real production add-on fields (`slug`, `name`, `description`, `billing_type`, `rate`); `priceLabel` from `helpers.js`; `ADDON_ICONS` / `ADDON_TAGLINES`; `isQuantityCapable` instead of the mockup's `addon.qty`; the included/unavailable pills read "Included" / "Covered"; the Flavor Blaster locked variant (not in the mockup); a keyboard handler for the `role="button"` tile (accessibility, not in the mockup); quantity writes to `form.addon_quantities`. Note `.wz-qty` and `.wz-qty-value` come from the `wz-qty` group ported in Task 2.
+Deltas from the mockup `Tile`: real production add-on fields; `priceLabel` from `helpers.js`; `ADDON_ICONS` / `ADDON_TAGLINES`; `isQuantityCapable` instead of `addon.qty`; the included/unavailable pills read "Included" / "Covered" and `aria-pressed` is `true` for included tiles; the Flavor Blaster locked variant; the handcrafted-syrups branch rendering the existing `SyrupPicker`; a keyboard handler for the `role="button"` tile.
 
 - [ ] **Step 2: Commit** (behavior-inert: nothing imports this file yet)
 
@@ -308,14 +319,13 @@ import React from 'react';
 import { ADDON_TAGLINES, priceLabel } from '../../helpers';
 import { BYOB_BUNDLE_SLUGS, BUNDLE_INCLUDED } from '../../../../../utils/proposalRules';
 
-// Decorative per-bundle glyphs (lightest to fullest).
+// Decorative per-bundle glyphs and foot labels (lightest to fullest).
 const BUNDLE_GLYPH = {
   'the-foundation': '⚗',
   'the-formula': '⚛',
   'the-full-compound': '⚜',
 };
 const BUNDLE_FOOT = {
-  'the-foundation': 'Lightest',
   'the-formula': 'The middle',
   'the-full-compound': 'The works',
 };
@@ -384,7 +394,7 @@ export default function BundlePicker({ bundles, nameBySlug, selectedIds, onToggl
 }
 ```
 
-Deltas from the mockup `BundlePicker`: real bundle add-ons filtered by `BYOB_BUNDLE_SLUGS`; `BUNDLE_INCLUDED` from `proposalRules`; included-item slugs resolved to names via the `nameBySlug` map passed from `ExtrasStep` (the mockup had the whole add-on array in scope); the "Most picked" ribbon is on `the-foundation`; selection state derived from `selectedIds` rather than a local Set; `priceLabel` from `helpers.js`.
+Deltas from the mockup `BundlePicker`: real bundle add-ons filtered by `BYOB_BUNDLE_SLUGS`; `BUNDLE_INCLUDED` from `proposalRules`; included-item slugs resolved via the `nameBySlug` map (built by `ExtrasStep` from the full `addons` list, so it covers items even if `filterAddons` hides them); the "Most picked" ribbon is on `the-foundation`; selection derived from `selectedIds`; `priceLabel` from `helpers.js`. The 3 bundles are `per_guest_timed`, so `priceLabel` renders `$X/guest` (correct: `per_guest_timed` is a per-guest base for the first 4 hours, not an hourly rate; the mockup's "/guest/hr" wording is not adopted).
 
 - [ ] **Step 2: Commit** (behavior-inert: nothing imports this file yet)
 
@@ -463,6 +473,7 @@ export default function AddonAccordion({
                       onToggle={toggleAddon}
                       quantities={form.addon_quantities}
                       setForm={setForm}
+                      syrupSelections={form.syrup_selections}
                       guestCount={guestCount}
                       glasswareRequirementMet={glasswareRequirementMet}
                       realGlasswareAddon={realGlasswareAddon}
@@ -479,7 +490,7 @@ export default function AddonAccordion({
 }
 ```
 
-Deltas from the mockup `ALaCarte`: real `groupedAddons` shape (`key`, `label`, `glyph`, `blurb`, `addons`); selection and included/unavailable derived from the wizard's `form` and the `isIncludedByBundle` / `isUnavailableByBundle` props; the body is conditionally rendered rather than CSS-hidden.
+Deltas from the mockup `ALaCarte`: real `groupedAddons` shape (`key`, `label`, `glyph`, `blurb`, `addons`); selection and included/unavailable derived from `form` and the bundle-check props; `syrupSelections` threaded through to `AddonTile`; the body is conditionally rendered rather than CSS-hidden.
 
 - [ ] **Step 2: Commit** (behavior-inert: nothing imports this file yet)
 
@@ -492,7 +503,7 @@ git commit -m "feat(wizard): add AddonAccordion component for extras redesign"
 
 ## Task 6: Rewrite ExtrasStep and wire QuoteWizard (the swap)
 
-This task makes the redesign live. After it, the wizard renders the new Extras step.
+This task makes the redesign live.
 
 **Files:**
 - Modify (full rewrite): `client/src/pages/website/quoteWizard/steps/ExtrasStep.js`
@@ -512,14 +523,15 @@ import AddonAccordion from './extras/AddonAccordion';
 // All add-on rules live in proposalRules.js and run through toggleAddon; this
 // component only arranges and presents.
 export default function ExtrasStep({
-  form, setForm, groupedAddons, toggleAddon, guestCount,
+  form, setForm, addons, groupedAddons, toggleAddon, guestCount,
   glasswareRequirementMet, realGlasswareAddon,
   isIncludedByBundle, isUnavailableByBundle, onSkipExtras, stepRoman,
 }) {
   const isBundle = (a) => BYOB_BUNDLE_SLUGS.includes(a.slug);
-  const allAddons = groupedAddons.flatMap(g => g.addons);
-  const bundles = allAddons.filter(isBundle);
-  const nameBySlug = Object.fromEntries(allAddons.map(a => [a.slug, a.name]));
+  const bundles = groupedAddons.flatMap(g => g.addons).filter(isBundle);
+  // Name map for bundle "included items": built from the full addons list so it
+  // resolves even slugs that filterAddons hid from the visible set.
+  const nameBySlug = Object.fromEntries((addons || []).map(a => [a.slug, a.name]));
   const accordionGroups = groupedAddons
     .map(g => ({ ...g, addons: g.addons.filter(a => !isBundle(a)) }))
     .filter(g => g.addons.length > 0);
@@ -581,7 +593,7 @@ export default function ExtrasStep({
 
 - [ ] **Step 2: Update the `ExtrasStep` render in `QuoteWizard.js`**
 
-Find the `currentStepKey === 'addons'` block (currently around lines 687-703). Replace it with:
+Find the `currentStepKey === 'addons'` block (currently around lines 686-703) and replace it with:
 
 ```jsx
           {/* Step: Add-ons */}
@@ -589,6 +601,7 @@ Find the `currentStepKey === 'addons'` block (currently around lines 687-703). R
             <ExtrasStep
               form={form}
               setForm={setForm}
+              addons={addons}
               groupedAddons={groupedAddons}
               toggleAddon={toggleAddon}
               guestCount={guestCount}
@@ -602,7 +615,7 @@ Find the `currentStepKey === 'addons'` block (currently around lines 687-703). R
           )}
 ```
 
-Changes: removed the `update`, `expandedAddons`, and `toggleExpand` props; added `stepRoman={ROMANS[step]}`. `ROMANS` is already defined in `QuoteWizard.js` (around line 601) and is in scope here.
+Changes: removed the `update`, `expandedAddons`, and `toggleExpand` props; added `addons` and `stepRoman={ROMANS[step]}`. `ROMANS` is already defined in `QuoteWizard.js` (around line 601) and is in scope here. The syrup picker inside `AddonTile` writes `form.syrup_selections` through `setForm`, so the `update` prop is no longer needed.
 
 - [ ] **Step 3: Remove the now-unused `expandedAddons` state in `QuoteWizard.js`**
 
@@ -632,12 +645,12 @@ Expected: build completes with no errors. This is the first compile of `AddonTil
 
 Start the dev server (only if `os` has no dev server running). Verify against the mockup and the spec's verification list:
 - BYOB path: bundle band shows 3 cards (Foundation with "Most picked"), nothing pre-checked; picking a bundle marks its included a-la-carte tiles "Included" and any superseded tile "Covered"; "Skip the bundle" clears it.
-- Hosted path and mocktail path: no bundle band, accordion only.
+- Hosted and mocktail paths: no bundle band, accordion only.
 - Accordion: first category open, others toggle; count pills read "{n} added" / "{n} options".
-- Tiles: select/deselect, description expander, quantity steppers (barback, banquet server, additional bartender, pre-batched mocktail).
-- Flavor Blaster: locked tile when glassware unmet; both unlock buttons work; normal tile once glassware is satisfied.
+- Tiles: select/deselect, description expander, quantity steppers.
+- Handcrafted Syrups: selecting the tile reveals the `SyrupPicker` inside it; picking flavors updates the live estimate; clicks in the picker do not toggle the tile off.
+- Flavor Blaster: locked tile when glassware unmet; both unlock buttons; normal tile once glassware is satisfied.
 - The "Skip this step" pill advances without clearing selections.
-- The live estimate sidebar updates as tiles toggle.
 
 - [ ] **Step 6: Commit**
 
@@ -648,38 +661,29 @@ git commit -m "feat(wizard): rebuild Extras step with the apothecary Lab Add-Ons
 
 ---
 
-## Task 7: Cleanup and docs
-
-Remove the now-dead old styles and update the folder tree.
+## Task 7: Documentation
 
 **Files:**
-- Modify: `client/src/index.css` (remove the dead `wz-addon-*` block)
 - Modify: `README.md`
 
-- [ ] **Step 1: Remove the dead `wz-addon-*` CSS**
+The old `wz-addon-*` CSS is intentionally left in place: it is shared with `ClassWizard.js` (lines 436-450 use `wz-addon-list`, `wz-addon-option`, `wz-addon-content`, `wz-addon-name`, `wz-addon-desc`, `wz-addon-price`), so it is not dead and must not be deleted.
 
-The old `ExtrasStep.js` markup is gone, so its CSS is dead. In `index.css`, delete the `wz-addon-*` rule block (currently around lines 5539-5731: `.wz-addon-category` through `.wz-addon-qty-value`). Keep `.wz-no-addons` (still used by the new `ExtrasStep`) and the unrelated `.wz-addon-option input[type="radio"]` rule near line 6177 if it belongs to another surface; verify with a grep for `wz-addon` across `client/src` before deleting each rule, and keep any class still referenced.
+- [ ] **Step 1: Update the folder structure in `README.md`**
 
-- [ ] **Step 2: Update the folder tree in `README.md`**
+The README folder map lists `quoteWizard/` as a single inline entry (around line 264), not an expanded `steps/` tree. Extend that entry to mention the new `steps/extras/` folder and its three components (`AddonTile.js`, `BundlePicker.js`, `AddonAccordion.js`), matching the inline phrasing used for sibling entries like `proposalView/`.
 
-In the README folder-structure tree, under `client/src/pages/website/quoteWizard/steps/`, add the new `extras/` folder with `AddonTile.js`, `BundlePicker.js`, and `AddonAccordion.js`. Match the surrounding tree's indentation and comment style.
-
-- [ ] **Step 3: Build check**
-
-Run: `CI=true npx react-scripts build`
-Expected: still clean; the dev-server walkthrough from Task 6 still passes (CSS removal only).
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 2: Commit**
 
 ```bash
-git add client/src/index.css README.md
-git commit -m "chore(wizard): drop dead extras CSS and update the folder tree"
+git add README.md
+git commit -m "docs: note the quoteWizard steps/extras components in the folder map"
 ```
 
 ---
 
 ## Self-review notes
 
-- Spec coverage: step chrome (Task 6), bundle band (Tasks 4, 6), accordion (Tasks 5, 6), tile with all states (Task 3), Flavor Blaster lock (Task 3), syrup-as-plain-tile (Task 3, no picker imported), category metadata (Task 1), no auto-check (Task 4, `BundlePicker` derives selection from `selectedIds` and pre-selects nothing), dynamic step roman (Task 6), CSS (Tasks 2, 7), docs (Task 7). All spec sections map to a task.
-- The `priceLabel` helper, `nameBySlug` map, and all prop names (`isIncludedByBundle`, `isUnavailableByBundle`, `glasswareRequirementMet`, `realGlasswareAddon`, `addon_quantities`) are used consistently across Tasks 1, 3, 4, 5, 6.
+- Spec coverage: step chrome (Task 6), bundle band (Tasks 4, 6), accordion (Tasks 5, 6), tile with all states including the syrup picker branch and the Flavor Blaster lock (Task 3), category metadata (Task 1), no auto-check (Task 4), dynamic step roman (Task 6), CSS (Task 2), docs (Task 7). All spec sections map to a task.
+- `priceLabel`, `nameBySlug`, `syrupSelections`, and all prop names are used consistently across tasks. `ExtrasStep` receives `addons` and `groupedAddons`; `AddonAccordion` receives and forwards `syrup_selections` as `syrupSelections`; `AddonTile` reads it.
 - No placeholders: every component is given in full; the CSS port names exact source rules and an exact `ex-` to `wz-` transform.
+- Review fixes folded in: syrup picker kept (not removed); `priceLabel` carries the syrup case; `.wz-card .wz-title-row h3` is order-independent; `nameBySlug` is built from the full `addons` list; Task 7 no longer deletes the `wz-addon-*` CSS shared with `ClassWizard`; the README step targets the real inline entry; `aria-pressed` is set for included tiles; `.ex-tile.expanded` is in the Task 2 port list.
