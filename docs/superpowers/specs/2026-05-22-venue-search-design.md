@@ -101,11 +101,12 @@ never throws. This is what makes the front-end degrade gracefully.
 - `POST https://places.googleapis.com/v1/places:autocomplete`
   - Headers: `Content-Type: application/json`, `X-Goog-Api-Key: <key>`
   - Body: `{ input, sessionToken, includedRegionCodes: ["us"],
-    locationRestriction: { rectangle: REGION_RECTANGLE } }`
+    locationBias: { rectangle: REGION_RECTANGLE } }`
   - `REGION_RECTANGLE` is a coarse bounding box over the five service-area
     states: `low { latitude: 36.95, longitude: -97.3 }`,
-    `high { latitude: 49.4, longitude: -82.0 }`. If autocomplete rejects
-    `locationRestriction`, fall back to `locationBias` with the same rectangle.
+    `high { latitude: 49.4, longitude: -82.0 }`. `locationBias` biases results
+    toward that box; the `VENUE_STATES` allowlist in `mapPlaceToVenue` is the
+    precise gate for what counts as in service area.
 - From the response `suggestions` array, keep only entries with a
   `placePrediction` (ignore `queryPrediction`). Map each to
   `{ placeId, name, address }` where `name` is

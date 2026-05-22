@@ -29,7 +29,7 @@
 - `client/src/components/VenueSearchInput.js` — self-contained typeahead component.
 
 **Modified files:**
-- `server/middleware/rateLimiters.js` — add `venueSearchLimiter`.
+- `server/middleware/rateLimiters.js` — add `venueSearchLimiter` and `venueSearchGlobalLimiter`.
 - `server/index.js` — mount the venues router.
 - `server/routes/proposals/public.js` — accept, validate, and store `venue_street` / `venue_zip` from the wizard.
 - `client/src/components/VenueAddressFields.js` — embed `VenueSearchInput` for the venue-name field.
@@ -116,6 +116,19 @@ test('falls back to postal_town when locality is absent', () => {
   assert.equal(result.venue_city, 'Lansing');
 });
 
+test('omits the street when Google returns a number but no route', () => {
+  const result = mapPlaceToVenue(place([
+    comp('500', 'street_number'),
+    comp('Chicago', 'locality'),
+    comp('Illinois', 'administrative_area_level_1'),
+  ], 'Numbered Place'));
+  assert.deepEqual(result, {
+    venue_name: 'Numbered Place',
+    venue_city: 'Chicago',
+    venue_state: 'Illinois',
+  });
+});
+
 test('returns an empty object for junk input', () => {
   assert.deepEqual(mapPlaceToVenue(null), {});
   assert.deepEqual(mapPlaceToVenue({}), {});
@@ -143,6 +156,12 @@ const { VENUE_STATES } = require('./venueAddress');
 
 const AUTOCOMPLETE_URL = 'https://places.googleapis.com/v1/places:autocomplete';
 const DETAILS_URL = 'https://places.googleapis.com/v1/places/';
+
+// Length caps on user-supplied input. Enforced in this util so the bound
+// travels with the function, not only with the route handler.
+const MAX_QUERY_LEN = 200;
+const MAX_PLACE_ID_LEN = 300;
+const MAX_TOKEN_LEN = 100;
 
 // Coarse bounding box over the five service-area states (IL, IN, MI, MN, WI).
 // Biases autocomplete results toward the region; VENUE_STATES is the precise
@@ -176,9 +195,12 @@ function pick(components, type) {
 function mapPlaceToVenue(place) {
   if (!place || typeof place !== 'object') return {};
   const components = place.addressComponents || [];
-  const street = [pick(components, 'street_number'), pick(components, 'route')]
-    .filter(Boolean)
-    .join(' ');
+  // A usable street needs a route (the street name). A street_number with no
+  // route is not a street, so venue_street stays empty in that case.
+  const route = pick(components, 'route');
+  const street = route
+    ? [pick(components, 'street_number'), route].filter(Boolean).join(' ')
+    : '';
   const city = pick(components, 'locality')
     || pick(components, 'postal_town')
     || pick(components, 'sublocality_level_1');
@@ -208,8 +230,9 @@ function mapPlaceToVenue(place) {
  */
 async function searchVenues(input, sessionToken) {
   if (!isConfigured()) return [];
-  const q = (input || '').trim();
+  const q = String(input || '').trim().slice(0, MAX_QUERY_LEN);
   if (q.length < 3) return [];
+  const token = String(sessionToken || '').slice(0, MAX_TOKEN_LEN);
   try {
     const res = await fetch(AUTOCOMPLETE_URL, {
       method: 'POST',
@@ -219,8 +242,11 @@ async function searchVenues(input, sessionToken) {
       },
       body: JSON.stringify({
         input: q,
-        sessionToken: sessionToken || undefined,
+        sessionToken: token || undefined,
         includedRegionCodes: ['us'],
+        // locationBias (not locationRestriction): bias results toward the
+        // service-area box but still allow strong matches just outside it.
+        // VENUE_STATES in mapPlaceToVenue is the precise in-area gate.
         locationBias: { rectangle: REGION_RECTANGLE },
       }),
     });
@@ -239,6 +265,7 @@ async function searchVenues(input, sessionToken) {
       })
       .filter((r) => r.placeId && r.name);
   } catch (err) {
+    // Log err.message only; never log the API key or the request URL.
     console.error('[googlePlaces] searchVenues error:', err.message);
     return [];
   }
@@ -246,16 +273,20 @@ async function searchVenues(input, sessionToken) {
 
 /**
  * Fetch place details and map to a structured venue. Returns null when not
- * configured, when placeId is missing, or on any error.
+ * configured, when placeId is missing or empty, when Google returns nothing
+ * usable, or on any error.
  * @param {string} placeId
  * @param {string} sessionToken
  * @returns {Promise<object|null>}
  */
 async function getVenueDetails(placeId, sessionToken) {
-  if (!isConfigured() || !placeId) return null;
+  if (!isConfigured()) return null;
+  const id = String(placeId || '').slice(0, MAX_PLACE_ID_LEN);
+  if (!id) return null;
+  const token = String(sessionToken || '').slice(0, MAX_TOKEN_LEN);
   try {
-    const url = `${DETAILS_URL}${encodeURIComponent(placeId)}`
-      + (sessionToken ? `?sessionToken=${encodeURIComponent(sessionToken)}` : '');
+    const url = `${DETAILS_URL}${encodeURIComponent(id)}`
+      + (token ? `?sessionToken=${encodeURIComponent(token)}` : '');
     const res = await fetch(url, {
       headers: {
         'X-Goog-Api-Key': process.env.GOOGLE_PLACES_API_KEY,
@@ -264,8 +295,12 @@ async function getVenueDetails(placeId, sessionToken) {
     });
     if (!res.ok) return null;
     const data = await res.json();
-    return mapPlaceToVenue(data);
+    const venue = mapPlaceToVenue(data);
+    // An empty map means Google returned nothing usable; report a miss so the
+    // documented object|null contract holds (callers expect at least a name).
+    return Object.keys(venue).length > 0 ? venue : null;
   } catch (err) {
+    // Log err.message only; never log the API key or the request URL.
     console.error('[googlePlaces] getVenueDetails error:', err.message);
     return null;
   }
@@ -283,7 +318,7 @@ module.exports = {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `node server/utils/googlePlaces.test.js`
-Expected: PASS — `# pass 5`, `# fail 0`.
+Expected: PASS — `# pass 6`, `# fail 0`.
 
 - [ ] **Step 5: Update docs**
 
@@ -317,7 +352,7 @@ module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWrite
 with:
 
 ```js
-// Venue-name search proxy (Google Places). Unauthenticated — the quote wizard
+// Venue-name search proxy (Google Places). Unauthenticated: the quote wizard
 // is public. A real search debounces to a handful of autocomplete calls plus
 // one details call; 60/min per IP is generous for that and curbs scripted
 // abuse of the (paid) Google quota.
@@ -329,7 +364,19 @@ const venueSearchLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter, adminWriteLimiter, venueSearchLimiter };
+// Global ceiling across all IPs, so an IP-rotating attacker still hits a cap
+// on the paid Google quota. Same pattern as labratSeedGlobalLimiter. Sized for
+// whole-site quote volume, not a single user; raise if real traffic nears it.
+const venueSearchGlobalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 600,
+  keyGenerator: () => 'venue-search-global',
+  message: { error: 'Venue search is busy. Please try again shortly.' },
+  standardHeaders: false,
+  legacyHeaders: false,
+});
+
+module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter, adminWriteLimiter, venueSearchLimiter, venueSearchGlobalLimiter };
 ```
 
 - [ ] **Step 2: Create the route**
@@ -341,27 +388,27 @@ Create `server/routes/venues.js`:
 
 const express = require('express');
 const asyncHandler = require('../middleware/asyncHandler');
-const { venueSearchLimiter } = require('../middleware/rateLimiters');
+const { venueSearchLimiter, venueSearchGlobalLimiter } = require('../middleware/rateLimiters');
 const { searchVenues, getVenueDetails } = require('../utils/googlePlaces');
 
 const router = express.Router();
 
 // Venue-name autocomplete. Public: the quote wizard is unauthenticated and no
-// proposal token exists at that stage. Thin proxy to Google Places — exposes
-// nothing sensitive. Rate-limited per IP. Absence of matches is a normal
-// outcome, so this never throws an AppError.
-router.get('/search', venueSearchLimiter, asyncHandler(async (req, res) => {
-  const q = typeof req.query.q === 'string' ? req.query.q.slice(0, 200) : '';
-  const token = typeof req.query.token === 'string' ? req.query.token.slice(0, 100) : '';
+// proposal token exists at that stage. Thin proxy to Google Places, exposes
+// nothing sensitive. Rate-limited per IP and with a global ceiling. Absence of
+// matches is a normal outcome, so this never throws an AppError. Length caps on
+// q / placeId / token live in server/utils/googlePlaces.js.
+router.get('/search', venueSearchGlobalLimiter, venueSearchLimiter, asyncHandler(async (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q : '';
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
   const results = await searchVenues(q, token);
   res.json({ results });
 }));
 
 // Resolve a selected suggestion to a structured venue address.
-router.get('/details/:placeId', venueSearchLimiter, asyncHandler(async (req, res) => {
-  const placeId = String(req.params.placeId || '').slice(0, 300);
-  const token = typeof req.query.token === 'string' ? req.query.token.slice(0, 100) : '';
-  const venue = await getVenueDetails(placeId, token);
+router.get('/details/:placeId', venueSearchGlobalLimiter, venueSearchLimiter, asyncHandler(async (req, res) => {
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
+  const venue = await getVenueDetails(req.params.placeId, token);
   res.json({ venue });
 }));
 
@@ -404,9 +451,11 @@ Expected (with the key set): `{"results":[ ... ]}` with one or more `{placeId,na
 Run: `curl "http://localhost:5000/api/venues/details/test?token=abc"`
 Expected (without the key): `{"venue":null}` with HTTP 200.
 
+**Owner action, not code, do not skip:** before this ships, set a daily request cap on the `GOOGLE_PLACES_API_KEY` in the Google Cloud console (APIs & Services, Places API New, Quotas). The two rate limiters bound per-minute abuse; the daily quota cap is the hard ceiling on total spend if the key ever leaks or a limiter is misconfigured.
+
 - [ ] **Step 6: Update docs**
 
-- `README.md`: add `server/routes/venues.js` to the folder-structure tree (under `server/routes/`), described as "Google Places venue search proxy". Add a `GOOGLE_PLACES_API_KEY` row to the Environment Variables table, using the same Variable and Purpose text as the `CLAUDE.md` row specified below.
+- `README.md`: add `server/routes/venues.js` to the folder-structure tree, in alphabetical position under `server/routes/` (after `testFeedback.js`), described as "Google Places venue search proxy". Add a `GOOGLE_PLACES_API_KEY` row to the Environment Variables table, using the same Variable and Purpose text as the `CLAUDE.md` row specified below.
 - `ARCHITECTURE.md`: add two rows to the API route table — `GET /api/venues/search` and `GET /api/venues/details/:placeId`, both public, described as venue-name autocomplete and place-details lookup. Add Google Places (New) to the Third-Party Integrations section.
 - `CLAUDE.md`: add a row to the Environment Variables table: `` | `GOOGLE_PLACES_API_KEY` | Google Places API (New) key for venue-name search. Server-only. When unset, venue search degrades to a plain text input. | ``. Add Google Places to the Tech Stack list (for example: `**Venue search**: Google Places API (New) for venue-name autocomplete`).
 
@@ -529,6 +578,8 @@ export default function VenueSearchInput({
   const choose = async (suggestion) => {
     setOpen(false);
     setSuggestions([]);
+    // Show the picked name immediately, before the details round-trip resolves.
+    onChange(suggestion.name);
     try {
       const res = await api.get(
         `/venues/details/${encodeURIComponent(suggestion.placeId)}`,
@@ -574,12 +625,15 @@ export default function VenueSearchInput({
         role="combobox"
         aria-expanded={open}
         aria-autocomplete="list"
+        aria-controls={`${id}-listbox`}
+        aria-activedescendant={open && highlight >= 0 ? `${id}-opt-${highlight}` : undefined}
       />
       {open && suggestions.length > 0 && (
-        <ul className="venue-search-dropdown" role="listbox">
+        <ul className="venue-search-dropdown" role="listbox" id={`${id}-listbox`}>
           {suggestions.map((s, i) => (
             <li
               key={s.placeId}
+              id={`${id}-opt-${i}`}
               className={`venue-search-option${i === highlight ? ' highlighted' : ''}`}
               role="option"
               aria-selected={i === highlight}
