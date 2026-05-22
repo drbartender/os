@@ -13,6 +13,12 @@ before(async () => {
     "INSERT INTO clients (name, email, phone) VALUES ('Balance SMS Test', 'balsms-test@example.com', '3125550160') RETURNING id"
   );
   clientId = c.rows[0].id;
+  // Sweep any sms_messages rows this file's message_types leaked from a prior
+  // aborted run. sms_messages.twilio_sid carries a partial UNIQUE index
+  // (idx_sms_messages_twilio_sid) so a stale 'stub' SID would collide here.
+  await pool.query(
+    "DELETE FROM sms_messages WHERE message_type IN ('balance_due_today_sms','balance_late_t1_sms','balance_late_t3_sms')"
+  );
 });
 
 beforeEach(async () => {
@@ -28,6 +34,12 @@ beforeEach(async () => {
 afterEach(async () => {
   await pool.query('DELETE FROM scheduled_messages WHERE entity_type=$1 AND entity_id=$2', ['proposal', proposalId]);
   await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+  // The dispatch test sends through sendAndLogSms, which logs an outbound row
+  // to sms_messages. Clean it up by message_type — sms_messages.twilio_sid is
+  // partial-UNIQUE, so leaving it would collide on the next run / sibling file.
+  await pool.query(
+    "DELETE FROM sms_messages WHERE message_type IN ('balance_due_today_sms','balance_late_t1_sms','balance_late_t3_sms')"
+  );
 });
 
 after(async () => {
@@ -54,7 +66,10 @@ test('balance_due_today_sms handler > sends an SMS and marks the row sent', asyn
   registerBalanceSmsHandlers();
   const { __setSmsDeps } = require('./sms');
   let body = null;
-  __setSmsDeps({ sendSMS: async (args) => { body = args.body; return { sid: 'stub' }; } });
+  // Unique SID per call — sms_messages.twilio_sid is partial-UNIQUE, a constant
+  // 'stub' SID collides across tests / runs (mirrors dripSmsHandlers.test.js).
+  let sidN = 0;
+  __setSmsDeps({ sendSMS: async (args) => { body = args.body; return { sid: `stub-${Date.now()}-${(sidN += 1)}` }; } });
   await pool.query(
     `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
      VALUES ($1, 'proposal', 'balance_due_today_sms', 'client', $2, 'sms', NOW() - INTERVAL '1 minute')`,
