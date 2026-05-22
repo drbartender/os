@@ -242,11 +242,13 @@ function registerAll() {
     offsetFromEventDate: -7 * DAY_SECONDS,
     anchor: 'event_date',
     category: 'operational',
+    priority: 3,
   });
   registerHandler('long_lead_t30_recap', handleLongLeadT30Recap, {
     offsetFromEventDate: -30 * DAY_SECONDS,
     anchor: 'event_date',
     category: 'operational',
+    priority: 3,
   });
 }
 

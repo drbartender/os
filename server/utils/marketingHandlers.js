@@ -427,17 +427,17 @@ function registerMarketingHandlers() {
   registerHandler(
     'drip_touch_2',
     handler('drip_touch_2', (p) => tpl.dripTouch2Client(makeMarketingTemplateContext(p))),
-    { offsetFromEventDate: null, anchor: 'created_at', category: 'marketing' }
+    { offsetFromEventDate: null, anchor: 'created_at', category: 'marketing', priority: 4 }
   );
   registerHandler(
     'drip_touch_4',
     handler('drip_touch_4', (p) => tpl.dripTouch4Client(makeMarketingTemplateContext(p))),
-    { offsetFromEventDate: null, anchor: 'created_at', category: 'marketing' }
+    { offsetFromEventDate: null, anchor: 'created_at', category: 'marketing', priority: 4 }
   );
   registerHandler(
     'drip_touch_5_email',
     handler('drip_touch_5_email', (p) => tpl.dripTouch5Client(makeMarketingTemplateContext(p))),
-    { offsetFromEventDate: null, anchor: 'created_at', category: 'marketing' }
+    { offsetFromEventDate: null, anchor: 'created_at', category: 'marketing', priority: 4, multiChannel: true }
   );
   registerHandler(
     'new_year_hello',
@@ -454,7 +454,7 @@ function registerMarketingHandlers() {
     // with the new event_date (re-evaluating eligibility). Without this hook
     // the row stays pinned to the OLD Jan 2 when admin moves an event across
     // a year boundary. See `.plan-2-contract.md` for the cross-plan contract.
-    { offsetFromEventDate: null, anchor: 'event_date', category: 'marketing' }
+    { offsetFromEventDate: null, anchor: 'event_date', category: 'marketing', priority: 5 }
   );
   registerHandler(
     'six_months_out',
@@ -463,7 +463,7 @@ function registerMarketingHandlers() {
       potionPlannerUrl: `${PUBLIC_SITE_URL}/plan/${p.token}`,
       consultUrl: null, // wired to Cal.com once the integration plan lands
     })),
-    { offsetFromEventDate: -6 * MONTH_SECONDS, anchor: 'event_date', category: 'marketing' }
+    { offsetFromEventDate: -6 * MONTH_SECONDS, anchor: 'event_date', category: 'marketing', priority: 5 }
   );
   registerHandler('retention_nudge', async ({ scheduledMessage }) => {
     const { proposal } = await loadHandlerContext(scheduledMessage);
@@ -482,6 +482,7 @@ function registerMarketingHandlers() {
     offsetFromEventDate: 11 * MONTH_SECONDS,
     anchor: 'event_date',
     category: 'marketing',
+    priority: 5,
   });
 
   registerHandler('review_request', async ({ scheduledMessage }) => {
@@ -505,6 +506,7 @@ function registerMarketingHandlers() {
     offsetFromEventDate: 2 * DAY_SECONDS,
     anchor: 'event_date',
     category: 'operational', // transactional post-sale follow-up under CAN-SPAM
+    priority: 3,
   });
 }
 

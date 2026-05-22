@@ -385,3 +385,61 @@ test('registerHandler > coerces a non-true multiChannel value to false', () => {
   const meta = getHandlerMeta('disp_test_meta_mc');
   assert.strictEqual(meta.multiChannel, false);
 });
+
+test('retrofit > priority and multiChannel landed on the 14 existing handler registrations', async () => {
+  // Marketing + pre-event handlers: re-register via their exported functions
+  // (they write into the instance this file imported at its top).
+  // eslint-disable-next-line global-require
+  require('./preEventHandlers').registerAll();
+  // eslint-disable-next-line global-require
+  require('./marketingHandlers').registerMarketingHandlers();
+
+  // Phase 4b flags exactly one marketing-side existing handler as multiChannel:
+  // drip_touch_5_email (the +21d drip pair's email half). The other 8
+  // marketing/pre-event handlers stay single-channel.
+  assert.strictEqual(getHandlerMeta('drip_touch_5_email').multiChannel, true);
+  for (const mt of [
+    'event_week_reminder', 'long_lead_t30_recap', 'review_request',
+    'drip_touch_2', 'drip_touch_4', 'new_year_hello', 'six_months_out', 'retention_nudge',
+  ]) {
+    const meta = getHandlerMeta(mt);
+    assert.ok(meta, `${mt} is registered`);
+    assert.strictEqual(meta.multiChannel, false, `${mt} stays single-channel`);
+  }
+  // Priority retrofit spot-check across the tiers, marketing/pre-event side.
+  assert.strictEqual(getHandlerMeta('event_week_reminder').priority, 3);
+  assert.strictEqual(getHandlerMeta('review_request').priority, 3);
+  assert.strictEqual(getHandlerMeta('drip_touch_2').priority, 4);
+  assert.strictEqual(getHandlerMeta('drip_touch_5_email').priority, 4);
+  assert.strictEqual(getHandlerMeta('retention_nudge').priority, 5);
+
+  // The five balance handlers register only at module-load of the dispatcher.
+  // Re-require it with the cache cleared so the module body re-runs and those
+  // five registerHandler calls re-execute against the fresh instance's own
+  // registry. Read them via the fresh instance's getHandlerMeta.
+  const dispatcherPath = require.resolve('./scheduledMessageDispatcher');
+  delete require.cache[dispatcherPath];
+  // eslint-disable-next-line global-require
+  const fresh = require('./scheduledMessageDispatcher');
+  // Of the five, three gain an SMS sibling in Phase 3 -> multiChannel:true; the
+  // two T-3 reminders are email-only and stay single-channel.
+  for (const mt of ['balance_due_today', 'balance_late_t1', 'balance_late_t3']) {
+    assert.strictEqual(fresh.getHandlerMeta(mt).multiChannel, true, `${mt} is multiChannel`);
+  }
+  for (const mt of ['balance_reminder_autopay_t3', 'balance_reminder_non_autopay_t3']) {
+    assert.strictEqual(fresh.getHandlerMeta(mt).multiChannel, false, `${mt} stays single-channel`);
+  }
+  assert.strictEqual(fresh.getHandlerMeta('balance_due_today').priority, 1);
+  assert.strictEqual(fresh.getHandlerMeta('balance_due_today').cooldownExempt, true);
+  assert.strictEqual(fresh.getHandlerMeta('balance_reminder_autopay_t3').priority, 1);
+  assert.strictEqual(fresh.getHandlerMeta('balance_late_t1').priority, 2);
+  assert.strictEqual(fresh.getHandlerMeta('balance_late_t3').priority, 2);
+
+  // Restore the original cached dispatcher instance so the rest of the suite
+  // whose top-of-file destructured imports point at the original is
+  // unaffected. (This is the last test in the file, but restoring keeps the
+  // cache honest if tests are later appended.)
+  delete require.cache[dispatcherPath];
+  // eslint-disable-next-line global-require
+  require('./scheduledMessageDispatcher');
+});

@@ -413,27 +413,27 @@ const DAY_SECONDS = 86400;
 registerHandler(
   'balance_reminder_autopay_t3',
   ({ entity, recipient }) => sendBalanceReminder({ entity, recipient, paymentMode: 'autopay' }),
-  { offsetFromEventDate: -3 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational' }
+  { offsetFromEventDate: -3 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational', priority: 1 }
 );
 registerHandler(
   'balance_reminder_non_autopay_t3',
   ({ entity, recipient }) => sendBalanceReminder({ entity, recipient, paymentMode: 'manual' }),
-  { offsetFromEventDate: -3 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational' }
+  { offsetFromEventDate: -3 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational', priority: 1 }
 );
 registerHandler(
   'balance_due_today',
   ({ entity, recipient }) => sendBalanceDueToday({ entity, recipient }),
-  { offsetFromEventDate: 0, anchor: 'balance_due_date', category: 'operational' }
+  { offsetFromEventDate: 0, anchor: 'balance_due_date', category: 'operational', priority: 1, cooldownExempt: true, multiChannel: true }
 );
 registerHandler(
   'balance_late_t1',
   ({ entity, recipient }) => sendBalanceLate({ entity, recipient, daysLate: 1 }),
-  { offsetFromEventDate: 1 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational' }
+  { offsetFromEventDate: 1 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational', priority: 2, multiChannel: true }
 );
 registerHandler(
   'balance_late_t3',
   ({ entity, recipient }) => sendBalanceLate({ entity, recipient, daysLate: 3 }),
-  { offsetFromEventDate: 3 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational' }
+  { offsetFromEventDate: 3 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational', priority: 2, multiChannel: true }
 );
 
 module.exports = {
