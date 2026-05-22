@@ -168,6 +168,125 @@ function computeStaffThankYouScheduledFor(ev) {
   return new Date(end + THANK_YOU_OFFSET_MS);
 }
 
+// ─── Shared assignment scheduler ─────────────────────────────────
+
+/**
+ * Idempotent insert helper. SELECTs for ANY existing row on the natural key
+ * (entity, message_type, recipient, channel) first, then INSERTs only when
+ * none exists. INSERT runs DIRECTLY on the passed `executor` (pg client OR
+ * pool) so it joins the caller's open transaction when one is supplied.
+ *
+ * The existence check intentionally has NO status filter — unlike
+ * preEventScheduling.insertIfMissing, which only skips on
+ * pending/sent/deferred. A staff message that hit a terminal `failed` or
+ * `suppressed` state must NOT be recreated as a fresh `pending` row on the
+ * next assignment or schedule-change: that would endlessly resurrect terminal
+ * rows. So ANY row for the natural key counts as "already exists" and the
+ * insert is skipped.
+ */
+async function insertShiftMessageIfMissing(executor, {
+  entityType, entityId, messageType, recipientType, recipientId, channel, scheduledFor,
+}) {
+  const existing = await executor.query(
+    `SELECT id FROM scheduled_messages
+      WHERE entity_type = $1 AND entity_id = $2
+        AND message_type = $3
+        AND recipient_type = $4 AND recipient_id = $5
+        AND channel = $6
+      LIMIT 1`,
+    [entityType, entityId, messageType, recipientType, recipientId, channel]
+  );
+  if (existing.rows.length > 0) return;
+  await executor.query(
+    `INSERT INTO scheduled_messages
+       (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
+       WHERE status = 'pending'
+     DO NOTHING`,
+    [entityId, entityType, messageType, recipientType, recipientId, channel, scheduledFor]
+  );
+}
+
+/**
+ * Schedule the day-before reminder and post-event thank-you SMS for every
+ * currently-approved staffer on a shift. Idempotent — re-running on an
+ * already-scheduled shift is a no-op. Best-effort by contract: the caller
+ * wraps this in try/catch + Sentry; the inner guard here is defense in depth.
+ *
+ * Skips silently when:
+ *   - the shift has no linked proposal (legacy hand-built shift), or
+ *   - the linked proposal is archived, or
+ *   - the event start/end instant cannot be computed (missing date/time).
+ *
+ * @param {number|string} shiftId
+ * @param {{query: Function}} [executor] - pg client or pool; defaults to pool
+ * @returns {Promise<{reminder: number, thankYou: number}>}
+ */
+async function scheduleStaffShiftMessages(shiftId, executor) {
+  const exec = executor || pool;
+  let inserted = { reminder: 0, thankYou: 0 };
+  try {
+    const { rows } = await exec.query(
+      `SELECT s.id AS shift_id, s.proposal_id,
+              p.status AS proposal_status,
+              p.event_date, p.event_start_time, p.event_duration_hours,
+              p.event_timezone
+         FROM shifts s
+         LEFT JOIN proposals p ON p.id = s.proposal_id
+        WHERE s.id = $1`,
+      [shiftId]
+    );
+    const shift = rows[0];
+    if (!shift || !shift.proposal_id) return inserted;
+    if (shift.proposal_status === 'archived') return inserted;
+
+    const reminderAt = computeShiftReminderScheduledFor(shift);
+    const thankYouAt = computeStaffThankYouScheduledFor(shift);
+    if (!reminderAt && !thankYouAt) return inserted;
+
+    const staffRes = await exec.query(
+      `SELECT user_id FROM shift_requests
+        WHERE shift_id = $1 AND status = 'approved'`,
+      [shiftId]
+    );
+
+    for (const row of staffRes.rows) {
+      if (reminderAt) {
+        await insertShiftMessageIfMissing(exec, {
+          entityType: 'shift',
+          entityId: Number(shiftId),
+          messageType: 'shift_reminder',
+          recipientType: 'staff',
+          recipientId: row.user_id,
+          channel: 'sms',
+          scheduledFor: reminderAt,
+        });
+        inserted.reminder += 1;
+      }
+      if (thankYouAt) {
+        await insertShiftMessageIfMissing(exec, {
+          entityType: 'shift',
+          entityId: Number(shiftId),
+          messageType: 'staff_thank_you',
+          recipientType: 'staff',
+          recipientId: row.user_id,
+          channel: 'sms',
+          scheduledFor: thankYouAt,
+        });
+        inserted.thankYou += 1;
+      }
+    }
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { component: 'staffShiftHandlers', step: 'scheduleStaffShiftMessages' },
+      extra: { shiftId },
+    });
+    console.error('[staffShiftHandlers] scheduleStaffShiftMessages failed (non-blocking):', err.message);
+  }
+  return inserted;
+}
+
 module.exports = {
   toCalendarYmd,
   parseClockTime,
@@ -175,4 +294,6 @@ module.exports = {
   computeEventStartUtc,
   computeShiftReminderScheduledFor,
   computeStaffThankYouScheduledFor,
+  insertShiftMessageIfMissing,
+  scheduleStaffShiftMessages,
 };
