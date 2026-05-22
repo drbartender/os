@@ -33,4 +33,38 @@ function splitEvenly(totalCents, n) {
   return shares;
 }
 
-module.exports = { contractedHours, wageCents, splitEvenly, SETUP_HOURS, BREAKDOWN_HOURS };
+/**
+ * Total gratuity in cents from a proposal pricing snapshot. `breakdown` is an
+ * array of { label, amount } with amount in dollars; there can be zero, one,
+ * or several 'Shared Gratuity' lines, so sum them all.
+ */
+function extractGratuityCents(pricingSnapshot) {
+  const breakdown = (pricingSnapshot && pricingSnapshot.breakdown) || [];
+  let dollars = 0;
+  for (const line of breakdown) {
+    if (line && line.label === 'Shared Gratuity') {
+      dollars += Number(line.amount) || 0;
+    }
+  }
+  return Math.round(dollars * 100);
+}
+
+/**
+ * The card-fee share attributable to a `grossCents` slice of a card payment
+ * of `paymentTotalCents` that incurred `paymentFeeCents` in fees. Returns 0
+ * when nothing was charged on a card.
+ */
+function proRataFeeCents(grossCents, paymentTotalCents, paymentFeeCents) {
+  if (!paymentTotalCents || paymentTotalCents <= 0) return 0;
+  // Clamp the ratio at 1: a slice can never carry more than the whole fee.
+  // The gratuity slice should always be <= the payment total, but data drift
+  // between pricing_snapshot and total_price must never over-net the fee.
+  const ratio = Math.min(1, grossCents / paymentTotalCents);
+  return Math.round(Number(paymentFeeCents) * ratio);
+}
+
+module.exports = {
+  contractedHours, wageCents, splitEvenly,
+  extractGratuityCents, proRataFeeCents,
+  SETUP_HOURS, BREAKDOWN_HOURS,
+};

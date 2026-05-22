@@ -35,3 +35,37 @@ test('splitEvenly > shares always sum to the exact total', () => {
 test('splitEvenly > zero recipients yields an empty array', () => {
   assert.deepEqual(splitEvenly(5000, 0), []);
 });
+
+const { extractGratuityCents, proRataFeeCents } = require('./payrollMath');
+
+test('extractGratuityCents > sums every Shared Gratuity breakdown line', () => {
+  const snapshot = { breakdown: [
+    { label: 'Package', amount: 800 },
+    { label: 'Shared Gratuity', amount: 150 },
+    { label: 'Shared Gratuity', amount: 50 },
+  ] };
+  assert.equal(extractGratuityCents(snapshot), 20000); // (150 + 50) dollars
+});
+
+test('extractGratuityCents > returns 0 when there is no gratuity line', () => {
+  assert.equal(extractGratuityCents({ breakdown: [{ label: 'Package', amount: 800 }] }), 0);
+});
+
+test('extractGratuityCents > tolerates a missing or empty snapshot', () => {
+  assert.equal(extractGratuityCents(null), 0);
+  assert.equal(extractGratuityCents({}), 0);
+});
+
+test('proRataFeeCents > the gratuity slice carries its share of the payment fee', () => {
+  // gratuity 20000 of a 100000 payment that cost 3200 in fees -> 640
+  assert.equal(proRataFeeCents(20000, 100000, 3200), 640);
+});
+
+test('proRataFeeCents > returns 0 when the payment total is 0 (non-card payment)', () => {
+  assert.equal(proRataFeeCents(20000, 0, 0), 0);
+});
+
+test('proRataFeeCents > clamps the ratio at 1 so a slice never over-nets the fee', () => {
+  // A slice larger than the payment total must still carry at most the whole fee.
+  assert.equal(proRataFeeCents(150000, 100000, 3200), 3200);
+});
