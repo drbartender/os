@@ -18,7 +18,7 @@ async function sendSMS({ to, body }) {
   if (!to) throw new Error('SMS recipient phone number is required');
   if (!client) {
     console.log(`[DEV] SMS skipped → ${to} | Body: ${body}`);
-    return { sid: 'dev-skipped' };
+    return { sid: `dev-skipped-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
   }
   const message = await client.messages.create({
     from: process.env.TWILIO_PHONE_NUMBER,
