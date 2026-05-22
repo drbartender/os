@@ -800,7 +800,7 @@ beforeEach(async () => {
   );
   shiftId = s.rows[0].id;
   await pool.query(
-    "INSERT INTO shift_requests (shift_id, user_id, position, status) VALUES ($1,$2,'bartender','approved')",
+    "INSERT INTO shift_requests (shift_id, user_id, position, status) VALUES ($1,$2,'Bartender','approved')",
     [shiftId, userId]
   );
 });
@@ -860,9 +860,9 @@ const { getStripe } = require('./stripeClient');
 const { matchTipToShift } = require('./payrollMath');
 
 // A tip belongs to a shift whose service window contains the tip timestamp:
-// from 1 hour before the event start (setup) to 3 hours after the scheduled
-// end. The grace covers guests who tip shortly after the event.
-const SETUP_GRACE = "INTERVAL '1 hour'";
+// from the event's setup start (event start minus the shift's setup lead) to
+// 3 hours after the scheduled end. Boundaries are computed in the event's own
+// timezone, then converted to an absolute epoch to compare against tipped_at.
 const POST_GRACE = "INTERVAL '3 hours'";
 
 /**
@@ -903,16 +903,19 @@ async function matchTipToEvent(tipId) {
   const tip = tipRes.rows[0];
   if (!tip) return;
 
-  // Build each candidate shift's service window in epoch ms. The window is
-  // anchored on the proposal's event start time, which casts cleanly with
-  // ::time, the same approach processEventCompletions uses.
+  // Build each candidate shift's service window in epoch ms, anchored on the
+  // proposal's event start, interpreted in the event's own timezone and padded
+  // by the shift's setup lead and a post-event grace.
   const windowRes = await pool.query(
     `SELECT s.id AS shift_id,
             EXTRACT(EPOCH FROM (
-              p.event_date + p.event_start_time::time - ${SETUP_GRACE}
+              ((p.event_date + p.event_start_time::time)
+                  AT TIME ZONE COALESCE(p.event_timezone, 'America/Chicago'))
+                - (COALESCE(s.setup_minutes_before, 60) || ' minutes')::interval
             )) * 1000 AS start_ms,
             EXTRACT(EPOCH FROM (
-              p.event_date + p.event_start_time::time
+              ((p.event_date + p.event_start_time::time)
+                  AT TIME ZONE COALESCE(p.event_timezone, 'America/Chicago'))
                 + (COALESCE(p.event_duration_hours, 0) || ' hours')::interval
                 + ${POST_GRACE}
             )) * 1000 AS end_ms
@@ -1038,7 +1041,7 @@ beforeEach(async () => {
   );
   shiftId = s.rows[0].id;
   await pool.query(
-    "INSERT INTO shift_requests (shift_id, user_id, position, status) VALUES ($1,$2,'bartender','approved')",
+    "INSERT INTO shift_requests (shift_id, user_id, position, status) VALUES ($1,$2,'Bartender','approved')",
     [shiftId, userId]
   );
 });
@@ -1052,6 +1055,7 @@ afterEach(async () => {
   await pool.query('DELETE FROM payouts WHERE contractor_id = $1', [userId]);
   await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [shiftId]);
   await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  await pool.query('DELETE FROM proposal_payments WHERE proposal_id = $1', [proposalId]);
   await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
 });
 
@@ -1087,6 +1091,42 @@ test('accruePayoutsForProposal > is idempotent: a second call does not duplicate
   );
   assert.equal(Number(rows[0].count), 1);
 });
+
+test('accruePayoutsForProposal > re-accrual preserves an admin edit to hours', async () => {
+  await accruePayoutsForProposal(proposalId);
+  // Simulate an admin adjusting the line in the portal.
+  await pool.query(
+    `UPDATE payout_events SET hours = 9, wage_cents = 18000
+     WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id = $1)`,
+    [userId]
+  );
+  await accruePayoutsForProposal(proposalId);
+  const { rows } = await pool.query(
+    `SELECT pe.hours, pe.wage_cents FROM payout_events pe
+     JOIN payouts po ON po.id = pe.payout_id WHERE po.contractor_id = $1`,
+    [userId]
+  );
+  // The edited hours survive; wage is recomputed from them (9 * $20.00).
+  assert.equal(Number(rows[0].hours), 9);
+  assert.equal(rows[0].wage_cents, 18000);
+});
+
+test('accruePayoutsForProposal > nets the card fee out of the gratuity share', async () => {
+  // One card payment of $1000 (100000c) carrying a $32.00 (3200c) Stripe fee.
+  await pool.query(
+    `INSERT INTO proposal_payments (proposal_id, payment_type, amount, status, fee_cents, stripe_payment_intent_id)
+     VALUES ($1, 'full', 100000, 'succeeded', 3200, 'pi_grat_fee')`,
+    [proposalId]
+  );
+  await accruePayoutsForProposal(proposalId);
+  const { rows } = await pool.query(
+    `SELECT pe.gratuity_share_cents FROM payout_events pe
+     JOIN payouts po ON po.id = pe.payout_id WHERE po.contractor_id = $1`,
+    [userId]
+  );
+  // Gratuity 10000c; fee share = 3200 * (10000 / 100000) = 320c; net = 9680c.
+  assert.equal(rows[0].gratuity_share_cents, 9680);
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1111,7 +1151,21 @@ const {
 } = require('./payrollMath');
 const { captureProposalPaymentFees } = require('./payrollTips');
 
-/** Ensure the pay_periods row for a given event date exists; return its id. */
+// Safe calendar date of a pg DATE value as 'YYYY-MM-DD'. node-postgres parses
+// a DATE at local midnight, so .toISOString() drifts the day on positive-offset
+// servers; read the local components instead. Mirrors toCalendarYmd in
+// preEventScheduling.js.
+function toCalendarYmd(value) {
+  if (value instanceof Date) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(value).slice(0, 10);
+}
+
+/** Ensure the pay_periods row for an event date exists; return { id, status }. */
 async function ensurePayPeriod(eventDate) {
   const { startDate, endDate } = payPeriodForDate(eventDate);
   const payday = computePayday(endDate);
@@ -1119,10 +1173,10 @@ async function ensurePayPeriod(eventDate) {
     `INSERT INTO pay_periods (start_date, end_date, payday)
      VALUES ($1, $2, $3)
      ON CONFLICT (start_date) DO UPDATE SET start_date = EXCLUDED.start_date
-     RETURNING id`,
+     RETURNING id, status`,
     [startDate, endDate, payday]
   );
-  return rows[0].id;
+  return rows[0];
 }
 
 /**
@@ -1140,10 +1194,13 @@ async function accruePayoutsForProposal(proposalId) {
   // before the event has run (e.g. defensively from elsewhere).
   if (proposal.status !== 'completed') return;
 
-  const eventDate = proposal.event_date instanceof Date
-    ? proposal.event_date.toISOString().slice(0, 10)
-    : String(proposal.event_date).slice(0, 10);
-  const payPeriodId = await ensurePayPeriod(eventDate);
+  const eventDate = toCalendarYmd(proposal.event_date);
+  const payPeriod = await ensurePayPeriod(eventDate);
+  // Never write into a frozen period. Once Phase 2 introduces processing/paid
+  // periods, a late accrual into a closed period would corrupt settled
+  // payroll; rolling it into the open period is a Phase 2 concern.
+  if (payPeriod.status !== 'open') return;
+  const payPeriodId = payPeriod.id;
 
   // Everyone who worked this event, with their shift, position, and rate.
   const workers = await pool.query(
@@ -1160,7 +1217,8 @@ async function accruePayoutsForProposal(proposalId) {
   if (!workers.rows.length) return;
 
   // Bartenders share gratuity and card tips; barbacks/servers do not.
-  const bartenders = workers.rows.filter(w => (w.position || '') === 'bartender');
+  // Case-insensitive: production seeds the position as 'Bartender' (capital B).
+  const bartenders = workers.rows.filter(w => (w.position || '').toLowerCase() === 'bartender');
 
   // Gratuity pool, net of the pro-rata card fee on the proposal's payments.
   // Capture any missing payment fees from Stripe first so the netting is real.
@@ -1228,14 +1286,16 @@ async function accruePayoutsForProposal(proposalId) {
        VALUES ($1,$2,$3,$3,$4,$5,$6,$7,$8,$9,$10)
        ON CONFLICT (payout_id, shift_id) DO UPDATE SET
          contracted_hours = EXCLUDED.contracted_hours,
-         hours = EXCLUDED.hours,
-         rate_cents = EXCLUDED.rate_cents,
-         wage_cents = EXCLUDED.wage_cents,
          gratuity_share_cents = EXCLUDED.gratuity_share_cents,
          card_tip_gross_cents = EXCLUDED.card_tip_gross_cents,
          card_tip_fee_cents = EXCLUDED.card_tip_fee_cents,
          card_tip_net_cents = EXCLUDED.card_tip_net_cents,
-         line_total_cents = EXCLUDED.line_total_cents`,
+         wage_cents = ROUND(payout_events.hours * payout_events.rate_cents),
+         line_total_cents = GREATEST(0,
+           ROUND(payout_events.hours * payout_events.rate_cents)
+           + EXCLUDED.gratuity_share_cents
+           + EXCLUDED.card_tip_net_cents
+           + payout_events.adjustment_cents)`,
       [payoutId, w.shift_id, hours, rateCents, wage,
        share.gratuity, share.tipGross, share.tipFee, tipNet, lineTotal]
     );
@@ -1254,12 +1314,12 @@ async function accruePayoutsForProposal(proposalId) {
 module.exports = { accruePayoutsForProposal, ensurePayPeriod };
 ```
 
-Note on `hours` reuse: the insert passes `$3` twice so `contracted_hours` and `hours` both start at the contracted value, per the spec (`hours` defaults to contracted time and is adjusted later in the portal).
+Note on the conflict clause: on first insert, `contracted_hours` and `hours` both start at the contracted value (`$3` passed twice). On re-accrual the `ON CONFLICT` clause deliberately does NOT touch `hours`, `rate_cents`, `late`, or the adjustment columns, so a portal edit survives a recompute; `wage_cents` and `line_total_cents` are recomputed from the existing (possibly edited) row, while the gratuity and card-tip shares refresh from the new computation.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test server/utils/payrollAccrual.test.js`
-Expected: PASS, 2 tests.
+Expected: PASS, 4 tests.
 
 - [ ] **Step 5: Commit**
 
