@@ -410,7 +410,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     addon_variants, addon_quantities, syrup_selections, event_type, event_type_category, event_type_custom,
     venue_name, venue_street, venue_city, venue_state, venue_zip,
     adjustments, total_price_override, setup_minutes_before,
-    class_options, client_provides_glassware
+    class_options, client_provides_glassware,
+    notify_assigned_staff, notify_staff_sms, notify_staff_email
   } = req.body;
 
   const dbClient = await pool.connect();
@@ -686,6 +687,30 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
           });
         }
         console.error('new_year_hello recompute failed (non-blocking):', recomputeErr);
+      }
+    }
+
+    // Phase 4a: post-commit staff reschedule hooks. Gated on a real reschedule
+    // (shouldSendRescheduleEmail). The helper re-anchors pending staff SMS rows
+    // AND, when notify_assigned_staff is set, sends the schedule-change SMS/email.
+    if (shouldSendRescheduleEmail) {
+      try {
+        const { runRescheduleStaffHooks } = require('../../utils/staffShiftHandlers');
+        await runRescheduleStaffHooks({
+          proposalId: parseInt(req.params.id, 10),
+          updated: updatedRow.rows[0],
+          notifyStaff: notify_assigned_staff === true,
+          notifyStaffSms: notify_staff_sms === true,
+          notifyStaffEmail: notify_staff_email === true,
+        });
+      } catch (staffHookErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(staffHookErr, {
+            tags: { route: 'proposals/update', issue: 'staff-reschedule-hooks' },
+            extra: { proposalId: req.params.id },
+          });
+        }
+        console.error('Staff reschedule hooks failed (non-blocking):', staffHookErr);
       }
     }
 

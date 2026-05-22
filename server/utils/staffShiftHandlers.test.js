@@ -262,3 +262,34 @@ test('dispatcher > staff_thank_you marks sent for a staffer with a phone', async
 
   await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [TEST_USER_ID_A]);
 });
+
+test('notifyStaffOfScheduleChange > sends SMS to an assigned staffer with a phone', async () => {
+  await seedShift();
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, preferred_name, phone)
+     VALUES ($1, 'Sam', '5555550144')
+     ON CONFLICT (user_id) DO UPDATE SET phone = EXCLUDED.phone, preferred_name = EXCLUDED.preferred_name`,
+    [TEST_USER_ID_A]
+  );
+  const { notifyStaffOfScheduleChange } = require('./staffShiftHandlers');
+  const r = await notifyStaffOfScheduleChange({
+    proposalId: TEST_PROPOSAL_ID,
+    updated: { event_date: '2026-09-01', event_start_time: '19:00', event_location: 'New Venue' },
+    sms: true,
+    email: false,
+  });
+  assert.strictEqual(r.smsSent, 1);
+  await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [TEST_USER_ID_A]);
+});
+
+test('notifyStaffOfScheduleChange > sends nothing when both channels are off', async () => {
+  await seedShift();
+  const { notifyStaffOfScheduleChange } = require('./staffShiftHandlers');
+  const r = await notifyStaffOfScheduleChange({
+    proposalId: TEST_PROPOSAL_ID,
+    updated: { event_date: '2026-09-01' },
+    sms: false,
+    email: false,
+  });
+  assert.deepStrictEqual(r, { smsSent: 0, emailSent: 0 });
+});

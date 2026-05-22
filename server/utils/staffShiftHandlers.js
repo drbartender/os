@@ -533,6 +533,127 @@ async function notifyStaffOfCancellation({ shiftId, staffUserIds, kind, sms, ema
   return result;
 }
 
+/**
+ * Notify a proposal's assigned staffers that the event was rescheduled
+ * (spec 3.17). Best-effort throughout.
+ */
+async function notifyStaffOfScheduleChange({ proposalId, updated, sms, email }) {
+  const result = { smsSent: 0, emailSent: 0 };
+  if (!sms && !email) return result;
+  try {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT sr.user_id, u.email AS staff_email,
+              cp.preferred_name AS staff_name, cp.phone AS staff_phone,
+              p.event_type, p.event_type_custom, p.event_date,
+              p.event_start_time, p.event_timezone, p.event_location
+         FROM shifts s
+         JOIN shift_requests sr ON sr.shift_id = s.id AND sr.status = 'approved'
+         JOIN users u ON u.id = sr.user_id
+         LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
+         LEFT JOIN proposals p ON p.id = s.proposal_id
+        WHERE s.proposal_id = $1`,
+      [proposalId]
+    );
+    if (rows.length === 0) return result;
+
+    for (const row of rows) {
+      const eventTypeLabel = getEventTypeLabel({
+        event_type: row.event_type, event_type_custom: row.event_type_custom,
+      });
+      const eventDateLocal = formatEventDateLong(row);
+      const newDateLocal = formatEventDateLong({
+        event_date: updated.event_date || row.event_date,
+        event_timezone: row.event_timezone,
+      });
+      const newTime = updated.event_start_time || row.event_start_time || 'TBD';
+      const newLocation = updated.event_location || row.event_location || 'same location';
+      const newDetails = `${newDateLocal}, ${newTime}, ${newLocation}`;
+
+      if (sms && row.staff_phone) {
+        try {
+          await sendAndLogSms({
+            to: row.staff_phone,
+            body: smsTemplates.staffScheduleChangeSms({ eventTypeLabel, eventDateLocal, newDetails }),
+            clientId: null,
+            messageType: 'staff_schedule_change',
+            recipientName: row.staff_name || null,
+          });
+          result.smsSent += 1;
+        } catch (smsErr) {
+          Sentry.captureException(smsErr, {
+            tags: { component: 'staffShiftHandlers', step: 'notifyStaffOfScheduleChange', channel: 'sms' },
+            extra: { proposalId, userId: row.user_id },
+          });
+          console.error('[staffShiftHandlers] schedule-change SMS failed (non-blocking):', smsErr.message);
+        }
+      }
+
+      if (email && row.staff_email) {
+        try {
+          await sendEmail({
+            to: row.staff_email,
+            subject: `Update from Dr. Bartender: ${eventTypeLabel} on ${eventDateLocal}`,
+            html: `<p>Update from Dr. Bartender: the ${eventTypeLabel} on ${eventDateLocal} has been changed.</p>`
+              + `<p>New details: ${newDetails}.</p>`
+              + `<p>Reply CONFIRM to stay on the shift, or call if there is a conflict.</p>`,
+            text: `Update from Dr. Bartender: the ${eventTypeLabel} on ${eventDateLocal} has been changed. `
+              + `New details: ${newDetails}. Reply CONFIRM to stay on the shift, or call if there is a conflict.`,
+          });
+          result.emailSent += 1;
+        } catch (emailErr) {
+          Sentry.captureException(emailErr, {
+            tags: { component: 'staffShiftHandlers', step: 'notifyStaffOfScheduleChange', channel: 'email' },
+            extra: { proposalId, userId: row.user_id },
+          });
+          console.error('[staffShiftHandlers] schedule-change email failed (non-blocking):', emailErr.message);
+        }
+      }
+    }
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { component: 'staffShiftHandlers', step: 'notifyStaffOfScheduleChange' },
+      extra: { proposalId },
+    });
+    console.error('[staffShiftHandlers] notifyStaffOfScheduleChange failed (non-blocking):', err.message);
+  }
+  return result;
+}
+
+/**
+ * Single post-commit entry point for the proposals PATCH reschedule path.
+ *   1. reanchorStaffShiftMessages (unconditional) — Task 11 adds this function;
+ *      until then it is a forward reference, resolved at call time.
+ *   2. notifyStaffOfScheduleChange (admin-toggled).
+ * Best-effort throughout.
+ */
+async function runRescheduleStaffHooks({ proposalId, updated, notifyStaff, notifyStaffSms, notifyStaffEmail }) {
+  try {
+    await reanchorStaffShiftMessages(proposalId);
+  } catch (reanchorErr) {
+    Sentry.captureException(reanchorErr, {
+      tags: { component: 'staffShiftHandlers', step: 'runRescheduleStaffHooks.reanchor' },
+      extra: { proposalId },
+    });
+    console.error('[staffShiftHandlers] reschedule re-anchor failed (non-blocking):', reanchorErr.message);
+  }
+  if (notifyStaff === true && (notifyStaffSms === true || notifyStaffEmail === true)) {
+    try {
+      await notifyStaffOfScheduleChange({
+        proposalId,
+        updated,
+        sms: notifyStaffSms === true,
+        email: notifyStaffEmail === true,
+      });
+    } catch (notifyErr) {
+      Sentry.captureException(notifyErr, {
+        tags: { component: 'staffShiftHandlers', step: 'runRescheduleStaffHooks.notify' },
+        extra: { proposalId },
+      });
+      console.error('[staffShiftHandlers] schedule-change notify failed (non-blocking):', notifyErr.message);
+    }
+  }
+}
+
 module.exports = {
   toCalendarYmd,
   parseClockTime,
@@ -547,4 +668,6 @@ module.exports = {
   handleStaffThankYou,
   registerStaffShiftHandlers,
   notifyStaffOfCancellation,
+  notifyStaffOfScheduleChange,
+  runRescheduleStaffHooks,
 };
