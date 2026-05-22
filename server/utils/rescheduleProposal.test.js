@@ -309,12 +309,7 @@ test('rescheduleProposal > skips entirely when proposal is archived', async () =
   assert.strictEqual(emailCalls.length, 0);
 });
 
-test('rescheduleProposal > commits DB changes and swallows post-commit email failure when client has no email', async () => {
-  // Pre-execution Finding B4: the implementation runs the email send in a
-  // post-commit try/catch that reports to Sentry and console-errors, but
-  // NEVER rethrows. DB state must always commit even when the email surface
-  // is broken. The test asserts the non-rejecting behavior + side effects
-  // (DB updated, no email actually sent).
+test('rescheduleProposal > commits DB changes and sends only SMS when client has email=NULL but a phone', async () => {
   await pool.query(
     `INSERT INTO clients (id, name, email, phone) VALUES (-3, 'No Email', NULL, '+15555555555')
      ON CONFLICT (id) DO NOTHING`
@@ -324,26 +319,23 @@ test('rescheduleProposal > commits DB changes and swallows post-commit email fai
      VALUES ($1, -3, 'deposit_paid', '2026-09-15', '18:00', 'Venue', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
     [TEST_PROPOSAL_ID]
   );
-  // Seed a pending row so we can verify the DB-side reanchor still ran.
   await pool.query(
     `INSERT INTO scheduled_messages
      (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for, status)
      VALUES ('proposal', $1, 'event_week_reminder', 'client', -3, 'email', '2026-08-08T15:00:00.000Z', 'pending')`,
     [TEST_PROPOSAL_ID]
   );
+  const { __setSmsDeps, _realSendSMS } = require('./sms');
+  let smsCalls = 0;
+  __setSmsDeps({ sendSMS: async () => { smsCalls += 1; return { sid: `stub-${Date.now()}-${smsCalls}` }; } });
+
   const old = { event_date: '2026-08-15', event_start_time: '18:00', event_location: 'X' };
   const updated = { event_date: '2026-09-15', event_start_time: '18:00', event_location: 'Y' };
-
-  // Should resolve, NOT reject — even though the email send will throw
-  // internally (sendRescheduleEmail's `no email` guard), the outer try/catch
-  // around the post-commit email call swallows it.
   await rescheduleProposal({ proposalId: TEST_PROPOSAL_ID, old, updated });
 
-  // Email mock should not have been invoked (the guard threw before reaching sendEmail)
   assert.strictEqual(emailCalls.length, 0);
+  assert.strictEqual(smsCalls, 1, 'the reschedule SMS should fire when only a phone is present');
 
-  // The DB-side reanchor must have run: pending row's scheduled_for should
-  // now be T-7 of the new event_date (2026-09-15 → 2026-09-08 at 10am CDT).
   const { rows } = await pool.query(
     `SELECT scheduled_for FROM scheduled_messages
       WHERE entity_type = 'proposal' AND entity_id = $1
@@ -352,5 +344,7 @@ test('rescheduleProposal > commits DB changes and swallows post-commit email fai
   );
   assert.strictEqual(new Date(rows[0].scheduled_for).toISOString(), '2026-09-08T15:00:00.000Z');
 
+  __setSmsDeps({ sendSMS: _realSendSMS });
+  await pool.query('DELETE FROM sms_messages WHERE client_id = -3');
   await pool.query('DELETE FROM clients WHERE id = -3');
 });

@@ -176,6 +176,7 @@ async function sendRescheduleEmail({ proposalId, old, updated }) {
             p.event_timezone, p.guest_count, p.total_price, p.balance_due_date,
             p.autopay_enrolled,
             c.id AS client_id, c.name AS client_name, c.email AS client_email,
+            c.phone AS client_phone,
             c.communication_preferences, c.email_status, c.phone_status,
             sp.name AS package_name
        FROM proposals p
@@ -186,20 +187,33 @@ async function sendRescheduleEmail({ proposalId, old, updated }) {
   );
   const ctx = rows[0];
   if (!ctx) throw new Error(`rescheduleProposal: proposal ${proposalId} not found`);
-  if (!ctx.client_email) throw new Error(`rescheduleProposal: proposal ${proposalId} client has no email`);
+  // Phase 3: the reschedule touch is email + SMS. Only bail when BOTH channels
+  // have no destination; otherwise proceed and let each channel's
+  // shouldSendImmediate gate decide.
+  if (!ctx.client_email && !ctx.client_phone) {
+    throw new Error(`rescheduleProposal: proposal ${proposalId} client has no email and no phone`);
+  }
 
   // Gemini Finding 3: respect suppression rules on this immediate send.
-  const sendCheck = await shouldSendImmediate({
+  // Phase 3: the touch is email + SMS — check each channel independently and
+  // gate each send, instead of an early return that would also skip the SMS.
+  const clientForCheck = {
+    communication_preferences: ctx.communication_preferences,
+    email_status: ctx.email_status,
+    phone_status: ctx.phone_status,
+  };
+  const emailCheck = await shouldSendImmediate({
     proposal: { id: ctx.id, status: ctx.status },
-    client: {
-      communication_preferences: ctx.communication_preferences,
-      email_status: ctx.email_status,
-      phone_status: ctx.phone_status,
-    },
+    client: clientForCheck,
     channel: 'email',
   });
-  if (!sendCheck.ok) {
-    console.log(`[rescheduleNotification] suppressed for proposal ${proposalId}: ${sendCheck.reason}`);
+  const smsCheck = await shouldSendImmediate({
+    proposal: { id: ctx.id, status: ctx.status },
+    client: clientForCheck,
+    channel: 'sms',
+  });
+  if (!emailCheck.ok && !smsCheck.ok) {
+    console.log(`[rescheduleNotification] both channels suppressed for proposal ${proposalId}: email=${emailCheck.reason} sms=${smsCheck.reason}`);
     return;
   }
 
@@ -260,23 +274,57 @@ async function sendRescheduleEmail({ proposalId, old, updated }) {
 
   const firstName = (ctx.client_name || '').trim().split(/\s+/)[0] || null;
 
-  const tpl = emailTemplates.rescheduleNotificationClient({
-    clientName: ctx.client_name,
-    clientFirstName: firstName,
-    oldDateLocal: fmtDate(old.event_date),
-    oldStartTimeLocal: fmtTime(old.event_date, old.event_start_time),
-    oldLocation: old.event_location || '',
-    newDateLocal: fmtDate(updated.event_date || ctx.event_date),
-    newStartTimeLocal: fmtTime(updated.event_date || ctx.event_date, updated.event_start_time || ctx.event_start_time),
-    newLocation: updated.event_location || ctx.event_location || '',
-    packageName: ctx.package_name || '',
-    guestCount: ctx.guest_count,
-    totalFormatted,
-    balanceDueDateLocal,
-    autopayEnrolled: !!ctx.autopay_enrolled,
-  });
+  // ── Email half ──
+  if (emailCheck.ok && ctx.client_email) {
+    const tpl = emailTemplates.rescheduleNotificationClient({
+      clientName: ctx.client_name,
+      clientFirstName: firstName,
+      oldDateLocal: fmtDate(old.event_date),
+      oldStartTimeLocal: fmtTime(old.event_date, old.event_start_time),
+      oldLocation: old.event_location || '',
+      newDateLocal: fmtDate(updated.event_date || ctx.event_date),
+      newStartTimeLocal: fmtTime(updated.event_date || ctx.event_date, updated.event_start_time || ctx.event_start_time),
+      newLocation: updated.event_location || ctx.event_location || '',
+      packageName: ctx.package_name || '',
+      guestCount: ctx.guest_count,
+      totalFormatted,
+      balanceDueDateLocal,
+      autopayEnrolled: !!ctx.autopay_enrolled,
+    });
+    await sendEmail({ to: ctx.client_email, ...tpl });
+  } else if (!emailCheck.ok) {
+    console.log(`[rescheduleNotification] email suppressed for proposal ${proposalId}: ${emailCheck.reason}`);
+  }
 
-  await sendEmail({ to: ctx.client_email, ...tpl });
+  // ── SMS half (Phase 3, spec 3.13) — own try/catch so an SMS failure does
+  // not throw into the caller (rescheduleProposal already wraps the email
+  // send best-effort post-commit; the SMS gets the same posture). ──
+  if (smsCheck.ok && ctx.client_phone) {
+    try {
+      const { sendAndLogSms } = require('./sms');
+      const smsTemplates = require('./smsTemplates');
+      const body = smsTemplates.rescheduleSms({
+        newDate: fmtDate(updated.event_date || ctx.event_date),
+        newStartTime: fmtTime(updated.event_date || ctx.event_date, updated.event_start_time || ctx.event_start_time),
+        newLocation: updated.event_location || ctx.event_location || '',
+      });
+      await sendAndLogSms({
+        to: ctx.client_phone,
+        body,
+        clientId: ctx.client_id || null,
+        messageType: 'reschedule',
+        recipientName: ctx.client_name || null,
+      });
+    } catch (smsErr) {
+      Sentry.captureException(smsErr, {
+        tags: { component: 'rescheduleProposal', step: 'reschedule_sms' },
+        extra: { proposalId },
+      });
+      console.error('[rescheduleNotification] SMS failed (non-blocking):', smsErr.message);
+    }
+  } else if (!smsCheck.ok) {
+    console.log(`[rescheduleNotification] SMS suppressed for proposal ${proposalId}: ${smsCheck.reason}`);
+  }
 }
 
 /**
