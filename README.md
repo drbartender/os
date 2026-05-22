@@ -88,6 +88,7 @@ Copy `.env.example` and fill in values. All variables:
 | `REACT_APP_GOOGLE_REVIEW_URL` | For tip pages | Client build-time Google review URL (same value as `PUBLIC_GOOGLE_REVIEW_URL`) |
 | `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` | For tip pages | Inbox that receives bartender feedback from the tip thank-you flow (default: `contact@drbartender.com`) |
 | `THUMBTACK_WEBHOOK_SECRET` | For Thumbtack | Shared secret for Thumbtack webhook auth |
+| `GOOGLE_PLACES_API_KEY` | For venue search | Google Places API (New) key for venue-name search. Server-only. When unset, venue search degrades to a plain text input. |
 | `SENTRY_DSN_SERVER` | For error tracking | Server-side Sentry DSN (optional in dev; required in prod) |
 | `REACT_APP_SENTRY_DSN_CLIENT` | For error tracking | Client-side Sentry DSN (optional in dev; required in prod) |
 | `ADMIN_EMAIL` | For seed | Admin account email. Used for the seed account and as the default Reply-To on client-facing emails. |
@@ -158,7 +159,8 @@ dr-bartender/
 │   │   ├── publicTip.js        # Public tip-page lookup + post-tip feedback (token-gated)
 │   │   ├── publicFeedback.js   # Post-event feedback router (5-star sentiment routing)
 │   │   ├── testFeedback.js     # Receives Lab Rat bug reports — INSERTs into `tester_bugs` (durable) AND fire-and-forget emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` (notification)
-│   │   └── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
+│   │   ├── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
+│   │   └── venues.js           # Google Places venue search proxy
 │   ├── utils/
 │   │   ├── adminAuditLog.js    # logAdminAction(...) — durable record of admin actions (rotate-token, regenerate-stripe). Best-effort; failures go to Sentry, never block the underlying op
 │   │   ├── agreementPdf.js     # PDFKit renderer for signed contractor agreements

@@ -273,6 +273,12 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/:id` | Admin | Client detail with proposal history |
 | PUT | `/:id` | Admin | Update client |
 
+### Venues — `/api/venues`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/search` | Public | Venue-name autocomplete — proxies Google Places (New), rate-limited |
+| GET | `/details/:placeId` | Public | Place-details lookup — resolves a suggestion to a structured venue address |
+
 ### Shifts — `/api/shifts`
 | Method | Path | Auth | Description |
 |---|---|---|---|
