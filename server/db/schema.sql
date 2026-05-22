@@ -2455,3 +2455,74 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_post_event_feedback_proposal
   ON post_event_feedback(proposal_id);
 CREATE INDEX IF NOT EXISTS idx_post_event_feedback_created_at
   ON post_event_feedback(created_at DESC);
+
+-- ─── Staff payment system, Phase 1 (2026-05-22) ───
+-- Payroll ledger: pay_periods (Tue-Mon windows), payouts (one per contractor
+-- per period), payout_events (per-event line items). Plus fee/match columns
+-- on tips and proposal_payments for fee-netting and tip-to-event matching.
+
+CREATE TABLE IF NOT EXISTS pay_periods (
+  id SERIAL PRIMARY KEY,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  payday DATE NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (start_date)
+);
+
+DO $$ BEGIN
+  ALTER TABLE pay_periods DROP CONSTRAINT IF EXISTS pay_periods_status_check;
+  ALTER TABLE pay_periods ADD CONSTRAINT pay_periods_status_check
+    CHECK (status IN ('open', 'processing', 'paid'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS payouts (
+  id SERIAL PRIMARY KEY,
+  pay_period_id INTEGER NOT NULL REFERENCES pay_periods(id),
+  contractor_id INTEGER NOT NULL REFERENCES users(id),
+  status TEXT NOT NULL DEFAULT 'pending',
+  total_cents INTEGER NOT NULL DEFAULT 0,
+  payment_method TEXT,
+  payment_handle TEXT,
+  paid_at TIMESTAMPTZ,
+  paid_by INTEGER REFERENCES users(id),
+  paystub_storage_key TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (pay_period_id, contractor_id)
+);
+
+DO $$ BEGIN
+  ALTER TABLE payouts DROP CONSTRAINT IF EXISTS payouts_status_check;
+  ALTER TABLE payouts ADD CONSTRAINT payouts_status_check
+    CHECK (status IN ('pending', 'paid'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+CREATE TABLE IF NOT EXISTS payout_events (
+  id SERIAL PRIMARY KEY,
+  payout_id INTEGER NOT NULL REFERENCES payouts(id) ON DELETE CASCADE,
+  shift_id INTEGER NOT NULL REFERENCES shifts(id) ON DELETE RESTRICT,
+  contracted_hours NUMERIC(5,2) NOT NULL,
+  hours NUMERIC(5,2) NOT NULL,
+  rate_cents INTEGER NOT NULL,
+  wage_cents INTEGER NOT NULL DEFAULT 0,
+  late BOOLEAN NOT NULL DEFAULT FALSE,
+  gratuity_share_cents INTEGER NOT NULL DEFAULT 0,
+  card_tip_gross_cents INTEGER NOT NULL DEFAULT 0,
+  card_tip_fee_cents INTEGER NOT NULL DEFAULT 0,
+  card_tip_net_cents INTEGER NOT NULL DEFAULT 0,
+  adjustment_cents INTEGER NOT NULL DEFAULT 0,
+  adjustment_note TEXT,
+  line_total_cents INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (payout_id, shift_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_payouts_pay_period ON payouts(pay_period_id);
+CREATE INDEX IF NOT EXISTS idx_payout_events_payout ON payout_events(payout_id);
+
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS fee_cents INTEGER;
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS shift_id INTEGER REFERENCES shifts(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_tips_shift ON tips(shift_id);
+
+ALTER TABLE proposal_payments ADD COLUMN IF NOT EXISTS fee_cents INTEGER;
