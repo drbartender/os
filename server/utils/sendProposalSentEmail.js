@@ -8,7 +8,7 @@ const realSendEmail = require('./email').sendEmail;
 const realEmailTemplates = require('./emailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 
-const PUBLIC_SITE_URL = process.env.PUBLIC_SITE_URL || 'https://drbartender.com';
+const { PUBLIC_SITE_URL } = require('./urls');
 
 // Dependency seam for tests.
 let _deps = { sendEmail: realSendEmail, emailTemplates: realEmailTemplates, Sentry: realSentry };
