@@ -228,11 +228,11 @@ surface; each parent does that in its `onSelect` handler.
 
 Files: `client/src/pages/website/quoteWizard/steps/EventDetailsStep.js`,
 `client/src/pages/website/quoteWizard/QuoteWizard.js`,
-`client/src/pages/website/quoteWizard/helpers.js`,
 `server/routes/proposals/public.js`.
 
-- `helpers.js`: `defaultForm` gains `venue_street` and `venue_zip` (default
-  `''`). City and state already exist as `event_city` / `event_state`.
+- `QuoteWizard.js`: the default form state gains `venue_street` and
+  `venue_zip` (default `''`). City and state already exist as `event_city` /
+  `event_state`.
 - `EventDetailsStep.js`: the plain `wz-venue_name` input is replaced with
   `VenueSearchInput`.
   - `onChange(name)`: `update('venue_name', name)` and **clear** `venue_street`
@@ -268,13 +268,15 @@ Files: `client/src/components/VenueAddressFields.js`,
 `client/src/pages/proposal/proposalView/ProposalView.js`.
 
 - `VenueAddressFields.js`: the plain venue-name `<input>` is replaced with
-  `VenueSearchInput`. The component gains one new prop, `onSelectVenue(venue)`,
-  distinct from the existing `onChange(field, value)`.
-  - `VenueSearchInput`'s `onChange` maps to the existing
-    `onChange('venue_name', name)`. Editing the name here does **not** clear the
-    other fields: at sign + pay and admin all five fields are visible and
-    independently editable, so clearing them on a name edit would be surprising.
-  - `VenueSearchInput`'s `onSelect` maps to `onSelectVenue(venue)`.
+  `VenueSearchInput`. `VenueAddressFields` keeps its existing
+  `onChange(field, value)` prop and gains no new prop.
+  - `VenueSearchInput`'s `onChange` maps to `onChange('venue_name', name)`.
+    Editing the name here does not clear the other fields: at sign + pay and
+    admin all five fields are visible and independently editable, so clearing
+    them on a name edit would be surprising.
+  - `VenueSearchInput`'s `onSelect` is handled inside `VenueAddressFields` by an
+    `applyVenue` helper that calls `onChange(field, value)` once for each
+    `venue_*` field the result contains.
 - `venue_complete === true` (the wizard already captured a full address): the
   existing read-only confirmation shows, unchanged. The search is not needed.
 - `venue_complete === false`: `VenueAddressFields` renders as today but the name
@@ -289,18 +291,23 @@ Files: `client/src/pages/admin/ProposalCreate.js`,
 `client/src/pages/admin/EventEditForm.js`.
 
 All three already use `VenueAddressFields`, so they get the search the moment
-`VenueAddressFields` embeds `VenueSearchInput`. Each of these three, plus
-`SignAndPaySection`, wires the new `onSelectVenue` prop to a single functional
-merge into its venue state (`setX(prev => ({ ...prev, ...venue }))`). The
+`VenueAddressFields` embeds `VenueSearchInput`. They need no change: each
+already passes `value` and a functional `onChange(field, value)`, which is
+exactly what the `applyVenue` helper inside `VenueAddressFields` reuses. The
 existing admin endpoints (`POST` for create, `PATCH /api/proposals/:id`) already
 accept all five `venue_*` keys, so no admin-side server change is needed.
 
-### Atomic multi-field update
+### Multi-field update on selection
 
-`onSelectVenue` exists specifically so a selection updates all five fields in
-one functional `setState`. Five sequential `onChange(field, value)` calls would
-risk a stale-closure overwrite in any parent whose setter is not functional.
-Every `onSelectVenue` handler must use the functional form.
+A selection sets up to five fields. The `applyVenue` helper inside
+`VenueAddressFields` calls the parent `onChange(field, value)` once per field.
+This is safe because all four `VenueAddressFields` consumers
+(`SignAndPaySection`, `ProposalCreate`, `ProposalDetailEditForm`,
+`EventEditForm`) implement `onChange` with a functional `setState`
+(`setX(prev => ({ ...prev, [field]: value }))`), so the sequential calls within
+one handler do not race. The quote wizard's `EventDetailsStep` is not a
+`VenueAddressFields` consumer; it handles a selection with its own single
+functional `setForm` merge.
 
 ## Edge Cases and Known Limitations
 
@@ -373,14 +380,15 @@ New: `server/utils/googlePlaces.js`, `server/routes/venues.js`,
 Modified: `server/index.js` (mount route), `server/middleware/rateLimiters.js`
 (new limiter), `server/routes/proposals/public.js` (accept/validate/store
 `venue_street` and `venue_zip`), `client/src/components/VenueAddressFields.js`
-(embed search, add `onSelectVenue`), `client/src/pages/proposal/proposalView/
-SignAndPaySection.js`, `client/src/pages/admin/ProposalCreate.js`,
-`client/src/pages/admin/ProposalDetailEditForm.js`,
-`client/src/pages/admin/EventEditForm.js` (wire `onSelectVenue`),
-`client/src/pages/website/quoteWizard/steps/EventDetailsStep.js`,
-`client/src/pages/website/quoteWizard/QuoteWizard.js`,
-`client/src/pages/website/quoteWizard/helpers.js`, `client/src/index.css`
-(dropdown styles), `.env.example`, `CLAUDE.md`, `README.md`, `ARCHITECTURE.md`.
+(embed search), `client/src/pages/website/quoteWizard/steps/EventDetailsStep.js`
+and `client/src/pages/website/quoteWizard/QuoteWizard.js` (wizard search and
+silent capture), `client/src/index.css` (dropdown styles), `.env.example`,
+`CLAUDE.md`, `README.md`, `ARCHITECTURE.md`.
+
+`SignAndPaySection.js`, `ProposalCreate.js`, `ProposalDetailEditForm.js`, and
+`EventEditForm.js` are deliberately not modified: embedding `VenueSearchInput`
+inside the shared `VenueAddressFields` gives all four surfaces the search with
+no parent change.
 
 ## Out of Scope
 
