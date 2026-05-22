@@ -69,3 +69,27 @@ test('proRataFeeCents > clamps the ratio at 1 so a slice never over-nets the fee
   // A slice larger than the payment total must still carry at most the whole fee.
   assert.equal(proRataFeeCents(150000, 100000, 3200), 3200);
 });
+
+const { matchTipToShift } = require('./payrollMath');
+
+const windows = [
+  { shiftId: 10, startMs: 1000, endMs: 5000 },
+  { shiftId: 20, startMs: 8000, endMs: 12000 },
+];
+
+test('matchTipToShift > returns the shift whose window contains the tip', () => {
+  assert.equal(matchTipToShift(3000, windows), 10);
+  assert.equal(matchTipToShift(9000, windows), 20);
+});
+
+test('matchTipToShift > returns null when no window contains the tip', () => {
+  assert.equal(matchTipToShift(6000, windows), null);
+});
+
+test('matchTipToShift > on overlap, picks the window whose start is nearest', () => {
+  const overlap = [
+    { shiftId: 1, startMs: 0, endMs: 10000 },
+    { shiftId: 2, startMs: 7000, endMs: 20000 },
+  ];
+  assert.equal(matchTipToShift(8000, overlap), 2); // 8000 is nearer 7000 than 0
+});

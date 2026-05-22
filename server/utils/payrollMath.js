@@ -63,8 +63,30 @@ function proRataFeeCents(grossCents, paymentTotalCents, paymentFeeCents) {
   return Math.round(Number(paymentFeeCents) * ratio);
 }
 
+/**
+ * Pick the shift a tip belongs to. `shiftWindows` is an array of
+ * { shiftId, startMs, endMs } service windows in epoch milliseconds.
+ * Returns the shiftId whose window contains `tippedAtMs`; on overlap, the
+ * one whose start is nearest the tip; null when none contain it.
+ */
+function matchTipToShift(tippedAtMs, shiftWindows) {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const w of shiftWindows) {
+    if (tippedAtMs >= w.startMs && tippedAtMs <= w.endMs) {
+      const distance = Math.abs(tippedAtMs - w.startMs);
+      if (distance < bestDistance) {
+        best = w.shiftId;
+        bestDistance = distance;
+      }
+    }
+  }
+  return best;
+}
+
 module.exports = {
   contractedHours, wageCents, splitEvenly,
   extractGratuityCents, proRataFeeCents,
+  matchTipToShift,
   SETUP_HOURS, BREAKDOWN_HOURS,
 };
