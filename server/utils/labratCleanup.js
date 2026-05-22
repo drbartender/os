@@ -42,6 +42,10 @@ async function purgeLabratTestData() {
         [labratProposalIds],
       );
       await client.query('DELETE FROM invoices WHERE proposal_id = ANY($1)', [labratProposalIds]);
+      // proposal_refunds → proposals AND → proposal_payments are both ON DELETE
+      // RESTRICT, so refunds must go before both. (Labrat data realistically
+      // never has refunds, but the purge must not abort if one ever does.)
+      await client.query('DELETE FROM proposal_refunds WHERE proposal_id = ANY($1)', [labratProposalIds]);
       await client.query('DELETE FROM proposal_payments WHERE proposal_id = ANY($1)', [labratProposalIds]);
       await client.query(
         "DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = ANY($1)",

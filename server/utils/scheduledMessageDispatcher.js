@@ -266,20 +266,30 @@ async function dispatchPending() {
   }
   _dispatchInFlight = true;
   try {
-    const { rows } = await pool.query(
-      `SELECT id, entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for
-       FROM scheduled_messages
-       WHERE status = 'pending' AND scheduled_for <= NOW()
-       ORDER BY scheduled_for ASC
-       LIMIT $1`,
-      [BATCH_LIMIT]
-    );
+    // Drain fully: keep pulling batches while the last one was full, so a
+    // backlog larger than BATCH_LIMIT clears within this tick instead of
+    // waiting for the next 5-min interval. dispatchRow always moves a row out
+    // of 'pending' (sent/failed/suppressed), so each pass sees a fresh set and
+    // the loop terminates once a partial batch comes back.
+    let batchSize;
+    do {
+      const { rows } = await pool.query(
+        `SELECT id, entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for
+         FROM scheduled_messages
+         WHERE status = 'pending' AND scheduled_for <= NOW()
+         ORDER BY scheduled_for ASC
+         LIMIT $1`,
+        [BATCH_LIMIT]
+      );
+      batchSize = rows.length;
 
-    for (const row of rows) {
-      // Sequential dispatch — keeps a single SMTP burst from blowing past Resend's
-      // rate limit. If volume grows, swap to a concurrency-limited Promise queue.
-      await dispatchRow(row);
-    }
+      for (const row of rows) {
+        // Sequential dispatch — keeps a single SMTP burst from blowing past
+        // Resend's rate limit. If volume grows, swap to a concurrency-limited
+        // Promise queue.
+        await dispatchRow(row);
+      }
+    } while (batchSize === BATCH_LIMIT);
   } finally {
     _dispatchInFlight = false;
   }
