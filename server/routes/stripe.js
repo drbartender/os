@@ -1405,6 +1405,23 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             }
             console.error('schedulePreEventReminders failed (non-blocking):', schedErr);
           }
+
+          // Plan 2d: schedule long-lead marketing touches (New Year, 6-mo-out)
+          // and suppress the now-moot unsigned-proposal drip. Separate
+          // try/catch from the Plan 2c block above so a marketing failure
+          // cannot mask a pre-event-reminder failure. The helper self-gates on
+          // eligibility and is idempotent under Stripe webhook retries.
+          try {
+            const { onProposalSignedAndPaid } = require('../utils/marketingHandlers');
+            await onProposalSignedAndPaid(Number(proposalId));
+          } catch (marketingErr) {
+            if (process.env.SENTRY_DSN_SERVER) {
+              Sentry.captureException(marketingErr, {
+                tags: { webhook: 'stripe', route: '/webhook', step: 'marketing-signpay' },
+              });
+            }
+            console.error('Marketing enroll on sign+pay failed (non-blocking):', marketingErr);
+          }
         }
       }
     }
@@ -1667,6 +1684,22 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             });
           }
           console.error('Shift auto-creation failed (non-blocking):', shiftErr);
+        }
+
+        // Plan 2d: a Payment-Link deposit is a genuine client sign+pay, so
+        // schedule the long-lead marketing touches and suppress the drip,
+        // same as the payment_intent.succeeded path. (This branch still lacks
+        // Plan 2c/2a reminders; that is a separate tracked follow-up.)
+        try {
+          const { onProposalSignedAndPaid } = require('../utils/marketingHandlers');
+          await onProposalSignedAndPaid(Number(proposalId));
+        } catch (marketingErr) {
+          if (process.env.SENTRY_DSN_SERVER) {
+            Sentry.captureException(marketingErr, {
+              tags: { webhook: 'stripe', route: '/webhook', event: 'checkout.session.completed', step: 'marketing-signpay' },
+            });
+          }
+          console.error('Marketing enroll on Payment-Link deposit failed (non-blocking):', marketingErr);
         }
       }
     }

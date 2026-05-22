@@ -473,6 +473,30 @@ function registerMarketingHandlers() {
   });
 }
 
+/**
+ * Plan 2d: shared sign+pay orchestrator. Called from every client sign+pay
+ * path (Stripe payment_intent.succeeded deposit/full, Stripe
+ * checkout.session.completed Payment-Link deposit, admin record-payment).
+ * Schedules the long-lead marketing touches, then suppresses any pending
+ * unsigned-proposal drip rows: once the client has signed and paid, the
+ * "still thinking about your event?" touches no longer apply. Only pending
+ * drip rows are flipped; already-sent rows stay 'sent'. Idempotent.
+ */
+async function onProposalSignedAndPaid(proposalId) {
+  await scheduleNewYearHello(proposalId);
+  await scheduleSixMonthsOut(proposalId);
+  await pool.query(
+    `UPDATE scheduled_messages
+        SET status = 'suppressed',
+            error_message = 'proposal signed and paid'
+      WHERE entity_type = 'proposal'
+        AND entity_id = $1
+        AND status = 'pending'
+        AND message_type IN ('drip_touch_2', 'drip_touch_4', 'drip_touch_5_email')`,
+    [proposalId]
+  );
+}
+
 module.exports = {
   registerMarketingHandlers,
   scheduleDripForProposal,
@@ -482,4 +506,5 @@ module.exports = {
   scheduleRetentionNudge,
   recomputeNewYearHelloForProposal,
   cancelMarketingForProposal,
+  onProposalSignedAndPaid,
 };

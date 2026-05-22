@@ -10,6 +10,7 @@ const {
   scheduleSixMonthsOut,
   scheduleRetentionNudge,
   cancelMarketingForProposal,
+  onProposalSignedAndPaid,
 } = require('./marketingHandlers');
 
 let clientId;
@@ -250,4 +251,21 @@ test('cancelMarketingForProposal > leaves already-sent messages alone', async ()
   assert.strictEqual(m['drip_touch_2'], 'sent');
   assert.strictEqual(m['drip_touch_4'], 'suppressed');
   assert.strictEqual(m['drip_touch_5_email'], 'suppressed');
+});
+
+// ── onProposalSignedAndPaid (Plan 2d sign+pay orchestrator) ──
+test('onProposalSignedAndPaid > suppresses the pending drip and schedules long-lead marketing', async () => {
+  await scheduleDripForProposal(proposalId);
+  await onProposalSignedAndPaid(proposalId);
+  const { rows } = await pool.query(
+    `SELECT message_type, status FROM scheduled_messages
+     WHERE entity_type='proposal' AND entity_id=$1`,
+    [proposalId]
+  );
+  const drip = rows.filter(r => r.message_type.startsWith('drip_'));
+  assert.ok(drip.length > 0, 'expected drip rows to exist');
+  assert.ok(drip.every(r => r.status === 'suppressed'), 'all pending drip rows should be suppressed');
+  // The beforeEach proposal is event_date + 365 days, so six_months_out is eligible.
+  const marketing = rows.filter(r => r.message_type === 'new_year_hello' || r.message_type === 'six_months_out');
+  assert.ok(marketing.length > 0, 'expected a long-lead marketing row scheduled');
 });

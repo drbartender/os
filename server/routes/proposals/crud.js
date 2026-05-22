@@ -832,6 +832,19 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
     console.error('Payment email failed (non-blocking):', emailErr);
   }
 
+  // Plan 2d: an admin-recorded outside payment moves the proposal to a paid
+  // state, so schedule the long-lead marketing touches and suppress the
+  // now-moot drip, same as a Stripe sign+pay.
+  try {
+    const { onProposalSignedAndPaid } = require('../../utils/marketingHandlers');
+    await onProposalSignedAndPaid(proposal.id);
+  } catch (marketingErr) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(marketingErr, { tags: { route: 'proposals/payment', issue: 'marketing-signpay' } });
+    }
+    console.error('Marketing enroll on record-payment failed (non-blocking):', marketingErr);
+  }
+
   // Auto-create event shift
   try {
     const shift = await createEventShifts(proposal.id);
