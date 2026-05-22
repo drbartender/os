@@ -41,4 +41,77 @@ function payPeriodForDate(ymd) {
   return { startDate, endDate };
 }
 
-module.exports = { payPeriodForDate, addDays, parseYmd, toYmd, dayOfWeek };
+// Observed date for a fixed-date holiday: Saturday shifts to Friday,
+// Sunday shifts to Monday.
+function observed(ymd) {
+  const dow = dayOfWeek(ymd);
+  if (dow === 6) return addDays(ymd, -1);
+  if (dow === 0) return addDays(ymd, 1);
+  return ymd;
+}
+
+// The nth `weekday` (0=Sun..6=Sat) of `month` (1-12) in `year`.
+function nthWeekday(year, month, weekday, n) {
+  const first = new Date(Date.UTC(year, month - 1, 1));
+  const offset = (weekday - first.getUTCDay() + 7) % 7;
+  return toYmd(new Date(Date.UTC(year, month - 1, 1 + offset + (n - 1) * 7)));
+}
+
+// The last `weekday` of `month` in `year`.
+function lastWeekday(year, month, weekday) {
+  const last = new Date(Date.UTC(year, month, 0));
+  const offset = (last.getUTCDay() - weekday + 7) % 7;
+  return toYmd(new Date(Date.UTC(year, month, 0 - offset)));
+}
+
+/** Observed US federal holidays for a year, as a Set of 'YYYY-MM-DD'. */
+function usFederalHolidays(year) {
+  return new Set([
+    observed(`${year}-01-01`),    // New Year's Day
+    nthWeekday(year, 1, 1, 3),    // MLK Day
+    nthWeekday(year, 2, 1, 3),    // Washington's Birthday
+    lastWeekday(year, 5, 1),      // Memorial Day
+    observed(`${year}-06-19`),    // Juneteenth
+    observed(`${year}-07-04`),    // Independence Day
+    nthWeekday(year, 9, 1, 1),    // Labor Day
+    nthWeekday(year, 10, 1, 2),   // Columbus Day
+    observed(`${year}-11-11`),    // Veterans Day
+    nthWeekday(year, 11, 4, 4),   // Thanksgiving
+    observed(`${year}-12-25`),    // Christmas
+  ]);
+}
+
+/** True when `ymd` is Mon-Fri and not an observed federal holiday. */
+function isWorkingDay(ymd) {
+  const dow = dayOfWeek(ymd);
+  if (dow === 0 || dow === 6) return false;
+  const year = Number(ymd.slice(0, 4));
+  // Check adjacent years too: a New Year observed on Dec 31 lands in the
+  // prior year, and one observed on Jan 2 is built for the next year.
+  for (const y of [year - 1, year, year + 1]) {
+    if (usFederalHolidays(y).has(ymd)) return false;
+  }
+  return true;
+}
+
+/**
+ * Payday for a period: the second working day on or after `endDate`
+ * (the period's Monday), counting that Monday when it is a working day.
+ */
+function computePayday(endDate) {
+  let d = endDate;
+  let working = 0;
+  for (let i = 0; i < 14; i++) {
+    if (isWorkingDay(d)) {
+      working += 1;
+      if (working === 2) return d;
+    }
+    d = addDays(d, 1);
+  }
+  throw new Error(`computePayday: no payday found near ${endDate}`);
+}
+
+module.exports = {
+  payPeriodForDate, computePayday, isWorkingDay, usFederalHolidays,
+  addDays, parseYmd, toYmd, dayOfWeek,
+};
