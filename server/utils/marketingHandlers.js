@@ -88,38 +88,45 @@ async function loadProposalForHandler(proposalId) {
 async function scheduleDripForProposal(proposalId) {
   const proposal = await loadProposalForHandler(proposalId);
   if (!proposal) return;
-  if (proposal.status === 'archived' || proposal.status === 'signed') return;
+  // Drip is the unsigned-proposal nurture sequence — only enroll while the
+  // proposal is sent and not yet acted on. Allowlist (not a denylist) so a
+  // future status defaults to "no drip". ('signed' was never a real status.)
+  if (!['sent', 'viewed', 'modified'].includes(proposal.status)) return;
   if (!proposal.client_id) return;
 
   const anchor = new Date(); // time-of-send moment
   const day = 86400000;
-  await scheduleMessage({
-    entityType: 'proposal',
-    entityId: proposalId,
-    messageType: 'drip_touch_2',
-    recipientType: 'client',
-    recipientId: proposal.client_id,
-    channel: 'email',
-    scheduledFor: new Date(anchor.getTime() + 7 * day),
-  });
-  await scheduleMessage({
-    entityType: 'proposal',
-    entityId: proposalId,
-    messageType: 'drip_touch_4',
-    recipientType: 'client',
-    recipientId: proposal.client_id,
-    channel: 'email',
-    scheduledFor: new Date(anchor.getTime() + 14 * day),
-  });
-  await scheduleMessage({
-    entityType: 'proposal',
-    entityId: proposalId,
-    messageType: 'drip_touch_5_email',
-    recipientType: 'client',
-    recipientId: proposal.client_id,
-    channel: 'email',
-    scheduledFor: new Date(anchor.getTime() + 21 * day),
-  });
+  // Three independent idempotent INSERTs — run concurrently (each
+  // scheduleMessage takes its own pooled connection).
+  await Promise.all([
+    scheduleMessage({
+      entityType: 'proposal',
+      entityId: proposalId,
+      messageType: 'drip_touch_2',
+      recipientType: 'client',
+      recipientId: proposal.client_id,
+      channel: 'email',
+      scheduledFor: new Date(anchor.getTime() + 7 * day),
+    }),
+    scheduleMessage({
+      entityType: 'proposal',
+      entityId: proposalId,
+      messageType: 'drip_touch_4',
+      recipientType: 'client',
+      recipientId: proposal.client_id,
+      channel: 'email',
+      scheduledFor: new Date(anchor.getTime() + 14 * day),
+    }),
+    scheduleMessage({
+      entityType: 'proposal',
+      entityId: proposalId,
+      messageType: 'drip_touch_5_email',
+      recipientType: 'client',
+      recipientId: proposal.client_id,
+      channel: 'email',
+      scheduledFor: new Date(anchor.getTime() + 21 * day),
+    }),
+  ]);
 }
 
 /**
@@ -483,8 +490,10 @@ function registerMarketingHandlers() {
  * drip rows are flipped; already-sent rows stay 'sent'. Idempotent.
  */
 async function onProposalSignedAndPaid(proposalId) {
-  await scheduleNewYearHello(proposalId);
-  await scheduleSixMonthsOut(proposalId);
+  await Promise.all([
+    scheduleNewYearHello(proposalId),
+    scheduleSixMonthsOut(proposalId),
+  ]);
   await pool.query(
     `UPDATE scheduled_messages
         SET status = 'suppressed',

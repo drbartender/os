@@ -118,6 +118,20 @@ test('scheduleDripForProposal > uses the proposal status moment as the +7/+14/+2
   assert.ok(t2 > now);
 });
 
+test('scheduleDripForProposal > does not enroll an already-advanced proposal', async () => {
+  // Drip is the unsigned-proposal nurture sequence. A proposal past sent/
+  // viewed/modified (here: accepted) must not get drip rows — the old guard
+  // checked a non-existent 'signed' status and let this through.
+  await pool.query("UPDATE proposals SET status = 'accepted' WHERE id = $1", [proposalId]);
+  await scheduleDripForProposal(proposalId);
+  const { rows } = await pool.query(
+    `SELECT count(*) FROM scheduled_messages
+     WHERE entity_type = 'proposal' AND entity_id = $1`,
+    [proposalId]
+  );
+  assert.strictEqual(Number(rows[0].count), 0);
+});
+
 // ── scheduleReviewRequest ──
 test('scheduleReviewRequest > inserts a review_request row 2 days after event_date', async () => {
   await scheduleReviewRequest(proposalId);
