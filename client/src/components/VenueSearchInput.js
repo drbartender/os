@@ -21,8 +21,8 @@ const MIN_CHARS = 3;
 
 export default function VenueSearchInput({
   value = '',
-  onChange,
-  onSelect,
+  onChange = () => {},
+  onSelect = () => {},
   id = 'venue-name',
   inputClassName = 'form-input',
   placeholder = 'Start typing your venue name',

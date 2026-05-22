@@ -89,6 +89,10 @@ export default function EventDetailsStep({
 
         <div className="form-group">
           <label htmlFor="wz-venue_name" className="form-label">Venue name (optional)</label>
+          {/* onChange clears venue_street/venue_zip on freehand edits: the wizard
+              has no visible street field, so a silently captured address must not
+              ride along with a name the user has since retyped. VenueAddressFields
+              deliberately does NOT clear, since there those fields are visible. */}
           <VenueSearchInput
             id="wz-venue_name"
             value={form.venue_name || ''}
