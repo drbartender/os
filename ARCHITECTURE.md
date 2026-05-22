@@ -715,7 +715,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `user_id` FK → users (recipient)
 - `shift_id` FK → shifts (nullable, for shift invitations)
 - `group_id` UUID — groups messages from the same batch send
-- `message_type` — e.g. general, shift_invitation
+- `message_type` TEXT — e.g. general, shift_invitation, plus the Comms Phase 3 client-SMS touch types. Widened to `TEXT` in Phase 3 (was `VARCHAR(20)` with a 4-value CHECK constraint, now dropped) so automated client-SMS touch identifiers fit.
 - `direction` TEXT NOT NULL DEFAULT 'outbound' CHECK (`inbound`, `outbound`) — added for two-way SMS via Automated Communication Foundation
 - `to_phone`, `body`
 - `twilio_sid`, `status` — delivery tracking. CHECK now allows `received` (the status for an inbound message) alongside `sent` / `failed` / `queued`.
@@ -745,6 +745,19 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 *Scheduled-message dispatcher:* `server/utils/scheduledMessageDispatcher.js` registers the `message_dispatcher` scheduler, which runs every 5 minutes. Each tick drains due `pending` rows from `scheduled_messages`, applies the shared suppression rules (archive / comm-prefs / bad-contact), and dispatches each row to its registered per-message-type handler (currently the money-path balance reminders). Rows are wired in by `server/utils/messageScheduling.js` (`scheduleMessage`, idempotent insert). Gated by `RUN_MESSAGE_DISPATCHER_SCHEDULER` (suppressed by the global `RUN_SCHEDULERS=false`).
 
 *Marketing and retention message types:* the dispatcher handles marketing-class touches registered by `marketingHandlers.js` (`drip_touch_2`, `drip_touch_4`, `drip_touch_5_email`, `new_year_hello`, `six_months_out`, `retention_nudge`), all gated on `clients.communication_preferences.marketing_enabled`, plus `review_request` (operational, a CAN-SPAM transactional follow-up, not gated). They are scheduled by hooks on the proposal status-transition paths: drip enrollment on every path that makes a proposal `sent`, New Year and 6-months-out plus drip-suppression on every sign+pay path, review request and retention nudge on completion, and marketing cancellation on archive.
+
+Comms Phase 3 adds the client-facing SMS layer. `sms.js` gains `sendAndLogSms`,
+the single send-and-log primitive for all automated SMS. `smsTemplates.js`
+holds the SMS body copy (mirrors `emailTemplates.js`). Scheduled SMS touches
+register dispatcher handlers like their email siblings: `dripSmsHandlers.js`
+(drip touches 1/3/5-sms), `drinkPlanNudge.js` (the drink-plan nudge, email + SMS,
+T-21), `balanceSmsHandlers.js` (non-autopay balance due-today / late t1 / late
+t3 SMS), and `eventEveSms.js` (the event-eve SMS, T-24h from event start, with
+bespoke wall-clock timing). `balanceReminderScheduling.js` holds the
+balance-reminder ladder scheduler (extracted from `stripe.js`). Immediate SMS
+sends (initial proposal, sign+pay confirmation, payment failure, reschedule) are
+best-effort hooks beside the existing email send, gated by
+`shouldSendImmediate({ channel: 'sms' })`.
 
 **scheduler_health** — Heartbeat table for the Automated Communication Foundation schedulers. Each scheduler writes its `last_run_at` on every tick; a monitoring loop alerts via Sentry when any scheduler hasn't checked in within 2x its expected interval.
 - `scheduler_name` TEXT PRIMARY KEY — stable identifier (e.g. `proposal_reminders`, `shift_reminders`, `client_messages_dispatcher`)
