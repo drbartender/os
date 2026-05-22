@@ -122,8 +122,10 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
   if (status === 'sent') {
     try {
       const pd = await pool.query(`
-        SELECT p.token, p.event_type, p.event_type_custom,
-               c.name AS client_name, c.email AS client_email
+        SELECT p.token, p.event_type, p.event_type_custom, p.event_date, p.status,
+               c.id AS client_id, c.name AS client_name, c.email AS client_email,
+               c.phone AS client_phone, c.communication_preferences,
+               c.email_status, c.phone_status
         FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
         WHERE p.id = $1`, [req.params.id]);
       if (pd.rows[0]) {

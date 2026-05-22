@@ -325,7 +325,9 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
     if (proposalStatus === 'sent') {
       try {
         const enriched = await pool.query(
-          `SELECT p.*, c.name AS client_name, c.email AS client_email
+          `SELECT p.*, c.id AS client_id, c.name AS client_name, c.email AS client_email,
+                  c.phone AS client_phone, c.communication_preferences,
+                  c.email_status, c.phone_status
              FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
             WHERE p.id = $1`, [proposal.id]);
         if (enriched.rows[0]) {

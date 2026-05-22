@@ -56,3 +56,59 @@ test('still emails when sent_at is already set (no idempotency skip)', async () 
   await sendProposalSentEmail({ ...baseProposal, sent_at: '2026-05-01T00:00:00Z' }, { actorType: 'admin' });
   assert.equal(called, true);
 });
+
+const assert2 = require('node:assert/strict');
+const { test: test2 } = require('node:test');
+
+test2('sendProposalSentEmail > fires the initial-proposal SMS when the client has a phone', async () => {
+  const mod2 = require('./sendProposalSentEmail');
+  let smsCalls = 0;
+  let smsArgs = null;
+  mod2.__setDeps({
+    sendEmail: async () => {},
+    sendAndLogSms: async (args) => { smsCalls += 1; smsArgs = args; return { sid: 'x', status: 'sent' }; },
+  });
+  await mod2.sendProposalSentEmail({
+    id: 1, token: 'tok-1', event_type: 'birthday-party', event_type_custom: null,
+    client_name: 'Pat', client_email: 'pat@example.com',
+    client_id: 7, client_phone: '3125550111',
+    communication_preferences: { sms_enabled: true, email_enabled: true },
+    email_status: 'ok', phone_status: 'ok',
+  }, { actorType: 'admin' });
+  assert2.strictEqual(smsCalls, 1, 'SMS should fire once');
+  assert2.strictEqual(smsArgs.messageType, 'initial_proposal');
+  assert2.strictEqual(smsArgs.clientId, 7);
+  assert2.match(smsArgs.body, /Dallas here/);
+});
+
+test2('sendProposalSentEmail > skips the SMS when sms_enabled is false', async () => {
+  const mod2 = require('./sendProposalSentEmail');
+  let smsCalls = 0;
+  mod2.__setDeps({
+    sendEmail: async () => {},
+    sendAndLogSms: async () => { smsCalls += 1; return { sid: 'x', status: 'sent' }; },
+  });
+  await mod2.sendProposalSentEmail({
+    id: 2, token: 'tok-2', event_type: 'birthday-party', event_type_custom: null,
+    client_name: 'Pat', client_email: 'pat@example.com',
+    client_id: 8, client_phone: '3125550111',
+    communication_preferences: { sms_enabled: false, email_enabled: true },
+    email_status: 'ok', phone_status: 'ok',
+  }, { actorType: 'admin' });
+  assert2.strictEqual(smsCalls, 0, 'SMS should be suppressed');
+});
+
+test2('sendProposalSentEmail > an SMS failure does not throw', async () => {
+  const mod2 = require('./sendProposalSentEmail');
+  mod2.__setDeps({
+    sendEmail: async () => {},
+    sendAndLogSms: async () => { throw new Error('sms boom'); },
+  });
+  await assert2.doesNotReject(() => mod2.sendProposalSentEmail({
+    id: 3, token: 'tok-3', event_type: 'birthday-party', event_type_custom: null,
+    client_name: 'Pat', client_email: 'pat@example.com',
+    client_id: 9, client_phone: '3125550111',
+    communication_preferences: { sms_enabled: true, email_enabled: true },
+    email_status: 'ok', phone_status: 'ok',
+  }, { actorType: 'admin' }));
+});

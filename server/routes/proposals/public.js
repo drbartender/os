@@ -275,7 +275,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       `INSERT INTO clients (name, email, phone, source) VALUES ($1, $2, $3, $4)
        ON CONFLICT (email) WHERE email IS NOT NULL
        DO UPDATE SET name = clients.name
-       RETURNING id`,
+       RETURNING id, communication_preferences, email_status, phone_status`,
       [client_name.trim(), client_email.trim().toLowerCase(), client_phone || null, 'website']
     );
     const finalClientId = clientResult.rows[0].id;
@@ -457,7 +457,16 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
         // from the proposal row.
         const eventTypeLabel = getEventTypeLabel({ event_type: proposal.event_type, event_type_custom: proposal.event_type_custom });
         await sendProposalSentEmail(
-          { ...proposal, client_name: client_name.trim(), client_email: client_email.trim().toLowerCase() },
+          {
+            ...proposal,
+            client_name: client_name.trim(),
+            client_email: client_email.trim().toLowerCase(),
+            client_id: finalClientId,
+            client_phone: client_phone || null,
+            communication_preferences: clientResult.rows[0].communication_preferences,
+            email_status: clientResult.rows[0].email_status,
+            phone_status: clientResult.rows[0].phone_status,
+          },
           { actorType: 'client' },
         );
 
