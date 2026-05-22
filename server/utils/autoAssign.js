@@ -3,9 +3,11 @@
  * Ranks candidates by seniority, geographic proximity, and equipment match.
  */
 
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendSMS, normalizePhone } = require('./sms');
 const { getEventTypeLabel } = require('./eventTypes');
+const { scheduleStaffShiftMessages } = require('./staffShiftHandlers');
 
 // ─── Haversine distance (miles) ──────────────────────────────────
 
@@ -344,6 +346,19 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
     `UPDATE shifts SET auto_assigned_at = NOW() WHERE id = $1`,
     [shiftId]
   );
+
+  // 12. Schedule the day-before reminder + post-event thank-you SMS for every
+  // approved staffer on this shift (idempotent). Best-effort: covers both the
+  // POST /shifts/:id/auto-assign route and the hourly auto-assign scheduler.
+  try {
+    await scheduleStaffShiftMessages(shiftId);
+  } catch (schedErr) {
+    Sentry.captureException(schedErr, {
+      tags: { component: 'autoAssign', issue: 'staff-sms-schedule' },
+      extra: { shiftId },
+    });
+    console.error('[AutoAssign] staff SMS scheduling failed (non-blocking):', schedErr.message);
+  }
 
   return {
     approved,

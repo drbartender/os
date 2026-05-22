@@ -1,4 +1,5 @@
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { sendSMS, normalizePhone } = require('../utils/sms');
@@ -11,6 +12,7 @@ const { subtractMinutesFromTime } = require('../utils/setupTime');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError, PermissionError } = require('../utils/errors');
 const { ADMIN_URL } = require('../utils/urls');
+const { scheduleStaffShiftMessages } = require('../utils/staffShiftHandlers');
 
 const router = express.Router();
 
@@ -558,6 +560,18 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
   // If this assignment fills the shift, clear the proposal's last-minute hold.
   await clearHoldIfFullyStaffed(req.params.id);
 
+  // Schedule the day-before reminder + post-event thank-you SMS for everyone
+  // approved on this shift (idempotent). Best-effort: a scheduling failure
+  // must never break the assignment response.
+  try {
+    await scheduleStaffShiftMessages(req.params.id);
+  } catch (schedErr) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(schedErr, { tags: { route: 'shifts/assign', issue: 'staff-sms-schedule' } });
+    }
+    console.error('[shifts] staff SMS scheduling failed (non-blocking):', schedErr.message);
+  }
+
   res.status(201).json(request);
 }));
 
@@ -662,6 +676,16 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
     // linked proposal's last-minute hold if so. result.rows[0] is the updated
     // shift_request, so its shift_id is in hand (no extra lookup needed).
     await clearHoldIfFullyStaffed(result.rows[0].shift_id);
+
+    // Schedule staff reminder + thank-you SMS (idempotent, best-effort).
+    try {
+      await scheduleStaffShiftMessages(result.rows[0].shift_id);
+    } catch (schedErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(schedErr, { tags: { route: 'shifts/approve', issue: 'staff-sms-schedule' } });
+      }
+      console.error('[shifts] staff SMS scheduling failed (non-blocking):', schedErr.message);
+    }
   }
 
   res.json(result.rows[0]);
