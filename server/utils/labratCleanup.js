@@ -19,18 +19,38 @@ async function purgeLabratTestData() {
   try {
     await client.query('BEGIN');
 
-    // 1. Delete proposals whose client is a labrat client.
-    //    proposals.client_id is ON DELETE SET NULL, so without this step the
-    //    proposal rows would orphan when we delete the clients below. Better
-    //    to delete them outright — they're test fixtures.
-    const proposalsDeleted = await client.query(
-      `DELETE FROM proposals
+    // 1. Delete proposals whose client is a labrat client. invoices.proposal_id
+    //    is ON DELETE RESTRICT, so a bare proposal delete violates
+    //    invoices_proposal_id_fkey (Sentry DRBARTENDER-SERVER-K) — the invoice +
+    //    payment children must go first. proposal_addons / proposal_activity_log
+    //    CASCADE, so they need no explicit delete; scheduled_messages has no FK
+    //    to proposals but would orphan, so sweep it too.
+    const labratProposalIds = (await client.query(
+      `SELECT id FROM proposals
        WHERE client_id IN (
          SELECT id FROM clients
          WHERE email LIKE $1
            AND created_at < NOW() - INTERVAL '${AGE_INTERVAL}'
        )`,
       ['%@labrat.test'],
+    )).rows.map(r => r.id);
+
+    if (labratProposalIds.length > 0) {
+      await client.query(
+        `DELETE FROM invoice_payments
+         WHERE invoice_id IN (SELECT id FROM invoices WHERE proposal_id = ANY($1))`,
+        [labratProposalIds],
+      );
+      await client.query('DELETE FROM invoices WHERE proposal_id = ANY($1)', [labratProposalIds]);
+      await client.query('DELETE FROM proposal_payments WHERE proposal_id = ANY($1)', [labratProposalIds]);
+      await client.query(
+        "DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = ANY($1)",
+        [labratProposalIds],
+      );
+    }
+    const proposalsDeleted = await client.query(
+      'DELETE FROM proposals WHERE id = ANY($1)',
+      [labratProposalIds],
     );
     stats.proposals = proposalsDeleted.rowCount;
 
