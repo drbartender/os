@@ -65,10 +65,18 @@ async function scheduleBalanceReminders(proposalId) {
         scheduledFor: t3Before,
       });
     } else {
+      // Email halves.
       await scheduleMessage({ ...base, messageType: 'balance_reminder_non_autopay_t3', scheduledFor: t3Before });
       await scheduleMessage({ ...base, messageType: 'balance_due_today', scheduledFor: dueDay });
       await scheduleMessage({ ...base, messageType: 'balance_late_t1', scheduledFor: t1After });
       await scheduleMessage({ ...base, messageType: 'balance_late_t3', scheduledFor: t3After });
+      // SMS halves (Phase 3, spec 3.5 / 3.6). Non-autopay only — autopay
+      // clients get no balance SMS, matching the email side. `base` has
+      // channel:'email'; override per row to 'sms'.
+      const smsBase = { ...base, channel: 'sms' };
+      await scheduleMessage({ ...smsBase, messageType: 'balance_due_today_sms', scheduledFor: dueDay });
+      await scheduleMessage({ ...smsBase, messageType: 'balance_late_t1_sms', scheduledFor: t1After });
+      await scheduleMessage({ ...smsBase, messageType: 'balance_late_t3_sms', scheduledFor: t3After });
     }
   } catch (err) {
     if (process.env.SENTRY_DSN_SERVER) {
