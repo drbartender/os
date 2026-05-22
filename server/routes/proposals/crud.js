@@ -610,6 +610,28 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       }
     }
 
+    // Plan 2d / W2: re-anchor the New Year touch after a reschedule.
+    // new_year_hello has a computed Jan-2 anchor (offsetFromEventDate null), so
+    // reanchorPendingMessages (the in-transaction generic offset cascade) skips
+    // it. recomputeNewYearHelloForProposal uses the module-level pool, so it
+    // runs here: post-commit and best-effort, alongside the reschedule email.
+    // shouldSendRescheduleEmail is true exactly when a signed proposal was
+    // rescheduled, which is the only time a new_year_hello row can exist.
+    if (shouldSendRescheduleEmail) {
+      try {
+        const { recomputeNewYearHelloForProposal } = require('../../utils/marketingHandlers');
+        await recomputeNewYearHelloForProposal(parseInt(req.params.id, 10));
+      } catch (recomputeErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(recomputeErr, {
+            tags: { route: 'proposals/update', issue: 'new-year-recompute' },
+            extra: { proposalId: req.params.id },
+          });
+        }
+        console.error('new_year_hello recompute failed (non-blocking):', recomputeErr);
+      }
+    }
+
     // Return updated proposal (from the UPDATE ... RETURNING * above)
     res.json(updatedRow.rows[0]);
   } catch (err) {
