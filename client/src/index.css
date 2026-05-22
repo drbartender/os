@@ -5958,6 +5958,9 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 /* À la carte divider + accordion */
 .wz-acla { margin-top: 6px; }
 .wz-acla-divider { margin: 24px 0 12px; }
+/* Ornate divider inside the wz-card parchment surface: flip span to paper + deep-brown */
+.wz-card .divider-ornate::before { border-top-color: rgba(184, 146, 74, 0.7); }
+.wz-card .divider-ornate span { background: var(--card-bg); color: var(--deep-brown); }
 .wz-acla-lede {
   color: rgba(28, 22, 16, 0.7);
   font-style: italic;
