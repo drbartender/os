@@ -1,0 +1,117 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const t = require('./smsTemplates');
+
+// No SMS body may contain an em dash (the AI tell, per CLAUDE.md).
+function assertNoEmDash(str, label) {
+  assert.ok(!str.includes('—'), `${label} must not contain an em dash`);
+}
+
+test('initialProposalSms > greets, names the event, includes the link', () => {
+  const s = t.initialProposalSms({ eventTypeLabel: 'birthday party', eventDate: 'August 15', link: 'https://x/p/abc' });
+  assert.match(s, /^Hi, Dallas here\./);
+  assert.match(s, /birthday party/);
+  assert.match(s, /August 15/);
+  assert.match(s, /https:\/\/x\/p\/abc/);
+  assertNoEmDash(s, 'initialProposalSms');
+});
+
+test('signPayConfirmationSms > confirms the booking and the date', () => {
+  const s = t.signPayConfirmationSms({ eventDate: 'August 15' });
+  assert.match(s, /You're booked for August 15/);
+  assertNoEmDash(s, 'signPayConfirmationSms');
+});
+
+test('dripTouch1Sms > asks if they got the proposal', () => {
+  const s = t.dripTouch1Sms({ eventTypeLabel: 'wedding', eventDate: 'June 1' });
+  assert.match(s, /Did you get the proposal/);
+  assert.match(s, /wedding/);
+  assertNoEmDash(s, 'dripTouch1Sms');
+});
+
+test('dripTouch3Sms > offers a tweak before it books up', () => {
+  const s = t.dripTouch3Sms({ eventTypeLabel: 'wedding', eventDate: 'June 1', link: 'https://x/p/abc' });
+  assert.match(s, /tweak/);
+  assert.match(s, /https:\/\/x\/p\/abc/);
+  assertNoEmDash(s, 'dripTouch3Sms');
+});
+
+test('dripTouch5Sms > last check, includes link', () => {
+  const s = t.dripTouch5Sms({ eventDate: 'June 1', link: 'https://x/p/abc' });
+  assert.match(s, /Last check/);
+  assert.match(s, /https:\/\/x\/p\/abc/);
+  assertNoEmDash(s, 'dripTouch5Sms');
+});
+
+test('drinkPlanNudgeSms > points at planner and consult', () => {
+  const s = t.drinkPlanNudgeSms({ eventDate: 'June 1', plannerUrl: 'https://x/plan/abc', consultUrl: 'https://cal/x' });
+  assert.match(s, /lock in drinks/);
+  assert.match(s, /https:\/\/x\/plan\/abc/);
+  assertNoEmDash(s, 'drinkPlanNudgeSms');
+});
+
+test('drinkPlanNudgeSms > omits the consult clause when consultUrl is null', () => {
+  const s = t.drinkPlanNudgeSms({ eventDate: 'June 1', plannerUrl: 'https://x/plan/abc', consultUrl: null });
+  assert.ok(!s.includes('book a consult'), 'consult clause should be omitted');
+  assert.match(s, /https:\/\/x\/plan\/abc/);
+});
+
+test('balanceDueTodaySms > says due today and includes the link', () => {
+  const s = t.balanceDueTodaySms({ eventDate: 'June 1', link: 'https://x/p/abc' });
+  assert.match(s, /due today/);
+  assert.match(s, /https:\/\/x\/p\/abc/);
+  assertNoEmDash(s, 'balanceDueTodaySms');
+});
+
+test('balanceLateSms > t1 is gentle, t3 is firmer', () => {
+  const s1 = t.balanceLateSms({ eventDate: 'June 1', link: 'https://x/p/abc', daysLate: 1 });
+  const s3 = t.balanceLateSms({ eventDate: 'June 1', link: 'https://x/p/abc', daysLate: 3 });
+  assert.match(s1, /1 day past due/);
+  assert.match(s3, /3 days past due/);
+  assert.match(s3, /ASAP/);
+  assertNoEmDash(s1, 'balanceLateSms t1');
+  assertNoEmDash(s3, 'balanceLateSms t3');
+});
+
+test('paymentFailureSms > says it did not go through, includes link', () => {
+  const s = t.paymentFailureSms({ eventDate: 'June 1', link: 'https://x/p/abc' });
+  assert.match(s, /didn't go through/);
+  assert.match(s, /https:\/\/x\/p\/abc/);
+  assertNoEmDash(s, 'paymentFailureSms');
+});
+
+test('eventEveSms > names bartender, time, location, phone, setup minutes', () => {
+  const s = t.eventEveSms({
+    startTime: '6:00 PM CDT',
+    location: '123 Main St',
+    bartenderName: 'Sam',
+    bartenderPhone: '+13125550000',
+    setupMinutes: 60,
+  });
+  assert.match(s, /Sam/);
+  assert.match(s, /6:00 PM CDT/);
+  assert.match(s, /123 Main St/);
+  assert.match(s, /\+13125550000/);
+  assert.match(s, /60 minutes/);
+  assertNoEmDash(s, 'eventEveSms');
+});
+
+test('eventEveSms > omits the bartender clause when no bartender assigned', () => {
+  const s = t.eventEveSms({
+    startTime: '6:00 PM CDT',
+    location: '123 Main St',
+    bartenderName: null,
+    bartenderPhone: null,
+    setupMinutes: 60,
+  });
+  assert.ok(!s.includes('direct number'), 'phone clause should be omitted');
+  assert.match(s, /6:00 PM CDT/);
+});
+
+test('rescheduleSms > gives the new details', () => {
+  const s = t.rescheduleSms({ newDate: 'July 4', newStartTime: '7:00 PM', newLocation: '5 Oak Ave' });
+  assert.match(s, /has been updated/);
+  assert.match(s, /July 4/);
+  assert.match(s, /5 Oak Ave/);
+  assertNoEmDash(s, 'rescheduleSms');
+});
