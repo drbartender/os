@@ -293,6 +293,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/:id/requests` | Staffing | Get all requests for a shift |
 | PUT | `/requests/:requestId` | Staffing | Approve or deny a request (sends SMS on approve) |
 | POST | `/:id/auto-assign` | Staffing | Run auto-assign algorithm (dry_run for preview, or execute to approve top candidates) |
+| POST | `/:id/cancel-or-unassign` | Staffing | Cancel a shift or unassign one staffer; optionally notifies affected staff via SMS |
 | GET | `/by-proposal/:proposalId` | Staffing | All shifts for a proposal (array — supports multi-shift events on EventDetailPage) |
 
 ### Admin — `/api/admin` (continued)
@@ -758,6 +759,8 @@ balance-reminder ladder scheduler (extracted from `stripe.js`). Immediate SMS
 sends (initial proposal, sign+pay confirmation, payment failure, reschedule) are
 best-effort hooks beside the existing email send, gated by
 `shouldSendImmediate({ channel: 'sms' })`.
+
+Staff-facing SMS (Phase 4a) is handled by `server/utils/staffShiftHandlers.js`: scheduled `shift_reminder` (day before the event) and `staff_thank_you` (after the event) message types, plus immediate schedule-change and cancellation/unassignment notices gated by an admin toggle on the event editor.
 
 **scheduler_health** — Heartbeat table for the Automated Communication Foundation schedulers. Each scheduler writes its `last_run_at` on every tick; a monitoring loop alerts via Sentry when any scheduler hasn't checked in within 2x its expected interval.
 - `scheduler_name` TEXT PRIMARY KEY — stable identifier (e.g. `proposal_reminders`, `shift_reminders`, `client_messages_dispatcher`)

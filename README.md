@@ -207,6 +207,7 @@ dr-bartender/
 │   │   ├── sms.js              # Twilio SMS wrapper
 │   │   ├── smsInbound.js       # Inbound-SMS processing: keyword/response-code detection, sender lookup, orchestrator
 │   │   ├── smsTemplates.js     # Client-facing automated SMS body templates
+│   │   ├── staffShiftHandlers.js # Staff-shift SMS: day-before reminder, post-event thank-you, schedule-change/cancel notices
 │   │   ├── storage.js          # Cloudflare R2 upload + signed URL helpers
 │   │   ├── stripeClient.js     # Central Stripe client factory (test-mode toggle, fail-closed)
 │   │   ├── tipHandleValidation.js # Validates + normalizes venmo/cashapp handles + paypal.me URLs before persist
