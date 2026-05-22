@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const {
   registerHandler,
+  getHandlerMeta,
   _clearHandlersForTest,
   dispatchPending,
 } = require('./scheduledMessageDispatcher');
@@ -349,4 +350,38 @@ test('dispatcher > suppresses a staff shift row when its linked proposal is arch
     await pool.query('DELETE FROM proposals WHERE id = $1', [ARCH_PROPOSAL_ID]);
     await pool.query('DELETE FROM users WHERE id = $1', [staffUserId]);
   }
+});
+
+test('registerHandler > stores priority, cooldownExempt, and multiChannel in handler meta', () => {
+  registerHandler('disp_test_meta_pri', async () => {}, {
+    priority: 2,
+    cooldownExempt: true,
+    multiChannel: true,
+    offsetFromEventDate: null,
+  });
+  const meta = getHandlerMeta('disp_test_meta_pri');
+  assert.strictEqual(meta.priority, 2);
+  assert.strictEqual(meta.cooldownExempt, true);
+  assert.strictEqual(meta.multiChannel, true);
+});
+
+test('registerHandler > defaults priority to 3, cooldownExempt and multiChannel to false', () => {
+  registerHandler('disp_test_meta_default', async () => {});
+  const meta = getHandlerMeta('disp_test_meta_default');
+  assert.strictEqual(meta.priority, 3);
+  assert.strictEqual(meta.cooldownExempt, false);
+  assert.strictEqual(meta.multiChannel, false);
+});
+
+test('registerHandler > rejects an out-of-range priority', () => {
+  assert.throws(
+    () => registerHandler('disp_test_meta_bad', async () => {}, { priority: 9 }),
+    /priority/
+  );
+});
+
+test('registerHandler > coerces a non-true multiChannel value to false', () => {
+  registerHandler('disp_test_meta_mc', async () => {}, { multiChannel: 'yes' });
+  const meta = getHandlerMeta('disp_test_meta_mc');
+  assert.strictEqual(meta.multiChannel, false);
 });

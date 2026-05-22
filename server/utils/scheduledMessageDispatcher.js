@@ -46,10 +46,25 @@ function registerHandler(messageType, handlerFn, options = {}) {
   if (typeof handlerFn !== 'function') {
     throw new Error(`registerHandler: handlerFn for '${messageType}' must be a function`);
   }
+  // priority: integer 1-5, 1 = highest. Default 3 (Lifecycle tier) so a handler
+  // registered without an explicit priority loses to operational touches but
+  // beats drip/marketing. cooldownExempt: when true, the dispatcher's
+  // overlap-prevention pass never defers this message_type (event_eve and
+  // balance_due_today MUST fire on their exact day, see spec 7.4).
+  // multiChannel: when true, this touch is scheduled as BOTH an email row and
+  // an SMS row; the channel-substitution step (spec 7.3) never substitutes a
+  // multiChannel row. If that row's own channel is dead it simply suppresses
+  // and the paired row on the other channel handles delivery.
+  const priority = (options.priority === undefined || options.priority === null)
+    ? 3
+    : Number(options.priority);
   const meta = {
     offsetFromEventDate: (options.offsetFromEventDate === null || options.offsetFromEventDate === undefined) ? null : Number(options.offsetFromEventDate),
     anchor: options.anchor || 'event_date',
     category: options.category || 'operational',
+    priority,
+    cooldownExempt: options.cooldownExempt === true,
+    multiChannel: options.multiChannel === true,
   };
   if (!VALID_ANCHORS.has(meta.anchor)) {
     throw new Error(`registerHandler: invalid anchor '${meta.anchor}' for '${messageType}'`);
@@ -59,6 +74,9 @@ function registerHandler(messageType, handlerFn, options = {}) {
   }
   if (meta.offsetFromEventDate !== null && !Number.isFinite(meta.offsetFromEventDate)) {
     throw new Error(`registerHandler: offsetFromEventDate must be a finite number or null for '${messageType}'`);
+  }
+  if (!Number.isInteger(meta.priority) || meta.priority < 1 || meta.priority > 5) {
+    throw new Error(`registerHandler: priority must be an integer 1-5 for '${messageType}'`);
   }
   handlers.set(messageType, handlerFn);
   handlerMeta.set(messageType, meta);
@@ -75,7 +93,7 @@ function registerHandler(messageType, handlerFn, options = {}) {
  * Gemini Finding 1.
  *
  * @param {string} messageType
- * @returns {{offsetFromEventDate: number|null, anchor: string, category: string} | null}
+ * @returns {{offsetFromEventDate: number|null, anchor: string, category: string, priority: number, cooldownExempt: boolean, multiChannel: boolean} | null}
  */
 function getHandlerMeta(messageType) {
   return handlerMeta.get(messageType) || null;
