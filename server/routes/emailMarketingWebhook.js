@@ -119,6 +119,36 @@ router.post('/resend', asyncHandler(async (req, res) => {
           [sendResult.rows[0].lead_id]
         );
       }
+
+      // Delivery-failure fallback (spec 7.5): a hard bounce on a client-facing
+      // address flips clients.email_status to 'bad' so the dispatcher's channel
+      // substitution falls future touches over to SMS. Client-facing emails are
+      // not tracked in email_sends, so match the recipient address from the
+      // Resend payload (data.to is an array) against clients.email.
+      //
+      // Only PERMANENT bounces mark an address bad. Resend's email.bounced is
+      // permanent-only today; if a future payload carries an explicit transient
+      // type, skip the flip. Complaints (spam reports) also flip email_status,
+      // continuing to email someone who reported us as spam is harmful.
+      const bounceTypeRaw = String(
+        data?.bounce?.type || data?.bounce_type || data?.type || ''
+      ).toLowerCase();
+      const isTransient = bounceTypeRaw.includes('transient')
+        || bounceTypeRaw.includes('temporary')
+        || bounceTypeRaw.includes('soft');
+      if (!isTransient) {
+        const recipients = Array.isArray(data?.to)
+          ? data.to
+          : (data?.to ? [data.to] : []);
+        for (const addr of recipients) {
+          if (!addr || typeof addr !== 'string') continue;
+          await pool.query(
+            `UPDATE clients SET email_status = 'bad'
+              WHERE LOWER(email) = LOWER($1) AND email_status <> 'bad'`,
+            [addr.trim()]
+          );
+        }
+      }
     }
 
     // Mark webhook as processed
