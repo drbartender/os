@@ -7,7 +7,9 @@ const {
   computeShiftReminderScheduledFor,
   computeStaffThankYouScheduledFor,
   scheduleStaffShiftMessages,
+  registerStaffShiftHandlers,
 } = require('./staffShiftHandlers');
+const { dispatchPending } = require('./scheduledMessageDispatcher');
 
 // Negative fixture IDs so parallel test files don't collide.
 const TEST_CLIENT_ID = -7401;
@@ -187,4 +189,76 @@ test('scheduleStaffShiftMessages > schedules for a second staffer added later', 
   );
   assert.strictEqual(rows.length, 2);
   for (const r of rows) assert.strictEqual(Number(r.n), 2);
+});
+
+test('dispatcher > shift_reminder marks sent for a staffer with a phone', async () => {
+  registerStaffShiftHandlers();
+  await seedShift();
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, preferred_name, phone)
+     VALUES ($1, 'Sam', '5555550111')
+     ON CONFLICT (user_id) DO UPDATE SET phone = EXCLUDED.phone, preferred_name = EXCLUDED.preferred_name`,
+    [TEST_USER_ID_A]
+  );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'shift', 'shift_reminder', 'staff', $2, 'sms', NOW() - INTERVAL '1 minute')`,
+    [TEST_SHIFT_ID, TEST_USER_ID_A]
+  );
+
+  await dispatchPending();
+
+  const { rows } = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE entity_type = 'shift' AND entity_id = $1 AND message_type = 'shift_reminder'",
+    [TEST_SHIFT_ID]
+  );
+  assert.strictEqual(rows[0].status, 'sent');
+
+  await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [TEST_USER_ID_A]);
+});
+
+test('dispatcher > shift_reminder marks failed when the staffer has no phone', async () => {
+  registerStaffShiftHandlers();
+  await seedShift();
+  // No contractor_profiles row for staffer A → handler throws "no phone".
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'shift', 'shift_reminder', 'staff', $2, 'sms', NOW() - INTERVAL '1 minute')`,
+    [TEST_SHIFT_ID, TEST_USER_ID_A]
+  );
+
+  await dispatchPending();
+
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE entity_type = 'shift' AND entity_id = $1 AND message_type = 'shift_reminder'",
+    [TEST_SHIFT_ID]
+  );
+  assert.strictEqual(rows[0].status, 'failed');
+  assert.ok(rows[0].error_message.includes('no phone'));
+});
+
+test('dispatcher > staff_thank_you marks sent for a staffer with a phone', async () => {
+  registerStaffShiftHandlers();
+  await seedShift();
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, preferred_name, phone)
+     VALUES ($1, 'Sam', '5555550111')
+     ON CONFLICT (user_id) DO UPDATE SET phone = EXCLUDED.phone, preferred_name = EXCLUDED.preferred_name`,
+    [TEST_USER_ID_A]
+  );
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'shift', 'staff_thank_you', 'staff', $2, 'sms', NOW() - INTERVAL '1 minute')`,
+    [TEST_SHIFT_ID, TEST_USER_ID_A]
+  );
+
+  await dispatchPending();
+
+  const { rows } = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE entity_type = 'shift' AND entity_id = $1 AND message_type = 'staff_thank_you'",
+    [TEST_SHIFT_ID]
+  );
+  assert.strictEqual(rows[0].status, 'sent');
+
+  await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [TEST_USER_ID_A]);
 });
