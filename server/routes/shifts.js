@@ -12,7 +12,7 @@ const { subtractMinutesFromTime } = require('../utils/setupTime');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError, PermissionError } = require('../utils/errors');
 const { ADMIN_URL } = require('../utils/urls');
-const { scheduleStaffShiftMessages } = require('../utils/staffShiftHandlers');
+const { scheduleStaffShiftMessages, notifyStaffOfCancellation } = require('../utils/staffShiftHandlers');
 
 const router = express.Router();
 
@@ -477,6 +477,111 @@ router.delete('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
   const result = await pool.query('DELETE FROM shifts WHERE id = $1 RETURNING id', [req.params.id]);
   if (!result.rows[0]) throw new NotFoundError('Shift not found.');
   res.json({ success: true });
+}));
+
+/**
+ * POST /shifts/:id/cancel-or-unassign — first-class cancel / unassign action.
+ *
+ * mode='cancel'   — sets shifts.status='cancelled' and denies every non-denied
+ *                   shift_requests row. Affected set = currently-approved staff.
+ * mode='unassign' — requires `user_id`. Flips that staffer's approved request
+ *                   to 'denied'. Affected set = that one staffer.
+ *
+ * Pending shift_reminder / staff_thank_you rows for the affected staffer(s) are
+ * suppressed.
+ *
+ * Staff notification (spec 3.18) is admin-toggled and best-effort: when
+ * notify_assigned_staff is true, fires SMS/email per notify_sms / notify_email
+ * AFTER commit. Both sub-flags default false.
+ */
+router.post('/:id/cancel-or-unassign', auth, requireStaffing, asyncHandler(async (req, res) => {
+  const { mode, user_id, notify_assigned_staff, notify_sms, notify_email } = req.body;
+  if (mode !== 'cancel' && mode !== 'unassign') {
+    throw new ValidationError({ mode: "mode must be 'cancel' or 'unassign'." });
+  }
+  const shiftId = parseInt(req.params.id, 10);
+  if (Number.isNaN(shiftId)) throw new ValidationError({ id: 'Invalid shift id.' });
+
+  let unassignUserId = null;
+  if (mode === 'unassign') {
+    unassignUserId = parseInt(user_id, 10);
+    if (Number.isNaN(unassignUserId)) {
+      throw new ValidationError({ user_id: 'user_id is required to unassign a staffer.' });
+    }
+  }
+
+  const dbClient = await pool.connect();
+  let affectedUserIds = [];
+  const kind = mode === 'cancel' ? 'cancelled' : 'unassigned';
+  try {
+    await dbClient.query('BEGIN');
+
+    const shiftRes = await dbClient.query('SELECT id FROM shifts WHERE id = $1', [shiftId]);
+    if (!shiftRes.rows[0]) throw new NotFoundError('Shift not found.');
+
+    if (mode === 'cancel') {
+      const approved = await dbClient.query(
+        "SELECT user_id FROM shift_requests WHERE shift_id = $1 AND status = 'approved'",
+        [shiftId]
+      );
+      affectedUserIds = approved.rows.map((r) => r.user_id);
+      await dbClient.query("UPDATE shifts SET status = 'cancelled' WHERE id = $1", [shiftId]);
+      await dbClient.query(
+        "UPDATE shift_requests SET status = 'denied' WHERE shift_id = $1 AND status != 'denied'",
+        [shiftId]
+      );
+      await dbClient.query(
+        `UPDATE scheduled_messages SET status = 'suppressed', error_message = 'shift cancelled'
+          WHERE entity_type = 'shift' AND entity_id = $1
+            AND message_type IN ('shift_reminder', 'staff_thank_you')
+            AND status = 'pending'`,
+        [shiftId]
+      );
+    } else {
+      const upd = await dbClient.query(
+        "UPDATE shift_requests SET status = 'denied' WHERE shift_id = $1 AND user_id = $2 AND status = 'approved' RETURNING id",
+        [shiftId, unassignUserId]
+      );
+      if (!upd.rows[0]) {
+        throw new NotFoundError('No approved assignment found for that staffer on this shift.');
+      }
+      affectedUserIds = [unassignUserId];
+      await dbClient.query(
+        `UPDATE scheduled_messages SET status = 'suppressed', error_message = 'staff unassigned'
+          WHERE entity_type = 'shift' AND entity_id = $1
+            AND recipient_type = 'staff' AND recipient_id = $2
+            AND message_type IN ('shift_reminder', 'staff_thank_you')
+            AND status = 'pending'`,
+        [shiftId, unassignUserId]
+      );
+    }
+
+    await dbClient.query('COMMIT');
+  } catch (err) {
+    try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
+    throw err;
+  } finally {
+    dbClient.release();
+  }
+
+  if (notify_assigned_staff === true && (notify_sms === true || notify_email === true)) {
+    try {
+      await notifyStaffOfCancellation({
+        shiftId,
+        staffUserIds: affectedUserIds,
+        kind,
+        sms: notify_sms === true,
+        email: notify_email === true,
+      });
+    } catch (notifyErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(notifyErr, { tags: { route: 'shifts/cancel-or-unassign', issue: 'staff-notify' } });
+      }
+      console.error('[shifts] cancel/unassign staff notify failed (non-blocking):', notifyErr.message);
+    }
+  }
+
+  res.json({ success: true, mode, affected_staff: affectedUserIds.length });
 }));
 
 /** POST /shifts/:id/assign — admin manually assigns a staff member */

@@ -28,6 +28,7 @@ const { subtractMinutesFromTime } = require('./setupTime');
 const { PUBLIC_SITE_URL } = require('./urls');
 const { registerHandler } = require('./scheduledMessageDispatcher');
 const { sendAndLogSms } = require('./sms');
+const { sendEmail } = require('./email');
 const smsTemplates = require('./smsTemplates');
 
 // ─── Timing helpers ──────────────────────────────────────────────
@@ -447,6 +448,91 @@ function registerStaffShiftHandlers() {
   });
 }
 
+// ─── Immediate staff notification hooks ──────────────────────────
+
+/**
+ * Notify a set of staffers that a shift was cancelled or a staffer was
+ * unassigned (spec 3.18). Sends SMS and/or email per the channel flags.
+ * Best-effort throughout — never rethrows.
+ *
+ * @param {Object} args
+ * @param {number} args.shiftId
+ * @param {number[]} args.staffUserIds
+ * @param {'cancelled'|'unassigned'} args.kind
+ * @param {boolean} args.sms
+ * @param {boolean} args.email
+ * @returns {Promise<{smsSent: number, emailSent: number}>}
+ */
+async function notifyStaffOfCancellation({ shiftId, staffUserIds, kind, sms, email }) {
+  const result = { smsSent: 0, emailSent: 0 };
+  if ((!sms && !email) || !Array.isArray(staffUserIds) || staffUserIds.length === 0) {
+    return result;
+  }
+  try {
+    for (const userId of staffUserIds) {
+      const ctx = await loadStaffShiftContext(shiftId, userId);
+      if (!ctx) continue;
+      const eventTypeLabel = getEventTypeLabel({
+        event_type: ctx.event_type, event_type_custom: ctx.event_type_custom,
+      });
+      const eventDateLocal = formatEventDateLong(ctx);
+
+      if (sms && ctx.staff_phone) {
+        try {
+          await sendAndLogSms({
+            to: ctx.staff_phone,
+            body: smsTemplates.staffCancellationSms({ eventTypeLabel, eventDateLocal, kind }),
+            clientId: null,
+            messageType: kind === 'unassigned' ? 'staff_unassignment_notice' : 'staff_cancellation_notice',
+            recipientName: ctx.staff_name || null,
+          });
+          result.smsSent += 1;
+        } catch (smsErr) {
+          Sentry.captureException(smsErr, {
+            tags: { component: 'staffShiftHandlers', step: 'notifyStaffOfCancellation', channel: 'sms' },
+            extra: { shiftId, userId },
+          });
+          console.error('[staffShiftHandlers] cancellation SMS failed (non-blocking):', smsErr.message);
+        }
+      }
+
+      if (email) {
+        const u = await pool.query('SELECT email FROM users WHERE id = $1', [userId]);
+        const staffEmail = u.rows[0]?.email;
+        if (staffEmail) {
+          const verb = kind === 'unassigned'
+            ? 'your shift is no longer needed'
+            : 'has been cancelled';
+          try {
+            await sendEmail({
+              to: staffEmail,
+              subject: `Update from Dr. Bartender: ${eventTypeLabel} on ${eventDateLocal}`,
+              html: `<p>Update from Dr. Bartender: the ${eventTypeLabel} on ${eventDateLocal}, ${verb}.</p>`
+                + `<p>Sorry for the disruption. Reach out with any questions.</p>`,
+              text: `Update from Dr. Bartender: the ${eventTypeLabel} on ${eventDateLocal}, ${verb}. `
+                + `Sorry for the disruption. Reach out with any questions.`,
+            });
+            result.emailSent += 1;
+          } catch (emailErr) {
+            Sentry.captureException(emailErr, {
+              tags: { component: 'staffShiftHandlers', step: 'notifyStaffOfCancellation', channel: 'email' },
+              extra: { shiftId, userId },
+            });
+            console.error('[staffShiftHandlers] cancellation email failed (non-blocking):', emailErr.message);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { component: 'staffShiftHandlers', step: 'notifyStaffOfCancellation' },
+      extra: { shiftId },
+    });
+    console.error('[staffShiftHandlers] notifyStaffOfCancellation failed (non-blocking):', err.message);
+  }
+  return result;
+}
+
 module.exports = {
   toCalendarYmd,
   parseClockTime,
@@ -460,4 +546,5 @@ module.exports = {
   handleShiftReminder,
   handleStaffThankYou,
   registerStaffShiftHandlers,
+  notifyStaffOfCancellation,
 };
