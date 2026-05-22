@@ -480,6 +480,18 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
       console.error('Public proposal emails failed (non-blocking):', emailErr);
     }
 
+    // Plan 2d: enroll the unsigned-proposal drip for a born-sent proposal.
+    // Top Shelf submits as 'draft' (proposalStatus !== 'sent') and is skipped.
+    if (proposalStatus === 'sent') {
+      try {
+        const { scheduleDripForProposal } = require('../../utils/marketingHandlers');
+        await scheduleDripForProposal(proposal.id);
+      } catch (dripErr) {
+        Sentry.captureException(dripErr, { tags: { route: 'proposals/public/submit', issue: 'drip-enroll' } });
+        console.error('Drip enrollment failed (non-blocking):', dripErr);
+      }
+    }
+
     res.status(201).json({ token: proposal.token, total: snapshot ? snapshot.total : 0, top_shelf: isTopShelfClass });
   } catch (err) {
     try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }

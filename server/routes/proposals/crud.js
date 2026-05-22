@@ -324,6 +324,19 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
       }
     }
 
+    // Plan 2d: enroll the unsigned-proposal drip for a born-sent proposal.
+    if (proposalStatus === 'sent') {
+      try {
+        const { scheduleDripForProposal } = require('../../utils/marketingHandlers');
+        await scheduleDripForProposal(proposal.id);
+      } catch (dripErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(dripErr, { tags: { route: 'proposals/create', issue: 'drip-enroll' } });
+        }
+        console.error('Drip enrollment failed (non-blocking):', dripErr);
+      }
+    }
+
     res.status(201).json(proposal);
   } catch (err) {
     try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
