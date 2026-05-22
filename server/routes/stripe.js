@@ -22,6 +22,7 @@ const { renderEventIcs } = require('../utils/icsCalendar');
 const { buildOrientationPayload } = require('../utils/orientationData');
 const { effectiveSetupMinutes } = require('../utils/setupTime');
 const { shouldSendImmediate } = require('../utils/messageSuppression');
+const { notifyClientPaymentFailed } = require('../utils/paymentFailedClientNotify');
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../utils/urls');
@@ -1470,46 +1471,10 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           }).catch(e => console.error('Failed payment notification email error:', e));
         }
 
-        // Client-side payment-failure email — throttle one per 24h per proposal
-        // to avoid spamming when Stripe retries multiple times against a bad card.
-        try {
-          const propRow = await pool.query(
-            `SELECT p.token, p.event_type, p.event_type_custom, c.name AS client_name, c.email AS client_email
-             FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
-             WHERE p.id = $1`,
-            [proposalId]
-          );
-          const pc = propRow.rows[0];
-          if (pc?.client_email) {
-            const throttle = await pool.query(
-              `SELECT 1 FROM proposal_activity_log
-               WHERE proposal_id = $1 AND action = 'payment_failed_email_client'
-                 AND created_at > NOW() - INTERVAL '24 hours'
-               LIMIT 1`,
-              [proposalId]
-            );
-            if (throttle.rowCount === 0) {
-              const tpl = emailTemplates.paymentFailedClient({
-                clientName: pc.client_name,
-                eventTypeLabel: eventLabelFor(pc),
-                last4: null, // not stored today — future task
-                proposalUrl: `${PUBLIC_SITE_URL}/proposal/${pc.token}`,
-              });
-              await sendEmail({ to: pc.client_email, ...tpl });
-              await pool.query(
-                `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'payment_failed_email_client', 'system', $2)`,
-                [proposalId, JSON.stringify({ payment_intent_id: intent.id })]
-              );
-            }
-          }
-        } catch (clientEmailErr) {
-          if (process.env.SENTRY_DSN_SERVER) {
-            Sentry.captureException(clientEmailErr, {
-              tags: { webhook: 'stripe', component: 'paymentFailedClient' },
-            });
-          }
-          console.error('Client payment-failure email failed (non-blocking):', clientEmailErr);
-        }
+        // Client-facing payment-failure email (throttled one per 24h per
+        // proposal). Extracted to a sibling util to keep this over-cap file
+        // from growing; the helper owns its own error handling.
+        await notifyClientPaymentFailed({ proposalId, paymentIntentId: intent.id });
       } catch (err) {
         if (process.env.SENTRY_DSN_SERVER) {
           Sentry.captureException(err, {
