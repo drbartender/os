@@ -48,6 +48,8 @@ let HOSTED_PKG_ID;    // a per_guest, non-class package
 let CLASS_PKG_ID;     // a bar_type='class' package
 let BYOB_BUNDLE_IDS;  // two distinct BYOB bundle addon ids (for the mutex case)
 let ADDITIONAL_BARTENDER_ID;
+let FOUNDATION_ID;    // the-foundation bundle (for the PATCH bundle-strip case)
+let ICE_DELIVERY_ID;  // ice-delivery-only — an add-on The Foundation covers
 
 // Email-stub call counter — reset per test that cares.
 let emailCalls = 0;
@@ -234,6 +236,18 @@ before(async () => {
   );
   assert.ok(bartender.rows[0], 'need the additional-bartender addon');
   ADDITIONAL_BARTENDER_ID = bartender.rows[0].id;
+
+  // The Foundation bundle + one add-on it covers — for the PATCH bundle-strip case.
+  const foundation = await pool.query(
+    `SELECT id FROM service_addons WHERE slug = 'the-foundation' AND is_active = true`
+  );
+  const iceDelivery = await pool.query(
+    `SELECT id FROM service_addons WHERE slug = 'ice-delivery-only' AND is_active = true`
+  );
+  assert.ok(foundation.rows[0], 'need the-foundation bundle addon');
+  assert.ok(iceDelivery.rows[0], 'need the ice-delivery-only addon');
+  FOUNDATION_ID = foundation.rows[0].id;
+  ICE_DELIVERY_ID = iceDelivery.rows[0].id;
 
   // Stub the dependency seam: count emails; optionally fail invoice creation.
   // Applied to BOTH routers — POST / lives in crud, PATCH /:id/status in
@@ -665,6 +679,49 @@ test('Case 13: POST with an existing client email reuses the client, no 500', as
     'SELECT COUNT(*)::int AS n FROM clients WHERE email = $1', [email]
   );
   assert.equal(clients.rows[0].n, 1, 'no duplicate client row should be created');
+});
+
+// ─── Case 14 — PATCH /:id runs the authoritative rule gate ──────────────────
+// H1: the edit path skipped validateProposalRules, so an edit could push a
+// proposal into a rule-violating state (here: two BYOB bundles) that POST
+// rejects. The PATCH handler must run the same gate POST does.
+test('Case 14: PATCH /:id with two BYOB bundles → 400, rule gate enforced', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal();
+
+  const res = await request('PATCH', `/api/proposals/${proposalId}`, {
+    token, body: { addon_ids: BYOB_BUNDLE_IDS },
+  });
+  assert.equal(res.status, 400, `expected 400, got ${res.status}: ${res.raw}`);
+  assert.equal(res.body.code, 'VALIDATION_ERROR');
+});
+
+// ─── Case 15 — PATCH /:id strips bundle-covered add-ons ─────────────────────
+// H1: the edit path skipped stripIncludedAddons, so editing a proposal to add a
+// bundle plus an add-on the bundle already covers double-charged the add-on.
+// Also asserts client_provides_glassware persists through the edit.
+test('Case 15: PATCH /:id strips a bundle-covered add-on and persists glassware', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal();
+
+  const res = await request('PATCH', `/api/proposals/${proposalId}`, {
+    token,
+    body: { addon_ids: [FOUNDATION_ID, ICE_DELIVERY_ID], client_provides_glassware: true },
+  });
+  assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
+
+  const addons = await pool.query(
+    'SELECT addon_id FROM proposal_addons WHERE proposal_id = $1', [proposalId]
+  );
+  const ids = addons.rows.map(r => r.addon_id);
+  assert.ok(ids.includes(FOUNDATION_ID), 'the bundle itself must stay');
+  assert.ok(!ids.includes(ICE_DELIVERY_ID), 'the bundle-covered add-on must be stripped');
+
+  const p = await pool.query(
+    'SELECT client_provides_glassware FROM proposals WHERE id = $1', [proposalId]
+  );
+  assert.equal(p.rows[0].client_provides_glassware, true,
+    'client_provides_glassware must persist through a PATCH edit');
 });
 
 // ─── Case 7 — adminWriteLimiter (run LAST; uses its own user) ───────────────

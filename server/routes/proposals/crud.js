@@ -407,7 +407,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     event_location, guest_count, package_id, num_bars, num_bartenders, addon_ids,
     addon_variants, addon_quantities, syrup_selections, event_type, event_type_category, event_type_custom,
     venue_name, venue_street, venue_city, venue_state, venue_zip,
-    adjustments, total_price_override, setup_minutes_before
+    adjustments, total_price_override, setup_minutes_before,
+    class_options, client_provides_glassware
   } = req.body;
 
   const dbClient = await pool.connect();
@@ -449,19 +450,24 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     if (!pkgResult.rows[0]) {
       throw new ValidationError({ package_id: 'Package not found' });
     }
+    const pkg = pkgResult.rows[0];
 
-    let addons = [];
-    const ids = addon_ids || [];
-    if (ids.length > 0) {
-      const addonResult = await dbClient.query(
-        'SELECT * FROM service_addons WHERE id = ANY($1) AND is_active = true', [ids]
-      );
-      addons = addonResult.rows.map(a => ({
+    // Mirror POST: fetch the full active add-on set (the bundle strip and the
+    // rule gate need bundle parents / requires_addon_slug parents), then strip
+    // bundle-covered add-ons. The edit path previously skipped both — an edit
+    // could double-charge a bundle-included add-on or land a rule-violating set.
+    const allAddonsResult = await dbClient.query(
+      'SELECT * FROM service_addons WHERE is_active = true'
+    );
+    const allActiveAddons = allAddonsResult.rows;
+    const strippedIds = stripIncludedAddons(addon_ids || [], allActiveAddons);
+    const addons = allActiveAddons
+      .filter(a => strippedIds.includes(a.id))
+      .map(a => ({
         ...a,
         variant: addon_variants?.[String(a.id)] || null,
         quantity: safeAddonQty(addon_quantities?.[String(a.id)]),
       }));
-    }
 
     // Use provided syrup selections, or fall back to existing snapshot syrups
     const oldSnapshot = old.pricing_snapshot || {};
@@ -499,8 +505,42 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         });
       }
     }
+    // Resolve class_options + glassware from the body, falling back to the
+    // persisted values when an event-only edit omits them.
+    const resolvedClassOptions = class_options !== undefined ? class_options : old.class_options;
+    const resolvedGlassware = client_provides_glassware !== undefined
+      ? !!client_provides_glassware
+      : old.client_provides_glassware;
+    const isClassBooking = pkg.bar_type === 'class';
+    const isTopShelfClass = isClassBooking
+      && !!resolvedClassOptions && resolvedClassOptions.top_shelf_requested === true;
+    // Top Shelf is class-only — reject the flag against a non-class package.
+    if (resolvedClassOptions && resolvedClassOptions.top_shelf_requested === true && !isClassBooking) {
+      throw new ValidationError({ class_options: 'Top Shelf is only valid for class packages' });
+    }
+    // Authoritative rule gate — mirrors POST. Skipped for Top Shelf (priced
+    // later, no rule inputs yet), exactly as the create path skips it.
+    if (!isTopShelfClass) {
+      validateProposalRules({
+        pkg,
+        guestCount: gc,
+        addonIds: strippedIds,
+        addons: allActiveAddons,
+        clientProvidesGlassware: resolvedGlassware,
+      });
+    }
+    // Normalize class_options for persistence — allowlist recognized keys, class
+    // bookings only. Mirrors POST / public.js cleanClassOptions.
+    const cleanClassOptions = isClassBooking && resolvedClassOptions && typeof resolvedClassOptions === 'object'
+      ? {
+          spirit_category: ['whiskey_bourbon', 'tequila_mezcal'].includes(resolvedClassOptions.spirit_category)
+            ? resolvedClassOptions.spirit_category : null,
+          top_shelf_requested: resolvedClassOptions.top_shelf_requested === true,
+        }
+      : null;
+
     const snapshot = calculateProposal({
-      pkg: pkgResult.rows[0], guestCount: gc, durationHours: dh, numBars: nb,
+      pkg, guestCount: gc, durationHours: dh, numBars: nb,
       numBartenders: num_bartenders, addons, syrupSelections: syrups,
       adjustments: adj, totalPriceOverride: tpo,
     });
@@ -521,7 +561,9 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         venue_city  = COALESCE($20, venue_city),
         venue_state = COALESCE($21, venue_state),
         venue_zip   = COALESCE($22, venue_zip),
-        setup_minutes_before = $23
+        setup_minutes_before = $23,
+        client_provides_glassware = $24,
+        class_options = $25
       WHERE id = $11
       RETURNING *
     `, [
@@ -533,7 +575,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       recomposedLocation,
       venue_name ?? null, venue_street ?? null, venue_city ?? null,
       venue_state ?? null, venue_zip ?? null,
-      setupMinutes ?? null
+      setupMinutes ?? null,
+      resolvedGlassware, cleanClassOptions ? JSON.stringify(cleanClassOptions) : null
     ]);
 
     // Replace proposal add-ons — single bulk INSERT
