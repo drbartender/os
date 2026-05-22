@@ -107,9 +107,15 @@ function request(method, path, { token, body } = {}) {
   });
 }
 
-// Count proposals rows — used by the rejection cases to prove zero were created.
-async function proposalCount() {
-  const r = await pool.query('SELECT COUNT(*)::int AS n FROM proposals');
+// Count proposals for a specific client email — scoped so a concurrent test
+// file creating proposals can't drift the assertion (a global COUNT did, which
+// made the rejection cases intermittently flaky under the parallel runner).
+async function proposalCountForEmail(email) {
+  const r = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM proposals p
+     JOIN clients c ON c.id = p.client_id WHERE c.email = $1`,
+    [email]
+  );
   return r.rows[0].n;
 }
 
@@ -414,34 +420,26 @@ test('Case 3: Top Shelf class + send_now true → 201 draft, no invoice, no emai
 
 // ─── Case 4 — hosted package below the 25-guest floor ───────────────────────
 test('Case 4: hosted package, guest_count 10 → 400, zero proposals created', async () => {
-  const before = await proposalCount();
-  const res = await request('POST', '/api/proposals', {
-    token: primaryToken,
-    body: validHostedBody({ guest_count: 10 }),
-  });
+  const body = validHostedBody({ guest_count: 10 });
+  const res = await request('POST', '/api/proposals', { token: primaryToken, body });
   assert.equal(res.status, 400, `expected 400, got ${res.status}: ${res.raw}`);
   assert.equal(res.body.code, 'VALIDATION_ERROR');
-  const after = await proposalCount();
-  assert.equal(after, before, 'no proposal row should be created on a rule violation');
+  assert.equal(await proposalCountForEmail(body.client_email), 0,
+    'no proposal row should be created on a rule violation');
 });
 
 // ─── Case 5 — two BYOB bundles (bundle mutex) ───────────────────────────────
 test('Case 5: two BYOB bundle ids → 400, zero proposals created', async () => {
-  const before = await proposalCount();
-  const res = await request('POST', '/api/proposals', {
-    token: primaryToken,
-    body: validHostedBody({ addon_ids: BYOB_BUNDLE_IDS }),
-  });
+  const body = validHostedBody({ addon_ids: BYOB_BUNDLE_IDS });
+  const res = await request('POST', '/api/proposals', { token: primaryToken, body });
   assert.equal(res.status, 400, `expected 400, got ${res.status}: ${res.raw}`);
   assert.equal(res.body.code, 'VALIDATION_ERROR');
-  const after = await proposalCount();
-  assert.equal(after, before, 'no proposal row should be created on the bundle mutex');
+  assert.equal(await proposalCountForEmail(body.client_email), 0,
+    'no proposal row should be created on the bundle mutex');
 });
 
 // ─── Case 6 — createInvoiceOnSend throws → txn rolls back ────────────────────
 test('Case 6: invoice failure rolls back the whole insert; retry yields exactly one', async () => {
-  const before = await proposalCount();
-
   // Fail the first invoice attempt. NOTE: the rolled-back attempt still BURNS
   // an invoice_number_seq value (sequences are non-transactional in Postgres) —
   // invoice numbers are allowed to have gaps, so this is expected, not a bug.
@@ -452,8 +450,7 @@ test('Case 6: invoice failure rolls back the whole insert; retry yields exactly 
   });
   trackResponse(failRes); // no-op on a non-201, but harmless
   assert.notEqual(failRes.status, 201, 'the request must error when the invoice fails');
-  const afterFail = await proposalCount();
-  assert.equal(afterFail, before,
+  assert.equal(await proposalCountForEmail(failBody.client_email), 0,
     'the proposal insert must roll back when createInvoiceOnSend throws');
 
   // A clean retry (invoice stub no longer throwing) succeeds exactly once.
@@ -526,17 +523,12 @@ test('Case 8: addon_quantities x2 doubles the addon line and persists quantity',
 
 // ─── Case 9 — Top Shelf flag on a NON-class package ─────────────────────────
 test('Case 9: top_shelf on a non-class package → 400, zero proposals created', async () => {
-  const before = await proposalCount();
-  const res = await request('POST', '/api/proposals', {
-    token: primaryToken,
-    body: validHostedBody({
-      class_options: { top_shelf_requested: true },
-    }),
-  });
+  const body = validHostedBody({ class_options: { top_shelf_requested: true } });
+  const res = await request('POST', '/api/proposals', { token: primaryToken, body });
   assert.equal(res.status, 400, `expected 400, got ${res.status}: ${res.raw}`);
   assert.equal(res.body.code, 'VALIDATION_ERROR');
-  const after = await proposalCount();
-  assert.equal(after, before, 'no proposal row should be created when Top Shelf hits a non-class package');
+  assert.equal(await proposalCountForEmail(body.client_email), 0,
+    'no proposal row should be created when Top Shelf hits a non-class package');
 });
 
 // ─── Case 10 — PATCH /:id/status → 'sent' on a draft ────────────────────────
