@@ -8,6 +8,7 @@ const { getBookingWindow } = require('../utils/bookingWindow');
 const { notifyLastMinuteBooking } = require('../utils/lastMinuteAlert');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
+const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { calculateSyrupCost } = require('../utils/pricingEngine');
 const {
   createBalanceInvoice,
@@ -1026,19 +1027,17 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           await sendEmail({ to: pi.client_email, ...tpl });
         }
       }
-      const adminEmail = process.env.ADMIN_EMAIL;
-      if (adminEmail) {
-        const adminUrl = `${ADMIN_URL}/proposals/${proposalId}`;
-        // Admin notification consolidation: the standalone clientSignedAdmin fires
-        // from the public-token signing route. In the canonical sign+pay coupled
-        // flow, the payment arrives within ~6 hours of the signature, and the
-        // post-commit notifier here suppresses the standalone paymentReceivedAdmin
-        // in favor of signedAndPaidAdmin. Spec section 6.
-        const tpl = isCoupledSigning
-          ? emailTemplates.signedAndPaidAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl })
-          : emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
-        await sendEmail({ to: adminEmail, ...tpl });
-      }
+      // Admin notification consolidation: the standalone clientSignedAdmin fires
+      // from the public-token signing route. In the canonical sign+pay coupled
+      // flow, the payment arrives within ~6 hours of the signature, and the
+      // post-commit notifier here suppresses the standalone paymentReceivedAdmin
+      // in favor of signedAndPaidAdmin (urgent_booking); a standalone balance
+      // payment routes to routine_finance. Spec section 6.
+      const adminUrl = `${ADMIN_URL}/proposals/${proposalId}`;
+      const adminTpl = isCoupledSigning
+        ? emailTemplates.signedAndPaidAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl })
+        : emailTemplates.paymentReceivedAdmin({ clientName: pi?.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, proposalId, adminUrl });
+      await notifyAdminCategory({ category: isCoupledSigning ? 'urgent_booking' : 'routine_finance', subject: adminTpl.subject, emailHtml: adminTpl.html, emailText: adminTpl.text });
     } catch (emailErr) {
       if (process.env.SENTRY_DSN_SERVER) {
         Sentry.captureException(emailErr, {
@@ -1410,23 +1409,18 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         ]);
         console.warn(`Payment FAILED (${paymentType}) for proposal ${proposalId}: ${intent.last_payment_error?.message || 'unknown'}`);
 
-        // Notify admin of failed payment
-        const adminEmail = process.env.ADMIN_EMAIL;
-        if (adminEmail) {
-          const payInfo = await pool.query(`
-            SELECT p.event_type, p.event_type_custom, c.name AS client_name
-            FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
-            WHERE p.id = $1
-          `, [proposalId]);
-          const pi = payInfo.rows[0];
-          await sendEmail({
-            to: adminEmail,
-            subject: `Payment Failed — ${pi?.client_name || 'Unknown'} (${eventLabelFor(pi)})`,
-            html: `<p>A ${paymentType} payment of $${(intent.amount / 100).toFixed(2)} failed for <strong>${pi?.client_name || 'Unknown'}</strong>.</p>
-                   <p><strong>Reason:</strong> ${intent.last_payment_error?.message || 'Unknown error'}</p>
-                   <p><a href="${ADMIN_URL}/proposals/${proposalId}">View Proposal</a></p>`,
-          }).catch(e => console.error('Failed payment notification email error:', e));
-        }
+        // Notify admins subscribed to payment_failure of a failed payment.
+        const payInfo = await pool.query(`SELECT p.event_type, p.event_type_custom, c.name AS client_name FROM proposals p LEFT JOIN clients c ON c.id = p.client_id WHERE p.id = $1`, [proposalId]);
+        const failPi = payInfo.rows[0];
+        const failReason = intent.last_payment_error?.message || 'Unknown error';
+        const failAmount = `$${(intent.amount / 100).toFixed(2)}`;
+        const failClient = failPi?.client_name || 'Unknown';
+        await notifyAdminCategory({
+          category: 'payment_failure',
+          subject: `Payment failed: ${failClient} (${eventLabelFor(failPi)})`,
+          emailHtml: `<p>A ${paymentType} payment of ${failAmount} failed for <strong>${failClient}</strong>.</p><p><strong>Reason:</strong> ${failReason}</p><p><a href="${ADMIN_URL}/proposals/${proposalId}">View Proposal</a></p>`,
+          emailText: `A ${paymentType} payment of ${failAmount} failed for ${failClient}. Reason: ${failReason}. ${ADMIN_URL}/proposals/${proposalId}`,
+        });
 
         // Client-facing payment-failure email (throttled one per 24h per
         // proposal). Extracted to a sibling util to keep this over-cap file

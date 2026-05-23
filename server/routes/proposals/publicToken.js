@@ -4,6 +4,7 @@ const { pool } = require('../../db');
 const { publicLimiter } = require('../../middleware/rateLimiters');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
+const { notifyAdminCategory } = require('../../utils/adminNotifications');
 const { ADMIN_URL } = require('../../utils/urls');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const { getBookingWindow } = require('../../utils/bookingWindow');
@@ -220,11 +221,15 @@ router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
         const tpl = emailTemplates.proposalSignedConfirmation({ clientName: pd.client_name, eventTypeLabel });
         await sendEmail({ to: pd.client_email, ...tpl });
       }
-      const adminEmail = process.env.ADMIN_EMAIL;
-      if (adminEmail && pd) {
+      if (pd) {
         const adminUrl = `${ADMIN_URL}/proposals/${pd.id}`;
         const tpl = emailTemplates.clientSignedAdmin({ clientName: pd.client_name, eventTypeLabel, proposalId: pd.id, adminUrl });
-        await sendEmail({ to: adminEmail, ...tpl });
+        await notifyAdminCategory({
+          category: 'urgent_booking',
+          subject: tpl.subject,
+          emailHtml: tpl.html,
+          emailText: tpl.text,
+        });
       }
     } catch (emailErr) {
       if (process.env.SENTRY_DSN_SERVER) {

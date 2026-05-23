@@ -49,6 +49,7 @@ const { calculateProposal } = require('../utils/pricingEngine');
 const { refreshUnlockedInvoices } = require('../utils/invoiceHelpers');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
+const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { shouldSendImmediate } = require('../utils/messageSuppression');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -415,25 +416,24 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
     // Post-commit notifications (best-effort; logged but never block response).
     if (pendingNotifications) {
       const { proposal: pn, snapshot, amountPaid, addonNames, clientName, clientEmail } = pendingNotifications;
-      const adminEmail = process.env.ADMIN_EMAIL;
       // Admin heads-up stays throttled to balance-changing submits — a
       // zero-impact addon submit (all package-covered) doesn't warrant a ping.
-      if (adminEmail && pendingNotifications.balanceChanged) {
+      if (pendingNotifications.balanceChanged) {
         const daysUntil = pn.event_date
           ? Math.ceil((new Date(pn.event_date) - new Date()) / (1000 * 60 * 60 * 24))
           : null;
         const isUrgent = daysUntil !== null && daysUntil <= 14;
-        sendEmail({
-          to: adminEmail,
-          subject: `${isUrgent ? 'URGENT: ' : ''}Drink Plan Submitted with Add-Ons — ${clientName}`,
-          html: `<p><strong>${clientName}</strong> submitted their drink plan.</p>
+        const dpSubject = `${isUrgent ? 'Urgent: ' : ''}Drink plan submitted with add-ons, ${clientName}`;
+        const dpHtml = `<p><strong>${clientName}</strong> submitted their drink plan.</p>
                  <p><strong>Add-ons selected:</strong> ${addonNames.join(', ')}</p>
                  <p><strong>New total:</strong> $${snapshot.total.toFixed(2)}</p>
                  <p><strong>Amount paid:</strong> $${amountPaid.toFixed(2)}</p>
                  <p><strong>Balance due:</strong> $${(snapshot.total - amountPaid).toFixed(2)}</p>
-                 ${isUrgent ? `<p style="color: red;"><strong>Event is in ${daysUntil} days!</strong></p>` : ''}
-                 <p><a href="${ADMIN_URL}/proposals/${pn.id}">View Proposal</a></p>`,
-        }).catch(emailErr => console.error('Admin notification email failed:', emailErr));
+                 ${isUrgent ? `<p style="color: red;"><strong>Event is in ${daysUntil} days.</strong></p>` : ''}
+                 <p><a href="${ADMIN_URL}/proposals/${pn.id}">View Proposal</a></p>`;
+        const dpText = `${clientName} submitted their drink plan with add-ons: ${addonNames.join(', ')}. New total $${snapshot.total.toFixed(2)}, balance due $${(snapshot.total - amountPaid).toFixed(2)}. ${ADMIN_URL}/proposals/${pn.id}`;
+        notifyAdminCategory({ category: 'routine_admin', subject: dpSubject, emailHtml: dpHtml, emailText: dpText })
+          .catch(emailErr => console.error('Admin notification failed:', emailErr));
       }
       if (clientEmail) {
         // Always-fire drink-plan-submitted confirmation. Balance language is

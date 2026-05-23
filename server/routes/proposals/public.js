@@ -3,8 +3,8 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { publicLimiter, publicReadLimiter } = require('../../middleware/rateLimiters');
 const { calculateProposal } = require('../../utils/pricingEngine');
-const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
+const { notifyAdminCategory } = require('../../utils/adminNotifications');
 const { ADMIN_URL } = require('../../utils/urls');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const asyncHandler = require('../../middleware/asyncHandler');
@@ -429,26 +429,28 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
 
     // Send email notifications (non-blocking)
     try {
-      const adminEmail = process.env.ADMIN_EMAIL;
       const adminUrl = `${ADMIN_URL}/proposals/${proposal.id}`;
 
       if (isTopShelfClass) {
         // Top Shelf: admin-only alert (pricing is TBD). Client already saw
         // "we'll follow up with custom pricing" on the wizard success screen.
-        if (adminEmail) {
-          const tpl = emailTemplates.topShelfClassRequestAdmin({
-            clientName: client_name.trim(),
-            clientEmail: client_email.trim().toLowerCase(),
-            clientPhone: client_phone || null,
-            spiritCategory: cleanClassOptions?.spirit_category || null,
-            guestCount: gc,
-            eventDate: event_date || null,
-            eventLocation: composedLocation || null,
-            proposalId: proposal.id,
-            adminUrl,
-          });
-          await sendEmail({ to: adminEmail, ...tpl });
-        }
+        const tpl = emailTemplates.topShelfClassRequestAdmin({
+          clientName: client_name.trim(),
+          clientEmail: client_email.trim().toLowerCase(),
+          clientPhone: client_phone || null,
+          spiritCategory: cleanClassOptions?.spirit_category || null,
+          guestCount: gc,
+          eventDate: event_date || null,
+          eventLocation: composedLocation || null,
+          proposalId: proposal.id,
+          adminUrl,
+        });
+        await notifyAdminCategory({
+          category: 'urgent_booking',
+          subject: tpl.subject,
+          emailHtml: tpl.html,
+          emailText: tpl.text,
+        });
       } else {
         // Client email via the shared helper. sendProposalSentEmail early-returns
         // unless the passed object has client_email — the INSERT ... RETURNING
@@ -470,15 +472,18 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
           { actorType: 'client' },
         );
 
-        if (adminEmail) {
-          const tpl2 = emailTemplates.clientSignedAdmin({
-            clientName: client_name.trim(),
-            eventTypeLabel,
-            proposalId: proposal.id,
-            adminUrl
-          });
-          await sendEmail({ to: adminEmail, subject: `New Website Quote: ${eventTypeLabel}`, html: tpl2.html });
-        }
+        const tpl2 = emailTemplates.clientSignedAdmin({
+          clientName: client_name.trim(),
+          eventTypeLabel,
+          proposalId: proposal.id,
+          adminUrl,
+        });
+        await notifyAdminCategory({
+          category: 'urgent_booking',
+          subject: `New Website Quote: ${eventTypeLabel}`,
+          emailHtml: tpl2.html,
+          emailText: tpl2.text,
+        });
       }
     } catch (emailErr) {
       Sentry.captureException(emailErr, { tags: { route: 'proposals/public/submit', phase: 'email' } });

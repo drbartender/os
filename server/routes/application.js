@@ -7,6 +7,7 @@ const { isValidUpload } = require('../utils/fileValidation');
 const { uploadFile } = require('../utils/storage');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
+const { notifyAdminCategory } = require('../utils/adminNotifications');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
 const { validatePhone } = require('../utils/phone');
@@ -251,11 +252,15 @@ router.post('/', auth, asyncHandler(async (req, res) => {
   // which is a potentially-stale snapshot from the auth middleware.
   if (!isPreHired) {
     try {
-      const adminEmail = process.env.ADMIN_EMAIL;
       const clientUrl = process.env.CLIENT_URL || 'https://admin.drbartender.com';
-      if (adminEmail) {
+      {
         const tpl = emailTemplates.newApplicationAdmin({ applicantName: full_name, applicantEmail: req.user.email, adminUrl: `${clientUrl}/admin/staff` });
-        await sendEmail({ to: adminEmail, ...tpl });
+        await notifyAdminCategory({
+          category: 'routine_hiring',
+          subject: tpl.subject,
+          emailHtml: tpl.html,
+          emailText: tpl.text,
+        });
       }
       if (req.user.email) {
         const tpl = emailTemplates.applicationReceivedConfirmation({ applicantName: full_name });

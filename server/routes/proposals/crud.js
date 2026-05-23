@@ -7,6 +7,7 @@ const { createEventShifts, syncShiftsFromProposal } = require('../../utils/event
 const { composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
+const { notifyAdminCategory } = require('../../utils/adminNotifications');
 const { createInvoiceOnSend, refreshUnlockedInvoices, createAdditionalInvoiceIfNeeded, linkPaymentToInvoice } = require('../../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../../utils/eventTypes');
 const { setupTimeDisplay } = require('../../utils/setupTime');
@@ -923,12 +924,8 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
       const tpl = emailTemplates.paymentReceivedClient({ clientName: pd.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType });
       await sendEmail({ to: pd.client_email, ...tpl });
     }
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (adminEmail) {
-      const adminUrl = `${ADMIN_URL}/proposals/${proposal.id}`;
-      const tpl = emailTemplates.paymentReceivedAdmin({ clientName: pd?.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType, proposalId: proposal.id, adminUrl });
-      await sendEmail({ to: adminEmail, ...tpl });
-    }
+    const tpl2 = emailTemplates.paymentReceivedAdmin({ clientName: pd?.client_name, eventTypeLabel, amount: amountFormatted, paymentType: payType, proposalId: proposal.id, adminUrl: `${ADMIN_URL}/proposals/${proposal.id}` });
+    await notifyAdminCategory({ category: 'routine_finance', subject: tpl2.subject, emailHtml: tpl2.html, emailText: tpl2.text });
   } catch (emailErr) {
     if (process.env.SENTRY_DSN_SERVER) {
       Sentry.captureException(emailErr, { tags: { route: 'proposals/payment', issue: 'email' } });

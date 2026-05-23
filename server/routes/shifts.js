@@ -7,6 +7,7 @@ const { geocodeAddress } = require('../utils/geocode');
 const { autoAssignShift } = require('../utils/autoAssign');
 const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
+const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { subtractMinutesFromTime } = require('../utils/setupTime');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -279,31 +280,33 @@ router.post('/:id/request', auth, requireOnboarded, asyncHandler(async (req, res
     RETURNING *
   `, [req.params.id, req.user.id, position || null, notes || null]);
 
-  // Notify admin of new shift request (non-blocking)
+  // Notify admins subscribed to urgent_staffing of a new shift request (non-blocking).
   try {
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (adminEmail) {
-      const shiftInfo = await pool.query(`
-        SELECT s.event_type, s.event_type_custom, s.event_date, cp.preferred_name
-        FROM shifts s LEFT JOIN contractor_profiles cp ON cp.user_id = $2
-        WHERE s.id = $1
-      `, [req.params.id, req.user.id]);
-      const si = shiftInfo.rows[0];
-      const staffName = si?.preferred_name || req.user.email || 'A staff member';
-      const eventDate = si?.event_date
-        ? new Date(si.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
-        : 'TBD';
-      const tpl = emailTemplates.shiftRequestAdmin({
-        staffName,
-        eventTypeLabel: getEventTypeLabel({ event_type: si?.event_type, event_type_custom: si?.event_type_custom }),
-        eventDate,
-        position: position || 'Bartender',
-        adminUrl: `${ADMIN_URL}/staffing`,
-      });
-      await sendEmail({ to: adminEmail, ...tpl });
-    }
+    const shiftInfo = await pool.query(`
+      SELECT s.event_type, s.event_type_custom, s.event_date, cp.preferred_name
+      FROM shifts s LEFT JOIN contractor_profiles cp ON cp.user_id = $2
+      WHERE s.id = $1
+    `, [req.params.id, req.user.id]);
+    const si = shiftInfo.rows[0];
+    const staffName = si?.preferred_name || req.user.email || 'A staff member';
+    const eventDate = si?.event_date
+      ? new Date(si.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
+      : 'TBD';
+    const tpl = emailTemplates.shiftRequestAdmin({
+      staffName,
+      eventTypeLabel: getEventTypeLabel({ event_type: si?.event_type, event_type_custom: si?.event_type_custom }),
+      eventDate,
+      position: position || 'Bartender',
+      adminUrl: `${ADMIN_URL}/staffing`,
+    });
+    await notifyAdminCategory({
+      category: 'urgent_staffing',
+      subject: tpl.subject,
+      emailHtml: tpl.html,
+      emailText: tpl.text,
+    });
   } catch (emailErr) {
-    console.error('Shift request email failed (non-blocking):', emailErr);
+    console.error('Shift request notification failed (non-blocking):', emailErr);
   }
 
   res.status(201).json(result.rows[0]);

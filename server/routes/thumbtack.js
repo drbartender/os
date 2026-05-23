@@ -5,6 +5,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('../utils/email');
 const { newThumbtackLeadAdmin, newThumbtackMessageAdmin, newThumbtackReviewAdmin } = require('../utils/emailTemplates');
+const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { ADMIN_URL } = require('../utils/urls');
 const asyncHandler = require('../middleware/asyncHandler');
 
@@ -286,21 +287,23 @@ router.post('/leads', asyncHandler(async (req, res) => {
 
     // Admin notification (non-blocking)
     try {
-      const adminEmail = process.env.ADMIN_EMAIL;
-      if (adminEmail) {
-        const adminUrl = clientId ? `${ADMIN_URL}/clients/${clientId}` : null;
-        const tpl = newThumbtackLeadAdmin({
-          customerName: lead.customerName,
-          customerPhone: lead.customerPhone,
-          category: lead.category,
-          description: lead.description,
-          location: [lead.locationCity, lead.locationState].filter(Boolean).join(', '),
-          eventDate: lead.eventDate,
-          details: lead.details,
-          adminUrl,
-        });
-        await sendEmail({ to: adminEmail, ...tpl });
-      }
+      const adminUrl = clientId ? `${ADMIN_URL}/clients/${clientId}` : null;
+      const tpl = newThumbtackLeadAdmin({
+        customerName: lead.customerName,
+        customerPhone: lead.customerPhone,
+        category: lead.category,
+        description: lead.description,
+        location: [lead.locationCity, lead.locationState].filter(Boolean).join(', '),
+        eventDate: lead.eventDate,
+        details: lead.details,
+        adminUrl,
+      });
+      await notifyAdminCategory({
+        category: 'routine_thumbtack',
+        subject: tpl.subject,
+        emailHtml: tpl.html,
+        emailText: tpl.text,
+      });
     } catch (emailErr) {
       if (process.env.SENTRY_DSN_SERVER) {
         Sentry.captureException(emailErr, {
