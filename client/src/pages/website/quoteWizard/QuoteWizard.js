@@ -413,17 +413,6 @@ export default function QuoteWizard() {
     }
   };
 
-  // Track which add-on descriptions are manually expanded
-  const [expandedAddons, setExpandedAddons] = useState(new Set());
-  const toggleExpand = (id) => {
-    setExpandedAddons(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   // Determine current step key
   const currentStepKey = steps[step]?.key;
 
@@ -688,17 +677,16 @@ export default function QuoteWizard() {
             <ExtrasStep
               form={form}
               setForm={setForm}
-              update={update}
+              addons={addons}
               groupedAddons={groupedAddons}
               toggleAddon={toggleAddon}
               guestCount={guestCount}
               glasswareRequirementMet={glasswareRequirementMet}
               realGlasswareAddon={realGlasswareAddon}
-              expandedAddons={expandedAddons}
-              toggleExpand={toggleExpand}
               isIncludedByBundle={(slug) => isIncludedByBundle(slug, form.addon_ids, addons)}
               isUnavailableByBundle={(slug) => isUnavailableByBundle(slug, form.addon_ids, addons)}
               onSkipExtras={skipExtras}
+              stepRoman={ROMANS[step]}
             />
           )}
 
