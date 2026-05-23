@@ -2,7 +2,7 @@ const express = require('express');
 const path = require('path');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { auth } = require('../middleware/auth');
+const { auth, requireAdminOrManager } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError } = require('../utils/errors');
 const { PUBLIC_SITE_URL } = require('../utils/urls');
@@ -11,6 +11,61 @@ const { normalizeTipHandlesInPlace } = require('../utils/tipHandleValidation');
 
 const router = express.Router();
 router.use(auth);
+
+// Notification categories (spec 8.3). The single source of truth for valid
+// keys is server/utils/adminNotifications.js VALID_CATEGORIES; mirrored here
+// as an array for the PATCH allowlist so this route does not depend on the
+// dispatcher module just for a constant.
+const NOTIFICATION_CATEGORIES = [
+  'urgent_booking',
+  'urgent_consult',
+  'urgent_staffing',
+  'urgent_client_reply',
+  'payment_failure',
+  'feedback',
+  'system_error',
+  'routine_admin',
+  'routine_thumbtack',
+  'routine_hiring',
+  'routine_finance',
+];
+const NOTIFICATION_CATEGORY_SET = new Set(NOTIFICATION_CATEGORIES);
+
+/**
+ * Merge a notification-preferences PATCH body into the current prefs object.
+ * Pure, no I/O. Throws ValidationError on an unknown key, a non-boolean
+ * value, or an empty patch. Exported for unit testing.
+ *
+ * @param {object} current the user's current notification_preferences.
+ * @param {object} patch the request body: { <category>: boolean, ... }.
+ * @returns {object} the merged preferences object.
+ */
+function applyNotificationPrefPatch(current, patch) {
+  const keys = Object.keys(patch || {});
+  if (keys.length === 0) {
+    throw new ValidationError(
+      { _form: 'Provide at least one category to update.' },
+      'Provide at least one category to update.'
+    );
+  }
+  const merged = { ...(current || {}) };
+  for (const k of keys) {
+    if (!NOTIFICATION_CATEGORY_SET.has(k)) {
+      throw new ValidationError(
+        { [k]: `Unknown notification category: ${k}` },
+        `Unknown notification category: ${k}`
+      );
+    }
+    if (typeof patch[k] !== 'boolean') {
+      throw new ValidationError(
+        { [k]: `Notification category ${k} must be a boolean.` },
+        `Notification category ${k} must be a boolean.`
+      );
+    }
+    merged[k] = patch[k];
+  }
+  return merged;
+}
 
 router.get('/tip-page', asyncHandler(async (req, res) => {
   const { rows } = await pool.query(`
@@ -151,4 +206,42 @@ router.get('/tips', asyncHandler(async (req, res) => {
   });
 }));
 
+// GET /api/me/notification-preferences: the current user's category subscriptions.
+router.get('/notification-preferences', asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT notification_preferences FROM users WHERE id = $1',
+    [req.user.id]
+  );
+  // Backfill any missing category to true so the UI always renders all 11
+  // toggles even if a historical row predates a category being added.
+  const stored = (rows[0] && rows[0].notification_preferences) || {};
+  const prefs = {};
+  for (const cat of NOTIFICATION_CATEGORIES) {
+    prefs[cat] = stored[cat] !== false;
+  }
+  res.json({ notification_preferences: prefs, categories: NOTIFICATION_CATEGORIES });
+}));
+
+// PATCH /api/me/notification-preferences: toggle one or more categories.
+// Admin/manager only: staff are never notification recipients.
+router.patch('/notification-preferences', requireAdminOrManager, asyncHandler(async (req, res) => {
+  const current = await pool.query(
+    'SELECT notification_preferences FROM users WHERE id = $1',
+    [req.user.id]
+  );
+  const merged = applyNotificationPrefPatch(
+    (current.rows[0] && current.rows[0].notification_preferences) || {},
+    req.body
+  );
+  const { rows } = await pool.query(
+    `UPDATE users SET notification_preferences = $1, updated_at = NOW()
+      WHERE id = $2
+      RETURNING notification_preferences`,
+    [JSON.stringify(merged), req.user.id]
+  );
+  res.json({ notification_preferences: rows[0].notification_preferences });
+}));
+
 module.exports = router;
+module.exports.applyNotificationPrefPatch = applyNotificationPrefPatch;
+module.exports.NOTIFICATION_CATEGORIES = NOTIFICATION_CATEGORIES;
