@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import CocktailMenuDashboard from './CocktailMenuDashboard';
+import NotificationSettings from './NotificationSettings';
 import ConfirmModal from '../../components/ConfirmModal';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
@@ -8,6 +9,7 @@ const TABS = [
   { key: 'drink-menu', label: 'Drink Menu' },
   { key: 'calendar', label: 'Calendar Sync' },
   { key: 'auto-assign', label: 'Auto-Assign' },
+  { key: 'notifications', label: 'Notifications' },
 ];
 
 function CalendarSyncSection() {
@@ -290,7 +292,7 @@ export default function SettingsDashboard() {
       <div className="page-header">
         <div>
           <div className="page-title">Settings</div>
-          <div className="page-subtitle">Drink menu, calendar sync, and auto-assign rules.</div>
+          <div className="page-subtitle">Drink menu, calendar sync, auto-assign rules, and notifications.</div>
         </div>
       </div>
 
@@ -310,6 +312,7 @@ export default function SettingsDashboard() {
       {activeTab === 'drink-menu' && <CocktailMenuDashboard embedded />}
       {activeTab === 'calendar' && <CalendarSyncSection />}
       {activeTab === 'auto-assign' && <AutoAssignSettings />}
+      {activeTab === 'notifications' && <NotificationSettings />}
     </div>
   );
 }
