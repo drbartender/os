@@ -432,6 +432,8 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | GET | `/tip-page` | Yes | Get the current bartender's tip-page record (token, display name, photo URL, payment rails, activation state). |
 | PATCH | `/tip-page` | Yes | Update bartender-editable fields on the tip page (display name override, Venmo/CashApp handles, opt-in flags). |
 | GET | `/tips` | Yes | Paginated list of recent successful tips for the current bartender (amount, source, created_at). |
+| GET | `/notification-preferences` | Yes | Current user's notification category subscriptions. |
+| PATCH | `/notification-preferences` | Admin/Manager | Toggle notification categories for the current admin/manager. |
 
 ### Admin Tip Pages — `/api/admin/contractors/:userId/tip-page`
 | Method | Path | Auth | Description |
@@ -761,6 +763,8 @@ best-effort hooks beside the existing email send, gated by
 `shouldSendImmediate({ channel: 'sms' })`.
 
 Staff-facing SMS (Phase 4a) is handled by `server/utils/staffShiftHandlers.js`: scheduled `shift_reminder` (day before the event) and `staff_thank_you` (after the event) message types, plus immediate schedule-change and cancellation/unassignment notices gated by an admin toggle on the event editor.
+
+Phase 4b adds three cross-cutting pieces. Overlap prevention: each handler carries a `priority` (1-5) and `cooldownExempt` flag; `dispatchPending` defers a colliding lower-priority touch 24h by writing `status='deferred'`, then reactivates deferred rows when they next come due. Delivery-failure fallback: a Resend hard bounce flips `clients.email_status='bad'` and a Twilio failure flips `phone_status='bad'`; the dispatcher substitutes the alternate channel for single-channel operational touches, and suspends a client's remaining automation when both channels are dead. Multi-admin notifications: `notifyAdminCategory` (in `server/utils/adminNotifications.js`) fans a notification out to every admin/manager whose `users.notification_preferences` subscribes them to the category, joining `contractor_profiles` for SMS.
 
 **scheduler_health** — Heartbeat table for the Automated Communication Foundation schedulers. Each scheduler writes its `last_run_at` on every tick; a monitoring loop alerts via Sentry when any scheduler hasn't checked in within 2x its expected interval.
 - `scheduler_name` TEXT PRIMARY KEY — stable identifier (e.g. `proposal_reminders`, `shift_reminders`, `client_messages_dispatcher`)
