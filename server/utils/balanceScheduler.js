@@ -2,7 +2,7 @@ const Sentry = require('@sentry/node');
 const { getStripe } = require('./stripeClient');
 const { pool } = require('../db');
 const { getEventTypeLabel } = require('./eventTypes');
-const { sendEmail } = require('./email');
+const { notifyAdminCategory } = require('./adminNotifications');
 
 // Rate-limit the no-stripe-client alert so Sentry isn't spammed every cycle.
 let stripeUnavailableLastLog = 0;
@@ -140,10 +140,13 @@ async function processAutopayCharges() {
               [proposal.id, logRowId]
             );
             if (recent.rowCount === 0) {
-              await sendEmail({
-                to: process.env.ADMIN_EMAIL || 'contact@drbartender.com',
-                subject: `Autopay failed: proposal #${proposal.id} ($${(balanceCents / 100).toFixed(2)})`,
-                html: `<p>Autopay attempt failed for proposal #${proposal.id}.</p><p>Error: ${err.message}</p>`,
+              const failSubject = `Autopay failed: proposal #${proposal.id} ($${(balanceCents / 100).toFixed(2)})`;
+              const failHtml = `<p>Autopay attempt failed for proposal #${proposal.id}.</p><p>Error: ${err.message}</p>`;
+              await notifyAdminCategory({
+                category: 'payment_failure',
+                subject: failSubject,
+                emailHtml: failHtml,
+                emailText: `Autopay attempt failed for proposal #${proposal.id}. Error: ${err.message}`,
               });
               // Mark THIS log row (not the most-recent via ORDER BY) as notified
               await pool.query(

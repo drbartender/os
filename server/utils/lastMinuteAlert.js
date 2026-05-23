@@ -3,6 +3,7 @@ const { pool } = require('../db');
 const { sendSMS, normalizePhone } = require('./sms');
 const { getEventTypeLabel } = require('./eventTypes');
 const { ADMIN_URL } = require('./urls');
+const { notifyAdminCategory } = require('./adminNotifications');
 
 /**
  * SMS blast for a ≤72h "staffing hold" booking. Admin gets a verify-staffing
@@ -28,19 +29,19 @@ async function notifyLastMinuteBooking(proposalId) {
     const time = p.event_start_time || 'TBD';
     const loc = p.event_location || 'location TBD';
 
-    // Admin leg — ADMIN_PHONE is optional; skip + log if unset.
-    const adminPhone = normalizePhone(process.env.ADMIN_PHONE || '');
-    if (adminPhone) {
-      try {
-        await sendSMS({
-          to: adminPhone,
-          body: `⚠️ Last-minute booking: ${label} ${date} ${time} — ${loc}. Verify staffing now. ${ADMIN_URL}/proposals/${p.id}`,
-        });
-      } catch (e) {
-        console.error('[lastMinuteAlert] admin SMS failed:', e.message);
-      }
-    } else {
-      console.log('[lastMinuteAlert] ADMIN_PHONE unset — admin SMS skipped');
+    // Admin leg: fan out to every admin/manager subscribed to urgent_booking,
+    // both email and SMS. No em dashes in the copy.
+    try {
+      const lmBody = `Last-minute booking: ${label} ${date} ${time}, ${loc}. Verify staffing now. ${ADMIN_URL}/proposals/${p.id}`;
+      await notifyAdminCategory({
+        category: 'urgent_booking',
+        subject: `Last-minute booking: ${label} on ${date}`,
+        emailHtml: `<p>${lmBody}</p>`,
+        emailText: lmBody,
+        smsBody: lmBody,
+      });
+    } catch (e) {
+      console.error('[lastMinuteAlert] admin notification failed:', e.message);
     }
 
     // Staff broad net — every approved contractor with a phone. Sequential

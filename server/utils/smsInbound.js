@@ -4,8 +4,7 @@
 
 const { pool } = require('../db');
 const Sentry = require('@sentry/node');
-const { sendSMS, normalizePhone } = require('./sms');
-const { sendEmail } = require('./email');
+const { notifyAdminCategory } = require('./adminNotifications');
 const { getEventTypeLabel } = require('./eventTypes');
 
 const STOP_WORDS = new Set(['stop', 'unsubscribe', 'end', 'cancel', 'quit']);
@@ -289,21 +288,20 @@ async function safeAlert(label, fn) {
   }
 }
 
-/** SMS the admin that a client texted in. ADMIN_PHONE unset means skipped. */
+/** Notify subscribed admins that a client texted in (urgent_client_reply). */
 async function alertInboundClient(client, body) {
   await safeAlert('inbound_client', async () => {
-    const adminPhone = normalizePhone(process.env.ADMIN_PHONE || '');
-    if (!adminPhone) {
-      console.log('[smsInbound] ADMIN_PHONE unset — inbound-client alert skipped');
-      return;
-    }
     const name = client.name || 'A client';
     // Truncate the inbound text so the outbound alert SMS cannot exceed
     // Twilio's 1600-char limit and fail to send.
     const snippet = (body || '').slice(0, 600);
-    await sendSMS({
-      to: adminPhone,
-      body: `${name} texted Dr. Bartender: "${snippet}". Reply in the admin Messages page.`,
+    const line = `${name} texted Dr. Bartender: "${snippet}". Reply in the admin Messages page.`;
+    await notifyAdminCategory({
+      category: 'urgent_client_reply',
+      subject: `${name} replied by text`,
+      emailHtml: `<p>${escapeHtml(line)}</p>`,
+      emailText: line,
+      smsBody: line,
     });
   });
 }
@@ -324,44 +322,30 @@ async function alertStaffCant(cant) {
     const eventLabel = getEventTypeLabel({ event_type: cant.eventType, event_type_custom: cant.eventTypeCustom });
     const who = cant.clientName ? `${eventLabel} for ${cant.clientName}` : `shift #${cant.shiftId}`;
     const dateStr = eventDate.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' });
-    const adminPhone = normalizePhone(process.env.ADMIN_PHONE || '');
+    const outLabel = daysOut < 0 ? 'past due' : `${daysOut} days out`;
 
-    // Event under 7 days out fires an urgent SMS, but ONLY if ADMIN_PHONE is set.
-    // If not set, fall through to email rather than dropping the alert.
-    if (daysOut < 7 && adminPhone) {
-      await sendSMS({
-        to: adminPhone,
-        body: `Staffing alert: a bartender dropped the ${who} on ${dateStr} (${daysOut < 0 ? 'past due' : daysOut + ' days out'}). The shift is re-opened and needs restaffing.`,
-      });
-      return;
-    }
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (!adminEmail) {
-      console.log('[smsInbound] ADMIN_PHONE and ADMIN_EMAIL both unset — staff-CANT alert skipped');
-      return;
-    }
-    await sendEmail({
-      to: adminEmail,
+    // Always email subscribed admins. An event under 7 days out is urgent
+    // enough to also text them. notifyAdminCategory sends SMS only when
+    // smsBody is provided, so the lead-time branch just gates that argument.
+    const smsLine = `Staffing alert: a bartender dropped the ${who} on ${dateStr} (${outLabel}). The shift is re-opened and needs restaffing.`;
+    await notifyAdminCategory({
+      category: 'urgent_staffing',
       subject: `Bartender dropped the ${dateStr} shift`,
-      html: `<p>A bartender texted CANT for the <strong>${escapeHtml(who)}</strong> on <strong>${escapeHtml(dateStr)}</strong> (${daysOut} days out).</p><p>The shift has been re-opened and needs restaffing. It will show as unstaffed on the Events dashboard.</p>`,
-      text: `A bartender texted CANT for the ${who} on ${dateStr} (${daysOut} days out). The shift has been re-opened and needs restaffing.`,
+      emailHtml: `<p>A bartender texted CANT for the <strong>${escapeHtml(who)}</strong> on <strong>${escapeHtml(dateStr)}</strong> (${escapeHtml(outLabel)}).</p><p>The shift has been re-opened and needs restaffing. It will show as unstaffed on the Events dashboard.</p>`,
+      emailText: `A bartender texted CANT for the ${who} on ${dateStr} (${outLabel}). The shift has been re-opened and needs restaffing.`,
+      ...(daysOut < 7 ? { smsBody: smsLine } : {}),
     });
   });
 }
 
-/** Email the admin about an inbound text the system took no action on. */
+/** Notify subscribed admins about an inbound text the system took no action on. */
 async function alertAdminEmail(subject, body) {
   await safeAlert('admin_email', async () => {
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (!adminEmail) {
-      console.log('[smsInbound] ADMIN_EMAIL unset — admin email skipped');
-      return;
-    }
-    await sendEmail({
-      to: adminEmail,
+    await notifyAdminCategory({
+      category: 'routine_admin',
       subject,
-      html: `<p>${escapeHtml(body)}</p>`,
-      text: body,
+      emailHtml: `<p>${escapeHtml(body)}</p>`,
+      emailText: body,
     });
   });
 }
