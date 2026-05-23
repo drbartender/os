@@ -4,6 +4,8 @@ const { sendEmail } = require('./email');
 const emailTemplates = require('./emailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
+const { resolveChannelFallback } = require('./channelFallback');
+const { suspendClientAutomation } = require('./clientAutomationSuspension');
 
 // ─── Handler registry ──────────────────────────────────────────
 // Keyed by message_type. Handler signature:
@@ -130,27 +132,11 @@ async function checkSuppression({ row, entity, recipient }) {
       return 'archived: linked proposal is archived, cascade rule applies';
     }
   }
-  // Per-channel comm-prefs (clients only — staff/admin prefs handled by later plans).
-  if (row.recipient_type === 'client' && recipient) {
-    if (row.channel === 'email') {
-      const prefs = recipient.communication_preferences || {};
-      if (prefs.email_enabled === false) {
-        return 'suppressed: client.communication_preferences.email_enabled is false';
-      }
-      if (recipient.email_status === 'bad') {
-        return 'suppressed: client.email_status is bad';
-      }
-    }
-    if (row.channel === 'sms') {
-      const prefs = recipient.communication_preferences || {};
-      if (prefs.sms_enabled === false) {
-        return 'suppressed: client.communication_preferences.sms_enabled is false';
-      }
-      if (recipient.phone_status === 'bad') {
-        return 'suppressed: client.phone_status is bad';
-      }
-    }
-  }
+  // Per-channel client comm-prefs / bad-contact handling moved to the
+  // resolveDelivery step in dispatchRow (Phase 4b): instead of a blunt
+  // suppress, a single-channel operational touch substitutes the alternate
+  // channel, and a both-channels-bad client has its automation suspended.
+  // Phase 4a's recipient_type IN ('staff','admin') branch (if present) stays.
   // Per-channel comm-prefs for staff and admin recipients (Phase 4a). Staff
   // SMS opt-out is set by the STOP keyword flipping
   // users.communication_preferences.sms_enabled. `users` has no
@@ -216,6 +202,123 @@ async function shouldDeferForOverlap(row) {
   return meta.priority >= strongestColliding;
 }
 
+// ─── Delivery resolution: channel substitution + both-bad suspension ──
+// Spec 7.3 / 7.5. For a client-recipient row, decide whether to send on the
+// row's channel, substitute the alternate channel, or suppress. On a
+// no-working-channel result the client's remaining automation is suspended.
+//
+// Multi-channel touches (handler meta multiChannel:true) are scheduled as BOTH
+// an email row and an SMS row. Spec 7.3 is explicit: a multi-channel touch gets
+// NO substitution. If a multiChannel row's own channel is dead, that row
+// simply suppresses and the paired row on the other channel still fires.
+// Substituting would put a second message on the live channel ON TOP OF the
+// paired row (e.g. a drink_plan_nudge email row substituted to SMS alongside
+// the real drink_plan_nudge_sms row, two SMS). Substitution applies only to
+// single-channel touches.
+//
+// Returns { proceed: true } when dispatch should continue (the row's `channel`
+// field may have been rewritten), or { proceed: false } when the row was
+// terminal-marked (suppressed) and dispatch must stop.
+async function resolveDelivery(row, recipient) {
+  // Staff/admin rows: Phase 4a owns their suppression in checkSuppression.
+  // Phase 4b's substitution rule is a client rule only.
+  if (row.recipient_type !== 'client' || !recipient) return { proceed: true };
+
+  const meta = handlerMeta.get(row.message_type);
+  const category = (meta && meta.category) || 'operational';
+  const isMultiChannel = !!(meta && meta.multiChannel);
+  const decision = resolveChannelFallback({ channel: row.channel, client: recipient, category });
+
+  if (decision.action === 'proceed') {
+    return { proceed: true };
+  }
+
+  if (decision.action === 'substitute') {
+    if (isMultiChannel) {
+      // Multi-channel touch (spec 7.3): no substitution. This row's own channel
+      // is dead, so suppress just this row, the paired row on the other channel
+      // handles delivery independently. Do NOT rewrite the channel.
+      await pool.query(
+        "UPDATE scheduled_messages SET status = 'suppressed', error_message = $2 WHERE id = $1",
+        [row.id, `suppressed: ${row.channel} unavailable for client; multi-channel touch, paired row handles the other channel (spec 7.3)`]
+      );
+      return { proceed: false };
+    }
+    // Single-channel touch: rewrite the row's channel in place so the handler
+    // and the final status='sent' write both reflect the channel actually
+    // used. Mutate the in-memory row too so the handler sees the substituted
+    // channel.
+    await pool.query(
+      'UPDATE scheduled_messages SET channel = $2 WHERE id = $1',
+      [row.id, decision.channel]
+    );
+    row.channel = decision.channel;
+    return { proceed: true };
+  }
+
+  // decision.action === 'suppress'
+  if (decision.reason === 'no_working_channel') {
+    // Both channels dead: suppress this row, suspend the rest of the client's
+    // automation, and fire one admin alert.
+    await pool.query(
+      "UPDATE scheduled_messages SET status = 'suppressed', error_message = $2 WHERE id = $1",
+      [row.id, 'suppressed: no working contact channel for client (spec 7.5)']
+    );
+    try {
+      await suspendClientAutomation(row.recipient_id);
+      await alertNoWorkingChannel(row.recipient_id, recipient);
+    } catch (suspendErr) {
+      Sentry.captureException(suspendErr, {
+        tags: { dispatcher: 'scheduled_messages', step: 'suspend_client' },
+        extra: { client_id: row.recipient_id },
+      });
+    }
+    return { proceed: false };
+  }
+
+  // marketing_disabled or any other suppress reason: just suppress this row.
+  await pool.query(
+    "UPDATE scheduled_messages SET status = 'suppressed', error_message = $2 WHERE id = $1",
+    [row.id, `suppressed: ${decision.reason || 'channel unavailable'}`]
+  );
+  return { proceed: false };
+}
+
+// Fire an admin alert that a client has no working contact channel. Uses the
+// Phase 4b admin-notification helper when available; falls back to a direct
+// email to ADMIN_EMAIL when Group 3 has not landed yet.
+async function alertNoWorkingChannel(clientId, recipient) {
+  const clientName = (recipient && recipient.name) || `client #${clientId}`;
+  const subject = 'No working contact channel for a client';
+  const bodyLine = `Automated messaging is suspended for ${clientName} (client #${clientId}). Both email and SMS are unavailable (opted out or bouncing). Update their contact details in the admin client page to resume automation.`;
+  let helper = null;
+  try {
+    helper = require('./adminNotifications');
+  } catch (_e) {
+    helper = null;
+  }
+  if (helper && typeof helper.notifyAdminCategory === 'function') {
+    await helper.notifyAdminCategory({
+      category: 'system_error',
+      subject,
+      emailHtml: `<p>${bodyLine}</p>`,
+      emailText: bodyLine,
+      smsBody: `Dr. Bartender: messaging suspended for ${clientName}. No working email or phone on file. Update their contact info.`,
+    });
+    return;
+  }
+  // Fallback: direct email to the single admin address.
+  const adminEmail = process.env.ADMIN_EMAIL;
+  if (adminEmail) {
+    await sendEmail({
+      to: adminEmail,
+      subject,
+      html: `<p>${bodyLine}</p>`,
+      text: bodyLine,
+    });
+  }
+}
+
 // ─── Entity / recipient lookups ──────────────────────────────
 
 async function lookupEntity(entityType, entityId) {
@@ -269,6 +372,21 @@ async function lookupRecipient(recipientType, recipientId) {
 async function dispatchRow(row) {
   let entity, recipient;
   try {
+    // Stale-row guard. The batch was SELECTed into memory at the top of the
+    // tick; a row processed earlier in the same batch may have flipped this
+    // row's status via suspendClientAutomation (the both-channels-bad cascade
+    // in resolveDelivery flips a client's other pending/deferred rows to
+    // 'suppressed'). Re-verify the row is still 'pending' before doing any
+    // work, if it is not, it was already handled this tick; skip it silently
+    // so resolveDelivery does not re-fire a duplicate admin alert.
+    const stillPending = await pool.query(
+      "SELECT 1 FROM scheduled_messages WHERE id = $1 AND status = 'pending'",
+      [row.id]
+    );
+    if (stillPending.rowCount === 0) {
+      return;
+    }
+
     [entity, recipient] = await Promise.all([
       lookupEntity(row.entity_type, row.entity_id),
       lookupRecipient(row.recipient_type, row.recipient_id),
@@ -288,6 +406,13 @@ async function dispatchRow(row) {
         "UPDATE scheduled_messages SET status = 'suppressed', error_message = $2 WHERE id = $1",
         [row.id, suppressionReason]
       );
+      return;
+    }
+
+    // Delivery resolution (spec 7.3 / 7.5): channel substitution + both-bad
+    // suspension. May rewrite row.channel, or terminal-mark the row and stop.
+    const delivery = await resolveDelivery(row, recipient);
+    if (!delivery.proceed) {
       return;
     }
 

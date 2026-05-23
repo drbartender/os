@@ -114,12 +114,14 @@ test('dispatcher > marks status suppressed when proposal is archived', async () 
   await pool.query("UPDATE proposals SET status = 'deposit_paid', archive_reason = NULL WHERE id = $1", [testProposalId]);
 });
 
-test('dispatcher > marks status suppressed when client has email_enabled=false', async () => {
-  const handler = mock.fn(async () => undefined);
+test('dispatcher > suppresses when the client has opted out of both channels', async () => {
+  const handler = mock.fn(async () => {});
   registerHandler('disp_test_optout', handler);
 
   await pool.query(
-    `UPDATE clients SET communication_preferences = jsonb_set(communication_preferences, '{email_enabled}', 'false'::jsonb) WHERE id = $1`,
+    `UPDATE clients SET communication_preferences =
+       jsonb_set(jsonb_set(communication_preferences, '{email_enabled}', 'false'::jsonb), '{sms_enabled}', 'false'::jsonb)
+     WHERE id = $1`,
     [testClientId]
   );
 
@@ -132,22 +134,23 @@ test('dispatcher > marks status suppressed when client has email_enabled=false',
   await dispatchPending();
   assert.strictEqual(handler.mock.callCount(), 0);
   const { rows } = await pool.query(
-    "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_optout'"
+    "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_optout'"
   );
   assert.strictEqual(rows[0].status, 'suppressed');
-  assert.match(rows[0].error_message, /email_enabled/);
 
   await pool.query(
-    `UPDATE clients SET communication_preferences = jsonb_set(communication_preferences, '{email_enabled}', 'true'::jsonb) WHERE id = $1`,
+    `UPDATE clients SET communication_preferences =
+       jsonb_set(jsonb_set(communication_preferences, '{email_enabled}', 'true'::jsonb), '{sms_enabled}', 'true'::jsonb)
+     WHERE id = $1`,
     [testClientId]
   );
 });
 
-test('dispatcher > marks status suppressed when client.email_status is bad', async () => {
-  const handler = mock.fn(async () => undefined);
+test('dispatcher > suppresses when both email_status and phone_status are bad', async () => {
+  const handler = mock.fn(async () => {});
   registerHandler('disp_test_bademail', handler);
 
-  await pool.query("UPDATE clients SET email_status = 'bad' WHERE id = $1", [testClientId]);
+  await pool.query("UPDATE clients SET email_status = 'bad', phone_status = 'bad' WHERE id = $1", [testClientId]);
 
   await pool.query(
     `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
@@ -158,12 +161,11 @@ test('dispatcher > marks status suppressed when client.email_status is bad', asy
   await dispatchPending();
   assert.strictEqual(handler.mock.callCount(), 0);
   const { rows } = await pool.query(
-    "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_bademail'"
+    "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_bademail'"
   );
   assert.strictEqual(rows[0].status, 'suppressed');
-  assert.match(rows[0].error_message, /email_status/);
 
-  await pool.query("UPDATE clients SET email_status = 'ok' WHERE id = $1", [testClientId]);
+  await pool.query("UPDATE clients SET email_status = 'ok', phone_status = 'ok' WHERE id = $1", [testClientId]);
 });
 
 test('dispatcher > skips rows whose scheduled_for is in the future', async () => {
@@ -571,4 +573,130 @@ test('overlap > a deferred row whose new time is due is reactivated and dispatch
     "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_reactivate'"
   );
   assert.strictEqual(rows[0].status, 'sent');
+});
+
+test('delivery > substitutes the channel when the primary channel is bad', async () => {
+  // email_status='bad', operational touch on email: row's channel is rewritten
+  // to 'sms' and the handler runs (the handler sees scheduledMessage.channel = 'sms').
+  let seenChannel = null;
+  registerHandler('disp_test_subst', async ({ scheduledMessage }) => {
+    seenChannel = scheduledMessage.channel;
+  }, { priority: 1, category: 'operational' });
+
+  await pool.query("UPDATE clients SET email_status = 'bad', phone_status = 'ok' WHERE id = $1", [testClientId]);
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_subst', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+  const { rows } = await pool.query(
+    "SELECT status, channel FROM scheduled_messages WHERE message_type = 'disp_test_subst'"
+  );
+  assert.strictEqual(rows[0].status, 'sent');
+  assert.strictEqual(rows[0].channel, 'sms');
+  assert.strictEqual(seenChannel, 'sms');
+
+  await pool.query("UPDATE clients SET email_status = 'ok' WHERE id = $1", [testClientId]);
+});
+
+test('delivery > a multiChannel row whose own channel is bad is suppressed, never substituted', async () => {
+  // A multiChannel touch is scheduled as both an email row and an SMS row.
+  // Spec 7.3: no substitution. With email_status='bad' but SMS fine, a
+  // SINGLE-channel email row would substitute to SMS; a multiChannel email row
+  // must instead SUPPRESS (channel stays 'email', handler never runs) so it
+  // does not duplicate the paired SMS row on the live channel.
+  const handler = mock.fn(async () => {});
+  registerHandler('disp_test_multichan', handler, {
+    priority: 2, category: 'operational', multiChannel: true,
+  });
+
+  await pool.query("UPDATE clients SET email_status = 'bad', phone_status = 'ok' WHERE id = $1", [testClientId]);
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_multichan', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 0, 'multiChannel row never reaches its handler');
+  const { rows } = await pool.query(
+    "SELECT status, channel FROM scheduled_messages WHERE message_type = 'disp_test_multichan'"
+  );
+  assert.strictEqual(rows[0].status, 'suppressed', 'suppressed, not sent');
+  assert.strictEqual(rows[0].channel, 'email', 'channel was NOT rewritten to sms');
+
+  await pool.query("UPDATE clients SET email_status = 'ok' WHERE id = $1", [testClientId]);
+});
+
+test('delivery > suspends client automation when both channels are bad', async () => {
+  const handler = mock.fn(async () => {});
+  registerHandler('disp_test_bothbad', handler, { priority: 1, category: 'operational' });
+
+  await pool.query("UPDATE clients SET email_status = 'bad', phone_status = 'bad' WHERE id = $1", [testClientId]);
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_bothbad', 'client', $2, 'email', NOW() - INTERVAL '1 minute'),
+            ($1, 'proposal', 'disp_test_bothbad_future', 'client', $2, 'sms', NOW() + INTERVAL '5 days')`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 0);
+  const { rows } = await pool.query(
+    "SELECT message_type, status FROM scheduled_messages WHERE message_type LIKE 'disp_test_bothbad%' ORDER BY message_type"
+  );
+  // Both the due row and the future row are suppressed by the suspension cascade.
+  assert.strictEqual(rows.find(r => r.message_type === 'disp_test_bothbad').status, 'suppressed');
+  assert.strictEqual(rows.find(r => r.message_type === 'disp_test_bothbad_future').status, 'suppressed');
+
+  await pool.query("UPDATE clients SET email_status = 'ok', phone_status = 'ok' WHERE id = $1", [testClientId]);
+});
+
+test('delivery > mid-batch suppression does not double-process a second row for the same client', async () => {
+  // Two operational single-channel rows for the same both-bad client, due in
+  // the same tick. The first to dispatch hits the both-bad path: it suppresses
+  // itself and suspendClientAutomation flips the second row to 'suppressed'.
+  // The stale-row guard must skip the second row so resolveDelivery's both-bad
+  // branch (and its admin alert) runs only once.
+  const handlerA = mock.fn(async () => {});
+  const handlerB = mock.fn(async () => {});
+  registerHandler('disp_test_midbatch_a', handlerA, { priority: 1, category: 'operational' });
+  registerHandler('disp_test_midbatch_b', handlerB, { priority: 2, category: 'operational' });
+
+  await pool.query("UPDATE clients SET email_status = 'bad', phone_status = 'bad' WHERE id = $1", [testClientId]);
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_midbatch_a', 'client', $2, 'email', NOW() - INTERVAL '2 minutes'),
+            ($1, 'proposal', 'disp_test_midbatch_b', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+
+  assert.strictEqual(handlerA.mock.callCount(), 0, 'both-bad row A never reaches its handler');
+  assert.strictEqual(handlerB.mock.callCount(), 0, 'row B never reaches its handler');
+  const { rows } = await pool.query(
+    `SELECT message_type, status, error_message FROM scheduled_messages
+      WHERE message_type LIKE 'disp_test_midbatch_%' ORDER BY message_type`
+  );
+  assert.strictEqual(rows.length, 2);
+  assert.ok(rows.every(r => r.status === 'suppressed'), 'both rows suppressed');
+  // Exactly one row was suppressed by the suspension CASCADE ('suspended:'
+  // prefix) and never re-processed. If the guard were missing, resolveDelivery
+  // would re-run on row B and overwrite that message with 'suppressed:',
+  // dropping the count to zero.
+  const cascadeSuppressed = rows.filter(
+    r => r.error_message && r.error_message.startsWith('suspended:')
+  );
+  assert.strictEqual(cascadeSuppressed.length, 1, 'row B keeps its cascade message, never re-processed');
+  // And exactly one row ran resolveDelivery's both-bad branch ('suppressed:'
+  // prefix with the no-working-channel reason).
+  const branchSuppressed = rows.filter(
+    r => r.error_message && r.error_message.startsWith('suppressed: no working contact channel')
+  );
+  assert.strictEqual(branchSuppressed.length, 1, 'the both-bad branch ran exactly once');
+
+  await pool.query("UPDATE clients SET email_status = 'ok', phone_status = 'ok' WHERE id = $1", [testClientId]);
 });
