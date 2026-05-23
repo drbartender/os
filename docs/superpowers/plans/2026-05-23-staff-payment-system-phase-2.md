@@ -15,11 +15,13 @@
 
 ---
 
-## Known gaps (deferred to Phase 2.5 or later)
+## In scope, with one small carve-out
 
-**Late-tip roll-forward** (spec Section 6.5): when a tip is matched to a shift whose period is already `processing` or `paid`, the spec says the tip rolls forward as a synthetic `payout_events` row on that contractor's next payout. **Phase 2 does NOT implement that.** Phase 2 sets `tips.shift_id` correctly (the matching IS done) and surfaces a flag in the unassigned-tips panel telling the admin which assignments landed against a frozen period, so the admin can compensate manually via an adjustment line on the next period's payout. Automatic roll-forward is a separate task, called out at the end of this plan.
+**Late-tip roll-forward** (spec Section 6.5): when a tip matches a shift whose period is `processing` or `paid`, the tip's bartender shares get added to a synthetic `payout_events` row on each bartender's next payout (the open period containing today, creating the payout if the bartender hasn't otherwise earned anything yet). The row references the original shift so the line is labeled by its true event. Multiple late tips against the same shift in the same forward-period aggregate into one row. **Implemented in Task 17.**
 
-**Refunded or disputed card tip after a payout has paid** (spec Section 11, third bullet): the spec says this surfaces as an admin alert with two options (absorb or net against the next payout via an adjustment line). Phase 2 has no admin-alert system; if a card tip is refunded post-payment, the admin notices it on the Stripe dashboard and manually adds a negative adjustment on the contractor's next payout. The alert UI is a Phase 4-ish concern alongside the scheduled-message work.
+**Refunded or disputed card tip after payout** (spec Section 11, third bullet): handled as an automatic clawback rather than an admin alert — when Stripe webhooks `charge.refunded` or `charge.dispute.funds_withdrawn` fire on a tip we already paid out, the bartender's pro-rata share of the clawed-back amount lands as a negative `adjustment_cents` on the bartender's next-payout line item for the original shift. Partial refunds are supported (the math is proportional and the cumulative refunded amount is tracked per tip for idempotency). **Implemented in Task 18.**
+
+**Carve-out: dispute reinstatement.** If a dispute is later *reinstated* in our favor (`charge.dispute.funds_reinstated`), Phase 2 does NOT automatically re-pay the bartender via a positive adjustment — the admin handles it manually via the standard adjustment field. The asymmetry is deliberate: it's rare, and an auto-reinstatement on a payout already accumulating a clawback risks compounding bugs that move real money.
 
 **Card-tip settling indicator on a line item.** The `EventLineItem` shows `card_tip_gross_cents`, `card_tip_fee_cents`, and `card_tip_net_cents`. When `card_tip_fee_cents` is 0 the line could mean "no fee, fully cleared" or "fee not yet captured from Stripe" — Phase 2 does not distinguish them. In practice the accrual captures fees before producing the line, so the ambiguous case is narrow. A future small task can show a "settling" badge when `tips.fee_cents IS NULL` for any tip in the bartender's share for that event.
 
@@ -2823,6 +2825,835 @@ git commit -m "feat(payroll): wire user-detail PayoutsTab to the real payout his
 
 ---
 
+## Task 17: Late-tip roll-forward
+
+**Files:**
+- Modify: `server/db/schema.sql` (append Phase 2 banner + two `tips` columns)
+- Create: `server/utils/payrollLateTip.js`
+- Create: `server/utils/payrollLateTip.test.js`
+- Modify: `server/utils/payrollTips.js` (`matchTipToEvent` calls `rollForwardLateTip` on a successful frozen-period match)
+- Modify: `server/routes/admin/payroll.js` (PATCH /tips/:id/assign calls `rollForwardLateTip` on the frozen path)
+
+`rollForwardLateTip(tipId)` does the spec Section 6.5 work: splits the matched tip's gross + fee shares across the original shift's approved bartenders and adds each share to a synthetic `payout_events` row on that bartender's payout in the open period containing today (creating the payout and, if needed, the pay period). The row is keyed by the original `(payout_id, shift_id)` so it labels back to its true event; multiple late tips for the same shift in the same forward-period aggregate into one row.
+
+Idempotency uses `tips.rolled_forward_at`: a NULL means "not yet rolled," a timestamp means "done." The function is a no-op when the flag is set, when the tip isn't assigned, when no bartenders are on the shift, when the today-period is not open (which shouldn't normally happen and falls through silently), or when the matched period is still `open` (the normal accrual path handles it instead).
+
+**Step 1: Append the schema additions**
+
+Append to the end of `server/db/schema.sql`:
+
+```sql
+-- ─── Staff payment system, Phase 2 (2026-05-23) ───
+-- Late-tip and chargeback tracking for tips that arrive after their event's
+-- pay period has been frozen.
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS rolled_forward_at TIMESTAMPTZ;
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS refunded_amount_cents INTEGER NOT NULL DEFAULT 0;
+```
+
+Apply the schema:
+
+```bash
+node -e "require('dotenv').config(); require('./server/db').initDb().then(()=>{console.log('schema ok');process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+```
+
+Expected: prints `schema ok`.
+
+**Step 2: Write the failing test**
+
+Create `server/utils/payrollLateTip.test.js`:
+
+```js
+require('dotenv').config();
+const { test, before, beforeEach, afterEach, after } = require('node:test');
+const assert = require('node:assert/strict');
+const { pool } = require('../db');
+const { rollForwardLateTip } = require('./payrollLateTip');
+
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('payrollLateTip.test.js refuses to run against production');
+}
+
+let bartenderA, bartenderB, frozenPeriodId, frozenProposalId, frozenShiftId, tipId;
+
+before(async () => {
+  const a = await pool.query(
+    "INSERT INTO users (email, password_hash, role) VALUES ('late-tip-a@example.com','x','staff') RETURNING id"
+  );
+  bartenderA = a.rows[0].id;
+  const b = await pool.query(
+    "INSERT INTO users (email, password_hash, role) VALUES ('late-tip-b@example.com','x','staff') RETURNING id"
+  );
+  bartenderB = b.rows[0].id;
+  for (const id of [bartenderA, bartenderB]) {
+    await pool.query(
+      `INSERT INTO contractor_profiles (user_id, hourly_rate) VALUES ($1, 20.00)
+       ON CONFLICT (user_id) DO UPDATE SET hourly_rate = 20.00`,
+      [id]
+    );
+  }
+});
+
+beforeEach(async () => {
+  // A frozen period (paid) two weeks back, with an event whose shift had both bartenders.
+  const p = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ('2026-05-12','2026-05-18','2026-05-19','paid')
+     ON CONFLICT (start_date) DO UPDATE SET status='paid' RETURNING id`
+  );
+  frozenPeriodId = p.rows[0].id;
+  const pr = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time, event_duration_hours, total_price)
+     VALUES (NULL, '2026-05-15', 'completed', 'wedding', '6:00 PM', 4, 2000)
+     RETURNING id`
+  );
+  frozenProposalId = pr.rows[0].id;
+  const s = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','6:00 PM','open',$1) RETURNING id`,
+    [frozenProposalId]
+  );
+  frozenShiftId = s.rows[0].id;
+  for (const id of [bartenderA, bartenderB]) {
+    await pool.query(
+      `INSERT INTO shift_requests (shift_id, user_id, position, status)
+       VALUES ($1,$2,'Bartender','approved')
+       ON CONFLICT (shift_id, user_id) DO UPDATE SET status='approved'`,
+      [frozenShiftId, id]
+    );
+  }
+  // A tip matched to that shift (post-event, fee already captured).
+  const t = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_late_tip_test', '2026-05-15 23:30:00+00', $2)
+     RETURNING id`,
+    [bartenderA, frozenShiftId]
+  );
+  tipId = t.rows[0].id;
+});
+
+afterEach(async () => {
+  // The roll-forward may have created a new pay period and payouts for today.
+  // Pull a fresh list by joining tips.shift_id and clean it all out.
+  await pool.query(
+    `DELETE FROM payout_events WHERE shift_id = $1 OR payout_id IN
+       (SELECT id FROM payouts WHERE contractor_id IN ($2,$3))`,
+    [frozenShiftId, bartenderA, bartenderB]
+  );
+  await pool.query(
+    'DELETE FROM payouts WHERE contractor_id IN ($1,$2)',
+    [bartenderA, bartenderB]
+  );
+  // Delete any open pay_period the roll-forward might have created today.
+  await pool.query(
+    `DELETE FROM pay_periods WHERE status = 'open'
+       AND start_date <> '2026-05-12'`
+  );
+  await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
+  await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [frozenShiftId]);
+  await pool.query('DELETE FROM shifts WHERE id = $1', [frozenShiftId]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [frozenProposalId]);
+  await pool.query('DELETE FROM pay_periods WHERE id = $1', [frozenPeriodId]);
+});
+
+after(async () => {
+  for (const id of [bartenderA, bartenderB]) {
+    await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [id]);
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+  }
+  await pool.end();
+});
+
+test('rollForwardLateTip > splits the tip net across both bartenders into the open period', async () => {
+  const result = await rollForwardLateTip(tipId);
+  assert.equal(result.bartenders, 2);
+
+  // Each bartender now has a payout in the open period with a single line
+  // item keyed to the ORIGINAL shift, carrying their share of the late tip.
+  const { rows } = await pool.query(
+    `SELECT po.contractor_id, pe.card_tip_gross_cents, pe.card_tip_fee_cents,
+            pe.card_tip_net_cents, pe.line_total_cents
+       FROM payout_events pe
+       JOIN payouts po ON po.id = pe.payout_id
+      WHERE pe.shift_id = $1 AND po.pay_period_id = $2
+      ORDER BY po.contractor_id`,
+    [frozenShiftId, result.period_id]
+  );
+  assert.equal(rows.length, 2);
+  // 4000c gross split 2 ways = [2000, 2000]; 128c fee split = [64, 64].
+  assert.equal(Number(rows[0].card_tip_gross_cents) + Number(rows[1].card_tip_gross_cents), 4000);
+  assert.equal(Number(rows[0].card_tip_fee_cents) + Number(rows[1].card_tip_fee_cents), 128);
+  // Net = gross - fee per bartender; line_total = net (no wage/gratuity).
+  assert.equal(Number(rows[0].card_tip_net_cents), 1936);
+  assert.equal(Number(rows[0].line_total_cents), 1936);
+
+  // And the tip is flagged so a second call is a no-op.
+  const tip = await pool.query('SELECT rolled_forward_at FROM tips WHERE id = $1', [tipId]);
+  assert.ok(tip.rows[0].rolled_forward_at);
+});
+
+test('rollForwardLateTip > a second call is idempotent', async () => {
+  await rollForwardLateTip(tipId);
+  const second = await rollForwardLateTip(tipId);
+  assert.equal(second, null);
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS c FROM payout_events pe
+       JOIN payouts po ON po.id = pe.payout_id
+      WHERE pe.shift_id = $1`,
+    [frozenShiftId]
+  );
+  assert.equal(rows[0].c, 2);  // exactly two rows, not four.
+});
+
+test('rollForwardLateTip > a second LATE tip for the same shift aggregates into the same rows', async () => {
+  await rollForwardLateTip(tipId);
+  // A second tip — same shift, fresh.
+  const t2 = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id)
+     VALUES (gen_random_uuid(), $1, 2000, 64, 'pi_late_tip_two', '2026-05-15 23:45:00+00', $2)
+     RETURNING id`,
+    [bartenderA, frozenShiftId]
+  );
+  try {
+    await rollForwardLateTip(t2.rows[0].id);
+    const { rows } = await pool.query(
+      `SELECT po.contractor_id, pe.card_tip_gross_cents
+         FROM payout_events pe
+         JOIN payouts po ON po.id = pe.payout_id
+        WHERE pe.shift_id = $1
+        ORDER BY po.contractor_id`,
+      [frozenShiftId]
+    );
+    // Same two rows, gross now 2000+1000=3000 per bartender (4000+2000 split 2 ways).
+    assert.equal(rows.length, 2);
+    assert.equal(Number(rows[0].card_tip_gross_cents), 3000);
+    assert.equal(Number(rows[1].card_tip_gross_cents), 3000);
+  } finally {
+    await pool.query('DELETE FROM tips WHERE id = $1', [t2.rows[0].id]);
+  }
+});
+```
+
+**Step 3: Run test to verify it fails**
+
+Run: `node --test server/utils/payrollLateTip.test.js`
+Expected: FAIL, cannot find module `./payrollLateTip`.
+
+**Step 4: Write the implementation**
+
+Create `server/utils/payrollLateTip.js`:
+
+```js
+/**
+ * Roll a card tip that matched a shift in a frozen pay period forward onto
+ * each bartender's payout in the open period containing today. The synthetic
+ * payout_events row references the ORIGINAL shift so the line still labels
+ * back to its true event — the period it lives in is just "where the money
+ * lands now."
+ *
+ * Idempotent via tips.rolled_forward_at: a second call is a no-op.
+ * Aggregates: multiple late tips for the same original shift, rolled forward
+ * into the same open period, accumulate on one (payout_id, shift_id) row per
+ * bartender via ON CONFLICT DO UPDATE.
+ */
+const Sentry = require('@sentry/node');
+const { pool } = require('../db');
+const { findOpenPeriodForDate } = require('./payrollProcessing');
+const { payPeriodForDate, computePayday } = require('./payrollPeriods');
+const { splitEvenly } = require('./payrollMath');
+
+async function rollForwardLateTip(tipId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Lock the tip and check idempotency + preconditions.
+    const tipRes = await client.query(
+      `SELECT id, shift_id, amount_cents, fee_cents, rolled_forward_at
+         FROM tips WHERE id = $1 FOR UPDATE`,
+      [tipId]
+    );
+    const tip = tipRes.rows[0];
+    if (!tip || !tip.shift_id || tip.rolled_forward_at) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    // Bartenders on the original shift.
+    const bartendersRes = await client.query(
+      `SELECT sr.user_id FROM shift_requests sr
+        WHERE sr.shift_id = $1 AND sr.status = 'approved'
+          AND LOWER(sr.position) = 'bartender'
+        ORDER BY sr.user_id`,
+      [tip.shift_id]
+    );
+    const bartenders = bartendersRes.rows.map(r => r.user_id);
+    if (bartenders.length === 0) {
+      // No bartenders to pay; flag the tip so we don't retry indefinitely.
+      await client.query('UPDATE tips SET rolled_forward_at = NOW() WHERE id = $1', [tipId]);
+      await client.query('COMMIT');
+      return { bartenders: 0 };
+    }
+
+    // Find/create the open period containing today.
+    const todayYmd = new Date().toISOString().slice(0, 10);
+    let period = await findOpenPeriodForDate(client, todayYmd);
+    if (!period) {
+      const { startDate, endDate } = payPeriodForDate(todayYmd);
+      const payday = computePayday(endDate);
+      const ins = await client.query(
+        `INSERT INTO pay_periods (start_date, end_date, payday, status)
+         VALUES ($1, $2, $3, 'open')
+         ON CONFLICT (start_date) DO UPDATE SET status = pay_periods.status
+         RETURNING id, status`,
+        [startDate, endDate, payday]
+      );
+      period = ins.rows[0];
+    }
+    if (period.status !== 'open') {
+      // Today's period is itself frozen (atypical). Defer: mark NOT rolled so
+      // a retry once a new period opens can pick this up.
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    // Split the tip across bartenders.
+    const n = bartenders.length;
+    const grossShares = splitEvenly(Number(tip.amount_cents), n);
+    const feeShares = splitEvenly(Number(tip.fee_cents || 0), n);
+
+    const touched = [];
+    for (let i = 0; i < n; i += 1) {
+      const userId = bartenders[i];
+      const gross = grossShares[i];
+      const fee = feeShares[i];
+      const net = gross - fee;
+
+      const poRes = await client.query(
+        `INSERT INTO payouts (pay_period_id, contractor_id)
+         VALUES ($1, $2)
+         ON CONFLICT (pay_period_id, contractor_id) DO UPDATE
+           SET pay_period_id = EXCLUDED.pay_period_id
+         RETURNING id`,
+        [period.id, userId]
+      );
+      const payoutId = poRes.rows[0].id;
+      touched.push(payoutId);
+
+      // Aggregate INSERT: ON CONFLICT adds to the existing line. wage,
+      // gratuity, hours, rate stay 0 (this is a tip-only synthetic row).
+      await client.query(
+        `INSERT INTO payout_events
+           (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
+            card_tip_gross_cents, card_tip_fee_cents, card_tip_net_cents, line_total_cents)
+         VALUES ($1, $2, 0, 0, 0, 0, $3, $4, $5, GREATEST(0, $5))
+         ON CONFLICT (payout_id, shift_id) DO UPDATE SET
+           card_tip_gross_cents = payout_events.card_tip_gross_cents + EXCLUDED.card_tip_gross_cents,
+           card_tip_fee_cents   = payout_events.card_tip_fee_cents   + EXCLUDED.card_tip_fee_cents,
+           card_tip_net_cents   = payout_events.card_tip_net_cents   + EXCLUDED.card_tip_net_cents,
+           line_total_cents     = GREATEST(0,
+             payout_events.wage_cents + payout_events.gratuity_share_cents
+             + payout_events.card_tip_net_cents + EXCLUDED.card_tip_net_cents
+             + payout_events.adjustment_cents)`,
+        [payoutId, tip.shift_id, gross, fee, net]
+      );
+    }
+
+    // Recompute every touched payout's total.
+    await client.query(
+      `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
+         SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
+       ), 0))
+       WHERE po.id = ANY($1)`,
+      [touched]
+    );
+
+    // Mark idempotent.
+    await client.query('UPDATE tips SET rolled_forward_at = NOW() WHERE id = $1', [tipId]);
+    await client.query('COMMIT');
+    return { bartenders: n, period_id: period.id };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    Sentry.captureException(err, { tags: { util: 'payrollLateTip' } });
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { rollForwardLateTip };
+```
+
+**Step 5: Run test to verify it passes**
+
+Run: `node --test server/utils/payrollLateTip.test.js`
+Expected: PASS, 3 tests.
+
+**Step 6: Hook `matchTipToEvent` to call roll-forward on a frozen match**
+
+In `server/utils/payrollTips.js`, the existing `matchTipToEvent` ends with:
+
+```js
+if (shiftId != null) {
+  await pool.query('UPDATE tips SET shift_id = $1 WHERE id = $2', [shiftId, tipId]);
+}
+```
+
+Replace that block with one that, after a successful match, checks the shift's period status and calls `rollForwardLateTip` when the period is frozen:
+
+```js
+if (shiftId != null) {
+  await pool.query('UPDATE tips SET shift_id = $1 WHERE id = $2', [shiftId, tipId]);
+  // If the matched shift's pay period is already frozen, roll forward
+  // immediately so the tip lands on a bartender payout next period.
+  try {
+    const { rows: ps } = await pool.query(
+      `SELECT pp.status
+         FROM shifts s
+         JOIN proposals pr ON pr.id = s.proposal_id
+         JOIN pay_periods pp ON pr.event_date BETWEEN pp.start_date AND pp.end_date
+        WHERE s.id = $1
+        LIMIT 1`,
+      [shiftId]
+    );
+    if (ps[0] && ps[0].status !== 'open') {
+      const { rollForwardLateTip } = require('./payrollLateTip');
+      await rollForwardLateTip(tipId);
+    }
+  } catch (err) {
+    Sentry.captureException(err, { tags: { util: 'matchTipToEvent', step: 'roll_forward' } });
+  }
+}
+```
+
+The `require('./payrollLateTip')` is local-scoped to avoid a circular-import landmine; both modules use `pool`, but `payrollLateTip` is heavier and only needed on the late path.
+
+**Step 7: Hook PATCH /tips/:id/assign to roll forward instead of just flagging**
+
+In `server/routes/admin/payroll.js`, locate the existing `PATCH '/payroll/tips/:id/assign'` handler. Replace the `if (proposalId) { try { await accruePayoutsForProposal(proposalId); } ... }` block with:
+
+```js
+// On the open path the standard accrual refreshes the tip pool. On the
+// frozen path roll forward so the tip lands on a bartender payout next period.
+try {
+  if (frozen) {
+    const { rollForwardLateTip } = require('../../utils/payrollLateTip');
+    await rollForwardLateTip(tipId);
+  } else if (proposalId) {
+    await accruePayoutsForProposal(proposalId);
+  }
+} catch (err) {
+  require('@sentry/node').captureException(err, {
+    tags: { route: 'tip_assign', step: frozen ? 'roll_forward' : 'reaccrue' },
+  });
+}
+```
+
+**Step 8: Run the full test suite**
+
+Run: `npm test`
+Expected: existing baseline holds (348 pass + the new payroll tests; 9 pre-existing failures unchanged). The `frozen_period=true` test from Task 7 still passes — `rollForwardLateTip` is called but the test's after-block clears any rows it created.
+
+**Step 9: Commit**
+
+```bash
+git add server/db/schema.sql server/utils/payrollLateTip.js server/utils/payrollLateTip.test.js server/utils/payrollTips.js server/routes/admin/payroll.js
+git commit -m "feat(payroll): late-tip roll-forward to the next open period"
+```
+
+---
+
+## Task 18: Auto-clawback on refund / dispute funds-withdrawn
+
+**Files:**
+- Create: `server/utils/payrollClawback.js`
+- Create: `server/utils/payrollClawback.test.js`
+- Modify: `server/routes/stripe.js` (handle `charge.refunded` and `charge.dispute.funds_withdrawn` in the webhook)
+
+`clawbackTip(tipId, newCumulativeRefundedCents)` claws the contractor's pro-rata share of an over-paid card tip out of the bartender's next-payout line. The new cumulative refunded amount drives the math: `delta = newCumulative - oldCumulative` is the increment over what was already clawed, so partial-then-full refunds aggregate correctly. Refund proportionality: `feeDelta = round(tip.fee_cents * delta / tip.amount_cents)`, then `netDelta = delta - feeDelta` is split across the bartenders (Phase 1's `splitEvenly` for determinism). Each share lands as a NEGATIVE `adjustment_cents` on a synthetic `payout_events` row keyed `(open-period-payout, original_shift_id)`. If a late-tip row already exists on the same (payout, shift), the adjustment adds onto it; the line's total floors at 0 (Phase 1 invariant).
+
+`tips.refunded_amount_cents` is updated to the new cumulative on success, so a webhook replay finds delta=0 and no-ops.
+
+The Stripe webhook listens for two events:
+- `charge.refunded` — the charge object carries `amount_refunded` (cumulative across multiple refunds). Find the tip by `stripe_payment_intent_id = charge.payment_intent` and call `clawbackTip(tipId, charge.amount_refunded)`.
+- `charge.dispute.funds_withdrawn` — Stripe pulled funds during a dispute. The dispute object carries `amount` (the amount withdrawn) and `payment_intent`. Treat the dispute amount as a clawback equivalent and call `clawbackTip(tipId, dispute.amount)`. The dispute and a separate refund are mutually exclusive in practice; if both fire we still no-op the second via the delta=0 check.
+
+A `charge.dispute.funds_reinstated` (we won the dispute) is intentionally NOT auto-credited back — the admin handles re-pay via a manual positive adjustment. This asymmetry is called out in the "in scope, with one small carve-out" section at the top.
+
+**Step 1: Write the failing test**
+
+Create `server/utils/payrollClawback.test.js`:
+
+```js
+require('dotenv').config();
+const { test, before, beforeEach, afterEach, after } = require('node:test');
+const assert = require('node:assert/strict');
+const { pool } = require('../db');
+const { clawbackTip } = require('./payrollClawback');
+
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('payrollClawback.test.js refuses to run against production');
+}
+
+let bartenderA, bartenderB, paidPeriodId, paidProposalId, paidShiftId, tipId;
+
+before(async () => {
+  const a = await pool.query(
+    "INSERT INTO users (email, password_hash, role) VALUES ('claw-a@example.com','x','staff') RETURNING id"
+  );
+  bartenderA = a.rows[0].id;
+  const b = await pool.query(
+    "INSERT INTO users (email, password_hash, role) VALUES ('claw-b@example.com','x','staff') RETURNING id"
+  );
+  bartenderB = b.rows[0].id;
+  for (const id of [bartenderA, bartenderB]) {
+    await pool.query(
+      `INSERT INTO contractor_profiles (user_id, hourly_rate) VALUES ($1, 20.00)
+       ON CONFLICT (user_id) DO UPDATE SET hourly_rate = 20.00`,
+      [id]
+    );
+  }
+});
+
+beforeEach(async () => {
+  const p = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ('2026-05-12','2026-05-18','2026-05-19','paid')
+     ON CONFLICT (start_date) DO UPDATE SET status='paid' RETURNING id`
+  );
+  paidPeriodId = p.rows[0].id;
+  const pr = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time, event_duration_hours, total_price)
+     VALUES (NULL, '2026-05-15', 'completed', 'wedding', '6:00 PM', 4, 2000)
+     RETURNING id`
+  );
+  paidProposalId = pr.rows[0].id;
+  const s = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','6:00 PM','open',$1) RETURNING id`,
+    [paidProposalId]
+  );
+  paidShiftId = s.rows[0].id;
+  for (const id of [bartenderA, bartenderB]) {
+    await pool.query(
+      `INSERT INTO shift_requests (shift_id, user_id, position, status)
+       VALUES ($1,$2,'Bartender','approved')
+       ON CONFLICT (shift_id, user_id) DO UPDATE SET status='approved'`,
+      [paidShiftId, id]
+    );
+  }
+  // The tip is already attached and paid out (refunded_amount_cents = 0).
+  const t = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id, refunded_amount_cents)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_claw_test', '2026-05-15 23:30:00+00', $2, 0)
+     RETURNING id`,
+    [bartenderA, paidShiftId]
+  );
+  tipId = t.rows[0].id;
+});
+
+afterEach(async () => {
+  await pool.query(
+    `DELETE FROM payout_events WHERE shift_id = $1 OR payout_id IN
+       (SELECT id FROM payouts WHERE contractor_id IN ($2,$3))`,
+    [paidShiftId, bartenderA, bartenderB]
+  );
+  await pool.query('DELETE FROM payouts WHERE contractor_id IN ($1,$2)', [bartenderA, bartenderB]);
+  await pool.query(
+    `DELETE FROM pay_periods WHERE status='open' AND start_date <> '2026-05-12'`
+  );
+  await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
+  await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [paidShiftId]);
+  await pool.query('DELETE FROM shifts WHERE id = $1', [paidShiftId]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [paidProposalId]);
+  await pool.query('DELETE FROM pay_periods WHERE id = $1', [paidPeriodId]);
+});
+
+after(async () => {
+  for (const id of [bartenderA, bartenderB]) {
+    await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [id]);
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+  }
+  await pool.end();
+});
+
+test('clawbackTip > full refund creates a negative adjustment split across bartenders', async () => {
+  // The full $40 tip is refunded. fee was $1.28 → net $38.72. Split 2 ways:
+  // [1936, 1936]. Both bartenders see -1936c on their next payout's line for
+  // the original shift.
+  const result = await clawbackTip(tipId, 4000);
+  assert.equal(result.delta, 4000);
+  assert.equal(result.bartenders, 2);
+
+  const { rows } = await pool.query(
+    `SELECT po.contractor_id, pe.adjustment_cents, pe.line_total_cents
+       FROM payout_events pe
+       JOIN payouts po ON po.id = pe.payout_id
+      WHERE pe.shift_id = $1 AND po.pay_period_id = $2
+      ORDER BY po.contractor_id`,
+    [paidShiftId, result.period_id]
+  );
+  assert.equal(rows.length, 2);
+  assert.equal(Number(rows[0].adjustment_cents), -1936);
+  assert.equal(Number(rows[1].adjustment_cents), -1936);
+  // line_total floors at 0 — no other income on the line.
+  assert.equal(Number(rows[0].line_total_cents), 0);
+
+  const tip = await pool.query('SELECT refunded_amount_cents FROM tips WHERE id = $1', [tipId]);
+  assert.equal(Number(tip.rows[0].refunded_amount_cents), 4000);
+});
+
+test('clawbackTip > partial then full refund aggregates the delta correctly', async () => {
+  // First refund $20 of 40, then a follow-up refund brings the cumulative to $40.
+  await clawbackTip(tipId, 2000);
+  await clawbackTip(tipId, 4000);
+  const { rows } = await pool.query(
+    `SELECT pe.adjustment_cents FROM payout_events pe
+       JOIN payouts po ON po.id = pe.payout_id
+      WHERE pe.shift_id = $1
+      ORDER BY po.contractor_id`,
+    [paidShiftId]
+  );
+  // Both clawbacks aggregate on the same line — total adjustment per bartender = -1936.
+  assert.equal(Number(rows[0].adjustment_cents), -1936);
+  assert.equal(Number(rows[1].adjustment_cents), -1936);
+});
+
+test('clawbackTip > a webhook replay with the same cumulative amount is a no-op', async () => {
+  await clawbackTip(tipId, 4000);
+  const replay = await clawbackTip(tipId, 4000);
+  assert.equal(replay.delta, 0);
+});
+```
+
+**Step 2: Run test to verify it fails**
+
+Run: `node --test server/utils/payrollClawback.test.js`
+Expected: FAIL, cannot find module `./payrollClawback`.
+
+**Step 3: Write the implementation**
+
+Create `server/utils/payrollClawback.js`:
+
+```js
+/**
+ * Auto-clawback for a card tip that was already paid out and is now being
+ * refunded (or chargeback funds were withdrawn during a dispute). The
+ * bartender's pro-rata share of the clawback amount lands as a NEGATIVE
+ * adjustment_cents on a synthetic payout_events row in the bartender's
+ * open-period payout, keyed by the ORIGINAL shift so the line labels back.
+ *
+ * Idempotent via tips.refunded_amount_cents: the function only ever moves
+ * the delta beyond what was already clawed, so a webhook replay with the
+ * same cumulative is delta=0 and no-ops.
+ */
+const Sentry = require('@sentry/node');
+const { pool } = require('../db');
+const { findOpenPeriodForDate } = require('./payrollProcessing');
+const { payPeriodForDate, computePayday } = require('./payrollPeriods');
+const { splitEvenly } = require('./payrollMath');
+
+async function clawbackTip(tipId, newCumulativeRefundedCents) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const tipRes = await client.query(
+      `SELECT id, shift_id, amount_cents, fee_cents, refunded_amount_cents
+         FROM tips WHERE id = $1 FOR UPDATE`,
+      [tipId]
+    );
+    const tip = tipRes.rows[0];
+    if (!tip) { await client.query('ROLLBACK'); return null; }
+
+    const original = Number(tip.amount_cents);
+    const newAmt = Math.max(0, Math.min(Number(newCumulativeRefundedCents) || 0, original));
+    const oldAmt = Number(tip.refunded_amount_cents || 0);
+    const delta = newAmt - oldAmt;
+    if (delta <= 0) { await client.query('ROLLBACK'); return { delta: 0 }; }
+
+    // If the tip was never assigned to a shift, there's no line to claw back
+    // FROM — just track the new cumulative and exit.
+    if (!tip.shift_id) {
+      await client.query('UPDATE tips SET refunded_amount_cents = $1 WHERE id = $2', [newAmt, tipId]);
+      await client.query('COMMIT');
+      return { delta, bartenders: 0 };
+    }
+
+    const bartendersRes = await client.query(
+      `SELECT sr.user_id FROM shift_requests sr
+        WHERE sr.shift_id = $1 AND sr.status = 'approved'
+          AND LOWER(sr.position) = 'bartender'
+        ORDER BY sr.user_id`,
+      [tip.shift_id]
+    );
+    const bartenders = bartendersRes.rows.map(r => r.user_id);
+    if (bartenders.length === 0) {
+      await client.query('UPDATE tips SET refunded_amount_cents = $1 WHERE id = $2', [newAmt, tipId]);
+      await client.query('COMMIT');
+      return { delta, bartenders: 0 };
+    }
+
+    // Proportional fee on the delta.
+    const feeDelta = original > 0
+      ? Math.round(Number(tip.fee_cents || 0) * delta / original)
+      : 0;
+    const netDelta = delta - feeDelta;
+    const perBartenderShares = splitEvenly(netDelta, bartenders.length);
+
+    // Find/create the open period containing today.
+    const todayYmd = new Date().toISOString().slice(0, 10);
+    let period = await findOpenPeriodForDate(client, todayYmd);
+    if (!period) {
+      const { startDate, endDate } = payPeriodForDate(todayYmd);
+      const payday = computePayday(endDate);
+      const ins = await client.query(
+        `INSERT INTO pay_periods (start_date, end_date, payday, status)
+         VALUES ($1, $2, $3, 'open')
+         ON CONFLICT (start_date) DO UPDATE SET status = pay_periods.status
+         RETURNING id, status`,
+        [startDate, endDate, payday]
+      );
+      period = ins.rows[0];
+    }
+    if (period.status !== 'open') {
+      // Defer: don't move cumulative either, so a later retry can do this work.
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    const note = `Chargeback on tip ${tipId} ($${(delta / 100).toFixed(2)})`;
+    const touched = [];
+    for (let i = 0; i < bartenders.length; i += 1) {
+      const userId = bartenders[i];
+      const negAdj = -perBartenderShares[i];
+
+      const poRes = await client.query(
+        `INSERT INTO payouts (pay_period_id, contractor_id)
+         VALUES ($1, $2)
+         ON CONFLICT (pay_period_id, contractor_id) DO UPDATE
+           SET pay_period_id = EXCLUDED.pay_period_id
+         RETURNING id`,
+        [period.id, userId]
+      );
+      const payoutId = poRes.rows[0].id;
+      touched.push(payoutId);
+
+      // ON CONFLICT: ADD to existing adjustment_cents, append to adjustment_note.
+      await client.query(
+        `INSERT INTO payout_events
+           (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
+            adjustment_cents, adjustment_note, line_total_cents)
+         VALUES ($1, $2, 0, 0, 0, 0, $3, $4, GREATEST(0, $3))
+         ON CONFLICT (payout_id, shift_id) DO UPDATE SET
+           adjustment_cents = payout_events.adjustment_cents + EXCLUDED.adjustment_cents,
+           adjustment_note  = COALESCE(payout_events.adjustment_note, '') ||
+             CASE WHEN payout_events.adjustment_note IS NULL OR payout_events.adjustment_note = ''
+                  THEN '' ELSE '; ' END ||
+             EXCLUDED.adjustment_note,
+           line_total_cents = GREATEST(0,
+             payout_events.wage_cents + payout_events.gratuity_share_cents
+             + payout_events.card_tip_net_cents
+             + payout_events.adjustment_cents + EXCLUDED.adjustment_cents)`,
+        [payoutId, tip.shift_id, negAdj, note]
+      );
+    }
+
+    await client.query(
+      `UPDATE payouts po SET total_cents = GREATEST(0, COALESCE((
+         SELECT SUM(line_total_cents) FROM payout_events WHERE payout_id = po.id
+       ), 0))
+       WHERE po.id = ANY($1)`,
+      [touched]
+    );
+
+    await client.query('UPDATE tips SET refunded_amount_cents = $1 WHERE id = $2', [newAmt, tipId]);
+    await client.query('COMMIT');
+    return { delta, bartenders: bartenders.length, period_id: period.id };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already */ }
+    Sentry.captureException(err, { tags: { util: 'payrollClawback' } });
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { clawbackTip };
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `node --test server/utils/payrollClawback.test.js`
+Expected: PASS, 3 tests.
+
+**Step 5: Wire the Stripe webhook**
+
+In `server/routes/stripe.js`, find the `router.post('/webhook', ...)` handler. The existing handler switches on `event.type` for `checkout.session.completed`, `payment_intent.succeeded`, etc. Add two new branches.
+
+Add the import near the top (with the other utility requires):
+
+```js
+const { clawbackTip } = require('../utils/payrollClawback');
+```
+
+Add a helper near the top of the handler (above the switch / branch chain):
+
+```js
+async function clawbackForPaymentIntent(paymentIntentId, newCumulativeCents) {
+  if (!paymentIntentId || !Number.isInteger(newCumulativeCents) || newCumulativeCents <= 0) return;
+  const { rows } = await pool.query(
+    'SELECT id FROM tips WHERE stripe_payment_intent_id = $1',
+    [paymentIntentId]
+  );
+  if (!rows[0]) return;  // Not a tip — could be a proposal payment, refund logic handled elsewhere.
+  try {
+    await clawbackTip(rows[0].id, newCumulativeCents);
+  } catch (err) {
+    Sentry.captureException(err, { tags: { webhook: 'tip_clawback', step: 'clawback' } });
+  }
+}
+```
+
+Then add the two event branches (alongside the existing event-type checks, before the final `return res.json({ received: true })`):
+
+```js
+if (event.type === 'charge.refunded') {
+  const charge = event.data.object;
+  await clawbackForPaymentIntent(charge.payment_intent, Number(charge.amount_refunded || 0));
+  return res.json({ received: true });
+}
+
+if (event.type === 'charge.dispute.funds_withdrawn') {
+  const dispute = event.data.object;
+  await clawbackForPaymentIntent(dispute.payment_intent, Number(dispute.amount || 0));
+  return res.json({ received: true });
+}
+```
+
+If the existing handler returns 200 on unrecognized events, these branches just intercept the relevant types. If the existing handler has a default "log and 200" path, place these branches BEFORE that default so they catch.
+
+**Step 6: Verify the webhook module loads**
+
+Run: `node -e "require('dotenv').config(); require('./server/routes/stripe'); console.log('loads ok')"`
+Expected: prints `loads ok`.
+
+**Step 7: Run the full test suite**
+
+Run: `npm test`
+Expected: the existing baseline (348 pass / 9 pre-existing) plus the new payroll suites passing.
+
+**Step 8: Commit**
+
+```bash
+git add server/utils/payrollClawback.js server/utils/payrollClawback.test.js server/routes/stripe.js
+git commit -m "feat(payroll): auto-clawback on refund / dispute funds-withdrawn"
+```
+
+---
+
 ## Phase 2 done
 
 At the end of Phase 2 the admin has a functioning payroll surface:
@@ -2838,4 +3669,4 @@ The lifecycle state machine is fully enforced on the backend: `pay_periods.statu
 
 **Still nothing user-facing for staff.** Phase 3 adds the staff My Pay page, the dashboard tile, and the paystub PDF generation (which is what fills `paystub_storage_key` — Phase 2 leaves it NULL). Phase 4 adds the two scheduled emails (payroll-due reminder to admin, paystub-ready to contractor) and rewrites the contractor-facing pay-policy copy.
 
-**The Known Gap** (late-tip roll-forward, spec Section 6.5) is intentionally still open. Phase 2 records the matching correctly and warns the admin when an assignment lands against a frozen period. Automatic roll-forward — synthesizing a `payout_events` row on the contractor's next open payout labeled to the original event — is its own focused task to plan separately, because picking the right "next" payout (which period? what if the bartender hasn't worked yet?) is a small design problem in its own right.
+**Late tips and chargebacks both close their own loops.** A tip matched (auto or manual) to a shift in a frozen period rolls forward automatically to the open period's payout for each bartender (Task 17). A refund or dispute funds-withdrawn on a tip we already paid out claws the bartender's pro-rata share back as a negative adjustment on the next open-period payout (Task 18). The one carve-out is `charge.dispute.funds_reinstated` (we won the dispute): no auto re-pay, admin handles via a manual positive adjustment.
