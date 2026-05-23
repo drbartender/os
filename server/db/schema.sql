@@ -688,11 +688,11 @@ ON CONFLICT (slug) DO NOTHING;
 -- are not covered by the client's hosted package. Per-guest billing keeps DRB's
 -- bring-and-take-back model consistent (flat pricing would imply client keeps bottle).
 INSERT INTO service_addons (slug, name, description, billing_type, rate, extra_hour_rate, applies_to, sort_order, minimum_hours, category, requires_addon_slug) VALUES
-  ('specialty-bitter-aperitifs', 'Bitter Aperitifs', 'Campari, Aperol, Cynar, and amaro. For Negronis, Boulevardiers, Paper Planes, and anything with a bitter backbone.', 'per_guest', 3.00, NULL, 'all', 35, NULL, 'craft_ingredients', NULL),
-  ('specialty-vermouths', 'Vermouth & Fortified Wines', 'Sweet and dry vermouth plus Lillet Blanc. For Manhattans, Martinis, Negronis, and Corpse Revivers.', 'per_guest', 1.50, NULL, 'all', 36, NULL, 'craft_ingredients', NULL),
-  ('specialty-niche-liqueurs', 'Specialty Liqueurs', 'Cointreau, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur — the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.', 'per_guest', 2.50, NULL, 'all', 37, NULL, 'craft_ingredients', NULL),
-  ('specialty-mezcal', 'Mezcal', 'Smoky agave spirit for Smokey Piñas and mezcal-forward cocktails.', 'per_guest', 3.00, NULL, 'all', 38, NULL, 'craft_ingredients', NULL),
-  ('specialty-cognac', 'Cognac', 'Aged French grape spirit for Sidecars and classic cognac builds.', 'per_guest', 4.00, NULL, 'all', 39, NULL, 'craft_ingredients', NULL)
+  ('specialty-bitter-aperitifs', 'Bitter Aperitifs', 'Campari, Aperol, Cynar, and amaro. For Negronis, Boulevardiers, Paper Planes, and anything with a bitter backbone.', 'per_guest', 3.00, NULL, 'hosted', 35, NULL, 'craft_ingredients', NULL),
+  ('specialty-vermouths', 'Vermouth & Fortified Wines', 'Sweet and dry vermouth plus Lillet Blanc. For Manhattans, Martinis, Negronis, and Corpse Revivers.', 'per_guest', 1.50, NULL, 'hosted', 36, NULL, 'craft_ingredients', NULL),
+  ('specialty-niche-liqueurs', 'Specialty Liqueurs', 'Cointreau, maraschino, amaretto, orgeat, absinthe, rye whiskey, coffee liqueur — the classic-cocktail modifiers that elevate Sidecars, Last Words, Mai Tais, Sazeracs, and Espresso Martinis.', 'per_guest', 2.50, NULL, 'hosted', 37, NULL, 'craft_ingredients', NULL),
+  ('specialty-mezcal', 'Mezcal', 'Smoky agave spirit for Smokey Piñas and mezcal-forward cocktails.', 'per_guest', 3.00, NULL, 'hosted', 38, NULL, 'craft_ingredients', NULL),
+  ('specialty-cognac', 'Cognac', 'Aged French grape spirit for Sidecars and classic cognac builds.', 'per_guest', 4.00, NULL, 'hosted', 39, NULL, 'craft_ingredients', NULL)
 ON CONFLICT (slug) DO NOTHING;
 
 -- Set categories on existing add-ons
@@ -703,6 +703,14 @@ UPDATE service_addons SET category = 'craft_ingredients' WHERE slug IN ('handcra
 UPDATE service_addons SET category = 'staffing' WHERE slug IN ('banquet-server','barback');
 UPDATE service_addons SET category = 'byob_support' WHERE slug = 'garnish-package-only';
 UPDATE service_addons SET category = 'logistics' WHERE slug = 'parking-fee';
+
+-- Specialty alcohol add-ons only apply on the hosted path. On BYOB and mocktail
+-- paths the client brings (or is not drinking) their own booze, so we should
+-- not offer Cognac / Mezcal / Vermouths / Liqueurs / Bitter Aperitifs there.
+-- The INSERT above seeds 'hosted' on fresh DBs; this corrects existing rows.
+UPDATE service_addons SET applies_to = 'hosted'
+  WHERE slug IN ('specialty-bitter-aperitifs','specialty-vermouths','specialty-niche-liqueurs','specialty-mezcal','specialty-cognac')
+    AND applies_to <> 'hosted';
 
 -- Update prices to match spec
 UPDATE service_addons SET rate = 3.50 WHERE slug = 'soft-drink-addon';

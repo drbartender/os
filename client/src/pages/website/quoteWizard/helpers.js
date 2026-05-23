@@ -37,3 +37,19 @@ export const ADDON_TAGLINES = {
 
 export const formatCurrency = (amount) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
+
+// Per-add-on price label (Extras step tiles + bundle cards).
+export function priceLabel(addon) {
+  // Syrups price via calculateSyrupCost (flavor count + 3-for-$75 tier), not the
+  // flat add-on rate; show the tier explicitly, matching the current step.
+  if (addon.slug === 'handcrafted-syrups') return '$30/bottle · 3 for $75';
+  switch (addon.billing_type) {
+    case 'per_guest':
+    case 'per_guest_timed': return `$${Number(addon.rate)}/guest`;
+    case 'per_hour':        return `$${Number(addon.rate)}/hr`;
+    case 'per_staff':       return `$${Number(addon.rate)}/staff member`;
+    case 'per_100_guests':  return `$${Number(addon.rate)}/100 guests`;
+    case 'flat':
+    default:                return `$${Number(addon.rate)}`;
+  }
+}
