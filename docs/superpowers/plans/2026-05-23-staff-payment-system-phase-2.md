@@ -21,7 +21,7 @@
 
 **Refunded or disputed card tip after payout** (spec Section 11, third bullet): handled as an automatic clawback rather than an admin alert — when Stripe webhooks `charge.refunded` or `charge.dispute.funds_withdrawn` fire on a tip we already paid out, the bartender's pro-rata share of the clawed-back amount lands as a negative `adjustment_cents` on the bartender's next-payout line item for the original shift. Partial refunds are supported (the math is proportional and the cumulative refunded amount is tracked per tip for idempotency). **Implemented in Task 18.**
 
-**Carve-out: dispute reinstatement.** If a dispute is later *reinstated* in our favor (`charge.dispute.funds_reinstated`), Phase 2 does NOT automatically re-pay the bartender via a positive adjustment — the admin handles it manually via the standard adjustment field. The asymmetry is deliberate: it's rare, and an auto-reinstatement on a payout already accumulating a clawback risks compounding bugs that move real money.
+**Dispute reinstatement = notify, don't auto-restore.** If a dispute is later *reinstated* in our favor (`charge.dispute.funds_reinstated`), Phase 2 does NOT automatically re-pay the bartender via a positive adjustment. Instead, the admin gets an email (Task 19) naming the reinstated amount, the original event date, the dispute opened/decided dates, the client, and each affected bartender with their pro-rata share, so the admin can add the positive adjustment manually on each bartender's next payout. The asymmetry is deliberate: auto-restoring would compound bugs on a money-movement path; the notification closes the loop without putting that decision on a webhook.
 
 **Card-tip settling indicator on a line item.** The `EventLineItem` shows `card_tip_gross_cents`, `card_tip_fee_cents`, and `card_tip_net_cents`. When `card_tip_fee_cents` is 0 the line could mean "no fee, fully cleared" or "fee not yet captured from Stripe" — Phase 2 does not distinguish them. In practice the accrual captures fees before producing the line, so the ambiguous case is narrow. A future small task can show a "settling" badge when `tips.fee_cents IS NULL` for any tip in the bartender's share for that event.
 
@@ -3654,6 +3654,413 @@ git commit -m "feat(payroll): auto-clawback on refund / dispute funds-withdrawn"
 
 ---
 
+## Task 19: Dispute-won admin notification email
+
+**Files:**
+- Modify: `server/db/schema.sql` (one more `tips` column for idempotency)
+- Create: `server/utils/payrollDisputeNotify.js`
+- Create: `server/utils/payrollDisputeNotify.test.js`
+- Modify: `server/utils/emailTemplates.js` (add `disputeWonAdminNotification`)
+- Modify: `server/routes/stripe.js` (handle `charge.dispute.funds_reinstated`)
+
+When Stripe tells us we won a dispute (`charge.dispute.funds_reinstated`) on a card tip we already paid out — and already clawed back from the bartenders' next payouts — we don't auto-re-pay them. We email the admin with the full context so they can add the positive adjustments deliberately:
+
+- The reinstated amount and the dispute opened/decided dates (from the webhook).
+- The original event date and event type (from the proposal).
+- The client name (from the proposal's client).
+- One row per bartender affected, showing their pro-rata share (so the admin's manual adjustments mirror the clawback math).
+- A link to the admin payroll portal.
+
+Idempotency: `tips.dispute_won_at` is NULL until the notification fires, timestamp after. A webhook replay reads the flag and no-ops.
+
+**Step 1: Append the schema column**
+
+Append to the existing Phase 2 schema block at the end of `server/db/schema.sql`:
+
+```sql
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_won_at TIMESTAMPTZ;
+```
+
+Apply the schema:
+
+```bash
+node -e "require('dotenv').config(); require('./server/db').initDb().then(()=>{console.log('schema ok');process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+```
+
+Expected: prints `schema ok`.
+
+**Step 2: Add the email template**
+
+In `server/utils/emailTemplates.js`, follow the existing pattern (each template is a named function that takes a context object and returns `{ subject, html, text }`, with `wrapEmail`, `esc`, and `ctaButton` helpers already in the file). Add the new template alongside the other `*Admin` templates (e.g. near `paymentReceivedAdmin`):
+
+```js
+function disputeWonAdminNotification({
+  amountDollars,                  // string like "40.00"
+  perBartender,                   // [{ name, shareDollars }]
+  eventDateLabel,                 // e.g. "May 15, 2026"
+  eventTypeLabel = 'event',
+  clientName,                     // string or null
+  disputeOpenedLabel,             // e.g. "May 16, 2026"
+  disputeWonLabel,                // e.g. "May 24, 2026"
+  payrollUrl,
+}) {
+  const subject = `Stripe dispute won — restore $${amountDollars} to ${perBartender.length} bartender${perBartender.length === 1 ? '' : 's'}`;
+  const rows = perBartender.map(b =>
+    `<tr><td style="padding:6px 12px">${esc(b.name)}</td><td style="padding:6px 12px;text-align:right">$${esc(b.shareDollars)}</td></tr>`
+  ).join('');
+  const innerHtml = `
+    <h2 style="margin:0 0 12px 0">Stripe dispute won</h2>
+    <p>We won the dispute on a $${esc(amountDollars)} card tip. Stripe has reinstated the funds. Because we already clawed the bartenders' shares back from their next payout when the dispute was opened, you'll need to manually add a positive adjustment on each affected payout so the staff get the money back.</p>
+    <table style="border-collapse:collapse;margin:16px 0">
+      <tr><td style="padding:6px 12px;color:#666">Event</td><td style="padding:6px 12px">${esc(eventTypeLabel)} on ${esc(eventDateLabel)}</td></tr>
+      ${clientName ? `<tr><td style="padding:6px 12px;color:#666">Client</td><td style="padding:6px 12px">${esc(clientName)}</td></tr>` : ''}
+      <tr><td style="padding:6px 12px;color:#666">Dispute opened</td><td style="padding:6px 12px">${esc(disputeOpenedLabel)}</td></tr>
+      <tr><td style="padding:6px 12px;color:#666">Dispute won</td><td style="padding:6px 12px">${esc(disputeWonLabel)}</td></tr>
+    </table>
+    <h3 style="margin:16px 0 8px 0">Per-bartender shares</h3>
+    <table style="border-collapse:collapse;border:1px solid #ddd">
+      <thead><tr><th style="padding:6px 12px;text-align:left;background:#f6f6f6">Bartender</th><th style="padding:6px 12px;text-align:right;background:#f6f6f6">Share to restore</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="margin:24px 0">${ctaButton(payrollUrl, 'Open payroll portal')}</div>
+    <p style="color:#666;font-size:13px">Phase 2 of payroll doesn't auto-restore disputed funds because the original clawback may have already been paid out, mid-recompute, or partially adjusted. Add the positive adjustment on each bartender's next pending payout to close the loop.</p>
+  `;
+  const text = [
+    `Stripe dispute won.`,
+    `Reinstated amount: $${amountDollars}.`,
+    `Event: ${eventTypeLabel} on ${eventDateLabel}${clientName ? ` (client ${clientName})` : ''}.`,
+    `Dispute opened ${disputeOpenedLabel}, won ${disputeWonLabel}.`,
+    ``,
+    `Per-bartender shares:`,
+    ...perBartender.map(b => `  ${b.name}: $${b.shareDollars}`),
+    ``,
+    `Add a positive adjustment on each bartender's next payout: ${payrollUrl}`,
+  ].join('\n');
+  return { subject, html: wrapEmail(innerHtml), text };
+}
+```
+
+Add `disputeWonAdminNotification` to the `module.exports` at the bottom of the file (matching how the other templates are exported).
+
+**Step 3: Write the failing test**
+
+Create `server/utils/payrollDisputeNotify.test.js`:
+
+```js
+require('dotenv').config();
+const { test, before, beforeEach, afterEach, after } = require('node:test');
+const assert = require('node:assert/strict');
+const { pool } = require('../db');
+const { notifyDisputeWon } = require('./payrollDisputeNotify');
+
+if (process.env.NODE_ENV === 'production') {
+  throw new Error('payrollDisputeNotify.test.js refuses to run against production');
+}
+
+let bartenderA, bartenderB, periodId, proposalId, shiftId, tipId;
+
+before(async () => {
+  const a = await pool.query(
+    "INSERT INTO users (email, password_hash, role) VALUES ('disp-won-a@example.com','x','staff') RETURNING id"
+  );
+  bartenderA = a.rows[0].id;
+  const b = await pool.query(
+    "INSERT INTO users (email, password_hash, role) VALUES ('disp-won-b@example.com','x','staff') RETURNING id"
+  );
+  bartenderB = b.rows[0].id;
+  for (const id of [bartenderA, bartenderB]) {
+    await pool.query(
+      `INSERT INTO contractor_profiles (user_id, preferred_name, hourly_rate)
+       VALUES ($1, $2, 20.00)
+       ON CONFLICT (user_id) DO UPDATE SET preferred_name = EXCLUDED.preferred_name`,
+      [id, id === bartenderA ? 'Alex' : 'Beth']
+    );
+  }
+});
+
+beforeEach(async () => {
+  const p = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ('2026-05-12','2026-05-18','2026-05-19','paid')
+     ON CONFLICT (start_date) DO UPDATE SET status='paid' RETURNING id`
+  );
+  periodId = p.rows[0].id;
+  const pr = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time, event_duration_hours, total_price)
+     VALUES (NULL, '2026-05-15', 'completed', 'wedding', '6:00 PM', 4, 2000)
+     RETURNING id`
+  );
+  proposalId = pr.rows[0].id;
+  const s = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','6:00 PM','open',$1) RETURNING id`,
+    [proposalId]
+  );
+  shiftId = s.rows[0].id;
+  for (const id of [bartenderA, bartenderB]) {
+    await pool.query(
+      `INSERT INTO shift_requests (shift_id, user_id, position, status)
+       VALUES ($1,$2,'Bartender','approved')
+       ON CONFLICT (shift_id, user_id) DO UPDATE SET status='approved'`,
+      [shiftId, id]
+    );
+  }
+  const t = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id,
+                       refunded_amount_cents)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_disp_won_test', '2026-05-15 23:30:00+00', $2, 4000)
+     RETURNING id`,
+    [bartenderA, shiftId]
+  );
+  tipId = t.rows[0].id;
+});
+
+afterEach(async () => {
+  await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
+  await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [shiftId]);
+  await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+  await pool.query('DELETE FROM pay_periods WHERE id = $1', [periodId]);
+});
+
+after(async () => {
+  for (const id of [bartenderA, bartenderB]) {
+    await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [id]);
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+  }
+  await pool.end();
+});
+
+test('notifyDisputeWon > flips dispute_won_at and resolves bartender names', async () => {
+  const result = await notifyDisputeWon(tipId, {
+    reinstatedAmountCents: 4000,
+    disputeOpenedAt: new Date('2026-05-16T10:00:00Z'),
+    disputeWonAt: new Date('2026-05-24T10:00:00Z'),
+  });
+  assert.equal(result.bartenders.length, 2);
+  assert.deepEqual(
+    result.bartenders.map(b => b.name).sort(),
+    ['Alex', 'Beth']
+  );
+  // Net per bartender = round((4000 - 128) / 2) = 1936, sums to net.
+  assert.equal(
+    result.bartenders.reduce((a, b) => a + b.shareCents, 0),
+    4000 - 128
+  );
+  const { rows } = await pool.query('SELECT dispute_won_at FROM tips WHERE id = $1', [tipId]);
+  assert.ok(rows[0].dispute_won_at);
+});
+
+test('notifyDisputeWon > a second call is idempotent (no-op when flag is set)', async () => {
+  await notifyDisputeWon(tipId, {
+    reinstatedAmountCents: 4000,
+    disputeOpenedAt: new Date(),
+    disputeWonAt: new Date(),
+  });
+  const second = await notifyDisputeWon(tipId, {
+    reinstatedAmountCents: 4000,
+    disputeOpenedAt: new Date(),
+    disputeWonAt: new Date(),
+  });
+  assert.equal(second, null);
+});
+
+test('notifyDisputeWon > returns null when the tip is unknown', async () => {
+  const res = await notifyDisputeWon(999999999, {
+    reinstatedAmountCents: 1000,
+    disputeOpenedAt: new Date(),
+    disputeWonAt: new Date(),
+  });
+  assert.equal(res, null);
+});
+```
+
+The tests assert the function's DB-touching contract: it flips the flag, resolves the bartender list, computes per-bartender shares that sum to the net amount. Email-send correctness is verified by manually triggering once against a test Stripe event after deploy; in dev the email path logs only (no `RESEND_API_KEY`), so a real send isn't exercised.
+
+**Step 4: Run test to verify it fails**
+
+Run: `node --test server/utils/payrollDisputeNotify.test.js`
+Expected: FAIL, cannot find module `./payrollDisputeNotify`.
+
+**Step 5: Write the implementation**
+
+Create `server/utils/payrollDisputeNotify.js`:
+
+```js
+/**
+ * Build and send the admin notification when Stripe reinstates funds on a
+ * disputed card tip we already paid out. Phase 2 does not auto re-pay (see
+ * the "Dispute reinstatement" carve-out at the top of the Phase 2 plan), so
+ * this email gives the admin every figure needed to add the positive
+ * adjustment on each bartender's next payout manually.
+ *
+ * Idempotent via tips.dispute_won_at.
+ */
+const Sentry = require('@sentry/node');
+const { pool } = require('../db');
+const { sendEmail } = require('./email');
+const emailTemplates = require('./emailTemplates');
+const { splitEvenly } = require('./payrollMath');
+const { getEventTypeLabel } = require('./eventTypes');
+
+function fmtDate(d) {
+  if (!d) return '';
+  const dt = d instanceof Date ? d : new Date(d);
+  if (!Number.isFinite(dt.getTime())) return '';
+  return dt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+async function notifyDisputeWon(tipId, { reinstatedAmountCents, disputeOpenedAt, disputeWonAt }) {
+  const tipRes = await pool.query(
+    `SELECT t.id, t.amount_cents, t.fee_cents, t.dispute_won_at, t.shift_id, t.target_user_id,
+            s.event_date, p.event_type, p.event_type_custom, p.client_id,
+            c.name AS client_name
+       FROM tips t
+  LEFT JOIN shifts s ON s.id = t.shift_id
+  LEFT JOIN proposals p ON p.id = s.proposal_id
+  LEFT JOIN clients c ON c.id = p.client_id
+      WHERE t.id = $1`,
+    [tipId]
+  );
+  const tip = tipRes.rows[0];
+  if (!tip || tip.dispute_won_at) return null;
+
+  // Bartenders on the original shift. If the tip was never matched (no shift_id),
+  // fall back to just the original recipient.
+  let bartenderIds = [];
+  if (tip.shift_id) {
+    const { rows } = await pool.query(
+      `SELECT sr.user_id FROM shift_requests sr
+        WHERE sr.shift_id = $1 AND sr.status = 'approved'
+          AND LOWER(sr.position) = 'bartender'
+        ORDER BY sr.user_id`,
+      [tip.shift_id]
+    );
+    bartenderIds = rows.map(r => r.user_id);
+  }
+  if (bartenderIds.length === 0 && tip.target_user_id) {
+    bartenderIds = [tip.target_user_id];
+  }
+
+  // Resolve display names.
+  let bartenders = [];
+  if (bartenderIds.length) {
+    const { rows } = await pool.query(
+      `SELECT u.id, u.email, cp.preferred_name
+         FROM users u
+    LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+        WHERE u.id = ANY($1::int[])
+        ORDER BY u.id`,
+      [bartenderIds]
+    );
+    bartenders = rows.map(r => ({ id: r.id, name: r.preferred_name || r.email }));
+  }
+
+  // Per-bartender net share of the reinstated amount.
+  const reinstated = Math.max(0, Math.min(Number(reinstatedAmountCents || 0), Number(tip.amount_cents)));
+  const original = Number(tip.amount_cents);
+  const feePortion = original > 0
+    ? Math.round(Number(tip.fee_cents || 0) * reinstated / original)
+    : 0;
+  const netTotal = reinstated - feePortion;
+  const shares = splitEvenly(netTotal, bartenders.length || 1);
+  bartenders = bartenders.map((b, i) => ({
+    ...b,
+    shareCents: shares[i] || 0,
+    shareDollars: ((shares[i] || 0) / 100).toFixed(2),
+  }));
+
+  // Send (best-effort — log to Sentry, but still mark the flag so a retry
+  // doesn't spam a fixed inbox).
+  try {
+    const tpl = emailTemplates.disputeWonAdminNotification({
+      amountDollars: (reinstated / 100).toFixed(2),
+      perBartender: bartenders.map(b => ({ name: b.name, shareDollars: b.shareDollars })),
+      eventDateLabel: fmtDate(tip.event_date),
+      eventTypeLabel: getEventTypeLabel({ event_type: tip.event_type, event_type_custom: tip.event_type_custom }),
+      clientName: tip.client_name || null,
+      disputeOpenedLabel: fmtDate(disputeOpenedAt),
+      disputeWonLabel: fmtDate(disputeWonAt),
+      payrollUrl: `${process.env.CLIENT_URL || ''}/financials/payroll`,
+    });
+    await sendEmail({
+      to: process.env.ADMIN_EMAIL,
+      subject: tpl.subject,
+      html: tpl.html,
+      text: tpl.text,
+    });
+  } catch (err) {
+    Sentry.captureException(err, { tags: { util: 'payrollDisputeNotify', step: 'send_email' } });
+  }
+
+  await pool.query('UPDATE tips SET dispute_won_at = NOW() WHERE id = $1', [tipId]);
+  return {
+    bartenders,
+    reinstatedAmountCents: reinstated,
+    netTotalCents: netTotal,
+  };
+}
+
+module.exports = { notifyDisputeWon };
+```
+
+**Step 6: Run test to verify it passes**
+
+Run: `node --test server/utils/payrollDisputeNotify.test.js`
+Expected: PASS, 3 tests.
+
+**Step 7: Wire the Stripe webhook**
+
+In `server/routes/stripe.js`, alongside the `charge.dispute.funds_withdrawn` branch added in Task 18, add a sibling branch:
+
+```js
+if (event.type === 'charge.dispute.funds_reinstated') {
+  const dispute = event.data.object;
+  const piId = dispute.payment_intent;
+  if (piId) {
+    const { rows } = await pool.query(
+      'SELECT id FROM tips WHERE stripe_payment_intent_id = $1',
+      [piId]
+    );
+    if (rows[0]) {
+      try {
+        const { notifyDisputeWon } = require('../utils/payrollDisputeNotify');
+        await notifyDisputeWon(rows[0].id, {
+          reinstatedAmountCents: Number(dispute.amount || 0),
+          disputeOpenedAt: dispute.created ? new Date(dispute.created * 1000) : null,
+          disputeWonAt: new Date(),
+        });
+      } catch (err) {
+        Sentry.captureException(err, { tags: { webhook: 'tip_dispute_won' } });
+      }
+    }
+  }
+  return res.json({ received: true });
+}
+```
+
+The local-scoped `require` mirrors the pattern used in Task 17 (`payrollLateTip`).
+
+**Step 8: Verify the webhook module loads**
+
+Run: `node -e "require('dotenv').config(); require('./server/routes/stripe'); console.log('loads ok')"`
+Expected: prints `loads ok`.
+
+**Step 9: Run the full test suite**
+
+Run: `npm test`
+Expected: baseline holds plus the new payroll suites pass.
+
+**Step 10: Commit**
+
+```bash
+git add server/db/schema.sql server/utils/payrollDisputeNotify.js server/utils/payrollDisputeNotify.test.js server/utils/emailTemplates.js server/routes/stripe.js
+git commit -m "feat(payroll): admin email when a tip dispute is reinstated"
+```
+
+---
+
 ## Phase 2 done
 
 At the end of Phase 2 the admin has a functioning payroll surface:
@@ -3669,4 +4076,4 @@ The lifecycle state machine is fully enforced on the backend: `pay_periods.statu
 
 **Still nothing user-facing for staff.** Phase 3 adds the staff My Pay page, the dashboard tile, and the paystub PDF generation (which is what fills `paystub_storage_key` — Phase 2 leaves it NULL). Phase 4 adds the two scheduled emails (payroll-due reminder to admin, paystub-ready to contractor) and rewrites the contractor-facing pay-policy copy.
 
-**Late tips and chargebacks both close their own loops.** A tip matched (auto or manual) to a shift in a frozen period rolls forward automatically to the open period's payout for each bartender (Task 17). A refund or dispute funds-withdrawn on a tip we already paid out claws the bartender's pro-rata share back as a negative adjustment on the next open-period payout (Task 18). The one carve-out is `charge.dispute.funds_reinstated` (we won the dispute): no auto re-pay, admin handles via a manual positive adjustment.
+**Late tips and chargebacks both close their own loops.** A tip matched (auto or manual) to a shift in a frozen period rolls forward automatically to the open period's payout for each bartender (Task 17). A refund or dispute funds-withdrawn on a tip we already paid out claws the bartender's pro-rata share back as a negative adjustment on the next open-period payout (Task 18). When a dispute is later reinstated in our favor (Task 19), the admin gets a one-shot email with the amount, the event date, the client, and the per-bartender shares — Phase 2 doesn't auto re-pay, but it doesn't leave the admin to discover the reinstatement on the Stripe dashboard either.
