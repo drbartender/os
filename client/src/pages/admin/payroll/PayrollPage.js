@@ -105,6 +105,20 @@ function CurrentTab() {
     });
   };
 
+  const onPaid = ({ payout, period_status }) => {
+    setData(prev => {
+      if (!prev) return prev;
+      const payouts = prev.payouts.map(po => po.id === payout.id ? { ...po, ...payout } : po);
+      // Advance focus to the next pending row, derived from the freshly-updated
+      // payouts list (the just-paid id is now status='paid' so it filters out
+      // naturally). Computing inside the setData updater avoids the stale-closure
+      // bug if the user clicks Mark Paid in rapid succession.
+      const remaining = payouts.filter(p => p.status === 'pending');
+      setExpanded(remaining[0] ? new Set([remaining[0].id]) : new Set());
+      return { ...prev, period: { ...prev.period, status: period_status }, payouts };
+    });
+  };
+
   if (loading) return <div className="muted">Loading…</div>;
   if (!data) return <div className="chip danger">Couldn't load the current period.</div>;
 
@@ -123,7 +137,7 @@ function CurrentTab() {
           expanded={expanded.has(po.id)}
           onToggle={() => toggle(po.id)}
           onLineSaved={onLineSaved}
-          onMarkPaid={() => {/* Task 13 wires this */}}
+          onPaid={onPaid}
           editable={data.period && data.period.status !== 'paid'}
         />
       ))}

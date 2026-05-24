@@ -3,8 +3,9 @@ import StatusChip from '../../../components/adminos/StatusChip';
 import { fmt$fromCents } from '../../../components/adminos/format';
 import { paymentMethodLabel } from '../userDetail/helpers';
 import EventLineItem from './EventLineItem';
+import MarkPaidAction from './MarkPaidAction';
 
-export default function PayoutRow({ payout, expanded, onToggle, onMarkPaid, onLineSaved, editable }) {
+export default function PayoutRow({ payout, expanded, onToggle, onLineSaved, onPaid, editable }) {
   return (
     <div className="card" style={{ marginBottom: 8 }}>
       <div
@@ -42,13 +43,9 @@ export default function PayoutRow({ payout, expanded, onToggle, onMarkPaid, onLi
           ))}
           {payout.status === 'pending' && (
             <div className="hstack" style={{ marginTop: 12 }}>
-              <button type="button" className="btn btn-primary btn-sm" onClick={onMarkPaid}>
-                Mark paid
-              </button>
+              <MarkPaidAction payout={payout} onPaid={onPaid} />
               <span className="tiny muted" style={{ marginLeft: 8 }}>
-                Records the method and timestamp. {editable
-                  ? 'Period must be processing first (use Process Payroll above).'
-                  : ''}
+                Records the method and timestamp; the period closes automatically when the last payout is paid.
               </span>
             </div>
           )}
