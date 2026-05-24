@@ -87,6 +87,24 @@ function CurrentTab() {
     }
   };
 
+  const onLineSaved = (updatedEvent, payoutTotal) => {
+    setData(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        payouts: prev.payouts.map(po =>
+          po.id !== updatedEvent.payout_id ? po : {
+            ...po,
+            total_cents: payoutTotal,
+            // Merge instead of replace: Task 4's PATCH returns SELECT * from
+            // payout_events only, so it doesn't carry the proposal-join fields
+            // (event_date, event_type) that the row needs to render its label.
+            events: po.events.map(e => e.id === updatedEvent.id ? { ...e, ...updatedEvent } : e),
+          }),
+      };
+    });
+  };
+
   if (loading) return <div className="muted">Loading…</div>;
   if (!data) return <div className="chip danger">Couldn't load the current period.</div>;
 
@@ -104,7 +122,9 @@ function CurrentTab() {
           payout={po}
           expanded={expanded.has(po.id)}
           onToggle={() => toggle(po.id)}
+          onLineSaved={onLineSaved}
           onMarkPaid={() => {/* Task 13 wires this */}}
+          editable={data.period && data.period.status !== 'paid'}
         />
       ))}
       {(!data.payouts || data.payouts.length === 0) && (

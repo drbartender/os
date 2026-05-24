@@ -2,8 +2,9 @@ import React from 'react';
 import StatusChip from '../../../components/adminos/StatusChip';
 import { fmt$fromCents } from '../../../components/adminos/format';
 import { paymentMethodLabel } from '../userDetail/helpers';
+import EventLineItem from './EventLineItem';
 
-export default function PayoutRow({ payout, expanded, onToggle, onMarkPaid }) {
+export default function PayoutRow({ payout, expanded, onToggle, onMarkPaid, onLineSaved, editable }) {
   return (
     <div className="card" style={{ marginBottom: 8 }}>
       <div
@@ -28,8 +29,29 @@ export default function PayoutRow({ payout, expanded, onToggle, onMarkPaid }) {
       </div>
       {expanded && (
         <div className="card-body">
-          {/* Task 12 fills in the expanded view (per-event lines + mark-paid action). */}
-          <div className="muted tiny">Expanded line items render here (Task 12).</div>
+          {(payout.events || []).length === 0 && (
+            <div className="muted tiny">No event lines on this payout.</div>
+          )}
+          {(payout.events || []).map(ev => (
+            <EventLineItem
+              key={ev.id}
+              event={ev}
+              editable={editable && payout.status === 'pending'}
+              onSaved={({ event, payout_total_cents }) => onLineSaved?.(event, payout_total_cents)}
+            />
+          ))}
+          {payout.status === 'pending' && (
+            <div className="hstack" style={{ marginTop: 12 }}>
+              <button type="button" className="btn btn-primary btn-sm" onClick={onMarkPaid}>
+                Mark paid
+              </button>
+              <span className="tiny muted" style={{ marginLeft: 8 }}>
+                Records the method and timestamp. {editable
+                  ? 'Period must be processing first (use Process Payroll above).'
+                  : ''}
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>
