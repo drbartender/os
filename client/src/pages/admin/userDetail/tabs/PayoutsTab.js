@@ -4,7 +4,7 @@ import StatusChip from '../../../../components/adminos/StatusChip';
 import { fmt$ } from '../../../../components/adminos/format';
 import FormBanner from '../../../../components/FormBanner';
 import FieldError from '../../../../components/FieldError';
-import { rateOf, PAYMENT_METHODS } from '../helpers';
+import { rateOf, PAYMENT_METHODS, paymentMethodLabel } from '../helpers';
 
 export default function PayoutsTab(props) {
   const {
@@ -146,7 +146,7 @@ export default function PayoutsTab(props) {
                   <div className="meta-k" style={{ marginBottom: 4 }}>Payout method</div>
                   <select className="select" value={editForm.preferred_payment_method} onChange={(e) => updateField('preferred_payment_method', e.target.value)}>
                     <option value="">—</option>
-                    {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                    {PAYMENT_METHODS.map(m => <option key={m} value={m}>{paymentMethodLabel(m)}</option>)}
                   </select>
                 </div>
                 <div>
@@ -174,7 +174,7 @@ export default function PayoutsTab(props) {
                   <div className="hstack" style={{ padding: '10px 12px', background: 'var(--bg-2)', borderRadius: 3, border: '1px solid var(--line-1)' }}>
                     <Icon name="dollar" size={14} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <strong style={{ fontSize: 12.5 }}>{payment.preferred_payment_method}</strong>
+                      <strong style={{ fontSize: 12.5 }}>{paymentMethodLabel(payment.preferred_payment_method)}</strong>
                       <div className="tiny muted">{payment.payment_username || (payment.account_number ? `Account ··· ${String(payment.account_number).slice(-4)}` : 'Not configured')}</div>
                     </div>
                   </div>
