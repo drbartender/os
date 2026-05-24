@@ -318,7 +318,7 @@ before(async () => {
   );
   adminId = u.rows[0].id;
   adminToken = jwt.sign(
-    { id: adminId, email: 'payroll-admin@example.com', role: 'admin' },
+    { userId: adminId, tokenVersion: 0 },  // matches server/middleware/auth.js contract
     process.env.JWT_SECRET
   );
 
@@ -490,7 +490,7 @@ before(async () => {
   );
   adminId = u.rows[0].id;
   adminToken = jwt.sign(
-    { id: adminId, email: 'payroll-admin@example.com', role: 'admin' },
+    { userId: adminId, tokenVersion: 0 },  // matches server/middleware/auth.js contract
     process.env.JWT_SECRET
   );
 
