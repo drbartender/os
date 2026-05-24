@@ -249,3 +249,50 @@ test('POST /periods/:id/process > 409 when not open', async () => {
     await pool.query("UPDATE pay_periods SET status = 'open' WHERE id = $1", [periodId]);
   }
 });
+
+test('POST /payouts/:id/mark-paid > marks paid, records method, and finalizes the period', async () => {
+  await pool.query("UPDATE pay_periods SET status = 'processing' WHERE id = $1", [periodId]);
+  try {
+    const r = await req(
+      'POST', `/api/admin/payroll/payouts/${payoutId}/mark-paid`, adminToken,
+      { payment_method: 'venmo', payment_handle: 'payroll-test' }
+    );
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.payout.status, 'paid');
+    assert.equal(body.payout.payment_method, 'venmo');
+    assert.equal(body.payout.payment_handle, 'payroll-test');
+    assert.ok(body.payout.paid_at);
+    // The fixture is the only payout in this period, so the period flipped to paid.
+    assert.equal(body.period_status, 'paid');
+  } finally {
+    await pool.query(
+      `UPDATE payouts SET status='pending', payment_method=NULL, payment_handle=NULL,
+                          paid_at=NULL, paid_by=NULL WHERE id = $1`,
+      [payoutId]
+    );
+    await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [periodId]);
+  }
+});
+
+test('POST /payouts/:id/mark-paid > 409 when the period is still open', async () => {
+  // periodId is currently 'open' (the prior test reset it).
+  const r = await req(
+    'POST', `/api/admin/payroll/payouts/${payoutId}/mark-paid`, adminToken,
+    { payment_method: 'venmo' }
+  );
+  assert.equal(r.status, 409);
+});
+
+test('POST /payouts/:id/mark-paid > 400 on an invalid method', async () => {
+  await pool.query("UPDATE pay_periods SET status = 'processing' WHERE id = $1", [periodId]);
+  try {
+    const r = await req(
+      'POST', `/api/admin/payroll/payouts/${payoutId}/mark-paid`, adminToken,
+      { payment_method: 'bitcoin' }
+    );
+    assert.equal(r.status, 400);
+  } finally {
+    await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [periodId]);
+  }
+});

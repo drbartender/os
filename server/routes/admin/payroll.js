@@ -10,7 +10,7 @@ const { pool } = require('../../db');
 const { auth, adminOnly } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { NotFoundError, ValidationError, ConflictError } = require('../../utils/errors');
-const { findOpenPeriodForDate, recomputePayoutTotal } = require('../../utils/payrollProcessing');
+const { findOpenPeriodForDate, recomputePayoutTotal, maybeFinalizePeriod } = require('../../utils/payrollProcessing');
 
 const router = express.Router();
 
@@ -103,6 +103,7 @@ router.get('/payroll/periods/:id', auth, adminOnly, asyncHandler(async (req, res
 }));
 
 const EDITABLE_FIELDS = ['hours', 'rate_cents', 'late', 'adjustment_cents', 'adjustment_note'];
+const ALLOWED_PAY_METHODS = new Set(['venmo', 'cashapp', 'paypal', 'check', 'direct_deposit', 'other']);
 
 router.patch('/payroll/payout-events/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   const eventId = Number(req.params.id);
@@ -230,6 +231,74 @@ router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async 
     throw new ConflictError(`Period is ${existing.rows[0].status}, not open`);
   }
   res.json({ period: rows[0] });
+}));
+
+router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) throw new ValidationError(null, 'invalid payout id');
+
+  const method = req.body && req.body.payment_method;
+  if (!method || !ALLOWED_PAY_METHODS.has(method)) {
+    throw new ValidationError(null, `payment_method must be one of ${[...ALLOWED_PAY_METHODS].join(', ')}`);
+  }
+  const phRaw = req.body && req.body.payment_handle;
+  const handle = (phRaw !== null && phRaw !== undefined) ? String(phRaw) : null;
+  if (handle !== null && handle.length > 200) {
+    throw new ValidationError(null, 'payment_handle exceeds 200 chars');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT po.id, po.status AS payout_status, po.pay_period_id,
+              pp.status AS period_status
+         FROM payouts po
+         JOIN pay_periods pp ON pp.id = po.pay_period_id
+        WHERE po.id = $1
+        FOR UPDATE OF po, pp`,
+      [id]
+    );
+    if (!rows[0]) {
+      await client.query('ROLLBACK');
+      throw new NotFoundError('payout not found');
+    }
+    if (rows[0].payout_status !== 'pending') {
+      await client.query('ROLLBACK');
+      throw new ConflictError('payout is already paid');
+    }
+    if (rows[0].period_status !== 'processing') {
+      await client.query('ROLLBACK');
+      throw new ConflictError(`period is ${rows[0].period_status}; mark-paid requires processing`);
+    }
+
+    await client.query(
+      `UPDATE payouts
+          SET status = 'paid', payment_method = $1, payment_handle = $2,
+              paid_at = NOW(), paid_by = $3
+        WHERE id = $4`,
+      [method, handle, req.user.id, id]
+    );
+
+    const finalized = await maybeFinalizePeriod(client, rows[0].pay_period_id);
+    await client.query('COMMIT');
+
+    const refreshed = await pool.query(
+      `SELECT id, contractor_id, status, total_cents,
+              payment_method, payment_handle, paid_at, paystub_storage_key
+         FROM payouts WHERE id = $1`,
+      [id]
+    );
+    res.json({
+      payout: refreshed.rows[0],
+      period_status: finalized ? 'paid' : 'processing',
+    });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+    throw err;
+  } finally {
+    client.release();
+  }
 }));
 
 module.exports = router;
