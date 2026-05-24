@@ -9,8 +9,8 @@ const express = require('express');
 const { pool } = require('../../db');
 const { auth, adminOnly } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
-const { NotFoundError } = require('../../utils/errors');
-const { findOpenPeriodForDate } = require('../../utils/payrollProcessing');
+const { NotFoundError, ValidationError, ConflictError } = require('../../utils/errors');
+const { findOpenPeriodForDate, recomputePayoutTotal } = require('../../utils/payrollProcessing');
 
 const router = express.Router();
 
@@ -100,6 +100,116 @@ router.get('/payroll/periods/:id', auth, adminOnly, asyncHandler(async (req, res
   );
   if (!rows[0]) throw new NotFoundError('Period not found');
   res.json(await loadPeriodWithPayouts(rows[0]));
+}));
+
+const EDITABLE_FIELDS = ['hours', 'rate_cents', 'late', 'adjustment_cents', 'adjustment_note'];
+
+router.patch('/payroll/payout-events/:id', auth, adminOnly, asyncHandler(async (req, res) => {
+  const eventId = Number(req.params.id);
+  if (!Number.isInteger(eventId)) throw new ValidationError(null, 'invalid event id');
+
+  // Pick only the editable keys actually present in the body.
+  const patch = {};
+  for (const k of EDITABLE_FIELDS) {
+    if (k in req.body) patch[k] = req.body[k];
+  }
+  if (Object.keys(patch).length === 0) throw new ValidationError(null, 'no editable fields supplied');
+
+  // Validate field-by-field.
+  if ('hours' in patch) {
+    const n = Number(patch.hours);
+    if (!Number.isFinite(n) || n < 0 || n > 24) {
+      throw new ValidationError(null, 'hours must be between 0 and 24');
+    }
+    patch.hours = n;
+  }
+  if ('rate_cents' in patch) {
+    const n = Number(patch.rate_cents);
+    if (!Number.isInteger(n) || n < 0 || n > 100000) {
+      throw new ValidationError(null, 'rate_cents must be an integer between 0 and 100000');
+    }
+    patch.rate_cents = n;
+  }
+  if ('late' in patch) {
+    if (typeof patch.late !== 'boolean') throw new ValidationError(null, 'late must be a boolean');
+  }
+  if ('adjustment_cents' in patch) {
+    const n = Number(patch.adjustment_cents);
+    if (!Number.isInteger(n) || Math.abs(n) > 100000) {
+      throw new ValidationError(null, 'adjustment_cents must be an integer within +/-100000');
+    }
+    patch.adjustment_cents = n;
+  }
+  if ('adjustment_note' in patch) {
+    const s = patch.adjustment_note === null ? null : String(patch.adjustment_note);
+    if (s !== null && s.length > 500) {
+      throw new ValidationError(null, 'adjustment_note exceeds 500 chars');
+    }
+    patch.adjustment_note = s;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Pin the row + its parent payout + its period for the update.
+    const { rows } = await client.query(
+      `SELECT pe.*, po.id AS payout_id, po.status AS payout_status,
+              pp.id AS pay_period_id, pp.status AS period_status
+         FROM payout_events pe
+         JOIN payouts po ON po.id = pe.payout_id
+         JOIN pay_periods pp ON pp.id = po.pay_period_id
+        WHERE pe.id = $1
+        FOR UPDATE OF pe, po`,
+      [eventId]
+    );
+    if (!rows[0]) {
+      await client.query('ROLLBACK');
+      throw new NotFoundError('payout_event not found');
+    }
+    const row = rows[0];
+    if (row.payout_status === 'paid' || row.period_status === 'paid') {
+      await client.query('ROLLBACK');
+      throw new ConflictError('payout or period is paid; edits are frozen');
+    }
+
+    // Apply the patch on top of the current row.
+    const next = {
+      hours: 'hours' in patch ? patch.hours : Number(row.hours),
+      rate_cents: 'rate_cents' in patch ? patch.rate_cents : Number(row.rate_cents),
+      late: 'late' in patch ? patch.late : row.late,
+      adjustment_cents: 'adjustment_cents' in patch ? patch.adjustment_cents : Number(row.adjustment_cents),
+      adjustment_note: 'adjustment_note' in patch ? patch.adjustment_note : row.adjustment_note,
+    };
+    const wage = Math.round(next.hours * next.rate_cents);
+    const lineTotal = Math.max(
+      0,
+      wage + Number(row.gratuity_share_cents) + Number(row.card_tip_net_cents) + next.adjustment_cents
+    );
+
+    await client.query(
+      `UPDATE payout_events
+          SET hours = $1, rate_cents = $2, late = $3,
+              adjustment_cents = $4, adjustment_note = $5,
+              wage_cents = $6, line_total_cents = $7
+        WHERE id = $8`,
+      [next.hours, next.rate_cents, next.late,
+       next.adjustment_cents, next.adjustment_note,
+       wage, lineTotal, eventId]
+    );
+    const payoutTotal = await recomputePayoutTotal(client, row.payout_id);
+    await client.query('COMMIT');
+
+    const refreshed = await pool.query(
+      `SELECT * FROM payout_events WHERE id = $1`, [eventId]
+    );
+    res.json({ event: refreshed.rows[0], payout_total_cents: payoutTotal });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* ignored on already-rolled-back */ }
+    throw err;
+  } finally {
+    client.release();
+  }
 }));
 
 module.exports = router;

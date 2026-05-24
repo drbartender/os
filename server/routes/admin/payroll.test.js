@@ -99,18 +99,25 @@ after(async () => {
   await pool.end();
 });
 
-function req(method, path, token) {
+function req(method, path, token, body) {
   return new Promise((resolve, reject) => {
     const url = new URL(baseUrl + path);
+    const payload = body ? JSON.stringify(body) : null;
+    const headers = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (payload) {
+      headers['Content-Type'] = 'application/json';
+      headers['Content-Length'] = Buffer.byteLength(payload);
+    }
     const r = http.request({
-      method, hostname: url.hostname, port: url.port, path: url.pathname,
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      method, hostname: url.hostname, port: url.port, path: url.pathname, headers,
     }, (res) => {
-      let body = '';
-      res.on('data', c => { body += c; });
-      res.on('end', () => resolve({ status: res.statusCode, body }));
+      let buf = '';
+      res.on('data', c => { buf += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body: buf }));
     });
     r.on('error', reject);
+    if (payload) r.write(payload);
     r.end();
   });
 }
@@ -163,4 +170,63 @@ test('GET /payroll/periods/:id > returns the same shape for a specific period', 
 test('GET /payroll/periods/:id > 404 for a nonexistent id', async () => {
   const r = await req('GET', '/api/admin/payroll/periods/999999999', adminToken);
   assert.equal(r.status, 404);
+});
+
+test('PATCH /payout-events/:id > updates hours, recomputes wage and totals', async () => {
+  // The fixture row has hours=5.5, rate_cents=2000, wage=11000, gratuity=10000,
+  // adjustment=0 -> line_total=21000 and payout.total=21000.
+  const eventRow = await pool.query(
+    'SELECT id FROM payout_events WHERE payout_id = $1', [payoutId]
+  );
+  const eventId = eventRow.rows[0].id;
+  try {
+    const r = await req(
+      'PATCH', `/api/admin/payroll/payout-events/${eventId}`, adminToken, { hours: 9 }
+    );
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    // wage = round(9 * 2000) = 18000; line_total = 18000 + 10000 + 0 + 0 = 28000.
+    assert.equal(body.event.wage_cents, 18000);
+    assert.equal(body.event.line_total_cents, 28000);
+    assert.equal(body.payout_total_cents, 28000);
+    const { rows } = await pool.query(
+      'SELECT total_cents FROM payouts WHERE id = $1', [payoutId]
+    );
+    assert.equal(rows[0].total_cents, 28000);
+  } finally {
+    // Reset the fixture so other tests see the baseline.
+    await pool.query(
+      `UPDATE payout_events SET hours = 5.5, wage_cents = 11000, adjustment_cents = 0,
+                                line_total_cents = 21000
+         WHERE id = $1`, [eventId]
+    );
+    await pool.query('UPDATE payouts SET total_cents = 21000 WHERE id = $1', [payoutId]);
+  }
+});
+
+test('PATCH /payout-events/:id > 409 when the payout is already paid', async () => {
+  const eventRow = await pool.query(
+    'SELECT id FROM payout_events WHERE payout_id = $1', [payoutId]
+  );
+  const eventId = eventRow.rows[0].id;
+  await pool.query("UPDATE payouts SET status = 'paid' WHERE id = $1", [payoutId]);
+  try {
+    const r = await req(
+      'PATCH', `/api/admin/payroll/payout-events/${eventId}`, adminToken, { hours: 6 }
+    );
+    assert.equal(r.status, 409);
+  } finally {
+    await pool.query("UPDATE payouts SET status = 'pending' WHERE id = $1", [payoutId]);
+  }
+});
+
+test('PATCH /payout-events/:id > 400 on out-of-range hours', async () => {
+  const eventRow = await pool.query(
+    'SELECT id FROM payout_events WHERE payout_id = $1', [payoutId]
+  );
+  const r = await req(
+    'PATCH', `/api/admin/payroll/payout-events/${eventRow.rows[0].id}`,
+    adminToken, { hours: 99 }
+  );
+  assert.equal(r.status, 400);
 });
