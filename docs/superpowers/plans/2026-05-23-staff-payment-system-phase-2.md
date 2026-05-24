@@ -859,44 +859,44 @@ const EDITABLE_FIELDS = ['hours', 'rate_cents', 'late', 'adjustment_cents', 'adj
 
 router.patch('/payroll/payout-events/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   const eventId = Number(req.params.id);
-  if (!Number.isInteger(eventId)) throw new ValidationError('invalid event id');
+  if (!Number.isInteger(eventId)) throw new ValidationError(null, 'invalid event id');
 
   // Pick only the editable keys actually present in the body.
   const patch = {};
   for (const k of EDITABLE_FIELDS) {
     if (k in req.body) patch[k] = req.body[k];
   }
-  if (Object.keys(patch).length === 0) throw new ValidationError('no editable fields supplied');
+  if (Object.keys(patch).length === 0) throw new ValidationError(null, 'no editable fields supplied');
 
   // Validate field-by-field.
   if ('hours' in patch) {
     const n = Number(patch.hours);
     if (!Number.isFinite(n) || n < 0 || n > 24) {
-      throw new ValidationError('hours must be between 0 and 24');
+      throw new ValidationError(null, 'hours must be between 0 and 24');
     }
     patch.hours = n;
   }
   if ('rate_cents' in patch) {
     const n = Number(patch.rate_cents);
     if (!Number.isInteger(n) || n < 0 || n > 100000) {
-      throw new ValidationError('rate_cents must be an integer between 0 and 100000');
+      throw new ValidationError(null, 'rate_cents must be an integer between 0 and 100000');
     }
     patch.rate_cents = n;
   }
   if ('late' in patch) {
-    if (typeof patch.late !== 'boolean') throw new ValidationError('late must be a boolean');
+    if (typeof patch.late !== 'boolean') throw new ValidationError(null, 'late must be a boolean');
   }
   if ('adjustment_cents' in patch) {
     const n = Number(patch.adjustment_cents);
     if (!Number.isInteger(n) || Math.abs(n) > 100000) {
-      throw new ValidationError('adjustment_cents must be an integer within +/-100000');
+      throw new ValidationError(null, 'adjustment_cents must be an integer within +/-100000');
     }
     patch.adjustment_cents = n;
   }
   if ('adjustment_note' in patch) {
-    const s = patch.adjustment_note == null ? null : String(patch.adjustment_note);
-    if (s != null && s.length > 500) {
-      throw new ValidationError('adjustment_note exceeds 500 chars');
+    const s = patch.adjustment_note === null ? null : String(patch.adjustment_note);
+    if (s !== null && s.length > 500) {
+      throw new ValidationError(null, 'adjustment_note exceeds 500 chars');
     }
     patch.adjustment_note = s;
   }
@@ -1153,15 +1153,16 @@ Then add the handler after the process-period route:
 ```js
 router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
-  if (!Number.isInteger(id)) throw new ValidationError('invalid payout id');
+  if (!Number.isInteger(id)) throw new ValidationError(null, 'invalid payout id');
 
   const method = req.body && req.body.payment_method;
   if (!method || !ALLOWED_PAY_METHODS.has(method)) {
-    throw new ValidationError(`payment_method must be one of ${[...ALLOWED_PAY_METHODS].join(', ')}`);
+    throw new ValidationError(null, `payment_method must be one of ${[...ALLOWED_PAY_METHODS].join(', ')}`);
   }
-  const handle = req.body && req.body.payment_handle != null ? String(req.body.payment_handle) : null;
-  if (handle != null && handle.length > 200) {
-    throw new ValidationError('payment_handle exceeds 200 chars');
+  const phRaw = req.body && req.body.payment_handle;
+  const handle = (phRaw !== null && phRaw !== undefined) ? String(phRaw) : null;
+  if (handle !== null && handle.length > 200) {
+    throw new ValidationError(null, 'payment_handle exceeds 200 chars');
   }
 
   const client = await pool.connect();
@@ -1173,7 +1174,7 @@ router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(asyn
          FROM payouts po
          JOIN pay_periods pp ON pp.id = po.pay_period_id
         WHERE po.id = $1
-        FOR UPDATE OF po`,
+        FOR UPDATE OF po, pp`,
       [id]
     );
     if (!rows[0]) {
@@ -1436,7 +1437,7 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
   const tipId = Number(req.params.id);
   const shiftId = Number(req.body && req.body.shift_id);
   if (!Number.isInteger(tipId) || !Number.isInteger(shiftId)) {
-    throw new ValidationError('tipId and shift_id must be integers');
+    throw new ValidationError(null, 'tipId and shift_id must be integers');
   }
 
   // Resolve the shift's proposal and the period that proposal accrued into.
@@ -1538,7 +1539,7 @@ In `server/routes/admin/payroll.js`, add after the assign-tip route:
 ```js
 router.get('/payroll/contractors/:userId/payouts', auth, adminOnly, asyncHandler(async (req, res) => {
   const userId = Number(req.params.userId);
-  if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');
+  if (!Number.isInteger(userId)) throw new ValidationError(null, 'invalid userId');
   const { rows } = await pool.query(
     `SELECT po.id, po.status, po.total_cents,
             po.payment_method, po.payment_handle, po.paid_at, po.paystub_storage_key,
@@ -2001,7 +2002,7 @@ git commit -m "feat(payroll): current-period worklist with header and collapsed 
 - [ ] **Step 1: Create `EventLineItem.js`**
 
 ```jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
@@ -2017,6 +2018,18 @@ export default function EventLineItem({ event, editable, onSaved }) {
     adjustment_note: event.adjustment_note || '',
   });
   const [saving, setSaving] = useState(false);
+
+  // Resync the draft from props after a successful PATCH (the server may
+  // normalize values, and the parent merges the updated row into local state).
+  useEffect(() => {
+    setDraft({
+      hours: event.hours,
+      rate_dollars: (Number(event.rate_cents) / 100).toFixed(2),
+      late: !!event.late,
+      adjustment_dollars: (Number(event.adjustment_cents) / 100).toFixed(2),
+      adjustment_note: event.adjustment_note || '',
+    });
+  }, [event.id, event.hours, event.rate_cents, event.late, event.adjustment_cents, event.adjustment_note]);
 
   const eventLabel = getEventTypeLabel({
     event_type: event.event_type, event_type_custom: event.event_type_custom,
@@ -2191,7 +2204,10 @@ const onLineSaved = (updatedEvent, payoutTotal) => {
         po.id !== updatedEvent.payout_id ? po : {
           ...po,
           total_cents: payoutTotal,
-          events: po.events.map(e => e.id === updatedEvent.id ? updatedEvent : e),
+          // Merge instead of replace: Task 4's PATCH returns SELECT * from
+          // payout_events only, so it doesn't carry the proposal-join fields
+          // (event_date, event_type) that the row needs to render its label.
+          events: po.events.map(e => e.id === updatedEvent.id ? { ...e, ...updatedEvent } : e),
         }),
     };
   });
@@ -2442,14 +2458,13 @@ const onPaid = ({ payout, period_status }) => {
   setData(prev => {
     if (!prev) return prev;
     const payouts = prev.payouts.map(po => po.id === payout.id ? { ...po, ...payout } : po);
+    // Advance focus to the next pending row, derived from the freshly-updated
+    // payouts list (the just-paid id is now status='paid' so it filters out
+    // naturally). Computing inside the setData updater avoids the stale-closure
+    // bug if the user clicks Mark Paid in rapid succession.
+    const remaining = payouts.filter(p => p.status === 'pending');
+    setExpanded(remaining[0] ? new Set([remaining[0].id]) : new Set());
     return { ...prev, period: { ...prev.period, status: period_status }, payouts };
-  });
-  // Advance focus to the next pending row.
-  setExpanded(prev => {
-    const remaining = (data?.payouts || []).filter(p => p.status === 'pending' && p.id !== payout.id);
-    const next = new Set();
-    if (remaining[0]) next.add(remaining[0].id);
-    return next;
   });
 };
 
@@ -2519,7 +2534,10 @@ export default function UnassignedTipsPanel() {
     try {
       const { data } = await api.patch(`/admin/payroll/tips/${tipId}/assign`, { shift_id: shiftId });
       if (data.frozen_period) {
-        toast.warn?.('Assigned, but the matching period is already frozen. The tip is recorded; manual adjustment to the next payout may be needed.');
+        // ToastContext only exposes success/error, so use error for the frozen-period
+        // case. The roll-forward (Task 17) handles the data; this toast just tells
+        // the admin the assignment landed against a frozen period.
+        toast.error('Assigned, but the matching period is already frozen. The tip is recorded and will roll forward to the next open period.');
       } else {
         toast.success('Tip assigned.');
       }
@@ -2848,6 +2866,16 @@ Append to the end of `server/db/schema.sql`:
 -- pay period has been frozen.
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS rolled_forward_at TIMESTAMPTZ;
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS refunded_amount_cents INTEGER NOT NULL DEFAULT 0;
+
+-- Partial index supporting Task 7's unassigned-tips listing. Filter on
+-- shift_id IS NULL + tipped_at > NOW() - 90 days; this partial covers it.
+CREATE INDEX IF NOT EXISTS idx_tips_unassigned_recent
+  ON tips(tipped_at DESC) WHERE shift_id IS NULL;
+
+-- Supports Task 8's per-contractor history query (filter by contractor_id,
+-- order by pay_period.start_date). The join key on payouts is the contractor.
+CREATE INDEX IF NOT EXISTS idx_payouts_contractor_id
+  ON payouts(contractor_id);
 ```
 
 Apply the schema:
@@ -3112,8 +3140,14 @@ async function rollForwardLateTip(tipId) {
       period = ins.rows[0];
     }
     if (period.status !== 'open') {
-      // Today's period is itself frozen (atypical). Defer: mark NOT rolled so
-      // a retry once a new period opens can pick this up.
+      // Today's period is itself frozen (atypical and recoverable). Defer:
+      // mark NOT rolled so a retry once a new period opens can pick this up.
+      // Log to Sentry so a persistent defer doesn't silently disappear.
+      Sentry.captureMessage("rollForwardLateTip: today's period is non-open; deferring", {
+        level: 'warning',
+        tags: { util: 'payrollLateTip', step: 'defer_frozen_today' },
+        extra: { tipId, periodStatus: period.status },
+      });
       await client.query('ROLLBACK');
       return null;
     }
@@ -3195,7 +3229,7 @@ Expected: PASS, 3 tests.
 In `server/utils/payrollTips.js`, the existing `matchTipToEvent` ends with:
 
 ```js
-if (shiftId != null) {
+if (shiftId !== null && shiftId !== undefined) {
   await pool.query('UPDATE tips SET shift_id = $1 WHERE id = $2', [shiftId, tipId]);
 }
 ```
@@ -3203,7 +3237,7 @@ if (shiftId != null) {
 Replace that block with one that, after a successful match, checks the shift's period status and calls `rollForwardLateTip` when the period is frozen:
 
 ```js
-if (shiftId != null) {
+if (shiftId !== null && shiftId !== undefined) {
   await pool.query('UPDATE tips SET shift_id = $1 WHERE id = $2', [shiftId, tipId]);
   // If the matched shift's pay period is already frozen, roll forward
   // immediately so the tip lands on a bartender payout next period.
@@ -3520,11 +3554,19 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
     }
     if (period.status !== 'open') {
       // Defer: don't move cumulative either, so a later retry can do this work.
+      // Log to Sentry so a persistent defer doesn't silently disappear.
+      Sentry.captureMessage("clawbackTip: today's period is non-open; deferring", {
+        level: 'warning',
+        tags: { util: 'payrollClawback', step: 'defer_frozen_today' },
+        extra: { tipId, periodStatus: period.status, delta, newAmt },
+      });
       await client.query('ROLLBACK');
       return null;
     }
 
-    const note = `Chargeback on tip ${tipId} ($${(delta / 100).toFixed(2)})`;
+    // Note includes the delta AND the cumulative refunded amount so an admin
+    // reading the audit trail can distinguish multiple partial refunds.
+    const note = `Chargeback on tip ${tipId}: +$${(delta / 100).toFixed(2)} (cumulative $${(newAmt / 100).toFixed(2)})`;
     const touched = [];
     for (let i = 0; i < bartenders.length; i += 1) {
       const userId = bartenders[i];
