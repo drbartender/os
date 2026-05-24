@@ -416,3 +416,15 @@ test('PATCH /tips/:id/assign > frozen_period=true when the shift sits in a paid 
     await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [periodId]);
   }
 });
+
+test('GET /contractors/:userId/payouts > returns the contractor history with periods and totals', async () => {
+  const r = await req('GET', `/api/admin/payroll/contractors/${contractorId}/payouts`, adminToken);
+  assert.equal(r.status, 200);
+  const { payouts } = JSON.parse(r.body);
+  assert.ok(Array.isArray(payouts));
+  const ours = payouts.find(p => p.id === payoutId);
+  assert.ok(ours);
+  assert.equal(ours.total_cents, 21000);
+  assert.equal(ours.period.id, periodId);
+  assert.equal(Number(ours.event_count), 1);
+});

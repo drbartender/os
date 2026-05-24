@@ -409,4 +409,32 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
   res.json({ tip: updated.rows[0], frozen_period: frozen });
 }));
 
+router.get('/payroll/contractors/:userId/payouts', auth, adminOnly, asyncHandler(async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(userId)) throw new ValidationError(null, 'invalid userId');
+  const { rows } = await pool.query(
+    `SELECT po.id, po.status, po.total_cents,
+            po.payment_method, po.payment_handle, po.paid_at, po.paystub_storage_key,
+            pp.id AS period_id, pp.start_date, pp.end_date, pp.payday, pp.status AS period_status,
+            (SELECT COUNT(*) FROM payout_events WHERE payout_id = po.id) AS event_count
+       FROM payouts po
+       JOIN pay_periods pp ON pp.id = po.pay_period_id
+      WHERE po.contractor_id = $1
+      ORDER BY pp.start_date DESC`,
+    [userId]
+  );
+  res.json({
+    payouts: rows.map(r => ({
+      id: r.id, status: r.status, total_cents: r.total_cents,
+      payment_method: r.payment_method, payment_handle: r.payment_handle,
+      paid_at: r.paid_at, paystub_storage_key: r.paystub_storage_key,
+      event_count: r.event_count,
+      period: {
+        id: r.period_id, start_date: r.start_date, end_date: r.end_date,
+        payday: r.payday, status: r.period_status,
+      },
+    })),
+  });
+}));
+
 module.exports = router;
