@@ -230,3 +230,22 @@ test('PATCH /payout-events/:id > 400 on out-of-range hours', async () => {
   );
   assert.equal(r.status, 400);
 });
+
+test('POST /periods/:id/process > flips an open period to processing', async () => {
+  const r = await req('POST', `/api/admin/payroll/periods/${periodId}/process`, adminToken);
+  assert.equal(r.status, 200);
+  const body = JSON.parse(r.body);
+  assert.equal(body.period.status, 'processing');
+  // Reset for the rest of the suite.
+  await pool.query("UPDATE pay_periods SET status = 'open' WHERE id = $1", [periodId]);
+});
+
+test('POST /periods/:id/process > 409 when not open', async () => {
+  await pool.query("UPDATE pay_periods SET status = 'processing' WHERE id = $1", [periodId]);
+  try {
+    const r = await req('POST', `/api/admin/payroll/periods/${periodId}/process`, adminToken);
+    assert.equal(r.status, 409);
+  } finally {
+    await pool.query("UPDATE pay_periods SET status = 'open' WHERE id = $1", [periodId]);
+  }
+});

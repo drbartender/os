@@ -212,4 +212,24 @@ router.patch('/payroll/payout-events/:id', auth, adminOnly, asyncHandler(async (
   }
 }));
 
+router.post('/payroll/periods/:id/process', auth, adminOnly, asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) throw new NotFoundError('Period not found');
+  const { rows } = await pool.query(
+    `UPDATE pay_periods SET status = 'processing'
+      WHERE id = $1 AND status = 'open'
+      RETURNING id, start_date, end_date, payday, status`,
+    [id]
+  );
+  if (!rows[0]) {
+    // Either the period doesn't exist or it's not open.
+    const existing = await pool.query(
+      'SELECT status FROM pay_periods WHERE id = $1', [id]
+    );
+    if (!existing.rows[0]) throw new NotFoundError('Period not found');
+    throw new ConflictError(`Period is ${existing.rows[0].status}, not open`);
+  }
+  res.json({ period: rows[0] });
+}));
+
 module.exports = router;
