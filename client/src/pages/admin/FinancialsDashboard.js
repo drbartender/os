@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../utils/api';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { useToast } from '../../context/ToastContext';
@@ -46,6 +47,11 @@ export default function FinancialsDashboard() {
         <div>
           <div className="page-title">Financials</div>
           <div className="page-subtitle">Revenue, outstanding balances, and recent payments.</div>
+        </div>
+        <div>
+          <Link to="/financials/payroll" className="btn btn-secondary btn-sm">
+            Payroll →
+          </Link>
         </div>
       </div>
 
