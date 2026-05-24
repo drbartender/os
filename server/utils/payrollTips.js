@@ -78,6 +78,25 @@ async function matchTipToEvent(tipId) {
   const shiftId = matchTipToShift(tippedAtMs, windows);
   if (shiftId !== null && shiftId !== undefined) {
     await pool.query('UPDATE tips SET shift_id = $1 WHERE id = $2', [shiftId, tipId]);
+    // If the matched shift's pay period is already frozen, roll forward
+    // immediately so the tip lands on a bartender payout next period.
+    try {
+      const { rows: ps } = await pool.query(
+        `SELECT pp.status
+           FROM shifts s
+           JOIN proposals pr ON pr.id = s.proposal_id
+           JOIN pay_periods pp ON pr.event_date BETWEEN pp.start_date AND pp.end_date
+          WHERE s.id = $1
+          LIMIT 1`,
+        [shiftId]
+      );
+      if (ps[0] && ps[0].status !== 'open') {
+        const { rollForwardLateTip } = require('./payrollLateTip');
+        await rollForwardLateTip(tipId);
+      }
+    } catch (err) {
+      Sentry.captureException(err, { tags: { util: 'matchTipToEvent', step: 'roll_forward' } });
+    }
   }
 }
 

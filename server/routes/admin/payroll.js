@@ -391,19 +391,19 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
   );
   if (!updated.rows[0]) throw new NotFoundError('tip not found');
 
-  // Re-accrue for the affected proposal. Phase 1's accrual no-ops on a frozen
-  // period, so this is safe to call regardless — it only updates the payout
-  // line items when the period is still open.
-  if (proposalId) {
-    try {
+  // On the open path the standard accrual refreshes the tip pool. On the
+  // frozen path roll forward so the tip lands on a bartender payout next period.
+  try {
+    if (frozen) {
+      const { rollForwardLateTip } = require('../../utils/payrollLateTip');
+      await rollForwardLateTip(tipId);
+    } else if (proposalId) {
       await accruePayoutsForProposal(proposalId);
-    } catch (err) {
-      // Mirror the lifecycle hook's best-effort pattern. Do not fail the
-      // admin's assignment because of an accrual hiccup.
-      require('@sentry/node').captureException(err, {
-        tags: { route: 'tip_assign', step: 'reaccrue' },
-      });
     }
+  } catch (err) {
+    require('@sentry/node').captureException(err, {
+      tags: { route: 'tip_assign', step: frozen ? 'roll_forward' : 'reaccrue' },
+    });
   }
 
   res.json({ tip: updated.rows[0], frozen_period: frozen });

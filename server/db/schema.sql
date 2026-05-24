@@ -2526,3 +2526,19 @@ ALTER TABLE tips ADD COLUMN IF NOT EXISTS shift_id INTEGER REFERENCES shifts(id)
 CREATE INDEX IF NOT EXISTS idx_tips_shift ON tips(shift_id);
 
 ALTER TABLE proposal_payments ADD COLUMN IF NOT EXISTS fee_cents INTEGER;
+
+-- ─── Staff payment system, Phase 2 (2026-05-23) ───
+-- Late-tip and chargeback tracking for tips that arrive after their event's
+-- pay period has been frozen.
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS rolled_forward_at TIMESTAMPTZ;
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS refunded_amount_cents INTEGER NOT NULL DEFAULT 0;
+
+-- Partial index supporting Task 7's unassigned-tips listing. Filter on
+-- shift_id IS NULL + tipped_at > NOW() - 90 days; this partial covers it.
+CREATE INDEX IF NOT EXISTS idx_tips_unassigned_recent
+  ON tips(tipped_at DESC) WHERE shift_id IS NULL;
+
+-- Supports Task 8's per-contractor history query (filter by contractor_id,
+-- order by pay_period.start_date). The join key on payouts is the contractor.
+CREATE INDEX IF NOT EXISTS idx_payouts_contractor_id
+  ON payouts(contractor_id);
