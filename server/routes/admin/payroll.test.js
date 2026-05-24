@@ -296,3 +296,123 @@ test('POST /payouts/:id/mark-paid > 400 on an invalid method', async () => {
     await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [periodId]);
   }
 });
+
+test('GET /unassigned-tips > lists tips with NULL shift_id and candidate shifts', async () => {
+  const tip = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, stripe_payment_intent_id, tipped_at)
+     VALUES (gen_random_uuid(), $1, 5000, 'pi_unassigned_test', '2026-05-29 23:30:00+00')
+     RETURNING id`,
+    [contractorId]
+  );
+  const tipId = tip.rows[0].id;
+  try {
+    // Make the contractor an approved bartender on the fixture shift so it
+    // shows up in candidate_shifts.
+    await pool.query(
+      `INSERT INTO shift_requests (shift_id, user_id, position, status)
+       VALUES ($1,$2,'Bartender','approved')
+       ON CONFLICT (shift_id, user_id) DO UPDATE SET status='approved'`,
+      [shiftId, contractorId]
+    );
+    const r = await req('GET', '/api/admin/payroll/unassigned-tips', adminToken);
+    assert.equal(r.status, 200);
+    const { tips } = JSON.parse(r.body);
+    const ours = tips.find(t => t.id === tipId);
+    assert.ok(ours, 'fixture tip listed');
+    assert.equal(ours.amount_cents, 5000);
+    assert.ok(Array.isArray(ours.candidate_shifts));
+    assert.ok(ours.candidate_shifts.find(c => c.shift_id === shiftId), 'fixture shift in candidates');
+  } finally {
+    await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
+    await pool.query(
+      'DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2',
+      [shiftId, contractorId]
+    );
+  }
+});
+
+test('PATCH /tips/:id/assign > sets shift_id and re-accrues for open period', async () => {
+  const tip = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_assign_test', '2026-05-29 23:30:00+00')
+     RETURNING id`,
+    [contractorId]
+  );
+  const tipId = tip.rows[0].id;
+  try {
+    await pool.query(
+      `INSERT INTO shift_requests (shift_id, user_id, position, status)
+       VALUES ($1,$2,'Bartender','approved')
+       ON CONFLICT (shift_id, user_id) DO UPDATE SET status='approved'`,
+      [shiftId, contractorId]
+    );
+    const r = await req(
+      'PATCH', `/api/admin/payroll/tips/${tipId}/assign`, adminToken,
+      { shift_id: shiftId }
+    );
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.tip.shift_id, shiftId);
+    assert.equal(body.frozen_period, false);
+    // The re-accrual should have folded the tip into the contractor's payout_event.
+    const { rows } = await pool.query(
+      `SELECT card_tip_gross_cents, card_tip_fee_cents, card_tip_net_cents
+         FROM payout_events WHERE shift_id = $1 AND payout_id = $2`,
+      [shiftId, payoutId]
+    );
+    assert.equal(rows[0].card_tip_gross_cents, 4000);
+    assert.equal(rows[0].card_tip_fee_cents, 128);
+    assert.equal(rows[0].card_tip_net_cents, 3872);
+  } finally {
+    await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
+    await pool.query(
+      'DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2',
+      [shiftId, contractorId]
+    );
+    // Reset the line-item back to baseline (no tip) for downstream tests.
+    await pool.query(
+      `UPDATE payout_events
+          SET card_tip_gross_cents=0, card_tip_fee_cents=0, card_tip_net_cents=0,
+              line_total_cents=21000
+         WHERE payout_id = $1`,
+      [payoutId]
+    );
+    await pool.query('UPDATE payouts SET total_cents=21000 WHERE id = $1', [payoutId]);
+  }
+});
+
+test('PATCH /tips/:id/assign > frozen_period=true when the shift sits in a paid period', async () => {
+  await pool.query("UPDATE pay_periods SET status='paid' WHERE id = $1", [periodId]);
+  const tip = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_frozen_test', '2026-05-29 23:30:00+00')
+     RETURNING id`,
+    [contractorId]
+  );
+  const tipId = tip.rows[0].id;
+  try {
+    await pool.query(
+      `INSERT INTO shift_requests (shift_id, user_id, position, status)
+       VALUES ($1,$2,'Bartender','approved')
+       ON CONFLICT (shift_id, user_id) DO UPDATE SET status='approved'`,
+      [shiftId, contractorId]
+    );
+    const r = await req(
+      'PATCH', `/api/admin/payroll/tips/${tipId}/assign`, adminToken,
+      { shift_id: shiftId }
+    );
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.tip.shift_id, shiftId);
+    assert.equal(body.frozen_period, true);
+  } finally {
+    await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
+    await pool.query(
+      'DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2',
+      [shiftId, contractorId]
+    );
+    await pool.query("UPDATE pay_periods SET status='open' WHERE id = $1", [periodId]);
+  }
+});

@@ -11,6 +11,7 @@ const { auth, adminOnly } = require('../../middleware/auth');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { NotFoundError, ValidationError, ConflictError } = require('../../utils/errors');
 const { findOpenPeriodForDate, recomputePayoutTotal, maybeFinalizePeriod } = require('../../utils/payrollProcessing');
+const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
 
 const router = express.Router();
 
@@ -104,6 +105,15 @@ router.get('/payroll/periods/:id', auth, adminOnly, asyncHandler(async (req, res
 
 const EDITABLE_FIELDS = ['hours', 'rate_cents', 'late', 'adjustment_cents', 'adjustment_note'];
 const ALLOWED_PAY_METHODS = new Set(['venmo', 'cashapp', 'paypal', 'check', 'direct_deposit', 'other']);
+
+// pg returns DATE columns as JS Date objects. String(Date) yields
+// "Fri May 29 2026 ..." which breaks both `.slice(0,10)` formatting and
+// PG date casts downstream. Normalize to a YYYY-MM-DD string.
+function ymd(eventDate) {
+  if (!eventDate) return null;
+  if (eventDate instanceof Date) return eventDate.toISOString().slice(0, 10);
+  return String(eventDate).slice(0, 10);
+}
 
 router.patch('/payroll/payout-events/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   const eventId = Number(req.params.id);
@@ -299,6 +309,104 @@ router.post('/payroll/payouts/:id/mark-paid', auth, adminOnly, asyncHandler(asyn
   } finally {
     client.release();
   }
+}));
+
+router.get('/payroll/unassigned-tips', auth, adminOnly, asyncHandler(async (req, res) => {
+  // List recent unassigned tips. The dispatcher already retries matching, so
+  // these are the genuine failures (no service window matched).
+  const tipsRes = await pool.query(
+    `SELECT t.id, t.target_user_id, t.amount_cents, t.tipped_at,
+            COALESCE(cp.preferred_name, u.email) AS contractor_name
+       FROM tips t
+       JOIN users u ON u.id = t.target_user_id
+  LEFT JOIN contractor_profiles cp ON cp.user_id = t.target_user_id
+      WHERE t.shift_id IS NULL
+        AND t.tipped_at > NOW() - INTERVAL '90 days'
+      ORDER BY t.tipped_at DESC
+      LIMIT 200`
+  );
+  if (tipsRes.rows.length === 0) return res.json({ tips: [] });
+
+  // For each tip, the bartender's approved shifts within ±14 days are candidates.
+  const userIds = [...new Set(tipsRes.rows.map(t => t.target_user_id))];
+  const candidatesRes = await pool.query(
+    `SELECT sr.user_id, s.id AS shift_id, s.event_date,
+            p.event_type, p.event_type_custom
+       FROM shift_requests sr
+       JOIN shifts s ON s.id = sr.shift_id
+  LEFT JOIN proposals p ON p.id = s.proposal_id
+      WHERE sr.user_id = ANY($1::int[])
+        AND sr.status = 'approved'
+        AND s.event_date > NOW() - INTERVAL '120 days'
+      ORDER BY s.event_date DESC`,
+    [userIds]
+  );
+  const byUser = {};
+  for (const c of candidatesRes.rows) (byUser[c.user_id] ||= []).push(c);
+
+  const tips = tipsRes.rows.map(t => {
+    const all = byUser[t.target_user_id] || [];
+    const tipDate = new Date(t.tipped_at);
+    const within = all.filter(c => {
+      const ed = new Date(`${ymd(c.event_date)}T12:00:00Z`);
+      return Math.abs(ed - tipDate) <= 14 * 24 * 3600 * 1000;
+    });
+    return { ...t, candidate_shifts: within };
+  });
+  res.json({ tips });
+}));
+
+router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (req, res) => {
+  const tipId = Number(req.params.id);
+  const shiftId = Number(req.body && req.body.shift_id);
+  if (!Number.isInteger(tipId) || !Number.isInteger(shiftId)) {
+    throw new ValidationError(null, 'tipId and shift_id must be integers');
+  }
+
+  // Resolve the shift's proposal and the period that proposal accrued into.
+  const shiftRes = await pool.query(
+    `SELECT s.id, s.proposal_id, p.event_date FROM shifts s
+       LEFT JOIN proposals p ON p.id = s.proposal_id WHERE s.id = $1`,
+    [shiftId]
+  );
+  if (!shiftRes.rows[0]) throw new NotFoundError('shift not found');
+  const { proposal_id: proposalId, event_date: eventDate } = shiftRes.rows[0];
+
+  // Look up the period this event falls in (it may not exist yet if no event
+  // has accrued; in that case there's nothing frozen).
+  let frozen = false;
+  if (eventDate) {
+    const dateStr = ymd(eventDate);
+    const periodRes = await pool.query(
+      `SELECT status FROM pay_periods WHERE $1::date BETWEEN start_date AND end_date`,
+      [dateStr]
+    );
+    frozen = !!periodRes.rows[0] && periodRes.rows[0].status !== 'open';
+  }
+
+  // Assign the tip.
+  const updated = await pool.query(
+    `UPDATE tips SET shift_id = $1 WHERE id = $2 RETURNING id, shift_id, amount_cents, tipped_at`,
+    [shiftId, tipId]
+  );
+  if (!updated.rows[0]) throw new NotFoundError('tip not found');
+
+  // Re-accrue for the affected proposal. Phase 1's accrual no-ops on a frozen
+  // period, so this is safe to call regardless — it only updates the payout
+  // line items when the period is still open.
+  if (proposalId) {
+    try {
+      await accruePayoutsForProposal(proposalId);
+    } catch (err) {
+      // Mirror the lifecycle hook's best-effort pattern. Do not fail the
+      // admin's assignment because of an accrual hiccup.
+      require('@sentry/node').captureException(err, {
+        tags: { route: 'tip_assign', step: 'reaccrue' },
+      });
+    }
+  }
+
+  res.json({ tip: updated.rows[0], frozen_period: frozen });
 }));
 
 module.exports = router;
