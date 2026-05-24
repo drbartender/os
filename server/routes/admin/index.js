@@ -13,5 +13,6 @@ router.use('/', require('./settings'));
 router.use('/', require('./hiring'));
 router.use('/', require('./labratBugs'));
 router.use('/', require('./search'));
+router.use('/', require('./payroll'));
 
 module.exports = router;
