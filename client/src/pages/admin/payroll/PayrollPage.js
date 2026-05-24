@@ -5,6 +5,7 @@ import { useToast } from '../../../context/ToastContext';
 import PayrollHeader from './PayrollHeader';
 import PayoutRow from './PayoutRow';
 import UnassignedTipsPanel from './UnassignedTipsPanel';
+import HistoryView from './HistoryView';
 
 const TABS = [
   { id: 'current', label: 'Current period' },
@@ -149,8 +150,9 @@ function CurrentTab() {
   );
 }
 
-// Stubs filled in by later tasks.
-function HistoryTab() { return <div className="muted">Past periods coming online.</div>; }
+function HistoryTab() {
+  return <HistoryView />;
+}
 function UnassignedTab() {
   return <UnassignedTipsPanel />;
 }
