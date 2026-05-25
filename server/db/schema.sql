@@ -2364,10 +2364,22 @@ CREATE TABLE IF NOT EXISTS consults (
   client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
   proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL,
   scheduled_at TIMESTAMPTZ NOT NULL,
-  calendly_event_id TEXT,
+  calcom_event_id TEXT,
   status TEXT NOT NULL DEFAULT 'scheduled',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Idempotent rename for existing DBs created before the column was renamed
+-- away from Calendly. The CREATE TABLE above already uses the new name for
+-- fresh DBs; this just brings legacy installs in line.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'consults' AND column_name = 'calendly_event_id'
+  ) THEN
+    ALTER TABLE consults RENAME COLUMN calendly_event_id TO calcom_event_id;
+  END IF;
+END $$;
 
 DO $$ BEGIN
   ALTER TABLE consults DROP CONSTRAINT IF EXISTS consults_status_check;
