@@ -345,7 +345,8 @@ async function lookupEntity(entityType, entityId) {
   if (entityType === 'shift') {
     const r = await pool.query(
       `SELECT id, proposal_id, event_date, start_time, end_time, location,
-              status, archived_at, setup_minutes_before, positions_needed
+              status, archived_at, setup_minutes_before, positions_needed,
+              event_type, event_type_custom, client_name
        FROM shifts WHERE id = $1`,
       [entityId]
     );

@@ -2376,6 +2376,9 @@ DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_name = 'consults' AND column_name = 'calendly_event_id'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'consults' AND column_name = 'calcom_event_id'
   ) THEN
     ALTER TABLE consults RENAME COLUMN calendly_event_id TO calcom_event_id;
   END IF;

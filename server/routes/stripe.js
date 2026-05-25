@@ -1478,14 +1478,13 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         );
         isFirstDelivery = inserted.rowCount === 1;
 
+        // Unconditional: a payment_intent.succeeded that claimed isFirstDelivery first must not leave this link row 'pending' (would let it be reused).
+        await dbClient.query("UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1", [session.payment_link]);
+
         if (isFirstDelivery) {
           await dbClient.query(
             "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'archived')",
             [proposalId]
-          );
-          await dbClient.query(
-            "UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1",
-            [session.payment_link]
           );
           await dbClient.query(
             `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'deposit_paid', 'system', $2)`,
