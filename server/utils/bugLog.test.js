@@ -1,4 +1,6 @@
 require('dotenv').config();
+const { test, describe, beforeEach, after } = require('node:test');
+const assert = require('node:assert');
 const { pool } = require('../db');
 const {
   appendBug, readAllBugs, setBugStatus, openBugCountByMission,
@@ -8,7 +10,7 @@ describe('bugLog (Postgres)', () => {
   beforeEach(async () => {
     await pool.query("DELETE FROM tester_bugs WHERE mission_id LIKE 'test-%'");
   });
-  afterAll(async () => {
+  after(async () => {
     await pool.query("DELETE FROM tester_bugs WHERE mission_id LIKE 'test-%'");
     await pool.end();
   });
@@ -19,14 +21,14 @@ describe('bugLog (Postgres)', () => {
       testerName: 'Anon', where: 'step 3', didWhat: 'clicked',
       happened: 'nothing', expected: 'something', browser: 'Chrome',
     });
-    expect(id).toMatch(/^bug_/);
+    assert.match(id, /^bug_/);
     const bugs = await readAllBugs({ status: 'open', missionId: 'test-m1' });
-    expect(bugs).toHaveLength(1);
-    expect(bugs[0].id).toBe(id);
-    expect(bugs[0].kind).toBe('bug');
-    expect(bugs[0].missionId).toBe('test-m1');
-    expect(bugs[0].stepIndex).toBe(2);
-    expect(bugs[0].happened).toBe('nothing');
+    assert.strictEqual(bugs.length, 1);
+    assert.strictEqual(bugs[0].id, id);
+    assert.strictEqual(bugs[0].kind, 'bug');
+    assert.strictEqual(bugs[0].missionId, 'test-m1');
+    assert.strictEqual(bugs[0].stepIndex, 2);
+    assert.strictEqual(bugs[0].happened, 'nothing');
   });
 
   test('setBugStatus flips open to fixed and bumps status_updated_at', async () => {
@@ -34,13 +36,13 @@ describe('bugLog (Postgres)', () => {
       kind: 'bug', missionId: 'test-m2', happened: 'x',
     });
     const before = await readAllBugs({ status: 'open', missionId: 'test-m2' });
-    expect(before[0].statusUpdatedAt).toBeNull();
+    assert.strictEqual(before[0].statusUpdatedAt, null);
 
     const updated = await setBugStatus(id, { status: 'fixed', fixCommitSha: 'abc1234', notes: 'fix note' });
-    expect(updated.status).toBe('fixed');
-    expect(updated.fixCommitSha).toBe('abc1234');
-    expect(updated.notes).toBe('fix note');
-    expect(updated.statusUpdatedAt).not.toBeNull();
+    assert.strictEqual(updated.status, 'fixed');
+    assert.strictEqual(updated.fixCommitSha, 'abc1234');
+    assert.strictEqual(updated.notes, 'fix note');
+    assert.notStrictEqual(updated.statusUpdatedAt, null);
   });
 
   test('readAllBugs filters by missionId', async () => {
@@ -48,10 +50,10 @@ describe('bugLog (Postgres)', () => {
     await appendBug({ kind: 'bug', missionId: 'test-m4', happened: 'b' });
     const m3 = await readAllBugs({ missionId: 'test-m3' });
     const m4 = await readAllBugs({ missionId: 'test-m4' });
-    expect(m3).toHaveLength(1);
-    expect(m4).toHaveLength(1);
-    expect(m3[0].missionId).toBe('test-m3');
-    expect(m4[0].missionId).toBe('test-m4');
+    assert.strictEqual(m3.length, 1);
+    assert.strictEqual(m4.length, 1);
+    assert.strictEqual(m3[0].missionId, 'test-m3');
+    assert.strictEqual(m4[0].missionId, 'test-m4');
   });
 
   test('openBugCountByMission returns counts for open bugs only', async () => {
@@ -60,17 +62,21 @@ describe('bugLog (Postgres)', () => {
     const { id } = await appendBug({ kind: 'bug', missionId: 'test-m5', happened: 'z' });
     await setBugStatus(id, { status: 'fixed' });
     const counts = await openBugCountByMission();
-    expect(counts['test-m5']).toBe(2);
+    assert.strictEqual(counts['test-m5'], 2);
   });
 
   test('appendBug throws on invalid kind', async () => {
-    await expect(appendBug({ kind: 'invalid', happened: 'x' }))
-      .rejects.toThrow(/invalid kind/);
+    await assert.rejects(
+      appendBug({ kind: 'invalid', happened: 'x' }),
+      /invalid kind/
+    );
   });
 
   test('setBugStatus throws on invalid status', async () => {
     const { id } = await appendBug({ kind: 'bug', missionId: 'test-m6', happened: 'x' });
-    await expect(setBugStatus(id, { status: 'maybe' }))
-      .rejects.toThrow(/invalid status/);
+    await assert.rejects(
+      setBugStatus(id, { status: 'maybe' }),
+      /invalid status/
+    );
   });
 });

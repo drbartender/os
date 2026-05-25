@@ -1,4 +1,6 @@
 require('dotenv').config();
+const { test, describe, beforeEach, after, mock } = require('node:test');
+const assert = require('node:assert');
 const { pool } = require('../db');
 const { wrapScheduler, checkStaleSchedulers, recordHeartbeat } = require('./schedulerHealth');
 
@@ -7,98 +9,99 @@ describe('schedulerHealth', () => {
     await pool.query("DELETE FROM scheduler_health WHERE scheduler_name LIKE 'test-%'");
   });
 
-  afterAll(async () => {
+  after(async () => {
     await pool.query("DELETE FROM scheduler_health WHERE scheduler_name LIKE 'test-%'");
     await pool.end();
   });
 
   describe('recordHeartbeat', () => {
-    it('inserts a new row when scheduler has never run', async () => {
+    test('inserts a new row when scheduler has never run', async () => {
       await recordHeartbeat('test-fresh', 3600, 'ok');
       const { rows } = await pool.query(
         "SELECT * FROM scheduler_health WHERE scheduler_name = 'test-fresh'"
       );
-      expect(rows).toHaveLength(1);
-      expect(rows[0].last_status).toBe('ok');
-      expect(rows[0].consecutive_failures).toBe(0);
-      expect(rows[0].expected_interval_seconds).toBe(3600);
+      assert.strictEqual(rows.length, 1);
+      assert.strictEqual(rows[0].last_status, 'ok');
+      assert.strictEqual(rows[0].consecutive_failures, 0);
+      assert.strictEqual(rows[0].expected_interval_seconds, 3600);
     });
 
-    it('updates existing row on subsequent runs', async () => {
+    test('updates existing row on subsequent runs', async () => {
       await recordHeartbeat('test-update', 60, 'ok');
       const before = await pool.query(
         "SELECT last_run_at FROM scheduler_health WHERE scheduler_name = 'test-update'"
       );
       await new Promise((r) => setTimeout(r, 50));
       await recordHeartbeat('test-update', 60, 'ok');
-      const after = await pool.query(
+      const next = await pool.query(
         "SELECT last_run_at FROM scheduler_health WHERE scheduler_name = 'test-update'"
       );
-      expect(new Date(after.rows[0].last_run_at).getTime()).toBeGreaterThan(
-        new Date(before.rows[0].last_run_at).getTime()
+      assert.ok(
+        new Date(next.rows[0].last_run_at).getTime() > new Date(before.rows[0].last_run_at).getTime()
       );
     });
 
-    it('increments consecutive_failures on failed status, resets on ok', async () => {
+    test('increments consecutive_failures on failed status, resets on ok', async () => {
       await recordHeartbeat('test-fail', 60, 'failed', 'boom');
       await recordHeartbeat('test-fail', 60, 'failed', 'still boom');
       let { rows } = await pool.query(
         "SELECT consecutive_failures FROM scheduler_health WHERE scheduler_name = 'test-fail'"
       );
-      expect(rows[0].consecutive_failures).toBe(2);
+      assert.strictEqual(rows[0].consecutive_failures, 2);
 
       await recordHeartbeat('test-fail', 60, 'ok');
       ({ rows } = await pool.query(
         "SELECT consecutive_failures FROM scheduler_health WHERE scheduler_name = 'test-fail'"
       ));
-      expect(rows[0].consecutive_failures).toBe(0);
+      assert.strictEqual(rows[0].consecutive_failures, 0);
     });
   });
 
   describe('wrapScheduler', () => {
-    it('records ok heartbeat after successful run', async () => {
-      const fn = jest.fn().mockResolvedValue(undefined);
+    test('records ok heartbeat after successful run', async () => {
+      const fn = mock.fn(() => Promise.resolve(undefined));
       const wrapped = wrapScheduler('test-wrap-ok', 60, fn);
       await wrapped();
-      expect(fn).toHaveBeenCalled();
+      assert.ok(fn.mock.callCount() >= 1);
       const { rows } = await pool.query(
         "SELECT last_status FROM scheduler_health WHERE scheduler_name = 'test-wrap-ok'"
       );
-      expect(rows[0].last_status).toBe('ok');
+      assert.strictEqual(rows[0].last_status, 'ok');
     });
 
-    it('records failed heartbeat and swallows the error', async () => {
-      const fn = jest.fn().mockRejectedValue(new Error('kaboom'));
+    test('records failed heartbeat and swallows the error', async () => {
+      const fn = mock.fn(() => Promise.reject(new Error('kaboom')));
       const wrapped = wrapScheduler('test-wrap-fail', 60, fn);
-      // Wrapper must NOT rethrow — timer callbacks can't handle unhandled rejections
-      await expect(wrapped()).resolves.toBeUndefined();
+      // Wrapper must NOT rethrow, timer callbacks can't handle unhandled rejections.
+      const result = await wrapped();
+      assert.strictEqual(result, undefined);
       const { rows } = await pool.query(
         "SELECT last_status, last_error FROM scheduler_health WHERE scheduler_name = 'test-wrap-fail'"
       );
-      expect(rows[0].last_status).toBe('failed');
-      expect(rows[0].last_error).toBe('kaboom');
+      assert.strictEqual(rows[0].last_status, 'failed');
+      assert.strictEqual(rows[0].last_error, 'kaboom');
     });
   });
 
   describe('checkStaleSchedulers', () => {
-    it('returns names of schedulers that have not reported within 2x expected interval', async () => {
+    test('returns names of schedulers that have not reported within 2x expected interval', async () => {
       await pool.query(`
         INSERT INTO scheduler_health (scheduler_name, last_run_at, last_status, expected_interval_seconds, consecutive_failures)
         VALUES ('test-stale', NOW() - INTERVAL '10 minutes', 'ok', 60, 0)
       `);
       const stale = await checkStaleSchedulers();
       const names = stale.map((s) => s.scheduler_name);
-      expect(names).toContain('test-stale');
+      assert.ok(names.includes('test-stale'));
     });
 
-    it('does not flag schedulers within tolerance', async () => {
+    test('does not flag schedulers within tolerance', async () => {
       await pool.query(`
         INSERT INTO scheduler_health (scheduler_name, last_run_at, last_status, expected_interval_seconds, consecutive_failures)
         VALUES ('test-fresh-stale', NOW() - INTERVAL '30 seconds', 'ok', 60, 0)
       `);
       const stale = await checkStaleSchedulers();
       const names = stale.map((s) => s.scheduler_name);
-      expect(names).not.toContain('test-fresh-stale');
+      assert.ok(!names.includes('test-fresh-stale'));
     });
   });
 });
