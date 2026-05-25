@@ -894,14 +894,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_stripe_sessions_payment_link
 
 -- ─── Proposal Payment Options & Autopay ──────────────────────────
 
--- Status enum is re-asserted in a later block (see "Event Detail Redesign")
--- with the full ('completed','cancelled') set. Keep this earlier ADD aligned
--- so a partial-run state (one block applied, the other skipped) doesn't block
--- writes that try to set status='cancelled'.
-ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_status_check;
-ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
-  CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed','cancelled'));
-
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS payment_type VARCHAR(20) DEFAULT 'deposit';
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS autopay_enrolled BOOLEAN DEFAULT false;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(255);
@@ -1124,13 +1116,6 @@ CREATE INDEX IF NOT EXISTS idx_shifts_auto_assign ON shifts(event_date, auto_ass
 
 -- Setup time (default 1 hour before event start)
 ALTER TABLE shifts ADD COLUMN IF NOT EXISTS setup_minutes_before INTEGER DEFAULT 60;
-
--- Add 'completed' and 'cancelled' to proposal status. 'cancelled' is for archiving
--- duplicate or abandoned proposals so they vanish from the dashboard tabs without
--- losing audit trail (see Julia Neave 6-dupe incident, 2026-04).
-ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_status_check;
-ALTER TABLE proposals ADD CONSTRAINT proposals_status_check
-  CHECK (status IN ('draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed','cancelled'));
 
 -- Feedback tracking (fields only, feature built later)
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS feedback_request_sent_at TIMESTAMPTZ;
