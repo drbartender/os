@@ -112,6 +112,13 @@ function _handlersForTest() {
 
 // ─── Built-in suppression checks ──────────────────────────────
 
+// Entity and recipient are guaranteed non-null when this runs: the dispatcher
+// dispatchRow() rejects missing-lookup rows with status='failed' before
+// calling this function. This is a deliberate divergence from the in-app
+// shouldSendImmediate() in messageSuppression.js, which treats a missing
+// client as 'bad_contact' (silent suppression). Scheduled rows with bad
+// references are data integrity issues we want surfaced as 'failed', not
+// hidden behind 'suppressed'.
 async function checkSuppression({ row, entity, recipient }) {
   // Archived-proposal cascade — universal rule per spec section 7.1.
   if (row.entity_type === 'proposal' && entity && entity.status === 'archived') {
@@ -336,11 +343,20 @@ async function lookupEntity(entityType, entityId) {
     return r.rows[0] || null;
   }
   if (entityType === 'shift') {
-    const r = await pool.query('SELECT * FROM shifts WHERE id = $1', [entityId]);
+    const r = await pool.query(
+      `SELECT id, proposal_id, event_date, start_time, end_time, location,
+              status, archived_at, setup_minutes_before, positions_needed
+       FROM shifts WHERE id = $1`,
+      [entityId]
+    );
     return r.rows[0] || null;
   }
   if (entityType === 'consult') {
-    const r = await pool.query('SELECT * FROM consults WHERE id = $1', [entityId]);
+    const r = await pool.query(
+      `SELECT id, client_id, proposal_id, scheduled_at, calcom_event_id, status
+       FROM consults WHERE id = $1`,
+      [entityId]
+    );
     return r.rows[0] || null;
   }
   return null;

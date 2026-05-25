@@ -186,6 +186,27 @@ test('dispatcher > skips rows whose scheduled_for is in the future', async () =>
   assert.strictEqual(rows[0].status, 'pending');
 });
 
+test('dispatcher > marks failed with "lookup failed" when entity_id does not exist', async () => {
+  const handler = mock.fn(async () => undefined);
+  registerHandler('disp_test_missing_entity', handler, { anchor: 'created_at', offsetFromEventDate: null });
+
+  // A pinned non-existent proposal id. lookupEntity returns null, dispatchRow
+  // marks the row failed BEFORE calling checkSuppression or the handler.
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ($1, 'proposal', 'disp_test_missing_entity', 'client', $2, 'email', NOW() - INTERVAL '1 minute')`,
+    [999999999, testClientId]
+  );
+
+  await dispatchPending();
+  assert.strictEqual(handler.mock.callCount(), 0);
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_missing_entity'"
+  );
+  assert.strictEqual(rows[0].status, 'failed');
+  assert.match(rows[0].error_message, /lookup failed.*entity=false/);
+});
+
 test('dispatcher > marks failed with "no handler registered" when handler is missing', async () => {
   await pool.query(
     `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
