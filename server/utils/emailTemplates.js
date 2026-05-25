@@ -348,7 +348,7 @@ function paymentReceivedAdmin({ clientName, eventTypeLabel = 'event', amount, pa
     subject: `Payment Received: $${amount} — ${name}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Payment Received</h2>
-      <p><strong>${name}</strong> paid <strong>$${amount}</strong> (${paymentType}) for their <strong>${eventTypeLabel}</strong> (#${proposalId}).</p>
+      <p><strong>${esc(name)}</strong> paid <strong>$${amount}</strong> (${paymentType}) for their <strong>${esc(eventTypeLabel)}</strong> (#${proposalId}).</p>
       ${ctaButton(adminUrl, 'View Proposal')}
     `),
     text: `${name} paid $${amount} (${paymentType}) for their ${eventTypeLabel} (#${proposalId}). View: ${adminUrl}`,
@@ -361,7 +361,7 @@ function signedAndPaidAdmin({ clientName, eventTypeLabel = 'event', amount, paym
     subject: `Signed & Paid ($${amount}): ${name} — ${eventTypeLabel} (#${proposalId})`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Signed & Paid</h2>
-      <p><strong>${name}</strong> signed the proposal and paid <strong>$${amount}</strong> (${paymentType}) for their <strong>${eventTypeLabel}</strong> (#${proposalId}).</p>
+      <p><strong>${esc(name)}</strong> signed the proposal and paid <strong>$${amount}</strong> (${paymentType}) for their <strong>${esc(eventTypeLabel)}</strong> (#${proposalId}).</p>
       ${ctaButton(adminUrl, 'View Proposal')}
     `),
     text: `${name} signed the proposal and paid $${amount} (${paymentType}) for their ${eventTypeLabel} (#${proposalId}). View: ${adminUrl}`,
@@ -605,7 +605,7 @@ function wrapMarketingEmail(innerHtml, unsubscribeUrl) {
 // ─── Thumbtack Admin Notifications ──────────────────────────────
 
 function newThumbtackLeadAdmin({ customerName, customerPhone, category, description, location, eventDate, details, adminUrl }) {
-  const name = esc(customerName) || 'Unknown';
+  const name = esc(customerName || 'Unknown');
   const detailRows = (details || [])
     .map(d => `<tr><td style="padding:6px 12px;font-weight:bold;color:${BRAND.secondary};vertical-align:top;width:140px;">${esc(d.question)}</td><td style="padding:6px 12px;">${esc(d.answer)}</td></tr>`)
     .join('');
@@ -615,7 +615,7 @@ function newThumbtackLeadAdmin({ customerName, customerPhone, category, descript
   const dateStr = eventDate ? new Date(eventDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : 'Not specified';
 
   return {
-    subject: `New Thumbtack Lead: ${esc(customerName) || 'Unknown'}`,
+    subject: `New Thumbtack Lead: ${esc(customerName || 'Unknown')}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Thumbtack Lead</h2>
       <p style="background:#fff3cd;border:1px solid #ffc107;padding:12px;border-radius:6px;font-weight:bold;">
@@ -623,9 +623,9 @@ function newThumbtackLeadAdmin({ customerName, customerPhone, category, descript
       </p>
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:120px;">Name</td><td style="padding:8px 12px;">${name}</td></tr>
-        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Phone</td><td style="padding:8px 12px;">${esc(customerPhone) || 'N/A'}</td></tr>
-        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Category</td><td style="padding:8px 12px;">${esc(category) || 'N/A'}</td></tr>
-        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Location</td><td style="padding:8px 12px;">${esc(location) || 'N/A'}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Phone</td><td style="padding:8px 12px;">${esc(customerPhone || 'N/A')}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Category</td><td style="padding:8px 12px;">${esc(category || 'N/A')}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Location</td><td style="padding:8px 12px;">${esc(location || 'N/A')}</td></tr>
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Event Date</td><td style="padding:8px 12px;">${dateStr}</td></tr>
       </table>
       ${description ? `<p><strong>Description:</strong> ${esc(description)}</p>` : ''}
@@ -637,10 +637,10 @@ function newThumbtackLeadAdmin({ customerName, customerPhone, category, descript
 }
 
 function newThumbtackMessageAdmin({ customerName, text, adminUrl }) {
-  const name = esc(customerName) || 'A customer';
+  const name = esc(customerName || 'A customer');
   const rawPreview = text && text.length > 300 ? text.slice(0, 300) + '...' : (text || '(no text)');
   return {
-    subject: `Thumbtack Message from ${esc(customerName) || 'A customer'}`,
+    subject: `Thumbtack Message from ${esc(customerName || 'A customer')}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Thumbtack Message</h2>
       <p><strong>${name}</strong> sent a message via Thumbtack:</p>
@@ -654,10 +654,10 @@ function newThumbtackMessageAdmin({ customerName, text, adminUrl }) {
 }
 
 function newThumbtackReviewAdmin({ reviewerName, rating, reviewText }) {
-  const name = esc(reviewerName) || 'A customer';
+  const name = esc(reviewerName || 'A customer');
   const stars = rating !== null && rating !== undefined ? '★'.repeat(Math.round(rating)) + '☆'.repeat(5 - Math.round(rating)) : 'N/A';
   return {
-    subject: `New Thumbtack Review: ${stars} from ${esc(reviewerName) || 'A customer'}`,
+    subject: `New Thumbtack Review: ${stars} from ${esc(reviewerName || 'A customer')}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Thumbtack Review</h2>
       <p style="font-size:24px;margin:0.5rem 0;">${stars}</p>

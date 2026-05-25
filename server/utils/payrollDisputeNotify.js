@@ -81,9 +81,15 @@ async function notifyDisputeWon(tipId, { reinstatedAmountCents, disputeOpenedAt,
     shareDollars: ((shares[i] || 0) / 100).toFixed(2),
   }));
 
-  // Send (best-effort — log to Sentry, but still mark the flag so a retry
-  // doesn't spam a fixed inbox).
+  // Gate the dispute_won_at idempotency mark on email success. A persistent
+  // failure (eg. ADMIN_EMAIL unset, Resend outage) leaves the flag unset so a
+  // future webhook redelivery can retry. Sentry captures every failure so a
+  // stuck dispute does not vanish silently.
+  let emailSent = false;
   try {
+    if (!process.env.ADMIN_EMAIL) {
+      throw new Error('ADMIN_EMAIL not set; cannot deliver dispute-won notification');
+    }
     const tpl = emailTemplates.disputeWonAdminNotification({
       amountDollars: (reinstated / 100).toFixed(2),
       perBartender: bartenders.map(b => ({ name: b.name, shareDollars: b.shareDollars })),
@@ -100,11 +106,14 @@ async function notifyDisputeWon(tipId, { reinstatedAmountCents, disputeOpenedAt,
       html: tpl.html,
       text: tpl.text,
     });
+    emailSent = true;
   } catch (err) {
     Sentry.captureException(err, { tags: { util: 'payrollDisputeNotify', step: 'send_email' } });
   }
 
-  await pool.query('UPDATE tips SET dispute_won_at = NOW() WHERE id = $1', [tipId]);
+  if (emailSent) {
+    await pool.query('UPDATE tips SET dispute_won_at = NOW() WHERE id = $1', [tipId]);
+  }
   return {
     bartenders,
     reinstatedAmountCents: reinstated,
