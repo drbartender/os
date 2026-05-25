@@ -115,30 +115,20 @@ router.get('/publishable-key', (_req, res) => {
 async function getOrCreateCustomer(proposal) {
   const stripe = getStripe();
   // Validate the cached id against the active Stripe mode (live vs test).
-  // STRIPE_TEST_MODE_UNTIL toggles between modes; a customer created in one
-  // mode is not retrievable from the other and Stripe will reject the
-  // PaymentIntent with "No such customer". Verify before reuse.
+  // STRIPE_TEST_MODE_UNTIL toggles modes; a customer from one mode is not
+  // retrievable from the other. Verify before reuse.
   if (proposal.stripe_customer_id) {
     try {
       const existing = await stripe.customers.retrieve(proposal.stripe_customer_id);
-      if (existing && !existing.deleted) {
-        return proposal.stripe_customer_id;
-      }
+      if (existing && !existing.deleted) return proposal.stripe_customer_id;
     } catch (err) {
-      // Distinguish "really gone / wrong mode" from "transient API failure".
-      // resource_missing → safe to create a new customer (the old one is
-      // unusable in this mode). Anything else (network blip, 5xx, auth error)
-      // → re-throw so we don't silently overwrite a valid stripe_customer_id
-      // with a brand-new customer; a future autopay charge against a stale
-      // payment_method would fail loudly instead.
+      // resource_missing → safe to create new. Anything else (transient API
+      // failure) → re-throw so we don't overwrite a valid id with a fresh
+      // customer and break a future off-session autopay charge.
       if (err && err.code === 'resource_missing') {
-        // Self-healing during STRIPE_TEST_MODE_UNTIL cutovers — stale customer
-        // from the other mode. Logged locally only; not Sentry-worthy noise.
+        // Self-healing during STRIPE_TEST_MODE_UNTIL cutovers.
         console.warn(`[Stripe] Cached customer ${proposal.stripe_customer_id} not retrievable in current mode for proposal ${proposal.id}; creating new`);
-        // fall through to create
-      } else {
-        throw err;
-      }
+      } else { throw err; }
     }
   }
   const customer = await stripe.customers.create({
@@ -1054,10 +1044,8 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             await sendEmail({ to: pi.client_email, ...tpl });
           }
         } else {
-          // Non-coupled payment: existing paymentReceivedClient path, still gated
-          // by the same shouldSendImmediate check above. Detect autopay-driven
-          // balance charge (paymentType='balance' AND autopay enrolled) so the
-          // autopay-specific receipt copy variant still fires.
+          // Non-coupled payment. Detect autopay-driven balance charge so the
+          // autopay-specific receipt copy variant fires.
           const isAutopaySuccess = paymentType === 'balance' && pi?.autopay_enrolled === true;
           const tpl = emailTemplates.paymentReceivedClient({
             clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute, autopay: isAutopaySuccess,
@@ -1188,14 +1176,11 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             `, [proposalId]);
           }
 
-          // Last-minute staffing hold — only for the INITIAL-booking branches
-          // (full; deposit covered defensively even though the create-intent
-          // gate makes a ≤14d deposit impossible). balance / drink_plan_* /
-          // invoice are post-conversion and must never flip the hold. Flag the
-          // proposal atomically with the status change so the admin badge is
-          // consistent the instant the tx commits; the post-commit SMS blast is
-          // gated on the same isLastMinuteHold flag (set here) AND
-          // isFirstDelivery, so a Stripe retry can neither re-flag nor re-blast.
+          // Last-minute staffing hold — only for INITIAL-booking branches (full;
+          // deposit covered defensively even though create-intent rejects a ≤14d
+          // deposit). balance / drink_plan_* / invoice are post-conversion and
+          // must never flip the hold. The post-commit SMS blast is gated on this
+          // flag AND isFirstDelivery, so a Stripe retry can't re-flag or re-blast.
           if (paymentType === 'full' || paymentType === 'deposit') {
             const lmRes = await dbClient.query(
               'SELECT event_date, event_start_time FROM proposals WHERE id = $1',
@@ -1253,17 +1238,13 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             if (invoiceId) {
               await linkPaymentToInvoice(Number(invoiceId), paymentRowId, intent.amount, dbClient);
             } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
-              // Idempotency: this whole block is inside `if (isFirstDelivery)`
-              // above, so Stripe retries of the same intent won't re-create
-              // the "Drink Plan Extras" invoice. If this block is ever lifted
-              // out of that guard, add `ON CONFLICT` handling to
-              // createDrinkPlanExtrasInvoice first or you'll duplicate invoices.
+              // Idempotency: this block is inside `if (isFirstDelivery)` above, so
+              // Stripe retries won't re-create the extras invoice. If lifted out,
+              // add ON CONFLICT to createDrinkPlanExtrasInvoice first.
               //
-              // Clamp metadata against the authoritative charged amount so a
-              // mismatched or corrupted extras/balance split can't apportion
-              // more money than was actually captured. extras takes priority
-              // (it's what the client explicitly paid for); balance is what's
-              // left over after extras.
+              // Clamp metadata against the authoritative captured amount so a
+              // corrupted extras/balance split can't apportion more than was
+              // actually charged. extras takes priority; balance is the remainder.
               const rawExtrasCents = Number(intent.metadata?.extras_amount_cents || 0);
               const rawBalanceCents = Number(intent.metadata?.balance_amount_cents || 0);
               const extrasCents = Math.max(0, Math.min(rawExtrasCents, intent.amount));
@@ -1721,6 +1702,25 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   if (event.type === 'charge.dispute.funds_withdrawn') {
     const dispute = event.data.object;
     await clawbackForPaymentIntent(dispute.payment_intent, Number(dispute.amount || 0));
+  }
+
+  if (event.type === 'charge.dispute.funds_reinstated') {
+    const dispute = event.data.object;
+    const piId = dispute.payment_intent;
+    if (piId) {
+      const { rows } = await pool.query('SELECT id FROM tips WHERE stripe_payment_intent_id = $1', [piId]);
+      if (rows[0]) {
+        try {
+          const { notifyDisputeWon } = require('../utils/payrollDisputeNotify');
+          await notifyDisputeWon(rows[0].id, {
+            reinstatedAmountCents: Number(dispute.amount || 0),
+            disputeOpenedAt: dispute.created ? new Date(dispute.created * 1000) : null,
+            disputeWonAt: new Date(),
+          });
+        } catch (err) { Sentry.captureException(err, { tags: { webhook: 'tip_dispute_won' } }); }
+      }
+    }
+    return res.json({ received: true });
   }
 
   res.json({ received: true });
