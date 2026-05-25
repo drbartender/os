@@ -701,31 +701,15 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
     [proposalId]
   );
 
-  // Refund client notification — non-blocking. Fires only from the request
-  // that actually performed the reconciliation (recon.applied === true). A
-  // concurrent retry or admin double-submit is the idempotency loser
-  // (recon.applied === false, this request was a recon no-op) and must NOT
-  // send a duplicate notification for the same one real refund.
-  try {
-    const a = after.rows[0];
-    if (recon?.applied && a?.client_email) {
-      const newBalance = Number(a.total_price) - Number(a.amount_paid);
-      const tpl = emailTemplates.refundNotificationClient({
-        clientName: a.client_name,
-        refundAmount: plan.amountCents / 100,
-        last4: null, // not stored on payments today
-        newBalance,
-      });
-      await sendEmail({ to: a.client_email, ...tpl });
-    }
-  } catch (refundEmailErr) {
-    if (process.env.SENTRY_DSN_SERVER) {
-      Sentry.captureException(refundEmailErr, {
-        tags: { route: '/stripe/refund', component: 'refundNotificationClient' },
-        extra: { proposalId },
-      });
-    }
-    console.error('Refund client notification email failed (non-blocking):', refundEmailErr);
+  // Refund client notification: non-blocking, gated on recon.applied to avoid
+  // a double-send between this in-app route and the charge.refunded webhook.
+  if (recon?.applied) {
+    const { sendRefundClientNotification } = require('../utils/refundClientNotify');
+    await sendRefundClientNotification({
+      proposalId,
+      amountCents: plan.amountCents,
+      source: 'in_app_route',
+    });
   }
 
   res.json({
@@ -1614,6 +1598,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 
     if (proposalId && refundObj && paymentIntentId) {
       const dbClient = await pool.connect();
+      let recon = null;
       try {
         await dbClient.query('BEGIN');
         const payRow = await dbClient.query(
@@ -1622,7 +1607,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           [paymentIntentId]
         );
         const { applyRefundReconciliation } = require('../utils/refundHelpers');
-        await applyRefundReconciliation(
+        recon = await applyRefundReconciliation(
           {
             proposalId: Number(proposalId),
             stripeRefundId: refundObj.id,
@@ -1645,6 +1630,20 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         throw dbErr; // 5xx → Stripe retries (same posture as payment_intent.succeeded)
       } finally {
         dbClient.release();
+      }
+
+      // Notify the client only when THIS request actually applied the refund.
+      // Dashboard-issued refunds land here first (recon.applied true) and the
+      // client gets the same notification email the in-app route would send.
+      // When the webhook fires after an in-app refund, recon.applied is false
+      // (the in-app route already applied) and we skip to avoid double-send.
+      if (recon?.applied) {
+        const { sendRefundClientNotification } = require('../utils/refundClientNotify');
+        await sendRefundClientNotification({
+          proposalId,
+          amountCents: refundObj.amount,
+          source: 'webhook',
+        });
       }
     }
     // Tip-clawback path: no-ops when paymentIntentId is not a tip.
