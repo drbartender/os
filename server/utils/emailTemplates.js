@@ -3,11 +3,7 @@
  * Each template function returns { subject, html, text }.
  */
 
-/** Escape HTML special characters to prevent XSS in email bodies */
-function esc(str) {
-  if (!str) return '';
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+const { esc } = require('./htmlEscape');
 
 const BRAND = {
   dark: '#2d1810',

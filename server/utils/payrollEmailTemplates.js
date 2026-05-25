@@ -5,18 +5,15 @@
  * templates below for backwards compatibility, so consumers that access them
  * by property (emailTemplates.disputeWonAdminNotification) keep working.
  *
- * IMPORTANT — shared helpers (esc, BRAND, wrapEmail, ctaButton) are imported
- * from emailTemplates.js. emailTemplates.js requires this file lazily inside
- * its module.exports list (at module-load time), so this file's require of
- * emailTemplates.js would create a cycle. To avoid that, we duplicate the
- * tiny helpers we need rather than importing them. Mirrors the pattern in
- * lifecycleEmailTemplates.js — see that file's header comment for context.
+ * IMPORTANT — BRAND, wrapEmail, and ctaButton are DUPLICATED here on purpose.
+ * They also exist in emailTemplates.js. emailTemplates.js requires this file
+ * lazily inside its module.exports list, so this file's require of
+ * emailTemplates.js would create a cycle. We duplicate those helpers rather
+ * than import them. Mirrors the pattern in lifecycleEmailTemplates.js. esc is
+ * the exception — it lives in ./htmlEscape and is imported by both.
  */
 
-function esc(str) {
-  if (!str) return '';
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+const { esc } = require('./htmlEscape');
 
 const BRAND = {
   dark: '#2d1810',

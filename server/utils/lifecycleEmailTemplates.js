@@ -8,21 +8,17 @@
  * so consumers that access them by property (emailTemplates.signedAndPaidClient)
  * keep working unchanged.
  *
- * IMPORTANT — shared helpers are DUPLICATED here on purpose.
- *   esc / BRAND / wrapEmail / ctaButton / lastMinuteCaveatHtml /
- *   lastMinuteCaveatText also exist in emailTemplates.js.
- * They are copied (not imported) to break the require cycle: emailTemplates.js
- * requires this file for the templates, and importing the helpers back from it
- * would mean reading exports of a module that is still mid-load. If you edit the
- * BRAND palette or the email shell, update BOTH files. They are intentionally
- * byte-for-byte identical — keep them that way.
+ * IMPORTANT — BRAND / wrapEmail / ctaButton / lastMinuteCaveatHtml /
+ * lastMinuteCaveatText are DUPLICATED here on purpose. They also exist in
+ * emailTemplates.js. They are copied (not imported) to break the require cycle:
+ * emailTemplates.js requires this file for the templates, so importing the
+ * helpers back from it would mean reading exports of a module that is still
+ * mid-load. If you edit the BRAND palette or the email shell, update BOTH
+ * files. They are intentionally byte-for-byte identical — keep them that way.
+ * (esc is the exception — it lives in ./htmlEscape and is imported by both.)
  */
 
-/** Escape HTML special characters to prevent XSS in email bodies */
-function esc(str) {
-  if (!str) return '';
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+const { esc } = require('./htmlEscape');
 
 const BRAND = {
   dark: '#2d1810',

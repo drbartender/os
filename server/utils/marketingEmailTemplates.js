@@ -1,17 +1,9 @@
 const { wrapMarketingEmail, wrapEmail } = require('./emailTemplates');
+const { esc } = require('./htmlEscape');
 
 const BRAND_PRIMARY = '#3b2314';
 const BRAND_SECONDARY = '#6b4226';
 const BRAND_BG = '#f9f6f3';
-
-function esc(str) {
-  if (str === null || str === undefined) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 function ctaButton(url, label) {
   return `<p style="text-align:center;margin:2rem 0;">
