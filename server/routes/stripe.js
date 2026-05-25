@@ -10,12 +10,7 @@ const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { calculateSyrupCost } = require('../utils/pricingEngine');
-const {
-  createBalanceInvoice,
-  linkPaymentToInvoice,
-  createDrinkPlanExtrasInvoice,
-  findOpenInvoiceForBalance,
-} = require('../utils/invoiceHelpers');
+const { createBalanceInvoice, linkPaymentToInvoice, createDrinkPlanExtrasInvoice, findOpenInvoiceForBalance } = require('../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { scheduleBalanceReminders } = require('../utils/balanceReminderScheduling');
 const { schedulePreEventReminders } = require('../utils/preEventScheduling');
@@ -27,6 +22,8 @@ const { notifyClientPaymentFailed } = require('../utils/paymentFailedClientNotif
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../utils/urls');
+const { matchTipToEvent } = require('../utils/payrollTips');
+const { clawbackTipByPaymentIntent } = require('../utils/payrollClawback');
 
 const router = express.Router();
 
@@ -53,30 +50,20 @@ router.get('/publishable-key', (_req, res) => {
 async function getOrCreateCustomer(proposal) {
   const stripe = getStripe();
   // Validate the cached id against the active Stripe mode (live vs test).
-  // STRIPE_TEST_MODE_UNTIL toggles between modes; a customer created in one
-  // mode is not retrievable from the other and Stripe will reject the
-  // PaymentIntent with "No such customer". Verify before reuse.
+  // STRIPE_TEST_MODE_UNTIL toggles modes; a customer from one mode is not
+  // retrievable from the other. Verify before reuse.
   if (proposal.stripe_customer_id) {
     try {
       const existing = await stripe.customers.retrieve(proposal.stripe_customer_id);
-      if (existing && !existing.deleted) {
-        return proposal.stripe_customer_id;
-      }
+      if (existing && !existing.deleted) return proposal.stripe_customer_id;
     } catch (err) {
-      // Distinguish "really gone / wrong mode" from "transient API failure".
-      // resource_missing → safe to create a new customer (the old one is
-      // unusable in this mode). Anything else (network blip, 5xx, auth error)
-      // → re-throw so we don't silently overwrite a valid stripe_customer_id
-      // with a brand-new customer; a future autopay charge against a stale
-      // payment_method would fail loudly instead.
+      // resource_missing → safe to create new. Anything else (transient API
+      // failure) → re-throw so we don't overwrite a valid id with a fresh
+      // customer and break a future off-session autopay charge.
       if (err && err.code === 'resource_missing') {
-        // Self-healing during STRIPE_TEST_MODE_UNTIL cutovers — stale customer
-        // from the other mode. Logged locally only; not Sentry-worthy noise.
+        // Self-healing during STRIPE_TEST_MODE_UNTIL cutovers.
         console.warn(`[Stripe] Cached customer ${proposal.stripe_customer_id} not retrievable in current mode for proposal ${proposal.id}; creating new`);
-        // fall through to create
-      } else {
-        throw err;
-      }
+      } else { throw err; }
     }
   }
   const customer = await stripe.customers.create({
@@ -1016,10 +1003,8 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             console.error('Sign+pay confirmation SMS failed (non-blocking):', smsErr);
           }
         } else {
-          // Non-coupled payment: existing paymentReceivedClient path, still gated
-          // by the same shouldSendImmediate check above. Detect autopay-driven
-          // balance charge (paymentType='balance' AND autopay enrolled) so the
-          // autopay-specific receipt copy variant still fires.
+          // Non-coupled payment. Detect autopay-driven balance charge so the
+          // autopay-specific receipt copy variant fires.
           const isAutopaySuccess = paymentType === 'balance' && pi?.autopay_enrolled === true;
           const tpl = emailTemplates.paymentReceivedClient({
             clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute, autopay: isAutopaySuccess,
@@ -1056,20 +1041,15 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     if (proposalId) {
       const dbClient = await pool.connect();
       let isFirstDelivery = false;
-      // Set true in-tx when this initial-booking payment is for a ≤72h event.
-      // Gates BOTH the flag UPDATE (inside the tx) and the post-commit SMS
-      // blast — strictly within the isFirstDelivery guard so a Stripe webhook
-      // retry never double-flags or double-blasts.
+      // Set true in-tx for an initial-booking ≤72h-out payment. Gates BOTH the flag
+      // UPDATE (in-tx) and post-commit SMS so a Stripe retry never double-flags/blasts.
       let isLastMinuteHold = false;
       try {
         await dbClient.query('BEGIN');
 
-        // Idempotency guard: Stripe retries `payment_intent.succeeded` on
-        // transient delivery failures. Insert the payment row FIRST with an
-        // ON CONFLICT DO NOTHING; if rowCount === 0, this is a duplicate
-        // delivery — skip all state mutations and post-commit side effects
-        // (emails, shift creation) so we never double-charge amount_paid
-        // or spam notifications.
+        // Idempotency: Stripe retries on transient delivery failure. Insert the
+        // payment row FIRST with ON CONFLICT DO NOTHING; rowCount === 0 = duplicate
+        // delivery → skip all state mutations and post-commit side effects.
         const inserted = await dbClient.query(
           `INSERT INTO proposal_payments (proposal_id, stripe_payment_intent_id, payment_type, amount, status)
            VALUES ($1, $2, $3, $4, 'succeeded')
@@ -1153,14 +1133,11 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             `, [proposalId]);
           }
 
-          // Last-minute staffing hold — only for the INITIAL-booking branches
-          // (full; deposit covered defensively even though the create-intent
-          // gate makes a ≤14d deposit impossible). balance / drink_plan_* /
-          // invoice are post-conversion and must never flip the hold. Flag the
-          // proposal atomically with the status change so the admin badge is
-          // consistent the instant the tx commits; the post-commit SMS blast is
-          // gated on the same isLastMinuteHold flag (set here) AND
-          // isFirstDelivery, so a Stripe retry can neither re-flag nor re-blast.
+          // Last-minute staffing hold — only for INITIAL-booking branches (full;
+          // deposit covered defensively even though create-intent rejects a ≤14d
+          // deposit). balance / drink_plan_* / invoice are post-conversion and
+          // must never flip the hold. The post-commit SMS blast is gated on this
+          // flag AND isFirstDelivery, so a Stripe retry can't re-flag or re-blast.
           if (paymentType === 'full' || paymentType === 'deposit') {
             const lmRes = await dbClient.query(
               'SELECT event_date, event_start_time FROM proposals WHERE id = $1',
@@ -1218,17 +1195,13 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             if (invoiceId) {
               await linkPaymentToInvoice(Number(invoiceId), paymentRowId, intent.amount, dbClient);
             } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
-              // Idempotency: this whole block is inside `if (isFirstDelivery)`
-              // above, so Stripe retries of the same intent won't re-create
-              // the "Drink Plan Extras" invoice. If this block is ever lifted
-              // out of that guard, add `ON CONFLICT` handling to
-              // createDrinkPlanExtrasInvoice first or you'll duplicate invoices.
+              // Idempotency: this block is inside `if (isFirstDelivery)` above, so
+              // Stripe retries won't re-create the extras invoice. If lifted out,
+              // add ON CONFLICT to createDrinkPlanExtrasInvoice first.
               //
-              // Clamp metadata against the authoritative charged amount so a
-              // mismatched or corrupted extras/balance split can't apportion
-              // more money than was actually captured. extras takes priority
-              // (it's what the client explicitly paid for); balance is what's
-              // left over after extras.
+              // Clamp metadata against the authoritative captured amount so a
+              // corrupted extras/balance split can't apportion more than was
+              // actually charged. extras takes priority; balance is the remainder.
               const rawExtrasCents = Number(intent.metadata?.extras_amount_cents || 0);
               const rawBalanceCents = Number(intent.metadata?.balance_amount_cents || 0);
               const extrasCents = Math.max(0, Math.min(rawExtrasCents, intent.amount));
@@ -1497,22 +1470,23 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         });
       }
 
-      await pool.query(`
+      const inserted = await pool.query(`
         INSERT INTO tips (tip_page_token, target_user_id, amount_cents,
                           stripe_payment_intent_id, stripe_session_id,
                           customer_email, tipped_at)
         VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7))
         ON CONFLICT (stripe_payment_intent_id) DO NOTHING
+        RETURNING id
       `, [
-        token,
-        dbUserId,
-        session.amount_total,
-        piId,
-        session.id,
-        session.customer_details && session.customer_details.email ? session.customer_details.email : null,
-        session.created,
+        token, dbUserId, session.amount_total, piId, session.id,
+        session.customer_details?.email || null, session.created,
       ]);
+      // Best-effort match the tip to its event; must not fail the webhook.
       // Tip session handled — do NOT fall through to proposal deposit logic.
+      if (inserted.rows.length) {
+        try { await matchTipToEvent(inserted.rows[0].id); }
+        catch (err) { Sentry.captureException(err, { tags: { webhook: 'tip', step: 'tip_match' } }); }
+      }
       return res.json({ received: true });
     }
 
@@ -1626,11 +1600,9 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     const paymentIntentId = typeof charge.payment_intent === 'string'
       ? charge.payment_intent
       : charge.payment_intent?.id;
-    // charge.refunded delivers the whole charge; refunds.data is newest-first,
-    // so data[0] is the refund this event is about. A mis-pick in a rare
-    // multi-refund race is harmless: the unique stripe_refund_id index makes
-    // applyRefundReconciliation a no-op for an id already applied by the
-    // synchronous route.
+    // refunds.data is newest-first, so data[0] is the refund this event is about.
+    // A mis-pick in a multi-refund race is harmless: unique stripe_refund_id makes
+    // applyRefundReconciliation a no-op for an id already applied by the sync route.
     const refundObj = charge.refunds?.data?.[0];
     const proposalId = charge.metadata?.proposal_id
       || (paymentIntentId
@@ -1675,6 +1647,32 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         dbClient.release();
       }
     }
+    // Tip-clawback path: no-ops when paymentIntentId is not a tip.
+    await clawbackTipByPaymentIntent(paymentIntentId, Number(charge.amount_refunded || 0));
+  }
+
+  if (event.type === 'charge.dispute.funds_withdrawn') {
+    const dispute = event.data.object;
+    await clawbackTipByPaymentIntent(dispute.payment_intent, Number(dispute.amount || 0));
+  }
+
+  if (event.type === 'charge.dispute.funds_reinstated') {
+    const dispute = event.data.object;
+    const piId = dispute.payment_intent;
+    if (piId) {
+      const { rows } = await pool.query('SELECT id FROM tips WHERE stripe_payment_intent_id = $1', [piId]);
+      if (rows[0]) {
+        try {
+          const { notifyDisputeWon } = require('../utils/payrollDisputeNotify');
+          await notifyDisputeWon(rows[0].id, {
+            reinstatedAmountCents: Number(dispute.amount || 0),
+            disputeOpenedAt: dispute.created ? new Date(dispute.created * 1000) : null,
+            disputeWonAt: new Date(),
+          });
+        } catch (err) { Sentry.captureException(err, { tags: { webhook: 'tip_dispute_won' } }); }
+      }
+    }
+    return res.json({ received: true });
   }
 
   res.json({ received: true });

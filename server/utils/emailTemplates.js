@@ -813,6 +813,7 @@ async function sendPaperworkReminderEmail({ userId }) {
 // require back into this file — it duplicates the shared helpers on purpose),
 // so it is fully loaded here and the re-exports below are plain references.
 const lifecycle = require('./lifecycleEmailTemplates');
+const payroll = require('./payrollEmailTemplates');
 
 // ─── Pre-event Reminder Emails (Plan 2c) ────────────────────────
 
@@ -933,6 +934,7 @@ module.exports = {
   paymentFailedClient,
   clientSignedAdmin,
   paymentReceivedAdmin,
+  disputeWonAdminNotification: payroll.disputeWonAdminNotification,
   signedAndPaidAdmin,
   topShelfClassRequestAdmin,
   newApplicationAdmin,

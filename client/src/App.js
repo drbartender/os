@@ -76,6 +76,7 @@ const EventsDashboard = lazy(() => import('./pages/admin/EventsDashboard'));
 const EventDetailPage = lazy(() => import('./pages/admin/EventDetailPage'));
 const ClientsDashboard = lazy(() => import('./pages/admin/ClientsDashboard'));
 const FinancialsDashboard = lazy(() => import('./pages/admin/FinancialsDashboard'));
+const PayrollPage = lazy(() => import('./pages/admin/payroll/PayrollPage'));
 const HiringDashboard = lazy(() => import('./pages/admin/HiringDashboard'));
 const SettingsDashboard = lazy(() => import('./pages/admin/SettingsDashboard'));
 const DrinkPlansDashboard = lazy(() => import('./pages/admin/DrinkPlansDashboard'));
@@ -418,6 +419,7 @@ function AppRoutes() {
         <Route path="/clients/:id" element={<ClientDetail />} />
         <Route path="/messages" element={<Messages />} />
         <Route path="/financials" element={<FinancialsDashboard />} />
+        <Route path="/financials/payroll" element={<PayrollPage />} />
         <Route path="/tips" element={<TipsAdmin />} />
         <Route path="/settings" element={<SettingsDashboard />} />
         <Route path="/blog" element={<BlogDashboard />} />

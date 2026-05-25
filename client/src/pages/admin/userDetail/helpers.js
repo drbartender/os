@@ -8,7 +8,24 @@
 export const DEFAULT_HOURS_PER_SHIFT = 4;
 export const DEFAULT_HOURLY_RATE = 20;
 
-export const PAYMENT_METHODS = ['Zelle', 'Venmo', 'CashApp', 'PayPal', 'Direct Deposit'];
+// Canonical lowercase enum, matching server/routes/admin/users.js:520.
+// Zelle was retired; if a contractor still has 'Zelle' on file from before the
+// switch, the dropdown will not list it and the next save normalizes it.
+export const PAYMENT_METHODS = ['venmo', 'cashapp', 'paypal', 'check', 'direct_deposit', 'other'];
+
+const PAYMENT_METHOD_LABELS = {
+  venmo: 'Venmo',
+  cashapp: 'Cash App',
+  paypal: 'PayPal',
+  check: 'Check',
+  direct_deposit: 'Direct Deposit',
+  other: 'Other',
+};
+
+export function paymentMethodLabel(method) {
+  if (!method) return '';
+  return PAYMENT_METHOD_LABELS[method] || method;
+}
 
 export function rateOf(profile) {
   const r = Number(profile?.hourly_rate);

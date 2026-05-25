@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import api from '../../../../utils/api';
 import Icon from '../../../../components/adminos/Icon';
 import StatusChip from '../../../../components/adminos/StatusChip';
-import { fmt$ } from '../../../../components/adminos/format';
+import { fmt$, fmt$fromCents, fmtDate } from '../../../../components/adminos/format';
 import FormBanner from '../../../../components/FormBanner';
 import FieldError from '../../../../components/FieldError';
-import { rateOf, PAYMENT_METHODS } from '../helpers';
+import { rateOf, PAYMENT_METHODS, paymentMethodLabel } from '../helpers';
 
 export default function PayoutsTab(props) {
   const {
@@ -17,19 +19,44 @@ export default function PayoutsTab(props) {
   const updateField = (k, v) => setEditForm(f => ({ ...f, [k]: v }));
   const w9 = !!payment?.w9_file_url;
 
+  const { id: userIdParam } = useParams();
+  const navigate = useNavigate();
+  const [payouts, setPayouts] = useState(null);
+
+  useEffect(() => {
+    if (!userIdParam) return;
+    api.get(`/admin/payroll/contractors/${userIdParam}/payouts`)
+      .then(r => setPayouts(r.data.payouts || []))
+      .catch(() => setPayouts([]));
+  }, [userIdParam]);
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 320px', gap: 'var(--gap)' }}>
       <div className="vstack" style={{ gap: 'var(--gap)' }}>
-        {/* Pay periods placeholder */}
         <div className="card">
-          <div className="card-head">
-            <h3>Pay periods</h3>
-            <button type="button" className="btn btn-secondary btn-sm" disabled>
-              <Icon name="dollar" size={11} />Run payout
-            </button>
-          </div>
-          <div className="card-body muted tiny">
-            Pay-period tracking isn't wired up yet. Once you add a payouts table this card will show period rows with shifts / hours / wages / tips / total / status.
+          <div className="card-head"><h3>Pay periods</h3></div>
+          <div className="card-body">
+            {payouts === null && <div className="muted tiny">Loading…</div>}
+            {payouts !== null && payouts.length === 0 && (
+              <div className="muted tiny">No payouts yet. Once this contractor works a completed event, the period rows land here.</div>
+            )}
+            {payouts !== null && payouts.length > 0 && payouts.map(po => (
+              <div
+                key={po.id}
+                className="hstack"
+                style={{ padding: '8px 0', borderTop: '1px solid var(--line-1)', gap: 8, cursor: 'pointer' }}
+                onClick={() => navigate(`/financials/payroll`)}
+                role="button" tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/financials/payroll`); }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600 }}>{fmtDate(po.period.start_date)} – {fmtDate(po.period.end_date)}</div>
+                  <div className="tiny muted">{Number(po.event_count)} event{Number(po.event_count) === 1 ? '' : 's'} · Payday {fmtDate(po.period.payday)}</div>
+                </div>
+                <div className="num"><strong>{fmt$fromCents(po.total_cents)}</strong></div>
+                <span className={`chip ${po.status === 'paid' ? 'ok' : 'info'}`}>{po.status}</span>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -146,7 +173,7 @@ export default function PayoutsTab(props) {
                   <div className="meta-k" style={{ marginBottom: 4 }}>Payout method</div>
                   <select className="select" value={editForm.preferred_payment_method} onChange={(e) => updateField('preferred_payment_method', e.target.value)}>
                     <option value="">—</option>
-                    {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                    {PAYMENT_METHODS.map(m => <option key={m} value={m}>{paymentMethodLabel(m)}</option>)}
                   </select>
                 </div>
                 <div>
@@ -174,7 +201,7 @@ export default function PayoutsTab(props) {
                   <div className="hstack" style={{ padding: '10px 12px', background: 'var(--bg-2)', borderRadius: 3, border: '1px solid var(--line-1)' }}>
                     <Icon name="dollar" size={14} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <strong style={{ fontSize: 12.5 }}>{payment.preferred_payment_method}</strong>
+                      <strong style={{ fontSize: 12.5 }}>{paymentMethodLabel(payment.preferred_payment_method)}</strong>
                       <div className="tiny muted">{payment.payment_username || (payment.account_number ? `Account ··· ${String(payment.account_number).slice(-4)}` : 'Not configured')}</div>
                     </div>
                   </div>
