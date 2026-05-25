@@ -19,6 +19,7 @@
     "optimize:assets": "node scripts/optimize-assets.js",
     "worktree:new": "node scripts/worktree-new.js",
     "worktree:rm": "node scripts/worktree-rm.js",
+    "where": "node scripts/show-location.js",
     "prepare": "husky"
   },
   "dependencies": {

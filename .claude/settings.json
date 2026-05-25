@@ -3,5 +3,14 @@
     "github@claude-plugins-official": true,
     "vercel@claude-plugins-official": true,
     "stripe@claude-plugins-official": true
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node scripts/show-location.js" }
+        ]
+      }
+    ]
   }
 }
