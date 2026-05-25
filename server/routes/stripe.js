@@ -14,7 +14,6 @@ const { createBalanceInvoice, linkPaymentToInvoice, createDrinkPlanExtrasInvoice
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { renderEventIcs } = require('../utils/icsCalendar');
 const { buildOrientationPayload } = require('../utils/orientationData');
-const { effectiveSetupMinutes } = require('../utils/setupTime');
 const { shouldSendImmediate } = require('../utils/messageSuppression');
 const { notifyClientPaymentFailed } = require('../utils/paymentFailedClientNotify');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -890,9 +889,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
                 formattedBalanceDueDate: payload.balance.formattedBalanceDueDate,
               };
 
-              // effectiveSetupMinutes signature is (proposal, pkg). We pass the
-              // payload and null pkg so it falls through to its 60-min default.
-              const setupMin = effectiveSetupMinutes(payload, null) || 60;
+              const setupMin = payload.setupMinutesBefore;
               const timelineLines = [
                 payload.potionPlannerUrl
                   ? 'Drink plan: pick yours any time'

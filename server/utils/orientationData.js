@@ -1,5 +1,6 @@
 const { pool } = require('../db');
 const { resolveEventTimezone, formatEventLocalTime, DEFAULT_TZ } = require('./eventTimezone');
+const { effectiveSetupMinutes } = require('./setupTime');
 
 /**
  * Parse proposals.event_start_time (VARCHAR(20)) into {h, m}.
@@ -153,6 +154,7 @@ async function buildOrientationPayload(proposalId, { publicSiteUrl }) {
       p.balance_due_date,
       p.autopay_enrolled,
       p.event_timezone,
+      p.setup_minutes_before,
       c.id      AS client_id,
       c.name    AS client_name,
       c.email   AS client_email,
@@ -194,6 +196,11 @@ async function buildOrientationPayload(proposalId, { publicSiteUrl }) {
     ? formatEventLocalTime(utc.startUtc, tz, { hour: 'numeric', minute: '2-digit' })
     : (row.event_start_time || null);
 
+  const setupMinutesBefore = effectiveSetupMinutes(
+    { setup_minutes_before: row.setup_minutes_before },
+    { pricing_type: row.package_pricing_type }
+  );
+
   return {
     proposalId: row.id,
     clientName: row.client_name || 'there',
@@ -210,6 +217,7 @@ async function buildOrientationPayload(proposalId, { publicSiteUrl }) {
     formattedEventDate,
     formattedStartTime,
     balance,
+    setupMinutesBefore,
     potionPlannerUrl: buildPotionPlannerUrl(publicSiteUrl, row.drink_plan_token),
     drinkPlanToken: row.drink_plan_token,
   };
