@@ -12,8 +12,6 @@ const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { calculateSyrupCost } = require('../utils/pricingEngine');
 const { createBalanceInvoice, linkPaymentToInvoice, createDrinkPlanExtrasInvoice, findOpenInvoiceForBalance } = require('../utils/invoiceHelpers');
 const { getEventTypeLabel } = require('../utils/eventTypes');
-const { scheduleBalanceReminders } = require('../utils/balanceReminderScheduling');
-const { schedulePreEventReminders } = require('../utils/preEventScheduling');
 const { renderEventIcs } = require('../utils/icsCalendar');
 const { buildOrientationPayload } = require('../utils/orientationData');
 const { effectiveSetupMinutes } = require('../utils/setupTime');
@@ -1275,11 +1273,17 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         // isFirstDelivery so a Stripe webhook retry never re-blasts.
         if (isLastMinuteHold) notifyLastMinuteBooking(proposalId);
 
-        // Schedule balance-reminder ladder for the deposit-paid → balance-due window.
-        // Fires for both 'deposit' and 'full' payments; the helper skips when balance <= 0.
-        // Idempotent — Stripe retries that re-enter this block won't double-schedule.
+        // Schedule the balance-reminder ladder + pre-event reminders for the
+        // deposit-paid window. Both helpers are idempotent so a Stripe retry
+        // re-entering this block will not double-schedule. Gated on deposit/
+        // full payments; balance/extras payments skip (they fire post-conversion
+        // when reminders already exist). The pre-event call moved out of the
+        // separate block below into this single helper invocation.
+        let depositRemindersScheduled = false;
         if (paymentType === 'deposit' || paymentType === 'full') {
-          await scheduleBalanceReminders(proposalId);
+          const { scheduleDepositPaidReminders } = require('../utils/depositPaidSchedulers');
+          await scheduleDepositPaidReminders(proposalId, { source: 'payment_intent.succeeded' });
+          depositRemindersScheduled = true;
         }
 
         // Create the shift (and, via createEventShifts, the drink plan) BEFORE
@@ -1299,26 +1303,9 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 
         sendPaymentNotifications(proposalId, intent.amount, paymentType);
 
-        // Schedule pre-event reminder emails (T-7 event-week, conditional
-        // T-30 long-lead recap). Mirrors the balance-reminder scheduling
-        // above — both fire from this single first-delivery anchor point.
-        // Inserts are idempotent (insertIfMissing) so even if a Stripe retry
-        // somehow bypassed isFirstDelivery, we wouldn't double-schedule.
-        //
-        // Gate on deposit/full payment types — never on balance or
-        // drink-plan-extras payments (those happen post-conversion when
-        // reminders already exist).
-        if (paymentType === 'deposit' || paymentType === 'full') {
-          try {
-            await schedulePreEventReminders(proposalId);
-          } catch (schedErr) {
-            if (process.env.SENTRY_DSN_SERVER) {
-              Sentry.captureException(schedErr, {
-                tags: { webhook: 'stripe', route: '/webhook', step: 'schedulePreEventReminders' },
-              });
-            }
-            console.error('schedulePreEventReminders failed (non-blocking):', schedErr);
-          }
+        // depositRemindersScheduled covers both balance + pre-event scheduling
+        // above. This block remains as the deposit-only marketing/drip anchor.
+        if (depositRemindersScheduled) {
 
           // Plan 2d: schedule long-lead marketing touches (New Year, 6-mo-out)
           // and suppress the now-moot unsigned-proposal drip. Separate
@@ -1560,10 +1547,15 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           console.error('Shift auto-creation failed (non-blocking):', shiftErr);
         }
 
+        // Schedule the balance-reminder ladder + pre-event reminders, same as
+        // the payment_intent.succeeded deposit path. Payment-Link sessions are
+        // always 'deposit', so no payment-type gate is needed here.
+        const { scheduleDepositPaidReminders } = require('../utils/depositPaidSchedulers');
+        await scheduleDepositPaidReminders(Number(proposalId), { source: 'checkout.session.completed' });
+
         // Plan 2d: a Payment-Link deposit is a genuine client sign+pay, so
         // schedule the long-lead marketing touches and suppress the drip,
-        // same as the payment_intent.succeeded path. (This branch still lacks
-        // Plan 2c/2a reminders; that is a separate tracked follow-up.)
+        // same as the payment_intent.succeeded path.
         try {
           const { onProposalSignedAndPaid } = require('../utils/marketingHandlers');
           await onProposalSignedAndPaid(Number(proposalId));
