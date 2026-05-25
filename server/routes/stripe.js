@@ -22,6 +22,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../utils/urls');
 const { matchTipToEvent } = require('../utils/payrollTips');
+const { clawbackTip } = require('../utils/payrollClawback');
 
 const router = express.Router();
 
@@ -31,16 +32,8 @@ function eventLabelFor(row) {
 
 /**
  * Schedule the balance-reminder ladder for a freshly-deposit-paid proposal.
- *
- * Autopay enrolled:
- *   1 row at balance_due_date - 3 days (message_type: balance_reminder_autopay_t3)
- *
- * Non-autopay:
- *   4 rows: t-3, due-date, t+1, t+3
- *   (balance_reminder_non_autopay_t3, balance_due_today, balance_late_t1, balance_late_t3)
- *
- * Skips entirely if balance <= 0, balance_due_date not set, or balance_due_date in the past.
- *
+ * Autopay: 1 row at due-3. Non-autopay: 4 rows at t-3, due-date, t+1, t+3.
+ * Skips when balance <= 0, balance_due_date unset, or due_date before today.
  * Idempotent — scheduleMessage no-ops on duplicate pending rows.
  */
 async function scheduleBalanceReminders(proposalId) {
@@ -53,23 +46,18 @@ async function scheduleBalanceReminders(proposalId) {
       [id]
     );
     const p = r.rows[0];
-    if (!p) return;
-    if (!p.client_id) return;
-    if (!p.balance_due_date) return;
+    if (!p || !p.client_id || !p.balance_due_date) return;
     const balanceDue = Number(p.total_price) - Number(p.amount_paid);
     if (balanceDue <= 0) return;
 
     const dueDate = new Date(p.balance_due_date);
     if (Number.isNaN(dueDate.getTime())) return;
-    // Skip only when the balance due date is strictly BEFORE today. pg returns
-    // a DATE column as a JS Date at LOCAL midnight, so `startOfToday` is also
-    // built at local midnight — the two are on the same basis and the compare
-    // is correct no matter what time of day the deposit lands. A balance due
-    // TODAY is NOT skipped (the balance_due_today reminder still schedules),
-    // which is the point: a same-day deposit must not silently drop it.
+    // Skip only when balance due date is strictly BEFORE today. pg returns a DATE
+    // column as a JS Date at LOCAL midnight; startOfToday is local midnight too,
+    // so the compare is correct regardless of time-of-day. Due TODAY still schedules.
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
-    if (dueDate.getTime() < startOfToday.getTime()) return; // balance due strictly before today — admin handles manually
+    if (dueDate.getTime() < startOfToday.getTime()) return; // strictly before today — admin handles
 
     const dayMs = 24 * 60 * 60 * 1000;
     const t3Before = new Date(dueDate.getTime() - 3 * dayMs);
@@ -924,6 +912,18 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   // calls inside this handler so we use the keypair matching the event's mode.
   void stripeForEvent;
 
+  // ── Helper: tip-clawback on refund / dispute funds-withdrawn ────
+  async function clawbackForPaymentIntent(paymentIntentId, newCumulativeCents) {
+    if (!paymentIntentId || !Number.isInteger(newCumulativeCents) || newCumulativeCents <= 0) return;
+    const { rows } = await pool.query(
+      'SELECT id FROM tips WHERE stripe_payment_intent_id = $1',
+      [paymentIntentId]
+    );
+    if (!rows[0]) return; // Not a tip — could be a proposal payment.
+    try { await clawbackTip(rows[0].id, newCumulativeCents); }
+    catch (err) { Sentry.captureException(err, { tags: { webhook: 'tip_clawback', step: 'clawback' } }); }
+  }
+
   // ── Helper: send payment notification emails (non-blocking) ────
   async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
     try {
@@ -1096,20 +1096,15 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     if (proposalId) {
       const dbClient = await pool.connect();
       let isFirstDelivery = false;
-      // Set true in-tx when this initial-booking payment is for a ≤72h event.
-      // Gates BOTH the flag UPDATE (inside the tx) and the post-commit SMS
-      // blast — strictly within the isFirstDelivery guard so a Stripe webhook
-      // retry never double-flags or double-blasts.
+      // Set true in-tx for an initial-booking ≤72h-out payment. Gates BOTH the flag
+      // UPDATE (in-tx) and post-commit SMS so a Stripe retry never double-flags/blasts.
       let isLastMinuteHold = false;
       try {
         await dbClient.query('BEGIN');
 
-        // Idempotency guard: Stripe retries `payment_intent.succeeded` on
-        // transient delivery failures. Insert the payment row FIRST with an
-        // ON CONFLICT DO NOTHING; if rowCount === 0, this is a duplicate
-        // delivery — skip all state mutations and post-commit side effects
-        // (emails, shift creation) so we never double-charge amount_paid
-        // or spam notifications.
+        // Idempotency: Stripe retries on transient delivery failure. Insert the
+        // payment row FIRST with ON CONFLICT DO NOTHING; rowCount === 0 = duplicate
+        // delivery → skip all state mutations and post-commit side effects.
         const inserted = await dbClient.query(
           `INSERT INTO proposal_payments (proposal_id, stripe_payment_intent_id, payment_type, amount, status)
            VALUES ($1, $2, $3, $4, 'succeeded')
@@ -1672,11 +1667,9 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     const paymentIntentId = typeof charge.payment_intent === 'string'
       ? charge.payment_intent
       : charge.payment_intent?.id;
-    // charge.refunded delivers the whole charge; refunds.data is newest-first,
-    // so data[0] is the refund this event is about. A mis-pick in a rare
-    // multi-refund race is harmless: the unique stripe_refund_id index makes
-    // applyRefundReconciliation a no-op for an id already applied by the
-    // synchronous route.
+    // refunds.data is newest-first, so data[0] is the refund this event is about.
+    // A mis-pick in a multi-refund race is harmless: unique stripe_refund_id makes
+    // applyRefundReconciliation a no-op for an id already applied by the sync route.
     const refundObj = charge.refunds?.data?.[0];
     const proposalId = charge.metadata?.proposal_id
       || (paymentIntentId
@@ -1721,6 +1714,13 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         dbClient.release();
       }
     }
+    // Tip-clawback path: no-ops when paymentIntentId is not a tip.
+    await clawbackForPaymentIntent(paymentIntentId, Number(charge.amount_refunded || 0));
+  }
+
+  if (event.type === 'charge.dispute.funds_withdrawn') {
+    const dispute = event.data.object;
+    await clawbackForPaymentIntent(dispute.payment_intent, Number(dispute.amount || 0));
   }
 
   res.json({ received: true });
