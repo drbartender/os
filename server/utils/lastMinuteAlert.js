@@ -4,6 +4,7 @@ const { sendSMS, normalizePhone } = require('./sms');
 const { getEventTypeLabel } = require('./eventTypes');
 const { ADMIN_URL } = require('./urls');
 const { notifyAdminCategory } = require('./adminNotifications');
+const { esc } = require('./htmlEscape');
 
 /**
  * SMS blast for a ≤72h "staffing hold" booking. Admin gets a verify-staffing
@@ -36,7 +37,7 @@ async function notifyLastMinuteBooking(proposalId) {
       await notifyAdminCategory({
         category: 'urgent_booking',
         subject: `Last-minute booking: ${label} on ${date}`,
-        emailHtml: `<p>${lmBody}</p>`,
+        emailHtml: `<p>${esc(lmBody)}</p>`,
         emailText: lmBody,
         smsBody: lmBody,
       });

@@ -252,7 +252,7 @@ async function handleCant(staffUserId) {
     );
     await dbClient.query('COMMIT');
   } catch (err) {
-    await dbClient.query('ROLLBACK');
+    try { await dbClient.query('ROLLBACK'); } catch (_) { /* already rolled back or connection dropped */ }
     throw err;
   } finally {
     dbClient.release();

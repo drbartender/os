@@ -1,5 +1,26 @@
 const jwt = require('jsonwebtoken');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
+
+// Log access-control failures so a deliberate probe by a logged-in staff
+// account is visible. OWASP A09 — admin/manager routes are the highest-
+// stakes surface, so a 403 here is worth knowing about.
+function logRoleDenial(req, requiredLabel) {
+  try {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureMessage(`Access denied: ${requiredLabel}`, {
+        level: 'warning',
+        tags: { event: 'role_denial', required: requiredLabel },
+        extra: {
+          user_id: req.user?.id || null,
+          role: req.user?.role || null,
+          method: req.method,
+          path: req.originalUrl,
+        },
+      });
+    }
+  } catch (_) { /* never let logging break the response */ }
+}
 
 const auth = async (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
@@ -37,6 +58,7 @@ const auth = async (req, res, next) => {
 
 const adminOnly = (req, res, next) => {
   if (req.user?.role !== 'admin') {
+    logRoleDenial(req, 'admin');
     return res.status(403).json({ error: 'Admin access required' });
   }
   next();
@@ -44,6 +66,7 @@ const adminOnly = (req, res, next) => {
 
 const requireAdminOrManager = (req, res, next) => {
   if (req.user?.role === 'admin' || req.user?.role === 'manager') return next();
+  logRoleDenial(req, 'admin_or_manager');
   return res.status(403).json({ error: 'Admin access required.' });
 };
 

@@ -153,6 +153,10 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
  * Webhook entry point: look up the tip by Stripe payment_intent and run a
  * clawback for the new cumulative refunded amount. No-ops when the
  * payment_intent isn't a tip (e.g. a proposal payment refund).
+ *
+ * Errors propagate so the Stripe webhook returns 5xx and Stripe retries the
+ * full delivery. clawbackTip is idempotent via tips.refunded_amount_cents
+ * (delta=0 second pass), so retry is safe.
  */
 async function clawbackTipByPaymentIntent(paymentIntentId, newCumulativeCents) {
   if (!paymentIntentId || !Number.isInteger(newCumulativeCents) || newCumulativeCents <= 0) return;
@@ -161,8 +165,7 @@ async function clawbackTipByPaymentIntent(paymentIntentId, newCumulativeCents) {
     [paymentIntentId]
   );
   if (!rows[0]) return;
-  try { await clawbackTip(rows[0].id, newCumulativeCents); }
-  catch (err) { Sentry.captureException(err, { tags: { webhook: 'tip_clawback', step: 'clawback' } }); }
+  await clawbackTip(rows[0].id, newCumulativeCents);
 }
 
 module.exports = { clawbackTip, clawbackTipByPaymentIntent };
