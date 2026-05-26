@@ -10,6 +10,8 @@
 
 **Source spec:** `docs/superpowers/specs/2026-05-25-dispute-email-retry-bailout-design.md`
 
+**Execution-review cadence:** Specialized review agents fire at two checkpoints during execution: after Task 1 (schema), dispatch `database-review`; after Task 2 (transactional refactor of money-adjacent webhook code), dispatch `database-review` + `code-review` + `consistency-check` in parallel. Tasks 3-8 land without per-task agent review; the pre-push fleet covers the whole batch.
+
 ---
 
 ## Task 1: Schema migration
@@ -19,9 +21,10 @@
 
 - [ ] **Step 1: Open `server/db/schema.sql` and locate line 2592.** It contains `ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_won_at TIMESTAMPTZ;` inside the Phase 2 staff-payments block.
 
-- [ ] **Step 2: Append the two new ALTERs immediately after line 2592**
+- [ ] **Step 2: Append the two new ALTERs immediately after line 2592, prefixed with a date comment so future readers can locate them**
 
 ```sql
+-- Dispute-email retry bailout (2026-05-25)
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_email_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_email_failed_at TIMESTAMPTZ;
 ```
@@ -30,7 +33,7 @@ ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_email_failed_at TIMESTAMPTZ;
 
 Run: `grep -n "dispute_email" server/db/schema.sql`
 
-Expected: two lines listing `dispute_email_attempts` and `dispute_email_failed_at` immediately after line 2592 (line numbers may shift by 1 if there is a trailing blank line).
+Expected: two lines listing `dispute_email_attempts` and `dispute_email_failed_at` immediately after the date comment, near line 2593-2595.
 
 - [ ] **Step 4: Commit**
 
@@ -39,18 +42,24 @@ git add server/db/schema.sql
 git commit -m "feat(payroll): tips columns for dispute-email retry bailout"
 ```
 
+- [ ] **Step 5: Checkpoint review.** Dispatch the `database-review` agent against this commit. Prompt: `Review commit <SHA> for schema correctness. Two new ALTERs were added to server/db/schema.sql: dispute_email_attempts (INTEGER NOT NULL DEFAULT 0) and dispute_email_failed_at (TIMESTAMPTZ). Verify idempotency on fresh and existing DBs, rolling-restart safety, and no overlap with existing indexes.` Wait for the review. Address any findings before proceeding to Task 2.
+
 ---
 
-## Task 2: Add scaffolding (constants + __setDeps seam) to `payrollDisputeNotify.js`
+## Task 2: Refactor `notifyDisputeWon` to the transactional shape (constants + seam + body in one commit)
 
 **Files:**
 - Modify: `server/utils/payrollDisputeNotify.js`
 
-This task adds the tunable constants and the test seam WITHOUT changing the function's runtime behavior. Task 3 does the structural refactor.
+This task replaces the entire `notifyDisputeWon` function and introduces the module-level constants and `__setDeps` seam in the same commit. Per CLAUDE.md commit rule 3, the seam and constants exist only to support the refactor; they form a single logical feature.
 
-- [ ] **Step 1: Open `server/utils/payrollDisputeNotify.js` and locate the existing imports + `fmtDate` helper at the top.** The next line after `fmtDate` ends (around line 22) is where the new constants and seam land.
+- [ ] **Step 1: Open `server/utils/payrollDisputeNotify.js`.** Confirm the current shape:
+   - Imports: `Sentry`, `pool`, `sendEmail`, `emailTemplates`, `splitEvenly`, `getEventTypeLabel`
+   - `fmtDate` helper
+   - One `notifyDisputeWon` function
+   - `module.exports = { notifyDisputeWon }`
 
-- [ ] **Step 2: Insert constants and the `_deps` seam between `fmtDate` and the `notifyDisputeWon` function**
+- [ ] **Step 2: Insert module-level constants and `__setDeps` seam between `fmtDate` and the function definition**
 
 Find this block:
 ```js
@@ -76,59 +85,17 @@ function fmtDate(d) {
 const MAX_DISPUTE_EMAIL_ATTEMPTS = 3;
 const SEND_TIMEOUT_MS = 10_000;
 
-let _deps = { sendEmail, Sentry, sendTimeoutMs: SEND_TIMEOUT_MS };
+let _deps = { sendEmail, Sentry, sendTimeoutMs: SEND_TIMEOUT_MS, pool };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
 async function notifyDisputeWon(tipId, { reinstatedAmountCents, disputeOpenedAt, disputeWonAt }) {
 ```
 
-- [ ] **Step 3: Update the module.exports at the bottom of the file** to include `__setDeps`
-
-Find:
-```js
-module.exports = { notifyDisputeWon };
-```
-
-Replace with:
-```js
-module.exports = { notifyDisputeWon, __setDeps };
-```
-
-- [ ] **Step 4: Verify the module still loads cleanly**
-
-Run: `node -c server/utils/payrollDisputeNotify.js`
-Expected: exit code 0, no output.
-
-Run: `node -e "const m = require('./server/utils/payrollDisputeNotify'); console.log(Object.keys(m).sort());"`
-Expected:
-```
-[email] RESEND_API_KEY is NOT set ...  (warning, ok in dev)
-[ '__setDeps', 'notifyDisputeWon' ]
-```
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add server/utils/payrollDisputeNotify.js
-git commit -m "feat(payroll): __setDeps seam and tunable constants for dispute-email"
-```
-
----
-
-## Task 3: Refactor `notifyDisputeWon` to the transactional shape
-
-**Files:**
-- Modify: `server/utils/payrollDisputeNotify.js`
-
-This task replaces the entire `notifyDisputeWon` function body with the new structure: held transaction, `SELECT FOR UPDATE OF t`, computation, `Promise.race`-bounded send, atomic finalization UPDATE, post-commit Sentry capture wrapped in try/catch, expanded return shape with `abandoned`. The constants and `_deps` seam from Task 2 remain.
-
-- [ ] **Step 1: Locate the existing `notifyDisputeWon` function** in `server/utils/payrollDisputeNotify.js`. It starts with `async function notifyDisputeWon(tipId, { reinstatedAmountCents, disputeOpenedAt, disputeWonAt }) {` and ends at the closing brace before `module.exports`.
-
-- [ ] **Step 2: Replace the entire function body** (everything between the `async function notifyDisputeWon(...)` opening brace and its matching closing brace) with this implementation:
+- [ ] **Step 3: Replace the entire `notifyDisputeWon` function body** (between the opening brace and its matching closing brace) with the new transactional implementation:
 
 ```js
 async function notifyDisputeWon(tipId, { reinstatedAmountCents, disputeOpenedAt, disputeWonAt }) {
-  const client = await pool.connect();
+  const client = await _deps.pool.connect();
   let reinstated = 0;
   let bartenders = [];
   let netTotal = 0;
@@ -141,7 +108,9 @@ async function notifyDisputeWon(tipId, { reinstatedAmountCents, disputeOpenedAt,
     await client.query('BEGIN');
 
     // Lock + re-read. FOR UPDATE OF t scopes the lock to the tips row only,
-    // which is required when joining nullable sides (mirrors drinkPlanConsult.js:144).
+    // which is required when FOR UPDATE is combined with LEFT JOINs to
+    // nullable rows. Precedent: server/routes/drinkPlanConsult.js:144
+    // uses the same pattern with alias `dp`.
     const tipRes = await client.query(
       `SELECT t.id, t.amount_cents, t.fee_cents, t.dispute_won_at, t.shift_id, t.target_user_id,
               t.dispute_email_attempts,
@@ -299,44 +268,54 @@ async function notifyDisputeWon(tipId, { reinstatedAmountCents, disputeOpenedAt,
 }
 ```
 
-- [ ] **Step 3: Verify the file is syntactically clean and still loads**
+- [ ] **Step 4: Update the module.exports at the bottom of the file** to include `__setDeps`
+
+Find:
+```js
+module.exports = { notifyDisputeWon };
+```
+
+Replace with:
+```js
+module.exports = { notifyDisputeWon, __setDeps };
+```
+
+- [ ] **Step 5: Verify the module loads cleanly**
 
 Run: `node -c server/utils/payrollDisputeNotify.js`
 Expected: exit code 0, no output.
 
-Run: `node -e "require('./server/utils/payrollDisputeNotify');" 2>&1 | grep -v "RESEND\|Twilio"; echo "exit $?"`
-Expected: no error lines, `exit 0`.
+Run: `node -e "const m = require('./server/utils/payrollDisputeNotify'); console.log(Object.keys(m).sort());"`
+Expected output: `[ '__setDeps', 'notifyDisputeWon' ]`. A `[email] RESEND_API_KEY is NOT set` warning may or may not appear (conditional on the dev env).
 
-- [ ] **Step 4: Spot-check the only call site still type-aligns**
+- [ ] **Step 6: Spot-check the production callsite signature still aligns**
 
 Run: `grep -n "notifyDisputeWon" server/routes/stripe.js`
-Expected: exactly one production callsite at around line 1654, called as `await notifyDisputeWon(tipId, { reinstatedAmountCents: dispute.amount, disputeOpenedAt: ..., disputeWonAt: ... });` (signature unchanged from before the refactor).
+Expected: exactly one production callsite around line 1654. Read the lines around it: the call is `await notifyDisputeWon(tipId, { reinstatedAmountCents: ..., disputeOpenedAt: ..., disputeWonAt: ... })`. Signature unchanged from before. The return value is `await`ed and the caller does not destructure the return shape, so the new `abandoned` field is additive-safe.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add server/utils/payrollDisputeNotify.js
-git commit -m "feat(payroll): wrap notifyDisputeWon in transaction + bounded send"
+git commit -m "feat(payroll): transactional dispute-email retry bailout"
 ```
+
+- [ ] **Step 8: Checkpoint review.** Dispatch `database-review`, `code-review`, and `consistency-check` in PARALLEL via a single Agent-tool message. Prompts:
+   - `database-review`: review commit `<SHA>` for transaction safety, lock semantics (`FOR UPDATE OF t` with LEFT JOINs), the atomic CASE UPDATE, and idempotency of the new SQL statements.
+   - `code-review`: review commit `<SHA>` for correctness of `Promise.race` with orphan-suppression `.catch(() => {})`, post-commit Sentry try/catch, error propagation, and the new `__setDeps` seam shape.
+   - `consistency-check`: verify the state machine (`dispute_won_at`, `dispute_email_failed_at`) is internally consistent across the new SQL, the function logic, the test scaffolding to come, and the cited spec sections.
+   Wait for all three. Address any blockers before proceeding to Task 3.
 
 ---
 
-## Task 4: Test scaffolding + simpler test cases
+## Task 3: Test scaffolding + four simpler test cases
 
 **Files:**
-- Create or modify: `server/utils/payrollDisputeNotify.test.js`
+- Replace entirely: `server/utils/payrollDisputeNotify.test.js` (an existing 128-line file with 3 legacy tests EXISTS at this path; this task replaces it wholesale)
 
-This task sets up the test file with imports, the `beforeEach`/`afterEach` hooks for `__setDeps` reset and `console.error` restoration, and the four simplest test cases. Subsequent tasks add the harder ones.
+The legacy tests (`appendBug`-style three cases against the old non-transactional behavior) are subsumed by the new 11-test suite. The legacy idempotency test maps to the new "Already-completed short-circuit" test; the legacy name-resolution coverage is exercised by every test that asserts the return shape. No coverage is lost.
 
-- [ ] **Step 1: Check if the test file already exists**
-
-Run: `ls server/utils/payrollDisputeNotify.test.js 2>&1`
-
-If the file exists, skim it to confirm whether the existing tests assume the old single-statement UPDATE behavior. If they do, plan to replace them entirely with the new file content below. If the file does not exist, create it.
-
-- [ ] **Step 2: Write the test file scaffolding**
-
-Open `server/utils/payrollDisputeNotify.test.js` and replace its contents with:
+- [ ] **Step 1: Replace the file contents entirely.** Open `server/utils/payrollDisputeNotify.test.js` and replace ALL contents with the scaffolding below:
 
 ```js
 // Serial execution required. This suite mutates process.env.ADMIN_EMAIL and
@@ -351,9 +330,23 @@ const { sendEmail } = require('./email');
 const Sentry = require('@sentry/node');
 const { notifyDisputeWon, __setDeps } = require('./payrollDisputeNotify');
 
-const TEST_TIP_PREFIX = -990000000; // negative ids guaranteed unique vs. SERIAL prod rows
+// Negative ids guaranteed unique vs. SERIAL prod rows; deterministic
+// stripe_payment_intent_id values keyed off the test id avoid collisions
+// across this file's tests.
+const TEST_TIP_PREFIX = -990000000;
+const ADMIN_EMAIL_DEFAULT = 'test@example.com';
 
-let sendEmailMock, captureExceptionMock, captureMessageMock, consoleErrorOriginal;
+let sendEmailMock, captureExceptionMock, captureMessageMock, consoleErrorOriginal, adminEmailOriginal;
+
+async function purgeTestRows() {
+  await pool.query(
+    `DELETE FROM tips
+       WHERE id <= $1
+          OR stripe_payment_intent_id LIKE 'pi_test_%'
+          OR stripe_payment_intent_id = 'pi_disp_won_test'`,
+    [TEST_TIP_PREFIX]
+  );
+}
 
 async function seedTip({ id, amount_cents = 5000, fee_cents = 100, dispute_won_at = null, dispute_email_attempts = 0, dispute_email_failed_at = null, shift_id = null, target_user_id = null }) {
   await pool.query(
@@ -382,42 +375,54 @@ async function readTip(id) {
 
 describe('notifyDisputeWon', () => {
   before(async () => {
-    await pool.query('DELETE FROM tips WHERE id <= $1', [TEST_TIP_PREFIX]);
+    await purgeTestRows();
   });
 
   after(async () => {
-    await pool.query('DELETE FROM tips WHERE id <= $1', [TEST_TIP_PREFIX]);
+    await purgeTestRows();
   });
 
   beforeEach(() => {
     sendEmailMock = mock.fn(async () => ({ id: 'msg_test' }));
     captureExceptionMock = mock.fn();
     captureMessageMock = mock.fn();
+    adminEmailOriginal = process.env.ADMIN_EMAIL;
+    process.env.ADMIN_EMAIL = ADMIN_EMAIL_DEFAULT;
     __setDeps({
       sendEmail: sendEmailMock,
       Sentry: { captureException: captureExceptionMock, captureMessage: captureMessageMock },
       sendTimeoutMs: 100,
+      pool,
     });
   });
 
   afterEach(async () => {
-    __setDeps({ sendEmail, Sentry, sendTimeoutMs: 10_000 });
+    // Reset deps to harmless no-ops, NOT the real sendEmail/Sentry, so that
+    // any orphan invocation from a misbehaving test cannot hit production
+    // Resend or pollute Sentry. pool is restored to the real pool.
+    __setDeps({
+      sendEmail: async () => ({ id: 'noop' }),
+      Sentry: { captureException: () => {}, captureMessage: () => {} },
+      sendTimeoutMs: 10_000,
+      pool,
+    });
+    if (typeof adminEmailOriginal === 'string') process.env.ADMIN_EMAIL = adminEmailOriginal;
+    else delete process.env.ADMIN_EMAIL;
     if (consoleErrorOriginal) {
       console.error = consoleErrorOriginal;
       consoleErrorOriginal = null;
     }
-    await pool.query('DELETE FROM tips WHERE id <= $1', [TEST_TIP_PREFIX]);
+    await purgeTestRows();
   });
 });
 ```
 
-- [ ] **Step 3: Add the "Success path" test inside the `describe` block** (just before the closing `});`)
+- [ ] **Step 2: Add the "Success path" test** inside the `describe` block, just before the closing `});`
 
 ```js
   test('success path: marks dispute_won_at, resets attempts, returns abandoned=false', async () => {
     const id = TEST_TIP_PREFIX - 1;
     await seedTip({ id, dispute_email_attempts: 0 });
-    process.env.ADMIN_EMAIL = 'test@example.com';
 
     const result = await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
 
@@ -433,13 +438,12 @@ describe('notifyDisputeWon', () => {
   });
 ```
 
-- [ ] **Step 4: Add the "Counter reset on success after prior failure" test**
+- [ ] **Step 3: Add the "Counter reset on success after prior failure" test**
 
 ```js
   test('counter reset: prior failures zeroed on success', async () => {
     const id = TEST_TIP_PREFIX - 2;
     await seedTip({ id, dispute_email_attempts: 2 });
-    process.env.ADMIN_EMAIL = 'test@example.com';
 
     await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
 
@@ -449,13 +453,12 @@ describe('notifyDisputeWon', () => {
   });
 ```
 
-- [ ] **Step 5: Add the "Already-completed short-circuit" test**
+- [ ] **Step 4: Add the "Already-completed short-circuit" test**
 
 ```js
   test('already-completed: returns null, does not touch state or send', async () => {
     const id = TEST_TIP_PREFIX - 3;
     await seedTip({ id, dispute_won_at: new Date('2026-01-01') });
-    process.env.ADMIN_EMAIL = 'test@example.com';
 
     const result = await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
 
@@ -469,7 +472,7 @@ describe('notifyDisputeWon', () => {
   });
 ```
 
-- [ ] **Step 6: Add the "ADMIN_EMAIL unset" test**
+- [ ] **Step 5: Add the "ADMIN_EMAIL unset" test**
 
 ```js
   test('ADMIN_EMAIL unset: increments counter, fires captureException', async () => {
@@ -482,6 +485,7 @@ describe('notifyDisputeWon', () => {
       await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
     } finally {
       if (typeof saved === 'string') process.env.ADMIN_EMAIL = saved;
+      else delete process.env.ADMIN_EMAIL;
     }
 
     assert.strictEqual(captureExceptionMock.mock.callCount(), 1);
@@ -491,14 +495,19 @@ describe('notifyDisputeWon', () => {
   });
 ```
 
-- [ ] **Step 7: Run the test file and verify all four tests pass**
+- [ ] **Step 6: Run the test file and verify all four tests pass**
 
-Run: `node --test server/utils/payrollDisputeNotify.test.js 2>&1 | tail -15`
-Expected: `tests 4`, `pass 4`, `fail 0`.
+Run: `node --test server/utils/payrollDisputeNotify.test.js 2>&1 | grep -E "^# (tests|pass|fail|skip)"`
+Expected:
+```
+# tests 4
+# pass 4
+# fail 0
+```
 
-If any test fails, read the failure message and fix the test (NOT the production code) unless the failure exposes a real bug in Task 3's implementation. If a real bug surfaces, fix it in `payrollDisputeNotify.js`, re-run, and only commit when all 4 pass.
+If any test fails, read the failure and fix the test (not the production code) unless the failure exposes a real bug in Task 2. If Task 2 has a bug, fix it, re-run, only commit when green.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add server/utils/payrollDisputeNotify.test.js
@@ -507,18 +516,17 @@ git commit -m "test(payroll): scaffold + 4 simple cases for dispute-email retry"
 
 ---
 
-## Task 5: Failure-path test cases
+## Task 4: Failure-path test cases
 
 **Files:**
 - Modify: `server/utils/payrollDisputeNotify.test.js`
 
-- [ ] **Step 1: Add the "Single failure, attempts below threshold" test** inside the `describe` block, after the previous tests
+- [ ] **Step 1: Add the "Single failure, attempts below threshold" test** inside the `describe` block, after the prior tests
 
 ```js
   test('single failure: attempts=1, no flags set, no captureMessage', async () => {
     const id = TEST_TIP_PREFIX - 5;
     await seedTip({ id, dispute_email_attempts: 0 });
-    process.env.ADMIN_EMAIL = 'test@example.com';
     sendEmailMock.mock.mockImplementationOnce(() => Promise.reject(new Error('resend boom')));
 
     const result = await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
@@ -540,7 +548,6 @@ git commit -m "test(payroll): scaffold + 4 simple cases for dispute-email retry"
   test('bailout: attempts=2 + failure → attempts=3, both timestamps set and equal, captureMessage fires with full payload', async () => {
     const id = TEST_TIP_PREFIX - 6;
     await seedTip({ id, dispute_email_attempts: 2 });
-    process.env.ADMIN_EMAIL = 'test@example.com';
     sendEmailMock.mock.mockImplementationOnce(() => Promise.reject(new Error('still down')));
 
     const result = await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
@@ -561,45 +568,46 @@ git commit -m "test(payroll): scaffold + 4 simple cases for dispute-email retry"
     assert.strictEqual(after.dispute_email_attempts, 3);
     assert.notStrictEqual(after.dispute_won_at, null);
     assert.notStrictEqual(after.dispute_email_failed_at, null);
-    // Both NOW() in the same UPDATE should yield equal timestamps.
+    // Both NOW() in the same UPDATE → equal timestamps.
     assert.strictEqual(new Date(after.dispute_won_at).getTime(), new Date(after.dispute_email_failed_at).getTime());
   });
 ```
 
 - [ ] **Step 3: Add the "Computation throw rolls back without incrementing" test**
 
-Computation here means the bartender-resolution `client.query`. We override `__setDeps` to inject a `pool` shim that yields a client whose `query` rejects on the bartender lookup. Since the spec keeps `pool` direct (not in deps), this test simulates the throw by seeding a tip with a non-existent `shift_id` that violates a constraint OR by stubbing the underlying `pool.query` at the module level. The simplest approach: seed with a `shift_id` referencing a row, then drop the row mid-test. The cleaner approach is to stub `pool.query` using `mock.method`. Use the cleaner one:
+Use the `__setDeps` seam to inject a pool wrapper that throws on the users-resolution query (identified by SQL substring, not call-count, so the test is robust to query order). Seed `target_user_id` so the users-resolution query runs even with `shift_id = null`.
 
 ```js
   test('computation throw: counter unchanged, dispute_won_at null, no Sentry from inside notify', async () => {
     const id = TEST_TIP_PREFIX - 7;
-    await seedTip({ id, dispute_email_attempts: 0 });
-    process.env.ADMIN_EMAIL = 'test@example.com';
+    // target_user_id forces the users-resolution query to run even with shift_id = null.
+    await seedTip({ id, dispute_email_attempts: 0, target_user_id: -1 });
 
-    // Stub pool.connect().query to fail on the bartender-lookup statement.
-    // Real pool clients have a query method; we wrap the connect to inject a
-    // throwing query after the first two (BEGIN + tip SELECT) succeed.
-    const realConnect = pool.connect.bind(pool);
-    let queryCallNum = 0;
-    pool.connect = async () => {
-      const realClient = await realConnect();
-      const realQuery = realClient.query.bind(realClient);
-      realClient.query = async (...args) => {
-        queryCallNum += 1;
-        if (queryCallNum === 3) throw new Error('bartender lookup boom');
-        return realQuery(...args);
-      };
-      return realClient;
-    };
+    // Inject a pool wrapper that throws on the users join, identified by SQL substring.
+    __setDeps({
+      sendEmail: sendEmailMock,
+      Sentry: { captureException: captureExceptionMock, captureMessage: captureMessageMock },
+      sendTimeoutMs: 100,
+      pool: {
+        connect: async () => {
+          const realClient = await pool.connect();
+          const realQuery = realClient.query.bind(realClient);
+          realClient.query = async (sqlOrConfig, params) => {
+            const sql = typeof sqlOrConfig === 'string' ? sqlOrConfig : sqlOrConfig.text;
+            if (sql && sql.includes('contractor_profiles cp ON cp.user_id')) {
+              throw new Error('users lookup boom');
+            }
+            return realQuery(sqlOrConfig, params);
+          };
+          return realClient;
+        },
+      },
+    });
 
-    try {
-      await assert.rejects(
-        notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() }),
-        /bartender lookup boom/
-      );
-    } finally {
-      pool.connect = realConnect;
-    }
+    await assert.rejects(
+      notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() }),
+      /users lookup boom/
+    );
 
     assert.strictEqual(captureExceptionMock.mock.callCount(), 0);
     assert.strictEqual(captureMessageMock.mock.callCount(), 0);
@@ -613,8 +621,13 @@ Computation here means the bartender-resolution `client.query`. We override `__s
 
 - [ ] **Step 4: Run the 7 tests and verify all pass**
 
-Run: `node --test server/utils/payrollDisputeNotify.test.js 2>&1 | tail -15`
-Expected: `tests 7`, `pass 7`, `fail 0`.
+Run: `node --test server/utils/payrollDisputeNotify.test.js 2>&1 | grep -E "^# (tests|pass|fail|skip)"`
+Expected:
+```
+# tests 7
+# pass 7
+# fail 0
+```
 
 - [ ] **Step 5: Commit**
 
@@ -625,10 +638,15 @@ git commit -m "test(payroll): failure-path cases for dispute-email retry"
 
 ---
 
-## Task 6: Concurrency, timeout, and post-commit-Sentry-failure tests
+## Task 5: Concurrency, timeout, and post-commit-Sentry-failure tests
 
 **Files:**
 - Modify: `server/utils/payrollDisputeNotify.test.js`
+
+The concurrency tests require `pool.max >= 2` so the second `pool.connect()` call can grab its own connection while the first holds the lock. Confirm before running:
+
+Run: `grep -n "max" server/db/index.js | head -5`
+Expected: a Pool config with `max` >= 2, OR no `max` set (pg default is 10). If `max = 1`, the concurrency tests will hang. Adjust the project pool config or document this as a precondition.
 
 - [ ] **Step 1: Add the "Concurrency: bailout-trigger race" test**
 
@@ -636,7 +654,6 @@ git commit -m "test(payroll): failure-path cases for dispute-email retry"
   test('concurrency bailout race: at attempts=2, first call bails out, second short-circuits', async () => {
     const id = TEST_TIP_PREFIX - 8;
     await seedTip({ id, dispute_email_attempts: 2 });
-    process.env.ADMIN_EMAIL = 'test@example.com';
     sendEmailMock.mock.mockImplementation(() => Promise.reject(new Error('still down')));
 
     const results = await Promise.all([
@@ -644,7 +661,7 @@ git commit -m "test(payroll): failure-path cases for dispute-email retry"
       notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() }),
     ]);
 
-    // One delivery did the bailout, the other short-circuited.
+    // One bailout, one short-circuit.
     const abandonedCount = results.filter(r => r && r.abandoned === true).length;
     const nullCount = results.filter(r => r === null).length;
     assert.strictEqual(abandonedCount, 1);
@@ -666,7 +683,6 @@ git commit -m "test(payroll): failure-path cases for dispute-email retry"
   test('concurrency below-threshold race: both increment serially via row lock', async () => {
     const id = TEST_TIP_PREFIX - 9;
     await seedTip({ id, dispute_email_attempts: 0 });
-    process.env.ADMIN_EMAIL = 'test@example.com';
     sendEmailMock.mock.mockImplementation(() => Promise.reject(new Error('flapping')));
 
     await Promise.all([
@@ -684,25 +700,25 @@ git commit -m "test(payroll): failure-path cases for dispute-email retry"
   });
 ```
 
-- [ ] **Step 3: Add the "Send-timeout" test**
+- [ ] **Step 3: Add the "Send-timeout" test** (spec-aligned constants: 50ms timeout, 200ms resolve, < 200ms wall-clock)
 
 ```js
-  test('send-timeout: Promise.race rejects, counter increments, lock released within bound', async () => {
+  test('send-timeout: Promise.race rejects within bound, counter increments', async () => {
     const id = TEST_TIP_PREFIX - 10;
     await seedTip({ id, dispute_email_attempts: 0 });
-    process.env.ADMIN_EMAIL = 'test@example.com';
 
     __setDeps({
-      sendEmail: () => new Promise(resolve => setTimeout(() => resolve({ id: 'late' }), 500)),
+      sendEmail: () => new Promise(resolve => setTimeout(() => resolve({ id: 'late' }), 200)),
       Sentry: { captureException: captureExceptionMock, captureMessage: captureMessageMock },
       sendTimeoutMs: 50,
+      pool,
     });
 
     const startedAt = Date.now();
     await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
     const elapsed = Date.now() - startedAt;
 
-    assert.ok(elapsed < 300, `expected < 300ms, got ${elapsed}ms`);
+    assert.ok(elapsed < 200, `expected < 200ms, got ${elapsed}ms`);
     assert.strictEqual(captureExceptionMock.mock.callCount(), 1);
     const errArg = captureExceptionMock.mock.calls[0].arguments[0];
     assert.match(errArg.message, /timed out/);
@@ -716,16 +732,16 @@ git commit -m "test(payroll): failure-path cases for dispute-email retry"
 - [ ] **Step 4: Add the "Post-commit Sentry capture failure" test**
 
 ```js
-  test('post-commit Sentry capture failure: DB state still committed, console.error fired', async () => {
+  test('post-commit Sentry capture failure: DB committed, console.error fired', async () => {
     const id = TEST_TIP_PREFIX - 11;
     await seedTip({ id, dispute_email_attempts: 2 });
-    process.env.ADMIN_EMAIL = 'test@example.com';
 
     const throwingCaptureMessage = mock.fn(() => { throw new Error('sentry boom'); });
     __setDeps({
       sendEmail: sendEmailMock,
       Sentry: { captureException: captureExceptionMock, captureMessage: throwingCaptureMessage },
       sendTimeoutMs: 100,
+      pool,
     });
     sendEmailMock.mock.mockImplementationOnce(() => Promise.reject(new Error('still down')));
 
@@ -753,10 +769,19 @@ git commit -m "test(payroll): failure-path cases for dispute-email retry"
 
 - [ ] **Step 5: Run all 11 tests and verify all pass**
 
-Run: `node --test server/utils/payrollDisputeNotify.test.js 2>&1 | tail -15`
-Expected: `tests 11`, `pass 11`, `fail 0`.
+Run: `node --test server/utils/payrollDisputeNotify.test.js 2>&1 | grep -E "^# (tests|pass|fail|skip)"`
+Expected:
+```
+# tests 11
+# pass 11
+# fail 0
+```
 
-If a concurrency test is flaky, run 3 times in a row: `for i in 1 2 3; do node --test server/utils/payrollDisputeNotify.test.js 2>&1 | tail -3; done`. All three runs must show `pass 11`. If a flake surfaces, inspect the row-lock serialization assumption in the spec's Race safety section and fix the underlying issue (NOT the test).
+If any concurrency test is flaky, run three times in a row:
+```
+for i in 1 2 3; do node --test server/utils/payrollDisputeNotify.test.js 2>&1 | grep -E "^# (tests|pass|fail)"; done
+```
+All three runs must show `pass 11`. A flake indicates the row-lock serialization assumption is wrong; fix the underlying issue, not the test.
 
 - [ ] **Step 6: Commit**
 
@@ -767,21 +792,34 @@ git commit -m "test(payroll): concurrency + timeout + Sentry-failure cases for d
 
 ---
 
-## Task 7: Update `ARCHITECTURE.md` (tips table + state machine + sweep query)
+## Task 6: Backfill pre-existing `tips`-table drift in `ARCHITECTURE.md`
 
 **Files:**
-- Modify: `ARCHITECTURE.md` (existing tips-table description around lines 790-800; new Operational Practices section at the bottom)
+- Modify: `ARCHITECTURE.md` (tips-table description around lines 790-800)
+
+The current `tips` table description in `ARCHITECTURE.md` is missing five columns that have existed in `schema.sql` for some time: `fee_cents`, `shift_id`, `rolled_forward_at`, `refunded_amount_cents`, `dispute_won_at`. This task fixes the pre-existing drift; the bailout-specific additions land in Task 7.
 
 - [ ] **Step 1: Locate the existing `tips` table description in `ARCHITECTURE.md`**
 
 Run: `grep -n "tips" ARCHITECTURE.md | head -20`
-Expected: at least one heading or column-list entry around line 790-800 referencing the `tips` table.
+Expected: at least one heading or column-list entry around line 790-800.
 
-Open the file and locate the `tips` table description (it lists columns and their purposes).
+Open the file and read the tips table description.
 
-- [ ] **Step 2: Update the column list to bring it current with `server/db/schema.sql`**
+- [ ] **Step 2: Verify which columns are present today, and which are missing**
 
-The current doc is missing five columns: `fee_cents`, `shift_id`, `rolled_forward_at`, `refunded_amount_cents`, `dispute_won_at`. Plus the two new ones from Task 1. Append the seven columns to the column list (preserving the existing column entries):
+For each of the five columns (`fee_cents`, `shift_id`, `rolled_forward_at`, `refunded_amount_cents`, `dispute_won_at`), grep ARCHITECTURE.md to confirm whether the column is already documented. Only append entries for columns NOT already present:
+
+```bash
+for col in fee_cents shift_id rolled_forward_at refunded_amount_cents dispute_won_at; do
+  echo "=== $col ==="
+  grep -n "$col" ARCHITECTURE.md || echo "(missing)"
+done
+```
+
+- [ ] **Step 3: Append the missing column entries to the `tips` table description**
+
+For each column flagged "missing" in Step 2, add to the column list (preserving the section's format; if the section uses backticks or a different bullet style, match it):
 
 ```
 - `fee_cents`: integer cents of the Stripe fee withheld from the tip; populated on tip webhook
@@ -789,11 +827,35 @@ The current doc is missing five columns: `fee_cents`, `shift_id`, `rolled_forwar
 - `rolled_forward_at`: set when a late tip is rolled forward into the next open payout period
 - `refunded_amount_cents`: cumulative refund cents applied to this tip (clawback tracking)
 - `dispute_won_at`: set when Stripe reinstates a previously-paid-out card tip (either via successful admin notification OR via the retry-bailout path)
+```
+
+- [ ] **Step 4: Verify the additions landed**
+
+Run: `for col in fee_cents shift_id rolled_forward_at refunded_amount_cents dispute_won_at; do echo "$col: $(grep -c "$col" ARCHITECTURE.md) matches"; done`
+Expected: every column shows at least 1 match.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add ARCHITECTURE.md
+git commit -m "docs(arch): backfill tips-table drift (fee_cents, shift_id, rolled_forward_at, refunded_amount_cents, dispute_won_at)"
+```
+
+---
+
+## Task 7: Document new bailout columns + state machine + Operational Practices in `ARCHITECTURE.md`
+
+**Files:**
+- Modify: `ARCHITECTURE.md`
+
+- [ ] **Step 1: Append the two new bailout columns to the `tips` table description** (same column-list format as Task 6)
+
+```
 - `dispute_email_attempts`: retry counter for the dispute-won admin notification (0 to 3)
 - `dispute_email_failed_at`: set only when the dispute-won notification was abandoned after exhausting retries; canonical "needs manual reconciliation" marker
 ```
 
-- [ ] **Step 3: Add the state-machine description immediately after the `tips` column list**
+- [ ] **Step 2: Add the state-machine subsection immediately after the `tips` column list**
 
 ```markdown
 ### Dispute-won notification state machine
@@ -808,14 +870,14 @@ For tip rows that have entered the dispute-reinstatement flow, the `(dispute_won
 The `dispute_email_failed_at IS NOT NULL` predicate is the canonical "needs manual reconciliation" marker.
 ```
 
-- [ ] **Step 4: Add a `## Operational Practices` section at the end of `ARCHITECTURE.md`**
+- [ ] **Step 3: Add a `## Operational Practices` section at the end of `ARCHITECTURE.md`** (if such a section already exists, append the subsection there instead)
 
 ```markdown
 ## Operational Practices
 
 ### Weekly dispute-email-bailout sweep
 
-The dispute-won email-retry bailout (see `server/utils/payrollDisputeNotify.js`) writes `tips.dispute_email_failed_at = NOW()` when it permanently abandons a notification after three send failures. The Sentry alert that accompanies the bailout is best-effort: a process crash between commit and the Sentry call, or a Sentry transport failure, can lose the alert silently while the DB row carries the canonical marker.
+The dispute-won email-retry bailout (see `server/utils/payrollDisputeNotify.js`) writes `tips.dispute_email_failed_at = NOW()` when it permanently abandons a notification after three send failures. The Sentry alert accompanying the bailout is best-effort: a process crash between commit and the Sentry call, or a Sentry transport failure, can lose the alert silently while the DB row carries the canonical marker.
 
 Run this query weekly to catch any abandonments that did not reach Sentry:
 
@@ -826,18 +888,18 @@ SELECT id, dispute_email_failed_at, amount_cents, shift_id, target_user_id
  ORDER BY dispute_email_failed_at DESC;
 ```
 
-For each row returned, follow the manual recovery runbook in `docs/superpowers/specs/2026-05-25-dispute-email-retry-bailout-design.md`. Search `proposal_activity_log` by tip id before posting adjustments to avoid double-paying bartenders.
+For each row, follow the manual recovery runbook in `docs/superpowers/specs/2026-05-25-dispute-email-retry-bailout-design.md`. Always search `proposal_activity_log` by tip id before posting adjustments to avoid double-paying bartenders (the Promise.race timeout in `notifyDisputeWon` aborts the awaiter but does not cancel the in-flight Resend request, so the email may have actually delivered server-side even when the function treated it as a failure).
 ```
 
-- [ ] **Step 5: Verify the edits landed cleanly**
+- [ ] **Step 4: Verify the edits**
 
 Run: `grep -n "dispute_email" ARCHITECTURE.md`
-Expected: at least four matches (the two new columns in the table list, the state-machine description, and the Operational Practices section).
+Expected: at least four matches (two column entries, the state-machine description, the Operational Practices subsection).
 
 Run: `grep -n "Operational Practices" ARCHITECTURE.md`
-Expected: one match.
+Expected: at least one match.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add ARCHITECTURE.md
@@ -864,7 +926,7 @@ If a relevant section already exists, append a subsection inside it. If none exi
 
 The dispute-won email notification (fires on Stripe `charge.dispute.funds_reinstated`) auto-abandons after 3 failed send attempts. The DB column `tips.dispute_email_failed_at` is the canonical "needs manual reconciliation" marker; the accompanying Sentry alert is best-effort.
 
-**Weekly:** run the sweep query documented in `ARCHITECTURE.md` ("Weekly dispute-email-bailout sweep") to catch any abandonment whose Sentry alert was lost. The spec at `docs/superpowers/specs/2026-05-25-dispute-email-retry-bailout-design.md` has the recovery runbook.
+**Weekly:** run the sweep query documented in `ARCHITECTURE.md` ("Weekly dispute-email-bailout sweep") to catch any abandonment whose Sentry alert was lost. The spec at `docs/superpowers/specs/2026-05-25-dispute-email-retry-bailout-design.md` carries the recovery runbook.
 ```
 
 - [ ] **Step 3: Verify the addition**
@@ -885,20 +947,28 @@ git commit -m "docs(readme): weekly dispute-email-bailout sweep runbook reminder
 
 - [ ] **Step 1: Confirm all eight tasks committed**
 
-Run: `git log --oneline -10`
-Expected: the most recent commits include schema, seam, refactor, three test commits, ARCHITECTURE update, README update.
+Run: `git log --oneline -12`
+Expected: the eight most recent commits are (in order): schema migration, transactional refactor, simple-tests scaffolding, failure-path tests, concurrency/timeout/Sentry tests, ARCHITECTURE drift backfill, ARCHITECTURE new columns + state machine + Operational Practices, README runbook.
 
-- [ ] **Step 2: Run the test suite one more time, fresh**
+- [ ] **Step 2: Run the dispute-notify test suite one final time**
 
-Run: `node --test server/utils/payrollDisputeNotify.test.js 2>&1 | tail -15`
-Expected: `tests 11`, `pass 11`, `fail 0`.
+Run: `node --test server/utils/payrollDisputeNotify.test.js 2>&1 | grep -E "^# (tests|pass|fail|skip)"`
+Expected:
+```
+# tests 11
+# pass 11
+# fail 0
+```
 
-- [ ] **Step 3: Spot-check the call site in `stripe.js` still type-aligns**
+- [ ] **Step 3: Verify the production callsite still type-aligns AND tolerates the new return shape**
 
-Run: `grep -n "notifyDisputeWon" server/routes/stripe.js`
-Expected: one callsite, signature unchanged.
+Run: `grep -n -A 3 "notifyDisputeWon" server/routes/stripe.js`
+Expected: one callsite, awaits the return without destructuring. The new `abandoned` field is safely ignored (the call site does not depend on the return shape's fields).
 
-- [ ] **Step 4: Run the full test suite to confirm no other tests broke**
+- [ ] **Step 4: Run the full server test suite to confirm no other tests regressed**
 
-Run: `npm test 2>&1 | tail -20`
-Expected: total tests increased by 11 vs. baseline, all pass.
+Run: `npm test 2>&1 | grep -E "^# (tests|pass|fail|skip)" | tail -5`
+
+Compare to the pre-implementation baseline. The expected delta is `+11 -3 tests = +8 tests`: 11 new dispute-notify tests minus the 3 legacy tests that Task 3 replaced. The pass count should track `+8` over baseline; the fail count should remain at the baseline (which is 0, or whatever pre-existing failures exist due to unrelated infrastructure).
+
+If any test regressed (was passing before, fails now), investigate; the refactor in Task 2 should not have touched anything outside `payrollDisputeNotify.js`.
