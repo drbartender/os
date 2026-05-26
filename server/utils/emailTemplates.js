@@ -57,8 +57,8 @@ function proposalSent({ clientName, eventTypeLabel = 'event', proposalUrl, planU
     subject: `Your Proposal for your ${eventTypeLabel} — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Proposal is Ready!</h2>
-      <p>Hi ${name},</p>
-      <p>We've put together a proposal for your <strong>${eventTypeLabel}</strong>. Take a look, review the details, and sign when you're ready.</p>
+      <p>Hi ${esc(name)},</p>
+      <p>We've put together a proposal for your <strong>${esc(eventTypeLabel)}</strong>. Take a look, review the details, and sign when you're ready.</p>
       ${ctaButton(proposalUrl, 'View Proposal')}
       ${planSection}
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
@@ -74,8 +74,8 @@ function proposalSignedConfirmation({ clientName, eventTypeLabel = 'event' }) {
     subject: `Proposal Signed — your ${eventTypeLabel} — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Thank You for Signing!</h2>
-      <p>Hi ${name},</p>
-      <p>We've received your signed proposal for your <strong>${eventTypeLabel}</strong>. We're excited to work with you!</p>
+      <p>Hi ${esc(name)},</p>
+      <p>We've received your signed proposal for your <strong>${esc(eventTypeLabel)}</strong>. We're excited to work with you!</p>
       <p><strong>Next step:</strong> Submit your deposit to lock in your date. You'll receive payment instructions shortly, or you can pay directly from the proposal page.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
       <p>Cheers,<br/>The Dr. Bartender Team</p>
@@ -138,8 +138,8 @@ function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, p
     subject: `Payment Received — your ${eventTypeLabel} — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Payment Received!</h2>
-      <p>Hi ${name},</p>
-      <p>We've received your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${eventTypeLabel}</strong>.</p>
+      <p>Hi ${esc(name)},</p>
+      <p>We've received your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${esc(eventTypeLabel)}</strong>.</p>
       ${lastMinuteCaveatHtml(lastMinute)}
       <p>Thank you! We'll be in touch with next steps as your event date approaches.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
@@ -155,7 +155,7 @@ function clientOtp({ name, otp }) {
     subject: 'Your Dr. Bartender login code',
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Login Code</h2>
-      <p>Hi ${n},</p>
+      <p>Hi ${esc(n)},</p>
       <p>Use the code below to sign in to your Dr. Bartender client portal:</p>
       <div style="text-align:center;margin:2rem 0;">
         <span style="display:inline-block;padding:16px 32px;background:${BRAND.bg};border:2px solid ${BRAND.secondary};border-radius:8px;font-size:32px;font-weight:bold;letter-spacing:8px;color:${BRAND.primary};">${otp}</span>
@@ -559,7 +559,7 @@ function abandonedQuote({ clientName, resumeUrl }) {
     subject: 'Still planning your event? Your quote is waiting',
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Pick Up Where You Left Off</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${esc(name)},</p>
       <p>We noticed you started putting together a quote for your event but didn't finish.
          No worries — your progress is saved and ready for you!</p>
       ${ctaButton(resumeUrl, 'Continue Your Quote')}

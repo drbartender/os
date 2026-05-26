@@ -100,8 +100,8 @@ function signedAndPaidClient({
       subject: `Signed & Paid — your ${eventTypeLabel} — Dr. Bartender`,
       html: wrapEmail(`
         <h2 style="color:${BRAND.primary};margin-top:0;">You're Locked In!</h2>
-        <p>Hi ${name},</p>
-        <p>We've received your signed proposal <em>and</em> your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${eventTypeLabel}</strong>. Your date is officially on the books.</p>
+        <p>Hi ${esc(name)},</p>
+        <p>We've received your signed proposal <em>and</em> your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${esc(eventTypeLabel)}</strong>. Your date is officially on the books.</p>
         ${lastMinuteCaveatHtml(lastMinute)}
         <p>We'll be in touch with next steps as your event date approaches.</p>
         <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
@@ -189,8 +189,8 @@ function drinkPlanLink({ clientName, eventTypeLabel = 'event', planUrl }) {
     subject: `Your Drink Plan for your ${eventTypeLabel} — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Drink Plan is Ready!</h2>
-      <p>Hi ${name},</p>
-      <p>Thank you for booking with Dr. Bartender! We're excited to help make your <strong>${eventTypeLabel}</strong> unforgettable.</p>
+      <p>Hi ${esc(name)},</p>
+      <p>Thank you for booking with Dr. Bartender! We're excited to help make your <strong>${esc(eventTypeLabel)}</strong> unforgettable.</p>
       <p>We've created a personalized drink planning questionnaire for your event. Use it to tell us your preferences &mdash; signature cocktails, mocktails, beer &amp; wine, and everything in between.</p>
       ${ctaButton(planUrl, 'Plan Your Drinks')}
       <p style="font-size:14px;color:${BRAND.secondary};">You can return to this link anytime to save your progress or make changes before submitting.</p>
