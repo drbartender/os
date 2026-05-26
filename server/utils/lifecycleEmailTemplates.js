@@ -318,10 +318,31 @@ function postConsultClient({
   };
 }
 
+function lastMinuteStaffingConfirmation({ eventDate, bartenderList, isPlural }) {
+  const noun = isPlural ? 'bartenders' : 'bartender';
+  const verb = isPlural ? 'are' : 'is';
+  const subject = `Your ${noun} for ${eventDate}`;
+  const text = [
+    `Your ${noun} for ${eventDate} ${verb} ${bartenderList}. They'll be in touch the day of the event.`,
+    '',
+    'Let me know if you have any questions or need any changes.',
+    '',
+    'Cheers, Dallas',
+  ].join('\n');
+  const html = wrapEmail(`
+    <h2 style="color:${BRAND.primary};margin-top:0;">Your ${noun} for ${esc(eventDate)}</h2>
+    <p>Your ${noun} for <strong>${esc(eventDate)}</strong> ${verb} <strong>${esc(bartenderList)}</strong>. They'll be in touch the day of the event.</p>
+    <p>Let me know if you have any questions or need any changes.</p>
+    <p>Cheers, Dallas</p>
+  `);
+  return { subject, html, text };
+}
+
 module.exports = {
   signedAndPaidClient,
   drinkPlanLink,
   drinkPlanBalanceUpdate,
   shoppingListReady,
   postConsultClient,
+  lastMinuteStaffingConfirmation,
 };
