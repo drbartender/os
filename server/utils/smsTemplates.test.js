@@ -115,3 +115,26 @@ test('rescheduleSms > gives the new details', () => {
   assert.match(s, /5 Oak Ave/);
   assertNoEmDash(s, 'rescheduleSms');
 });
+
+test('lastMinuteStaffingConfirmationSms > singular form', () => {
+  const s = t.lastMinuteStaffingConfirmationSms({
+    eventDate: 'Saturday, May 30, 2026',
+    bartenderList: 'Alex ((312) 555-1234)',
+    isPlural: false,
+  });
+  assert.match(s, /^Hi, Dallas here\./);
+  assert.match(s, /Your bartender for Saturday, May 30, 2026 is Alex \(\(312\) 555-1234\)\./);
+  assert.match(s, /reach out the day of the event/);
+  assertNoEmDash(s, 'lastMinuteStaffingConfirmationSms singular');
+});
+
+test('lastMinuteStaffingConfirmationSms > plural form', () => {
+  const s = t.lastMinuteStaffingConfirmationSms({
+    eventDate: 'Saturday, May 30, 2026',
+    bartenderList: 'Alex ((312) 555-1234) and Jordan ((312) 555-5678)',
+    isPlural: true,
+  });
+  assert.match(s, /Your bartenders for Saturday, May 30, 2026 are Alex/);
+  assert.match(s, /and Jordan/);
+  assertNoEmDash(s, 'lastMinuteStaffingConfirmationSms plural');
+});
