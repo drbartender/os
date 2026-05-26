@@ -254,8 +254,13 @@ export default function QuoteWizard() {
 
   const numBars = form.needs_bar ? 1 : 0;
 
+  // Sequence-guard so a slow response from keystroke N-1 can't overwrite the
+  // fresh response from keystroke N (rapid qty stepper +/- presses otherwise
+  // race; whichever lands last wins, which can be the stale one).
+  const previewSeqRef = useRef(0);
   const fetchPreview = useCallback(async () => {
     if (!form.package_id) { setPreview(null); return; }
+    const seq = ++previewSeqRef.current;
     try {
       const res = await fetch(`${API_BASE}/api/proposals/public/calculate`, {
         method: 'POST',
@@ -270,14 +275,22 @@ export default function QuoteWizard() {
           syrup_selections: form.syrup_selections,
         }),
       });
+      if (seq !== previewSeqRef.current) return;
       if (!res.ok) { setPreview(null); return; }
       const data = await res.json();
+      if (seq !== previewSeqRef.current) return;
       if (data && data.total != null) setPreview(data);
       else setPreview(null);
-    } catch { setPreview(null); }
+    } catch {
+      if (seq === previewSeqRef.current) setPreview(null);
+    }
   }, [form.package_id, form.guest_count, form.event_duration_hours, numBars, form.addon_ids, form.addon_quantities, form.syrup_selections, addons]);
 
-  useEffect(() => { fetchPreview(); }, [fetchPreview]);
+  // Debounce 250ms so the qty stepper '+'/'-' doesn't fire one POST per click.
+  useEffect(() => {
+    const t = setTimeout(fetchPreview, 250);
+    return () => clearTimeout(t);
+  }, [fetchPreview]);
 
   const update = (field, value) => { setForm(f => ({ ...f, [field]: value })); clearField(field); };
 
