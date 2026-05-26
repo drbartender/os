@@ -24,6 +24,9 @@ function fmtDate(d) {
 const MAX_DISPUTE_EMAIL_ATTEMPTS = 3;
 const SEND_TIMEOUT_MS = 10_000;
 
+// _deps shape: pool is included so Task 4's computation-throw test can
+// inject a pool wrapper that rejects on a specific query. Spec text said
+// "Pool stays direct" but the test design surfaced a need to swap it.
 let _deps = { sendEmail, Sentry, sendTimeoutMs: SEND_TIMEOUT_MS, pool };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
@@ -127,15 +130,16 @@ async function notifyDisputeWon(tipId, { reinstatedAmountCents, disputeOpenedAt,
         html: tpl.html,
         text: tpl.text,
       });
-      // Suppress unhandled-rejection if the awaiter loses the race below.
+      // Suppress unhandled-rejection on whichever Promise loses the race below.
+      // sendPromise: if the timeout wins, sendPromise eventually settles unobserved.
+      // timeoutPromise: if sendPromise wins, the timer still fires and rejects.
       sendPromise.catch(() => {});
-      await Promise.race([
-        sendPromise,
-        new Promise((_, reject) => {
-          const t = setTimeout(() => reject(new Error('sendEmail timed out')), _deps.sendTimeoutMs);
-          t.unref?.();
-        }),
-      ]);
+      const timeoutPromise = new Promise((_, reject) => {
+        const t = setTimeout(() => reject(new Error('sendEmail timed out')), _deps.sendTimeoutMs);
+        t.unref?.();
+      });
+      timeoutPromise.catch(() => {});
+      await Promise.race([sendPromise, timeoutPromise]);
       emailSent = true;
     } catch (err) {
       _deps.Sentry.captureException(err, { tags: { util: 'payrollDisputeNotify', step: 'send_email' } });
