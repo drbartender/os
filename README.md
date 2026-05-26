@@ -192,6 +192,7 @@ dr-bartender/
 │   │   ├── googlePlaces.js     # Google Places venue-search proxy
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
 │   │   ├── lastMinuteAlert.js  # Last-minute (<72h) booking SMS alert dispatch (admin + broad staff blast, idempotent)
+│   │   ├── lastMinuteStaffingConfirmation.js  # Touch 2.2: bartender-list renderer + notify fn + atomic-flip trigger
 │   │   ├── lifecycleEmailTemplates.js # Lifecycle email templates split out of emailTemplates.js
 │   │   ├── messageScheduling.js # scheduleMessage(...): idempotent insert of a future touch into the scheduled_messages table
 │   │   ├── messageSuppression.js # shouldSendImmediate(...): shared archive / comm-prefs / bad-contact gate for immediate-send paths
