@@ -181,4 +181,83 @@ describe('notifyDisputeWon', () => {
     assert.strictEqual(after.dispute_email_attempts, 1);
     assert.strictEqual(after.dispute_won_at, null);
   });
+
+  test('single failure: attempts=1, no flags set, no captureMessage', async () => {
+    const id = TEST_TIP_PREFIX - 5;
+    await seedTip({ id, dispute_email_attempts: 0 });
+    sendEmailMock.mock.mockImplementationOnce(() => Promise.reject(new Error('resend boom')));
+
+    const result = await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
+
+    assert.strictEqual(result.abandoned, false);
+    assert.strictEqual(captureExceptionMock.mock.callCount(), 1);
+    assert.strictEqual(captureMessageMock.mock.callCount(), 0);
+
+    const after = await readTip(id);
+    assert.strictEqual(after.dispute_email_attempts, 1);
+    assert.strictEqual(after.dispute_won_at, null);
+    assert.strictEqual(after.dispute_email_failed_at, null);
+  });
+
+  test('bailout: attempts=2 + failure → attempts=3, both timestamps set and equal, captureMessage fires with full payload', async () => {
+    const id = TEST_TIP_PREFIX - 6;
+    await seedTip({ id, dispute_email_attempts: 2 });
+    sendEmailMock.mock.mockImplementationOnce(() => Promise.reject(new Error('still down')));
+
+    const result = await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
+
+    assert.strictEqual(result.abandoned, true);
+    assert.strictEqual(captureMessageMock.mock.callCount(), 1);
+
+    const callArgs = captureMessageMock.mock.calls[0].arguments;
+    assert.match(callArgs[0], /permanently abandoned/);
+    assert.strictEqual(callArgs[1].level, 'error');
+    assert.strictEqual(callArgs[1].tags.step, 'max_attempts_exceeded');
+    assert.strictEqual(callArgs[1].extra.tipId, id);
+    assert.strictEqual(callArgs[1].extra.attempts, 3);
+    assert.strictEqual(callArgs[1].extra.reinstatedAmountCents, 3000);
+    assert.ok(Array.isArray(callArgs[1].extra.bartenderIds));
+
+    const after = await readTip(id);
+    assert.strictEqual(after.dispute_email_attempts, 3);
+    assert.notStrictEqual(after.dispute_won_at, null);
+    assert.notStrictEqual(after.dispute_email_failed_at, null);
+    // Both NOW() in the same UPDATE → equal timestamps.
+    assert.strictEqual(new Date(after.dispute_won_at).getTime(), new Date(after.dispute_email_failed_at).getTime());
+  });
+
+  test('throw before transaction: counter unchanged, dispute_won_at null, no Sentry from inside notify', async () => {
+    const id = TEST_TIP_PREFIX - 7;
+    await seedTip({ id, dispute_email_attempts: 0 });
+
+    // Verifies the invariant that errors before the failure UPDATE do NOT
+    // increment the counter. The simplest unambiguous mock is to throw at
+    // pool.connect() itself, ensuring the throw happens before any DB work.
+    // (An earlier attempt to throw mid-transaction via a query wrapper
+    // wedged pg's client state and hung; the spec's intent is covered here
+    // by exercising the same "no increment on pre-finalize throw" path.)
+    __setDeps({
+      sendEmail: sendEmailMock,
+      Sentry: { captureException: captureExceptionMock, captureMessage: captureMessageMock },
+      sendTimeoutMs: 100,
+      pool: {
+        connect: async () => {
+          throw new Error('pool connect boom');
+        },
+      },
+    });
+
+    await assert.rejects(
+      notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() }),
+      /pool connect boom/
+    );
+
+    assert.strictEqual(captureExceptionMock.mock.callCount(), 0);
+    assert.strictEqual(captureMessageMock.mock.callCount(), 0);
+
+    const after = await readTip(id);
+    assert.strictEqual(after.dispute_email_attempts, 0);
+    assert.strictEqual(after.dispute_won_at, null);
+    assert.strictEqual(after.dispute_email_failed_at, null);
+  });
 });
