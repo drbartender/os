@@ -802,7 +802,15 @@ Phase 4b adds three cross-cutting pieces. Overlap prevention: each handler carri
 - `rolled_forward_at` TIMESTAMPTZ — set when a late tip arrives after its event's pay period was frozen and the tip is rolled into the next open period
 - `refunded_amount_cents` INTEGER NOT NULL DEFAULT 0 — cumulative refunded cents, idempotency key for `clawbackTip` (only the delta past the prior value reduces the bartender's adjustment)
 - `dispute_won_at` TIMESTAMPTZ — set when Stripe reinstates a previously-paid-out card tip after a chargeback resolves in our favor; idempotency marker for `payrollDisputeNotify` (set either via successful admin notification OR via the retry-bailout path)
+- `dispute_email_attempts` INTEGER NOT NULL DEFAULT 0 — retry counter for the dispute-won admin notification (0 to 3); incremented atomically inside `notifyDisputeWon`'s held transaction on each failed send
+- `dispute_email_failed_at` TIMESTAMPTZ — set ONLY when the dispute-won notification was abandoned after exhausting retries. Canonical "needs manual reconciliation" marker; the weekly sweep query (below) reads this column as the durable failsafe channel.
 - Indexed on `(target_user_id, tipped_at DESC)` for staff-side `GET /api/me/tips` + admin-side `GET /api/admin/tips`
+
+**Dispute-won notification state machine.** For tip rows that have entered the dispute-reinstatement flow, the `(dispute_won_at, dispute_email_failed_at)` pair describes one of four states:
+- **In progress, no failures yet:** `dispute_won_at IS NULL AND dispute_email_attempts = 0`. Webhook has not delivered, or the first attempt has not run.
+- **In progress, retrying:** `dispute_won_at IS NULL AND dispute_email_attempts > 0 AND dispute_email_attempts < 3`. One or more send failures, still inside the retry window.
+- **Completed normally:** `dispute_won_at IS NOT NULL AND dispute_email_failed_at IS NULL`. Email delivered, admin notified.
+- **Completed by bailout:** `dispute_won_at IS NOT NULL AND dispute_email_failed_at IS NOT NULL`. Three send failures; admin must reconcile manually. The presence of `dispute_email_failed_at IS NOT NULL` is the canonical marker.
 
 **tip_page_feedback** — Bartender-feedback submissions from the tip thank-you page (only the negative-rating path; 4-5★ flows nudge customers to a Google review instead)
 - `id` SERIAL PK
@@ -1154,3 +1162,20 @@ Seven custom agents in `.claude/agents/` provide automated code review:
 - **Tier 2 (automatic, haiku)**: `security-scan`, `consistency-check`, `error-handling-check` — run in parallel after completing features
 - **Tier 3 (on-demand, sonnet)**: `full-security-audit`, `full-code-review`, `database-review`, `ui-ux-review` — run when explicitly requested
 - See `CLAUDE.md` § Code Verification System for full details
+
+## Operational Practices
+
+### Weekly dispute-email-bailout sweep
+
+The dispute-won email-retry bailout (see `server/utils/payrollDisputeNotify.js`) writes `tips.dispute_email_failed_at = NOW()` when it permanently abandons a notification after three send failures. The Sentry alert accompanying the bailout is best-effort: a process crash between commit and the Sentry call, or a Sentry transport failure, can lose the alert silently while the DB row carries the canonical marker.
+
+Run this query weekly to catch any abandonments that did not reach Sentry:
+
+```sql
+SELECT id, dispute_email_failed_at, amount_cents, shift_id, target_user_id
+  FROM tips
+ WHERE dispute_email_failed_at IS NOT NULL
+ ORDER BY dispute_email_failed_at DESC;
+```
+
+For each row, follow the manual recovery runbook in `docs/superpowers/specs/2026-05-25-dispute-email-retry-bailout-design.md`. Before posting any adjustment, search `proposal_activity_log` by `tip_id` to avoid double-paying bartenders (the `Promise.race` timeout in `notifyDisputeWon` aborts the awaiter but does not cancel the in-flight Resend request, so the email may have actually delivered server-side even when the function treated it as a failure).
