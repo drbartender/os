@@ -784,13 +784,13 @@ Open the file and locate the `tips` table description (it lists columns and thei
 The current doc is missing five columns: `fee_cents`, `shift_id`, `rolled_forward_at`, `refunded_amount_cents`, `dispute_won_at`. Plus the two new ones from Task 1. Append the seven columns to the column list (preserving the existing column entries):
 
 ```
-- `fee_cents` — integer cents of the Stripe fee withheld from the tip; populated on tip webhook
-- `shift_id` — FK to `shifts.id` when the tip is matched to a specific shift; null until matched
-- `rolled_forward_at` — set when a late tip is rolled forward into the next open payout period
-- `refunded_amount_cents` — cumulative refund cents applied to this tip (clawback tracking)
-- `dispute_won_at` — set when Stripe reinstates a previously-paid-out card tip (either via successful admin notification OR via the retry-bailout path)
-- `dispute_email_attempts` — retry counter for the dispute-won admin notification (0 to 3)
-- `dispute_email_failed_at` — set only when the dispute-won notification was abandoned after exhausting retries; canonical "needs manual reconciliation" marker
+- `fee_cents`: integer cents of the Stripe fee withheld from the tip; populated on tip webhook
+- `shift_id`: FK to `shifts.id` when the tip is matched to a specific shift; null until matched
+- `rolled_forward_at`: set when a late tip is rolled forward into the next open payout period
+- `refunded_amount_cents`: cumulative refund cents applied to this tip (clawback tracking)
+- `dispute_won_at`: set when Stripe reinstates a previously-paid-out card tip (either via successful admin notification OR via the retry-bailout path)
+- `dispute_email_attempts`: retry counter for the dispute-won admin notification (0 to 3)
+- `dispute_email_failed_at`: set only when the dispute-won notification was abandoned after exhausting retries; canonical "needs manual reconciliation" marker
 ```
 
 - [ ] **Step 3: Add the state-machine description immediately after the `tips` column list**
