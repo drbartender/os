@@ -163,6 +163,8 @@ test('notifyClientOfStaffingConfirmation > happy path: sends SMS with rendered n
     assert.strictEqual(sms.calls.length, 1, 'exactly one SMS send');
     assert.match(sms.calls[0].body, /Your bartender for/);
     assert.match(sms.calls[0].body, /Alex \(\(312\) 555-1234\)/);
+    // Defense-in-depth against future template edits.
+    assert.ok(!sms.calls[0].body.includes('—'), 'rendered SMS body must not contain an em dash');
     const { rows } = await pool.query(
       "SELECT message_type, status FROM sms_messages WHERE client_id = $1",
       [clientId]
@@ -231,6 +233,47 @@ test('notifyClientOfStaffingConfirmation > sms-disabled client gets no SMS (emai
   } finally {
     sms.restore();
     // Restore the schema default exactly.
+    await pool.query(
+      `UPDATE clients SET communication_preferences = '{"sms_enabled": true, "email_enabled": true, "marketing_enabled": true}'::jsonb WHERE id = $1`,
+      [clientId]
+    );
+  }
+});
+
+test('notifyClientOfStaffingConfirmation > email-disabled client still gets SMS', async () => {
+  const sms = stubSms();
+  try {
+    await pool.query(
+      `UPDATE clients SET communication_preferences = '{"sms_enabled": true, "email_enabled": false, "marketing_enabled": true}'::jsonb WHERE id = $1`,
+      [clientId]
+    );
+    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
+    assert.strictEqual(sms.calls.length, 1, 'SMS still fires when only email is disabled');
+  } finally {
+    sms.restore();
+    await pool.query(
+      `UPDATE clients SET communication_preferences = '{"sms_enabled": true, "email_enabled": true, "marketing_enabled": true}'::jsonb WHERE id = $1`,
+      [clientId]
+    );
+  }
+});
+
+test('notifyClientOfStaffingConfirmation > both channels disabled sends nothing', async () => {
+  const sms = stubSms();
+  try {
+    await pool.query(
+      `UPDATE clients SET communication_preferences = '{"sms_enabled": false, "email_enabled": false, "marketing_enabled": true}'::jsonb WHERE id = $1`,
+      [clientId]
+    );
+    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
+    assert.strictEqual(sms.calls.length, 0, 'SMS must be suppressed');
+    const { rows } = await pool.query(
+      "SELECT COUNT(*)::int AS n FROM sms_messages WHERE client_id = $1",
+      [clientId]
+    );
+    assert.strictEqual(rows[0].n, 0, 'no sms_messages row should be written');
+  } finally {
+    sms.restore();
     await pool.query(
       `UPDATE clients SET communication_preferences = '{"sms_enabled": true, "email_enabled": true, "marketing_enabled": true}'::jsonb WHERE id = $1`,
       [clientId]
