@@ -797,6 +797,11 @@ Phase 4b adds three cross-cutting pieces. Overlap prevention: each handler carri
 - `customer_email` — captured by Stripe Checkout, may be null
 - `tipped_at` TIMESTAMPTZ — Stripe `session.created`
 - `created_at` TIMESTAMPTZ DEFAULT NOW()
+- `fee_cents` INTEGER — Stripe processing fee captured at webhook time; used by the payroll fee-netting math
+- `shift_id` FK → shifts (nullable; populated when the tip is matched to a specific bartender shift inside the +/-12h window around the event)
+- `rolled_forward_at` TIMESTAMPTZ — set when a late tip arrives after its event's pay period was frozen and the tip is rolled into the next open period
+- `refunded_amount_cents` INTEGER NOT NULL DEFAULT 0 — cumulative refunded cents, idempotency key for `clawbackTip` (only the delta past the prior value reduces the bartender's adjustment)
+- `dispute_won_at` TIMESTAMPTZ — set when Stripe reinstates a previously-paid-out card tip after a chargeback resolves in our favor; idempotency marker for `payrollDisputeNotify` (set either via successful admin notification OR via the retry-bailout path)
 - Indexed on `(target_user_id, tipped_at DESC)` for staff-side `GET /api/me/tips` + admin-side `GET /api/admin/tips`
 
 **tip_page_feedback** — Bartender-feedback submissions from the tip thank-you page (only the negative-rating path; 4-5★ flows nudge customers to a Google review instead)
