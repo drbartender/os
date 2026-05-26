@@ -1478,8 +1478,8 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         );
         isFirstDelivery = inserted.rowCount === 1;
 
-        // Unconditional: a payment_intent.succeeded that claimed isFirstDelivery first must not leave this link row 'pending' (would let it be reused).
-        await dbClient.query("UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1", [session.payment_link]);
+        // Unconditional: a payment_intent.succeeded that claimed isFirstDelivery first must not leave this link row 'pending' (would let it be reused). Scoped to proposal_id so a reused/orphaned link cannot mark sibling sessions succeeded.
+        await dbClient.query("UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1 AND proposal_id = $2", [session.payment_link, proposalId]);
 
         if (isFirstDelivery) {
           await dbClient.query(

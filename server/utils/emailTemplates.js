@@ -334,7 +334,7 @@ function clientSignedAdmin({ clientName, eventTypeLabel = 'event', proposalId, a
     subject: `Proposal Signed: ${name} — ${eventTypeLabel} (#${proposalId})`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Proposal Signed</h2>
-      <p><strong>${name}</strong> has signed the proposal for their <strong>${eventTypeLabel}</strong> (#${proposalId}).</p>
+      <p><strong>${esc(name)}</strong> has signed the proposal for their <strong>${esc(eventTypeLabel)}</strong> (#${proposalId}).</p>
       <p>The proposal status has been updated to <strong>accepted</strong>. Next step: collect the deposit.</p>
       ${ctaButton(adminUrl, 'View Proposal')}
     `),
@@ -392,7 +392,7 @@ function newApplicationAdmin({ applicantName, applicantEmail, adminUrl }) {
     subject: `New Application: ${applicantName}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Staff Application</h2>
-      <p><strong>${applicantName}</strong> (${applicantEmail}) has submitted an application.</p>
+      <p><strong>${esc(applicantName)}</strong> (${esc(applicantEmail)}) has submitted an application.</p>
       ${ctaButton(adminUrl, 'Review Applications')}
     `),
     text: `New application from ${applicantName} (${applicantEmail}). Review at: ${adminUrl}`,
@@ -405,7 +405,7 @@ function shiftRequestAdmin({ staffName, eventTypeLabel = 'event', eventDate, pos
     subject: `Shift Request: ${staffName} — ${eventTypeLabel}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Shift Request</h2>
-      <p><strong>${staffName}</strong> has requested to work as <strong>${position}</strong> at ${eventPhrase} on ${eventDate}.</p>
+      <p><strong>${esc(staffName)}</strong> has requested to work as <strong>${esc(position)}</strong> at ${esc(eventPhrase)} on ${esc(eventDate)}.</p>
       ${ctaButton(adminUrl, 'View Shift Requests')}
     `),
     text: `${staffName} requested to work ${position} at ${eventPhrase} on ${eventDate}. Review at: ${adminUrl}`,
@@ -421,20 +421,20 @@ function shiftRequestApproved({ staffName, eventTypeLabel = 'event', eventDate, 
   const name = staffName || 'there';
   const eventPhrase = eventTypeLabel === 'event' ? 'an upcoming event' : `an upcoming ${eventTypeLabel} event`;
   const setupRow = setupTime
-    ? `<tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Setup / arrive by</td><td style="padding:8px 12px;">${setupTime}</td></tr>`
+    ? `<tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Setup / arrive by</td><td style="padding:8px 12px;">${esc(setupTime)}</td></tr>`
     : '';
   const setupText = setupTime ? ` Setup / arrive by ${setupTime}.` : '';
   return {
     subject: `You're Confirmed: ${eventTypeLabel} on ${eventDate} — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">You're Confirmed!</h2>
-      <p>Hi ${name},</p>
-      <p>Great news — you've been confirmed to work ${eventPhrase}.</p>
+      <p>Hi ${esc(name)},</p>
+      <p>Great news — you've been confirmed to work ${esc(eventPhrase)}.</p>
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
-        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:100px;">Date</td><td style="padding:8px 12px;">${eventDate}</td></tr>
-        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Time</td><td style="padding:8px 12px;">${startTime} – ${endTime}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:100px;">Date</td><td style="padding:8px 12px;">${esc(eventDate)}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Time</td><td style="padding:8px 12px;">${esc(startTime)} – ${esc(endTime)}</td></tr>
         ${setupRow}
-        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Location</td><td style="padding:8px 12px;">${location}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Location</td><td style="padding:8px 12px;">${esc(location)}</td></tr>
       </table>
       <p>Please arrive on time and in proper uniform. See you there!</p>
       <p>— The Dr. Bartender Team</p>
