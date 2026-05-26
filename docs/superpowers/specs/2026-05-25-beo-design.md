@@ -81,15 +81,27 @@ All write endpoints wrap their multi-table mutations in a single `BEGIN/COMMIT/R
 
 Add a new `beoReadLimiter` to `rateLimiters.js` keyed by `req.user?.id`, following the existing user.id-keyed pattern (`adminWriteLimiter` keyed by `admin-${req.user.id}` at line 100, `searchLimiter` at line 113). Use 60/15min per-user; comfortable headroom for one staffer refreshing repeatedly while standing in a venue parking lot. Apply this limiter to `GET /api/beo/:proposalId` instead of `publicReadLimiter`.
 
-**`POST /api/drink-plans/:id/finalize`** (`auth`, `requireAdminOrManager`, `drinkPlanWriteLimiter`). Inside one transaction: (1) `UPDATE drink_plans dp SET finalized_at = NOW(), finalized_by = req.user.id FROM proposals p WHERE dp.id = :id AND dp.proposal_id = p.id AND dp.status = 'reviewed' AND dp.finalized_at IS NULL AND p.status != 'archived' AND COALESCE(dp.selections, '{}'::jsonb) != '{}'::jsonb RETURNING dp.*, dp.proposal_id`. The non-empty-selections guard prevents finalizing a row where admin flipped status to `reviewed` without the client ever submitting the planner. If the UPDATE matches zero rows, ROLLBACK and respond 409 with a reason (`not_reviewed`, `already_finalized`, `archived`, or `no_selections`); concurrent Finalize clicks see this and only the first one proceeds. (2) Read `proposal_id` from the RETURNING row (not via a separate SELECT, which would break the single-transaction promise) and call `scheduleBeoNudgesForProposal(proposalId, txClient)` (see 6.4) which inserts pending `beo_unack_nudge_sms` rows for each currently-approved staffer linked to any shift on the proposal. (3) INSERT into `proposal_activity_log` with `action = 'beo_finalized'`. COMMIT. Returns the updated plan.
+**`POST /api/drink-plans/:id/finalize`** (`auth`, `requireAdminOrManager`, `drinkPlanWriteLimiter`). Inside one transaction: (1) `UPDATE drink_plans dp SET finalized_at = NOW(), finalized_by = req.user.id FROM proposals p WHERE dp.id = :id AND dp.proposal_id = p.id AND dp.status = 'reviewed' AND dp.finalized_at IS NULL AND p.status != 'archived' AND COALESCE(dp.selections, '{}'::jsonb) != '{}'::jsonb RETURNING dp.*, dp.proposal_id`. The non-empty-selections guard prevents finalizing a row where admin flipped status to `reviewed` without the client ever submitting the planner. If the UPDATE matches zero rows, ROLLBACK and respond 409 with a reason (`not_reviewed`, `already_finalized`, `archived`, or `no_selections`); concurrent Finalize clicks see this and only the first one proceeds. (2) Read `proposal_id` from the RETURNING row (not via a separate SELECT, which would break the single-transaction promise) and call `scheduleBeoNudgesForProposal(proposalId, txClient)` (see 6.4) which inserts pending `beo_unack_nudge_sms` rows for each currently-approved staffer linked to any shift on the proposal. (3) INSERT into `proposal_activity_log` with the columns the table requires (`proposal_id`, `action='beo_finalized'`, `actor_type='admin'`, `actor_id=req.user.id`, `details` JSONB with `{ finalized_at, nudge_count }`). Missing actor / details columns are NOT NULL and the existing pattern at `drinkPlans.js:339` shows the full insert shape. COMMIT. Returns the updated plan.
 
-The combination of the `finalized_at IS NULL` UPDATE guard (one transaction wins) and the partial unique index on `scheduled_messages` (catches any race that slips past application code) gives belt-and-suspenders dedup of the SMS schedule under concurrent Finalize clicks.
+The combination of the `finalized_at IS NULL` UPDATE guard (one transaction wins) and the partial unique index on `scheduled_messages` (catches a single-process race that slips past application code) prevents the standard double-Finalize race. The partial unique index does NOT catch the rarer Refinalize-after-Unfinalize race where two transactions both observe "no pending row" because the prior pending was just suppressed; the partial index excludes suppressed rows by design and both inserts would succeed. The Refinalize race is therefore guarded by admin-click serialization (the Finalize button disables on submit), not by the index. Out of scope to fix at the DB level for v1.
 
-**`POST /api/drink-plans/:id/unfinalize`** (`auth`, `requireAdminOrManager`, `drinkPlanWriteLimiter`). Guard: `finalized_at IS NOT NULL`. Inside one transaction: (1) UPDATE `drink_plans` SET `finalized_at = NULL`, `finalized_by = NULL`. (2) UPDATE `shift_requests` SET `beo_acknowledged_at = NULL` for EVERY linked request (any status), not just approved. Stale acks on denied or pending rows would otherwise surface as "Confirmed [time]" pills on the admin EventDetailPage for any staffer who was once approved-and-acked, then denied, between Finalize cycles. Clearing all rows keeps the admin view honest. (3) UPDATE `scheduled_messages` SET `status = 'suppressed'`, `error_message = 'unfinalized: BEO unfinalized by admin'` WHERE `entity_type = 'proposal'` AND `entity_id = :proposalId` AND `message_type = 'beo_unack_nudge_sms'` AND `status = 'pending'`. Sent rows are deliberately left in place to preserve the audit trail. (4) INSERT into `proposal_activity_log` with `action = 'beo_unfinalized'`. COMMIT. Returns the updated plan.
+**`POST /api/drink-plans/:id/unfinalize`** (`auth`, `requireAdminOrManager`, `drinkPlanWriteLimiter`). Guard: `finalized_at IS NOT NULL`. Inside one transaction: (1) UPDATE `drink_plans` SET `finalized_at = NULL`, `finalized_by = NULL`. (2) UPDATE `shift_requests` SET `beo_acknowledged_at = NULL` for EVERY linked request (any status), not just approved. Stale acks on denied or pending rows would otherwise surface as "Confirmed [time]" pills on the admin EventDetailPage for any staffer who was once approved-and-acked, then denied, between Finalize cycles. Clearing all rows keeps the admin view honest. (3) UPDATE `scheduled_messages` SET `status = 'suppressed'`, `error_message = 'unfinalized: BEO unfinalized by admin'` WHERE `entity_type = 'proposal'` AND `entity_id = :proposalId` AND `message_type = 'beo_unack_nudge_sms'` AND `status = 'pending'`. Sent rows are deliberately left in place to preserve the audit trail. (4) INSERT into `proposal_activity_log` with the full required column set: `proposal_id`, `action='beo_unfinalized'`, `actor_type='admin'`, `actor_id=req.user.id`, `details` JSONB with `{ suppressed_count, cleared_ack_count }`. COMMIT. Returns the updated plan.
 
 The audit-preserving suppression in step 3 means a future Refinalize must use a status-aware idempotency check that ignores `status='suppressed'` rows when deciding whether to insert (see 6.4).
 
-**`PATCH /api/drink-plans/:id/status` guard (modification to existing route).** The existing route accepts the four-value whitelist `pending`, `draft`, `submitted`, `reviewed` (the inert legacy `exploration_saved` is intentionally excluded). Add a guard before the UPDATE: if `finalized_at IS NOT NULL`, throw a 409 with `"Plan is finalized. Unfinalize first to change status."` regardless of the target status. This preserves the invariant that finalized plans are fully locked: no change to draft, no re-flag to submitted, no re-flag to reviewed. Reverting must go through the explicit Unfinalize endpoint, which knows to clear acks and suppress nudges.
+**Finalize is a hard lock on all drink-plan content, not just status.** Bartenders open the BEO live (the staff portal fetches it fresh, not a snapshot), so anything mutable after Finalize is content the bartender sees but admin never approved. To enforce the lock, every existing drink-plan mutation route gains the same `finalized_at IS NOT NULL → 409` guard, with the same "Unfinalize first" message:
+
+- `PATCH /api/drink-plans/:id/status` (the four-value whitelist `pending`, `draft`, `submitted`, `reviewed`; the inert legacy `exploration_saved` is intentionally excluded). No status change while finalized.
+- `PATCH /api/drink-plans/:id/notes` (admin notes). No notes edit while finalized.
+- `PUT /api/drink-plans/:id/shopping-list` (admin shopping-list edit). No shopping-list edit while finalized.
+- `PATCH /api/drink-plans/:id/shopping-list/approve` (already-approved status flip is idempotent, but a fresh approve after admin re-uploads the list reverts to pending; lock prevents that loop).
+- `POST /api/drink-plans/:id/logo` (admin logo upload by id). No re-upload while finalized.
+- `DELETE /api/drink-plans/:id/logo`. No logo removal while finalized.
+- `PUT /api/drink-plans/t/:token/selections` (client autosave) AND `PUT /api/drink-plans/t/:token/logo` (client logo upload). These run on a token-gated public route; the guard is the same `finalized_at IS NOT NULL → 409` check, but the response is shaped for the public planner (e.g., a one-line "This plan has been finalized; reach out if you need a change.").
+
+The Unfinalize endpoint is the single way to take the lock off. Acknowledgments and pending nudges are cleared as part of Unfinalize (section 6.2 already specifies this).
+
+Two existing routes deliberately stay unlocked while finalized: the consult input (`PUT /api/drink-plans/:id/consult` if it exists, or admin-side console patches) is admin's note-pad and ops-honest to be editable during the event itself. Admin-facing read-only routes (every `GET /api/drink-plans/...`) are unaffected.
 
 **`GET /api/beo/:proposalId`** (`auth`, `beoReadLimiter`). Returns a single JSON payload composing the BEO content (see 7). Authorization rule:
 - Admin / manager: always allowed.
@@ -102,7 +114,8 @@ The audit-preserving suppression in step 3 means a future Refinalize must use a 
 {
   "proposal": { "id": ..., "event_type": ..., "event_type_custom": ..., "event_date": ..., "event_start_time": ..., "event_timezone": ..., "event_location": ..., "guest_count": ..., "num_bars": ..., ... },
   "client": { "name": ..., "phone": ... },
-  "drink_plan": null | { "id": ..., "token": ..., "status": ..., "finalized_at": ..., "selections": {...}, "consult_selections": {...}, "admin_notes": ..., ... },
+  "package": { "id": ..., "name": ..., "pricing_type": ..., "guests_per_bartender": ..., "extra_bartender_hourly": ..., ... },
+  "drink_plan": null | { "id": ..., "status": ..., "finalized_at": ..., "selections": {...}, "consult_selections": {...}, "admin_notes": ..., "has_logo": bool, ... },
   "shopping_list_status": null | "approved" | "pending_review",
   "addons": [...],
   "shift_requests": [{ "user_id": ..., "beo_acknowledged_at": ... }, ...],
@@ -110,7 +123,11 @@ The audit-preserving suppression in step 3 means a future Refinalize must use a 
 }
 ```
 
-`drink_plan: null` is the "proposal exists but no drink_plan row yet" case (admin hasn't created one); the BEO page renders the empty-state card from 7.10. The endpoint never 404s for an authorized viewer; 404 is reserved for missing proposals (section 9). `viewer.is_acknowledged` is convenience-computed so the page does not have to scan `shift_requests` itself.
+`drink_plan: null` is the "proposal exists but no drink_plan row yet" case (admin hasn't created one); the BEO page renders the empty-state card from 7.10. The endpoint never 404s for an authorized viewer; 404 is reserved for missing proposals (section 9). `viewer.is_acknowledged` is convenience-computed so the page does not have to scan `shift_requests` itself. `package` is included so `setupTimeDisplay(proposal, pkg)` can apply the hosted-vs-BYOB setup default in the BEO renderer.
+
+**`drink_plan.token` is deliberately omitted from the response.** The token is a public, password-equivalent credential to the client-facing drink-plan routes (`PUT /api/drink-plans/t/:token/...` can mutate, submit, and trigger Stripe extras charges). Handing it to every approved staffer would let any bartender submit or alter the client's plan. The BEO renderer needs the company logo, which today lives behind a token-gated proxy at `/api/drink-plans/t/:token/logo`; the spec adds a new staff-authenticated proxy at `GET /api/beo/:proposalId/logo` (see below) so the BEO page never touches the token.
+
+**`GET /api/beo/:proposalId/logo`** (`auth`, `beoReadLimiter`). Same authorization as `GET /api/beo/:proposalId` (admin/manager or approved staffer on a non-cancelled shift). Loads the drink plan's `_logoFilename` and reuses the existing `getSignedUrl` + R2 fetch pattern from `drinkPlans.js:670` (the token-gated proxy). 404 when no logo. Returns the image bytes with the same `Content-Type` and `Cache-Control: private, max-age=3600`. The BEO page references this URL directly, no token in flight.
 
 **`POST /api/beo/:proposalId/acknowledge`** (`auth`, `drinkPlanWriteLimiter`). Role check FIRST: if `req.user.role === 'admin'` OR `req.user.role === 'manager'`, return 200 `{ acknowledged: false }` immediately (admin/manager view-only acknowledgment is a no-op; no `shift_requests` row to stamp). Otherwise, stamp `shift_requests.beo_acknowledged_at = NOW()` for every approved `shift_requests` row that belongs to this user on any shift linked to this proposal where the linked drink plan is finalized, in a single atomic UPDATE...FROM:
 
@@ -174,7 +191,7 @@ Gate conditions:
 | `drink_plans.finalized_at IS NULL` | `beo_not_finalized` (defensive; Unfinalize already suppresses pending rows) |
 | any `shift_requests.beo_acknowledged_at IS NOT NULL` for this user on this proposal | `already_acknowledged` |
 | no `approved` `shift_requests` for this user on any non-cancelled shift in this proposal | `staffer_unassigned` |
-| recipient staff has no `contractor_profiles.phone` (or it does not normalize to E.164) | `no_phone` (suppress, do NOT fail; a missing phone is an ops issue to fix on the profile, not a dispatcher Sentry event) |
+| recipient staff has no `contractor_profiles.phone` (or it does not normalize to E.164) | `no_phone` (suppress, do NOT fail; a missing phone is an ops issue to fix on the profile, not a dispatcher Sentry event). The handler also writes a single `console.warn('[beoHandlers] no_phone suppression for staff ${user_id} on proposal ${proposal_id}')` line so the gap surfaces in logs, plus a low-severity Sentry breadcrumb (not capture) tagged `beo_no_phone` so admin can pull a list periodically. Without any signal, the gap stays invisible until a bartender complains in person |
 | recipient staff `users.onboarding_status = 'deactivated'` | `user_deactivated`. The schedule-time filter (6.4 step 4) only catches staffers deactivated BEFORE Finalize; a staffer assigned + approved while active, then deactivated AFTER Finalize but BEFORE the T-3 dispatch, slips past unless the dispatch-time gate catches it |
 | event start (computed from proposal `event_date` + `event_start_time` + `event_timezone`) is in the past | `event_in_past` (covers the case where the event was rescheduled into the past after the row was scheduled; complements the scheduling-time guard in 6.4) |
 | proposal `event_start_time` is NULL or unparseable (TBD-time event) | `no_start_time`. Existing routes tolerate `event_start_time` as NULL or "TBD" (`shifts.js:730` fallback); without this gate the past-event computation would throw and the row would land `failed` with a Sentry alert instead of clean suppression. At Finalize time, the same TBD condition causes `scheduleBeoNudgesForProposal` to skip the insert entirely (no point scheduling a nudge that will only fire to suppress); admin re-finalizes after setting the start time |
@@ -192,7 +209,9 @@ BEO ready from Dr. Bartender: [event_type_label] on [event_date_local]. Tap to r
 
 `[event_date_local]` is formatted via `staffShiftHandlers.formatEventDateLong` for cross-SMS consistency ("Saturday, August 15" in event TZ). `[event_type_label]` is `getEventTypeLabel(...)` truncated at 40 characters with an ellipsis if longer; `event_type_custom` is a free-text `VARCHAR(255)` and a long custom value (`"My Daughter's Sweet Sixteen Quinceañera Co-Birthday Celebration"`) would silently blow the 160-char segment budget. The truncation lives in the template (`smsTemplates.staffBeoNudgeSms`), not in the data, so the BEO page itself still renders the full label. `[staff_beo_url]` is `${STAFF_URL}/events/${proposalId}/beo`. The CTA is "tap and confirm in the portal." The SMS does NOT instruct the staffer to reply (reusing the existing `CONFIRM` keyword would steal it from the shift-ack flow, which is the existing established behavior).
 
-**Length budget.** Worst-case body for a long event type ("graduation-celebration") runs ~120 characters before the URL, then `https://staff.drbartender.com/events/99999/beo` adds ~46 characters → ~166 characters total. This crosses the 160-character single-segment boundary and bills as 2 segments. Two acceptable mitigations: (a) accept 2-segment billing for BEO (volume is low; 1 nudge per event per staffer at most), or (b) shorten the body to `BEO ready: [event_type_label] on [event_date_local]. Tap to confirm: [url]` to keep ~140 characters typical. Pick (a) for v1; the URL itself eats most of the budget and any URL shortener adds infra. Re-evaluate if SMS spend becomes a line item.
+**Length budget.** Worst-case body for a long event type ("graduation-celebration") runs ~120 characters before the URL, then `https://staff.drbartender.com/events/99999/beo` adds ~46 characters → ~166 characters total. This crosses the 160-character single-segment boundary and bills as 2 segments. Two acceptable mitigations: (a) accept 2-segment billing for BEO (volume is low; 1 nudge per event per staffer at most), or (b) shorten the body to `BEO ready: [event_type_label] on [event_date_local]. Tap to confirm: [url]` to keep ~140 characters typical. Pick (a) for v1; the URL itself eats most of the budget and any URL shortener adds infra.
+
+**Encoding budget.** `event_type_custom` is free-text and may contain non-GSM-7 characters (accented letters, emoji, curly quotes). Twilio downshifts the whole message to UCS-2 when any character is outside the GSM-7 set, halving the per-segment cap to 70 characters. The 40-character `eventTypeLabel` truncation lives in `smsTemplates.staffBeoNudgeSms`; the helper should also normalize the truncated label to GSM-7-compatible characters where possible (replace curly quotes with straight, strip emoji) or accept the larger billing cost. Pick "strip and normalize" for v1 (deterministic, no surprise cost). Re-evaluate if SMS spend becomes a line item.
 
 ### 6.4 Scheduling rows
 
@@ -233,7 +252,7 @@ Inside `rescheduleProposalInTx`, after the existing per-shift reanchor loop:
 1. Trigger condition: ANY change to `event_date` or `event_start_time` (the only fields the BEO anchor depends on; `event_location` is BEO content but doesn't move the anchor, `event_duration_hours` only affects END-anchored handlers like staff_thank_you, and `event_timezone` is not API-mutable per the existing PATCH route's accepted-field list and the column's NOT NULL DEFAULT).
 2. Guard: `if (proposal.status === 'archived') skip;`.
 3. Compute `new_event_start_utc`. If null/unparseable (TBD-time event), skip.
-4. If `new_event_start_utc < NOW()`, skip the UPDATE; the row stays pending with its OLD `scheduled_for` (which becomes past at the next dispatcher tick if it wasn't already), the dispatcher picks it up, and the handler's `event_in_past` gate (6.3) suppresses it. Net effect: one extra dispatcher cycle to terminal-state the row, no SMS sent.
+4. If `new_event_start_utc < NOW()`, do NOT skip silently. The row's existing `scheduled_for` may still be in the FUTURE relative to NOW (e.g., finalize was today, original anchor was "tomorrow", admin moves event to "yesterday"). In that scenario the dispatcher never picks the row up because `scheduled_for > NOW()`, and the row sits pending forever. Run an explicit suppression UPDATE inside this branch: `UPDATE scheduled_messages SET status='suppressed', error_message='event_in_past: rescheduled' WHERE entity_type='proposal' AND entity_id=proposalId AND message_type='beo_unack_nudge_sms' AND status='pending'`. Then return; do not run step 5.
 5. Single UPDATE on the dbClient: `scheduled_messages SET scheduled_for = MAX(new_event_start_utc - 3 days, NOW() + 5 minutes) WHERE entity_type='proposal' AND entity_id=proposalId AND message_type='beo_unack_nudge_sms' AND status='pending'`.
 
 The "no BEO rows yet because Finalize hasn't been clicked" case is a no-op: the UPDATE matches zero rows.
@@ -266,7 +285,7 @@ Single source of truth for what suppresses a BEO nudge row. Read top to bottom; 
 | Admin denial via `PUT /api/shifts/requests/:requestId` (approved → denied) | pending → `status='suppressed'`, reason `staffer_unassigned: ...`, **only when the staffer has no other approved active shifts on this proposal**; AND clear that staffer's `beo_acknowledged_at` on the denied row | New code in the PUT route's deny branch (see below) |
 | Admin hard-delete via `DELETE /api/shifts/:id` (shifts.js:479) | pending → `status='suppressed'`, reason `staffer_unassigned: shift deleted`, **only when the affected staffer has no other approved active shifts on this proposal** | New code in the DELETE handler before the existing cascade (see below). Without this, the row survives the cascade (BEO rows are scoped by `proposal_id`, not the deleted `shift_id`) and only the dispatch-time gate would catch it, relying on luck instead of explicit suppression |
 | Generic admin shift-cancel via `PUT /api/shifts/:id` with `status='cancelled'` (shifts.js:419) | pending → `status='suppressed'`, reason `staffer_unassigned: shift cancelled (generic PUT)`, **only when each affected staffer has no other approved active shifts on this proposal** | New code in the PUT handler when the body sets `status='cancelled'`. The existing per-handler suppression at cancel-or-unassign does NOT cover this path; the generic PUT bypasses it. Same `NOT EXISTS`-guarded UPDATE applied per affected user |
-| Staff or admin hard-delete of a request via `DELETE /api/shifts/requests/:requestId` (shifts.js:316) | pending → `status='suppressed'`, reason `staffer_unassigned: request deleted` for the request's user on the linked proposal, **only when the user has no other approved active shifts on this proposal**. Also clear that user's `beo_acknowledged_at` for the proposal (defensive; the request is gone, but historical rows on other requests carry the ack forward) | New code in the DELETE handler before the row is deleted. Capture `user_id` and `shift.proposal_id` first |
+| Staff or admin hard-delete of a request via `DELETE /api/shifts/requests/:requestId` (shifts.js:316) | pending → `status='suppressed'`, reason `staffer_unassigned: request deleted` for the request's user on the linked proposal, **only when the user has no other approved active shifts on this proposal**. Do NOT clear `beo_acknowledged_at` on surviving rows for the same user (they correctly represent prior acks for shifts that are still in force). | New code in the DELETE handler before the row is deleted. Capture `user_id` and `shift.proposal_id` first |
 | `shift_requests.beo_acknowledged_at IS NOT NULL` at dispatch | `status='suppressed'`, reason `already_acknowledged: ...` | Handler throws `SuppressMessageError` (section 6.3) |
 | `finalized_at IS NULL` at dispatch (defensive) | `status='suppressed'`, reason `beo_not_finalized: ...` | Handler throws `SuppressMessageError` |
 | event start in the past at dispatch | `status='suppressed'`, reason `event_in_past: ...` | Handler throws `SuppressMessageError` |
@@ -301,7 +320,7 @@ This guard assumes one shift mutation per handler call (the canonical pattern: o
 
 - `POST /api/shifts/:id/assign` (admin-initiated assign / re-approve): add `beo_acknowledged_at = NULL` to the existing `ON CONFLICT (shift_id, user_id) DO UPDATE` clause.
 - `PUT /api/shifts/requests/:requestId` approve branch (denied → approved): the route does a bare `UPDATE shift_requests SET status='approved' WHERE id=$1`, NOT an upsert. Add `beo_acknowledged_at = NULL` to that UPDATE's SET clause.
-- `POST /api/shifts/:id/request` (staff-self-request, shifts.js:279): the route is `INSERT ... ON CONFLICT (shift_id, user_id) DO UPDATE SET status='pending'`. Add `beo_acknowledged_at = NULL` to the DO UPDATE for consistency (a previously-denied row going back to pending should not carry the ack; harmless until admin re-approves, but the assign/PUT approve branches both clear so this one should too for symmetry).
+- `POST /api/shifts/:id/request` (staff-self-request, shifts.js:279): the route is `INSERT ... ON CONFLICT (shift_id, user_id) DO UPDATE SET status='pending'`. Gate the `beo_acknowledged_at = NULL` clear on the actual transition: clear only when the prior status was `denied` (denied → pending re-request). Do NOT clear when prior status was already `approved` (a staffer who is currently approved+acked and somehow self-requests again would otherwise silently wipe their ack, re-trigger the BEO SMS, and flip the admin pill to "Not opened" with no warning). Use a conditional in the DO UPDATE: `beo_acknowledged_at = CASE WHEN shift_requests.status = 'denied' THEN NULL ELSE shift_requests.beo_acknowledged_at END`.
 
 Without these, a staffer who was denied (with their pre-deny ack still on the row) and then re-approved would carry that stale ack forward and the dispatch-time `already_acknowledged` gate would skip the new nudge they actually need. Pattern:
 
@@ -314,11 +333,22 @@ ON CONFLICT (shift_id, user_id) DO UPDATE
 
 This pairs with the cancellation-suppression: cancelling a shift suppresses pending BEO rows; re-approving the staffer (potentially on another shift in the same proposal) clears their ack so the next Finalize cycle's nudge fires correctly.
 
-**PUT /api/shifts/requests/:requestId deny path.** Before the UPDATE that flips `status='denied'`, SELECT the request's `user_id` and the shift's `proposal_id`. After the UPDATE, run two operations:
-1. The same `NOT EXISTS`-guarded BEO suppression UPDATE as the cancel-or-unassign path, scoped to this user on this proposal.
-2. Clear `beo_acknowledged_at` on the denied row itself, so a future re-approval starts clean (consistent with the assign / re-approve pattern).
+**PUT /api/shifts/requests/:requestId deny path.** Before the UPDATE that flips `status='denied'`, SELECT the request's CURRENT `status`, `user_id`, and the shift's `proposal_id`. **Branch on the prior status:**
+- If prior status was `approved`, run two post-UPDATE operations:
+  1. The same `NOT EXISTS`-guarded BEO suppression UPDATE as the cancel-or-unassign path, scoped to this user on this proposal.
+  2. Clear `beo_acknowledged_at` on the denied row itself, so a future re-approval starts clean (consistent with the assign / re-approve pattern).
+- If prior status was `pending` or already `denied`, skip the BEO suppression (the staffer never received a nudge to suppress).
 
-**DELETE /api/shifts/:id (hard delete).** Wrap the three-step capture-delete-suppress sequence in `BEGIN/COMMIT/ROLLBACK` on a single `pool.connect()` client (the existing handler is a single statement; the spec adds two more, all three must commit together). Inside the transaction: SELECT the affected `user_id`s and the linked `proposal_id` first, then DELETE the shift (cascade removes `shift_requests`), then run the same `NOT EXISTS`-guarded BEO suppression UPDATE for each affected user. The `NOT EXISTS` subquery correctly sees the shift gone and suppresses for any staffer who had only that one shift on the proposal. Explicit suppression here means we are not relying on the dispatch-time `staffer_unassigned` gate to catch the orphan; it would catch it, but a system that depends on lucky cleanup is fragile, and a crash between the bare DELETE and a separate-statement suppression would leave the orphan row to fire.
+This branching is required because the existing route is a bare `UPDATE shift_requests SET status=$1 WHERE id=$2 RETURNING *` with no precondition; a `pending → denied` flip without the SELECT-then-branch would incorrectly enter the BEO suppression code path.
+
+**DELETE /api/shifts/:id (hard delete).** Wrap the three-step capture-delete-suppress sequence in `BEGIN/COMMIT/ROLLBACK` on a single `pool.connect()` client (the existing handler is a single statement; the spec adds two more, all three must commit together). Inside the transaction:
+1. SELECT the affected `user_id`s AND the linked `proposal_id` first. Guard the SELECT with `WHERE proposal_id IS NOT NULL`: legacy hand-built shifts can have `proposal_id IS NULL` (they predate the proposal linkage), and a downstream suppression UPDATE with `entity_id = NULL` would match every BEO row in the table. If `proposal_id IS NULL`, skip the BEO suppression step entirely; legacy shifts have no BEO rows anyway.
+2. DELETE the shift (cascade removes `shift_requests`).
+3. Run the same `NOT EXISTS`-guarded BEO suppression UPDATE for each affected user. The `NOT EXISTS` subquery correctly sees the shift gone and suppresses for any staffer who had only that one shift on the proposal.
+
+Explicit suppression here means we are not relying on the dispatch-time `staffer_unassigned` gate to catch the orphan; it would catch it, but a system that depends on lucky cleanup is fragile, and a crash between the bare DELETE and a separate-statement suppression would leave the orphan row to fire.
+
+**Generic `PUT /api/shifts/:id` cancellation path.** When the request body sets `status='cancelled'`, wrap the existing single-statement UPDATE plus the new BEO suppression UPDATE in `BEGIN/COMMIT/ROLLBACK`. Both must commit together; otherwise a successful shift cancel followed by a failed suppression UPDATE leaves pending nudges firing for a cancelled shift. The broader inconsistency (the generic PUT is an old back door that bypasses `cancel-or-unassign`'s shift_reminder/staff_thank_you suppression and the staff notification flow) is acknowledged but out of scope for this work; the BEO build adds BEO-specific suppression without normalizing the broader path.
 
 ### 6.7 Staff portal discovery
 
@@ -326,10 +356,14 @@ Two additions outside the BEO page itself so staff can find it.
 
 **`client/src/pages/staff/StaffShifts.js`.** Today the card shows the event header, date, time, setup time, location, positions, and the request / status block. Add a small inline "View BEO" badge + link, gated to render ONLY when (a) this staffer's `shift_requests.status === 'approved'` for this shift AND (b) the shift itself is not `cancelled` (mirrors the auth guard in section 9). (The page lists shifts available for request too; an unapproved staffer or a staffer assigned to a cancelled shift clicking "View BEO" would hit the 403 from the auth check.) State badge values:
 
-- `Draft` (drink plan exists, not yet `submitted` / `reviewed`)
-- `Ready` (drink plan finalized, staffer has not acked)
+- `In progress` (drink plan exists, status is `pending` / `draft`; client may still be editing)
+- `Pending review` (drink plan exists, status is `submitted`; client done, admin not yet reviewed)
+- `Reviewed` (status `reviewed`, finalized_at is still null; admin reviewed but not finalized)
+- `Ready` (`finalized_at IS NOT NULL`, staffer has not acked)
 - `Confirmed` (`beo_acknowledged_at IS NOT NULL`)
 - hide the badge entirely if the staffer is not approved on this shift, the shift is cancelled, or the drink plan does not yet exist
+
+The distinct labels for `pending/draft` vs `submitted` vs `reviewed` matter because they signal different staff actions: "In progress" means nothing to do yet; "Pending review" means admin is the bottleneck; "Reviewed" means waiting on Finalize. Without distinct labels, staff can't predict when their BEO will land.
 
 **`client/src/pages/staff/StaffEvents.js`.** Mirror the same badge / link in whatever row treatment that page uses today.
 
@@ -358,7 +392,7 @@ The exact column lists in each endpoint are an implementation-plan detail; the s
 
 ### 7.1 Event header
 
-- Client name plus a `tel:` link to client phone (intentional: bartender on-site may need to reach the client directly for last-minute coordination; matches existing exposure via the `shift_reminder` SMS body and the `GET /shifts` admin-facing data)
+- Client name plus a `tel:` link to client phone, IF `clients.phone` is non-null. Omit the link element entirely when phone is null (don't render a broken `<a href="tel:">` or `<a href="tel:null">`). The link is intentional when present: bartender on-site may need to reach the client directly for last-minute coordination; matches existing exposure via the `shift_reminder` SMS body and the `GET /shifts` admin-facing data. PII surface widens to per-staffer-per-proposal compared to shift_reminder's per-shift exposure, but staff already have shift-level access and this is parity, not net new
 - Event type label (via `getEventTypeLabel`)
 - Date in event timezone, formatted "Saturday, August 15"
 - Start time, end time, and setup arrival time (use `setupTimeDisplay(proposal, pkg)` from `server/utils/setupTime.js`; do NOT hand-roll `event_start_time` minus a constant default, because the canonical helper applies hosted's 90-minute default and BYOB's 60-minute default correctly). All in event TZ
@@ -393,7 +427,7 @@ Render `proposal_addons` joined to `service_addons` for names. Champagne toast (
 
 ### 7.6 Custom menu
 
-If `selections.menuStyle` is `custom` or `house`: a card with `menuTheme`, `drinkNaming`, `menuDesignNotes`, and the uploaded logo (if `selections.companyLogo` is present, render via the existing token-gated `/api/drink-plans/t/:token/logo` proxy URL). The `drink_plan.token` is included in the GET BEO response payload (section 6.2) so the staff page can construct that URL. The token-gated logo proxy is public-by-design (the token is the auth); ensure the BEO renderer does NOT also expose the token in `tel:`, `mailto:`, or other visible-link attributes anywhere else on the page. Otherwise omit this card.
+If `selections.menuStyle` is `custom` or `house`: a card with `menuTheme`, `drinkNaming`, `menuDesignNotes`, and the uploaded logo (when `drink_plan.has_logo === true` in the GET BEO response, render the logo by setting `<img src="/api/beo/${proposalId}/logo">`). The new staff-authenticated logo route (see 6.2) replaces the previously-suggested token-gated proxy; the drink-plan token never enters the staff portal context, eliminating the credential-leak risk. Add `referrerPolicy="no-referrer"` to outbound anchors in this and other cards (maps link in 7.1, shopping-list link in 7.8) as defense-in-depth against any future URL containing a token. Otherwise omit this card.
 
 ### 7.7 Special notes
 
@@ -429,7 +463,8 @@ The whole-page render handles three states beyond the per-section omits in 7.4-7
 
 - **Loading.** While the GET fetches, render a skeleton (one header card placeholder + 3-4 body-card placeholders). Match the StaffShifts loading shape ("Loading shifts..." spinner + skeleton) for consistency. Do NOT render an empty document.
 - **Empty.** If the proposal exists but no `drink_plans` row exists (admin has not yet generated the drink plan for the event), render a muted card with body `"No drink plan yet for this event. The BEO will populate once the plan is created."` plus the event header card from 7.1 so the staffer can still see when/where. No "Confirm" action bar in this state.
-- **Error.** On 4xx/5xx from `GET /api/beo/:proposalId`: render a centered card with the error message (toast on transient errors, full-page error on 403 with body `"You are not assigned to this event."`). Include a "Retry" button that re-issues the GET. 401 hard-redirects to `/login?next=/events/:proposalId/beo`.
+- **Partial empty.** If `drink_plan` exists but individual data slices are empty (e.g., `serving_type` is null, no signature drinks selected, no addons), each card from 7.2-7.5 either omits itself (per 7.5 pattern) OR renders an explicit "Not specified yet" fallback. Cards must never render the JavaScript string `"undefined"` or `"null"` to the viewer. Pick a per-card stance: 7.2 service plan and 7.3 drink menu always render with explicit "Not specified yet" placeholders (bartenders need to know SOMETHING about service style); 7.4 addons / 7.5 logistics / 7.6 custom menu / 7.7.1 consult input omit when empty.
+- **Error.** On 4xx/5xx from `GET /api/beo/:proposalId`: render a centered card with the error message (toast on transient errors, full-page error on 403 with body `"You are not assigned to this event."`, full-page error on 404 with body `"Event not found."`). Include a "Retry" button that re-issues the GET. 401 hard-redirects to `/login?next=/events/:proposalId/beo`.
 
 ## 8. Edge cases
 
@@ -477,34 +512,39 @@ The frontend route `/events/:proposalId/beo` lives inside `StaffLayout`, which a
 ## 10. Files
 
 ### Server (new)
-- `server/routes/beo.js`: GET `/api/beo/:proposalId`, POST `/api/beo/:proposalId/acknowledge`. Mounted in `server/index.js`. Both use the appropriate existing rate limiters (`publicReadLimiter`, `drinkPlanWriteLimiter`).
+- `server/routes/beo.js`: GET `/api/beo/:proposalId`, GET `/api/beo/:proposalId/logo`, POST `/api/beo/:proposalId/acknowledge`. Mounted in `server/index.js`. GET routes use the new user.id-keyed `beoReadLimiter`; write route uses `drinkPlanWriteLimiter`.
 - `server/utils/beoHandlers.js`: `scheduleBeoNudgesForProposal(proposalId, executor)`, `insertBeoNudgeIfMissing(executor, { proposalId, userId, scheduledFor })`, `suppressBeoNudgesForProposal(proposalId, executor, reason)` (called by Unfinalize), `suppressBeoNudgesForStaffers(proposalId, userIds, executor)` (called by cancel-or-unassign), `handleBeoUnackNudge` dispatcher handler, `registerBeoHandlers()` bootstrap.
 - `server/utils/beoHandlers.test.js`: scheduling idempotency, per-staffer dedupe across multiple shifts, gate evaluation, suppress-on-unfinalize preserves sent rows, late-finalize collapse to NOW+5min, past-event skip.
 - `server/routes/beo.test.js`: authorization (staff with approved shift vs staff without; admin), acknowledge flow stamping all relevant shift_requests, acknowledge blocked when not finalized, rate-limit headers present.
 
 ### Server (modify)
 - `server/db/schema.sql`: the three idempotent ALTERs + the partial index from 6.1, including `ON DELETE SET NULL` on `finalized_by`.
+- `server/middleware/rateLimiters.js`: add a new `beoReadLimiter` keyed by `req.user?.id` (mirrors `adminSearchLimiter` at line 110-117), 60 requests / 15 minutes. Export.
 - `server/utils/errors.js`: add `SuppressMessageError` class with a `reason` property. Add a clear inline comment that it is NOT an `AppError` subclass on purpose (the dispatcher contract is internal; this error never surfaces to a client and must not be routed through the global error middleware that handles `AppError`). The comment exists to deter a future contributor from "fixing" the inconsistency.
 - `server/utils/scheduledMessageDispatcher.js`: `require` the new `SuppressMessageError` from `./errors`. Extend the `try/catch` around `await handler(...)` to discriminate `SuppressMessageError` (mark row `status='suppressed'` with the error's `reason`, return). Document the contract at the handler-registration callsite.
-- `server/routes/drinkPlans.js`: add POST `/:id/finalize` and POST `/:id/unfinalize` next to the existing status route. Each wraps its writes in `pool.connect()` + `BEGIN/COMMIT/ROLLBACK`. Update the existing `PATCH /:id/status` to refuse any status change when `finalized_at IS NOT NULL` (the lock-when-finalized invariant). Update the existing `GET /` (list), `GET /:id`, and `GET /by-proposal/:proposalId` to SELECT `finalized_at` (and `finalized_by` on detail routes).
+- `server/routes/drinkPlans.js`:
+  - Add POST `/:id/finalize` and POST `/:id/unfinalize` next to the existing status route. Each wraps its writes in `pool.connect()` + `BEGIN/COMMIT/ROLLBACK`. Each activity-log INSERT uses the full required column set (`proposal_id`, `action`, `actor_type`, `actor_id`, `details`).
+  - **Add the lock-when-finalized guard to every mutation route on `drink_plans`**: `PATCH /:id/status`, `PATCH /:id/notes`, `PUT /:id/shopping-list`, `PATCH /:id/shopping-list/approve`, `POST /:id/logo`, `DELETE /:id/logo`, `PUT /t/:token/selections`, `PUT /t/:token/logo`. Each refuses with 409 (`"Plan is finalized. Unfinalize first to change."`) when `finalized_at IS NOT NULL`. Without this, Finalize would lock only status and admin/client could keep mutating BEO content post-Finalize while bartenders read the live changes.
+  - Update the existing `GET /` (list), `GET /:id`, and `GET /by-proposal/:proposalId` to SELECT `finalized_at` (and `finalized_by` on detail routes). Detail routes also project `selections IS NOT NULL AND selections != '{}'::jsonb AS has_selections` for the Finalize gate logic.
 - `server/routes/shifts.js`:
   - `POST /:id/cancel-or-unassign`: SELECT `proposal_id` at handler entry. Add the `beo_unack_nudge_sms` `NOT EXISTS`-guarded suppression UPDATE from section 6.6.
   - `POST /:id/assign`: add `beo_acknowledged_at = NULL` to the assign / re-approve `ON CONFLICT DO UPDATE` to clear stale acks.
-  - `POST /:id/request` (staff-self-request, line 279): add `beo_acknowledged_at = NULL` to the `ON CONFLICT DO UPDATE` for consistency with the assign / approve paths.
-  - `PUT /shifts/requests/:requestId`:
-    - on the **deny** branch (status approved → denied), run the same BEO suppression UPDATE for that user on the shift's proposal AND clear `beo_acknowledged_at` on the denied row.
-    - on the **approve** branch (status denied/pending → approved), explicitly add `beo_acknowledged_at = NULL` to the UPDATE's SET clause (the route does a bare UPDATE, not an upsert; the assign path's ON CONFLICT pattern doesn't apply here). Without this, a previously-denied staffer's stale ack carries forward and the dispatch-time gate skips their new nudge.
+  - `POST /:id/request` (staff-self-request, line 279): add a conditional `beo_acknowledged_at` clear to the `ON CONFLICT DO UPDATE`, gated on the prior status: `beo_acknowledged_at = CASE WHEN shift_requests.status = 'denied' THEN NULL ELSE shift_requests.beo_acknowledged_at END`. Wiping ack on a currently approved+acked row would silently re-trigger the nudge SMS.
+  - `PUT /shifts/requests/:requestId`: SELECT the request's CURRENT `status` and `user_id` + the shift's `proposal_id` before the UPDATE.
+    - **deny** branch: only run BEO suppression + ack-clear when prior status was `approved` (pending→denied or denied→denied skips suppression because no nudge was ever scheduled). When triggered, run the same BEO suppression UPDATE as cancel-or-unassign for that user on the shift's proposal AND clear `beo_acknowledged_at` on the denied row.
+    - **approve** branch (denied/pending → approved): explicitly add `beo_acknowledged_at = NULL` to the UPDATE's SET clause (the route does a bare UPDATE, not an upsert; the assign path's ON CONFLICT pattern doesn't apply here). Without this, a previously-denied staffer's stale ack carries forward and the dispatch-time gate skips their new nudge.
     - The existing call to `scheduleStaffShiftMessages` at line 790 already exists; ensure the new branch added to `scheduleStaffShiftMessages` (LEFT JOIN drink_plans + conditional BEO nudge insert) flows through both call sites.
-  - `PUT /:id` (generic shift update, line 419): when the request body sets `status='cancelled'`, run the same `NOT EXISTS`-guarded BEO suppression UPDATE as cancel-or-unassign, scoped to every approved user on the shift. (The generic PUT bypasses cancel-or-unassign's per-handler suppression.)
-  - `DELETE /:id`: wrap the new three-step sequence in `BEGIN/COMMIT/ROLLBACK` on a `pool.connect()` client. Before the cascade DELETE, capture every approved `user_id` on the shift + the linked `proposal_id`. DELETE the shift (cascades remove `shift_requests`). Run the `NOT EXISTS`-guarded BEO suppression UPDATE for each affected user. All three commit together.
-  - `DELETE /requests/:requestId` (line 316): SELECT `user_id` and `shift.proposal_id` before the row is deleted. After the DELETE, run the same `NOT EXISTS`-guarded BEO suppression UPDATE for that user on that proposal, and clear any `beo_acknowledged_at` for that user on other surviving shift_requests rows for the proposal.
+  - `PUT /:id` (generic shift update, line 419): when the request body sets `status='cancelled'`, wrap the existing single-statement UPDATE + the new BEO suppression UPDATE in `BEGIN/COMMIT/ROLLBACK`. Run the same `NOT EXISTS`-guarded BEO suppression UPDATE as cancel-or-unassign, scoped to every approved user on the shift. (The generic PUT bypasses cancel-or-unassign's per-handler suppression.)
+  - `DELETE /:id`: wrap the new three-step sequence in `BEGIN/COMMIT/ROLLBACK` on a `pool.connect()` client. Capture every approved `user_id` on the shift + the linked `proposal_id` with a `WHERE proposal_id IS NOT NULL` guard (legacy hand-built shifts can have NULL proposal_id; without the guard, the suppression UPDATE matches every BEO row in the table). DELETE the shift (cascades remove `shift_requests`). Run the `NOT EXISTS`-guarded BEO suppression UPDATE for each affected user. All three commit together.
+  - `DELETE /requests/:requestId` (line 316): SELECT `user_id` and `shift.proposal_id` before the row is deleted (skip if `proposal_id IS NULL`). After the DELETE, run the same `NOT EXISTS`-guarded BEO suppression UPDATE for that user on that proposal. Do NOT clear `beo_acknowledged_at` on surviving rows for the same user (those represent prior acks for shifts that are still in force).
   - `GET /shifts/by-proposal/:proposalId`: switch `approved_staff` from `array_agg(name)` to `json_agg(json_build_object(..., 'beo_acknowledged_at', sr.beo_acknowledged_at) ORDER BY <same key>)`.
   - `GET /shifts` (staff path) + `GET /shifts/user/:userId/events`: LEFT JOIN `drink_plans` for `finalized_at`, plus the requester's `sr.beo_acknowledged_at`.
 
-- `server/utils/staffShiftHandlers.js`: add `formatEventDateLong` to the module.exports list. The function is defined at line 349 but not currently exported; the BEO handler imports it for SMS-body date formatting. (Alternative: move the helper to a new shared util like `server/utils/eventTimeFormat.js` and import from both. Either works; export is the minimal-diff path.)
 - `server/utils/smsTemplates.js`: add `staffBeoNudgeSms({ eventTypeLabel, eventDateLocal, beoUrl })`. SMS body keeps the word "confirm" deliberately: the goal is to drive staff to the portal where the click is itself the read-receipt signal.
 - `server/utils/smsTemplates.test.js`: add the matching test cases (link present, no em dashes, expected phrasing).
-- `server/utils/staffShiftHandlers.js`: extend `scheduleStaffShiftMessages` to LEFT JOIN `drink_plans` and conditionally enqueue the BEO nudge for the new staffer when the linked plan is finalized.
+- `server/utils/staffShiftHandlers.js`:
+  - Extend `scheduleStaffShiftMessages` to LEFT JOIN `drink_plans` and conditionally enqueue the BEO nudge for the new staffer when the linked plan is finalized. The BEO insert is scoped to rows the function's existing loop already iterates (`status='approved'`); a staff-self-request creates `status='pending'` and is correctly skipped.
+  - Add `formatEventDateLong` to the `module.exports` block (the function is defined at line 349 but not exported; the BEO handler imports it for SMS-body date formatting).
 - `server/utils/beoHandlers.js` (new, already listed above): also exports `reanchorBeoForProposal(proposalId, executor)`. A single UPDATE on pending BEO rows for the proposal, run on the passed dbClient, guarded by `proposals.status != 'archived'` and skipping when `new_event_start_utc < NOW()` or `event_start_time` is NULL.
 - `server/utils/rescheduleProposal.js`: extend `rescheduleProposalInTx` to invoke `reanchorBeoForProposal(proposalId, dbClient)` after the existing per-shift reanchor loop, gated on `event_date` or `event_start_time` having changed. The call runs in-transaction so the proposal UPDATE, the offset cascade, and the BEO reanchor commit together.
 - `server/utils/staffShiftHandlers.test.js`: assignment-after-finalize, no-op when finalize hasn't happened yet.
@@ -566,30 +606,41 @@ The frontend route `/events/:proposalId/beo` lives inside `StaffLayout`, which a
   - Acknowledge endpoint refuses when `finalized_at IS NULL` (409)
   - Rate-limit headers present on both endpoints
 
-- `drinkPlans.test.js` additions (Finalize / Unfinalize):
-  - Finalize succeeds with `status='reviewed'`, schedules nudges, writes activity-log row, returns updated plan
-  - Finalize refuses when `status != 'reviewed'` (409)
-  - Finalize refuses when `finalized_at IS NOT NULL` (409) and the UPDATE guard prevents duplicate scheduling
+- `drinkPlans.test.js` additions (Finalize / Unfinalize / lock):
+  - Finalize succeeds with `status='reviewed'` AND non-empty selections, schedules nudges, writes activity-log row, returns updated plan
+  - Finalize refuses with `status != 'reviewed'` (409 reason `not_reviewed`)
+  - Finalize refuses with `finalized_at IS NOT NULL` (409 reason `already_finalized`)
+  - Finalize refuses with archived proposal (409 reason `archived`)
+  - Finalize refuses with empty selections (409 reason `no_selections`)
   - Finalize is transactional: a forced scheduling failure rolls back `finalized_at`
-  - PATCH `/:id/status` refuses any status change when `finalized_at IS NOT NULL` (409, "Plan is finalized")
-  - Unfinalize clears `finalized_at`, clears every linked `beo_acknowledged_at`, suppresses pending BEO rows with `error_message='unfinalized'`, preserves sent rows, writes activity-log row
+  - Finalize activity-log INSERT carries all required columns (`proposal_id`, `action`, `actor_type`, `actor_id`, `details`); test asserts no NOT NULL violation on a synthetic missing-column INSERT
+  - PATCH `/:id/status` refuses any status change when `finalized_at IS NOT NULL` (409)
+  - PATCH `/:id/notes`, PUT `/:id/shopping-list`, PATCH `/:id/shopping-list/approve`, POST `/:id/logo`, DELETE `/:id/logo`, PUT `/t/:token/selections`, PUT `/t/:token/logo` each refuse with 409 when `finalized_at IS NOT NULL` (one test per route)
+  - Unfinalize clears `finalized_at`, clears EVERY linked `beo_acknowledged_at` (not just approved), suppresses pending BEO rows with `error_message='unfinalized: BEO unfinalized by admin'`, preserves sent rows, writes activity-log row with full column set
   - Unfinalize is transactional under partial failure
-  - Acknowledge endpoint atomic UPDATE returns zero rows when `finalized_at` is NULL (no orphan ack possible)
+  - Acknowledge endpoint atomic UPDATE returns zero rows when `finalized_at` is NULL (no orphan ack possible); admin role check runs FIRST and returns `{acknowledged:false}` without UPDATE
   - GET endpoints project `finalized_at` and `finalized_by` (list + detail + by-proposal)
 
 - `shifts.test.js` additions:
   - cancel-or-unassign loads `proposal_id` from the shift before running the BEO suppression UPDATE
   - cancel-or-unassign suppresses BEO nudges when affected staffer has no other approved active shift on the proposal
   - cancel-or-unassign leaves BEO nudges PENDING when affected staffer still has another approved active shift
-  - `PUT /shifts/requests/:requestId` deny branch suppresses BEO nudge AND clears `beo_acknowledged_at` for that staffer
-  - `PUT /shifts/requests/:requestId` approve branch (re-approval) clears `beo_acknowledged_at` (carry-forward guard)
+  - `PUT /shifts/requests/:requestId` deny branch with prior status `approved`: suppresses BEO nudge AND clears `beo_acknowledged_at`
+  - `PUT /shifts/requests/:requestId` deny branch with prior status `pending`: NO BEO suppression (no nudge was ever scheduled)
+  - `PUT /shifts/requests/:requestId` approve branch (re-approval): clears `beo_acknowledged_at` (carry-forward guard)
+  - `PUT /shifts/:id` with `status='cancelled'` wraps shift UPDATE + BEO suppression UPDATE in one transaction; both succeed or both roll back
   - `PUT /shifts/:id` with `status='cancelled'` suppresses BEO nudges for affected users with no other approved active shifts
   - `POST /shifts/:id/assign` re-approve clears `beo_acknowledged_at = NULL`
-  - `POST /shifts/:id/request` (staff-self-request) ON CONFLICT clears `beo_acknowledged_at = NULL`
+  - `POST /shifts/:id/request` ON CONFLICT clears `beo_acknowledged_at` ONLY when prior status was `denied`; does NOT clear when prior was `approved` (no silent ack wipe)
+  - `DELETE /shifts/:id` wraps capture-delete-suppress in one transaction
+  - `DELETE /shifts/:id` skips BEO suppression entirely when shift's `proposal_id IS NULL` (legacy hand-built shift)
   - `DELETE /shifts/:id` suppresses BEO nudges for every previously-approved user on the deleted shift who has no other approved active shift on the proposal
-  - `DELETE /shifts/requests/:requestId` suppresses BEO nudges and clears beo_acknowledged_at on surviving rows for the same user/proposal
+  - `DELETE /shifts/requests/:requestId` suppresses BEO nudge for that user on the proposal; does NOT clear `beo_acknowledged_at` on surviving rows for the same user
+  - `DELETE /shifts/requests/:requestId` skips BEO suppression when shift's `proposal_id IS NULL`
   - auth check on `GET /api/beo/:proposalId` rejects a staffer whose only approved request is on a cancelled shift
   - auth check on `GET /api/beo/:proposalId` returns 404 (not 403) for a non-existent proposalId
+  - GET `/api/beo/:proposalId` does NOT include `drink_plan.token` in the response
+  - GET `/api/beo/:proposalId/logo` returns image bytes for the same proposal an authorized staffer can view; 404 when no logo
   - Finalize refuses an archived proposal even when status='reviewed' (409)
   - GET `/shifts/by-proposal/:proposalId` projects `approved_staff` as an array of objects with `beo_acknowledged_at`, ORDER BY preserved
   - GET `/shifts` (staff) projects `finalized_at` and the requester's `beo_acknowledged_at`
@@ -625,6 +676,10 @@ Note: `smsInbound.js` and its test file are deliberately unchanged. The CONFIRM 
 14. Reverted finalized plan: PATCH `/api/drink-plans/:id/status` with target `draft` on a `finalized_at IS NOT NULL` plan returns 409
 15. Past-event reschedule: pending BEO nudge on an event that gets rescheduled into the past; dispatcher fires the row, handler throws `SuppressMessageError('event_in_past')`, row marked suppressed instead of SMS sent
 16. Reassignment with stale ack: deny a previously-approved staffer (whose `beo_acknowledged_at` is set), re-approve them; their `beo_acknowledged_at` is now NULL and the next nudge fires correctly
+17. Past-event reschedule with future scheduled_for: finalize for event tomorrow, then reschedule event to yesterday; verify pending BEO row is suppressed in-band by `reanchorBeoForProposal` (NOT left pending with stale future scheduled_for)
+18. Content-lock end-to-end: finalize a plan, then attempt PATCH `/:id/notes`, PUT `/:id/shopping-list`, POST `/:id/logo`, and the client-side PUT `/t/:token/selections`; each must 409
+19. Token leak: confirm `GET /api/beo/:proposalId` response payload does NOT contain `drink_plan.token`; admin DevTools spot-check on a live proposal
+20. Concurrent Finalize from two admin sessions: only one succeeds with 200 + nudges scheduled; the other gets 409
 
 ## 12. SMS dispatcher gate: `SuppressMessageError`
 
