@@ -260,4 +260,107 @@ describe('notifyDisputeWon', () => {
     assert.strictEqual(after.dispute_won_at, null);
     assert.strictEqual(after.dispute_email_failed_at, null);
   });
+
+  test('concurrency bailout race: at attempts=2, first call bails out, second short-circuits', async () => {
+    const id = TEST_TIP_PREFIX - 8;
+    await seedTip({ id, dispute_email_attempts: 2 });
+    sendEmailMock.mock.mockImplementation(() => Promise.reject(new Error('still down')));
+
+    const results = await Promise.all([
+      notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() }),
+      notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() }),
+    ]);
+
+    // One bailout, one short-circuit.
+    const abandonedCount = results.filter(r => r && r.abandoned === true).length;
+    const nullCount = results.filter(r => r === null).length;
+    assert.strictEqual(abandonedCount, 1);
+    assert.strictEqual(nullCount, 1);
+
+    assert.strictEqual(captureExceptionMock.mock.callCount(), 1);
+    assert.strictEqual(captureMessageMock.mock.callCount(), 1);
+
+    const after = await readTip(id);
+    assert.strictEqual(after.dispute_email_attempts, 3);
+    assert.notStrictEqual(after.dispute_won_at, null);
+    assert.notStrictEqual(after.dispute_email_failed_at, null);
+  });
+
+  test('concurrency below-threshold race: both increment serially via row lock', async () => {
+    const id = TEST_TIP_PREFIX - 9;
+    await seedTip({ id, dispute_email_attempts: 0 });
+    sendEmailMock.mock.mockImplementation(() => Promise.reject(new Error('flapping')));
+
+    await Promise.all([
+      notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() }),
+      notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() }),
+    ]);
+
+    assert.strictEqual(captureExceptionMock.mock.callCount(), 2);
+    assert.strictEqual(captureMessageMock.mock.callCount(), 0);
+
+    const after = await readTip(id);
+    assert.strictEqual(after.dispute_email_attempts, 2);
+    assert.strictEqual(after.dispute_won_at, null);
+    assert.strictEqual(after.dispute_email_failed_at, null);
+  });
+
+  test('send-timeout: Promise.race rejects within bound, counter increments', async () => {
+    const id = TEST_TIP_PREFIX - 10;
+    await seedTip({ id, dispute_email_attempts: 0 });
+
+    __setDeps({
+      sendEmail: () => new Promise(resolve => setTimeout(() => resolve({ id: 'late' }), 500)),
+      Sentry: { captureException: captureExceptionMock, captureMessage: captureMessageMock },
+      sendTimeoutMs: 50,
+      pool,
+    });
+
+    const startedAt = Date.now();
+    await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
+    const elapsed = Date.now() - startedAt;
+
+    assert.ok(elapsed < 400, `expected < 400ms, got ${elapsed}ms`);
+    assert.strictEqual(captureExceptionMock.mock.callCount(), 1);
+    const errArg = captureExceptionMock.mock.calls[0].arguments[0];
+    assert.match(errArg.message, /timed out/);
+
+    const after = await readTip(id);
+    assert.strictEqual(after.dispute_email_attempts, 1);
+    assert.strictEqual(after.dispute_won_at, null);
+  });
+
+  test('post-commit Sentry capture failure: DB committed, console.error fired', async () => {
+    const id = TEST_TIP_PREFIX - 11;
+    await seedTip({ id, dispute_email_attempts: 2 });
+
+    const throwingCaptureMessage = mock.fn(() => { throw new Error('sentry boom'); });
+    __setDeps({
+      sendEmail: sendEmailMock,
+      Sentry: { captureException: captureExceptionMock, captureMessage: throwingCaptureMessage },
+      sendTimeoutMs: 100,
+      pool,
+    });
+    sendEmailMock.mock.mockImplementationOnce(() => Promise.reject(new Error('still down')));
+
+    consoleErrorOriginal = console.error;
+    const consoleErrorMock = mock.fn();
+    console.error = consoleErrorMock;
+
+    const result = await notifyDisputeWon(id, { reinstatedAmountCents: 3000, disputeOpenedAt: new Date(), disputeWonAt: new Date() });
+
+    assert.strictEqual(result.abandoned, true);
+    assert.strictEqual(throwingCaptureMessage.mock.callCount(), 1);
+
+    const consoleErrorCalls = consoleErrorMock.mock.calls;
+    assert.ok(consoleErrorCalls.length >= 1, 'console.error should have been called');
+    const firstArg = consoleErrorCalls[0].arguments[0];
+    assert.match(firstArg, /BAILOUT_ALERT_FAILED/);
+    assert.match(firstArg, new RegExp(`tipId=${id}`));
+
+    const after = await readTip(id);
+    assert.notStrictEqual(after.dispute_won_at, null);
+    assert.notStrictEqual(after.dispute_email_failed_at, null);
+    assert.strictEqual(after.dispute_email_attempts, 3);
+  });
 });
