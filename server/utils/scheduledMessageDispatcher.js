@@ -308,7 +308,7 @@ async function alertNoWorkingChannel(clientId, recipient) {
     await helper.notifyAdminCategory({
       category: 'system_error',
       subject,
-      emailHtml: `<p>${bodyLine}</p>`,
+      emailHtml: `<p>${esc(bodyLine)}</p>`,
       emailText: bodyLine,
       smsBody: `Dr. Bartender: messaging suspended for ${clientName}. No working email or phone on file. Update their contact info.`,
     });
@@ -320,7 +320,7 @@ async function alertNoWorkingChannel(clientId, recipient) {
     await sendEmail({
       to: adminEmail,
       subject,
-      html: `<p>${bodyLine}</p>`,
+      html: `<p>${esc(bodyLine)}</p>`,
       text: bodyLine,
     });
   }
@@ -345,7 +345,7 @@ async function lookupEntity(entityType, entityId) {
   if (entityType === 'shift') {
     const r = await pool.query(
       `SELECT id, proposal_id, event_date, start_time, end_time, location,
-              status, archived_at, setup_minutes_before, positions_needed,
+              status, setup_minutes_before, positions_needed,
               event_type, event_type_custom, client_name
        FROM shifts WHERE id = $1`,
       [entityId]
