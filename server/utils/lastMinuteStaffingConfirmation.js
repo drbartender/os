@@ -187,8 +187,79 @@ async function notifyClientOfStaffingConfirmation(proposalId, shiftId) {
   }
 }
 
+/**
+ * Clear the linked proposal's last-minute hold once its shift is fully staffed
+ * and, if this caller wins the atomic flip, fire the client confirmation
+ * (Touch 2.2: email + SMS naming the bartender(s) + phone).
+ *
+ * "Fully staffed" = approved shift_requests count >= positions_needed length,
+ * the SAME definition autoAssign uses for slotsRemaining. The UPDATE returns
+ * `id` only if the row was actually held (last_minute_hold true→false); a
+ * returned row means THIS caller is the unique flip owner and is responsible
+ * for the notify. Concurrent fills lose the WHERE clause race and skip silently.
+ *
+ * Non-blocking outer try/catch + Sentry capture. An orphan flip (hold cleared
+ * but notify thrown) lands a Sentry exception so the lost message is observable.
+ *
+ * CALLERS: shifts.js:669, shifts.js:786, autoAssign.js. All three call
+ * unconditionally. Do not add an upstream `WHERE last_minute_hold` filter at
+ * any call site (that would regress the auto-assign clear-hold bugfix).
+ *
+ * `positions_needed` is `TEXT DEFAULT '[]'` (JSON-encoded string per
+ * schema.sql:280), so the length check uses `JSON.parse` with a fallback,
+ * NOT `Array.isArray` (which is always false on strings).
+ */
+async function confirmStaffingIfFullyStaffed(shiftId) {
+  try {
+    const s = await pool.query(
+      'SELECT proposal_id, positions_needed FROM shifts WHERE id = $1',
+      [shiftId]
+    );
+    const row = s.rows[0];
+    if (!row || !row.proposal_id) return;
+    let needed = 0;
+    try {
+      const parsed = JSON.parse(row.positions_needed || '[]');
+      needed = Array.isArray(parsed) ? parsed.length : 0;
+    } catch (_) {
+      needed = 0;
+    }
+    if (needed === 0) return;
+    const a = await pool.query(
+      "SELECT COUNT(*)::int AS n FROM shift_requests WHERE shift_id = $1 AND status = 'approved'",
+      [shiftId]
+    );
+    if (a.rows[0].n < needed) return;
+    const flip = await pool.query(
+      'UPDATE proposals SET last_minute_hold = false WHERE id = $1 AND last_minute_hold = true RETURNING id',
+      [row.proposal_id]
+    );
+    if (flip.rows.length === 0) return; // hold was already cleared or never set
+    try {
+      await notifyClientOfStaffingConfirmation(row.proposal_id, shiftId);
+    } catch (notifyErr) {
+      console.error('[confirmStaffingIfFullyStaffed] notify failed (non-blocking):', notifyErr.message);
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(notifyErr, {
+          tags: { feature: 'staffing-confirmation', stage: 'notify' },
+          extra: { proposalId: row.proposal_id, shiftId },
+        });
+      }
+    }
+  } catch (e) {
+    console.error('[confirmStaffingIfFullyStaffed] failed (non-blocking):', e.message);
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(e, {
+        tags: { feature: 'staffing-confirmation' },
+        extra: { shiftId },
+      });
+    }
+  }
+}
+
 module.exports = {
   renderBartenderList,
   _resolveDisplayName,
   notifyClientOfStaffingConfirmation,
+  confirmStaffingIfFullyStaffed,
 };

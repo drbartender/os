@@ -297,3 +297,50 @@ test('notifyClientOfStaffingConfirmation > Twilio throw is swallowed (function d
     __setSmsDeps({ sendSMS: savedRealSendSMS });
   }
 });
+
+// ─── confirmStaffingIfFullyStaffed integration tests ─────────────
+
+const { confirmStaffingIfFullyStaffed } = require('./lastMinuteStaffingConfirmation');
+
+test('confirmStaffingIfFullyStaffed > held + fully-staffed → flips hold and sends', async () => {
+  const sms = stubSms();
+  try {
+    await confirmStaffingIfFullyStaffed(shiftId);
+    assert.strictEqual(sms.calls.length, 1);
+    const { rows } = await pool.query('SELECT last_minute_hold FROM proposals WHERE id = $1', [proposalId]);
+    assert.strictEqual(rows[0].last_minute_hold, false);
+  } finally { sms.restore(); }
+});
+
+test('confirmStaffingIfFullyStaffed > non-held + fully-staffed → no notify (regression pin)', async () => {
+  const sms = stubSms();
+  try {
+    await pool.query('UPDATE proposals SET last_minute_hold = false WHERE id = $1', [proposalId]);
+    await confirmStaffingIfFullyStaffed(shiftId);
+    assert.strictEqual(sms.calls.length, 0, 'normal-lead-time proposal must not fire notify');
+  } finally { sms.restore(); }
+});
+
+test('confirmStaffingIfFullyStaffed > held but understaffed → no flip, no notify', async () => {
+  // Make the shift need 2 positions; only 1 approved → not fully staffed.
+  await pool.query(`UPDATE shifts SET positions_needed = '["lead","support"]' WHERE id = $1`, [shiftId]);
+  const sms = stubSms();
+  try {
+    await confirmStaffingIfFullyStaffed(shiftId);
+    assert.strictEqual(sms.calls.length, 0);
+    const { rows } = await pool.query('SELECT last_minute_hold FROM proposals WHERE id = $1', [proposalId]);
+    assert.strictEqual(rows[0].last_minute_hold, true, 'hold should still be true');
+  } finally { sms.restore(); }
+});
+
+test('confirmStaffingIfFullyStaffed > concurrent calls flip exactly once (atomic-flip race)', async () => {
+  const sms = stubSms();
+  try {
+    await Promise.all([
+      confirmStaffingIfFullyStaffed(shiftId),
+      confirmStaffingIfFullyStaffed(shiftId),
+      confirmStaffingIfFullyStaffed(shiftId),
+    ]);
+    assert.strictEqual(sms.calls.length, 1, 'WHERE last_minute_hold=true is the one-shot guarantee');
+  } finally { sms.restore(); }
+});
