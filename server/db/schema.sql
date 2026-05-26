@@ -2590,6 +2590,9 @@ ALTER TABLE proposal_payments ADD COLUMN IF NOT EXISTS fee_cents INTEGER;
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS rolled_forward_at TIMESTAMPTZ;
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS refunded_amount_cents INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_won_at TIMESTAMPTZ;
+-- Dispute-email retry bailout (2026-05-25)
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_email_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_email_failed_at TIMESTAMPTZ;
 
 -- Partial index supporting Task 7's unassigned-tips listing. Filter on
 -- shift_id IS NULL + tipped_at > NOW() - 90 days; this partial covers it.
