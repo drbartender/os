@@ -565,13 +565,11 @@ before(async () => {
     `INSERT INTO clients (name, email, phone) VALUES ('LMSC Test', 'lmsc-test@example.com', '3125550190') RETURNING id`
   );
   clientId = c.rows[0].id;
-  // Set communication_preferences explicitly (clients table doesn't have a default).
-  await pool.query(
-    `UPDATE clients SET communication_preferences = '{"email_enabled": true, "sms_enabled": true}'::jsonb,
-                         email_status = 'unknown', phone_status = 'unknown'
-       WHERE id = $1`,
-    [clientId]
-  );
+  // No UPDATE needed: clients.communication_preferences defaults to
+  // {"sms_enabled":true,"email_enabled":true,"marketing_enabled":true},
+  // and clients.email_status / phone_status both default to 'ok' (the
+  // CHECK constraint only allows 'ok' or 'bad', so the prior draft's
+  // 'unknown' value violated the constraint).
   const u = await pool.query(
     `INSERT INTO users (email, password_hash, onboarding_status) VALUES ('lmsc-bartender@example.com', 'x', 'approved') RETURNING id`
   );
@@ -701,16 +699,19 @@ test('notifyClientOfStaffingConfirmation > no_bartenders returns silently', asyn
 test('notifyClientOfStaffingConfirmation > sms-disabled client gets no SMS (email path still attempts)', async () => {
   const sms = stubSms();
   try {
+    // Preserve marketing_enabled so we only flip the sms toggle (matches the
+    // schema default of all-three-enabled, just with sms_enabled flipped).
     await pool.query(
-      `UPDATE clients SET communication_preferences = '{"email_enabled": true, "sms_enabled": false}'::jsonb WHERE id = $1`,
+      `UPDATE clients SET communication_preferences = '{"sms_enabled": false, "email_enabled": true, "marketing_enabled": true}'::jsonb WHERE id = $1`,
       [clientId]
     );
     await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
     assert.strictEqual(sms.calls.length, 0, 'SMS must be suppressed');
   } finally {
     sms.restore();
+    // Restore the schema default exactly.
     await pool.query(
-      `UPDATE clients SET communication_preferences = '{"email_enabled": true, "sms_enabled": true}'::jsonb WHERE id = $1`,
+      `UPDATE clients SET communication_preferences = '{"sms_enabled": true, "email_enabled": true, "marketing_enabled": true}'::jsonb WHERE id = $1`,
       [clientId]
     );
   }
@@ -971,12 +972,18 @@ In `server/utils/autoAssign.js`, at the top with the other imports, add:
 const { confirmStaffingIfFullyStaffed } = require('./lastMinuteStaffingConfirmation');
 ```
 
-Find the per-candidate SMS for-loop (it ends around line 342) and the `UPDATE shifts SET auto_assigned_at = NOW()` block (around line 346). Insert this between them, before line 346:
+Verify `Sentry` is already imported (`grep "require('@sentry/node')" server/utils/autoAssign.js`); if it is not, add `const Sentry = require('@sentry/node');` too.
+
+Find the structural landmarks: the per-candidate SMS for-loop (closes near line 342), the `// 11. Mark shift as auto-assigned` comment (near line 344), and the `UPDATE shifts SET auto_assigned_at = NOW()` (near line 345-346). Insert this new block BETWEEN the closing `}` of the for-loop AND the `// 11. Mark shift as auto-assigned` comment (line numbers are approximate; rely on the comment/for-loop landmarks, not the absolute numbers):
 
 ```js
-  // 11.5. Touch 2.2: if this auto-assign just filled a held proposal, fire
+  // 10.5. Touch 2.2: if this auto-assign just filled a held proposal, fire
   // the client staffing-confirmation. Non-blocking; idempotency is enforced
-  // by confirmStaffingIfFullyStaffed's atomic UPDATE.
+  // by confirmStaffingIfFullyStaffed's atomic UPDATE. The outer try/catch
+  // here is defensive belt-and-suspenders. confirmStaffingIfFullyStaffed
+  // ALSO has its own outer try/catch + Sentry capture, but matching the
+  // sibling `scheduleStaffShiftMessages` pattern (line ~353) keeps the
+  // autoAssign-side Sentry tag attached so failures cluster by call site.
   try {
     await confirmStaffingIfFullyStaffed(shiftId);
   } catch (confErr) {
@@ -987,8 +994,6 @@ Find the per-candidate SMS for-loop (it ends around line 342) and the `UPDATE sh
     console.error('[AutoAssign] staffing-confirmation hook failed (non-blocking):', confErr.message);
   }
 ```
-
-(`Sentry` is already imported in `autoAssign.js`. Confirm with a quick grep before assuming.)
 
 - [ ] **Step 9: Sanity-check both files load without circular-require failures**
 
@@ -1060,7 +1065,13 @@ const { getBookingWindow } = require('./bookingWindow');
 
 - [ ] **Step 3: Add the re-evaluation logic inside `rescheduleProposalInTx`**
 
-Inside `rescheduleProposalInTx`, after the existing balance-due / scheduled_messages cascade work and just before the function returns, add:
+`rescheduleProposalInTx` has MULTIPLE early returns (around lines 368, 382, 389 for no-reschedulable-change, proposal-not-found, and non-POST_SIGNPAY status) before the final return near line 470. The hook goes near line 470, after the existing balance-due / scheduled_messages cascade work and just before the function returns. This placement skips the early-return branches by design:
+
+* **No reschedulable change (line 368):** event_date/start_time didn't change, so the booking window can't have crossed the 72h boundary. Skip is correct.
+* **Proposal not found (line 382):** can't UPDATE a missing row. Skip is correct.
+* **Non-POST_SIGNPAY status (line 389):** `last_minute_hold` is only ever set to `true` by the Stripe webhook (`server/routes/stripe.js`) on payment, which moves the proposal to `deposit_paid` or `balance_paid`. A pre-payment proposal (draft / sent / viewed / accepted) cannot carry `last_minute_hold = true` by any production path. Skip is correct for those statuses. If admin manually toggles the flag on a non-POST_SIGNPAY proposal via SQL, the reschedule will not re-evaluate; this is a documented edge case, not a flaw.
+
+Insert this block at the tail return of `rescheduleProposalInTx`:
 
 ```js
   // Touch 2.2 prerequisite: keep last_minute_hold consistent with the new
