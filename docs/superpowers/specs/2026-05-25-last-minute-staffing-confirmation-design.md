@@ -32,12 +32,14 @@ Fire one client email + one client SMS, both with bartender name(s) and phone(s)
 
 The existing helper `server/routes/shifts.js:829` (`clearHoldIfFullyStaffed(shiftId)`) is the natural anchor. It already runs on the two manual assignment paths and checks the "fully staffed" condition. Four changes:
 
-1. **Rename** `clearHoldIfFullyStaffed` to `confirmStaffingIfFullyStaffed`. New name reflects both roles (clear the hold AND notify the client). A grep across the repo confirms only three references today: the definition in `shifts.js`, the call at `shifts.js:669`, and the call at `shifts.js:786`. No test file or other consumer holds a stale reference, so the rename is a closed change set.
-2. **Atomic flip becomes the one-shot guard.** Replace today's unconditional `UPDATE proposals SET last_minute_hold = false WHERE id = $1 AND last_minute_hold = true` with the same query plus `RETURNING id`. If a row comes back, *this caller* is the unique owner of the flip and is responsible for firing the notification. If zero rows, the hold was already cleared (by an earlier concurrent fill, or the proposal was never held) and the notify path is skipped. No new column, no extra row, no race.
+1. **Rename** `clearHoldIfFullyStaffed` to `confirmStaffingIfFullyStaffed`. New name reflects both roles (clear the hold AND notify the client). A grep across the repo confirms three code references today: the definition in `shifts.js`, the call at `shifts.js:669`, and the call at `shifts.js:786`. The rename also updates the literal string in the outer catch's `console.error('[shifts] clearHoldIfFullyStaffed failed (non-blocking):', e.message)` at `shifts.js:855` so debug logs stay congruent with the symbol name. No test file or other consumer holds a stale reference, so the rename is a closed change set.
+2. **Atomic flip becomes the one-shot guard.** Replace today's unconditional `UPDATE proposals SET last_minute_hold = false WHERE id = $1 AND last_minute_hold = true` with the same query plus `RETURNING id`. If a row comes back, *this caller* is the unique owner of the flip and is responsible for firing the notification. If zero rows, the hold was already cleared (by an earlier concurrent fill, or the proposal was never held) and the notify path is skipped. No new column, no extra row, no race. `proposalId` is in hand from the existing `SELECT proposal_id, positions_needed FROM shifts WHERE id = $1` at `shifts.js:831-833` and passed straight into `notifyClientOfStaffingConfirmation(proposalId, shiftId)`; the `RETURNING id` is a guard, not a value source.
 3. **Close the auto-assign gap.** `server/utils/autoAssign.js:307` approves shift_requests in batch but never calls `clearHoldIfFullyStaffed`. Today this means auto-assigned last-minute bookings never clear the hold (admin sees the badge until they manually re-touch the proposal). Add one `await confirmStaffingIfFullyStaffed(shiftId)` call after the approve loop, just before the `auto_assigned_at` UPDATE at line 346. This bug-fix and Touch 2.2 share the same fix.
-4. **Reschedule re-evaluation.** `server/utils/rescheduleProposal.js` already mutates `event_date` and `event_start_time`. After the date mutation, call `getBookingWindow(...)` and write `last_minute_hold = lastMinuteHold` to the proposal row in the same transaction. Two scenarios:
-   * Held proposal rescheduled past 72h → `last_minute_hold = false`. No notification fires (the next staffing-fill is no longer a "last-minute" confirmation; the standard T-24h event-eve SMS still informs the client).
-   * Non-held proposal rescheduled into 72h → `last_minute_hold = true`. The next staffing-fill flips the flag back to false and fires the notification as normal.
+4. **Reschedule re-evaluation.** The canonical reschedule path is the proposal `PATCH` handler at `server/routes/proposals/crud.js:551-583`, which `UPDATE`s `event_date`/`event_start_time` then calls `rescheduleProposalInTx(dbClient, { proposalId, old, updated })` at `crud.js:617-626` in the same transaction. The hook goes inside `rescheduleProposalInTx` (`server/utils/rescheduleProposal.js`) after the existing balance-due-date and scheduled_messages cascade work, using `updated` (the post-UPDATE row) as the source for the new `event_date`/`event_start_time`. Compute `getBookingWindow(...)` from `updated`, and if `updated.last_minute_hold !== lastMinuteHold` issue `UPDATE proposals SET last_minute_hold = $1 WHERE id = $2` via the same `dbClient`. Two scenarios:
+   * Held proposal rescheduled past 72h → `last_minute_hold` becomes false. No notification fires (the next staffing-fill is no longer a "last-minute" confirmation; the standard T-24h event-eve SMS still informs the client).
+   * Non-held proposal rescheduled into 72h → `last_minute_hold` becomes true. The next staffing-fill flips the flag back to false and fires the notification as normal.
+
+   `rescheduleProposal()` (the non-`InTx` wrapper) is exercised only by tests; production traffic always lands via `rescheduleProposalInTx` from the PATCH handler. Placing the hook inside the `InTx` variant covers production and lets the test wrapper continue to work.
 
 **Call-site discipline (PIN).** All three call sites (`shifts.js:669`, `shifts.js:786`, the new autoAssign.js insertion) unconditionally `await confirmStaffingIfFullyStaffed(shiftId)`. The helper itself is the only gate. **Do not add an upstream `WHERE last_minute_hold = true` filter at any call site.** Doing so would silently regress the auto-assign clear-hold bugfix this spec bundles in.
 
@@ -90,12 +92,14 @@ Behavior, in order:
 
 3. **Render eventDate string** via `formatEventDateLong(proposal)` imported from `server/utils/preEventHandlers.js` (signature: takes the whole proposal row, resolves event timezone, returns e.g. `"Saturday, May 30, 2026"`). The proposal SELECT in step 1 selects `event_date` + `event_timezone` for this purpose. Resilient to a null `event_timezone` (helper falls back to America/Chicago via the existing `resolveEventTimezone`).
 
+   **PIN:** there is a same-name `formatEventDateLong(ctx)` in `server/utils/staffShiftHandlers.js:349` with a different return shape (no year, `"Saturday, August 15"`). An autocomplete-driven import from the wrong module silently degrades the format. Import explicitly from `./preEventHandlers`.
+
 4. **Render email + SMS bodies** (see Templates below). Build the bartender-list string + pluralization context **once** in the notify fn; pass primitives to templates so templates stay pure (no array logic).
 
-5. **Email send (independent try/catch).**
+5. **Email send (independent try/catch).** `shouldSendImmediate` is **async** (`server/utils/messageSuppression.js:22`); the `await` is load-bearing because the returned Promise's `.ok` is undefined, which would silently disable the send.
    ```js
    try {
-     const emailOk = shouldSendImmediate({ proposal, client, channel: 'email' });
+     const emailOk = await shouldSendImmediate({ proposal, client, channel: 'email' });
      if (emailOk.ok) {
        await sendEmail({ to: client.email, subject, html, text });
      }
@@ -109,11 +113,12 @@ Behavior, in order:
    Notes:
    * Do **not** pass an explicit `replyTo`. `sendEmail` (`server/utils/email.js:33`) already defaults `replyTo` to `process.env.ADMIN_EMAIL`. The spec's earlier draft referenced a non-existent `ADMIN_EMAIL` named export.
    * `proposalId` and `shiftId` go in `extra`, not `tags` (low-cardinality discipline; Sentry's tag index is finite).
+   * `shouldSendImmediate` also checks `proposal.status === 'archived'` internally (`messageSuppression.js:26-28`); the spec's explicit archived early return in step 1 is a defense-in-depth duplicate, not a bug. The step-1 check fires before the bartender query, avoiding wasted DB work on archived rows; `shouldSendImmediate`'s check fires per channel just before the send.
 
-6. **SMS send (independent try/catch).** Same shape; SMS failure cannot prevent or mask an email failure's Sentry capture, and vice versa.
+6. **SMS send (independent try/catch).** Same shape; SMS failure cannot prevent or mask an email failure's Sentry capture, and vice versa. Same `await` requirement on `shouldSendImmediate`.
    ```js
    try {
-     const smsOk = shouldSendImmediate({ proposal, client, channel: 'sms' });
+     const smsOk = await shouldSendImmediate({ proposal, client, channel: 'sms' });
      if (smsOk.ok) {
        await sendAndLogSms({
          to: client.phone,
@@ -184,7 +189,7 @@ function lastMinuteStaffingConfirmation({ eventDate, bartenderList, isPlural }) 
 }
 ```
 
-**Re-export bridge.** Sibling lifecycle templates (`signedAndPaidClient`, `drinkPlanLink`, `shoppingListReady`, `postConsultClient`) are all exposed both from `lifecycleEmailTemplates.js` and re-exported from `server/utils/emailTemplates.js:811-919`. Mirror the pattern: add `lastMinuteStaffingConfirmation` to the re-export block even though `notifyClientOfStaffingConfirmation` is the only known consumer today (cross-cutting consistency rule).
+**Re-export bridge.** Sibling lifecycle templates (`signedAndPaidClient`, `drinkPlanLink`, `drinkPlanBalanceUpdate`, `shoppingListReady`, `postConsultClient`) are all exposed both from `lifecycleEmailTemplates.js` and re-exported from the `module.exports` block at `server/utils/emailTemplates.js:964-969`. Mirror the pattern: add `lastMinuteStaffingConfirmation: lifecycle.lastMinuteStaffingConfirmation` to that exports block even though `notifyClientOfStaffingConfirmation` is the only known consumer today (cross-cutting consistency rule).
 
 ## Suppression and edge handling
 
@@ -208,8 +213,8 @@ function lastMinuteStaffingConfirmation({ eventDate, bartenderList, isPlural }) 
 | File | Change |
 |---|---|
 | `server/routes/shifts.js` | Rename `clearHoldIfFullyStaffed` → `confirmStaffingIfFullyStaffed`. Add `RETURNING id` to the UPDATE. If a row returns, await `notifyClientOfStaffingConfirmation(proposalId, shiftId)` inside an inner try/catch with Sentry capture. Outer catch upgraded to also Sentry-capture (today it only `console.error`s). Two existing call sites stay (just renamed). |
-| `server/utils/autoAssign.js` | Add `await confirmStaffingIfFullyStaffed(shiftId)` after the approve loop (after line 309, before the `auto_assigned_at` UPDATE at line 346). Wrap in try/catch + Sentry (matches the sibling `scheduleStaffShiftMessages` pattern at line 353: `Sentry.captureException(err, { tags: { component: 'autoAssign', issue: 'staffing-confirmation' }, extra: { shiftId } })`). |
-| `server/utils/rescheduleProposal.js` | After the date mutation in the transaction, call `getBookingWindow(...)` with the new `event_date`/`event_start_time` and `UPDATE proposals SET last_minute_hold = $newValue WHERE id = $id` in the same transaction. |
+| `server/utils/autoAssign.js` | Add `await confirmStaffingIfFullyStaffed(shiftId)` between the per-candidate SMS for-loop (ends ~line 342) and the `auto_assigned_at` UPDATE at line 346. The approval itself is the batched `UPDATE shift_requests` at lines 305-310; the for-loop is per-candidate Twilio SMS, not part of approval. Wrap the new call in try/catch + Sentry (matches the sibling `scheduleStaffShiftMessages` pattern at line 353: `Sentry.captureException(err, { tags: { component: 'autoAssign', issue: 'staffing-confirmation' }, extra: { shiftId } })`). |
+| `server/utils/rescheduleProposal.js` | Inside `rescheduleProposalInTx(client, { proposalId, old, updated })`, after the existing balance-due / cascade work, compute `getBookingWindow(updated)` and `UPDATE proposals SET last_minute_hold = $1 WHERE id = $2` via the same `client` if the computed value differs from `updated.last_minute_hold`. The PATCH handler at `crud.js:617-626` is the only production caller; the test-only `rescheduleProposal(...)` wrapper inherits the behavior for free. |
 | `server/utils/lastMinuteStaffingConfirmation.js` | **New.** `notifyClientOfStaffingConfirmation(proposalId, shiftId)` plus its bartender-list renderer. ~150 lines. |
 | `server/utils/lastMinuteStaffingConfirmation.test.js` | **New.** Unit tests covering all early-return reasons, pluralization (1/2/3+, missing phones, missing names), per-channel suppression independence, and `messageType` literal acceptance. |
 | `server/utils/lifecycleEmailTemplates.js` | Add `lastMinuteStaffingConfirmation` template. |
@@ -250,3 +255,5 @@ No schema change. No env-var change. No new route. No `CLAUDE.md` update (no new
 * The event-eve SMS (touch 3.7) is untouched. Last-minute bookings receive both messages (Touch 2.2 immediately, plus the standard T-24h SMS) by design. Different timing, different framing.
 * Relocating `formatPhoneDisplay` from `server/utils/globalSearch.js` to a shared `phone.js`. The notify module imports from the current home; cleanup is left for a future pass.
 * No backfill SQL for in-flight held proposals at deploy. Accepted as a double-touch risk per Suppression section.
+* **Direct shift-date edits via `PUT /shifts/:id` (`server/routes/shifts.js:419`) do not re-evaluate `last_minute_hold`.** The shift table mirrors the proposal's event_date (kept in sync via `syncShiftsFromProposal`); the canonical date lives on the proposal, and admin direct-editing a shift's date in isolation is rare and already a data-integrity gray area (the shift can drift from the proposal). The booking-window source of truth stays the proposal's event_date, and the reschedule re-evaluation hook is on the proposal-PATCH path only. If admin needs a "moved into 72h" alert after a direct shift edit, they manually toggle `last_minute_hold` via the existing admin UI (today's tool, unchanged).
+* No re-arming of `last_minute_hold` if a bartender is unassigned post-flip. Once a hold is cleared, it stays cleared; the booking has passed the verification step and admin manages any subsequent staffing rework via existing tools.
