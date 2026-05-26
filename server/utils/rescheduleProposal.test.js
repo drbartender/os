@@ -16,7 +16,7 @@ Module._load = function patched(request, parent, ...rest) {
   return originalLoad.call(this, request, parent, ...rest);
 };
 
-const { rescheduleProposal, hasReschedulableChange, reanchorPendingMessages } = require('./rescheduleProposal');
+const { rescheduleProposal, rescheduleProposalInTx, hasReschedulableChange, reanchorPendingMessages } = require('./rescheduleProposal');
 const preEventHandlers = require('./preEventHandlers');
 
 const TEST_CLIENT_ID = -2;
@@ -347,4 +347,48 @@ test('rescheduleProposal > commits DB changes and sends only SMS when client has
   __setSmsDeps({ sendSMS: _realSendSMS });
   await pool.query('DELETE FROM sms_messages WHERE client_id = -3');
   await pool.query('DELETE FROM clients WHERE id = -3');
+});
+
+test('rescheduleProposalInTx > moves held proposal past 72h → last_minute_hold becomes false', async () => {
+  const c = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('LMH Test', 'lmh-test@example.com', '3125550191') RETURNING id`
+  );
+  const cId = c.rows[0].id;
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, event_start_time, status, event_type, last_minute_hold)
+     VALUES ($1, CURRENT_DATE + INTERVAL '2 days', '18:00', 'balance_paid', 'birthday-party', true)
+     RETURNING id`,
+    [cId]
+  );
+  const pId = p.rows[0].id;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const oldRow = {
+      event_date: new Date(Date.now() + 2 * 24 * 3600 * 1000),
+      event_start_time: '18:00',
+      event_location: 'Test Venue',
+      last_minute_hold: true,
+    };
+    const upd = await client.query(
+      `UPDATE proposals SET event_date = CURRENT_DATE + INTERVAL '30 days' WHERE id = $1 RETURNING *`,
+      [pId]
+    );
+    await rescheduleProposalInTx(client, {
+      proposalId: pId,
+      old: oldRow,
+      updated: upd.rows[0],
+    });
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+  const after = await pool.query('SELECT last_minute_hold FROM proposals WHERE id = $1', [pId]);
+  assert.strictEqual(after.rows[0].last_minute_hold, false);
+  await pool.query('DELETE FROM scheduled_messages WHERE entity_id = $1', [pId]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [pId]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [cId]);
 });
