@@ -780,7 +780,7 @@ Phase 4b adds three cross-cutting pieces. Overlap prevention: each handler carri
 - `client_id` FK → clients (ON DELETE SET NULL)
 - `proposal_id` FK → proposals (ON DELETE SET NULL)
 - `scheduled_at` TIMESTAMPTZ NOT NULL — when the consult is booked for
-- `calendly_event_id` TEXT — external Cal.com / Calendly event identifier (nullable until integration lands)
+- `calcom_event_id` TEXT — external Cal.com event identifier (nullable until integration lands; renamed from `calendly_event_id` to match the Cal.com vendor cutover)
 - `status` TEXT NOT NULL DEFAULT `'scheduled'` CHECK (`scheduled`, `completed`, `cancelled`, `no_show`)
 - `created_at` TIMESTAMPTZ DEFAULT NOW()
 - Lookup indexes on `proposal_id` and `client_id`; partial index `idx_consults_scheduled_at(scheduled_at) WHERE status = 'scheduled'` keeps upcoming-consult queries cheap.
