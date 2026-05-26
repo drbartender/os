@@ -4,7 +4,7 @@
 
 **Goal:** Wire Touch 2.2 from the comms spec: fire one client email + one client SMS with bartender name(s) and phone(s) the moment a `last_minute_hold = true` proposal's shift becomes fully staffed, one-shot per proposal.
 
-**Architecture:** New notify module (`server/utils/lastMinuteStaffingConfirmation.js`) is the side-effect carrier. Trigger is the existing `clearHoldIfFullyStaffed` helper at `server/routes/shifts.js:829`, renamed to `confirmStaffingIfFullyStaffed`, with the existing UPDATE upgraded to `RETURNING id` so the atomic flip is itself the one-shot guard. Three call sites converge on the renamed helper (`shifts.js:669` manual assign, `shifts.js:786` request approval, new line in `autoAssign.js`); a fourth hook in `rescheduleProposalInTx` keeps `last_minute_hold` consistent across reschedules. Templates are pure (no I/O), live beside their siblings in `lifecycleEmailTemplates.js` and `smsTemplates.js`, and take pre-rendered primitives only.
+**Architecture:** One new module, `server/utils/lastMinuteStaffingConfirmation.js`, hosts the whole feature: the pure `renderBartenderList` helper, the side-effecting `notifyClientOfStaffingConfirmation(proposalId, shiftId)`, and the extracted/renamed `confirmStaffingIfFullyStaffed(shiftId)` trigger (formerly inline in `shifts.js` as `clearHoldIfFullyStaffed`). Three call sites converge on the helper (the two existing `shifts.js` paths at lines 669 and 786, plus a new line in `autoAssign.js`); a fourth hook in `rescheduleProposalInTx` keeps `last_minute_hold` consistent across reschedules. The atomic `UPDATE ... RETURNING id` inside `confirmStaffingIfFullyStaffed` is the one-shot guard. Templates are pure (no I/O), live beside their siblings in `lifecycleEmailTemplates.js` and `smsTemplates.js`, and take pre-rendered primitives only. Putting both side-effect carriers in the same module avoids a circular require that would arise if the trigger stayed in `routes/shifts.js` (since `shifts.js` already requires `../utils/autoAssign` at load).
 
 **Tech Stack:** Node.js / Express 4, Postgres via `pg`, Resend (email), Twilio (SMS), `node:test` + `node:assert/strict` (no Jest), Sentry for error capture. All tests run against a real local DB via `DATABASE_URL` (existing house pattern, see `server/utils/paymentFailedClientNotify.test.js`).
 
@@ -19,11 +19,12 @@
 | `server/utils/lifecycleEmailTemplates.js` (modify) | Add `lastMinuteStaffingConfirmation` template (subject/html/text). Pure. |
 | `server/utils/lifecycleEmailTemplates.test.js` (create) | First test file for this module. Render-shape tests for the new template, plural and singular. |
 | `server/utils/emailTemplates.js` (modify) | Re-export the new template via the existing `lifecycle.*` block at `:964-969`. |
-| `server/utils/lastMinuteStaffingConfirmation.js` (create) | The notify module. Pure `renderBartenderList()` + side-effecting `notifyClientOfStaffingConfirmation(proposalId, shiftId)`. |
-| `server/utils/lastMinuteStaffingConfirmation.test.js` (create) | Real-DB integration tests covering the early-return matrix, the renderer, and per-channel suppression independence. |
-| `server/routes/shifts.js` (modify) | Rename helper, add `RETURNING id` + notify call, upgrade outer catch. |
-| `server/utils/autoAssign.js` (modify) | Add the new helper call after the per-candidate SMS for-loop. |
-| `server/utils/rescheduleProposal.js` (modify) | Inside `rescheduleProposalInTx`, re-evaluate `last_minute_hold` against the post-update event_date/event_start_time. |
+| `server/utils/lastMinuteStaffingConfirmation.js` (create) | The whole-feature module: pure `renderBartenderList` + `_resolveDisplayName`, side-effecting `notifyClientOfStaffingConfirmation`, and the trigger `confirmStaffingIfFullyStaffed` extracted from `shifts.js`. |
+| `server/utils/lastMinuteStaffingConfirmation.test.js` (create) | Real-DB integration tests: renderer unit tests, early-return matrix, per-channel suppression independence, atomic-flip race, non-held-no-notify regression. |
+| `server/routes/shifts.js` (modify) | DELETE the inline `clearHoldIfFullyStaffed`. At lines 669 and 786, call the imported `confirmStaffingIfFullyStaffed` from `../utils/lastMinuteStaffingConfirmation`. |
+| `server/utils/autoAssign.js` (modify) | Add `await confirmStaffingIfFullyStaffed(shiftId)` between the per-candidate SMS for-loop and the `auto_assigned_at` UPDATE. Import from `./lastMinuteStaffingConfirmation` (sibling util, no cycle). |
+| `server/utils/rescheduleProposal.js` (modify) | Inside `rescheduleProposalInTx`, re-evaluate `last_minute_hold` against the post-update `event_date`/`event_start_time`. |
+| `server/utils/rescheduleProposal.test.js` (modify) | One new test: held proposal moved past 72h → flag becomes false. |
 | `README.md` (modify) | One line in the folder tree for the new util file. |
 | `ARCHITECTURE.md` (modify) | One line under the comms section noting Touch 2.2 ships. |
 
@@ -71,7 +72,7 @@ Expected: failure with `TypeError: t.lastMinuteStaffingConfirmationSms is not a 
 
 - [ ] **Step 3: Implement the template**
 
-Append to `server/utils/smsTemplates.js` (before `module.exports`):
+Append to `server/utils/smsTemplates.js` (before the `module.exports` block):
 
 ```js
 // ─── 2.2 Last-minute staffing confirmation SMS ───────────────────
@@ -82,12 +83,12 @@ function lastMinuteStaffingConfirmationSms({ eventDate, bartenderList, isPlural 
 }
 ```
 
-Then add `lastMinuteStaffingConfirmationSms,` to the `module.exports` object at the bottom of the file (alongside the other template names).
+Add `lastMinuteStaffingConfirmationSms,` to the `module.exports` object at the bottom of the file.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test server/utils/smsTemplates.test.js`
-Expected: all tests pass (including the existing ones).
+Expected: all tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -114,7 +115,6 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const t = require('./lifecycleEmailTemplates');
 
-// No email subject or text body may contain an em dash (the AI tell, per CLAUDE.md).
 function assertNoEmDash(str, label) {
   assert.ok(!str.includes('—'), `${label} must not contain an em dash`);
 }
@@ -152,7 +152,6 @@ test('lastMinuteStaffingConfirmation > html is wrapped with the standard chrome'
     bartenderList: 'Alex',
     isPlural: false,
   });
-  // wrapEmail wraps with <!DOCTYPE html> + a body container
   assert.match(out.html, /<!DOCTYPE html>/i);
 });
 ```
@@ -188,7 +187,7 @@ function lastMinuteStaffingConfirmation({ eventDate, bartenderList, isPlural }) 
 }
 ```
 
-Then add `lastMinuteStaffingConfirmation,` to the `module.exports` object at line 321-327. Result:
+Then add `lastMinuteStaffingConfirmation,` to the `module.exports` object at lines 321-327. Result:
 
 ```js
 module.exports = {
@@ -208,7 +207,7 @@ Expected: all three tests pass.
 
 - [ ] **Step 5: Add the re-export bridge**
 
-Open `server/utils/emailTemplates.js`. Find the `module.exports` block (lines ~960-974). The existing block has lifecycle re-exports on lines 964-969:
+Open `server/utils/emailTemplates.js`. Find the `module.exports` block (~lines 960-974). The existing block has lifecycle re-exports on lines 964-969:
 
 ```js
   // Lifecycle templates re-exported from the sibling file for backwards compat.
@@ -225,15 +224,13 @@ Add one more line directly after `postConsultClient: lifecycle.postConsultClient
   lastMinuteStaffingConfirmation: lifecycle.lastMinuteStaffingConfirmation,
 ```
 
-- [ ] **Step 6: Sanity-check the re-export**
-
-Run a quick require-and-check from the command line:
+- [ ] **Step 6: Sanity-check the re-export with typeof**
 
 ```bash
 node -e "console.log(typeof require('./server/utils/emailTemplates').lastMinuteStaffingConfirmation)"
 ```
 
-Expected output: `function`.
+Expected output: `function`. (`typeof` is the right shape, not just `require`, see Task 4 Step 9 for why this matters with circular-require risks elsewhere.)
 
 - [ ] **Step 7: Commit**
 
@@ -244,121 +241,140 @@ git commit -m "feat(comms): add lastMinuteStaffingConfirmation email template + 
 
 ---
 
-## Task 3: Bartender-list renderer
+## Task 3: Notify module (renderer + notify fn + README line)
 
 **Files:**
-- Create: `server/utils/lastMinuteStaffingConfirmation.js` (renderer only; main fn lands in Task 4)
+- Create: `server/utils/lastMinuteStaffingConfirmation.js`
 - Create: `server/utils/lastMinuteStaffingConfirmation.test.js`
+- Modify: `README.md`
 
-This task ships only the pure `renderBartenderList` function plus its tests. The main notify fn lands in Task 4 so the renderer can be reviewed and reverted independently.
+This task ships the whole notify-side module in one commit. The renderer and the notify fn co-locate because the notify fn is the renderer's only caller; shipping just the renderer would commit dead code. `confirmStaffingIfFullyStaffed` lands in Task 4 (it requires the notify fn that this task creates, so a forward dependency is impossible). Tests are real-DB integration tests, same pattern as `paymentFailedClientNotify.test.js`.
 
-- [ ] **Step 1: Create the failing test file**
+- [ ] **Step 1: Create the test file with renderer tests**
 
 Create `server/utils/lastMinuteStaffingConfirmation.test.js`:
 
 ```js
-const { test } = require('node:test');
+require('dotenv').config();
+const { test, before, after, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { renderBartenderList, _resolveDisplayName } = require('./lastMinuteStaffingConfirmation');
+const { pool } = require('../db');
+const {
+  renderBartenderList,
+  _resolveDisplayName,
+  notifyClientOfStaffingConfirmation,
+} = require('./lastMinuteStaffingConfirmation');
+
+// ─── Pure renderer tests ─────────────────────────────────────────
 
 test('_resolveDisplayName > preferred_name wins', () => {
-  const name = _resolveDisplayName({ preferred_name: 'Alex', first_name: 'Alexander', last_name: 'Smith' });
-  assert.strictEqual(name, 'Alex');
+  assert.strictEqual(_resolveDisplayName({ preferred_name: 'Alex' }), 'Alex');
 });
 
-test('_resolveDisplayName > falls through to first_name', () => {
-  const name = _resolveDisplayName({ preferred_name: null, first_name: 'Alex', last_name: 'Smith' });
-  assert.strictEqual(name, 'Alex');
+test('_resolveDisplayName > falls through to generic when preferred_name is null', () => {
+  assert.strictEqual(_resolveDisplayName({ preferred_name: null }), 'Your bartender');
 });
 
-test('_resolveDisplayName > falls through to last_name', () => {
-  const name = _resolveDisplayName({ preferred_name: null, first_name: null, last_name: 'Smith' });
-  assert.strictEqual(name, 'Smith');
-});
-
-test('_resolveDisplayName > final fallback to generic label', () => {
-  const name = _resolveDisplayName({ preferred_name: null, first_name: null, last_name: null });
-  assert.strictEqual(name, 'Your bartender');
+test('_resolveDisplayName > falls through to generic on missing contractor_profiles row', () => {
+  // LEFT JOIN with no contractor_profiles → the full row is null-shaped from
+  // the renderer's perspective: { preferred_name: null, phone: null }.
+  assert.strictEqual(_resolveDisplayName({ preferred_name: null, phone: null }), 'Your bartender');
 });
 
 test('renderBartenderList > 1 bartender with phone', () => {
-  const out = renderBartenderList([
-    { preferred_name: 'Alex', phone: '3125551234' },
-  ]);
-  assert.strictEqual(out, 'Alex ((312) 555-1234)');
+  assert.strictEqual(
+    renderBartenderList([{ preferred_name: 'Alex', phone: '3125551234' }]),
+    'Alex ((312) 555-1234)'
+  );
 });
 
 test('renderBartenderList > 1 bartender no phone', () => {
-  const out = renderBartenderList([
-    { preferred_name: 'Alex', phone: null },
-  ]);
-  assert.strictEqual(out, 'Alex');
+  assert.strictEqual(
+    renderBartenderList([{ preferred_name: 'Alex', phone: null }]),
+    'Alex'
+  );
 });
 
 test('renderBartenderList > 2 bartenders both with phones', () => {
-  const out = renderBartenderList([
-    { preferred_name: 'Alex', phone: '3125551234' },
-    { preferred_name: 'Jordan', phone: '3125555678' },
-  ]);
-  assert.strictEqual(out, 'Alex ((312) 555-1234) and Jordan ((312) 555-5678)');
+  assert.strictEqual(
+    renderBartenderList([
+      { preferred_name: 'Alex', phone: '3125551234' },
+      { preferred_name: 'Jordan', phone: '3125555678' },
+    ]),
+    'Alex ((312) 555-1234) and Jordan ((312) 555-5678)'
+  );
 });
 
 test('renderBartenderList > 3 bartenders Oxford-comma', () => {
-  const out = renderBartenderList([
-    { preferred_name: 'Alex', phone: '3125551234' },
-    { preferred_name: 'Jordan', phone: '3125555678' },
-    { preferred_name: 'Sam', phone: '3125559012' },
-  ]);
-  assert.strictEqual(out, 'Alex ((312) 555-1234), Jordan ((312) 555-5678), and Sam ((312) 555-9012)');
+  assert.strictEqual(
+    renderBartenderList([
+      { preferred_name: 'Alex', phone: '3125551234' },
+      { preferred_name: 'Jordan', phone: '3125555678' },
+      { preferred_name: 'Sam', phone: '3125559012' },
+    ]),
+    'Alex ((312) 555-1234), Jordan ((312) 555-5678), and Sam ((312) 555-9012)'
+  );
 });
 
 test('renderBartenderList > 2 bartenders mixed phone presence', () => {
-  const out = renderBartenderList([
-    { preferred_name: 'Alex', phone: '3125551234' },
-    { preferred_name: 'Jordan', phone: null },
-  ]);
-  assert.strictEqual(out, 'Alex ((312) 555-1234) and Jordan');
+  assert.strictEqual(
+    renderBartenderList([
+      { preferred_name: 'Alex', phone: '3125551234' },
+      { preferred_name: 'Jordan', phone: null },
+    ]),
+    'Alex ((312) 555-1234) and Jordan'
+  );
 });
 
-test('renderBartenderList > 1 bartender, missing all name fields', () => {
-  const out = renderBartenderList([
-    { preferred_name: null, first_name: null, last_name: null, phone: '3125551234' },
-  ]);
-  assert.strictEqual(out, 'Your bartender ((312) 555-1234)');
+test('renderBartenderList > 1 bartender with phone but null preferred_name', () => {
+  assert.strictEqual(
+    renderBartenderList([{ preferred_name: null, phone: '3125551234' }]),
+    'Your bartender ((312) 555-1234)'
+  );
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run renderer tests to verify they fail**
 
 Run: `node --test server/utils/lastMinuteStaffingConfirmation.test.js`
 Expected: failure, `Cannot find module './lastMinuteStaffingConfirmation'`.
 
-- [ ] **Step 3: Implement the renderer**
+- [ ] **Step 3: Implement the renderer and notify fn (one file)**
 
 Create `server/utils/lastMinuteStaffingConfirmation.js`:
 
 ```js
+const Sentry = require('@sentry/node');
+const { pool } = require('../db');
+const { sendEmail } = require('./email');
+const { sendAndLogSms } = require('./sms');
+const { shouldSendImmediate } = require('./messageSuppression');
 const { formatPhoneDisplay } = require('./globalSearch');
+const { formatEventDateLong } = require('./preEventHandlers');
+const lifecycleEmail = require('./lifecycleEmailTemplates');
+const smsTemplates = require('./smsTemplates');
+
+// ─── Pure renderer ───────────────────────────────────────────────
 
 /** Pick the most specific display name available, falling through to a generic label. */
 function _resolveDisplayName(row) {
-  return row.preferred_name || row.first_name || row.last_name || 'Your bartender';
+  return row.preferred_name || 'Your bartender';
 }
 
 /**
  * Render an approved-bartender list as a single human-readable string.
- *
- *   1:  "Alex ((312) 555-1234)"  or  "Alex"  (no phone)
+ *   1:  "Alex ((312) 555-1234)"   or   "Alex"  (no phone)
  *   2:  "Alex ((312) 555-1234) and Jordan ((312) 555-5678)"
  *   3+: "Alex (...), Jordan (...), and Sam (...)"   (Oxford comma)
  *
  * `phone` is the raw 10-digit value stored in `contractor_profiles.phone`
- * (per validatePhone enforcement in `phone.js`). `formatPhoneDisplay` returns
+ * (per validatePhone in `phone.js`). `formatPhoneDisplay` returns
  * `(XXX) XXX-XXXX` for clean 10-digit storage and the empty string for
- * null/unparseable input; the empty string suppresses the parenthetical.
+ * null/unparseable input; an empty display suppresses the parenthetical.
  *
- * @param {Array<{preferred_name?: string|null, first_name?: string|null, last_name?: string|null, phone?: string|null}>} bartenders
- * @returns {string}
+ * `users` has no `first_name`/`last_name`; `contractor_profiles.preferred_name`
+ * is the only name source, with `'Your bartender'` as the fallback for both
+ * a null preferred_name AND a missing contractor_profiles row (LEFT JOIN null).
  */
 function renderBartenderList(bartenders) {
   const parts = bartenders.map((b) => {
@@ -374,248 +390,8 @@ function renderBartenderList(bartenders) {
   return `${head}, and ${tail}`;
 }
 
-module.exports = {
-  renderBartenderList,
-  _resolveDisplayName,
-};
-```
+// ─── Notify fn ───────────────────────────────────────────────────
 
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `node --test server/utils/lastMinuteStaffingConfirmation.test.js`
-Expected: all 10 tests pass.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add server/utils/lastMinuteStaffingConfirmation.js server/utils/lastMinuteStaffingConfirmation.test.js
-git commit -m "feat(comms): bartender-list renderer for last-minute staffing confirmation"
-```
-
----
-
-## Task 4: Notify function (notifyClientOfStaffingConfirmation)
-
-**Files:**
-- Modify: `server/utils/lastMinuteStaffingConfirmation.js` (add the main fn)
-- Modify: `server/utils/lastMinuteStaffingConfirmation.test.js` (add integration tests)
-
-This task ships the side-effecting notify function. Tests are integration-style against the real DB, they require `DATABASE_URL` set, same pattern as `paymentFailedClientNotify.test.js`. SMS is stubbed via `__setSmsDeps`; email is best-effort (no Resend key in dev means it logs only, we assert the SMS half and Sentry behavior, plus that the function doesn't throw).
-
-- [ ] **Step 1: Add integration test setup at the top of the test file**
-
-Edit `server/utils/lastMinuteStaffingConfirmation.test.js`. At the very top, add the dotenv config + fixture imports above the existing `const { test } = require('node:test');` line. Then add a fixtures block and tests at the bottom. The final file shape:
-
-```js
-require('dotenv').config();
-const { test, before, after, beforeEach, afterEach } = require('node:test');
-const assert = require('node:assert/strict');
-const { pool } = require('../db');
-const {
-  renderBartenderList,
-  _resolveDisplayName,
-  notifyClientOfStaffingConfirmation,
-} = require('./lastMinuteStaffingConfirmation');
-
-// ─── Pure renderer tests (Task 3) ────────────────────────────────
-// ... (keep all 10 existing renderer tests unchanged) ...
-
-// ─── Integration tests for notifyClientOfStaffingConfirmation ────
-
-let clientId;
-let proposalId;
-let shiftId;
-let userId;
-
-before(async () => {
-  const c = await pool.query(
-    `INSERT INTO clients (name, email, phone, communication_preferences, email_status, phone_status)
-     VALUES ('LMSC Test', 'lmsc-test@example.com', '3125550190',
-             '{"email_enabled": true, "sms_enabled": true}'::jsonb,
-             'unknown', 'unknown')
-     RETURNING id`
-  );
-  clientId = c.rows[0].id;
-  const u = await pool.query(
-    `INSERT INTO users (email, password_hash, first_name, last_name, onboarding_status)
-     VALUES ('lmsc-bartender@example.com', 'x', 'Alex', 'Smith', 'approved')
-     RETURNING id`
-  );
-  userId = u.rows[0].id;
-  await pool.query(
-    `INSERT INTO contractor_profiles (user_id, preferred_name, phone)
-     VALUES ($1, 'Alex', '3125551234')`,
-    [userId]
-  );
-});
-
-beforeEach(async () => {
-  const p = await pool.query(
-    `INSERT INTO proposals (client_id, event_date, event_start_time, status, event_type, last_minute_hold)
-     VALUES ($1, CURRENT_DATE + INTERVAL '2 days', '18:00', 'balance_paid', 'birthday-party', true)
-     RETURNING id`,
-    [clientId]
-  );
-  proposalId = p.rows[0].id;
-  const s = await pool.query(
-    `INSERT INTO shifts (proposal_id, event_date, start_time, end_time, location, positions_needed, status)
-     VALUES ($1, CURRENT_DATE + INTERVAL '2 days', '18:00', '22:00', 'Test Venue',
-             '["lead"]'::jsonb, 'open')
-     RETURNING id`,
-    [proposalId]
-  );
-  shiftId = s.rows[0].id;
-  await pool.query(
-    `INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved')`,
-    [shiftId, userId]
-  );
-});
-
-afterEach(async () => {
-  await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [shiftId]);
-  await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
-  await pool.query('DELETE FROM sms_messages WHERE client_id = $1', [clientId]);
-  await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
-});
-
-after(async () => {
-  await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [userId]);
-  await pool.query('DELETE FROM users WHERE id = $1', [userId]);
-  await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
-  await pool.end();
-});
-
-function stubSms() {
-  const { __setSmsDeps, _realSendSMS } = require('./sms');
-  const calls = [];
-  __setSmsDeps({
-    sendSMS: async ({ to, body }) => {
-      calls.push({ to, body });
-      return { sid: `stub-${calls.length}-${Date.now()}` };
-    },
-  });
-  return {
-    calls,
-    restore: () => __setSmsDeps({ sendSMS: _realSendSMS }),
-  };
-}
-
-test('notifyClientOfStaffingConfirmation > happy path: sends SMS once', async () => {
-  const sms = stubSms();
-  try {
-    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
-    assert.strictEqual(sms.calls.length, 1, 'exactly one SMS send');
-    assert.match(sms.calls[0].body, /Your bartender for/);
-    assert.match(sms.calls[0].body, /Alex \(\(312\) 555-1234\)/);
-    const { rows } = await pool.query(
-      "SELECT message_type, status FROM sms_messages WHERE client_id = $1",
-      [clientId]
-    );
-    assert.strictEqual(rows.length, 1);
-    assert.strictEqual(rows[0].message_type, 'last_minute_staffing_confirmation');
-    assert.strictEqual(rows[0].status, 'sent');
-  } finally { sms.restore(); }
-});
-
-test('notifyClientOfStaffingConfirmation > proposal_missing returns silently', async () => {
-  const sms = stubSms();
-  try {
-    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(999999999, shiftId));
-    assert.strictEqual(sms.calls.length, 0);
-  } finally { sms.restore(); }
-});
-
-test('notifyClientOfStaffingConfirmation > orphan_proposal returns silently', async () => {
-  const sms = stubSms();
-  try {
-    await pool.query('UPDATE proposals SET client_id = NULL WHERE id = $1', [proposalId]);
-    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
-    assert.strictEqual(sms.calls.length, 0);
-  } finally { sms.restore(); }
-});
-
-test('notifyClientOfStaffingConfirmation > archived status returns silently', async () => {
-  const sms = stubSms();
-  try {
-    await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
-    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
-    assert.strictEqual(sms.calls.length, 0);
-  } finally { sms.restore(); }
-});
-
-test('notifyClientOfStaffingConfirmation > event_date_null returns silently', async () => {
-  const sms = stubSms();
-  try {
-    await pool.query('UPDATE proposals SET event_date = NULL WHERE id = $1', [proposalId]);
-    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
-    assert.strictEqual(sms.calls.length, 0);
-  } finally { sms.restore(); }
-});
-
-test('notifyClientOfStaffingConfirmation > no_bartenders returns silently', async () => {
-  const sms = stubSms();
-  try {
-    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [shiftId]);
-    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
-    assert.strictEqual(sms.calls.length, 0);
-  } finally { sms.restore(); }
-});
-
-test('notifyClientOfStaffingConfirmation > sms-disabled client gets no SMS (email still attempts)', async () => {
-  const sms = stubSms();
-  try {
-    await pool.query(
-      `UPDATE clients SET communication_preferences = '{"email_enabled": true, "sms_enabled": false}'::jsonb WHERE id = $1`,
-      [clientId]
-    );
-    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
-    assert.strictEqual(sms.calls.length, 0, 'SMS must be suppressed');
-    // Email best-effort (no Resend key in dev); we only check it did not throw.
-  } finally { sms.restore(); }
-});
-
-test('notifyClientOfStaffingConfirmation > sms-throw does not prevent re-entry / does not throw out', async () => {
-  // The function must swallow per-channel send failures via Sentry, never throw.
-  const { __setSmsDeps, _realSendSMS } = require('./sms');
-  __setSmsDeps({ sendSMS: async () => { throw new Error('twilio simulated 500'); } });
-  try {
-    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
-    // The failed-send row was logged with status='failed' by sendAndLogSms.
-    const { rows } = await pool.query(
-      "SELECT status FROM sms_messages WHERE client_id = $1 ORDER BY id DESC LIMIT 1",
-      [clientId]
-    );
-    assert.strictEqual(rows[0].status, 'failed');
-  } finally { __setSmsDeps({ sendSMS: _realSendSMS }); }
-});
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `node --test server/utils/lastMinuteStaffingConfirmation.test.js`
-Expected: the 10 existing renderer tests still pass; the 8 new integration tests fail because `notifyClientOfStaffingConfirmation` is not yet exported (`TypeError: notifyClientOfStaffingConfirmation is not a function`).
-
-- [ ] **Step 3: Implement the notify function**
-
-Edit `server/utils/lastMinuteStaffingConfirmation.js`. Add at the top (with the other requires), preserve the existing `renderBartenderList` + `_resolveDisplayName`:
-
-```js
-const Sentry = require('@sentry/node');
-const { pool } = require('../db');
-const { sendEmail } = require('./email');
-const { sendAndLogSms } = require('./sms');
-const { shouldSendImmediate } = require('./messageSuppression');
-const { formatPhoneDisplay } = require('./globalSearch');
-const { formatEventDateLong } = require('./preEventHandlers');
-const lifecycleEmail = require('./lifecycleEmailTemplates');
-const smsTemplates = require('./smsTemplates');
-```
-
-(`formatPhoneDisplay` is already imported by the existing renderer code, make sure the require line appears exactly once.)
-
-Below the existing `renderBartenderList` function, add:
-
-```js
 function _captureInfo(reason, extra) {
   if (!process.env.SENTRY_DSN_SERVER) return;
   Sentry.captureMessage(`[lastMinuteStaffingConfirmation] ${reason}`, {
@@ -628,18 +404,17 @@ function _captureInfo(reason, extra) {
 /**
  * Fire one client email + one client SMS announcing the bartender(s) for a
  * last-minute booking, the moment its shift becomes fully staffed. One-shot
- * per proposal, the caller guarantees this by gating on the atomic flip of
- * proposals.last_minute_hold true→false (see shifts.js
- * confirmStaffingIfFullyStaffed). This function never throws; per-channel
- * failures land in Sentry and the other channel still attempts.
+ * per proposal: the caller guarantees this by gating on the atomic flip of
+ * proposals.last_minute_hold true→false (see confirmStaffingIfFullyStaffed).
+ * This function never throws; per-channel failures land in Sentry and the
+ * other channel still attempts.
  *
  * @param {number} proposalId
- * @param {number} shiftId , the shift that just became fully staffed; only
- *   bartenders approved on THIS shift are reported (multi-shift proposals keep
- *   other shifts' bartenders to the standard T-24h event-eve SMS).
+ * @param {number} shiftId  the shift that just became fully staffed; only
+ *   bartenders approved on THIS shift are reported (multi-shift proposals
+ *   keep other shifts' bartenders to the standard T-24h event-eve SMS).
  */
 async function notifyClientOfStaffingConfirmation(proposalId, shiftId) {
-  // Load proposal + client (LEFT JOIN, orphan proposals are real)
   const proposalRows = await pool.query(
     `SELECT p.id, p.event_date, p.event_start_time, p.event_timezone, p.status,
             c.id   AS client_id,
@@ -673,12 +448,10 @@ async function notifyClientOfStaffingConfirmation(proposalId, shiftId) {
     return;
   }
 
-  // Load approved bartenders on the just-filled shift only
   const bartenderRows = await pool.query(
-    `SELECT u.first_name, u.last_name, cp.preferred_name, cp.phone
+    `SELECT cp.preferred_name, cp.phone
        FROM shift_requests sr
-       JOIN users u ON u.id = sr.user_id
-       LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+       LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
       WHERE sr.shift_id = $1 AND sr.status = 'approved'
       ORDER BY sr.id ASC`,
     [shiftId]
@@ -689,12 +462,10 @@ async function notifyClientOfStaffingConfirmation(proposalId, shiftId) {
     return;
   }
 
-  // Build the template inputs once (templates stay pure / array-free)
   const eventDate = formatEventDateLong(row);
   const bartenderList = renderBartenderList(bartenderRows.rows);
   const isPlural = bartenderRows.rows.length > 1;
 
-  // The `proposal` and `client` shapes that shouldSendImmediate wants.
   const proposalForSuppression = { status: row.status };
   const clientForSuppression = {
     communication_preferences: row.communication_preferences,
@@ -702,7 +473,8 @@ async function notifyClientOfStaffingConfirmation(proposalId, shiftId) {
     phone_status: row.phone_status,
   };
 
-  // Email send, independent try/catch
+  // Email send, independent try/catch. shouldSendImmediate is async; the
+  // await is load-bearing (the Promise's .ok is undefined without it).
   try {
     const emailOk = await shouldSendImmediate({
       proposal: proposalForSuppression,
@@ -730,7 +502,7 @@ async function notifyClientOfStaffingConfirmation(proposalId, shiftId) {
     }
   }
 
-  // SMS send, independent try/catch
+  // SMS send, independent try/catch, same await requirement.
   try {
     const smsOk = await shouldSendImmediate({
       proposal: proposalForSuppression,
@@ -767,45 +539,303 @@ module.exports = {
 };
 ```
 
-(Replace the existing `module.exports` block at the bottom; do not leave two.)
-
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 4: Run renderer tests**
 
 Run: `node --test server/utils/lastMinuteStaffingConfirmation.test.js`
-Expected: all 18 tests pass.
+Expected: the 9 renderer tests pass. The notify fn export exists but is untested yet.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add integration tests for the notify fn**
+
+Append to `server/utils/lastMinuteStaffingConfirmation.test.js`:
+
+```js
+// ─── Integration tests for notifyClientOfStaffingConfirmation ────
+
+let clientId;
+let proposalId;
+let shiftId;
+let userId;
+let savedRealSendSMS;  // captured once at the start so per-test stubs cannot
+                       // be re-captured as "real" by a downstream test.
+
+before(async () => {
+  const sms = require('./sms');
+  savedRealSendSMS = sms._realSendSMS;
+  const c = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('LMSC Test', 'lmsc-test@example.com', '3125550190') RETURNING id`
+  );
+  clientId = c.rows[0].id;
+  // Set communication_preferences explicitly (clients table doesn't have a default).
+  await pool.query(
+    `UPDATE clients SET communication_preferences = '{"email_enabled": true, "sms_enabled": true}'::jsonb,
+                         email_status = 'unknown', phone_status = 'unknown'
+       WHERE id = $1`,
+    [clientId]
+  );
+  const u = await pool.query(
+    `INSERT INTO users (email, password_hash, onboarding_status) VALUES ('lmsc-bartender@example.com', 'x', 'approved') RETURNING id`
+  );
+  userId = u.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, preferred_name, phone) VALUES ($1, 'Alex', '3125551234')`,
+    [userId]
+  );
+});
+
+beforeEach(async () => {
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, event_start_time, status, event_type, last_minute_hold)
+     VALUES ($1, CURRENT_DATE + INTERVAL '2 days', '18:00', 'balance_paid', 'birthday-party', true)
+     RETURNING id`,
+    [clientId]
+  );
+  proposalId = p.rows[0].id;
+  const s = await pool.query(
+    `INSERT INTO shifts (proposal_id, event_date, start_time, end_time, location, positions_needed, status)
+     VALUES ($1, CURRENT_DATE + INTERVAL '2 days', '18:00', '22:00', 'Test Venue', '["lead"]', 'open')
+     RETURNING id`,
+    [proposalId]
+  );
+  shiftId = s.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved')`,
+    [shiftId, userId]
+  );
+});
+
+afterEach(async () => {
+  await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [shiftId]);
+  await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+  await pool.query('DELETE FROM sms_messages WHERE client_id = $1', [clientId]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+});
+
+after(async () => {
+  await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [userId]);
+  await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [clientId]);
+  await pool.end();
+});
+
+function stubSms() {
+  const { __setSmsDeps } = require('./sms');
+  const calls = [];
+  __setSmsDeps({
+    sendSMS: async ({ to, body }) => {
+      calls.push({ to, body });
+      return { sid: `stub-${calls.length}-${Date.now()}` };
+    },
+  });
+  return {
+    calls,
+    restore: () => __setSmsDeps({ sendSMS: savedRealSendSMS }),
+  };
+}
+
+test('notifyClientOfStaffingConfirmation > happy path: sends SMS with rendered name + phone', async () => {
+  const sms = stubSms();
+  try {
+    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
+    assert.strictEqual(sms.calls.length, 1, 'exactly one SMS send');
+    assert.match(sms.calls[0].body, /Your bartender for/);
+    assert.match(sms.calls[0].body, /Alex \(\(312\) 555-1234\)/);
+    const { rows } = await pool.query(
+      "SELECT message_type, status FROM sms_messages WHERE client_id = $1",
+      [clientId]
+    );
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].message_type, 'last_minute_staffing_confirmation');
+    assert.strictEqual(rows[0].status, 'sent');
+  } finally { sms.restore(); }
+});
+
+test('notifyClientOfStaffingConfirmation > proposal_missing returns silently', async () => {
+  const sms = stubSms();
+  try {
+    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(999999999, shiftId));
+    assert.strictEqual(sms.calls.length, 0);
+  } finally { sms.restore(); }
+});
+
+test('notifyClientOfStaffingConfirmation > orphan_proposal returns silently', async () => {
+  const sms = stubSms();
+  try {
+    await pool.query('UPDATE proposals SET client_id = NULL WHERE id = $1', [proposalId]);
+    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
+    assert.strictEqual(sms.calls.length, 0);
+  } finally { sms.restore(); }
+});
+
+test('notifyClientOfStaffingConfirmation > archived status returns silently', async () => {
+  const sms = stubSms();
+  try {
+    // Set status via the original valid value set; if your local DB has the
+    // post-migration constraint with 'archived', this UPDATE will succeed.
+    // If not, use UPDATE WHERE id with a status the local CHECK accepts and
+    // skip this case, the spec's notify fn check is correct against current
+    // production schema.
+    await pool.query("UPDATE proposals SET status = 'archived' WHERE id = $1", [proposalId]);
+    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
+    assert.strictEqual(sms.calls.length, 0);
+  } finally { sms.restore(); }
+});
+
+test('notifyClientOfStaffingConfirmation > event_date_null returns silently', async () => {
+  const sms = stubSms();
+  try {
+    await pool.query('UPDATE proposals SET event_date = NULL WHERE id = $1', [proposalId]);
+    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
+    assert.strictEqual(sms.calls.length, 0);
+  } finally { sms.restore(); }
+});
+
+test('notifyClientOfStaffingConfirmation > no_bartenders returns silently', async () => {
+  const sms = stubSms();
+  try {
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [shiftId]);
+    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
+    assert.strictEqual(sms.calls.length, 0);
+  } finally { sms.restore(); }
+});
+
+test('notifyClientOfStaffingConfirmation > sms-disabled client gets no SMS (email path still attempts)', async () => {
+  const sms = stubSms();
+  try {
+    await pool.query(
+      `UPDATE clients SET communication_preferences = '{"email_enabled": true, "sms_enabled": false}'::jsonb WHERE id = $1`,
+      [clientId]
+    );
+    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
+    assert.strictEqual(sms.calls.length, 0, 'SMS must be suppressed');
+  } finally {
+    sms.restore();
+    await pool.query(
+      `UPDATE clients SET communication_preferences = '{"email_enabled": true, "sms_enabled": true}'::jsonb WHERE id = $1`,
+      [clientId]
+    );
+  }
+});
+
+test('notifyClientOfStaffingConfirmation > Twilio throw is swallowed (function does not reject)', async () => {
+  const { __setSmsDeps } = require('./sms');
+  __setSmsDeps({ sendSMS: async () => { throw new Error('twilio simulated 500'); } });
+  try {
+    await assert.doesNotReject(() => notifyClientOfStaffingConfirmation(proposalId, shiftId));
+    // sendAndLogSms wrote the failed row before re-throwing; the outer
+    // try/catch in notifyClientOfStaffingConfirmation swallowed the throw.
+    const { rows } = await pool.query(
+      "SELECT status FROM sms_messages WHERE client_id = $1 ORDER BY id DESC LIMIT 1",
+      [clientId]
+    );
+    assert.strictEqual(rows[0].status, 'failed');
+  } finally {
+    __setSmsDeps({ sendSMS: savedRealSendSMS });
+  }
+});
+```
+
+- [ ] **Step 6: Run all tests**
+
+Run: `node --test server/utils/lastMinuteStaffingConfirmation.test.js`
+Expected: all 9 renderer tests + 8 integration tests pass (17 total).
+
+- [ ] **Step 7: Add the README line**
+
+Open `README.md`. Find the folder-tree section that lists `server/utils/` contents (search for `lastMinuteAlert.js`). Add a new line directly beneath it, matching the surrounding indent/comment style:
+
+```
+│   ├── lastMinuteStaffingConfirmation.js  # Touch 2.2: bartender-list renderer + notify fn + atomic-flip trigger
+```
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add server/utils/lastMinuteStaffingConfirmation.js server/utils/lastMinuteStaffingConfirmation.test.js
-git commit -m "feat(comms): notifyClientOfStaffingConfirmation fires email + SMS on hold-cleared (Touch 2.2)"
+git add server/utils/lastMinuteStaffingConfirmation.js server/utils/lastMinuteStaffingConfirmation.test.js README.md
+git commit -m "feat(comms): notify module for last-minute staffing confirmation (Touch 2.2)"
 ```
 
 ---
 
-## Task 5: Wire confirmStaffingIfFullyStaffed (rename + atomic-flip + auto-assign call)
+## Task 4: Extract trigger, delete from shifts.js, wire all three call sites, add docs
 
 **Files:**
-- Modify: `server/routes/shifts.js`
-- Modify: `server/utils/autoAssign.js`
+- Modify: `server/utils/lastMinuteStaffingConfirmation.js` (add `confirmStaffingIfFullyStaffed`)
+- Modify: `server/utils/lastMinuteStaffingConfirmation.test.js` (add atomic-flip + non-held tests)
+- Modify: `server/routes/shifts.js` (delete the inline helper, replace two call sites)
+- Modify: `server/utils/autoAssign.js` (new third call site)
+- Modify: `ARCHITECTURE.md`
 
-Single commit because the three call-site wirings (rename in shifts.js, autoAssign.js addition) plus the helper internals are one logical feature: "every assignment path converges on the renamed helper, which atomically flips the hold and fires the notify."
+This task lands the trigger function and wires it everywhere. Single commit because the three call-site updates plus the helper extraction are one logical feature ("every assignment path converges on the renamed helper"). The bundled fixes are explicit: the rename, the atomic-flip RETURNING upgrade, the auto-assign clear-hold bugfix (spec §The Trigger §3), and the Touch 2.2 notify wiring.
 
-- [ ] **Step 1: Read the current helper to confirm shape**
+- [ ] **Step 1: Write the failing tests for the new trigger**
 
-Open `server/routes/shifts.js` and re-read lines 820-860. Confirm: function `clearHoldIfFullyStaffed(shiftId)` exists; lines 669 and 786 call it; outer try/catch only `console.error`s.
+Append to `server/utils/lastMinuteStaffingConfirmation.test.js`:
 
-- [ ] **Step 2: Rename + upgrade the helper**
+```js
+// ─── confirmStaffingIfFullyStaffed integration tests ─────────────
 
-In `server/routes/shifts.js`, replace the function definition at lines 820-857 with:
+const { confirmStaffingIfFullyStaffed } = require('./lastMinuteStaffingConfirmation');
+
+test('confirmStaffingIfFullyStaffed > held + fully-staffed → flips hold and sends', async () => {
+  const sms = stubSms();
+  try {
+    await confirmStaffingIfFullyStaffed(shiftId);
+    assert.strictEqual(sms.calls.length, 1);
+    const { rows } = await pool.query('SELECT last_minute_hold FROM proposals WHERE id = $1', [proposalId]);
+    assert.strictEqual(rows[0].last_minute_hold, false);
+  } finally { sms.restore(); }
+});
+
+test('confirmStaffingIfFullyStaffed > non-held + fully-staffed → no notify (regression pin)', async () => {
+  const sms = stubSms();
+  try {
+    await pool.query('UPDATE proposals SET last_minute_hold = false WHERE id = $1', [proposalId]);
+    await confirmStaffingIfFullyStaffed(shiftId);
+    assert.strictEqual(sms.calls.length, 0, 'normal-lead-time proposal must not fire notify');
+  } finally { sms.restore(); }
+});
+
+test('confirmStaffingIfFullyStaffed > held but understaffed → no flip, no notify', async () => {
+  // Make the shift need 2 positions; only 1 approved → not fully staffed.
+  await pool.query(`UPDATE shifts SET positions_needed = '["lead","support"]' WHERE id = $1`, [shiftId]);
+  const sms = stubSms();
+  try {
+    await confirmStaffingIfFullyStaffed(shiftId);
+    assert.strictEqual(sms.calls.length, 0);
+    const { rows } = await pool.query('SELECT last_minute_hold FROM proposals WHERE id = $1', [proposalId]);
+    assert.strictEqual(rows[0].last_minute_hold, true, 'hold should still be true');
+  } finally { sms.restore(); }
+});
+
+test('confirmStaffingIfFullyStaffed > concurrent calls flip exactly once (atomic-flip race)', async () => {
+  const sms = stubSms();
+  try {
+    await Promise.all([
+      confirmStaffingIfFullyStaffed(shiftId),
+      confirmStaffingIfFullyStaffed(shiftId),
+      confirmStaffingIfFullyStaffed(shiftId),
+    ]);
+    assert.strictEqual(sms.calls.length, 1, 'WHERE last_minute_hold=true is the one-shot guarantee');
+  } finally { sms.restore(); }
+});
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `node --test server/utils/lastMinuteStaffingConfirmation.test.js`
+Expected: the 4 new tests fail with `TypeError: confirmStaffingIfFullyStaffed is not a function`.
+
+- [ ] **Step 3: Add `confirmStaffingIfFullyStaffed` to the module**
+
+In `server/utils/lastMinuteStaffingConfirmation.js`, append the new function below `notifyClientOfStaffingConfirmation`:
 
 ```js
 /**
  * Clear the linked proposal's last-minute hold once its shift is fully staffed
  * and, if this caller wins the atomic flip, fire the client confirmation
- * (Touch 2.2, email + SMS naming the bartender(s) + phone).
+ * (Touch 2.2: email + SMS naming the bartender(s) + phone).
  *
- * "Fully staffed" = approved shift_requests count >= positions_needed length -
+ * "Fully staffed" = approved shift_requests count >= positions_needed length,
  * the SAME definition autoAssign uses for slotsRemaining. The UPDATE returns
  * `id` only if the row was actually held (last_minute_hold true→false); a
  * returned row means THIS caller is the unique flip owner and is responsible
@@ -817,6 +847,10 @@ In `server/routes/shifts.js`, replace the function definition at lines 820-857 w
  * CALLERS: shifts.js:669, shifts.js:786, autoAssign.js. All three call
  * unconditionally, do not add an upstream `WHERE last_minute_hold` filter at
  * any call site (that would regress the auto-assign clear-hold bugfix).
+ *
+ * `positions_needed` is `TEXT DEFAULT '[]'` (JSON-encoded string per
+ * schema.sql:280), so the length check uses `JSON.parse` with a fallback,
+ * NOT `Array.isArray` (which is always false on strings).
  */
 async function confirmStaffingIfFullyStaffed(shiftId) {
   try {
@@ -826,7 +860,13 @@ async function confirmStaffingIfFullyStaffed(shiftId) {
     );
     const row = s.rows[0];
     if (!row || !row.proposal_id) return;
-    const needed = Array.isArray(row.positions_needed) ? row.positions_needed.length : 0;
+    let needed = 0;
+    try {
+      const parsed = JSON.parse(row.positions_needed || '[]');
+      needed = Array.isArray(parsed) ? parsed.length : 0;
+    } catch (_) {
+      needed = 0;
+    }
     if (needed === 0) return;
     const a = await pool.query(
       "SELECT COUNT(*)::int AS n FROM shift_requests WHERE shift_id = $1 AND status = 'approved'",
@@ -841,7 +881,7 @@ async function confirmStaffingIfFullyStaffed(shiftId) {
     try {
       await notifyClientOfStaffingConfirmation(row.proposal_id, shiftId);
     } catch (notifyErr) {
-      console.error('[shifts] notifyClientOfStaffingConfirmation failed (non-blocking):', notifyErr.message);
+      console.error('[confirmStaffingIfFullyStaffed] notify failed (non-blocking):', notifyErr.message);
       if (process.env.SENTRY_DSN_SERVER) {
         Sentry.captureException(notifyErr, {
           tags: { feature: 'staffing-confirmation', stage: 'notify' },
@@ -850,7 +890,7 @@ async function confirmStaffingIfFullyStaffed(shiftId) {
       }
     }
   } catch (e) {
-    console.error('[shifts] confirmStaffingIfFullyStaffed failed (non-blocking):', e.message);
+    console.error('[confirmStaffingIfFullyStaffed] failed (non-blocking):', e.message);
     if (process.env.SENTRY_DSN_SERVER) {
       Sentry.captureException(e, {
         tags: { feature: 'staffing-confirmation' },
@@ -861,34 +901,80 @@ async function confirmStaffingIfFullyStaffed(shiftId) {
 }
 ```
 
-Also at the top of `server/routes/shifts.js`, add the new imports if they are not already present:
+Update the `module.exports` block to add `confirmStaffingIfFullyStaffed`:
 
 ```js
-const Sentry = require('@sentry/node');
-const { notifyClientOfStaffingConfirmation } = require('../utils/lastMinuteStaffingConfirmation');
+module.exports = {
+  renderBartenderList,
+  _resolveDisplayName,
+  notifyClientOfStaffingConfirmation,
+  confirmStaffingIfFullyStaffed,
+};
 ```
 
-(Check whether Sentry is already imported. If yes, leave it; if no, add it.)
+- [ ] **Step 4: Run tests to verify they pass**
 
-- [ ] **Step 3: Update the two existing call sites**
+Run: `node --test server/utils/lastMinuteStaffingConfirmation.test.js`
+Expected: all 21 tests pass (9 renderer + 8 notify + 4 trigger).
 
-In `server/routes/shifts.js`:
-- Line 669: `await clearHoldIfFullyStaffed(req.params.id);` → `await confirmStaffingIfFullyStaffed(req.params.id);`
-- Line 786: `await clearHoldIfFullyStaffed(result.rows[0].shift_id);` → `await confirmStaffingIfFullyStaffed(result.rows[0].shift_id);`
+- [ ] **Step 5: Delete the old helper from shifts.js**
 
-Also update the inline comment above line 668 if it references the old name (search the file for `clearHoldIfFullyStaffed` to confirm no stragglers).
+Open `server/routes/shifts.js`. Delete the entire `clearHoldIfFullyStaffed` function definition (lines 821-857, including the docblock above it). The file should end with the `module.exports = router;` line (which becomes the new last line of the file, with the function removed above it).
 
-- [ ] **Step 4: Verify zero stragglers**
+- [ ] **Step 6: Update the two call sites in shifts.js**
 
-Run: `node -e "const fs = require('fs'); const s = fs.readFileSync('server/routes/shifts.js', 'utf8'); console.log('count:', (s.match(/clearHoldIfFullyStaffed/g) || []).length);"`
-Expected: `count: 0`.
-
-- [ ] **Step 5: Add the autoAssign.js call**
-
-In `server/utils/autoAssign.js`, find the per-candidate SMS for-loop (it ends around line 342) and the `UPDATE shifts SET auto_assigned_at = NOW()` block (around line 346). Insert this between them:
+At the top of `server/routes/shifts.js`, with the other utils imports, add:
 
 ```js
-  // 11.5. Touch 2.2, if this auto-assign just filled a held proposal, fire
+const { confirmStaffingIfFullyStaffed } = require('../utils/lastMinuteStaffingConfirmation');
+```
+
+At line 669, change:
+
+```js
+  await clearHoldIfFullyStaffed(req.params.id);
+```
+
+to:
+
+```js
+  await confirmStaffingIfFullyStaffed(req.params.id);
+```
+
+At line 786, change:
+
+```js
+  await clearHoldIfFullyStaffed(result.rows[0].shift_id);
+```
+
+to:
+
+```js
+  await confirmStaffingIfFullyStaffed(result.rows[0].shift_id);
+```
+
+Also update the comment above each call site to reference the new name if it mentions the old one. Search the file for any remaining `clearHoldIfFullyStaffed` occurrences (should be none after these edits).
+
+- [ ] **Step 7: Verify zero stragglers in shifts.js**
+
+```bash
+node -e "const fs=require('fs'); const s=fs.readFileSync('server/routes/shifts.js','utf8'); console.log('clear count:', (s.match(/clearHoldIfFullyStaffed/g) || []).length, '/ confirm count:', (s.match(/confirmStaffingIfFullyStaffed/g) || []).length);"
+```
+
+Expected: `clear count: 0 / confirm count: 3` (one import + two call sites).
+
+- [ ] **Step 8: Add the autoAssign.js call**
+
+In `server/utils/autoAssign.js`, at the top with the other imports, add:
+
+```js
+const { confirmStaffingIfFullyStaffed } = require('./lastMinuteStaffingConfirmation');
+```
+
+Find the per-candidate SMS for-loop (it ends around line 342) and the `UPDATE shifts SET auto_assigned_at = NOW()` block (around line 346). Insert this between them, before line 346:
+
+```js
+  // 11.5. Touch 2.2: if this auto-assign just filled a held proposal, fire
   // the client staffing-confirmation. Non-blocking; idempotency is enforced
   // by confirmStaffingIfFullyStaffed's atomic UPDATE.
   try {
@@ -902,76 +988,91 @@ In `server/utils/autoAssign.js`, find the per-candidate SMS for-loop (it ends ar
   }
 ```
 
-At the top of `server/utils/autoAssign.js`, add the import next to the existing imports:
+(`Sentry` is already imported in `autoAssign.js`. Confirm with a quick grep before assuming.)
 
-```js
-const { confirmStaffingIfFullyStaffed } = require('../routes/shifts');
-```
+- [ ] **Step 9: Sanity-check both files load without circular-require failures**
 
-(Note: cross-layer import from `utils` → `routes` is unusual. If the linter or a code-review agent flags this, follow up by exporting `confirmStaffingIfFullyStaffed` from a new `server/utils/staffingConfirmation.js` wrapper. For now, the direct import is the minimal change.)
-
-Confirm `confirmStaffingIfFullyStaffed` is exported from `server/routes/shifts.js`. Find the `module.exports` block at the bottom of `shifts.js`, if it currently uses `module.exports = router;`, replace with:
-
-```js
-module.exports = router;
-module.exports.confirmStaffingIfFullyStaffed = confirmStaffingIfFullyStaffed;
-```
-
-(Routers in Express are functions, so attaching a named export property works without breaking the existing `app.use('/api/shifts', router)` consumers.)
-
-- [ ] **Step 6: Sanity-check both files load**
+Use `typeof` (not just `require`) so a circular-require mask is exposed:
 
 ```bash
-node -e "require('./server/routes/shifts'); require('./server/utils/autoAssign'); console.log('ok');"
+node -e "console.log('shifts:', typeof require('./server/routes/shifts')); console.log('confirm via utils:', typeof require('./server/utils/lastMinuteStaffingConfirmation').confirmStaffingIfFullyStaffed); console.log('autoAssign:', typeof require('./server/utils/autoAssign').autoAssignShift);"
 ```
-Expected output: `ok` (no require-cycle errors, no missing-export errors).
 
-- [ ] **Step 7: Run the relevant test suites**
+Expected:
+```
+shifts: function
+confirm via utils: function
+autoAssign: function
+```
+
+Any `undefined` in the second line means the circular-require concern bit; investigate before proceeding.
+
+- [ ] **Step 10: Add the ARCHITECTURE one-liner**
+
+In `ARCHITECTURE.md`, find the comms / scheduled-messages section. Add this bullet (or a similar entry under an "Immediate event-driven sends" sub-section, creating that sub-section if it does not yet exist):
+
+```
+- **Touch 2.2 last-minute staffing confirmation**, `server/utils/lastMinuteStaffingConfirmation.js`. Immediate email + SMS to the client the moment a held proposal's shift becomes fully staffed. Triggered from `confirmStaffingIfFullyStaffed`, which atomically flips `proposals.last_minute_hold` true→false via `RETURNING id` and only fires the notify when the flip succeeds (one-shot guard). Called from `server/routes/shifts.js` (manual assign + request approval) and `server/utils/autoAssign.js`.
+```
+
+- [ ] **Step 11: Re-run the test suite to confirm nothing regressed**
 
 ```bash
 node --test server/utils/lastMinuteStaffingConfirmation.test.js
 node --test server/utils/smsTemplates.test.js
 node --test server/utils/lifecycleEmailTemplates.test.js
 ```
-Expected: all tests pass (none of the existing tests should have regressed).
 
-- [ ] **Step 8: Commit**
+Expected: all tests pass.
+
+- [ ] **Step 12: Commit**
 
 ```bash
-git add server/routes/shifts.js server/utils/autoAssign.js
-git commit -m "feat(comms): wire Touch 2.2 across all three assignment paths (rename + RETURNING + autoAssign hook)"
+git add server/utils/lastMinuteStaffingConfirmation.js server/utils/lastMinuteStaffingConfirmation.test.js server/routes/shifts.js server/utils/autoAssign.js ARCHITECTURE.md
+git commit -m "feat(comms,shifts): extract confirmStaffingIfFullyStaffed, wire all assign paths (Touch 2.2 + closes auto-assign clear-hold gap)"
 ```
 
 ---
 
-## Task 6: Reschedule re-evaluation
+## Task 5: Reschedule re-evaluation
 
 **Files:**
 - Modify: `server/utils/rescheduleProposal.js`
+- Modify: `server/utils/rescheduleProposal.test.js`
 
-- [ ] **Step 1: Locate the insertion point**
+This task can ship independently of Task 4. Without it, a held proposal rescheduled past 72h keeps a stale `last_minute_hold` flag (harmless, the next staffing-fill would correctly fire a "your bartender is X" notify, just on a booking that's no longer last-minute). With it, the flag stays consistent with the booking window.
 
-Open `server/utils/rescheduleProposal.js`. Find `rescheduleProposalInTx(client, { proposalId, old, updated })`. Note where the existing balance-due-date + scheduled_messages cascade work happens. Insert the new logic AFTER all that work, BEFORE the function returns.
+- [ ] **Step 1: Grep the existing test file for shape**
 
-- [ ] **Step 2: Add the import**
+```bash
+node -e "const s=require('fs').readFileSync('server/utils/rescheduleProposal.test.js','utf8'); console.log('imports:', s.split('\n').slice(0,15).join('\n'));"
+```
 
-At the top of `server/utils/rescheduleProposal.js` (with the other requires), add:
+Confirm: the test file already imports from `node:test`, `node:assert/strict`, `../db`, and `./rescheduleProposal`. Note which of `rescheduleProposal` / `rescheduleProposalInTx` is already destructured in the imports block (you may need to add `rescheduleProposalInTx` to the import line).
+
+- [ ] **Step 2: Add the import in `rescheduleProposal.js`**
+
+Open `server/utils/rescheduleProposal.js`. At the top with the existing requires, add:
 
 ```js
 const { getBookingWindow } = require('./bookingWindow');
 ```
 
-- [ ] **Step 3: Add the re-evaluation logic**
+- [ ] **Step 3: Add the re-evaluation logic inside `rescheduleProposalInTx`**
 
-Inside `rescheduleProposalInTx`, after the existing cascade work and just before the function returns its result, add:
+Inside `rescheduleProposalInTx`, after the existing balance-due / scheduled_messages cascade work and just before the function returns, add:
 
 ```js
-  // Touch 2.2 prerequisite, keep last_minute_hold consistent with the new
+  // Touch 2.2 prerequisite: keep last_minute_hold consistent with the new
   // event_date/event_start_time. A held proposal moved past 72h becomes
   // unheld; a non-held proposal moved into 72h becomes held. The actual
   // notification fires from confirmStaffingIfFullyStaffed only when the
-  // next staffing-fill flips a held proposal, this hook just keeps the
+  // next staffing-fill flips a held proposal; this hook just keeps the
   // flag in sync with the booking window.
+  //
+  // getBookingWindow returns { hoursUntilEvent, fullPaymentRequired,
+  // lastMinuteHold } and takes an options object (NOT a row); see
+  // bookingWindow.js:39 + :42-46 for the signature.
   const { lastMinuteHold } = getBookingWindow({
     eventDate: updated.event_date,
     eventStartTime: updated.event_start_time,
@@ -984,22 +1085,16 @@ Inside `rescheduleProposalInTx`, after the existing cascade work and just before
   }
 ```
 
-(`updated` here is the post-UPDATE row that `crud.js:617-626` passes in; it carries the new event_date / event_start_time and the prior `last_minute_hold` value.)
+(`updated` is the post-UPDATE row that `crud.js:617-626` passes in; it carries the new event_date/event_start_time and the prior `last_minute_hold` value. The PATCH UPDATE includes `RETURNING *`, so `updated.last_minute_hold` reflects pre-hook state. If you can't confirm `updated` carries this column, do a fresh `SELECT last_minute_hold FROM proposals WHERE id = $1` via the same `client` instead.)
 
-- [ ] **Step 4: Run the reschedule tests**
+- [ ] **Step 4: Add a test asserting held-becomes-unheld on reschedule past 72h**
 
-Run: `node --test server/utils/rescheduleProposal.test.js`
-Expected: all existing tests pass (the re-evaluation is additive; existing test fixtures don't set `last_minute_hold` and won't trigger a flag change).
-
-- [ ] **Step 5: Add one new test asserting the re-evaluation**
-
-Append to `server/utils/rescheduleProposal.test.js`:
+Append to `server/utils/rescheduleProposal.test.js` (adjust the imports if `rescheduleProposalInTx` is not already imported):
 
 ```js
 test('rescheduleProposalInTx > moves held proposal past 72h → last_minute_hold becomes false', async () => {
-  // Fixture: create a held proposal with an event 2 days out.
   const c = await pool.query(
-    `INSERT INTO clients (name, email, phone) VALUES ('LMH Test', 'lmh@example.com', '3125550191') RETURNING id`
+    `INSERT INTO clients (name, email, phone) VALUES ('LMH Test', 'lmh-test@example.com', '3125550191') RETURNING id`
   );
   const cId = c.rows[0].id;
   const p = await pool.query(
@@ -1012,14 +1107,14 @@ test('rescheduleProposalInTx > moves held proposal past 72h → last_minute_hold
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // Simulate the PATCH handler updating the date to 30 days out.
+    const oldRow = { event_date: new Date(Date.now() + 2*24*3600*1000), event_start_time: '18:00', last_minute_hold: true };
     const upd = await client.query(
       `UPDATE proposals SET event_date = CURRENT_DATE + INTERVAL '30 days' WHERE id = $1 RETURNING *`,
       [pId]
     );
     await rescheduleProposalInTx(client, {
       proposalId: pId,
-      old: { event_date: new Date(Date.now() + 2*24*3600*1000), event_start_time: '18:00', last_minute_hold: true },
+      old: oldRow,
       updated: upd.rows[0],
     });
     await client.query('COMMIT');
@@ -1031,62 +1126,39 @@ test('rescheduleProposalInTx > moves held proposal past 72h → last_minute_hold
   }
   const after = await pool.query('SELECT last_minute_hold FROM proposals WHERE id = $1', [pId]);
   assert.strictEqual(after.rows[0].last_minute_hold, false);
-  // cleanup
   await pool.query('DELETE FROM proposals WHERE id = $1', [pId]);
   await pool.query('DELETE FROM clients WHERE id = $1', [cId]);
 });
 ```
 
-(Import `rescheduleProposalInTx` from the module's exports if the existing test file does not already destructure it. Confirm the import line; adjust if needed.)
+- [ ] **Step 5: Run reschedule tests**
 
-- [ ] **Step 6: Run the test**
+```bash
+node --test server/utils/rescheduleProposal.test.js
+```
 
-Run: `node --test server/utils/rescheduleProposal.test.js`
-Expected: all tests including the new one pass.
+Expected: all existing tests pass, and the new test passes.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add server/utils/rescheduleProposal.js server/utils/rescheduleProposal.test.js
-git commit -m "feat(comms): re-evaluate last_minute_hold on reschedule (Touch 2.2 prerequisite)"
+git commit -m "feat(reschedule): re-evaluate last_minute_hold on reschedule (Touch 2.2 prerequisite)"
 ```
 
 ---
 
-## Task 7: Documentation updates
+## Execution-Review Cadence
 
-**Files:**
-- Modify: `README.md`
-- Modify: `ARCHITECTURE.md`
+Per the user's standing review preference (see memory: "Plan-execution review cadence"), run a focused review at each major checkpoint. Skip on Tasks 1-2 (mechanical template work, low blast radius). Specialized agents fire after the following:
 
-- [ ] **Step 1: Read the relevant sections**
+| After | Agents | Why |
+|---|---|---|
+| Task 3 (notify module + tests) | `code-review` + `consistency-check` | Cross-cutting integration of `messageSuppression`, templates, sendEmail, sendAndLogSms; new shape of integration tests. |
+| Task 4 (extract + wire all paths) | `consistency-check` + `database-review` | Verify the rename caught every site and that the atomic-flip race semantics are correct under concurrency. |
+| Task 5 (reschedule hook) | `database-review` | Cross-transaction consistency check in `rescheduleProposalInTx`. |
 
-Open `README.md` and find the folder-structure tree (search for `server/utils/`). Open `ARCHITECTURE.md` and find the comms section.
-
-- [ ] **Step 2: Add the new util file to README**
-
-In `README.md`'s folder tree, locate the line listing `lastMinuteAlert.js` under `server/utils/`. Add a new line directly beneath it:
-
-```
-│   ├── lastMinuteStaffingConfirmation.js  # Touch 2.2, client email+SMS on hold clear
-```
-
-(Match the indentation style and comment style of surrounding lines exactly.)
-
-- [ ] **Step 3: Add the one-liner to ARCHITECTURE**
-
-In `ARCHITECTURE.md`, find the comms / scheduled-messages section. Add this bullet under the "Immediate event-driven sends" subsection (or create the subsection if it does not exist):
-
-```
-- **Touch 2.2 last-minute staffing confirmation**, `server/utils/lastMinuteStaffingConfirmation.js`. Immediate email + SMS to the client the moment a held proposal's shift becomes fully staffed. Triggered from `server/routes/shifts.js#confirmStaffingIfFullyStaffed`, which atomically flips `proposals.last_minute_hold` true→false via `RETURNING id` and only fires the notify when the flip succeeds (one-shot guard).
-```
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add README.md ARCHITECTURE.md
-git commit -m "docs: README + ARCHITECTURE updates for Touch 2.2"
-```
+No `security-review` is required for this feature (no auth/payment surface). `performance-review` not required either (the notify fn is one event-driven query pair, no batching, no scheduler).
 
 ---
 
@@ -1096,43 +1168,44 @@ git commit -m "docs: README + ARCHITECTURE updates for Touch 2.2"
 
 | Spec section | Plan task | Notes |
 |---|---|---|
-| The trigger §1 (rename) | Task 5 step 2-4 | ✓ |
-| The trigger §2 (RETURNING flip) | Task 5 step 2 | ✓ |
-| The trigger §3 (autoAssign call) | Task 5 step 5 | ✓ |
-| The trigger §4 (reschedule re-eval) | Task 6 | ✓ |
-| Call-site discipline PIN | Task 5 step 2 (docstring) | ✓ |
-| Outer try/catch Sentry upgrade | Task 5 step 2 | ✓ |
-| Notify fn step 1 (proposal+client LEFT JOIN + early returns) | Task 4 step 3 | ✓ |
-| Notify fn step 2 (bartender query + fallback name) | Task 3 + Task 4 step 3 | ✓ |
-| Notify fn step 3 (formatEventDateLong import) | Task 4 step 3 | ✓ |
-| Notify fn step 4 (templates take primitives) | Task 4 step 3 | ✓ |
-| Notify fn steps 5-6 (per-channel awaited shouldSendImmediate) | Task 4 step 3 | ✓ |
+| The trigger §1 (extract + rename, NOT cross-layer import) | Task 4 Steps 3, 5, 6 | ✓ Extracted to utils, both shifts.js call sites and autoAssign import from the same module. |
+| The trigger §2 (RETURNING flip) + positions_needed PIN | Task 4 Step 3 | ✓ JSON.parse preserved. |
+| The trigger §3 (autoAssign call) | Task 4 Step 8 | ✓ |
+| The trigger §4 (reschedule re-eval inside `rescheduleProposalInTx`) | Task 5 Steps 2-3 | ✓ Uses `updated` arg as spec mandates. |
+| Call-site discipline PIN | Task 4 Step 3 (docstring) | ✓ |
+| Outer try/catch Sentry upgrade | Task 4 Step 3 | ✓ |
+| Notify fn step 1 (proposal+client LEFT JOIN + early returns) | Task 3 Step 3 | ✓ All 4 early-return reasons captured. |
+| Notify fn step 2 (bartender query, no users JOIN, fallback `'Your bartender'`) | Task 3 Step 3 | ✓ `users.first_name`/`last_name` removed everywhere. |
+| Notify fn step 3 (formatEventDateLong import) | Task 3 Step 3 | ✓ Imported from `./preEventHandlers`. |
+| Notify fn step 4 (templates take primitives) | Task 3 Step 3 | ✓ |
+| Notify fn steps 5-6 (per-channel awaited shouldSendImmediate) | Task 3 Step 3 | ✓ `await` is load-bearing per the inline comment. |
 | SMS template | Task 1 | ✓ |
 | Email template + re-export | Task 2 | ✓ |
-| Suppression and edge handling matrix | Task 4 tests | ✓ each early-return + suppression-independence case |
-| Tests: pluralization | Task 3 | ✓ 1/2/3/mixed/missing-names |
-| Tests: early-return matrix | Task 4 | ✓ all 5 |
-| Tests: per-channel suppression | Task 4 | ✓ sms-disabled, sms-throw |
-| Tests: messageType literal acceptance | Task 4 happy-path test asserts `message_type = 'last_minute_staffing_confirmation'` in the sms_messages row | ✓ |
-| Tests: non-held → no notify | Implicit in Task 4, the atomic flip in `confirmStaffingIfFullyStaffed` is the gate; the integration test in Task 5 step 7 covers this. Worth adding an explicit test in Task 5 if time allows. | Partial |
-| Tests: auto-assign integration | Out of scope for unit tests; manual verification on staging | Documented |
-| Tests: reschedule integration | Task 6 step 5 | ✓ (one direction; the reverse is symmetric) |
-| README + ARCHITECTURE updates | Task 7 | ✓ |
+| Suppression and edge handling matrix | Task 3 Step 5 tests | ✓ All early-return cases plus SMS-disabled + Twilio-throw. |
+| Tests: pluralization | Task 3 Step 1 | ✓ 1/2/3/mixed + null preferred_name. |
+| Tests: early-return matrix | Task 3 Step 5 | ✓ All 5 reasons. |
+| Tests: per-channel suppression | Task 3 Step 5 | ✓ sms-disabled, sms-throw. |
+| Tests: messageType literal acceptance | Task 3 Step 5 happy-path asserts `message_type = 'last_minute_staffing_confirmation'`. | ✓ |
+| Tests: non-held → no notify | Task 4 Step 1 | ✓ Explicit regression pin. |
+| Tests: atomic-flip race | Task 4 Step 1 | ✓ Three concurrent calls → exactly one send. |
+| Tests: auto-assign integration | Documented as manual verification on staging; out of scope for unit tests. | Documented |
+| Tests: reschedule integration | Task 5 Step 4 (one direction; the reverse is symmetric). | ✓ |
+| README + ARCHITECTURE updates | Tasks 3 Step 7 + 4 Step 10 (folded into feature commits, not a separate docs task). | ✓ |
 
 ### Placeholder scan
 
 * No "TBD", "TODO", "fill in", or "implement later" present.
 * No "similar to Task N" without showing the code.
 * Every code step includes the actual code.
-* The cross-layer `utils → routes` import in Task 5 Step 5 is flagged with a follow-up condition rather than left as a hand-wave.
+* The previous draft's cross-layer `utils → routes` import is gone; the helper now lives in `utils/lastMinuteStaffingConfirmation.js` and both `routes/shifts.js` and `utils/autoAssign.js` import from it.
 
 ### Type consistency
 
-* `notifyClientOfStaffingConfirmation(proposalId, shiftId)`, same signature in Task 3 export, Task 4 export, Task 5 caller.
-* `confirmStaffingIfFullyStaffed(shiftId)`, same signature at definition (Task 5 Step 2), at both call sites in shifts.js (Task 5 Step 3), and at the autoAssign call (Task 5 Step 5).
-* Template signatures `({ eventDate, bartenderList, isPlural })`, identical in Task 1 SMS template, Task 2 email template, Task 4 notify fn (where bartenderList comes from `renderBartenderList()` and isPlural from `bartenders.length > 1`).
-* `renderBartenderList(bartenders)`, same shape in Task 3 implementation and Task 4 caller.
-* SQL column names, `last_minute_hold`, `event_date`, `event_start_time`, `event_timezone`, `client_id`, `status`, match the spec's named columns.
+* `notifyClientOfStaffingConfirmation(proposalId, shiftId)`, same signature in Task 3 export and Task 4 internal caller.
+* `confirmStaffingIfFullyStaffed(shiftId)`, same signature at definition (Task 4 Step 3), at both shifts.js call sites (Task 4 Step 6), and at the autoAssign call (Task 4 Step 8).
+* Template signatures `({ eventDate, bartenderList, isPlural })`, identical in Task 1, Task 2, and Task 3's notify-fn callers.
+* `renderBartenderList(bartenders)`, same shape in Task 3 implementation and Task 3 notify-fn caller.
+* SQL columns referenced (`last_minute_hold`, `event_date`, `event_start_time`, `event_timezone`, `client_id`, `status`, `contractor_profiles.preferred_name`, `contractor_profiles.phone`) all verified against `schema.sql`.
 
 ---
 
@@ -1140,7 +1213,7 @@ git commit -m "docs: README + ARCHITECTURE updates for Touch 2.2"
 
 Plan complete and saved to `docs/superpowers/plans/2026-05-25-last-minute-staffing-confirmation.md`. Two execution options:
 
-1. **Subagent-Driven (recommended)**, I dispatch a fresh subagent per task, review between tasks, fast iteration.
-2. **Inline Execution**, I execute tasks in this session using executing-plans, batch execution with checkpoints.
+1. **Subagent-Driven (recommended)**, fresh subagent per task, review between tasks, fast iteration.
+2. **Inline Execution**, execute tasks in this session using executing-plans, batch execution with checkpoints.
 
 Which approach?
