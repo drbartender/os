@@ -81,9 +81,9 @@ Time-to-event drives mode. Boundaries are computed in hours, not day-rounded:
 
 ### 3.8 Calendar sync
 
-- ICS feed endpoint at `/cal/{slug}.ics` serves the staffer's confirmed shifts as VEVENT entries plus an all-day reminder 3 days before any unconfirmed BEO. Past shifts roll off after 30 days. Feed refreshes every 15 minutes (server-side cache or client-side polling, not real-time push).
+- The existing ICS feed at `GET /api/calendar/feed/:token` (`server/routes/calendar.js:286`) is the one we extend; no new feed route. The feed already serves the staffer's confirmed shifts as VEVENT entries. This spec adds all-day VEVENT reminders 3 days before any unconfirmed BEO. Past shifts roll off after 30 days. Feed refreshes every 15 minutes (existing `Cache-Control: private, max-age=900` header on the route).
 - Account / Calendar sync section shows three one-tap subscribe buttons (Google Calendar, Apple Calendar, Outlook) deep-linking to the calendar app with the feed URL pre-loaded, plus the raw URL with a Copy button, plus a last-sync status block (which calendar app, how long ago, event count).
-- The `slug` reuses the existing `tip_card_slug` from staff-payments. No new identifier.
+- The token is the existing `users.calendar_token UUID UNIQUE DEFAULT gen_random_uuid()` (separate from the tip-page token, which lives on `payment_profiles.tip_page_token` and is only assigned when the staffer activates tipping). Rotation via the existing `POST /api/calendar/regenerate-token` route.
 
 ## 4. Non-goals
 
@@ -111,17 +111,37 @@ Time-to-event drives mode. Boundaries are computed in hours, not day-rounded:
 
 Merged to main 2026-05-25 (`089b9cd Merge branch 'staff-payments'`). Shipped: `pay_periods`, `payouts`, `payout_events`, `payout_events.shift_id`, gratuity-split logic, `card_tip_*_cents` columns, late-tip roll-forward, auto-clawback on refund / dispute, processing → paid lifecycle, mark-paid action with method-aware QR + deep link. Existing endpoints (GET payouts list / detail) feed the new Pay tab and PayoutDetail.
 
-### 5.4 Tip-card slug + handles
+### 5.4 Tip-card token + handles
 
-`MyTipPage.js` shipped: per-staffer slug, public `/tip/{slug}` page, handle editor for Venmo / Cash App / PayPal. The slug is permanent once assigned and printed on physical QR cards; this spec keeps that contract intact.
+`MyTipPage.js` shipped against `payment_profiles.tip_page_token UUID` (nullable; only set when the staffer activates tipping) + `payment_profiles.tip_page_active BOOLEAN`. Public route `GET /tip/:token`. Server route `GET /api/me/tip-page` at `server/routes/me.js:70` projects token, active flag, all handle columns (`venmo_handle`, `cashapp_handle`, `paypal_url`, `stripe_payment_link_url`), `preferred_payment_method`, and a monthly tip count from `tips`. The token is permanent once assigned and printed on physical QR cards; this spec keeps that contract intact and extends the same route with the additional fields the new TipCardPage needs.
 
-### 5.5 Schema fields already collected
+### 5.5 Schema fields already in place
 
-`contractor_profiles` already has: `preferred_name`, `phone`, `email`, `birth_*`, `city`, `state`, `street_address`, `zip_code`, `emergency_contact_name` + `_phone` + `_relationship`, `alcohol_certification_file_url` + `_filename`, `resume_file_url`, `headshot_file_url`, equipment booleans, `travel_distance`, `reliable_transportation`. **Mailing address columns exist** (we don't need to add them; we just need to expose editing of them on the staff portal). Legal name lives on `applications.full_name` and `agreements.full_name` (NOT on contractor_profiles); reading requires a JOIN. `users.email`, `users.onboarding_status` (extended with `suspended` and `deactivated` values), `users.notifications_opt_in` (existing single boolean, replaced by the new JSONB).
+What is actually in the codebase as of this branch (verified against `server/db/schema.sql` and route files):
+
+**Contractor profile data** lives on `contractor_profiles`: `preferred_name`, `phone`, `email`, `birth_month/day/year`, `city`, `state`, `street_address`, `zip_code`, `emergency_contact_name` + `_phone` + `_relationship`, `alcohol_certification_file_url` + `_filename`, `resume_file_url` + `_filename`, `headshot_file_url` + `_filename`, equipment booleans, `travel_distance`, `reliable_transportation`. Mailing address is a composite of four columns (`street_address`, `city`, `state`, `zip_code`); the staff-portal Profile UI renders one address field but the backend reads/writes all four.
+
+**Staff payment data** lives on `payment_profiles` (one row per user, NOT on `contractor_profiles`). Existing columns: `preferred_payment_method TEXT` (values like `'venmo'`, `'cashapp'`, `'paypal'`, `'direct_deposit'`, `'check'`), `payment_username TEXT`, `routing_number TEXT`, `account_number TEXT` (both currently plaintext, see section 12), `w9_file_url VARCHAR(500)`, `w9_filename VARCHAR(255)`, `venmo_handle TEXT`, `cashapp_handle TEXT`, `paypal_url TEXT`, `tip_page_token UUID` (nullable), `tip_page_active BOOLEAN DEFAULT TRUE`, `stripe_payment_link_url TEXT`, `stripe_payment_link_id TEXT`. The W-9 file lives on `payment_profiles`, NOT `contractor_profiles`. This spec adds one column (`zelle_handle TEXT`) and reuses everything else, no new payment-methods table.
+
+**Legal name** lives on `applications.full_name` (NOT NULL) and on `agreements.full_name` (the signed contractor agreement). It is NOT on `contractor_profiles` or `users`. Reading requires a LEFT JOIN through `applications`.
+
+**`users.notification_preferences`** ALREADY EXISTS as a NOT NULL JSONB column (`server/db/schema.sql:2232`) populated with a default of 11 admin-side notification category booleans (urgent_booking, urgent_consult, urgent_staffing, urgent_client_reply, payment_failure, feedback, system_error, routine_admin, routine_thumbtack, routine_hiring, routine_finance). The endpoints `GET /api/me/notification-preferences` (auth) and `PATCH /api/me/notification-preferences` (`requireAdminOrManager`) exist at `server/routes/me.js:210` and `:227`. **Staff are not notification recipients today through this surface.** This spec adds a SEPARATE column `users.staff_notification_preferences` and SEPARATE endpoints for staff prefs; the existing admin column and admin endpoints are untouched.
+
+**`users.communication_preferences`** is the top-level kill switch: `{ sms_enabled, email_enabled, marketing_enabled }`. NOT NULL JSONB. The critical-path-override logic in section 6.13 must respect this (a staffer who turns off SMS globally cannot have it forced back on by a critical-path category).
+
+**`users.calendar_token`** EXISTS as `UUID UNIQUE DEFAULT gen_random_uuid()` for every user (`server/db/schema.sql:269`). The route `GET /api/calendar/feed/:token` ALREADY exists at `server/routes/calendar.js:286` (~477 lines of working code with rate limiting, ETag / Last-Modified, staff vs admin projection). This spec extends that feed, it does NOT create a parallel one.
+
+**`users.onboarding_status`** CHECK enum at `server/db/schema.sql:25` is `IN ('in_progress','applied','interviewing','hired','rejected','submitted','reviewed','approved','deactivated')`. **`'suspended'` is NOT present today.** This spec adds it via the schema additions in section 7.
+
+**`scheduled_messages.channel`** CHECK at `server/db/schema.sql:2309` is `IN ('email','sms')`. **`'push'` is NOT present today.** This spec widens it.
+
+**`pay_periods.status`** CHECK at `server/db/schema.sql:2531` is `IN ('open','processing','paid')`. The drop endpoint's processing-period guard reads this value.
+
+**`payouts`** records carry inline snapshots: `payment_method TEXT` + `payment_handle TEXT` per row. A paid stub is self-contained, changing a staffer's preferred handle later does not retroactively change paid payouts. This is the rationale for NOT introducing a separate payment-methods table.
 
 ### 5.6 Existing comms infrastructure
 
-`scheduled_messages` dispatcher with `checkSuppression` (cascades on `proposals.status='archived'` etc.), `registerHandler({ offsetFromEventDate, anchor, category, priority })`, the `urgent_staffing` admin-notification category (already wired to email + SMS), `sendAndLogSms`, `notifyAdminCategory`. Phase 4a staff SMS handlers (shift_reminder, staff_thank_you, shift_unassignment_notice, etc.) already exist. The new Cover-Needed broadcasts ride this infrastructure.
+`scheduled_messages` dispatcher with `checkSuppression` (cascades on `proposals.status='archived'` etc.), `registerHandler({ offsetFromEventDate, anchor, category, priority })`, the `urgent_staffing` admin-notification category (already wired to email + SMS), `sendAndLogSms`, `notifyAdminCategory`. Phase 4a staff SMS handlers (shift_reminder, staff_thank_you, shift_unassignment_notice, etc.) already exist. The new Cover-Needed broadcasts ride this infrastructure. The `category` column on `scheduled_messages` already accepts `'operational' | 'marketing'`; the `channel` column accepts `'email' | 'sms'` today and is widened to include `'push'` by this spec.
 
 ## 6. Architecture
 
@@ -136,7 +156,7 @@ Merged to main 2026-05-25 (`089b9cd Merge branch 'staff-payments'`). Shipped: `p
 - Menu items: Edit profile, Calendar sync, Notification preferences, Get support, Sign out (red).
 - Each item dispatches the corresponding route: profile / payments / calendar / notif / docs sub-section, or `mailto:staff@drbartender.com`, or the sign-out action.
 
-**URL space.** The new routes mount under `StaffSiteRoutes` (already wrapped by `RequirePortal + StaffLayout` per the spec's earlier reading of `App.js`). The wrapper changes to `RequirePortal + StaffShell`. The new mount table:
+**URL space.** `App.js` exposes two staff-portal route blocks: `HiringRoutes()` (line 246, mounted when `context==='hiring'`) and `StaffSiteRoutes()` (line 296, mounted when `context==='staff'`). Both wrap their staff routes in `<RequirePortal><StaffLayout/></RequirePortal>` at lines 271 and 314. This spec updates BOTH wrappers to `<RequirePortal><StaffShell/></RequirePortal>` so the new portal renders on both subdomain contexts (the hiring subdomain hosts staff routes for new hires immediately post-onboarding). The new mount table:
 
 | URL | Component | Tab active |
 |---|---|---|
@@ -310,61 +330,66 @@ Structure:
   - Validate and add
 - **Footer disclaimer** (italic small): *"Card payments settle through Dr. Bartender and appear as card_tip_net_cents on your paystub. It's your responsibility to enter handles correctly. Payments sent to typos are not our liability."*
 
-**Data model.** Replace the flat columns `contractor_profiles.venmo` / `cashapp` / `paypal_url` / etc. with a dedicated `staff_payment_methods` table:
+**Data model.** No new table. The canonical staff-payment row is `payment_profiles` (one row per user). All handles, the W-9, the tip-page token, and the payroll-target indicator already live there. This spec adds one column (`zelle_handle TEXT`) and reuses the rest.
 
-```sql
-CREATE TABLE IF NOT EXISTS staff_payment_methods (
-  id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  kind VARCHAR(50) NOT NULL CHECK (kind IN ('venmo', 'cashapp', 'paypal', 'zelle', 'direct_deposit', 'check')),
-  handle VARCHAR(500),                 -- @rosa, $rosa, paypal.me/x, email/phone for Zelle; null for check
-  bank_routing_encrypted VARCHAR(500), -- direct_deposit only, encrypted via server/utils/encryption.js
-  bank_account_encrypted VARCHAR(500), -- direct_deposit only, encrypted
-  bank_account_last4 VARCHAR(4),       -- last 4 of the account # for masked display
-  is_preferred_payroll BOOLEAN DEFAULT false,
-  display_order INTEGER,               -- for the tip card chooser ordering (NULL for payroll-only)
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE (user_id, kind, handle)       -- prevent duplicate handles for the same user/kind
-);
-CREATE INDEX IF NOT EXISTS idx_spm_user ON staff_payment_methods(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_spm_preferred_payroll_unique
-  ON staff_payment_methods(user_id) WHERE is_preferred_payroll = true;
-```
+The seven payment methods the UI surfaces map onto `payment_profiles` columns as follows:
 
-Migration: a one-time pass copies the existing flat handle columns from `contractor_profiles` into rows of `staff_payment_methods`, then the flat columns are deprecated (kept for one release for safety, dropped in a follow-up). The existing `users.payment_handles` JSON (if any) on the staff-payments side is the canonical pre-migration source.
+| UI method | Column read / written | Notes |
+|---|---|---|
+| Card | n/a (conceptual row, no DB representation) | Always-on, non-deletable, settled through the platform |
+| Venmo | `venmo_handle TEXT` | Existing column |
+| Cash App | `cashapp_handle TEXT` | Existing column |
+| PayPal | `paypal_url TEXT` | Existing column (full URL, not just a handle) |
+| Zelle | `zelle_handle TEXT` | **New column added in section 7** |
+| Direct deposit | `routing_number TEXT` + `account_number TEXT` | Existing columns. v1.5 encrypts on edit (see section 12) |
+| Check | (no handle data; preferred-only) | Indicated by `preferred_payment_method='check'` only |
 
-The Card payments row is conceptual, it's a row in the UI that does not correspond to a `staff_payment_methods` table row. The UI always renders it. Tip card display order persists in `users.ui_preferences.tip_card_order` as the array of method IDs the user has actively reordered (Card always implied in the list, position determined by where the user placed the literal `'card'` token in the order array, or first if absent).
+**Payroll target.** `payment_profiles.preferred_payment_method TEXT` already holds the active payroll route. Values: `'venmo' | 'cashapp' | 'paypal' | 'zelle' | 'direct_deposit' | 'check'`. The "Set as preferred" action on a row writes this column. There is no separate `is_preferred_payroll` flag (the column itself is the source of truth, and is single-valued by construction). When the user clears the handle for the currently-preferred method, the server auto-flips `preferred_payment_method` to `NULL` and surfaces a Profile warning chip on the next portal load.
 
-**Endpoints:**
+**Tip card display order.** Persists on `users.ui_preferences.tip_card_order` as an array of method tokens, e.g. `['venmo', 'card', 'cashapp', 'paypal']`. The `'card'` token is always implicit, position determined by where the user placed it (default first if absent). Reorder writes the full array on each save.
 
-- `GET /api/me/payment-methods`, returns the staffer's methods array plus the always-on card-payment row in the canonical position per their saved order.
-- `POST /api/me/payment-methods`, creates a new row.
-- `PATCH /api/me/payment-methods/:id`, updates handle / routing / account / is_preferred_payroll. When `is_preferred_payroll=true` is set, the route runs in a transaction that flips the previously-preferred row to false (the partial unique index above is defense-in-depth).
-- `DELETE /api/me/payment-methods/:id`, removes. If the removed row was preferred-payroll, the route auto-promotes the first remaining payroll-eligible method to preferred. If no payroll-eligible methods remain, payroll stays unset (admin gets a notification on the next pay run; out of scope for v1 to auto-handle).
-- `PUT /api/me/tip-card-order`, body is `{ order: ['card', 'venmo', ...] }`. Saves to `users.ui_preferences.tip_card_order`. Validates that every method in the order array maps to an existing payment method (or `'card'`); rejects with 400 otherwise.
+**Payouts unaffected.** Past payouts already snapshot `payment_method` + `payment_handle` per row on `payouts`. Editing a handle today does not retroactively change a paid stub, which is why the canonical `payment_profiles` row (rather than a multi-row table) is sufficient.
+
+**Endpoints** (all on `server/routes/me.js`, auth-gated, scoped by `req.user.id`):
+
+- `GET /api/me/payment-methods`, projects every handle column from `payment_profiles` plus `preferred_payment_method` and the conceptual Card row metadata. The Card row is server-rendered with a stable shape so the client doesn't need to know whether it's a real DB row.
+- `PATCH /api/me/payment-methods`, body is a partial map: `{ venmo_handle?, cashapp_handle?, paypal_url?, zelle_handle?, routing_number?, account_number?, payment_username? }`. Writes only the keys present; null clears. Validates Venmo / Cash App / PayPal formats server-side via `server/utils/tipHandleValidation.js` (the existing util used by the tip-page route). For routing/account, validates ABA checksum on routing and length on account.
+- `PUT /api/me/preferred-payment-method`, body is `{ method: 'venmo' | 'cashapp' | 'paypal' | 'zelle' | 'direct_deposit' | 'check' }`. Validates that the corresponding handle column is populated (rejects 400 with `{field: 'venmo_handle', error: 'Add a Venmo handle before setting it as preferred.'}` if not). Writes `payment_profiles.preferred_payment_method`.
+- `PUT /api/me/tip-card-order`, body is `{ order: ['venmo', 'card', 'cashapp', 'paypal'] }`. Writes to `users.ui_preferences.tip_card_order`. Validates that every token in the order array is one of `{'card', 'venmo', 'cashapp', 'paypal', 'zelle'}`; rejects 400 otherwise.
+
+**Delete semantics.** Tip-eligible handle deletion = `PATCH /api/me/payment-methods` with the relevant field set to null. If the deleted handle was the preferred-payroll target, server clears `preferred_payment_method` to NULL in the same transaction. No DELETE endpoint required.
+
+**No data migration needed.** All handle columns already exist on `payment_profiles`. The only schema change is the new `zelle_handle` column (idempotent ALTER). Existing tip-page flows continue to work because they read the same columns.
 
 ### 6.12 AccountPage / Calendar sync
 
-Three subscribe buttons:
+**Reuses existing infrastructure.** `server/routes/calendar.js:286` already implements `GET /api/calendar/feed/:token` against `users.calendar_token UUID UNIQUE DEFAULT gen_random_uuid()` (assigned to every user). Rate limiting, ETag / Last-Modified, role-aware projection (staff see only their approved shifts; admins see everything), and token rotation (`POST /api/calendar/regenerate-token`) all ship. This spec extends the existing feed, it does not create a parallel one.
 
-- Google Calendar (deep link: `https://calendar.google.com/calendar/r?cid=<encoded https feed url>`)
-- Apple Calendar (deep link: `webcal://staff.drbartender.com/cal/{slug}.ics`)
-- Outlook (deep link to Outlook's subscription URL with the feed pre-filled)
+Three subscribe buttons (deep links composed against the existing feed URL):
 
-Subscription URL block below the buttons: read-only URL + a Copy button (toggles to a "Copied" checkmark for 1.8 seconds).
+- Google Calendar: `https://calendar.google.com/calendar/r?cid=<encoded https feed url>`
+- Apple Calendar: `webcal://<api-host>/api/calendar/feed/<token>` (webcal scheme triggers the OS calendar subscribe sheet)
+- Outlook: Outlook's subscription URL with the feed pre-filled
 
-Footer note: *"Refreshes every 15 minutes. Includes all confirmed shifts, plus an all-day reminder 3 days before any unconfirmed BEO. Past shifts roll off after 30 days."*
+Subscription URL block below the buttons: read-only URL (the existing `/api/calendar/feed/:token` URL) + a Copy button (toggles to a "Copied" checkmark for 1.8 seconds). A "Regenerate URL" affordance below the Copy button calls the existing `POST /api/calendar/regenerate-token` route, with a confirm dialog warning that previously-subscribed apps will stop syncing.
 
-"Last sync" sub-section: shows which calendar app subscribed (detected via referrer or stored in `users.ui_preferences.calendar_subscribed_app`), how long ago it pulled the feed (server tracks `last_ics_fetch_at` per slug), and an event count. A Disconnect button clears the tracked state.
+Footer note: *"Refreshes every 15 minutes. Includes your confirmed shifts, plus an all-day reminder 3 days before any unconfirmed BEO. Past shifts roll off after 30 days."*
 
-**ICS feed endpoint** at `GET /api/cal/{slug}.ics`. Public route (the slug is the auth, same model as `/tip/{slug}`). Returns text/calendar with a stable PRODID. VEVENT entries:
+"Last sync" sub-section: shows the last time the calendar app pulled the feed (server tracks `users.last_ics_fetch_at` per user) and which app subscribed (detected via User-Agent on each fetch, persisted to `users.ui_preferences.calendar_subscribed_app`). A Disconnect button clears the tracked state but does NOT rotate the token (use the explicit Regenerate URL action for that).
 
-- Every approved shift_request on a non-cancelled shift in the future, plus past shifts within the last 30 days.
-- Each shift becomes a VEVENT with DTSTART = shift_event_start, DTEND = shift_event_end, SUMMARY = client name + event type, LOCATION = event_location, DESCRIPTION = role + setup notes + a deep link to `https://staff.drbartender.com/shifts/{id}`.
-- Plus an all-day VEVENT 3 days before any unconfirmed BEO (one all-day VEVENT per affected shift, with TRANSP:TRANSPARENT so it doesn't block the day visually): SUMMARY = "Confirm BEO: [client]", DESCRIPTION includes the link.
+**Feed extensions for the staff portal.** The existing `buildCalendarFeed` builder in `server/routes/calendar.js` is extended to also emit:
 
-Cache header: `Cache-Control: private, max-age=900` (15 min). On every fetch, server updates `users.last_ics_fetch_at = NOW()` and `users.ui_preferences.calendar_subscribed_app` based on the User-Agent (Google fetches from `Calendar.google.com`, Apple from `iCal/macOS` or `iOS/`, Outlook from `Microsoft Office/Outlook`).
+- All-day VEVENTs 3 days before each unconfirmed-BEO shift: `DTSTART;VALUE=DATE = (shift_event_date - 3 days)`, `TRANSP:TRANSPARENT` (does not block the day visually), SUMMARY = `"Confirm BEO: <client>"`, DESCRIPTION includes a deep link to `https://staff.drbartender.com/shifts/<id>`. One all-day VEVENT per affected shift.
+- The shift-level VEVENTs (already in the feed) gain the staff-portal deep link in their DESCRIPTION field for staff projections.
+
+Source of "unconfirmed BEO": `drink_plans.finalized_at IS NOT NULL AND shift_requests.beo_acknowledged_at IS NULL` (the BEO spec's existing fields).
+
+**Per-fetch side effects** (already implemented in `calendar.js`; this spec extends only the projection):
+
+- `users.last_ics_fetch_at = NOW()` on every successful fetch
+- `users.ui_preferences.calendar_subscribed_app` is set per the User-Agent (Google fetches from `Calendar.google.com`, Apple from `iCal/macOS` or `iOS/`, Outlook from `Microsoft Office/Outlook`)
+
+Cache header is already `Cache-Control: private, max-age=900`.
 
 ### 6.13 AccountPage / Notifications
 
@@ -387,7 +412,7 @@ Push column behavior:
 - iOS coachmark modal: 3-step list with icons (Share button → Add to Home Screen → Open from home screen → return here to toggle push), with a single "Got it" button to dismiss.
 - Toggling a push cell on for the first time triggers `Notification.requestPermission()`. If denied, toggle stays off and banner state becomes "denied."
 
-**Backend.** Add a JSONB column `users.notification_preferences` with the per-category × per-channel toggle state plus a sub-object for push subscriptions:
+**Backend.** Add a NEW JSONB column `users.staff_notification_preferences` (separate from the existing admin-categories `users.notification_preferences`). Shape:
 
 ```json
 {
@@ -408,20 +433,27 @@ Push column behavior:
 }
 ```
 
-Endpoints:
+Why a new column rather than reusing the existing `users.notification_preferences`: that column is a NOT NULL JSONB pre-populated with 11 admin-side category booleans. Its PATCH route is `requireAdminOrManager`. Both the shape (flat key:boolean vs. nested channels[]) and the auth guard differ. Mixing staff prefs into it would either break the admin contract or require a polymorphic shape; a separate column is cleaner.
 
-- `GET /api/me/notification-preferences`, returns the JSONB plus the browser-permission-state-derived flags (server can't know browser state, so the client computes those locally and the GET just returns saved prefs).
-- `PATCH /api/me/notification-preferences`, partial update. Body merges into the existing JSONB. Use `jsonb_set` for atomic per-key updates so concurrent saves from multiple devices don't clobber.
-- `POST /api/me/push-subscriptions`, body is a `PushSubscription` JSON from the browser. Append to the `push_subscriptions` array. Returns 200.
-- `DELETE /api/me/push-subscriptions`, body is `{ endpoint: '...' }`. Remove the matching subscription.
+New endpoints (`server/routes/staffPortal.js`, auth-gated, no admin guard, scoped by `req.user.id`):
 
-**Critical-path override.** Three categories are critical: `beo_finalized`, `schedule_change`, `payday`. The dispatcher's channel-routing helper (`pickChannelsForUserAndCategory(userId, category)`) enforces: if ALL of a critical category's channels are toggled off in the user's prefs, fall back to a single deterministic channel (SMS for shift-related, email for payday). The UI surfaces this with the footer copy: *"Critical-path messages. BEO finalized, schedule changes, payday, can't be fully muted. We'll deliver them through whatever channel is still on."*
+- `GET /api/me/staff-notifications`, returns the JSONB (initialized to a default if NULL). Browser-permission flags are computed client-side.
+- `PATCH /api/me/staff-notifications`, partial update. Body merges into the existing JSONB. Use `jsonb_set` for atomic per-key updates so concurrent saves from multiple devices don't clobber.
+- `POST /api/me/push-subscriptions`, body is a `PushSubscription` JSON from the browser plus the User-Agent. Appends to `staff_notification_preferences.push_subscriptions[]`. Returns 200.
+- `DELETE /api/me/push-subscriptions`, body is `{ endpoint: '...' }`. Removes the matching subscription.
 
-**Dispatcher integration.** Extend `scheduleMessage` and the dispatcher's per-row send logic:
+**Top-level kill switch.** `users.communication_preferences` is honored at the dispatcher level BEFORE category-level routing runs. If `sms_enabled=false`, every SMS row is suppressed regardless of category preferences. Same for `email_enabled`. Push has no top-level kill switch (the user owns it via their browser permission). Quiet hours, if non-null, suppress non-critical pushes during the window.
 
-- When inserting a `scheduled_messages` row for a categorized event, the route or scheduler stores the `category` (existing) but does NOT pre-resolve the channel. Instead it stores `channel='auto'`.
-- At dispatch time, the dispatcher calls `pickChannelsForUserAndCategory` to resolve the actual channel(s). If push is preferred AND the user has an active subscription, try push first; on failure (subscription expired / unreachable), fall back to the next channel in priority order (SMS > email).
-- Existing rows with explicit `channel='sms'` continue to work as before (no auto-resolve).
+**Critical-path override.** Three categories are critical: `beo_finalized`, `schedule_change`, `payday`. The dispatcher's channel-routing helper (`pickChannelsForUserAndCategory(userId, category)`) enforces: if ALL of a critical category's channels are toggled off in the user's prefs, fall back to a single deterministic channel (SMS for shift-related, email for payday). This fallback is itself gated by `communication_preferences`, if the user has turned off SMS globally, the critical-path override picks email instead, and if both are off, falls back to push (sub-bullet: a UI-side guard prevents users from disabling BOTH SMS and email globally with critical-path categories opted out of push, but the dispatcher must still degrade gracefully if it happens). Footer copy: *"Critical-path messages. BEO finalized, schedule changes, payday, can't be fully muted. We'll deliver them through whatever channel is still on."*
+
+**Dispatcher integration.** The cleanest pattern is **multi-row scheduling at enqueue time**, not `channel='auto'` resolution at dispatch time. Reasoning: `scheduled_messages.channel` has a CHECK constraint (`IN ('email','sms')` today, widened to `'push'` by section 7). An 'auto' value would either break the constraint or require carrying a parallel "resolved_channel" column. Instead:
+
+- When a category-driven message is scheduled, the helper `enqueueCategorizedMessage(userId, category, payload)` resolves the channel set via `pickChannelsForUserAndCategory` at scheduling time and inserts ONE `scheduled_messages` row per resolved channel (e.g., a `beo_finalized` event for a staffer opted-in to push + SMS produces two rows: one with `channel='push'`, one with `channel='sms'`).
+- The dispatcher re-checks `communication_preferences` at send time and skips the row if the channel kill switch has flipped to false since enqueue.
+- Suppression cascade (the existing `checkSuppression`) prevents duplicate delivery if the same logical event is already covered by another row (e.g., a manual SMS already sent).
+- For push specifically: each row's send call iterates the user's `push_subscriptions[]`. A 410 Gone or 404 response auto-prunes the dead subscription from the JSONB (`jsonb_set` with the filtered array).
+
+Existing rows with `channel='sms'` or `'email'` continue to work unchanged; the new code path is additive.
 
 ### 6.14 AccountPage / Documents
 
@@ -450,7 +482,11 @@ Two main sections + a small "Other archives" cross-link section.
 3. Modal sub: "The new file becomes your active record. Choose a PDF or photo."
 4. File picker (accept `.pdf,.png,.jpg,.jpeg`); after selection, the chosen file's name + size shows in the modal.
 5. Buttons: Cancel / Replace (primary, disabled until a file is chosen).
-6. On Replace, POST to `POST /api/me/documents/:doc_type/replace` (multipart). Backend uploads the new file to R2, sets the new URL on `contractor_profiles` for the active record, and appends an entry to a new `staff_document_history` table:
+6. On Replace, POST to `POST /api/me/documents/:doc_type/replace` (multipart). `doc_type` is `'w9'` or `'alcohol_certification'`. Backend uploads the new file to R2, then writes the new URL + filename to the correct active record column:
+   - `doc_type='w9'` → `payment_profiles.w9_file_url` + `payment_profiles.w9_filename` (NOT `contractor_profiles`)
+   - `doc_type='alcohol_certification'` → `contractor_profiles.alcohol_certification_file_url` + `contractor_profiles.alcohol_certification_filename`
+
+   Before the active-record write, the route snapshots the previous URL + filename into a new `staff_document_history` row:
 
 ```sql
 CREATE TABLE IF NOT EXISTS staff_document_history (
@@ -506,7 +542,7 @@ Replaced wholesale. Delete in the same change:
 2. Browser prompts for permission.
 3. On grant, the client subscribes: `await navigator.serviceWorker.register('/staff-sw.js')` then `await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: VAPID_PUBLIC_KEY })`.
 4. The resulting `PushSubscription` JSON is POSTed to `/api/me/push-subscriptions`.
-5. Backend appends to `users.notification_preferences.push_subscriptions[]`.
+5. Backend appends to `users.staff_notification_preferences.push_subscriptions[]`.
 
 **Sending:**
 
@@ -522,67 +558,85 @@ The BEO spec's `GET /api/beo/:proposalId` response includes a `shift_requests` a
 
 - For each approved shift_request on a non-cancelled shift linked to the proposal:
   - `user_id`
-  - `name` (full name from `users` / `applications` for first + last initial computation client-side)
-  - `initials` (computed from name; both first letters)
+  - `display_name` (composed server-side: `contractor_profiles.preferred_name` if set, else first token + last-initial of `applications.full_name` joined via `users.id = applications.user_id`; falls back to email-local-part if neither is set). The first + last-initial computation happens server-side so the client receives a presentation-ready string.
+  - `initials` (computed server-side from the same name source; two characters)
   - `is_me` boolean (true when `user_id === req.user.id`)
-  - `role` from `shift_requests.position` (defaulting to 'Bartender' when null)
-  - `phone` from `contractor_profiles.phone` (E.164 or formatted)
+  - `role` from `shift_requests.position` (defaulting to `'Bartender'` when null)
+  - `phone` from `contractor_profiles.phone` (E.164)
   - `needs_cover` boolean (true when `shift_requests.cover_requested_at IS NOT NULL`)
 
 Phone is teammate PII visible to anyone on the same gig, fine for coworkers (already exposed via `shift_reminder` SMS) but the BEO response surface widens slightly per the BEO spec section 7.1.
 
 ## 7. Schema additions
 
-All idempotent and additive. No data loss.
+All idempotent and additive. No data loss. Every ALTER is `IF NOT EXISTS`-style; every constraint widening goes through `DROP CONSTRAINT IF EXISTS` then `ADD CONSTRAINT` inside a `DO $$ EXCEPTION WHEN OTHERS THEN NULL` block, matching the existing patterns in `server/db/schema.sql`.
 
 ```sql
--- Theme + tip-card order + calendar subscription tracking
-ALTER TABLE users ADD COLUMN IF NOT EXISTS ui_preferences JSONB DEFAULT '{}'::jsonb;
+-- Theme + tip-card order + calendar subscribed-app tracking
+ALTER TABLE users ADD COLUMN IF NOT EXISTS ui_preferences JSONB
+  NOT NULL DEFAULT '{}'::jsonb;
+
+-- Per-user last calendar-feed fetch timestamp (powers the Account / Calendar "Last sync" panel)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ics_fetch_at TIMESTAMPTZ;
 
--- Notification preferences with push subscription storage
-ALTER TABLE users ADD COLUMN IF NOT EXISTS notification_preferences JSONB DEFAULT '{}'::jsonb;
--- The existing notifications_opt_in BOOLEAN column is preserved for backwards
--- compatibility; one-time migration copies its value into the new prefs JSON.
+-- Staff-side per-category × per-channel notification routing + push subscriptions
+-- (separate from the existing admin-only users.notification_preferences)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_notification_preferences JSONB
+  NOT NULL DEFAULT jsonb_build_object(
+    'channels', jsonb_build_object(
+      'shift_offered',   '["push","sms","email"]'::jsonb,
+      'shift_decided',   '["push","sms"]'::jsonb,
+      'cover_needed',    '["push"]'::jsonb,
+      'beo_finalized',   '["push","sms","email"]'::jsonb,
+      'beo_reminder_t3', '["push","sms"]'::jsonb,
+      'schedule_change', '["push","sms","email"]'::jsonb,
+      'payday',          '["sms","email"]'::jsonb,
+      'tip_received',    '["push"]'::jsonb
+    ),
+    'push_subscriptions', '[]'::jsonb,
+    'quiet_hours', 'null'::jsonb
+  );
 
--- Drop / cover marketplace
+-- Widen onboarding_status enum to include 'suspended' (active staff who break the rules)
+DO $$ BEGIN
+  ALTER TABLE users DROP CONSTRAINT IF EXISTS users_onboarding_status_check;
+  ALTER TABLE users ADD CONSTRAINT users_onboarding_status_check
+    CHECK (onboarding_status IN (
+      'in_progress','applied','interviewing','hired','rejected',
+      'submitted','reviewed','approved','suspended','deactivated'
+    ));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- Widen scheduled_messages.channel enum to include 'push'
+DO $$ BEGIN
+  ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_channel_check;
+  ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_channel_check
+    CHECK (channel IN ('email','sms','push'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- Drop / cover marketplace columns on shift_requests
 ALTER TABLE shift_requests
   ADD COLUMN IF NOT EXISTS cover_requested_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS cover_reason TEXT,
   ADD COLUMN IF NOT EXISTS dropped_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS drop_reason TEXT,
-  ADD COLUMN IF NOT EXISTS drop_emergency BOOLEAN DEFAULT false;
+  ADD COLUMN IF NOT EXISTS drop_emergency BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS replaced_by_request_id INTEGER REFERENCES shift_requests(id) ON DELETE SET NULL;
 
 CREATE INDEX IF NOT EXISTS idx_shift_requests_cover_requested
   ON shift_requests(cover_requested_at) WHERE cover_requested_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_shift_requests_dropped
+  ON shift_requests(dropped_at) WHERE dropped_at IS NOT NULL;
 
--- Payment methods table (replacing the flat contractor_profiles handle columns)
-CREATE TABLE IF NOT EXISTS staff_payment_methods (
-  id SERIAL PRIMARY KEY,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  kind VARCHAR(50) NOT NULL CHECK (kind IN ('venmo', 'cashapp', 'paypal', 'zelle', 'direct_deposit', 'check')),
-  handle VARCHAR(500),
-  bank_routing_encrypted VARCHAR(500),
-  bank_account_encrypted VARCHAR(500),
-  bank_account_last4 VARCHAR(4),
-  is_preferred_payroll BOOLEAN DEFAULT false,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE (user_id, kind, handle)
-);
-CREATE INDEX IF NOT EXISTS idx_spm_user ON staff_payment_methods(user_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_spm_preferred_payroll_unique
-  ON staff_payment_methods(user_id) WHERE is_preferred_payroll = true;
+-- One new handle column on payment_profiles (Zelle); all other handle columns and the W-9 columns
+-- already exist on payment_profiles (verified against server/db/schema.sql:129+ and :2000+).
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS zelle_handle TEXT;
 
-DROP TRIGGER IF EXISTS update_staff_payment_methods_updated_at ON staff_payment_methods;
-CREATE TRIGGER update_staff_payment_methods_updated_at BEFORE UPDATE ON staff_payment_methods
-  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- Alcohol certification expiry tracking
+-- Alcohol certification expiry tracking (for the 60-day expires-soon nudge)
 ALTER TABLE contractor_profiles
   ADD COLUMN IF NOT EXISTS alcohol_certification_expires_on DATE;
 
--- Document replace history
+-- Document replace history (snapshot of the previous file before a Replace overwrites the active record)
 CREATE TABLE IF NOT EXISTS staff_document_history (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -593,64 +647,37 @@ CREATE TABLE IF NOT EXISTS staff_document_history (
   replaced_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sdh_user ON staff_document_history(user_id);
-
--- W-9 file URL: confirm it exists (if not, add)
-ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS w9_file_url VARCHAR(500);
-ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS w9_filename VARCHAR(255);
 ```
 
-**Migrations from existing data.** A one-time data migration (run once after the schema is in place):
+**No data migration.** All payment handle columns and the W-9 columns already exist on `payment_profiles`; this spec only adds `zelle_handle`. The new `staff_notification_preferences` JSONB has a default value via the ALTER statement above, so backfill happens at column-creation time, not via a follow-up `UPDATE`. The existing `users.notifications_opt_in` BOOLEAN (if present) is preserved for backwards compatibility but not read by the new staff portal; admin tooling that references it is unaffected.
 
-```sql
--- Seed staff_payment_methods from existing contractor_profiles / users.payment_handles
-INSERT INTO staff_payment_methods (user_id, kind, handle, is_preferred_payroll)
-SELECT
-  u.id,
-  unnest(ARRAY['venmo', 'cashapp', 'paypal']),
-  unnest(ARRAY[u.payment_handles->>'venmo', u.payment_handles->>'cashapp', u.payment_handles->>'paypal_url']),
-  false
-FROM users u
-WHERE u.payment_handles IS NOT NULL AND u.role = 'staff';
--- Then a follow-up UPDATE to set is_preferred_payroll=true on the row matching users.payment_handles->>'preferred_method'.
+**Tables NOT introduced** (and why):
 
--- Seed notification_preferences from notifications_opt_in
-UPDATE users SET notification_preferences = jsonb_build_object(
-  'channels', jsonb_build_object(
-    'shift_offered',     CASE WHEN notifications_opt_in THEN '["sms","email"]'::jsonb ELSE '[]'::jsonb END,
-    'shift_decided',     CASE WHEN notifications_opt_in THEN '["sms"]'::jsonb           ELSE '[]'::jsonb END,
-    'cover_needed',      '[]'::jsonb,
-    'beo_finalized',     CASE WHEN notifications_opt_in THEN '["sms","email"]'::jsonb ELSE '[]'::jsonb END,
-    'beo_reminder_t3',   CASE WHEN notifications_opt_in THEN '["sms"]'::jsonb           ELSE '[]'::jsonb END,
-    'schedule_change',   CASE WHEN notifications_opt_in THEN '["sms","email"]'::jsonb ELSE '[]'::jsonb END,
-    'payday',            CASE WHEN notifications_opt_in THEN '["sms","email"]'::jsonb ELSE '[]'::jsonb END,
-    'tip_received',      '[]'::jsonb
-  ),
-  'push_subscriptions', '[]'::jsonb
-)
-WHERE notification_preferences = '{}'::jsonb OR notification_preferences IS NULL;
-```
+- ~~`staff_payment_methods`~~: redundant with the existing `payment_profiles` columns. `payouts.payment_method` + `payouts.payment_handle` already snapshot at payout time, so paid stubs are self-contained and a multi-row history is unnecessary.
+- ~~Any new ICS route table~~: the existing `users.calendar_token` + `GET /api/calendar/feed/:token` route handle this.
 
 ## 8. Files
 
 ### 8.1 Server (new)
 
-- `server/routes/staffPortal.js`, composite endpoints used by Home and other pages: `GET /api/me/staff-home`, `GET /api/me/payment-methods`, `POST /api/me/payment-methods`, `PATCH /api/me/payment-methods/:id`, `DELETE /api/me/payment-methods/:id`, `PUT /api/me/tip-card-order`, `PATCH /api/me/profile`, `PATCH /api/me/ui-preferences`, `GET /api/me/notification-preferences`, `PATCH /api/me/notification-preferences`, `POST /api/me/push-subscriptions`, `DELETE /api/me/push-subscriptions`, `POST /api/me/documents/:doc_type/replace`.
-- `server/routes/calendar.js` (or extend the existing one), `GET /api/cal/:slug.ics` public endpoint returning the ICS feed.
-- `server/utils/pushSender.js`, wraps `web-push` npm.
-- `server/utils/notificationChannelResolver.js`, `pickChannelsForUserAndCategory(userId, category)` with critical-path override.
-- `server/utils/icsFeedBuilder.js`, composes VEVENT entries from a staffer's shifts.
+- `server/routes/staffPortal.js`, composite endpoints used by Home and other pages: `GET /api/me/staff-home`, `GET /api/me/payment-methods`, `PATCH /api/me/payment-methods`, `PUT /api/me/preferred-payment-method`, `PUT /api/me/tip-card-order`, `PATCH /api/me/profile`, `PATCH /api/me/ui-preferences`, `GET /api/me/staff-notifications`, `PATCH /api/me/staff-notifications`, `POST /api/me/push-subscriptions`, `DELETE /api/me/push-subscriptions`, `POST /api/me/documents/:doc_type/replace`. All `auth`-gated, no `requireAdminOrManager`, scoped by `req.user.id`. The four drop / cover endpoints (`POST /api/shifts/requests/:id/drop`, `/request-cover`, `/claim-cover`, `/emergency-drop`) live in `server/routes/shifts.js`, not this file.
+- `server/utils/pushSender.js`, wraps `web-push` npm. Exports `sendPush({ subscription, title, body, url, tag, icon })`. Returns `{ ok: true }` on success or `{ ok: false, gone: true }` for 410 / 404 (caller prunes the subscription).
+- `server/utils/notificationChannelResolver.js`, `pickChannelsForUserAndCategory(userId, category) => Promise<string[]>`. Reads `users.staff_notification_preferences` AND `users.communication_preferences` and returns the effective channel set (after kill-switch suppression + critical-path override). Pure helper, no I/O beyond the one user-row read.
+- `server/utils/staffCalendarFeedExt.js`, the VEVENT-list extension that the existing `server/routes/calendar.js` builder calls into to produce the BEO-confirm all-day reminders. Co-located with the existing builder rather than a parallel file.
 - `server/routes/staffPortal.test.js`, endpoint contract tests.
-- `server/utils/pushSender.test.js`, `server/utils/notificationChannelResolver.test.js`, `server/utils/icsFeedBuilder.test.js`.
+- `server/utils/pushSender.test.js`, `server/utils/notificationChannelResolver.test.js`, `server/utils/staffCalendarFeedExt.test.js`.
 
 ### 8.2 Server (modify)
 
 - `server/db/schema.sql`, all schema additions in section 7.
 - `server/routes/shifts.js`, new drop / cover endpoints (`POST /requests/:id/drop`, `/request-cover`, `/claim-cover`, `/emergency-drop`). The existing routes also gain projection updates for the new pages: `GET /shifts` (staff path) adds `drink_plan_finalized_at`, `my_beo_acknowledged_at`, `cover_requested_at`, `cover_for_first_initial`; `GET /shifts/user/:userId/events` adds `payout_id` per past row (computed via a join to `payout_events`).
-- `server/utils/scheduledMessageDispatcher.js`, dispatch-time channel resolution: when a row's `channel='auto'`, call `notificationChannelResolver.pickChannelsForUserAndCategory`. Try push first if granted + subscribed, fall back to SMS / email per the resolved list. Existing explicit-channel rows unaffected.
-- `server/index.js`, mount `/api/me/*`, `/api/cal/*`.
-- `server/utils/staffShiftHandlers.js`, cover-broadcast scheduling helper: when a `request-cover` endpoint fires, schedule one `cover_broadcast` scheduled_messages row per opted-in qualified teammate.
+- `server/routes/calendar.js`, extend `buildCalendarFeed` (the existing builder powering `GET /api/calendar/feed/:token`) to call into `staffCalendarFeedExt` for the all-day "Confirm BEO" VEVENTs on unconfirmed-BEO shifts. No new route, no parallel builder.
+- `server/utils/scheduledMessageDispatcher.js`, three changes: (1) before dispatching any row, re-check `users.communication_preferences` and skip rows whose channel kill switch has been turned off since enqueue; (2) for `channel='push'` rows, iterate `users.staff_notification_preferences.push_subscriptions[]` and call `pushSender.sendPush`; prune subscriptions that return `gone:true`; (3) the existing per-category suppression cascade extends to cover the multi-row push+sms+email enqueue pattern (one logical event = one suppression key).
+- `server/utils/scheduledMessages.js` (the scheduler-side helper), add `enqueueCategorizedMessage(userId, category, payload)` that resolves channels via `notificationChannelResolver` and inserts one `scheduled_messages` row per resolved channel.
+- `server/index.js`, mount `/api/me/*` (the staffPortal router) under the existing app instance. The existing `/api/calendar/*` mount stays.
+- `server/utils/staffShiftHandlers.js`, cover-broadcast scheduling helper: when a `request-cover` endpoint fires, schedule cover-broadcast `scheduled_messages` rows per opted-in qualified teammate via `enqueueCategorizedMessage(teammateId, 'cover_needed', ...)`. The Twilio rate-limit guard from the BEO spec applies (chunked sends, exponential backoff on 429).
 - `server/utils/smsTemplates.js`, new `cover_broadcast_sms` template + `staff_drop_to_management_sms` for the management-side urgent notifications on emergency drops.
-- `server/routes/me.js` (existing), `GET /api/me` extended to include `notification_preferences`, `ui_preferences`, payment methods list, on a single payload so the StaffShell can render without multiple GETs.
+- `server/routes/me.js` (existing), `GET /api/me` extended to include `staff_notification_preferences`, `ui_preferences`, and a flattened payment-methods snapshot, so the StaffShell can render without multiple GETs. The existing `GET /api/me/tip-page` route stays unchanged (now consumed by both TipCardPage and the AccountPage / Payment methods Card-row metadata).
 
 ### 8.3 Client (new)
 
@@ -681,7 +708,7 @@ WHERE notification_preferences = '{}'::jsonb OR notification_preferences IS NULL
 
 ### 8.4 Client (modify)
 
-- `client/src/App.js`, replace the staff route block. Old routes get `<Navigate to=... replace>` redirects for the 30-day grace period.
+- `client/src/App.js`, replace the staff route block in BOTH `HiringRoutes()` (around line 271) and `StaffSiteRoutes()` (around line 314): swap `<StaffLayout/>` for `<StaffShell/>` in each `<Route element>` wrapper, then replace the per-page route children with the new mount table from section 6.1. Old routes get `<Navigate to=... replace>` redirects for the 30-day grace period; the redirect list applies to both blocks.
 - `client/vercel.json`, `staff.drbartender.com` subdomain rewrites stay; add the staff-sw.js path to the cache control (or rely on Vercel default).
 - `client/src/index.css`, pull in the design's CSS tokens / skin-aware variables. The design's `styles.css` from `Dr Bartender (6)/staff/` is the source. Namespace under `[data-skin="light"]` / `[data-skin="dark"]` blocks.
 
@@ -699,7 +726,7 @@ WHERE notification_preferences = '{}'::jsonb OR notification_preferences IS NULL
 ### 8.6 Docs
 
 - `README.md`, folder tree updates (new staff portal files, removed fragments), Key Features (the new portal).
-- `ARCHITECTURE.md`, route table (all the new `/api/me/*` and `/api/cal/:slug.ics` rows), schema section (new tables + columns), notifications model section (channel-routing).
+- `ARCHITECTURE.md`, route table (all the new `/api/me/*` rows plus the extended `/api/calendar/feed/:token`), schema section (new column + constraint widenings + the document-history table), notifications model section (channel-routing + critical-path override + push lifecycle).
 - `CLIENT_FACING_SURFACES.md`, staff portal section overhaul.
 
 ## 9. Phasing
@@ -712,11 +739,11 @@ Phase A is ~3-4 weeks of focused work. Phase B is ~1 week. Both ship as separate
 
 ## 10. Authorization
 
-- All `/api/me/*` endpoints are `auth`-gated and scope every read/write by `req.user.id`. IDOR guard is in the query (`WHERE user_id = $1`), not by trusting body params.
-- The four drop/cover endpoints additionally verify `req.user.id === shift_requests.user_id` (you can only drop your own; admin uses different routes).
-- The ICS feed `GET /api/cal/:slug.ics` is public (slug is the auth, matching the existing `/tip/:slug` pattern). Slug is a hard-to-guess UUID-like string already.
-- Push subscription PII (`endpoint` URL, `keys`) is stored in plaintext in `users.notification_preferences.push_subscriptions[]`. This is the standard Web Push pattern; the keys are recipient-public (used by the server to encrypt the payload, but they don't grant access to anything beyond sending notifications to that endpoint). No encryption required.
-- Bank routing + account numbers in `staff_payment_methods` use the existing `server/utils/encryption.js` AES-256-GCM pattern. Per CLAUDE.md, "fails closed in prod", if encryption fails, the route returns 5xx and never stores plaintext.
+- All `/api/me/*` endpoints are `auth`-gated and scope every read/write by `req.user.id`. IDOR guard is in the query (`WHERE user_id = $1`), not by trusting body params. The PATCH endpoints reject any payload key that maps to a user-scoped foreign key.
+- The four drop / cover endpoints additionally verify `req.user.id === shift_requests.user_id` (you can only drop your own; admin uses different routes).
+- The calendar feed `GET /api/calendar/feed/:token` is public-by-token (matching the existing `/tip/:token` pattern). Token is a UUID assigned to every user, can be rotated via `POST /api/calendar/regenerate-token`. Rate limiting is already enforced by the existing route.
+- Push subscription PII (`endpoint` URL, `keys`) is stored as JSON in `users.staff_notification_preferences.push_subscriptions[]`. This is the standard Web Push pattern, the keys are recipient-public (used by the server to encrypt the payload, but they don't grant access to anything beyond sending notifications to that endpoint). No encryption required.
+- **Bank routing + account numbers** on `payment_profiles` are CURRENTLY stored as plaintext `TEXT` columns (verified in `server/db/schema.sql:129+`). This spec does NOT change that for v1, the existing staff-payments backend already reads/writes these as plaintext and changing the storage model is out of scope for the staff-portal redesign. See section 12 for the encryption-at-rest follow-up.
 
 ## 11. Testing approach
 
@@ -724,35 +751,40 @@ Phase A is ~3-4 weeks of focused work. Phase B is ~1 week. Both ship as separate
 
 - `staffPortal.test.js`:
   - `GET /api/me/staff-home` composes the four sections correctly
-  - `GET /api/me/payment-methods` returns the staffer's methods plus the implied card-payments row in the right position
-  - `POST` / `PATCH` / `DELETE /api/me/payment-methods/*` with transition-correctness (preferred-payroll uniqueness, auto-promote on delete-of-preferred)
-  - `PUT /api/me/tip-card-order` validates order against the user's methods
-  - `PATCH /api/me/notification-preferences` partial update via `jsonb_set`
-  - `POST /api/me/documents/:doc_type/replace` writes to history table + flips the active URL
+  - `GET /api/me/payment-methods` projects all handle columns from `payment_profiles` plus the conceptual Card row in the user's saved order
+  - `PATCH /api/me/payment-methods` writes only present keys, validates handle formats via `tipHandleValidation`, rejects null routing-number on direct-deposit if account-number is non-null (and vice versa)
+  - `PUT /api/me/preferred-payment-method` rejects 400 when the corresponding handle column is empty; writes `payment_profiles.preferred_payment_method` otherwise
+  - `PATCH /api/me/payment-methods` that clears the currently-preferred handle auto-NULLs `preferred_payment_method` in the same transaction
+  - `PUT /api/me/tip-card-order` validates order tokens against the allowed set; rejects unknown tokens
+  - `PATCH /api/me/staff-notifications` partial update via `jsonb_set`
+  - `POST /api/me/push-subscriptions` appends to the array; duplicate endpoints replace rather than duplicate
+  - `POST /api/me/documents/:doc_type/replace` writes to `staff_document_history` BEFORE updating the active record (so the snapshot survives even if the active-record update fails)
   - All endpoints respect IDOR (a staffer cannot read or mutate another staffer's data)
 - `shifts.test.js` additions:
-  - `POST /requests/:id/drop` succeeds at 14+ days, returns 409 at 13d 23h
-  - `POST /requests/:id/request-cover` sets `cover_requested_at`, schedules cover_broadcast rows for opted-in qualified teammates
-  - `POST /requests/:shiftId/claim-cover` creates a new pending request and notifies management
-  - `POST /requests/:id/emergency-drop` requires `reason` >= 10 chars, returns 400 below, succeeds at < 72h
-  - `urgent_staffing` admin notification fires email always + SMS when days_out <= 7
+  - `POST /requests/:id/drop` succeeds at 14+ days, returns 409 at 13d 23h, returns 409 when `pay_periods.status='processing'` for the period the shift falls into
+  - `POST /requests/:id/request-cover` sets `cover_requested_at`, calls `enqueueCategorizedMessage` for opted-in qualified teammates; Twilio rate-limit guard chunks sends
+  - `POST /requests/:shiftId/claim-cover` creates a new pending request linked via `replaced_by_request_id` and notifies management
+  - `POST /requests/:id/emergency-drop` requires `reason` >= 10 chars, returns 400 below, succeeds at < 72h (computed in hours, not days)
+  - `urgent_staffing` admin notification fires email always + SMS when hours_to_event <= 168 (7 days)
 - `notificationChannelResolver.test.js`:
-  - Returns the user's opted-in channels for a category
+  - Returns the user's opted-in channels for a category, filtered by `communication_preferences`
+  - `sms_enabled=false` removes SMS from every category's channel list
   - Critical-path override fires when all channels for `beo_finalized` / `schedule_change` / `payday` are off
+  - Critical-path override degrades to push when both SMS and email are globally off
   - Returns empty for unsupported categories (defensive)
 - `pushSender.test.js`:
   - Sends a push successfully (mocked web-push)
-  - On 410 Gone, removes the subscription from the user's prefs
+  - On 410 Gone, returns `gone:true`; caller prunes the subscription via `jsonb_set`
   - Handles invalid subscription gracefully
-- `icsFeedBuilder.test.js`:
-  - Includes future confirmed shifts as VEVENT entries
-  - Includes past shifts within 30 days
-  - Includes all-day BEO unconfirmed reminders 3 days before
-  - Returns a valid ICS document (no malformed PRODID, correct CRLF line endings)
+- `staffCalendarFeedExt.test.js`:
+  - Emits all-day VEVENT for each unconfirmed-BEO shift 3 days before the event date
+  - Skips already-confirmed BEOs (where `shift_requests.beo_acknowledged_at IS NOT NULL`)
+  - Composes valid ICS lines (CRLF, proper escape of commas/semicolons in SUMMARY)
 - `scheduledMessageDispatcher.test.js` additions:
-  - `channel='auto'` row resolves at dispatch via `notificationChannelResolver`
-  - Push attempted first when granted+subscribed; falls back to SMS on 410
-  - Critical-path override sends via SMS when the user has muted all channels for `beo_finalized`
+  - Multi-row enqueue: a `beo_finalized` event for a staffer opted-in to push + SMS produces two `scheduled_messages` rows
+  - `communication_preferences.sms_enabled=false` at send time suppresses an SMS row even though it was enqueued
+  - Push row iterates `staff_notification_preferences.push_subscriptions[]`; 410 prunes the dead one
+  - Critical-path override delivers SMS when the user has muted all channels for `beo_finalized`
 
 **Client smoke tests** (existing `react-scripts` build with `CI=true` is the gate):
 
@@ -773,8 +805,8 @@ Phase A:
 6. A teammate claims the cover → admin approves → swap completes
 7. Emergency drop at 48h → modal requires reason, management email + SMS fires
 8. Theme toggle persists across browser sessions
-9. Tip Card drag-reorder persists, shows correctly on /tip/{slug} chooser page (existing public route reads from the new order)
-10. AccountPage / Payment methods: add Venmo, set as preferred for payroll, remove it (auto-promotes next eligible)
+9. Tip Card drag-reorder persists, shows correctly on `/tip/:token` chooser page (existing public route reads `users.ui_preferences.tip_card_order`)
+10. AccountPage / Payment methods: edit Venmo handle, set Venmo as preferred for payroll, clear the Venmo handle, confirm `preferred_payment_method` auto-flips to NULL
 11. AccountPage / Documents: replace W-9, then alcohol cert; both confirm modals work, history table records both
 12. Existing payday emails / SMS still fire per the staff-payments backend (no regression)
 
@@ -789,31 +821,32 @@ Phase B:
 
 ## 12. Risk and rollback
 
-- **Schema additions are additive and idempotent.** Rollback = `DROP COLUMN` / `DROP TABLE` per the additions in section 7. Worst-case partial rollback during Phase A: deleted columns leave dangling JSONB keys in `notification_preferences`, which are harmless.
-- **Data migration from `payment_handles` JSON into `staff_payment_methods` is one-way.** Keep the old `users.payment_handles` JSON in place for one release cycle as the safe-rollback path. After v1 stability is confirmed, drop the JSON.
+- **Schema additions are additive and idempotent.** Rollback = `DROP COLUMN` / `DROP TABLE` per the additions in section 7. No data migration runs (the canonical handle columns already exist on `payment_profiles`), so there is no halfway-migrated state to worry about. Constraint widenings (`onboarding_status`, `scheduled_messages.channel`) are reversible by re-adding the narrower CHECK after first verifying no rows hold the new values.
 - **The portal-wide replacement is high blast radius.** Every staffer's daily experience changes. Mitigations:
   - Stage to a single canary staffer (Rosa or another willing tester) before the broader cutover. Have them use the new portal in production for 3-5 events. If anything misses, fix before broader rollout.
   - Keep the 30-day redirect grace period for old URLs. A bookmarked `/dashboard` link still works (redirects to `/`).
-  - Roll out the staff-payments side (existing) ahead of the redesign so the Pay tab has data to render against on day one.
+  - The staff-payments backend already shipped; the Pay tab has real data from day one.
 - **Push delivery is best-effort.** A push that fails to deliver isn't visible to the staffer. Mitigations:
   - Critical-path override (section 6.13) guarantees SMS-or-email fallback for BEO finalized / schedule changes / payday.
   - Service worker logs push events to a dev console for debug (no PII in logs).
-  - On 410 Gone, the subscription is auto-removed (handled in `pushSender.js`).
-- **ICS feed PII surface.** The feed includes event_location, client_name. If a staffer's calendar is shared with a partner (read-access to their iCloud), that partner now sees client identities. Acceptable, bartenders typically share these details with their household anyway. Worth a one-line note in the AccountPage / Calendar sync sub: *"Your subscribed calendar shows client names and locations. Don't share the feed URL, it's the only thing protecting this data."*
+  - On 410 Gone, `pushSender` returns `gone:true` and the dispatcher prunes the dead subscription from `staff_notification_preferences.push_subscriptions[]`.
+- **Calendar feed PII surface.** The feed includes `event_location` and `client_name`. If a staffer's calendar is shared with a partner (read-access to their iCloud), that partner now sees client identities. Acceptable, bartenders typically share these details with their household anyway. Worth a one-line note in the AccountPage / Calendar sync sub: *"Your subscribed calendar shows client names and locations. Don't share the feed URL, it's the only thing protecting this data."*
+- **Bank PII at rest.** `payment_profiles.routing_number` and `payment_profiles.account_number` are stored as plaintext today. The redesign does not change that. Encryption-at-rest via `server/utils/encryption.js` is a v1.5 follow-up (see section 13). Until then, treat these columns as compliance-sensitive (no logging, no API surface beyond the staffer's own GET).
 - **Stripe / card-payment flow is unchanged.** No risk to the existing card-tip pool logic.
 - **Worst-case bug:** the new ShiftDetail page fails to render a BEO. Fallback: the back button always works, the staffer can still see the shift on the Shifts/Mine list, and admin can still text them the BEO directly. No money or data corruption.
 
 Primary surfaces to watch in production:
-1. The drop/cover endpoints (real money paths if a drop accidentally fires a payroll regeneration, out of scope but possible).
-2. The notification channel routing (a misconfigured prefs JSON could silently drop notifications, test the critical-path override carefully).
-3. The payment methods migration (data integrity, verify every existing handle landed in the new table).
-4. The push subscription lifecycle (subscriptions expire; the dispatcher must handle 410s gracefully and not retry indefinitely).
+1. The drop / cover endpoints (real money paths if a drop accidentally fires a payroll regeneration, out of scope but possible). The `pay_periods.status='processing'` guard is the load-bearing check.
+2. The notification channel routing (a misconfigured prefs JSON could silently drop notifications, test the critical-path override carefully, including the SMS + email both-off → push degradation path).
+3. The push subscription lifecycle (subscriptions expire; the dispatcher must handle 410s gracefully and not retry indefinitely; verify pruning on next attempt).
+4. The Twilio rate limit on cover broadcasts (a popular shift with many qualified teammates could trigger a burst; verify chunking + backoff under load).
 
 ## 13. Out of scope / follow-ups
 
 - **Brand kit.** Asset doesn't exist; row gets added later.
 - **Admin-side BEO redesign** per `admin-os/beo.jsx` (lifecycle bar + nudge preview + activity log). Real upgrade over the BEO spec's simpler buttons-on-DrinkPlanCard pattern, but deferred to its own follow-up to keep this scope focused on the staff-side.
-- **Plaid Link for direct-deposit onboarding.** Manual routing+account entry (encrypted) is v1; Plaid replaces the input form in v1.5 if the UX friction warrants.
+- **Bank-PII encryption-at-rest.** `payment_profiles.routing_number` and `payment_profiles.account_number` are plaintext today. Move both behind `server/utils/encryption.js` (AES-256-GCM, fails-closed-in-prod) in v1.5. Touch every read site (`/api/me/payment-methods`, the staff-payments backend's payout-stub composition, admin tooling) in the same change.
+- **Plaid Link for direct-deposit onboarding.** Manual routing + account entry is v1; Plaid replaces the input form in v1.5 once the encryption migration lands, so the new flow can write encrypted from day one.
 - **Per-bartender Stripe Connect.** Declined.
 - **In-portal direct chat with admin.** Declined.
 - **Post-event surveys.** Out.
@@ -821,7 +854,7 @@ Primary surfaces to watch in production:
 - **Time clock / clock-in.** Out.
 - **Carpool coordination.** Out.
 - **PWA install prompt UX.** v1 relies on iOS Safari's native Add to Home Screen flow via the coachmark. A first-class install prompt component lands in v1.5 if push adoption is slow.
-- **Notification quiet hours.** The shape (`users.notification_preferences.quiet_hours`) is reserved in the JSON; the UI hides it in v1. Add later if staff requests it.
+- **Notification quiet hours.** The shape (`users.staff_notification_preferences.quiet_hours`) is reserved in the JSON; the UI hides it in v1. Add later if staff requests it.
 - **Calendar sync app detection.** v1 sets `calendar_subscribed_app` based on User-Agent heuristics; a richer "Connected calendars" sub-section with multi-app status comes later if needed.
 - **Document Past BEOs archive.** Removed from the Documents Other-archives section per the redesign. If staff requests viewing past BEOs from the Documents tab later, it's a small re-add.
 
@@ -831,14 +864,14 @@ Mandatory per the Mandatory Documentation Updates table in `CLAUDE.md`:
 
 | What changed | CLAUDE.md | README.md | ARCHITECTURE.md |
 |---|---|---|---|
-| New route files (`staffPortal.js`, `calendar.js` extension) |, | Folder tree | API route table |
-| New util files (`pushSender.js`, `notificationChannelResolver.js`, `icsFeedBuilder.js`) |, | Folder tree | Mention in notifications section |
-| New components / pages (StaffShell, AccountPage + sub-sections, ShiftDetail, PayPage, etc.) |, | Folder tree |, |
-| Schema additions (3 ALTERs, 2 new tables) |, |, | Database Schema section |
-| New env vars (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `REACT_APP_VAPID_PUBLIC_KEY`) | Env Variables table | Env Variables table |, |
-| New npm script (none expected) |, |, |, |
+| New route file (`staffPortal.js`) + extended `calendar.js` | n/a | Folder tree | API route table |
+| New util files (`pushSender.js`, `notificationChannelResolver.js`, `staffCalendarFeedExt.js`) | n/a | Folder tree | Mention in notifications section |
+| New components / pages (StaffShell, AccountPage + sub-sections, ShiftDetail, PayPage, etc.) | n/a | Folder tree | n/a |
+| Schema additions (3 column adds, 2 constraint widenings, 1 new table) | n/a | n/a | Database Schema section |
+| New env vars (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `REACT_APP_VAPID_PUBLIC_KEY`) | Env Variables table | Env Variables table | n/a |
+| New npm script (none expected) | n/a | n/a | n/a |
 | New integration (`web-push` npm) | Tech Stack list | Tech Stack table | Third-Party Integrations |
-| New feature (the redesign as a whole) |, | Key Features | Relevant architecture sections |
+| New feature (the redesign as a whole) | n/a | Key Features | Relevant architecture sections |
 
 `CLIENT_FACING_SURFACES.md` gets a wholesale staff-portal section rewrite reflecting the new tabs.
 
