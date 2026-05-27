@@ -2,9 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Apply the 4 codex findings queued in `docs/tech-debt.md` (committed in `af947bb` on `main`, unpushed) that surfaced during the 2026-05-27 pre-push review fleet. These are real bugs in cc-import admin flows and tip payroll handling that were deliberately deferred so we could ship the larger batch on tempo. None are exploitable security issues; all are correctness defects in operator workflows or money-path corner cases.
+**Spec:** Four entries in `docs/tech-debt.md:159-185` (committed `af947bb` on `main`, unpushed). Each entry has its own `**Source / What / Why deferred / Next step:**` block — the equivalent of a per-finding mini-spec. No separate spec doc; the tech-debt entries are concrete enough.
 
-**Architecture:** Four independent fixes, each landed as its own commit on branch `codex-followups`. Order is smallest/safest → riskiest: Fix 1 (one-line additive call) → Fix 2 (defensive branching with atomic-txn refactor) → Fix 3 (date-based reclassification helper) → Fix 4 (money-path math change with new tests). Each fix follows TDD — failing test first, minimal fix, verify. Worktree at `..\worktrees\codex-followups\`; merge back to `main` from the `os` integration folder when all four are green, then push triggers the standard agent fleet.
+**Goal:** Apply the 4 codex findings queued during the 2026-05-27 pre-push review fleet. These are real bugs in cc-import admin flows and tip payroll handling that were deliberately deferred so we could ship the larger batch on tempo. None are exploitable security issues; all are correctness defects in operator workflows or money-path corner cases.
+
+**Architecture:** Four independent fixes, each landed as its own commit on branch `codex-followups`. Order is smallest/safest → riskiest: Fix 1 (one-line additive call) → Fix 2 (defensive branching) → Fix 3 (date-based reclassification helper) → Fix 4 (money-path math change with new tests). Each fix follows TDD — failing test first, minimal fix, verify. The matching `docs/tech-debt.md` entry is DELETED INSIDE THE SAME COMMIT as its fix (no separate cleanup commit); keeps `tech-debt.md` consistent with `main` at every intermediate sha.
+
+Worktree at `..\worktrees\codex-followups\`; merge back to `main` from the `os` integration folder on explicit user cue when all four are green.
 
 **Tech Stack:** Node.js 18 / Express 4.22, raw SQL via `pg` 8.20, `node:test` (built-in test runner), Sentry for non-blocking observability, Neon Postgres (dev branch for local test DB).
 
@@ -27,15 +31,57 @@ Tests in this plan assume an `'open'` pay_period covering today exists in the de
 
 | File | Responsibility | Touched by |
 |---|---|---|
-| `server/routes/admin/ccImport/review.js` | Orphan-payment + errored-row + skipped-event admin routes | Fix 1, 2, 3 |
-| `server/routes/admin/ccImport/review.test.js` | Integration tests for the cc-import Review endpoints | Fix 1, 2, 3 |
-| `scripts/cc-import/phases/phase3.js` | Source of `promoteBucketA`/`promoteBucketB` and the bucket dispatch | Fix 3 (extracts a helper) |
-| `scripts/cc-import/lib/buckets.js` | `classify(row, today)` returning A/B/C/D | Fix 3 (read-only, reused) |
-| `server/utils/payrollLateTip.js` | Late-tip rollforward util | Fix 4 |
-| `server/utils/payrollLateTip.test.js` | Unit tests for rollForwardLateTip | Fix 4 |
-| `server/utils/payrollClawback.js` | Tip-clawback util | Fix 4 |
-| `server/utils/payrollClawback.test.js` | Unit tests for clawbackTip | Fix 4 |
-| `docs/tech-debt.md` | Tracks the four deferred entries we are now resolving | Final task (remove resolved entries) |
+| `server/routes/admin/ccImport/review.js` | Orphan-payment + errored-row + skipped-event admin routes | Task 1, 2, 3 |
+| `server/routes/admin/ccImport/review.test.js` | Integration tests for the cc-import Review endpoints | Task 1, 2, 3 |
+| `scripts/cc-import/phases/phase3.js` | Source of `promoteBucketA`/`promoteBucketB` and the bucket dispatch | Task 3 (extracts a helper) |
+| `scripts/cc-import/lib/buckets.js` | `classify(row, today)` returning A/B/C/D | Task 3 (read-only, reused) |
+| `server/utils/payrollLateTip.js` | Late-tip rollforward util | Task 4 |
+| `server/utils/payrollLateTip.test.js` | Unit tests for rollForwardLateTip | Task 4 |
+| `server/utils/payrollClawback.js` | Tip-clawback util | Task 4 |
+| `server/utils/payrollClawback.test.js` | Unit tests for clawbackTip | Task 4 |
+| `docs/tech-debt.md` | Tracks the four deferred entries we are resolving | Each task's commit deletes its matching entry |
+
+---
+
+## Test harness primer
+
+Two patterns the new test snippets all share, captured here once so each task can stay terse.
+
+**Pattern A — admin route tests use `req()`, NOT supertest's `adminAgent.post(...)`.** The helper is defined inline in `server/routes/admin/ccImport/review.test.js:618-643` and is backed by `http.request`. Pattern:
+
+```javascript
+const r = await req('POST', '/api/admin/cc-import/review/orphan-payment/123/link', adminToken, { proposal_id: 999 });
+assert.equal(r.status, 200);
+const body = JSON.parse(r.body);  // r.body is the raw response string, not pre-parsed
+assert.equal(body.ok, true);
+```
+
+`adminToken` is set up in `before()` and is in module scope; reuse it.
+
+**Pattern B — `legacy_cc_payments` rows MUST seed a `legacy_cc_raw_imports` row first and reference it.** Schema (`server/db/schema.sql:2725-2727`) declares `raw_import_id BIGINT NOT NULL REFERENCES legacy_cc_raw_imports(id) ON DELETE RESTRICT` plus `UNIQUE (raw_import_id)`. A NULL `raw_import_id` violates the constraint and the INSERT throws before the route is ever hit. Mirror the existing pattern at `review.test.js:265-307`:
+
+```javascript
+// Seed the raw_imports parent first.
+const rawIns = await pool.query(
+  `INSERT INTO legacy_cc_raw_imports
+     (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+   VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+   RETURNING id`,
+  [nextSrn(), nextHash('codex-followup')]
+);
+const rawImportId = rawIns.rows[0].id;
+
+// Then the legacy_cc_payments child, referencing it.
+const legacyRes = await pool.query(
+  `INSERT INTO legacy_cc_payments
+     (cc_event_title, cc_type, paid_on, payment_applied_cents, payment_method, raw_import_id)
+   VALUES ('Test Event', 'Payment', CURRENT_DATE, 10000, 'card', $1)
+   RETURNING id`,
+  [rawImportId]
+);
+```
+
+`nextSrn()` and `nextHash()` already exist (`review.test.js:61-63`). Cleanup order in `finally`: delete from `legacy_cc_payments` first, then `legacy_cc_raw_imports` (FK is RESTRICT, not CASCADE).
 
 ---
 
@@ -46,36 +92,43 @@ Tests in this plan assume an `'open'` pay_period covering today exists in the de
 **Files:**
 - Modify: `server/routes/admin/ccImport/review.js:421-427`
 - Test: `server/routes/admin/ccImport/review.test.js` (add one case)
+- Modify: `docs/tech-debt.md` (delete the matching entry in the same commit)
 
-- [ ] **Step 1: Confirm `phase4.suppressStaleBalanceReminders` signature and behavior**
+- [ ] **Step 1: Confirm `phase4.suppressStaleBalanceReminders` signature**
+
+Already verified by the plan author (against `scripts/cc-import/phases/phase4.js:763-777`):
+
+```javascript
+async function suppressStaleBalanceReminders(client) {
+  const r = await client.query(`UPDATE scheduled_messages SET status='suppressed' ...
+    WHERE entity_type='proposal' AND status='pending'
+      AND message_type = ANY($1::text[])
+      AND entity_id IN (SELECT id FROM proposals WHERE cc_id IS NOT NULL AND amount_paid >= total_price)`,
+    [STALE_BALANCE_REMINDER_TYPES]);
+  return r.rowCount;
+}
+```
+
+Takes a `pg` client (NOT a `proposalId`), scans across all cc-imported fully-paid proposals. The tech-debt entry at `docs/tech-debt.md:171` said `(proposalId)` — that was wrong; the actual signature is `(client)`. The plan calls it `suppressStaleBalanceReminders(tail)`, which matches.
+
+- [ ] **Step 2: Read the existing orphan-link tests to confirm the harness**
 
 Run:
 ```bash
-grep -n "async function suppressStaleBalanceReminders" scripts/cc-import/phases/phase4.js
+grep -n "/review/orphan-payment.*link" server/routes/admin/ccImport/review.test.js
 ```
-Expected: one match at line 763. Confirm the function accepts a `pg` client and returns the suppressed row count (`UPDATE ... RETURNING` style or similar).
-
-Read 20 lines starting at the match to verify what it does — should be `UPDATE scheduled_messages SET status='suppressed' WHERE entity_type='proposal' AND message_type LIKE 'balance_%' AND status='pending' AND <proposal is fully paid>`.
-
-- [ ] **Step 2: Read the existing orphan-link test to mirror its setup**
-
-Run:
-```bash
-grep -n "/review/orphan-payment.*link\|recomputeAmountPaid" server/routes/admin/ccImport/review.test.js
-```
-Note the test fixture style (how `adminAgent` is set up, how proposals/legacy_cc_payments rows are seeded).
+Expected: a mix of existing tests at the file's `// ── §2 orphan-payment/:id/link ──` section. All use `req('POST', path, adminToken, body)` and assert `r.status` + `JSON.parse(r.body)`. Mirror that.
 
 - [ ] **Step 3: Write the failing test**
 
 Append to `server/routes/admin/ccImport/review.test.js`, after the existing orphan-link tests:
 
 ```javascript
-test('POST /review/orphan-payment/:legacy_id/link > suppresses stale balance reminders when legacy payment fully settles a future proposal', async () => {
-  // A cc-imported proposal with a future event_date and a pending
-  // balance_reminder. The legacy payment we'll link covers total_price in full,
-  // so post-link the proposal must be marked paid AND the pending reminder
-  // must flip to 'suppressed' (otherwise it would fire even though balance is 0).
-
+test('POST /orphan-payment/:id/link suppresses stale balance reminders when legacy payment fully settles a future proposal', async () => {
+  // A cc-imported proposal with a future event_date and a pending balance_reminder.
+  // The legacy payment we link covers total_price in full, so post-link the
+  // proposal is paid AND the pending reminder must flip to 'suppressed' (otherwise
+  // it fires even though balance is 0).
   const propRes = await pool.query(
     `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
      VALUES (NULL, 'confirmed', CURRENT_DATE + INTERVAL '30 days', 500, 0,
@@ -95,38 +148,51 @@ test('POST /review/orphan-payment/:legacy_id/link > suppresses stale balance rem
   );
   const smId = smRes.rows[0].id;
 
+  // Seed the legacy_cc_raw_imports parent first (NOT NULL FK at schema.sql:2725).
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix1-orphan')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+
   // Legacy payment NOT yet linked (cc_event_id NULL = orphan).
   const legacyRes = await pool.query(
     `INSERT INTO legacy_cc_payments
-       (cc_type, payment_applied_cents, paid_on, raw_import_id)
-     VALUES ('Payment', 50000, CURRENT_DATE - INTERVAL '5 days', NULL)
-     RETURNING id`
+       (cc_event_title, cc_type, paid_on, payment_applied_cents, payment_method, raw_import_id)
+     VALUES ('Fix1 Test', 'Payment', CURRENT_DATE - INTERVAL '5 days', 50000, 'card', $1)
+     RETURNING id`,
+    [rawImportId]
   );
   const legacyId = legacyRes.rows[0].id;
 
-  const res = await adminAgent.post(`/api/admin/cc-import/review/orphan-payment/${legacyId}/link`)
-    .send({ proposal_id: proposalId, cc_event_id: proposalCcId });
-  assert.strictEqual(res.status, 200);
-  assert.strictEqual(res.body.ok, true);
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcId });
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.ok, true);
 
-  const after = await pool.query('SELECT status FROM scheduled_messages WHERE id = $1', [smId]);
-  assert.strictEqual(after.rows[0].status, 'suppressed');
-
-  // Cleanup
-  await pool.query('DELETE FROM scheduled_messages WHERE id = $1', [smId]);
-  await pool.query('DELETE FROM proposal_payments WHERE proposal_id = $1', [proposalId]);
-  await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
-  await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    const after = await pool.query('SELECT status FROM scheduled_messages WHERE id = $1', [smId]);
+    assert.equal(after.rows[0].status, 'suppressed');
+  } finally {
+    await pool.query('DELETE FROM scheduled_messages WHERE id = $1', [smId]);
+    await pool.query('DELETE FROM proposal_payments WHERE proposal_id = $1', [proposalId]);
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+  }
 });
 ```
 
 - [ ] **Step 4: Run the test to verify it fails**
 
-Run:
 ```bash
 node --test server/routes/admin/ccImport/review.test.js 2>&1 | grep -A 4 "suppresses stale"
 ```
-Expected: `✖ POST /review/orphan-payment/:legacy_id/link > suppresses stale balance reminders ...` with `AssertionError: 'pending' !== 'suppressed'`.
+Expected: `✖ ... suppresses stale balance reminders ...` with `AssertionError: 'pending' !== 'suppressed'`.
 
 - [ ] **Step 5: Apply the fix**
 
@@ -151,6 +217,10 @@ try {
   await phase4.rederivePaymentTypeAndStatus(tail);
   // Mirror phase4.run() — when a manual link fully settles a future proposal,
   // any already-scheduled balance_* rows must be suppressed so they don't fire.
+  // suppressStaleBalanceReminders runs on the same client; its UPDATE commits
+  // when the client returns to the pool (no explicit BEGIN/COMMIT here — the
+  // helper's UPDATE is auto-committed by the driver since we never opened a txn
+  // on this connection).
   await phase4.suppressStaleBalanceReminders(tail);
 } finally {
   tail.release();
@@ -159,24 +229,26 @@ try {
 
 - [ ] **Step 6: Run the new test — verify it passes**
 
-Run:
 ```bash
 node --test server/routes/admin/ccImport/review.test.js 2>&1 | grep -A 4 "suppresses stale"
 ```
-Expected: `✔ POST /review/orphan-payment/:legacy_id/link > suppresses stale balance reminders ...`.
+Expected: PASS.
 
-- [ ] **Step 7: Run the full review.test.js file — verify no regression**
+- [ ] **Step 7: Run the full file — verify no regression**
 
-Run:
 ```bash
 node --test server/routes/admin/ccImport/review.test.js 2>&1 | tail -10
 ```
-Expected: `tests N, pass N, fail 0`. The N depends on how many cases pre-existed plus the one we added.
+Expected: `tests N, pass N, fail 0`.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Delete the matching tech-debt entry**
+
+Open `docs/tech-debt.md`. Find the entry `### CC-Import: orphan-payment link skips suppressStaleBalanceReminders` (around line 166). Delete the entire `### ... **Source:** / **What:** / **Why deferred:** / **Next step:**` block.
+
+- [ ] **Step 9: Commit**
 
 ```bash
-git add server/routes/admin/ccImport/review.js server/routes/admin/ccImport/review.test.js
+git add server/routes/admin/ccImport/review.js server/routes/admin/ccImport/review.test.js docs/tech-debt.md
 git commit -m "fix(cc-import): suppress stale balance reminders on orphan-payment link"
 ```
 
@@ -184,41 +256,73 @@ git commit -m "fix(cc-import): suppress stale balance reminders on orphan-paymen
 
 ## Task 2: Reject orphan-payment link on non-success promote status (atomic txn)
 
-**Codex finding:** [P1] `phase4.promoteSingleLegacyPayment` and `promoteSingleLegacyRefund` return `{ status: 'errored', error: '<reason>' }` for failure modes (`legacy_row_not_found`, `wrong_cc_type`, `proposal_not_found_for_cc_event_id`, `proposal_not_found_in_lock`, `insert_skipped_no_existing_row`) and `{ status: 'orphan' }` for the missing-cc_event_id branch. The link route at `server/routes/admin/ccImport/review.js:439` treats non-success the same as success — runs the tail, audit-logs success, returns 200 — leaving `legacy_cc_payments.cc_event_id` set but `promoted_payment_id` / `promoted_refund_id` NULL. The orphan-queue filter on `cc_event_id IS NULL` then drops the row, stranding the operator.
+**Codex finding:** [P1] `phase4.promoteSingleLegacyPayment` and `promoteSingleLegacyRefund` return `{ status: 'errored', error: '<reason>' }` for failure modes and `{ status: 'orphan' }` for the missing-cc_event_id branch. The link route at `server/routes/admin/ccImport/review.js` treats non-success the same as success — runs the tail, audit-logs success, returns 200 — leaving `legacy_cc_payments.cc_event_id` set but `promoted_payment_id` / `promoted_refund_id` NULL. The orphan-queue filter on `cc_event_id IS NULL` then drops the row, stranding the operator.
 
-**Approach chosen (per user decision):** Option A — move the `UPDATE legacy_cc_payments SET cc_event_id` into the **same** transaction as the promote. On non-success status, throw inside the txn so the cc_event_id UPDATE rolls back atomically. No manual undo.
+**Asymmetric fix.** The PAYMENT and REFUND branches have different transaction shapes (called out in the in-code comment at `review.js:364-372`) and require different fixes:
+
+- **Payment branch** (`review.js:396-414`) — already uses a shared transaction (`BEGIN`/`COMMIT` with a client that's passed into `promoteSingleLegacyPayment`). Add a status check inside the txn; on non-success, `throw new ConflictError(...)` so the BEGIN rolls back the `cc_event_id` UPDATE.
+- **Refund branch** (`review.js:373-395`) — CANNOT share a transaction with `promoteSingleLegacyRefund` (per Approach A — proposal row-locks against autopay). Already has an explicit revert-on-throw catch block at lines 382-394 that NULLs cc_event_id back. We add the same status check AFTER the call; on non-success, throw `ConflictError`. The existing catch block runs the revert UPDATE and reportException — no new revert code needed.
 
 **Files:**
-- Modify: `server/routes/admin/ccImport/review.js:395-440` (both refund and payment branches)
-- Test: `server/routes/admin/ccImport/review.test.js` (add 3 cases — errored, orphan, already_promoted)
+- Modify: `server/routes/admin/ccImport/review.js:373-414`
+- Test: `server/routes/admin/ccImport/review.test.js` (add 2 cases — errored, happy-path regression)
+- Modify: `docs/tech-debt.md` (delete the matching entry in the same commit)
 
-- [ ] **Step 1: Read the current refund branch around lines 380-395 to find the symmetric structure**
+- [ ] **Step 1: Read the current branches to confirm the asymmetry**
 
-Run:
 ```bash
-sed -n '380,440p' server/routes/admin/ccImport/review.js
+sed -n '360,415p' server/routes/admin/ccImport/review.js
+```
+Expected: lines 360-372 carry the Approach A comment explaining why refund uses a different shape. Lines 373-395 are the refund branch (`pool.query` direct, explicit catch revert). Lines 396-414 are the payment branch (shared client BEGIN/COMMIT).
+
+- [ ] **Step 2: Confirm `ConflictError(message, code)` propagates `code` to the JSON body**
+
+Already verified against `server/utils/errors.js:17-21`:
+
+```javascript
+class ConflictError extends AppError {
+  constructor(message, code = 'CONFLICT') {
+    super(message, 409, code);
+  }
+}
 ```
 
-The route has two parallel branches: one for refunds (calls `promoteSingleLegacyRefund`), one for payments (calls `promoteSingleLegacyPayment`). Both need the fix.
+`AppError.code` is rendered into `res.body.code` by the global error middleware. Other call sites in `review.js` (e.g. lines 276-280, 289, 932) already use the `(message, code)` form. Safe to throw `new ConflictError('Promote failed: ...', 'CC_PROMOTE_FAILED')`.
 
-- [ ] **Step 2: Write the first failing test (errored status)**
+- [ ] **Step 3: Write the first failing test (errored status, payment branch)**
+
+The errored-status branch CANNOT be reproduced by seeding alone — verified against `scripts/cc-import/phases/phase4.js:357-485`. When `cc_event_id` is set in the same txn to a cc_id that resolves to a real proposal (which any clean seed does), `promoteSingleLegacyPayment` finds the proposal at lines 384-388 and returns `{ status: 'promoted' }`. The only deterministic path to `'errored'` is mocking the helper.
 
 Append to `server/routes/admin/ccImport/review.test.js`:
 
 ```javascript
-test('POST /review/orphan-payment/:legacy_id/link > rolls back cc_event_id and 409s on errored promote status', async () => {
-  // Seed a legacy_cc_payments row whose promote will fail (cc_type='Refund' but
-  // we'll try to link as a Payment — phase4.promoteSingleLegacyPayment returns
-  // { status: 'errored', error: 'wrong_cc_type' }).
+test('POST /orphan-payment/:id/link rolls back cc_event_id and 409s on errored promote status', async () => {
+  // promoteSingleLegacyPayment is mocked to return errored; the new code in the
+  // route throws ConflictError, and the BEGIN rolls back the cc_event_id UPDATE.
+  // We can't reproduce 'errored' from a seed alone because the helper resolves
+  // any matching proposal cleanly (see phase4.js:357-485).
+  const phase4 = require('../../../../scripts/cc-import/phases/phase4');
+  const { mock } = require('node:test');
+  const spy = mock.method(phase4, 'promoteSingleLegacyPayment',
+    async () => ({ status: 'errored', error: 'forced_for_test' }));
+
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix2-err')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+
   const legacyRes = await pool.query(
-    `INSERT INTO legacy_cc_payments (cc_type, payment_applied_cents, paid_on, raw_import_id)
-     VALUES ('Refund', 10000, CURRENT_DATE, NULL)
-     RETURNING id`
+    `INSERT INTO legacy_cc_payments (cc_event_title, cc_type, paid_on, payment_applied_cents, raw_import_id)
+     VALUES ('Fix2 Err', 'Payment', CURRENT_DATE, 10000, $1)
+     RETURNING id`,
+    [rawImportId]
   );
   const legacyId = legacyRes.rows[0].id;
 
-  // A proposal to link against (the link request itself succeeds; the promote
-  // is what fails downstream).
   const propRes = await pool.query(
     `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
      VALUES (NULL, 'confirmed', CURRENT_DATE + INTERVAL '30 days', 500, 0,
@@ -228,33 +332,38 @@ test('POST /review/orphan-payment/:legacy_id/link > rolls back cc_event_id and 4
   const proposalId = propRes.rows[0].id;
   const proposalCcId = propRes.rows[0].cc_id;
 
-  const res = await adminAgent.post(`/api/admin/cc-import/review/orphan-payment/${legacyId}/link`)
-    .send({ proposal_id: proposalId, cc_event_id: proposalCcId });
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcId });
 
-  // Server returns 409 with CC_PROMOTE_FAILED.
-  assert.strictEqual(res.status, 409);
-  assert.strictEqual(res.body.code, 'CC_PROMOTE_FAILED');
+    assert.equal(r.status, 409);
+    const body = JSON.parse(r.body);
+    assert.equal(body.code, 'CC_PROMOTE_FAILED');
 
-  // cc_event_id stays NULL — row stays in the orphan queue.
-  const after = await pool.query('SELECT cc_event_id FROM legacy_cc_payments WHERE id = $1', [legacyId]);
-  assert.strictEqual(after.rows[0].cc_event_id, null);
-
-  await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
-  await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    // cc_event_id stays NULL — row stays on the orphan queue with a recovery path.
+    // This is the load-bearing assertion: proves BEGIN/ROLLBACK fired even
+    // though the promote helper was mocked.
+    const after = await pool.query('SELECT cc_event_id FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    assert.equal(after.rows[0].cc_event_id, null);
+  } finally {
+    spy.mock.restore();
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+  }
 });
 ```
 
-- [ ] **Step 3: Run the new test — verify it fails**
+- [ ] **Step 4: Run the new test — verify it fails**
 
-Run:
 ```bash
 node --test server/routes/admin/ccImport/review.test.js 2>&1 | grep -A 4 "rolls back cc_event_id"
 ```
-Expected: FAIL — current code returns 200, cc_event_id is set.
+Expected: FAIL — current code returns 200.
 
-- [ ] **Step 4: Refactor both branches to atomic txn + status check**
+- [ ] **Step 5: Refactor the PAYMENT branch (lines 396-414)**
 
-The current payment branch (around line 397-413):
+Current code:
 
 ```javascript
 // Payment path — shared transaction.
@@ -292,8 +401,8 @@ try {
   );
   promoteResult = await phase4.promoteSingleLegacyPayment(legacyId, { client });
   if (promoteResult.status !== 'promoted' && promoteResult.status !== 'already_promoted') {
-    // Throw so the BEGIN/COMMIT rolls back the cc_event_id UPDATE — keeps the
-    // row in the orphan queue with a recovery path.
+    // Throw so BEGIN rolls back the cc_event_id UPDATE — keeps the row in the
+    // orphan queue with a recovery path.
     throw new ConflictError(
       `Promote failed: ${promoteResult.error || promoteResult.status}`,
       'CC_PROMOTE_FAILED'
@@ -312,62 +421,101 @@ try {
 }
 ```
 
-Apply the **mirror change** to the refund branch (around line 380-395). The structure is identical; only the function called differs (`promoteSingleLegacyRefund` instead of `promoteSingleLegacyPayment`).
+- [ ] **Step 6: Refactor the REFUND branch (lines 373-395) — asymmetric fix**
 
-- [ ] **Step 5: Verify `ConflictError` is imported at the top of the file**
+The refund branch already has a revert-on-throw catch block. Add a status check AFTER `promoteSingleLegacyRefund(legacyId)` returns; on non-success, throw `ConflictError`. The existing catch block runs the cc_event_id revert UPDATE and (per the Sentry-skip change in Step 5) we also suppress Sentry on the new ConflictError.
 
-Run:
+Current refund branch:
+
+```javascript
+if (legacy.cc_type === 'Refund') {
+  // Refund path — UPDATE + explicit revert-on-throw.
+  await pool.query(
+    `UPDATE legacy_cc_payments SET cc_event_id = $1 WHERE id = $2`,
+    [targetCcId, legacyId]
+  );
+  try {
+    promoteResult = await phase4.promoteSingleLegacyRefund(legacyId);
+  } catch (err) {
+    // Revert the cc_event_id assignment so the orphan stays on the worklist.
+    try {
+      await pool.query(
+        `UPDATE legacy_cc_payments SET cc_event_id = NULL WHERE id = $1
+            AND promoted_payment_id IS NULL AND promoted_refund_id IS NULL`,
+        [legacyId]
+      );
+    } catch (revertErr) {
+      reportException(req, revertErr, { step: 'cc_event_id_revert', legacyId });
+    }
+    reportException(req, err, { step: 'promote_single', legacyId });
+    throw err;
+  }
+}
+```
+
+Replace with:
+
+```javascript
+if (legacy.cc_type === 'Refund') {
+  // Refund path — UPDATE + explicit revert-on-throw. promoteSingleLegacyRefund
+  // MUST own its own connection (Approach A; cannot share a txn). Add a status
+  // check after the call so non-success non-throws still trigger the existing
+  // revert catch block via re-throw.
+  await pool.query(
+    `UPDATE legacy_cc_payments SET cc_event_id = $1 WHERE id = $2`,
+    [targetCcId, legacyId]
+  );
+  try {
+    promoteResult = await phase4.promoteSingleLegacyRefund(legacyId);
+    if (promoteResult.status !== 'promoted' && promoteResult.status !== 'already_promoted') {
+      throw new ConflictError(
+        `Promote failed: ${promoteResult.error || promoteResult.status}`,
+        'CC_PROMOTE_FAILED'
+      );
+    }
+  } catch (err) {
+    // Revert the cc_event_id assignment so the orphan stays on the worklist.
+    try {
+      await pool.query(
+        `UPDATE legacy_cc_payments SET cc_event_id = NULL WHERE id = $1
+            AND promoted_payment_id IS NULL AND promoted_refund_id IS NULL`,
+        [legacyId]
+      );
+    } catch (revertErr) {
+      reportException(req, revertErr, { step: 'cc_event_id_revert', legacyId });
+    }
+    // ConflictError is the operator-visible failure — don't Sentry-spam on it.
+    if (!(err instanceof ConflictError)) {
+      reportException(req, err, { step: 'promote_single', legacyId });
+    }
+    throw err;
+  }
+}
+```
+
+- [ ] **Step 7: Confirm `ConflictError` is imported (no edit expected)**
+
 ```bash
 grep -n "ConflictError" server/routes/admin/ccImport/review.js | head -3
 ```
-Expected: at least one import line. If not, add `ConflictError` to the existing `require('../../../utils/errors')` destructure at the top of the file.
+Expected: line 38 already imports it via `const { ValidationError, NotFoundError, ConflictError } = require('../../../utils/errors');`. No edit needed; this is a sanity check.
 
-- [ ] **Step 6: Run the new errored-status test — verify it passes**
+- [ ] **Step 8: Run the errored-status test — verify it passes**
 
-Run:
 ```bash
 node --test server/routes/admin/ccImport/review.test.js 2>&1 | grep -A 4 "rolls back cc_event_id"
 ```
 Expected: PASS.
 
-- [ ] **Step 7: Add the orphan-status test**
+- [ ] **Step 9: Add the success-still-works regression test**
 
-Append to `review.test.js`:
-
-```javascript
-test('POST /review/orphan-payment/:legacy_id/link > 409s on orphan promote status', async () => {
-  // promoteSingleLegacyPayment returns { status: 'orphan' } when the legacy
-  // row has no cc_event_id at the start of the promote (we set it inside the
-  // same txn, so this branch fires only on a race or a deliberately bad call).
-  // Easiest reproduction: pass a non-existent proposal_id; the cc_event_id we
-  // set won't resolve to any real proposal, so the promote walks back to its
-  // missing-anchor branch.
-
-  const legacyRes = await pool.query(
-    `INSERT INTO legacy_cc_payments (cc_type, payment_applied_cents, paid_on, raw_import_id)
-     VALUES ('Payment', 10000, CURRENT_DATE, NULL)
-     RETURNING id`
-  );
-  const legacyId = legacyRes.rows[0].id;
-
-  const res = await adminAgent.post(`/api/admin/cc-import/review/orphan-payment/${legacyId}/link`)
-    .send({ proposal_id: 999999999, cc_event_id: 'definitely-not-a-real-cc-id' });
-
-  assert.strictEqual(res.status, 409);
-  assert.strictEqual(res.body.code, 'CC_PROMOTE_FAILED');
-
-  const after = await pool.query('SELECT cc_event_id FROM legacy_cc_payments WHERE id = $1', [legacyId]);
-  assert.strictEqual(after.rows[0].cc_event_id, null);
-
-  await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
-});
-```
-
-- [ ] **Step 8: Add the success-still-works regression test**
+Append:
 
 ```javascript
-test('POST /review/orphan-payment/:legacy_id/link > still succeeds and persists cc_event_id on promoted status', async () => {
-  // Regression: refactor should not break the happy path.
+test('POST /orphan-payment/:id/link still succeeds and persists cc_event_id on promoted status', async () => {
+  // Regression guard: the refactor must not break the happy path. We use the
+  // file's existing rawOp/orphanPaymentId fixture pattern if one is still
+  // un-used at this point in the run; otherwise we mint fresh rows.
   const propRes = await pool.query(
     `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
      VALUES (NULL, 'confirmed', CURRENT_DATE + INTERVAL '60 days', 500, 0,
@@ -377,72 +525,156 @@ test('POST /review/orphan-payment/:legacy_id/link > still succeeds and persists 
   const proposalId = propRes.rows[0].id;
   const proposalCcId = propRes.rows[0].cc_id;
 
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix2-ok')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+
   const legacyRes = await pool.query(
-    `INSERT INTO legacy_cc_payments (cc_type, payment_applied_cents, paid_on, raw_import_id)
-     VALUES ('Payment', 10000, CURRENT_DATE, NULL)
-     RETURNING id`
+    `INSERT INTO legacy_cc_payments (cc_event_title, cc_type, paid_on, payment_applied_cents, raw_import_id)
+     VALUES ('Fix2 Happy', 'Payment', CURRENT_DATE, 10000, $1)
+     RETURNING id`,
+    [rawImportId]
   );
   const legacyId = legacyRes.rows[0].id;
 
-  const res = await adminAgent.post(`/api/admin/cc-import/review/orphan-payment/${legacyId}/link`)
-    .send({ proposal_id: proposalId, cc_event_id: proposalCcId });
-  assert.strictEqual(res.status, 200);
-  assert.strictEqual(res.body.ok, true);
-  assert.strictEqual(res.body.promote_status, 'promoted');
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcId });
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.ok, true);
+    assert.equal(body.promote_status, 'promoted');
 
-  const after = await pool.query('SELECT cc_event_id, promoted_payment_id FROM legacy_cc_payments WHERE id = $1', [legacyId]);
-  assert.strictEqual(after.rows[0].cc_event_id, proposalCcId);
-  assert.notStrictEqual(after.rows[0].promoted_payment_id, null);
-
-  // Cleanup
-  await pool.query('DELETE FROM proposal_payments WHERE proposal_id = $1', [proposalId]);
-  await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
-  await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    const after = await pool.query(
+      'SELECT cc_event_id, promoted_payment_id FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    assert.equal(after.rows[0].cc_event_id, proposalCcId);
+    assert.notEqual(after.rows[0].promoted_payment_id, null);
+  } finally {
+    await pool.query('DELETE FROM proposal_payments WHERE proposal_id = $1', [proposalId]);
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+  }
 });
 ```
 
-- [ ] **Step 9: Run the full file — verify all three new tests pass and nothing regressed**
+> Not testing the `'orphan'` promote-status branch: in the new atomic-txn design we always SET cc_event_id BEFORE the promote, so `'orphan'` (the missing-anchor branch) is unreachable from this route. The `'errored'` test in Step 3 is the canonical non-success reproducer.
 
-Run:
+- [ ] **Step 10: Add a Sentry-not-called assertion (suggestion folded in)**
+
+The Step 5 / Step 6 change explicitly does NOT call `reportException` when the thrown error is a `ConflictError` (operator-visible failure, not a code defect). Add a regression test so this stays true. Uses the same `mock.method(phase4, 'promoteSingleLegacyPayment', ...)` approach as Step 3 plus a second mock on `Sentry.captureException`.
+
+Append:
+
+```javascript
+test('POST /orphan-payment/:id/link does NOT capture ConflictError to Sentry on non-success promote', async () => {
+  // The point of the `if (!(err instanceof ConflictError))` guard around
+  // reportException is that operator-visible failures (a bad row in the legacy_cc
+  // queue) should NOT spam Sentry. Stub Sentry.captureException and assert it
+  // was not called when the route 409s.
+  const Sentry = require('@sentry/node');
+  const phase4 = require('../../../../scripts/cc-import/phases/phase4');
+  const { mock } = require('node:test');
+  const promoteSpy = mock.method(phase4, 'promoteSingleLegacyPayment',
+    async () => ({ status: 'errored', error: 'forced_for_test' }));
+  const sentrySpy = mock.method(Sentry, 'captureException', () => {});
+
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix2-sentry')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+  const legacyRes = await pool.query(
+    `INSERT INTO legacy_cc_payments (cc_event_title, cc_type, paid_on, payment_applied_cents, raw_import_id)
+     VALUES ('Fix2 Sentry', 'Payment', CURRENT_DATE, 10000, $1) RETURNING id`,
+    [rawImportId]
+  );
+  const legacyId = legacyRes.rows[0].id;
+  const propRes = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
+     VALUES (NULL, 'confirmed', CURRENT_DATE + INTERVAL '30 days', 500, 0,
+             'cc-fix2-sentry-' || gen_random_uuid()::text, gen_random_uuid(), 'birthday-party')
+     RETURNING id, cc_id`
+  );
+  const proposalId = propRes.rows[0].id;
+  const proposalCcId = propRes.rows[0].cc_id;
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcId });
+    assert.equal(r.status, 409);
+    assert.equal(sentrySpy.mock.callCount(), 0, 'ConflictError must not be sent to Sentry');
+  } finally {
+    promoteSpy.mock.restore();
+    sentrySpy.mock.restore();
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+  }
+});
+```
+
+- [ ] **Step 11: Run the full file — verify all new tests pass**
+
 ```bash
 node --test server/routes/admin/ccImport/review.test.js 2>&1 | tail -10
 ```
 Expected: `tests N, pass N, fail 0`.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 12: Delete the matching tech-debt entry**
+
+Open `docs/tech-debt.md`. Find the entry `### CC-Import: orphan-payment link silently no-ops on non-success status` (around line 159). Delete the entire block.
+
+- [ ] **Step 13: Commit**
 
 ```bash
-git add server/routes/admin/ccImport/review.js server/routes/admin/ccImport/review.test.js
+git add server/routes/admin/ccImport/review.js server/routes/admin/ccImport/review.test.js docs/tech-debt.md
 git commit -m "fix(cc-import): atomic-rollback orphan-payment link on non-success promote status"
 ```
+
+**Checkpoint review.** This commit changes data-integrity (atomic-txn around a money-adjacent UPDATE). Run two review agents in parallel against the diff before moving to Task 3:
+
+```bash
+# from os integration window — agents read against worktree HEAD
+# (database-review for the txn/rollback correctness; code-review for the
+#  ConflictError + Sentry-skip pattern)
+```
+
+Launch `database-review` and `code-review` via the Agent tool. Wait for both to return clean (or flag) before Task 3.
 
 ---
 
 ## Task 3: Errored-row and skipped-event retry reclassifies by date
 
-**Codex finding:** [P1] Three retry endpoints in `review.js` hardcode `phase3.promoteBucketA` regardless of the row's effective bucket:
-- Line 286: `/duplicate/:row_id/promote` (dedup-skip retry)
+**Codex finding:** [P1] Two retry endpoints in `review.js` hardcode `phase3.promoteBucketA` regardless of the row's effective bucket:
 - Line 820: `/errored-row/:row_id/retry`
 - Line 930: `/skipped-event/:row_id/promote`
 
-For the **errored-row** and **skipped-event** retries (the two codex flagged), if the underlying row is a past-dated event (would naturally classify as Bucket B), forcing Bucket A creates a `confirmed` proposal with a past event_date and enrolls in auto-comms — the scheduler would then send "your event is next week!" emails for an event that already happened.
+For both, if the underlying row is a past-dated event (would classify as Bucket B), forcing Bucket A creates a `confirmed` proposal with a past event_date and enrolls in auto-comms — the scheduler would then send "your event is next week!" emails for an event that already happened.
 
 The duplicate-promote retry (line 286) is **out of scope** — that endpoint is for dedup-suspect rows where the operator has already confirmed the row is NOT a duplicate. The classification was correct at first run; bypassing dedup keeps the same classification.
 
-**Approach chosen (per user decision):** Option 1 — reclassify by `event_date`. Past-dated rows route to `promoteBucketB` (writes to `proposals` with `status='completed'` + completed shifts + NO auto-comms enrollment). Future-dated rows continue to `promoteBucketA`.
+**Approach:** Reclassify by `event_date`. Past-dated rows route to `promoteBucketB` (writes to `proposals` with `status='completed'` + completed shifts + NO auto-comms enrollment). Future-dated rows continue to `promoteBucketA`. Bucket C and D archive paths are not single-row-callable on retry — the operator explicitly chose to promote — so they degrade to A with the audit log carrying the original bucket letter.
 
 **Files:**
-- Modify: `server/routes/admin/ccImport/review.js:820, 930` (the two flagged retry sites)
-- Modify: `scripts/cc-import/phases/phase3.js` — export a tiny `classifyForRetry(payload, today)` helper that wraps `classify(...)` + returns the right `promote*` function reference
+- Modify: `server/routes/admin/ccImport/review.js:820, 930` (the two flagged retry sites + audit-log metadata)
+- Modify: `scripts/cc-import/phases/phase3.js` — export `classifyForRetry(payload, today)`
 - Test: `server/routes/admin/ccImport/review.test.js` (add 2 cases — past-dated retry → B; future-dated retry → A)
+- Modify: `docs/tech-debt.md` (delete the matching entry in the same commit)
 
-- [ ] **Step 1: Confirm the existing classify() signature**
+- [ ] **Step 1: Confirm the existing `classify()` signature**
 
-Run:
 ```bash
 cat scripts/cc-import/lib/buckets.js
 ```
-Expected output mirrors what's already in the file:
+Expected:
 ```javascript
 function classify({ status, eventDate, packageName }, today) {
   if (status === 'Confirmed' && isSkippedPackage(packageName)) return 'D';
@@ -452,132 +684,191 @@ function classify({ status, eventDate, packageName }, today) {
 }
 ```
 
-- [ ] **Step 2: Find how the row's status / eventDate / packageName are extracted in phase3.js for the initial bucket dispatch**
+- [ ] **Step 2: Confirm `phase3.buildRowContext(row)` exists and exports the right keys**
 
-Run:
-```bash
-grep -n "classify(" scripts/cc-import/phases/phase3.js
-```
-Expected: at least one call site that builds the `{status, eventDate, packageName}` shape from the raw payload. Read that block — we'll reuse the same field-extraction logic.
+Already verified at `scripts/cc-import/phases/phase3.js:160-200`. `buildRowContext(row)` returns a `ctx` object with `status`, `eventDate`, `packageName`, `ccId`, etc. — the keys `classify` consumes. The CSV column names it reads internally are `'Status'`, `'Package Name'`, `'Event Date'`, `'ID'` (NOT `'Event Status'`/`'Package'`/`'Event Id'`). The new `classifyForRetry` reuses `buildRowContext` instead of re-implementing the extraction — keeps a single source of truth for CSV column names.
 
-- [ ] **Step 3: Write the failing test (past-dated retry routes to Bucket B)**
+`buildRowContext` is currently module-local. Step 3 adds it to the exports.
+
+- [ ] **Step 3: Write the failing test (past-dated skipped-event retry → Bucket B)**
+
+`phase3.promoteBucketA._promote` calls `resolveClientId(client, ctx)` at `scripts/cc-import/phases/phase3.js:469-472` and returns `{ status: 'errored', error: 'client_not_found_for_email_or_missing' }` when the row has no email match. The test must seed a `clients` row first AND include `'Contact Email(s)'` in the payload so the row resolves to that client and the date-classification fix actually runs.
 
 Append to `server/routes/admin/ccImport/review.test.js`:
 
 ```javascript
-test('POST /review/skipped-event/:row_id/promote > past-dated event lands in Bucket B (completed, no auto-comms enrollment)', async () => {
-  // Seed a 'skipped' raw row whose payload is a Confirmed PAST event.
+test('POST /skipped-event/:row_id/promote past-dated event lands in Bucket B (completed, no auto-comms)', async () => {
+  // Seed a clients row first so phase3's resolveClientId finds a match.
+  const clientEmail = `fix3-past-${Date.now()}@example.com`;
+  const clientIns = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Past Event Test', $1, '555-0100') RETURNING id`,
+    [clientEmail]
+  );
+  const seededClientId = clientIns.rows[0].id;
+
+  // Seed a 'skipped' raw row whose payload is a Confirmed PAST event. Column
+  // names must match what phase3.buildRowContext reads: 'Status', 'Package Name',
+  // 'Event Date', 'ID', 'Contact Email(s)'.
   const payload = {
-    'Event Status': 'Confirmed',
+    'Status': 'Confirmed',
     'Event Date': '2024-01-15',  // far past
-    'Package': 'Bartending Services',  // a skip-list package — that's why it's 'skipped' status
-    'Client': 'Past Event Test',
-    'Event Id': 'cc-fix3-past-' + Date.now(),
+    'Package Name': 'Bartending Services',  // a skip-list package
+    'Client Name': 'Past Event Test',
+    'Contact Email(s)': clientEmail,
+    'ID': 'cc-fix3-past-' + Date.now(),
   };
   const rawRes = await pool.query(
     `INSERT INTO legacy_cc_raw_imports
        (source_file, source_entity, source_row_number, source_row_hash, payload, import_status, cc_id)
-     VALUES ('report (10).csv', 'events', 999999, md5(random()::text),
-             $1::jsonb, 'skipped', $2)
+     VALUES ('report (10).csv', 'events', $1, $2,
+             $3::jsonb, 'skipped', $4)
      RETURNING id`,
-    [JSON.stringify(payload), payload['Event Id']]
+    [nextSrn(), nextHash('fix3-past'), JSON.stringify(payload), payload['ID']]
   );
   const rowId = rawRes.rows[0].id;
+  let proposalId = null;
 
-  const res = await adminAgent.post(`/api/admin/cc-import/review/skipped-event/${rowId}/promote`)
-    .send({});
-  assert.strictEqual(res.status, 200);
-  assert.ok(res.body.proposal_id, 'expected a proposal_id in the response');
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/skipped-event/${rowId}/promote`, adminToken, {});
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.ok(body.proposal_id, 'expected a proposal_id in the response');
+    proposalId = body.proposal_id;
 
-  const proposalId = res.body.proposal_id;
+    const propRow = await pool.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
+    assert.equal(propRow.rows[0].status, 'completed');
 
-  // Bucket B means: proposals.status='completed', shifts.status='completed',
-  // and NO pending scheduled_messages enrolled.
-  const propRow = await pool.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
-  assert.strictEqual(propRow.rows[0].status, 'completed');
+    const shiftRow = await pool.query('SELECT status FROM shifts WHERE proposal_id = $1', [proposalId]);
+    if (shiftRow.rowCount > 0) {
+      assert.equal(shiftRow.rows[0].status, 'completed');
+    }
 
-  const shiftRow = await pool.query('SELECT status FROM shifts WHERE proposal_id = $1', [proposalId]);
-  // Shifts may not exist on Bucket B archive flow — accept either no shift or completed.
-  if (shiftRow.rowCount > 0) {
-    assert.strictEqual(shiftRow.rows[0].status, 'completed');
+    const smCount = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM scheduled_messages
+         WHERE entity_type = 'proposal' AND entity_id = $1 AND status = 'pending'`,
+      [proposalId]
+    );
+    assert.equal(smCount.rows[0].c, 0, 'past-dated retry must not enroll in auto-comms');
+  } finally {
+    if (proposalId) {
+      await pool.query("DELETE FROM scheduled_messages WHERE entity_type='proposal' AND entity_id = $1", [proposalId]);
+      await pool.query("DELETE FROM shift_requests WHERE shift_id IN (SELECT id FROM shifts WHERE proposal_id = $1)", [proposalId]);
+      await pool.query("DELETE FROM shifts WHERE proposal_id = $1", [proposalId]);
+      await pool.query("DELETE FROM proposal_activity_log WHERE proposal_id = $1", [proposalId]);
+      await pool.query("DELETE FROM proposals WHERE id = $1", [proposalId]);
+    }
+    await pool.query("DELETE FROM legacy_cc_raw_imports WHERE id = $1", [rowId]);
+    await pool.query("DELETE FROM clients WHERE id = $1", [seededClientId]);
   }
-
-  const smCount = await pool.query(
-    `SELECT COUNT(*)::int AS c FROM scheduled_messages
-       WHERE entity_type = 'proposal' AND entity_id = $1 AND status = 'pending'`,
-    [proposalId]
-  );
-  assert.strictEqual(smCount.rows[0].c, 0, 'past-dated retry must not enroll in auto-comms');
-
-  // Cleanup
-  await pool.query("DELETE FROM scheduled_messages WHERE entity_type='proposal' AND entity_id = $1", [proposalId]);
-  await pool.query("DELETE FROM shifts WHERE proposal_id = $1", [proposalId]);
-  await pool.query("DELETE FROM proposals WHERE id = $1", [proposalId]);
-  await pool.query("DELETE FROM legacy_cc_raw_imports WHERE id = $1", [rowId]);
 });
 ```
 
-- [ ] **Step 4: Run the new test — verify it fails**
+- [ ] **Step 4: Run the test — verify it fails**
 
-Run:
 ```bash
 node --test server/routes/admin/ccImport/review.test.js 2>&1 | grep -A 4 "past-dated event lands"
 ```
-Expected: FAIL — current code routes to Bucket A, so `proposals.status='confirmed'` (not 'completed').
+Expected: FAIL — current code routes to Bucket A so `proposals.status='confirmed'`.
 
-- [ ] **Step 5: Add `classifyForRetry` helper to phase3.js**
+- [ ] **Step 5: Add `classifyForRetry` to phase3.js**
 
-In `scripts/cc-import/phases/phase3.js`, add this near the existing `promoteBucketA`/`promoteBucketB` exports (around line 436):
+In `scripts/cc-import/phases/phase3.js`, add this near the `promoteBucketA`/`promoteBucketB` definitions (around line 436):
 
 ```javascript
 /**
- * Used by the cc-import Review page's retry endpoints (`/errored-row/:id/retry`
- * and `/skipped-event/:id/promote`). Reads the raw payload, runs the same
- * `classify(...)` the initial phase 3 pass uses, and returns the matching
- * promote function. Falls back to promoteBucketA when classification is
- * ambiguous (Bucket C archive isn't a single-row API — and the operator
- * explicitly chose to retry, so we honor "make this active" intent).
+ * Used by the cc-import Review page's retry endpoints (/errored-row/:id/retry,
+ * /skipped-event/:id/promote). Reuses buildRowContext to extract the same
+ * fields the initial-pass dispatch uses, runs classify(), and returns the
+ * matching promote function reference plus the genuine bucket letter.
  *
- * Returns: { bucket: 'A' | 'B', promote: function(payload, options) }
+ * Bucket A (future + Confirmed) → promoteBucketA.
+ * Bucket B (past + Confirmed)   → promoteBucketB.
+ * Bucket C / D                  → degrade to promoteBucketA. C/D archive paths
+ *   are not single-row callable, and the operator's retry click means "make
+ *   this active." The `bucket` field still carries 'C' or 'D' so the audit log
+ *   records the genuine classification (useful for back-tracing intent).
  */
 function classifyForRetry(payload, today = new Date()) {
-  // Extract status / eventDate / packageName from the raw payload using the
-  // same helpers as the initial-pass dispatch.
-  const status = trimOrNull(getCol(payload, 'Event Status'));
-  const eventDateRaw = getCol(payload, 'Event Date');
-  const eventDate = eventDateRaw ? parseCcDate(eventDateRaw) : null;
-  const packageName = trimOrNull(getCol(payload, 'Package'));
-
-  const bucket = classify({ status, eventDate, packageName }, today);
+  const ctx = buildRowContext(payload);
+  const bucket = classify(
+    { status: ctx.status, eventDate: ctx.eventDate, packageName: ctx.packageName },
+    today
+  );
   if (bucket === 'B') return { bucket: 'B', promote: promoteBucketB };
-  // A, C, or D on retry: operator is force-promoting — honor "active" intent.
-  // C and D archive paths aren't single-row-callable, so we promote as A.
-  return { bucket: 'A', promote: promoteBucketA };
+  // A, C, D — all degrade to promoteBucketA on operator retry. `bucket` retains
+  // the genuine letter for audit clarity.
+  return { bucket, promote: promoteBucketA };
 }
 ```
 
-Add `classifyForRetry` to the module.exports list at the bottom of `phase3.js`.
-
-- [ ] **Step 6: Update the skipped-event retry endpoint to use classifyForRetry**
-
-In `server/routes/admin/ccImport/review.js`, find the block at lines 919-933:
+Then update the `module.exports` block at the bottom of `phase3.js`. Current state at `phase3.js:841-851` (verified):
 
 ```javascript
-// Re-run via promoteBucketA. The row's natural bucket is determined by
-// status + date inside the promote helper; for a Bucket D row that was
-// skipped purely on package, bypassing means it now lands in A / B / C as
-// appropriate. We call promoteBucketA which handles its own classification
-// path through the underlying _promote.
-// NOTE: phase3.promoteBucketA uses bucketLetter='A' explicitly — meaning
-// the row will be inserted as Bucket A (future + Confirmed). For a more
-// permissive re-classification, callers would need a dedicated bypass
-// helper. For Task 19 we accept "promote as Bucket A" semantics: the
-// operator who flips a skipped row is explicitly saying "this should be
-// an active event."
+module.exports = {
+  run,
+  promoteBucketA,
+  promoteBucketB,
+  // Internals re-exported for unit tests.
+  parseAddons,
+  parseBookedAt,
+  computeBalanceDueDateA,
+  buildPricingSnapshot,
+  buildRowContext,
+};
+```
+
+`buildRowContext` is ALREADY exported. Add a single line for `classifyForRetry`:
+
+```javascript
+module.exports = {
+  run,
+  promoteBucketA,
+  promoteBucketB,
+  classifyForRetry,
+  // Internals re-exported for unit tests.
+  parseAddons,
+  parseBookedAt,
+  computeBalanceDueDateA,
+  buildPricingSnapshot,
+  buildRowContext,
+};
+```
+
+Run after the edit:
+```bash
+grep -n "classifyForRetry" scripts/cc-import/phases/phase3.js
+```
+Expected: 2 matches — the function definition and the exports line.
+
+- [ ] **Step 6: Update the skipped-event retry endpoint (review.js:919-933) and its audit log**
+
+Find:
+
+```javascript
 const result = await phase3.promoteBucketA(guard.rows[0].payload, { skipDedup: true });
 if (result.status !== 'promoted' && result.status !== 'already_promoted') {
   throw new ConflictError(`Promote failed: ${result.error || result.status}`, 'CC_PROMOTE_FAILED');
 }
+
+await pool.query(
+  `UPDATE legacy_cc_raw_imports
+      SET import_status = 'promoted',
+          import_notes = $2::jsonb
+    WHERE id = $1`,
+  [rowId, JSON.stringify({
+    promoted_by_user_id: req.user.id,
+    promoted_at: new Date().toISOString(),
+    proposal_id: result.proposalId || null,
+    skip_rule_bypassed: true,
+  })]
+);
+
+await logAdminAction({
+  actorUserId: req.user.id,
+  targetUserId: null,
+  action: 'cc_review_skipped_event_promoted',
+  metadata: { row_id: rowId, proposal_id: result.proposalId || null },
+});
 ```
 
 Replace with:
@@ -585,28 +876,46 @@ Replace with:
 ```javascript
 // Reclassify by status + event_date so a past-dated event lands in Bucket B
 // (completed, no auto-comms enrollment) instead of being force-promoted as
-// Bucket A and scheduling stale reminders. Mirrors the initial phase 3 pass
-// via classifyForRetry.
+// Bucket A and scheduling stale reminders. classifyForRetry mirrors the
+// initial phase 3 pass via buildRowContext + classify.
 const { bucket, promote } = phase3.classifyForRetry(guard.rows[0].payload);
 const result = await promote(guard.rows[0].payload, { skipDedup: true });
 if (result.status !== 'promoted' && result.status !== 'already_promoted') {
   throw new ConflictError(`Promote failed: ${result.error || result.status}`, 'CC_PROMOTE_FAILED');
 }
-```
 
-Also include `bucket` in the existing `logAdminAction` metadata block right after this (so the audit trail records which bucket the retry landed in).
+await pool.query(
+  `UPDATE legacy_cc_raw_imports
+      SET import_status = 'promoted',
+          import_notes = $2::jsonb
+    WHERE id = $1`,
+  [rowId, JSON.stringify({
+    promoted_by_user_id: req.user.id,
+    promoted_at: new Date().toISOString(),
+    proposal_id: result.proposalId || null,
+    skip_rule_bypassed: true,
+    retry_bucket: bucket,
+  })]
+);
+
+await logAdminAction({
+  actorUserId: req.user.id,
+  targetUserId: null,
+  action: 'cc_review_skipped_event_promoted',
+  metadata: { row_id: rowId, proposal_id: result.proposalId || null, retry_bucket: bucket },
+});
+```
 
 - [ ] **Step 7: Run the failing test — verify it now passes**
 
-Run:
 ```bash
 node --test server/routes/admin/ccImport/review.test.js 2>&1 | grep -A 4 "past-dated event lands"
 ```
 Expected: PASS.
 
-- [ ] **Step 8: Update the errored-row retry endpoint the same way**
+- [ ] **Step 8: Update the errored-row retry endpoint (review.js:820) and its audit log**
 
-Find the block at line 820 of `review.js`:
+Find:
 
 ```javascript
 const r = await phase3.promoteBucketA(workingPayload, { skipDedup: false });
@@ -617,108 +926,161 @@ retryStatus = r.status;
 Replace with:
 
 ```javascript
-const { bucket, promote } = phase3.classifyForRetry(workingPayload);
+const { bucket: retryBucket, promote } = phase3.classifyForRetry(workingPayload);
 const r = await promote(workingPayload, { skipDedup: false });
 retryResult = r;
 retryStatus = r.status;
 ```
 
-Include `bucket` in the route's audit log too.
+Then update the audit-log block at `review.js:884-894`:
 
-- [ ] **Step 9: Add a parallel test for the errored-row retry (past-dated → B)**
+```javascript
+await logAdminAction({
+  actorUserId: req.user.id,
+  targetUserId: null,
+  action: 'cc_review_errored_row_retried',
+  metadata: {
+    row_id: rowId,
+    source_entity: sourceEntity,
+    payload_overridden: !!payloadOverride,
+    result_status: retryStatus,
+    retry_bucket: retryBucket,
+  },
+});
+```
+
+(`retryBucket` is `undefined` on the `'payments'` and other `source_entity` branches that don't call `classifyForRetry` — JSON serialization drops undefined keys, so the metadata stays clean.)
+
+- [ ] **Step 9: Add the parallel errored-row retry test (past-dated → B)**
+
+Same `clients`-seed pattern as Step 3 so `resolveClientId` resolves cleanly and the date-classification code path actually runs.
 
 Append:
 
 ```javascript
-test('POST /review/errored-row/:row_id/retry > past-dated event lands in Bucket B', async () => {
+test('POST /errored-row/:row_id/retry past-dated event lands in Bucket B', async () => {
+  const clientEmail = `fix3-err-${Date.now()}@example.com`;
+  const clientIns = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Past Errored Test', $1, '555-0101') RETURNING id`,
+    [clientEmail]
+  );
+  const seededClientId = clientIns.rows[0].id;
+
   const payload = {
-    'Event Status': 'Confirmed',
+    'Status': 'Confirmed',
     'Event Date': '2023-12-01',
-    'Package': 'Open Bar',  // not a skip-list package
-    'Client': 'Past Errored Test',
-    'Event Id': 'cc-fix3-err-past-' + Date.now(),
+    'Package Name': 'Open Bar',  // not a skip-list package
+    'Client Name': 'Past Errored Test',
+    'Contact Email(s)': clientEmail,
+    'ID': 'cc-fix3-err-past-' + Date.now(),
   };
   const rawRes = await pool.query(
     `INSERT INTO legacy_cc_raw_imports
        (source_file, source_entity, source_row_number, source_row_hash, payload, import_status, cc_id, import_notes)
-     VALUES ('report (10).csv', 'events', 888888, md5(random()::text),
-             $1::jsonb, 'errored', $2, $3::jsonb)
+     VALUES ('report (10).csv', 'events', $1, $2,
+             $3::jsonb, 'errored', $4, $5::jsonb)
      RETURNING id`,
-    [JSON.stringify(payload), payload['Event Id'], JSON.stringify({ error: 'simulated for test', phase: 'phase3' })]
+    [nextSrn(), nextHash('fix3-err'), JSON.stringify(payload), payload['ID'],
+     JSON.stringify({ error: 'simulated for test', phase: 'phase3' })]
   );
   const rowId = rawRes.rows[0].id;
+  let proposalId = null;
 
-  const res = await adminAgent.post(`/api/admin/cc-import/review/errored-row/${rowId}/retry`)
-    .send({});
-  assert.strictEqual(res.status, 200);
-  assert.ok(res.body.proposal_id);
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/errored-row/${rowId}/retry`, adminToken, {});
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.ok(body.result?.proposalId);
+    proposalId = body.result.proposalId;
 
-  const propRow = await pool.query('SELECT status FROM proposals WHERE id = $1', [res.body.proposal_id]);
-  assert.strictEqual(propRow.rows[0].status, 'completed');
-
-  // Cleanup
-  await pool.query("DELETE FROM shifts WHERE proposal_id = $1", [res.body.proposal_id]);
-  await pool.query("DELETE FROM proposals WHERE id = $1", [res.body.proposal_id]);
-  await pool.query("DELETE FROM legacy_cc_raw_imports WHERE id = $1", [rowId]);
+    const propRow = await pool.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
+    assert.equal(propRow.rows[0].status, 'completed');
+  } finally {
+    if (proposalId) {
+      await pool.query("DELETE FROM shift_requests WHERE shift_id IN (SELECT id FROM shifts WHERE proposal_id = $1)", [proposalId]);
+      await pool.query("DELETE FROM shifts WHERE proposal_id = $1", [proposalId]);
+      await pool.query("DELETE FROM proposal_activity_log WHERE proposal_id = $1", [proposalId]);
+      await pool.query("DELETE FROM proposals WHERE id = $1", [proposalId]);
+    }
+    await pool.query("DELETE FROM legacy_cc_raw_imports WHERE id = $1", [rowId]);
+    await pool.query("DELETE FROM clients WHERE id = $1", [seededClientId]);
+  }
 });
 ```
 
 - [ ] **Step 10: Run the full file — verify all tests pass**
 
-Run:
 ```bash
 node --test server/routes/admin/ccImport/review.test.js 2>&1 | tail -10
 ```
 Expected: `tests N, pass N, fail 0`.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 11: Delete the matching tech-debt entry**
+
+Open `docs/tech-debt.md`. Find `### CC-Import: \`promoteBucketA\` hardcodes Bucket A on errored-row + skipped-event retry` (around line 173). Delete the entire block.
+
+- [ ] **Step 12: Commit**
 
 ```bash
-git add server/routes/admin/ccImport/review.js server/routes/admin/ccImport/review.test.js scripts/cc-import/phases/phase3.js
-git commit -m "fix(cc-import): errored-row + skipped-event retry reclassifies by date so past-dated events land in Bucket B"
+git add server/routes/admin/ccImport/review.js server/routes/admin/ccImport/review.test.js scripts/cc-import/phases/phase3.js docs/tech-debt.md
+git commit -m "fix(cc-import): errored-row + skipped-event retry reclassifies by date"
 ```
 
 ---
 
-## Task 4: payrollLateTip + clawbackTip filter stubs from split instead of skipping entirely
+## Task 4: payrollLateTip + clawbackTip filter stubs from split
 
-**Codex finding:** [P1] Both `rollForwardLateTip` (`server/utils/payrollLateTip.js:41-49`) and `clawbackTip` (`server/utils/payrollClawback.js:37-45`) early-return on `isLegacyCcStubUser(tip.target_user_id)`. After that, they split the money across ALL approved bartenders on `tip.shift_id`. On a mixed shift (stub + real bartender, possible after operator linked a real user via `/review/unmatched-payee/.../link`), a tip whose `target_user_id` resolves to the stub now skips entirely — the real bartender on the same shift gets nothing from a tip, and a later refund won't claw their share back.
+**Codex finding:** [P1] Both `rollForwardLateTip` (`server/utils/payrollLateTip.js:36-49`) and `clawbackTip` (`server/utils/payrollClawback.js:32-45`) early-return on `isLegacyCcStubUser(tip.target_user_id)`. After that, they split the money across ALL approved bartenders on `tip.shift_id`. On a mixed shift (stub + real bartender, possible after operator linked a real user via `/review/unmatched-payee/.../link`), a tip whose `target_user_id` resolves to the stub now skips entirely — the real bartender on the same shift gets nothing from a tip, and a later refund won't claw their share back.
 
-**Approach chosen (per user decision):** Filter stubs out of the per-bartender split instead of skipping entirely. If ALL bartenders are stubs, keep the original skip (with a renamed reason string). The math change: per-bartender share = total / N where N is now `realBartenders.length` (smaller denominator when stubs are filtered → larger share for the real bartenders, which is the correct outcome).
+**Approach:** Replace the target-user gate with a **per-bartender-split filter**. Stubs are excluded from the denominator. If ALL bartenders on the shift are stubs, the entire rollforward/clawback is skipped under a new reason string (`'all_bartenders_are_legacy_cc_stubs'`).
+
+**Critical test-rewrite caveat.** The existing `'skips when target is a legacy CC stub'` tests in both `payrollLateTip.test.js:143` and `payrollClawback.test.js:142` set `tips.target_user_id = stubId` but DO NOT add the stub to `shift_requests` for the test shift. The `beforeEach` block puts `bartenderA + bartenderB` (both real) on the shift. Under the new logic those tests would land the tip on the two real bartenders (correct new behavior) and the old assertion `result = { skipped: true, reason: 'legacy_cc_stub_target' }` would fail. The existing tests are testing the OLD gate, which is being REMOVED — they cannot be saved by a reason-string rename. They must be **deleted and replaced** with tests that genuinely exercise the new behavior:
+
+1. **Mixed-shift test** (NEW): one stub + one real bartender on a FRESH shift (NOT `frozenShiftId`/`paidShiftId` — those already have 2 real bartenders from `beforeEach`). Assert the real bartender gets the full tip.
+2. **All-stubs test** (REPLACES the old target-stub test): a FRESH shift with stub-only bartenders, tip targeted at a stub. Assert the new reason string fires and no payouts are created.
+
+`clawbackTipByPaymentIntent > inherits the legacy-stub skip` (`payrollClawback.test.js:179`) has the same problem and gets the same treatment — delete it and add a parallel all-stubs test under the new gate name.
 
 **Files:**
-- Modify: `server/utils/payrollLateTip.js:36-49`
-- Modify: `server/utils/payrollClawback.js:32-45`
-- Test: `server/utils/payrollLateTip.test.js` (update existing all-stub test for renamed reason; add mixed-shift test)
-- Test: `server/utils/payrollClawback.test.js` (same updates)
+- Modify: `server/utils/payrollLateTip.js:36-65` (remove target-user gate; add per-bartender filter + all-stubs guard)
+- Modify: `server/utils/payrollClawback.js:32-73` (same pattern)
+- Modify: `server/utils/payrollLateTip.test.js` (DELETE the old target-stub test; ADD mixed-shift + all-stubs tests)
+- Modify: `server/utils/payrollClawback.test.js` (same)
+- Modify: `docs/tech-debt.md` (delete the matching entry in the same commit)
 
-- [ ] **Step 1: Read the existing all-stub tests for both files to plan the reason-string update**
+- [ ] **Step 1: Read the existing target-stub tests in both files**
 
-Run:
 ```bash
-grep -n "legacy_cc_stub_target" server/utils/payrollLateTip.test.js server/utils/payrollClawback.test.js
+sed -n '143,178p' server/utils/payrollLateTip.test.js
+sed -n '142,213p' server/utils/payrollClawback.test.js
 ```
-Expected: one match in each file at the existing `skipped: true, reason: 'legacy_cc_stub_target'` assertion.
+Confirm: each test (a) creates a fresh stub user, (b) inserts a tip with `target_user_id = stubId`, (c) does NOT touch `shift_requests` for the test shift. The shift retains `bartenderA + bartenderB` from `beforeEach`. These tests will be deleted.
 
-- [ ] **Step 2: Write the failing mixed-shift test for rollForwardLateTip**
+Confirm fixture variable names: `payrollLateTip.test.js` uses `frozenShiftId`; `payrollClawback.test.js` uses `paidShiftId` (NOT `openShiftId`). All new test snippets in this task use those names where they reference the file's existing fixtures.
 
-Append to `server/utils/payrollLateTip.test.js` (before the existing tail-cleanup):
+- [ ] **Step 2: Confirm no external callers switch on the old reason string**
+
+```bash
+grep -rn "legacy_cc_stub_target" --include="*.js" .
+```
+Expected: 4 matches total — `payrollLateTip.js`, `payrollClawback.js`, `payrollLateTip.test.js`, `payrollClawback.test.js`. No callers in routes, schedulers, or webhooks. Rename is safe.
+
+- [ ] **Step 3: Write the failing mixed-shift test for rollForwardLateTip**
+
+Append to `server/utils/payrollLateTip.test.js` (BEFORE the existing target-stub test at line 143, which we'll delete in Step 6):
 
 ```javascript
 test('rollForwardLateTip > mixed-stub shift: real bartender gets the whole tip, stubs filtered out', async () => {
-  // Setup: one stub bartender + one real bartender on the same shift. Tip is
-  // targeted at the stub. Without the fix, the whole rollforward skips. With
-  // the fix, the real bartender gets the full tip rolled forward.
-
+  // FRESH shift — beforeEach already populated frozenShiftId with bartenderA + bartenderB,
+  // so we cannot reuse it for a mixed-stub test. New shift, new proposal, new pay_period
+  // membership (it's in the same frozen period for the original-shift label, but we add
+  // shift_requests just for our two users).
   const stub = await pool.query(
     `INSERT INTO users (email, password_hash, role, cc_id)
      VALUES ('mixed-stub@example.com','x','staff','legacy_cc:test:mixed-stub')
      RETURNING id`
   );
   const stubId = stub.rows[0].id;
-
-  // Mixed bartender: a fresh non-stub user (separate from the existing
-  // bartenderA at the top of the file so we don't collide with other tests).
   const real = await pool.query(
     `INSERT INTO users (email, password_hash, role)
      VALUES ('mixed-real@example.com','x','staff')
@@ -731,51 +1093,54 @@ test('rollForwardLateTip > mixed-stub shift: real bartender gets the whole tip, 
     [realId]
   );
 
-  // Both approved on the frozen shift (reusing frozenShiftId from the test file's setup).
+  // Fresh shift on the same frozen proposal (different shift id so we don't
+  // collide with beforeEach's frozenShiftId).
+  const mixedShift = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','7:00 PM','open',$1) RETURNING id`,
+    [frozenProposalId]
+  );
+  const mixedShiftId = mixedShift.rows[0].id;
+
   await pool.query(
     `INSERT INTO shift_requests (shift_id, user_id, position, status)
-     VALUES ($1, $2, 'Bartender', 'approved'), ($1, $3, 'Bartender', 'approved')
-     ON CONFLICT DO NOTHING`,
-    [frozenShiftId, stubId, realId]
+     VALUES ($1, $2, 'Bartender', 'approved'), ($1, $3, 'Bartender', 'approved')`,
+    [mixedShiftId, stubId, realId]
   );
 
-  // Late tip targeting the stub.
   const tipRes = await pool.query(
     `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
                        stripe_payment_intent_id, tipped_at, shift_id)
      VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_mixed_late_tip', '2026-05-15 23:30:00+00', $2)
      RETURNING id`,
-    [stubId, frozenShiftId]
+    [stubId, mixedShiftId]
   );
   const mixedTipId = tipRes.rows[0].id;
 
   try {
     const result = await rollForwardLateTip(mixedTipId);
-    // Result is NOT skipped — money flowed.
-    assert.notStrictEqual(result?.skipped, true);
-    assert.strictEqual(result.bartenders, 1, 'only the real bartender takes the split');
+    assert.notEqual(result?.skipped, true);
+    assert.equal(result.bartenders, 1, 'only the real bartender takes the split');
 
-    // The real bartender has a payout_event with the FULL tip amount (4000c gross, 128c fee).
     const realEvent = await pool.query(
       `SELECT pe.card_tip_gross_cents, pe.card_tip_fee_cents, pe.card_tip_net_cents
          FROM payout_events pe
          JOIN payouts po ON po.id = pe.payout_id
         WHERE po.contractor_id = $1 AND pe.shift_id = $2`,
-      [realId, frozenShiftId]
+      [realId, mixedShiftId]
     );
-    assert.strictEqual(realEvent.rowCount, 1);
-    assert.strictEqual(Number(realEvent.rows[0].card_tip_gross_cents), 4000);
-    assert.strictEqual(Number(realEvent.rows[0].card_tip_fee_cents), 128);
-    assert.strictEqual(Number(realEvent.rows[0].card_tip_net_cents), 3872);
+    assert.equal(realEvent.rowCount, 1);
+    assert.equal(Number(realEvent.rows[0].card_tip_gross_cents), 4000);
+    assert.equal(Number(realEvent.rows[0].card_tip_fee_cents), 128);
+    assert.equal(Number(realEvent.rows[0].card_tip_net_cents), 3872);
 
-    // The stub has NO payout_event.
     const stubEvent = await pool.query(
       `SELECT COUNT(*)::int AS c FROM payout_events pe
          JOIN payouts po ON po.id = pe.payout_id
         WHERE po.contractor_id = $1`,
       [stubId]
     );
-    assert.strictEqual(stubEvent.rows[0].c, 0);
+    assert.equal(stubEvent.rows[0].c, 0);
   } finally {
     await pool.query(
       `DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id IN ($1, $2))`,
@@ -783,140 +1148,147 @@ test('rollForwardLateTip > mixed-stub shift: real bartender gets the whole tip, 
     );
     await pool.query('DELETE FROM payouts WHERE contractor_id IN ($1, $2)', [stubId, realId]);
     await pool.query('DELETE FROM tips WHERE id = $1', [mixedTipId]);
-    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1 AND user_id IN ($2, $3)', [frozenShiftId, stubId, realId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [mixedShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [mixedShiftId]);
     await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [realId]);
     await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [stubId, realId]);
   }
 });
 ```
 
-- [ ] **Step 3: Run the test — verify it fails**
+- [ ] **Step 4: Run the test — verify it fails**
 
-Run:
 ```bash
 node --test server/utils/payrollLateTip.test.js 2>&1 | grep -A 4 "mixed-stub shift"
 ```
-Expected: FAIL with `result.skipped === true` (current code skips the whole rollforward).
+Expected: FAIL — current code skips on the target-stub gate, so `result.skipped === true`.
 
-- [ ] **Step 4: Apply the fix to payrollLateTip.js**
+- [ ] **Step 5: Apply the fix to payrollLateTip.js**
 
-In `server/utils/payrollLateTip.js`, find the block at lines 36-49:
-
-```javascript
-// cc-import: tips paid TO a legacy_cc:* stub bartender never roll forward
-// into modern payouts (we cannot pay stubs through Stripe Connect). Fires
-// BEFORE any DB writes — leaves rolled_forward_at NULL so a re-run after
-// a future de-stub can pick up the tip. Reuses the same transaction client
-// so the read happens against the locked row.
-if (await isLegacyCcStubUser(tip.target_user_id, client)) {
-  Sentry.captureMessage('rollForwardLateTip: target is legacy_cc stub; skipping', {
-    level: 'info',
-    tags: { util: 'payrollLateTip', step: 'skip_legacy_cc_stub' },
-    extra: { tipId, targetUserId: tip.target_user_id },
-  });
-  await client.query('ROLLBACK');
-  return { skipped: true, reason: 'legacy_cc_stub_target' };
-}
-
-// Bartenders on the original shift.
-const bartendersRes = await client.query(
-  `SELECT sr.user_id FROM shift_requests sr
-    WHERE sr.shift_id = $1 AND sr.status = 'approved'
-      AND LOWER(sr.position) = 'bartender'
-    ORDER BY sr.user_id`,
-  [tip.shift_id]
-);
-const bartenders = bartendersRes.rows.map(r => r.user_id);
-if (bartenders.length === 0) {
-  // No bartenders to pay; flag the tip so we don't retry indefinitely.
-  await client.query('UPDATE tips SET rolled_forward_at = NOW() WHERE id = $1', [tipId]);
-  await client.query('COMMIT');
-  return { bartenders: 0 };
-}
-```
-
-Replace with:
+Find lines 36-65 (the target-stub gate + the bartender query block + the no-bartenders branch). Replace the whole block with:
 
 ```javascript
-// Bartenders on the original shift. Stub users (cc_id LIKE 'legacy_cc:%') are
-// filtered out of the per-bartender split — they can't be paid through Stripe
-// Connect, so they receive no share. If ALL bartenders on the shift are stubs,
-// the entire rollforward is skipped (original cc-import gate). The real
-// bartenders on a mixed-stub shift then split the full tip.
-const bartendersRes = await client.query(
-  `SELECT sr.user_id, (u.cc_id LIKE 'legacy_cc:%') AS is_stub
-     FROM shift_requests sr
-     JOIN users u ON u.id = sr.user_id
-    WHERE sr.shift_id = $1 AND sr.status = 'approved'
-      AND LOWER(sr.position) = 'bartender'
-    ORDER BY sr.user_id`,
-  [tip.shift_id]
-);
-const allBartenders = bartendersRes.rows;
-const bartenders = allBartenders.filter(r => !r.is_stub).map(r => r.user_id);
-const stubCount = allBartenders.length - bartenders.length;
+    // Bartenders on the original shift. Stub users (cc_id LIKE 'legacy_cc:%')
+    // are filtered out of the per-bartender split — they can't be paid through
+    // Stripe Connect, so they receive no share. If ALL bartenders are stubs,
+    // the entire rollforward is skipped (renamed reason).
+    const bartendersRes = await client.query(
+      `SELECT sr.user_id, (u.cc_id LIKE 'legacy_cc:%') AS is_stub
+         FROM shift_requests sr
+         JOIN users u ON u.id = sr.user_id
+        WHERE sr.shift_id = $1 AND sr.status = 'approved'
+          AND LOWER(sr.position) = 'bartender'
+        ORDER BY sr.user_id`,
+      [tip.shift_id]
+    );
+    const allBartenders = bartendersRes.rows;
+    const bartenders = allBartenders.filter(r => !r.is_stub).map(r => r.user_id);
+    const stubCount = allBartenders.length - bartenders.length;
 
-if (allBartenders.length === 0) {
-  // No bartenders at all — flag the tip so we don't retry indefinitely.
-  await client.query('UPDATE tips SET rolled_forward_at = NOW() WHERE id = $1', [tipId]);
-  await client.query('COMMIT');
-  return { bartenders: 0 };
-}
+    if (allBartenders.length === 0) {
+      // No bartenders at all — permanent: mark rolled so we don't retry forever.
+      await client.query('UPDATE tips SET rolled_forward_at = NOW() WHERE id = $1', [tipId]);
+      await client.query('COMMIT');
+      return { bartenders: 0 };
+    }
 
-if (bartenders.length === 0) {
-  // All bartenders on the shift are stubs — no modern payouts possible.
-  // Leave rolled_forward_at NULL so a future de-stub can replay.
-  Sentry.captureMessage('rollForwardLateTip: all shift bartenders are legacy_cc stubs; skipping', {
-    level: 'info',
-    tags: { util: 'payrollLateTip', step: 'skip_all_stubs' },
-    extra: { tipId, shiftId: tip.shift_id, stubCount },
-  });
-  await client.query('ROLLBACK');
-  return { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' };
-}
-
-// Mixed shift (stub + real): the existing per-bartender split below uses
-// `bartenders` (filtered, real only), so the real bartenders take the full
-// tip — the stubs are correctly excluded from the denominator.
+    if (bartenders.length === 0) {
+      // All shift bartenders are stubs — recoverable: leave rolled_forward_at NULL
+      // so a future de-stub can replay.
+      Sentry.captureMessage('rollForwardLateTip: all shift bartenders are legacy_cc stubs; skipping', {
+        level: 'info',
+        tags: { util: 'payrollLateTip', step: 'skip_all_stubs' },
+        extra: { tipId, shiftId: tip.shift_id, stubCount },
+      });
+      await client.query('ROLLBACK');
+      return { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' };
+    }
 ```
 
-(The downstream `const n = bartenders.length;` and the rest of the file stays unchanged — `bartenders` is now the filtered list.)
+(Note the explicit asymmetry: "no bartenders ever" sets `rolled_forward_at = NOW()` and commits — permanent; "all stubs" rolls back and leaves NULL — recoverable.)
 
-- [ ] **Step 5: Run the mixed-shift test — verify it passes**
+The downstream `const n = bartenders.length;` and the rest of the file stays unchanged — `bartenders` is now the filtered list. Also delete the `isLegacyCcStubUser` import if it's no longer used (grep first).
 
-Run:
+```bash
+grep -n "isLegacyCcStubUser" server/utils/payrollLateTip.js
+```
+If zero matches after the fix, also remove `isLegacyCcStubUser` from the `require('./payrollGuards')` line at the top. (Keep `payrollClawback.js`'s import — it's still imported there until Step 8.)
+
+- [ ] **Step 6: Run the mixed-shift test — verify it passes; delete the old target-stub test**
+
 ```bash
 node --test server/utils/payrollLateTip.test.js 2>&1 | grep -A 4 "mixed-stub shift"
 ```
 Expected: PASS.
 
-- [ ] **Step 6: Update the existing all-stub test to assert the new reason string**
+Then DELETE the test block at lines 143-178 (the `'rollForwardLateTip > skips and returns structured shape when target is a legacy CC stub'` test). The gate it was testing has been removed.
 
-Find the existing test in `payrollLateTip.test.js`:
+- [ ] **Step 7: Add an all-stubs test (replaces what the deleted test was supposed to cover)**
 
-```javascript
-test('rollForwardLateTip > skips and returns structured shape when target is a legacy CC stub', async () => {
-  // ... existing setup ...
-  const result = await rollForwardLateTip(stubTipId);
-  assert.deepStrictEqual(result, { skipped: true, reason: 'legacy_cc_stub_target' });
-  // ...
-```
-
-The current test setup creates ONE stub bartender on the shift (no real bartender). Under the new logic, that's "all bartenders are stubs" → still skips, but the reason string is now `'all_bartenders_are_legacy_cc_stubs'`. Update the assertion:
+Append to `payrollLateTip.test.js`:
 
 ```javascript
-assert.deepStrictEqual(result, { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' });
+test('rollForwardLateTip > skips with all_bartenders_are_legacy_cc_stubs when every shift bartender is a stub', async () => {
+  // Fresh shift with stub-only roster.
+  const stubA = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('all-stub-a@example.com','x','staff','legacy_cc:test:all-a')
+     RETURNING id`
+  );
+  const stubB = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('all-stub-b@example.com','x','staff','legacy_cc:test:all-b')
+     RETURNING id`
+  );
+  const stubAId = stubA.rows[0].id;
+  const stubBId = stubB.rows[0].id;
+
+  const allStubShift = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','8:00 PM','open',$1) RETURNING id`,
+    [frozenProposalId]
+  );
+  const allStubShiftId = allStubShift.rows[0].id;
+
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved'), ($1, $3, 'Bartender', 'approved')`,
+    [allStubShiftId, stubAId, stubBId]
+  );
+
+  const tipRes = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id)
+     VALUES (gen_random_uuid(), $1, 3000, 96, 'pi_all_stub_late', '2026-05-15 23:30:00+00', $2)
+     RETURNING id`,
+    [stubAId, allStubShiftId]
+  );
+  const allStubTipId = tipRes.rows[0].id;
+
+  try {
+    const result = await rollForwardLateTip(allStubTipId);
+    assert.deepEqual(result, { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' });
+
+    const noPayout = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payout_events WHERE payout_id IN
+         (SELECT id FROM payouts WHERE contractor_id IN ($1, $2))`,
+      [stubAId, stubBId]
+    );
+    assert.equal(noPayout.rows[0].c, 0);
+
+    const tip = await pool.query('SELECT rolled_forward_at FROM tips WHERE id = $1', [allStubTipId]);
+    assert.equal(tip.rows[0].rolled_forward_at, null, 'recoverable: stays NULL so a future de-stub can replay');
+  } finally {
+    await pool.query('DELETE FROM tips WHERE id = $1', [allStubTipId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [allStubShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [allStubShiftId]);
+    await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [stubAId, stubBId]);
+  }
+});
 ```
 
-Also update the test name for clarity:
+Run the full file:
 
-```javascript
-test('rollForwardLateTip > skips when ALL shift bartenders are legacy CC stubs', async () => {
-```
-
-- [ ] **Step 7: Run the full payrollLateTip.test.js — verify both old and new tests pass**
-
-Run:
 ```bash
 node --test server/utils/payrollLateTip.test.js 2>&1 | tail -10
 ```
@@ -924,30 +1296,56 @@ Expected: `tests N, pass N, fail 0`.
 
 - [ ] **Step 8: Apply the parallel fix to payrollClawback.js**
 
-In `server/utils/payrollClawback.js`, find the block at lines 32-45:
+In `server/utils/payrollClawback.js`, find lines 32-73 (the target-stub gate at 32-45 + the no-shift-id guard at 55-59 + the bartender query + no-bartenders branch at 61-73). Replace the target-stub gate block and the bartender section with:
 
 ```javascript
-// cc-import: tips paid TO a legacy_cc:* stub bartender never had a modern
-// payout to claw back FROM (stubs are imports-only, no Stripe Connect).
-// Fires BEFORE any DB writes — leaves refunded_amount_cents at the prior
-// value so a re-run after a future de-stub can replay. clawbackTipByPaymentIntent
-// inherits this skip automatically since it calls clawbackTip internally.
-if (await isLegacyCcStubUser(tip.target_user_id, client)) {
-  Sentry.captureMessage('clawbackTip: target is legacy_cc stub; skipping', {
-    level: 'info',
-    tags: { util: 'payrollClawback', step: 'skip_legacy_cc_stub' },
-    extra: { tipId, targetUserId: tip.target_user_id },
-  });
-  await client.query('ROLLBACK');
-  return { skipped: true, reason: 'legacy_cc_stub_target' };
-}
+    // (The `if (!tip.shift_id)` block at lines 55-59 stays unchanged.)
+
+    const bartendersRes = await client.query(
+      `SELECT sr.user_id, (u.cc_id LIKE 'legacy_cc:%') AS is_stub
+         FROM shift_requests sr
+         JOIN users u ON u.id = sr.user_id
+        WHERE sr.shift_id = $1 AND sr.status = 'approved'
+          AND LOWER(sr.position) = 'bartender'
+        ORDER BY sr.user_id`,
+      [tip.shift_id]
+    );
+    const allBartenders = bartendersRes.rows;
+    const bartenders = allBartenders.filter(r => !r.is_stub).map(r => r.user_id);
+    const stubCount = allBartenders.length - bartenders.length;
+
+    if (allBartenders.length === 0) {
+      // No bartenders to claw from — track the new cumulative and exit.
+      await client.query('UPDATE tips SET refunded_amount_cents = $1 WHERE id = $2', [newAmt, tipId]);
+      await client.query('COMMIT');
+      return { delta, bartenders: 0 };
+    }
+
+    if (bartenders.length === 0) {
+      // All shift bartenders are stubs — recoverable: do NOT advance refunded_amount_cents
+      // so a future de-stub can replay.
+      Sentry.captureMessage('clawbackTip: all shift bartenders are legacy_cc stubs; skipping', {
+        level: 'info',
+        tags: { util: 'payrollClawback', step: 'skip_all_stubs' },
+        extra: { tipId, shiftId: tip.shift_id, stubCount },
+      });
+      await client.query('ROLLBACK');
+      return { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' };
+    }
 ```
 
-Remove it entirely. Then find the later block that queries approved bartenders for the clawback split (look for `SELECT sr.user_id FROM shift_requests sr` around line 70-90) and apply the same filter + all-stub guard pattern as in Step 4.
+Delete the original lines 32-45 (the `if (await isLegacyCcStubUser(...))` block) entirely.
 
-The exact callsite differs slightly because clawbackTip already has an early-return for the no-shift-id case (`if (!tip.shift_id) ...`). The stub-filter logic goes right after the bartender query.
+The downstream per-bartender split loop (lines 113-146) uses `bartenders.length` — now the filtered count — so it splits across reals only. No other changes needed below.
 
-- [ ] **Step 9: Write the failing mixed-shift test for clawbackTip**
+Grep to confirm `isLegacyCcStubUser` is no longer used:
+
+```bash
+grep -n "isLegacyCcStubUser" server/utils/payrollClawback.js
+```
+If zero matches, drop it from the `require('./payrollGuards')` line at the top.
+
+- [ ] **Step 9: Add a failing mixed-shift test for clawbackTip**
 
 Append to `server/utils/payrollClawback.test.js`:
 
@@ -970,30 +1368,38 @@ test('clawbackTip > mixed-stub shift: claws back from real bartender only, stubs
     [realId]
   );
 
-  // Both approved on the test shift (reuse the file's frozenShiftId / openShiftId
-  // — whichever the existing tests use as the "current open period shift").
+  // Fresh shift on the same paid proposal (different shift id so we don't
+  // collide with beforeEach's paidShiftId roster).
+  const mixedShift = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','7:00 PM','open',$1) RETURNING id`,
+    [paidProposalId]
+  );
+  const mixedShiftId = mixedShift.rows[0].id;
+
   await pool.query(
     `INSERT INTO shift_requests (shift_id, user_id, position, status)
-     VALUES ($1, $2, 'Bartender', 'approved'), ($1, $3, 'Bartender', 'approved')
-     ON CONFLICT DO NOTHING`,
-    [openShiftId, stubId, realId]
+     VALUES ($1, $2, 'Bartender', 'approved'), ($1, $3, 'Bartender', 'approved')`,
+    [mixedShiftId, stubId, realId]
   );
 
-  // A tip already paid + previously rolled forward (so there's a payout_event
-  // for the real bartender to claw back from).
+  // Tip already paid (rolled_forward_at set so the system thinks the late-tip
+  // pipeline already ran). Seed a payout_event for the real bartender so there's
+  // something to claw back FROM.
   const tipRes = await pool.query(
     `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
                        stripe_payment_intent_id, tipped_at, shift_id, rolled_forward_at, refunded_amount_cents)
      VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_cb_mixed', NOW() - INTERVAL '1 day', $2, NOW(), 0)
      RETURNING id`,
-    [stubId, openShiftId]
+    [stubId, mixedShiftId]
   );
   const cbTipId = tipRes.rows[0].id;
 
-  // Seed the existing payout_event for the real bartender (matches what
-  // rollForwardLateTip would have created via the new mixed-shift path).
+  // Seed the real bartender's payout_event (what rollForwardLateTip on a mixed
+  // shift would have created via the new code path).
   await pool.query(
-    `INSERT INTO payouts (pay_period_id, contractor_id) VALUES ((SELECT id FROM pay_periods WHERE status='open' AND CURRENT_DATE BETWEEN start_date AND end_date), $1)
+    `INSERT INTO payouts (pay_period_id, contractor_id)
+     VALUES ((SELECT id FROM pay_periods WHERE status='open' AND CURRENT_DATE BETWEEN start_date AND end_date), $1)
      ON CONFLICT (pay_period_id, contractor_id) DO NOTHING`,
     [realId]
   );
@@ -1003,115 +1409,125 @@ test('clawbackTip > mixed-stub shift: claws back from real bartender only, stubs
      SELECT id, $2, 0, 0, 0, 0, 4000, 128, 3872, 3872
        FROM payouts WHERE contractor_id = $1
      ON CONFLICT (payout_id, shift_id) DO NOTHING`,
-    [realId, openShiftId]
+    [realId, mixedShiftId]
   );
 
   try {
-    const result = await clawbackTip(cbTipId, 4000);  // full refund
-    assert.notStrictEqual(result?.skipped, true);
-    assert.strictEqual(result.bartenders, 1);
+    const result = await clawbackTip(cbTipId, 4000);
+    assert.notEqual(result?.skipped, true);
+    assert.equal(result.bartenders, 1);
 
-    // Real bartender's adjustment_cents reflects the negative clawback.
     const adj = await pool.query(
       `SELECT adjustment_cents FROM payout_events pe
          JOIN payouts po ON po.id = pe.payout_id
         WHERE po.contractor_id = $1 AND pe.shift_id = $2`,
-      [realId, openShiftId]
+      [realId, mixedShiftId]
     );
-    assert.strictEqual(Number(adj.rows[0].adjustment_cents), -4000);
+    assert.equal(Number(adj.rows[0].adjustment_cents), -3872);  // net delta, not gross
   } finally {
-    await pool.query('DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id = $1)', [realId]);
+    await pool.query('DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id IN ($1, $2))',
+      [stubId, realId]);
     await pool.query('DELETE FROM payouts WHERE contractor_id IN ($1, $2)', [stubId, realId]);
     await pool.query('DELETE FROM tips WHERE id = $1', [cbTipId]);
-    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1 AND user_id IN ($2, $3)', [openShiftId, stubId, realId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [mixedShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [mixedShiftId]);
     await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [realId]);
     await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [stubId, realId]);
   }
 });
 ```
 
-- [ ] **Step 10: Update the existing all-stub clawback test to assert the new reason string**
+- [ ] **Step 10: Delete the old target-stub clawback tests**
 
-Find:
+Both `clawbackTip > skips and returns structured shape when target is a legacy CC stub` (line 142) AND `clawbackTipByPaymentIntent > inherits the legacy-stub skip from clawbackTip` (line 179) test the OLD gate. Delete both blocks.
 
-```javascript
-assert.deepStrictEqual(result, { skipped: true, reason: 'legacy_cc_stub_target' });
-```
+- [ ] **Step 11: Add an all-stubs clawback test**
 
-Replace with:
+Append:
 
 ```javascript
-assert.deepStrictEqual(result, { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' });
+test('clawbackTip > skips with all_bartenders_are_legacy_cc_stubs when every shift bartender is a stub', async () => {
+  const stubA = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('cb-all-stub-a@example.com','x','staff','legacy_cc:test:cb-all-a')
+     RETURNING id`
+  );
+  const stubB = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('cb-all-stub-b@example.com','x','staff','legacy_cc:test:cb-all-b')
+     RETURNING id`
+  );
+  const stubAId = stubA.rows[0].id;
+  const stubBId = stubB.rows[0].id;
+
+  const allStubShift = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','8:00 PM','open',$1) RETURNING id`,
+    [paidProposalId]
+  );
+  const allStubShiftId = allStubShift.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved'), ($1, $3, 'Bartender', 'approved')`,
+    [allStubShiftId, stubAId, stubBId]
+  );
+
+  const tipRes = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id, refunded_amount_cents)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_all_stub_cb', NOW() - INTERVAL '1 day', $2, 0)
+     RETURNING id`,
+    [stubAId, allStubShiftId]
+  );
+  const allStubTipId = tipRes.rows[0].id;
+
+  try {
+    const result = await clawbackTip(allStubTipId, 2500);
+    assert.deepEqual(result, { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' });
+
+    // Recoverable: refunded_amount_cents stays at 0.
+    const tipAfter = await pool.query('SELECT refunded_amount_cents FROM tips WHERE id = $1', [allStubTipId]);
+    assert.equal(Number(tipAfter.rows[0].refunded_amount_cents), 0);
+  } finally {
+    await pool.query('DELETE FROM tips WHERE id = $1', [allStubTipId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [allStubShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [allStubShiftId]);
+    await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [stubAId, stubBId]);
+  }
+});
 ```
 
-- [ ] **Step 11: Run both payroll tests — verify everything passes**
+> `clawbackTipByPaymentIntent` does NOT get a dedicated all-stubs test — it's a thin wrapper that calls `clawbackTip` and inherits its behavior. The all-stubs test above proves the inner function's behavior; the wrapper is exercised by the existing happy-path tests at lines 94-140. If a future refactor splits the wrapper, add a dedicated test then.
 
-Run:
+- [ ] **Step 12: Run both payroll test files — verify everything passes**
+
 ```bash
 node --test server/utils/payrollLateTip.test.js server/utils/payrollClawback.test.js 2>&1 | tail -15
 ```
-Expected: `tests N, pass N, fail 0` (combined count for both files).
+Expected: `tests N, pass N, fail 0`.
 
-- [ ] **Step 12: Run the broader payroll suite for regression coverage**
+- [ ] **Step 13: Run the broader payroll suite for regression**
 
-Run:
 ```bash
 node --test server/utils/payrollLateTip.test.js server/utils/payrollClawback.test.js server/utils/payrollAccrual.test.js server/utils/payrollGuards.test.js 2>&1 | tail -10
 ```
-Expected: all pass. `payrollAccrual.test.js` should be green now that the prerequisite pay_period reset is in place.
+Expected: all pass. (`payrollAccrual.test.js` requires the dev DB `pay_periods` row #783 to be `'open'` — the prerequisite at the top of this plan.)
 
-- [ ] **Step 13: Commit**
+- [ ] **Step 14: Delete the matching tech-debt entry**
+
+Open `docs/tech-debt.md`. Find `### CC-Import: \`payrollLateTip\` / \`clawbackTip\` stub gate fires on target` (around line 180). Delete the entire block.
+
+- [ ] **Step 15: Commit**
 
 ```bash
-git add server/utils/payrollLateTip.js server/utils/payrollLateTip.test.js server/utils/payrollClawback.js server/utils/payrollClawback.test.js
+git add server/utils/payrollLateTip.js server/utils/payrollLateTip.test.js server/utils/payrollClawback.js server/utils/payrollClawback.test.js docs/tech-debt.md
 git commit -m "fix(payroll): mixed-stub shifts route the tip to real bartenders instead of skipping"
 ```
 
----
+**Checkpoint review.** This commit is a money-path math change with cross-cutting tip-handling implications. Run two review agents in parallel against the diff before pre-merge:
 
-## Task 5: Remove the four resolved entries from tech-debt.md
-
-**Why:** All four codex findings tracked in `docs/tech-debt.md` (added in commit `af947bb`, currently on `main` unpushed) are now resolved by Tasks 1-4. Leaving them in `tech-debt.md` would mislead a future reader.
-
-**Files:**
-- Modify: `docs/tech-debt.md` (remove four `### CC-Import: ...` blocks added in `af947bb`)
-
-- [ ] **Step 1: Confirm the four entries exist**
-
-Run:
-```bash
-grep -n "### CC-Import" docs/tech-debt.md
-```
-Expected: 4 matches, all under the "Low-value / nice-to-have" section.
-
-- [ ] **Step 2: Delete the four `### CC-Import: ...` blocks**
-
-Open `docs/tech-debt.md`. Find the section starting `### CC-Import: orphan-payment link silently no-ops on non-success status` and ending at the line BEFORE `### admin.js applications filter CASE expression blocks index` (which is a pre-existing entry — keep it).
-
-Delete the four blocks (`### CC-Import: orphan-payment link silently no-ops...`, `### CC-Import: orphan-payment link skips suppressStaleBalanceReminders`, `### CC-Import: promoteBucketA hardcodes Bucket A on errored-row + skipped-event retry`, `### CC-Import: payrollLateTip / clawbackTip stub gate fires on target...`) including their `**Source:** / **What:** / **Why deferred:** / **Next step:**` blocks.
-
-- [ ] **Step 3: Verify the file still parses cleanly**
-
-Run:
-```bash
-grep -c "^###" docs/tech-debt.md
-```
-Expected: pre-existing-count + 0 (i.e., the entry count from before `af947bb` minus the one new `metricsQueries include_cc` L4 entry we keep, since L4 is still a real follow-up).
-
-Wait — the L4 `metricsQueries include_cc` entry IS preserved. Only the 4 codex CC-Import entries get removed.
-
-Re-check:
-```bash
-grep -n "^### " docs/tech-debt.md
-```
-Expected: still has `### metricsQueries include_cc filter join lacks composite index` (preserved) but no `### CC-Import: ...` entries (removed).
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add docs/tech-debt.md
-git commit -m "docs(tech-debt): remove 4 CC-Import entries now resolved by codex-followups"
-```
+- `code-review` — verifies the per-bartender split denominator change and the asymmetric "all stubs" vs "no bartenders" handling.
+- `consistency-check` — verifies the `'all_bartenders_are_legacy_cc_stubs'` reason string is identical across all 4 files, and that no caller still switches on `'legacy_cc_stub_target'`.
 
 ---
 
@@ -1121,15 +1537,13 @@ Before merging `codex-followups` back to `main`:
 
 - [ ] **Step 1: Confirm the branch's commit list**
 
-Run from inside the worktree:
 ```bash
 git log --oneline main..HEAD
 ```
-Expected: 5 commits in the order Tasks 1 → 5, plus this plan document if you committed it on this branch.
+Expected: 4 fix commits (Tasks 1-4) in order. NO standalone Task 5 commit — the tech-debt deletions are absorbed into each fix.
 
 - [ ] **Step 2: Run the full impacted-tests set**
 
-Run:
 ```bash
 node --test \
   server/routes/admin/ccImport/review.test.js \
@@ -1141,15 +1555,38 @@ node --test \
 ```
 Expected: all pass.
 
-- [ ] **Step 3: Run the file-size ratchet check**
+- [ ] **Step 3: File-size ratchet — binding constraint, check carefully**
 
-Run:
 ```bash
 npm run check:filesize
 ```
-Expected: `review.js` and `phase3.js` may YELLOW (700-1000 lines, planning a split) but must not RED-block.
 
-- [ ] **Step 4: Switch back to `os` integration window and merge**
+`review.js` is at 962 lines on `HEAD`. Task 2 adds ~20 lines and Task 3 adds ~5 lines — combined ~987 lines, under the 1000-line hard cap but ON the edge. The ratchet RED-blocks any future commit that grows this file further until something is extracted. Expected report state:
+
+- `review.js`: YELLOW (~987 / 1000) — over the 700 soft cap; "plan a split"
+- `phase3.js`: YELLOW (~860 / 1000)
+
+If either file exceeds 1000 lines, the commit RED-blocks and you must extract before merging. Do NOT bypass with `--no-verify`.
+
+After merge, queue a tech-debt entry to extract `review.js` (per-concern split mirroring `proposals/` — `orphans.js`, `errored.js`, `skipped.js`, `unmatched.js`). The current ~987 lines on this branch leave essentially no headroom; the next codex-followups-style batch will RED-block on the first growing commit. Out of scope for this branch.
+
+- [ ] **Step 4: Verify the matching tech-debt entries are gone**
+
+```bash
+grep -c "### CC-Import" docs/tech-debt.md
+```
+Expected: `0`. The four CC-Import entries were deleted across Tasks 1-4 commits.
+
+```bash
+grep -n "^### " docs/tech-debt.md | grep -i "metricsQueries"
+```
+Expected: 1 match — the `### metricsQueries include_cc filter join lacks composite index` entry is preserved (it's a real follow-up, not codex-followups scope).
+
+- [ ] **Step 5: Wait for explicit user cue before merging**
+
+Per CLAUDE.md Rule 4 + Rule 11: do NOT auto-merge. The merge is a hard-to-reverse operation that consolidates 4 commits onto `main`. State to the user: *"All 4 fixes green, ratchet passes, tech-debt entries removed. Ready to merge `codex-followups` into `main`?"* and wait.
+
+- [ ] **Step 6: On explicit yes, switch to `os` and merge**
 
 From the `os` folder (NOT the worktree):
 ```bash
@@ -1157,38 +1594,45 @@ git merge codex-followups
 ```
 Expected: fast-forward merge (no conflicts — `codex-followups` branched from `main` and no parallel work touched these files).
 
-- [ ] **Step 5: Clean up the worktree**
+- [ ] **Step 7: Clean up the worktree**
 
 ```bash
 npm run worktree:rm -- codex-followups
 ```
 
-- [ ] **Step 6: Push only on explicit user cue (per CLAUDE.md Rule 4)**
+- [ ] **Step 8: Push only on explicit user cue (per CLAUDE.md Rule 4)**
 
-Do NOT auto-push. Wait for the user to issue a push cue. When they do, the 0.5-step confirmation gate fires the pre-push agent fleet on the batched commits (5 from `codex-followups` + the pre-existing unpushed `af947bb` doc-queue commit).
+Do NOT auto-push. Wait for the user to issue a push cue. When they do, the 0.5-step confirmation gate fires the pre-push agent fleet on the batched commits (4 from `codex-followups` + the pre-existing unpushed `af947bb` doc-queue commit).
 
 ---
 
 ## Self-review notes
 
-**Spec coverage:** All 4 codex findings have dedicated tasks (1: P2 suppress, 2: P1 atomic-rollback, 3: P1 reclassify-by-date, 4: P1 mixed-stub split). Task 5 cleans up the tech-debt entries those four resolved.
+**Spec coverage:** All 4 codex findings have dedicated tasks (1: P2 suppress, 2: P1 atomic-rollback, 3: P1 reclassify-by-date, 4: P1 mixed-stub split). The `docs/tech-debt.md` cleanup is dispersed across the 4 fix commits so the file stays consistent with `main` at every sha — no standalone Task 5.
 
-**Placeholders:** None — every step has the actual SQL, JS, or shell to paste.
+**Asymmetries that are intentional and called out:**
+- Task 2 payment vs refund branch — different transaction shapes per Approach A; both get a status check but the payment branch relies on BEGIN-rollback while the refund branch relies on the existing catch-block revert.
+- Task 4 "no bartenders ever" vs "all stubs" — permanent (`rolled_forward_at = NOW()`, commit) vs recoverable (rollback, leaves NULL for future de-stub replay).
+- Task 4 `clawbackTipByPaymentIntent` — no dedicated all-stubs test because it's a thin wrapper; the inner function's test covers the behavior.
 
-**Type consistency:** `classifyForRetry(payload, today)` returns `{ bucket, promote }` consistently across Task 3 Step 5 (definition) and Steps 6/8 (consumers). The `reason` string `'all_bartenders_are_legacy_cc_stubs'` is identical across Task 4 Steps 4/6/8/10. `phase4.suppressStaleBalanceReminders(tail)` signature matches Task 1 Step 1 lookup.
+**Type / string consistency** (also enforced by `consistency-check` at the post-Task-4 checkpoint):
+- `classifyForRetry(payload, today)` returns `{ bucket: 'A' | 'B' | 'C' | 'D', promote: function }` consistently across the definition in Task 3 Step 5 and consumers in Steps 6 / 8.
+- The reason string `'all_bartenders_are_legacy_cc_stubs'` is identical across Task 4 (4 files: payrollLateTip.js, payrollLateTip.test.js, payrollClawback.js, payrollClawback.test.js).
+- `phase4.suppressStaleBalanceReminders(client)` signature matches Task 1 Step 5's `suppressStaleBalanceReminders(tail)` call.
 
 **Open risks:**
-- Task 3 assumes `classify(...)` results A/C/D should all route to `promoteBucketA` on operator retry. If a future requirement says retried Bucket C rows should archive to `legacy_cc_proposals` instead of being force-promoted as A, that's a small extension to `classifyForRetry` (return a `bucket: 'C', promote: archiveToBucketC` function). Out of scope today.
-- Task 4 assumes mixed-stub shifts are possible. Verified by the existence of the `/review/unmatched-payee/.../link` endpoint, which reassigns a stub's shift_requests to a real user. If product later decides stubs should be HARD-deleted on link (not co-existing), the all-stubs check still works — it just becomes unreachable in practice.
+- Task 3: `classifyForRetry` degrades buckets C and D to `promoteBucketA` (with `bucket` letter preserved in audit log). If a future requirement says retried Bucket C rows should archive to `legacy_cc_proposals` instead, that's a small extension to the helper. Out of scope today.
+- Task 2 errored-status test: cannot be reproduced from a seed alone (verified against `phase4.js:357-485` — a clean cc_id match always returns `'promoted'`). The test mocks `phase4.promoteSingleLegacyPayment` via `node:test`'s `mock.method`. The load-bearing assertion is that `cc_event_id` returns to NULL after the route 409s — proves the BEGIN/ROLLBACK fired even with the helper mocked. If a future phase4 refactor changes the return shape, only the mock return value needs updating; the 409 + `CC_PROMOTE_FAILED` + cc_event_id-NULL invariants stay.
+- Pre-merge step 3: `review.js` at ~987 lines after Tasks 2 + 3 is on the edge of the 1000-line ratchet. ANY additional growth in a follow-up commit on this branch will RED-block; either flat-or-shrinking commits only, or extract before adding.
 
 ---
 
 ## Execution handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-05-27-codex-followups.md`. Two execution options:
+Plan complete. Two execution options:
 
-1. **Subagent-Driven (recommended)** — dispatch a fresh subagent per task, two-stage review between tasks, fast iteration. Best fit when the tasks span money paths (Task 4) so each gets independent eyes.
+1. **Subagent-Driven (recommended for this plan)** — dispatch a fresh subagent per task, two-stage review between tasks, fast iteration. Best fit because Task 4 is a money path and benefits from independent eyes per checkpoint.
 
-2. **Inline Execution** — execute tasks in this session with checkpoint reviews. Faster end-to-end if no surprises, but less rigorous per-task review.
+2. **Inline Execution** — execute tasks in this session with the named checkpoint reviews (after Task 2: database-review + code-review; after Task 4: code-review + consistency-check). Faster end-to-end if no surprises, but less rigorous per-task review.
 
 Which approach?
