@@ -91,7 +91,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   }
 }));
 
-// Handler stubs (filled in by Tasks 5, 6, 7, 8).
+// Event handlers. handleCreated implemented; others are stubs that Tasks 6, 7, 8 fill in.
 async function handleCreated(payload, res) {
   const { uid, startTime } = extractBookingFields(payload);
   if (!uid || !startTime) {
@@ -129,6 +129,14 @@ async function handleCreated(payload, res) {
       if (lookup.rows[0]) {
         clientId = lookup.rows[0].id;
       } else {
+        // SAVEPOINT brackets the INSERT so a 23505 (lost race against a
+        // concurrent auto-create for the same email) can be rolled back
+        // without aborting the outer transaction. Without the savepoint,
+        // the next query after a failed INSERT throws SQLSTATE 25P02
+        // (current transaction is aborted, commands ignored until end of
+        // transaction block) and the loser's whole transaction has to
+        // ROLLBACK, losing the consult row.
+        await client.query('SAVEPOINT clients_insert');
         try {
           const created = await client.query(
             `INSERT INTO clients (name, email, phone, source, notes)
@@ -137,20 +145,27 @@ async function handleCreated(payload, res) {
              RETURNING id`,
             [name, email, phone]
           );
+          await client.query('RELEASE SAVEPOINT clients_insert');
           clientId = created.rows[0].id;
           createdClientInThisTx = true;
         } catch (err) {
           if (err.code === '23505') {
             // Lost the race against another concurrent create for same email.
-            // The winner committed before our INSERT could land. Re-SELECT
-            // to pick up the winner's clientId; do not flag this as a
+            // ROLLBACK TO SAVEPOINT clears the aborted-transaction state
+            // (otherwise the re-SELECT below throws 25P02). Re-SELECT to
+            // pick up the winner's clientId; do not flag this as a
             // we-created-it case because we did not actually create.
+            await client.query('ROLLBACK TO SAVEPOINT clients_insert');
             const reLookup = await client.query(
               'SELECT id FROM clients WHERE LOWER(email) = $1 LIMIT 1',
               [email]
             );
             clientId = reLookup.rows[0]?.id || null;
           } else {
+            // Unexpected error. Still need to either release or rollback
+            // the savepoint before re-throwing; we choose rollback so
+            // the outer transaction sees a clean state when it ROLLBACKs.
+            try { await client.query('ROLLBACK TO SAVEPOINT clients_insert'); } catch (_) { /* swallow */ }
             throw err;
           }
         }
