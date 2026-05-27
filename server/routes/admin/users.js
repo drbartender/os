@@ -33,7 +33,7 @@ router.get('/users', auth, adminOnly, asyncHandler(async (req, res) => {
   const [usersResult, countResult] = await Promise.all([
     pool.query(`
       SELECT
-        u.id, u.email, u.role, u.onboarding_status, u.notifications_opt_in, u.created_at, u.updated_at,
+        u.id, u.email, u.role, u.onboarding_status, u.notifications_opt_in, u.created_at, u.updated_at, u.cc_id,
         op.account_created, op.welcome_viewed, op.field_guide_completed, op.agreement_completed,
         op.contractor_profile_completed, op.payday_protocols_completed, op.onboarding_completed,
         op.last_completed_step, op.updated_at as progress_updated_at,
@@ -65,7 +65,7 @@ router.get('/users/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   const userId = req.params.id;
 
   const [userRes, progressRes, profileRes, agreementRes, paymentRes, appRes] = await Promise.all([
-    pool.query('SELECT id, email, role, onboarding_status, notifications_opt_in, can_hire, can_staff, created_at, updated_at FROM users WHERE id = $1', [userId]),
+    pool.query('SELECT id, email, role, onboarding_status, notifications_opt_in, can_hire, can_staff, created_at, updated_at, cc_id FROM users WHERE id = $1', [userId]),
     pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [userId]),
     pool.query('SELECT * FROM contractor_profiles WHERE user_id = $1', [userId]),
     pool.query('SELECT * FROM agreements WHERE user_id = $1', [userId]),
@@ -419,7 +419,7 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
   const [staffResult, countResult] = await Promise.all([
     pool.query(`
       SELECT
-        u.id, u.email, u.role, u.onboarding_status, u.created_at,
+        u.id, u.email, u.role, u.onboarding_status, u.created_at, u.cc_id,
         cp.preferred_name, cp.phone, cp.city, cp.state,
         cp.travel_distance, cp.reliable_transportation,
         cp.equipment_portable_bar, cp.equipment_cooler, cp.equipment_table_with_spandex,

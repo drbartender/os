@@ -56,8 +56,9 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
            p.num_bartenders, p.package_id, p.status, p.total_price, p.amount_paid,
            p.deposit_amount, p.balance_due_date, p.payment_type, p.autopay_enrolled,
            p.sent_at, p.accepted_at, p.client_signed_at, p.last_viewed_at,
-           p.created_at, p.updated_at,
+           p.created_at, p.updated_at, p.cc_id AS proposal_cc_id,
            c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
+           c.cc_id AS client_cc_id,
            sp.name AS package_name, sp.slug AS package_slug
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
@@ -327,7 +328,7 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
         const enriched = await pool.query(
           `SELECT p.*, c.id AS client_id, c.name AS client_name, c.email AS client_email,
                   c.phone AS client_phone, c.communication_preferences,
-                  c.email_status, c.phone_status
+                  c.email_status, c.phone_status, c.cc_id AS client_cc_id
              FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
             WHERE p.id = $1`, [proposal.id]);
         if (enriched.rows[0]) {
@@ -364,8 +365,9 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
 router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone, c.source AS client_source,
+           c.cc_id AS client_cc_id,
            sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category, sp.includes AS package_includes,
-           u.email AS created_by_email
+           u.email AS created_by_email, u.cc_id AS user_cc_id
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
     LEFT JOIN service_packages sp ON sp.id = p.package_id

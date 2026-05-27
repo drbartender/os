@@ -127,8 +127,8 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
        WHERE p.status NOT IN ('draft')${propDate}${propCc}`, listParams),
     pool.query(`
       SELECT p.id, p.event_type, p.event_type_custom, p.event_date, p.total_price, p.amount_paid,
-             p.deposit_amount, p.status, p.created_at,
-             c.name AS client_name, c.email AS client_email,
+             p.deposit_amount, p.status, p.created_at, p.cc_id AS proposal_cc_id,
+             c.name AS client_name, c.email AS client_email, c.cc_id AS client_cc_id,
              sp.name AS package_name
       FROM proposals p
       LEFT JOIN clients c ON c.id = p.client_id
@@ -139,7 +139,8 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
     `, [...listParams, limit, offset]),
     pool.query(`
       SELECT pp.id, pp.proposal_id, pp.payment_type, pp.amount, pp.status AS payment_status,
-             pp.created_at, p.event_type, p.event_type_custom, c.name AS client_name,
+             pp.created_at, p.event_type, p.event_type_custom, p.cc_id AS proposal_cc_id,
+             c.name AS client_name, c.cc_id AS client_cc_id,
              ip.invoice_id, i.token AS invoice_token
       FROM proposal_payments pp
       JOIN proposals p ON p.id = pp.proposal_id

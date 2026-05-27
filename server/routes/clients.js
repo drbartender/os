@@ -17,7 +17,7 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { search, page = 1, limit = 50 } = req.query;
   let query = `
     SELECT
-      c.id, c.name, c.email, c.phone, c.source, c.created_at, c.updated_at,
+      c.id, c.name, c.email, c.phone, c.source, c.created_at, c.updated_at, c.cc_id,
       COALESCE(agg.events_count, 0)::int    AS events_count,
       COALESCE(agg.lifetime_value, 0)::float8 AS lifetime_value
     FROM clients c
@@ -71,7 +71,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]),
     pool.query(`
       SELECT p.id, p.token, p.client_id, p.event_type, p.event_type_custom,
-             p.event_date, p.status, p.total_price, p.amount_paid, p.created_at,
+             p.event_date, p.status, p.total_price, p.amount_paid, p.created_at, p.cc_id,
              sp.name AS package_name, sp.slug AS package_slug
       FROM proposals p
       LEFT JOIN service_packages sp ON sp.id = p.package_id
