@@ -166,3 +166,35 @@ test('accruePayoutsForProposal > splits gratuity evenly across two bartenders', 
     await pool.query('DELETE FROM users WHERE id = $1', [user2]);
   }
 });
+
+test('accruePayoutsForProposal > skips and returns structured shape when proposal has a legacy CC stub participant', async () => {
+  // cc-import: events whose participants include a legacy_cc:* stub bartender
+  // must NOT enter modern payouts (we cannot pay a stub through Stripe Connect).
+  // The guard fires per-proposal — one stub on any shift skips the WHOLE accrual.
+  const stub = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('accrue-stub@example.com','x','staff','legacy_cc:test:accrue-stub')
+     RETURNING id`
+  );
+  const stubId = stub.rows[0].id;
+  await pool.query(
+    "INSERT INTO shift_requests (shift_id, user_id, position, status) VALUES ($1,$2,'Bartender','approved')",
+    [shiftId, stubId]
+  );
+  try {
+    const result = await accruePayoutsForProposal(proposalId);
+    assert.deepStrictEqual(result, { skipped: true, reason: 'legacy_cc_stub_participant' });
+    // Guard MUST fire BEFORE any DB writes: no payouts/payout_events for ANY
+    // participant on this proposal, including the non-stub bartender (userId).
+    const noEvents = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payout_events pe
+         JOIN payouts po ON po.id = pe.payout_id
+        WHERE po.contractor_id IN ($1, $2)`,
+      [userId, stubId]
+    );
+    assert.strictEqual(noEvents.rows[0].c, 0);
+  } finally {
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2', [shiftId, stubId]);
+    await pool.query('DELETE FROM users WHERE id = $1', [stubId]);
+  }
+});

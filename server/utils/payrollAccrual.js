@@ -73,7 +73,17 @@ async function accruePayoutsForProposal(proposalId) {
   // to INSERT into payouts referencing a stub user (we cannot pay them
   // through Stripe Connect anyway). See specs/2026-05-25-checkcherry-import-design.md.
   if (await isLegacyCcParticipant(proposalId)) {
-    console.log(`[payrollAccrual] proposal #${proposalId} has legacy CC stub participants; skipping accrual.`);
+    // Surface to Sentry at info so the cc-import review queue can show
+    // "needs operator action" alongside the late-tip / clawback stub-skips
+    // (sibling pattern in payrollLateTip.js and payrollClawback.js).
+    Sentry.captureMessage(
+      `payrollAccrual: skipping proposal with legacy CC stub participant`,
+      {
+        level: 'info',
+        tags: { component: 'payrollAccrual', reason: 'legacy_cc_stub_participant' },
+        extra: { proposalId },
+      }
+    );
     return { skipped: true, reason: 'legacy_cc_stub_participant' };
   }
   const eventDate = toCalendarYmd(proposal.event_date);
