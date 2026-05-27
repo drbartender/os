@@ -1,0 +1,43 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const t = require('./lifecycleEmailTemplates');
+
+function assertNoEmDash(str, label) {
+  assert.ok(!str.includes('—'), `${label} must not contain an em dash`);
+}
+
+test('lastMinuteStaffingConfirmation > singular subject + body', () => {
+  const out = t.lastMinuteStaffingConfirmation({
+    eventDate: 'Saturday, May 30, 2026',
+    bartenderList: 'Alex ((312) 555-1234)',
+    isPlural: false,
+  });
+  assert.strictEqual(out.subject, 'Your bartender for Saturday, May 30, 2026');
+  assert.match(out.text, /Your bartender for Saturday, May 30, 2026 is Alex \(\(312\) 555-1234\)/);
+  assert.match(out.text, /Cheers, Dallas/);
+  assert.match(out.html, /Alex \(\(312\) 555-1234\)/);
+  assertNoEmDash(out.subject, 'subject');
+  assertNoEmDash(out.text, 'text');
+});
+
+test('lastMinuteStaffingConfirmation > plural subject + body', () => {
+  const out = t.lastMinuteStaffingConfirmation({
+    eventDate: 'Saturday, May 30, 2026',
+    bartenderList: 'Alex ((312) 555-1234) and Jordan ((312) 555-5678)',
+    isPlural: true,
+  });
+  assert.strictEqual(out.subject, 'Your bartenders for Saturday, May 30, 2026');
+  assert.match(out.text, /Your bartenders for Saturday, May 30, 2026 are Alex/);
+  assert.match(out.text, /and Jordan/);
+  assertNoEmDash(out.subject, 'subject');
+  assertNoEmDash(out.text, 'text');
+});
+
+test('lastMinuteStaffingConfirmation > html is wrapped with the standard chrome', () => {
+  const out = t.lastMinuteStaffingConfirmation({
+    eventDate: 'Saturday, May 30, 2026',
+    bartenderList: 'Alex',
+    isPlural: false,
+  });
+  assert.match(out.html, /<!DOCTYPE html>/i);
+});

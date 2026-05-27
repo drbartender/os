@@ -8,6 +8,7 @@ const { pool } = require('../db');
 const { sendSMS, normalizePhone } = require('./sms');
 const { getEventTypeLabel } = require('./eventTypes');
 const { scheduleStaffShiftMessages } = require('./staffShiftHandlers');
+const { confirmStaffingIfFullyStaffed } = require('./lastMinuteStaffingConfirmation');
 
 // ─── Haversine distance (miles) ──────────────────────────────────
 
@@ -339,6 +340,23 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
     }
 
     approved.push(candidate);
+  }
+
+  // 10.5. Touch 2.2: if this auto-assign just filled a held proposal, fire
+  // the client staffing-confirmation. Non-blocking; idempotency is enforced
+  // by confirmStaffingIfFullyStaffed's atomic UPDATE. The outer try/catch
+  // here is defensive belt-and-suspenders. confirmStaffingIfFullyStaffed
+  // ALSO has its own outer try/catch + Sentry capture, but matching the
+  // sibling `scheduleStaffShiftMessages` pattern below keeps the autoAssign-
+  // side Sentry tag attached so failures cluster by call site.
+  try {
+    await confirmStaffingIfFullyStaffed(shiftId);
+  } catch (confErr) {
+    Sentry.captureException(confErr, {
+      tags: { component: 'autoAssign', issue: 'staffing-confirmation' },
+      extra: { shiftId },
+    });
+    console.error('[AutoAssign] staffing-confirmation hook failed (non-blocking):', confErr.message);
   }
 
   // 11. Mark shift as auto-assigned

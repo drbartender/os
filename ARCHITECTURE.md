@@ -1046,6 +1046,14 @@ re-derives date math:
 - `server/utils/lastMinuteAlert.js` — admin + broad-net staff SMS blast for
   ≤72h "staffing hold" bookings (`notifyLastMinuteBooking(proposalId)`,
   self-guarding/non-blocking).
+- `server/utils/lastMinuteStaffingConfirmation.js` — Touch 2.2: the moment a
+  held proposal's shift becomes fully staffed, fire one client email + one
+  client SMS naming the bartender(s) + phone. The trigger
+  `confirmStaffingIfFullyStaffed(shiftId)` atomically flips
+  `proposals.last_minute_hold` true→false via `RETURNING id`; only the caller
+  that wins the flip fires the notify (one-shot guard, no double-sends under
+  concurrent fills). Called from `server/routes/shifts.js` (manual assign +
+  request approval) and `server/utils/autoAssign.js`.
 
 **Behavior.** Bookings ≤14 days out require full payment — the deposit option is
 **rejected at the `create-intent` payment-intent gate** (`FULL_PAYMENT_REQUIRED`;

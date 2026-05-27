@@ -967,6 +967,7 @@ module.exports = {
   drinkPlanBalanceUpdate: lifecycle.drinkPlanBalanceUpdate,
   shoppingListReady: lifecycle.shoppingListReady,
   postConsultClient: lifecycle.postConsultClient,
+  lastMinuteStaffingConfirmation: lifecycle.lastMinuteStaffingConfirmation,
   // Pre-event reminder emails (Plan 2c)
   eventWeekReminderClient,
   rescheduleNotificationClient,

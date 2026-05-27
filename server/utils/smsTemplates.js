@@ -123,6 +123,13 @@ function staffCancellationSms(ctx) {
   return `Update from Dr. Bartender: ${sentence}. Sorry for the disruption. Reach out with questions.`;
 }
 
+// ─── 2.2 Last-minute staffing confirmation SMS ───────────────────
+function lastMinuteStaffingConfirmationSms({ eventDate, bartenderList, isPlural }) {
+  const noun = isPlural ? 'bartenders' : 'bartender';
+  const verb = isPlural ? 'are' : 'is';
+  return `Hi, Dallas here. Your ${noun} for ${eventDate} ${verb} ${bartenderList}. They'll reach out the day of the event. Let me know if you have any questions.`;
+}
+
 module.exports = {
   initialProposalSms,
   signPayConfirmationSms,
@@ -139,4 +146,5 @@ module.exports = {
   staffThankYouSms,
   staffScheduleChangeSms,
   staffCancellationSms,
+  lastMinuteStaffingConfirmationSms,
 };
