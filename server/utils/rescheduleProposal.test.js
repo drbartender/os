@@ -156,6 +156,55 @@ test('reanchorPendingMessages > skips sent rows — only pending re-anchored', a
   assert.strictEqual(new Date(rows[0].scheduled_for).toISOString(), '2026-08-08T15:00:00.000Z');
 });
 
+test('reanchorPendingMessages > SKIP_REANCHOR_TYPES protects post_event_wrap_up_email from a future handler-meta regression', async () => {
+  // Defense-in-depth regression test. The real ccWrapUpHandler registers with
+  // offsetFromEventDate=null, which already short-circuits via the
+  // `if (!newScheduledFor) continue;` branch in reanchorPendingMessages. The
+  // skip set inside rescheduleProposal.js guards against a future change that
+  // gives the handler a non-null offset. Simulate that regression by
+  // registering a non-null-offset handler under the same message_type, then
+  // assert the skip set still keeps the row unchanged.
+  const { registerHandler } = require('./scheduledMessageDispatcher');
+  registerHandler(
+    'post_event_wrap_up_email',
+    async () => {},
+    { offsetFromEventDate: 7 * 86400, anchor: 'event_date', category: 'operational', priority: 3 }
+  );
+
+  await pool.query(
+    `INSERT INTO proposals (id, client_id, status, event_date, event_start_time, event_timezone, created_at, total_price)
+     VALUES ($1, $2, 'completed', '2026-09-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
+  );
+  // Stale scheduled_for that does NOT match the new event_date + 7d offset.
+  // Without SKIP_REANCHOR_TYPES the reanchor would recompute and update this.
+  const stale = new Date('2026-08-22T15:00:00.000Z');
+  await pool.query(
+    `INSERT INTO scheduled_messages
+     (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for, status)
+     VALUES ('proposal', $1, 'post_event_wrap_up_email', 'client', $2, 'email', $3, 'pending')`,
+    [TEST_PROPOSAL_ID, TEST_CLIENT_ID, stale]
+  );
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await reanchorPendingMessages(client, TEST_PROPOSAL_ID);
+    await client.query('COMMIT');
+  } finally {
+    client.release();
+  }
+
+  const { rows } = await pool.query(
+    `SELECT scheduled_for FROM scheduled_messages
+      WHERE entity_type = 'proposal' AND entity_id = $1 AND message_type = 'post_event_wrap_up_email'`,
+    [TEST_PROPOSAL_ID]
+  );
+  // Skip set caught it — scheduled_for unchanged despite the non-null offset
+  // metadata that would otherwise have produced a new value.
+  assert.strictEqual(new Date(rows[0].scheduled_for).toISOString(), '2026-08-22T15:00:00.000Z');
+});
+
 // ── rescheduleProposal ──
 test('rescheduleProposal > sends the reschedule email and re-anchors pending rows', async () => {
   await pool.query(
