@@ -60,6 +60,19 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
   process.exit(1);
 }
 
+// Cal.com webhook secret presence check. Emits a one-shot warning so the
+// missed-config alarm fires even when no Cal.com traffic hits the endpoint.
+if (!process.env.CAL_WEBHOOK_SECRET) {
+  const msg = 'CAL_WEBHOOK_SECRET is not set; Cal.com webhook will return 503 on every request';
+  console.warn(`[startup] ${msg}`);
+  try {
+    const Sentry = require('@sentry/node');
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureMessage(msg, { level: 'warning', tags: { component: 'startup', subsystem: 'calcom' } });
+    }
+  } catch (_) { /* sentry optional in dev */ }
+}
+
 const app = express();
 app.set('trust proxy', 1); // Required for Render/Heroku reverse proxies (rate limiter, IP detection)
 const PORT = process.env.PORT || 5000;
