@@ -354,8 +354,13 @@ async function run({ ccDir, loadCsv: loadCsvFn = loadCsv, captureMessage = null 
   await finishRun(runId, {
     status: errored > 0 ? 'partial' : 'succeeded',
     rowsProcessed: processed,
-    rowsInserted: inserted,
-    rowsSkipped: skipped + updated, // dedup hits don't INSERT a new client row
+    // Cross-phase accounting convention (matches Phase 3): rows_inserted counts
+    // any row that produced a DB state change — new INSERT (`inserted`) OR
+    // dedup-update of an existing row (`updated`). rows_skipped is reserved
+    // for rows we deliberately left untouched (none on the Phase 2 happy path;
+    // a re-import re-records the raw row and either inserts or updates).
+    rowsInserted: inserted + updated,
+    rowsSkipped: skipped,
     rowsErrored: errored,
     errorSummary: `phase 2: processed=${processed} inserted=${inserted} updated=${updated} errored=${errored}`,
     notes: samples,
