@@ -58,6 +58,9 @@ test('registerDrinkPlanNudgeHandlers > registers email + sms types, operational,
 test('scheduleDrinkPlanNudge > inserts an email row and an sms row', async () => {
   _clearHandlersForTest();
   registerDrinkPlanNudgeHandlers();
+  // cc-import (Task 2): scheduleDrinkPlanNudge now early-returns when no
+  // drink_plans row exists. Seed the row so the nudge actually schedules.
+  await pool.query(`INSERT INTO drink_plans (proposal_id) VALUES ($1)`, [proposalId]);
   await scheduleDrinkPlanNudge(proposalId);
   const { rows } = await pool.query(
     `SELECT message_type, channel FROM scheduled_messages
@@ -73,6 +76,9 @@ test('scheduleDrinkPlanNudge > inserts an email row and an sms row', async () =>
 test('scheduleDrinkPlanNudge > is idempotent', async () => {
   _clearHandlersForTest();
   registerDrinkPlanNudgeHandlers();
+  // cc-import (Task 2): seed the drink_plans row so the early-return guard
+  // does not skip scheduling. See specs/2026-05-25-checkcherry-import-design.md §9.3.D.
+  await pool.query(`INSERT INTO drink_plans (proposal_id) VALUES ($1)`, [proposalId]);
   await scheduleDrinkPlanNudge(proposalId);
   await scheduleDrinkPlanNudge(proposalId);
   const { rows } = await pool.query(
@@ -80,6 +86,21 @@ test('scheduleDrinkPlanNudge > is idempotent', async () => {
     [proposalId]
   );
   assert.strictEqual(Number(rows[0].count), 2);
+});
+
+test('scheduleDrinkPlanNudge > skips when no drink_plans row exists (cc-import)', async () => {
+  // CC-import (spec §9.3.D): events without a drink plan never get nudged.
+  // No drink_plans INSERT before calling — verifies the early-return guard.
+  _clearHandlersForTest();
+  registerDrinkPlanNudgeHandlers();
+  await scheduleDrinkPlanNudge(proposalId);
+  const { rows } = await pool.query(
+    `SELECT message_type FROM scheduled_messages
+     WHERE entity_type='proposal' AND entity_id=$1
+       AND message_type LIKE 'drink_plan_nudge%'`,
+    [proposalId]
+  );
+  assert.strictEqual(rows.length, 0, 'no drink_plan_nudge rows should be scheduled when no drink_plans row exists');
 });
 
 test('drink_plan_nudge handler > throws SUPPRESS when the drink plan has populated selections', async () => {

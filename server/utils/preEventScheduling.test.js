@@ -133,6 +133,9 @@ test('schedulePreEventReminders > schedules event_week_reminder (T-7) when propo
      VALUES ($1, $2, 'deposit_paid', '2026-08-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
     [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
   );
+  // cc-import (Task 2): scheduleDrinkPlanNudge early-returns when no
+  // drink_plans row exists. Seed the row so the nudge schedules below.
+  await pool.query(`INSERT INTO drink_plans (proposal_id) VALUES ($1)`, [TEST_PROPOSAL_ID]);
   await schedulePreEventReminders(TEST_PROPOSAL_ID);
   const { rows } = await pool.query(
     `SELECT message_type, channel, recipient_type, recipient_id, status, scheduled_for
@@ -161,6 +164,8 @@ test('schedulePreEventReminders > also schedules long_lead_t30_recap when bookin
      VALUES ($1, $2, 'deposit_paid', '2026-12-01', '18:00', 'America/Chicago', '2026-05-01T12:00:00Z', 1000)`,
     [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
   );
+  // cc-import (Task 2): seed drink_plans row so the nudge schedules.
+  await pool.query(`INSERT INTO drink_plans (proposal_id) VALUES ($1)`, [TEST_PROPOSAL_ID]);
   await schedulePreEventReminders(TEST_PROPOSAL_ID);
   const { rows } = await pool.query(
     `SELECT message_type FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1 ORDER BY message_type`,
@@ -178,6 +183,8 @@ test('schedulePreEventReminders > is idempotent — calling twice does not dupli
      VALUES ($1, $2, 'deposit_paid', '2026-08-15', '18:00', 'America/Chicago', '2026-07-01T12:00:00Z', 1000)`,
     [TEST_PROPOSAL_ID, TEST_CLIENT_ID]
   );
+  // cc-import (Task 2): seed drink_plans row so the nudge schedules.
+  await pool.query(`INSERT INTO drink_plans (proposal_id) VALUES ($1)`, [TEST_PROPOSAL_ID]);
   await schedulePreEventReminders(TEST_PROPOSAL_ID);
   await schedulePreEventReminders(TEST_PROPOSAL_ID);
   const { rows } = await pool.query(
