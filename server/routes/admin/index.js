@@ -14,5 +14,6 @@ router.use('/', require('./hiring'));
 router.use('/', require('./labratBugs'));
 router.use('/', require('./search'));
 router.use('/', require('./payroll'));
+router.use('/cc-import', require('./ccImport'));
 
 module.exports = router;
