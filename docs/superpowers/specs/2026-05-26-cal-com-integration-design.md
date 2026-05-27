@@ -664,8 +664,9 @@ Per the Mandatory Documentation Updates table in CLAUDE.md, plus the Cross-Cutti
 - **`server/routes/clients.js:9`**: extend `VALID_SOURCES = ['direct', 'thumbtack', 'referral', 'website']` to include `'calcom'`. The same array is referenced at lines 56 and 93 for ValidationError messages; no separate edits needed there since they use `.join(', ')`.
 - **`client/src/pages/admin/ClientsDashboard.js:18`**: extend the `SOURCE` map by adding `calcom: { label: 'Cal.com', kind: 'info' }` (or another `kind` value if `'info'` clashes visually; the dashboard already uses `neutral`, `info`, `ok`, `accent`, `violet`). Same map drives the dropdown on `:163`.
 - **`client/src/pages/admin/ClientDetail.js:15`**: extend its own `SOURCE` map with the same `calcom` entry. Without this, the client-detail page renders Cal.com-sourced clients with the raw enum string and a neutral chip.
-- **`client/src/pages/admin/ClientDrawer.js:12`**: extend its own `SOURCE` map with the same `calcom` entry. Same rendering concern as ClientDetail.
-- Note: the existing `instagram` entry in `ClientsDashboard.js` SOURCE map (not in `VALID_SOURCES`) is a pre-existing inconsistency outside this spec's scope. Worth flagging in a separate cleanup spec.
+- **`client/src/components/adminos/drawers/ClientDrawer.js:12`**: extend its own `SOURCE` map with the same `calcom` entry. Same rendering concern as ClientDetail. (Path is under `components/adminos/drawers/`, not `pages/admin/` as an earlier draft cited.)
+- **`client/src/pages/admin/ProposalCreate.js:26`**: extends a `SOURCES` array (different shape from the SOURCE map: `[{ value, label }, ...]`) used by the manual-proposal-create form's source dropdown. Add `{ value: 'calcom', label: 'Cal.com' }` so admin can pick Cal.com when manually entering a proposal.
+- Note: the existing `instagram` entry in all three SOURCE maps (not in `VALID_SOURCES`) is a pre-existing inconsistency outside this spec's scope. Worth flagging in a separate cleanup spec.
 
 ## 12. Testing strategy
 
@@ -710,7 +711,7 @@ Step ordering matters: env vars set, then code + bundled docs deployed, then Cal
 6. **Subscribe the webhook in Cal.com.** Configure Cal.com webhook endpoint = `https://<api-domain>/api/calcom/webhook`, subscribe to `BOOKING_CREATED`, `BOOKING_CANCELLED`, `BOOKING_RESCHEDULED`, `BOOKING_NO_SHOW_UPDATED`. Paste the secret (matches what step 3 set in Render).
 7. **Run the E2E smoke (§12).** Confirm webhooks land, consults rows appear, clients auto-create, replay-dedupe works.
 8. **Verify URL placeholders render** the consult line in client comms (trigger a six-months-out send manually if needed, or wait for a real send).
-9. **Post-rollout docs commit.** Update `README.md` and `ARCHITECTURE.md` per §11 (the deeper structural docs that don't block fresh-environment setup). Update `server/routes/clients.js` `VALID_SOURCES`, plus all three `SOURCE` maps in `client/src/pages/admin/{ClientsDashboard,ClientDetail,ClientDrawer}.js`.
+9. **Post-rollout docs commit.** Update `README.md` and `ARCHITECTURE.md` per §11 (the deeper structural docs that don't block fresh-environment setup). Update `server/routes/clients.js` `VALID_SOURCES`, plus all three `SOURCE` maps (`client/src/pages/admin/ClientsDashboard.js`, `client/src/pages/admin/ClientDetail.js`, `client/src/components/adminos/drawers/ClientDrawer.js`), plus the `SOURCES` array in `client/src/pages/admin/ProposalCreate.js`.
 
 ## 14. Future work (deferred V2 and beyond)
 
