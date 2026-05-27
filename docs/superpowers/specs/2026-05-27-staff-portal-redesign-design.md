@@ -121,7 +121,7 @@ What is actually in the codebase as of this branch (verified against `server/db/
 
 **Contractor profile data** lives on `contractor_profiles`: `preferred_name`, `phone`, `email`, `birth_month/day/year`, `city`, `state`, `street_address`, `zip_code`, `emergency_contact_name` + `_phone` + `_relationship`, `alcohol_certification_file_url` + `_filename`, `resume_file_url` + `_filename`, `headshot_file_url` + `_filename`, equipment booleans, `travel_distance`, `reliable_transportation`. Mailing address is a composite of four columns (`street_address`, `city`, `state`, `zip_code`); the staff-portal Profile UI renders one address field but the backend reads/writes all four.
 
-**Staff payment data** lives on `payment_profiles` (one row per user, NOT on `contractor_profiles`). Existing columns: `preferred_payment_method TEXT` (values like `'venmo'`, `'cashapp'`, `'paypal'`, `'direct_deposit'`, `'check'`), `payment_username TEXT`, `routing_number TEXT`, `account_number TEXT` (both currently plaintext, see section 12), `w9_file_url VARCHAR(500)`, `w9_filename VARCHAR(255)`, `venmo_handle TEXT`, `cashapp_handle TEXT`, `paypal_url TEXT`, `tip_page_token UUID` (nullable), `tip_page_active BOOLEAN DEFAULT TRUE`, `stripe_payment_link_url TEXT`, `stripe_payment_link_id TEXT`. The W-9 file lives on `payment_profiles`, NOT `contractor_profiles`. This spec adds one column (`zelle_handle TEXT`) and reuses everything else, no new payment-methods table.
+**Staff payment data** lives on `payment_profiles` (one row per user, NOT on `contractor_profiles`). Existing columns: `preferred_payment_method TEXT` (values like `'venmo'`, `'cashapp'`, `'paypal'`, `'direct_deposit'`, `'check'`), `payment_username TEXT`, `routing_number VARCHAR(255)`, `account_number VARCHAR(255)` (both store AES-256-GCM ciphertext via `server/utils/encryption.js`; the ALTER COLUMN TYPE widening from TEXT lives near schema line 1990), `w9_file_url VARCHAR(500)`, `w9_filename VARCHAR(255)`, `venmo_handle TEXT`, `cashapp_handle TEXT`, `paypal_url TEXT`, `tip_page_token UUID` (nullable), `tip_page_active BOOLEAN DEFAULT TRUE`, `stripe_payment_link_url TEXT`, `stripe_payment_link_id TEXT`. The W-9 file lives on `payment_profiles`, NOT `contractor_profiles`. This spec adds one column (`zelle_handle TEXT`) and reuses everything else, no new payment-methods table.
 
 **Legal name** lives on `applications.full_name` (NOT NULL) and on `agreements.full_name` (the signed contractor agreement). It is NOT on `contractor_profiles` or `users`. Reading requires a LEFT JOIN through `applications`.
 
@@ -129,19 +129,25 @@ What is actually in the codebase as of this branch (verified against `server/db/
 
 **`users.communication_preferences`** is the top-level kill switch: `{ sms_enabled, email_enabled, marketing_enabled }`. NOT NULL JSONB. The critical-path-override logic in section 6.13 must respect this (a staffer who turns off SMS globally cannot have it forced back on by a critical-path category).
 
-**`users.calendar_token`** EXISTS as `UUID UNIQUE DEFAULT gen_random_uuid()` for every user (`server/db/schema.sql:269`). The route `GET /api/calendar/feed/:token` ALREADY exists at `server/routes/calendar.js:286` (~477 lines of working code with rate limiting, ETag / Last-Modified, staff vs admin projection). This spec extends that feed, it does NOT create a parallel one.
+**`users.calendar_token`** EXISTS as `UUID UNIQUE DEFAULT gen_random_uuid()` for every user (`server/db/schema.sql:269`). The route `GET /api/calendar/feed/:token` ALREADY exists at `server/routes/calendar.js:287` (~477 lines of working code with rate limiting, ETag / Last-Modified, staff vs admin projection). Token rotation route is `POST /api/calendar/token/regenerate` at `server/routes/calendar.js:463`. This spec extends that feed, it does NOT create a parallel one.
 
 **`users.onboarding_status`** CHECK enum at `server/db/schema.sql:25` is `IN ('in_progress','applied','interviewing','hired','rejected','submitted','reviewed','approved','deactivated')`. **`'suspended'` is NOT present today.** This spec adds it via the schema additions in section 7.
 
-**`scheduled_messages.channel`** CHECK at `server/db/schema.sql:2309` is `IN ('email','sms')`. **`'push'` is NOT present today.** This spec widens it.
+**`scheduled_messages.channel`** CHECK at `server/db/schema.sql:2307` is `IN ('email','sms')`. **`'push'` is NOT present today.** This spec widens it. Note: the table also has `entity_type` CHECK `IN ('proposal','shift','client','consult')` and `recipient_type` CHECK `IN ('client','staff','admin')`; there is NO `category` column. Cover-broadcast rows use `entity_type='shift'` with a new `message_type` value; staff push rows use `recipient_type='staff'`.
 
-**`pay_periods.status`** CHECK at `server/db/schema.sql:2531` is `IN ('open','processing','paid')`. The drop endpoint's processing-period guard reads this value.
+**`pay_periods.status`** CHECK at `server/db/schema.sql:2532` is `IN ('open','processing','paid')`. The drop endpoint's processing-period guard reads this value.
 
 **`payouts`** records carry inline snapshots: `payment_method TEXT` + `payment_handle TEXT` per row. A paid stub is self-contained, changing a staffer's preferred handle later does not retroactively change paid payouts. This is the rationale for NOT introducing a separate payment-methods table.
 
 ### 5.6 Existing comms infrastructure
 
-`scheduled_messages` dispatcher with `checkSuppression` (cascades on `proposals.status='archived'` etc.), `registerHandler({ offsetFromEventDate, anchor, category, priority })`, the `urgent_staffing` admin-notification category (already wired to email + SMS), `sendAndLogSms`, `notifyAdminCategory`. Phase 4a staff SMS handlers (shift_reminder, staff_thank_you, shift_unassignment_notice, etc.) already exist. The new Cover-Needed broadcasts ride this infrastructure. The `category` column on `scheduled_messages` already accepts `'operational' | 'marketing'`; the `channel` column accepts `'email' | 'sms'` today and is widened to include `'push'` by this spec.
+`scheduled_messages` dispatcher with `checkSuppression` (cascades on `proposals.status='archived'` etc.), `registerHandler({ offsetFromEventDate, anchor, category, priority })`, the `urgent_staffing` admin-notification category (already wired to email + SMS), `sendAndLogSms`, `notifyAdminCategory`. Phase 4a staff SMS handlers (shift_reminder, staff_thank_you, shift_unassignment_notice, etc.) already exist. The new Cover-Needed broadcasts ride this infrastructure.
+
+**Patterns the cc-import + Touch 2.2 merges exposed that this spec follows:**
+
+- `checkSuppression` is exported from `server/utils/scheduledMessageDispatcher.js` (line 683). The staff portal's dispatcher integration reuses it for the `communication_preferences` kill-switch re-check rather than duplicating the SELECT.
+- `SKIP_REANCHOR_TYPES` (a `Set` in `server/utils/rescheduleProposal.js`) lists `message_type` values that bypass re-anchoring on reschedule. If any new staff-portal message_type (e.g., `cover_broadcast`, `beo_unack_nudge_sms`) should NOT re-anchor when the event date moves, add it to that set in the same change.
+- No `category` column exists on `scheduled_messages`. Category-aware routing lives in handler registration (`registerHandler({ category })`) and in the new `pickChannelsForUserAndCategory` helper, NOT as a per-row column. Section 6.13 reflects this.
 
 ## 6. Architecture
 
@@ -363,7 +369,7 @@ The seven payment methods the UI surfaces map onto `payment_profiles` columns as
 
 ### 6.12 AccountPage / Calendar sync
 
-**Reuses existing infrastructure.** `server/routes/calendar.js:286` already implements `GET /api/calendar/feed/:token` against `users.calendar_token UUID UNIQUE DEFAULT gen_random_uuid()` (assigned to every user). Rate limiting, ETag / Last-Modified, role-aware projection (staff see only their approved shifts; admins see everything), and token rotation (`POST /api/calendar/regenerate-token`) all ship. This spec extends the existing feed, it does not create a parallel one.
+**Reuses existing infrastructure.** `server/routes/calendar.js:287` already implements `GET /api/calendar/feed/:token` against `users.calendar_token UUID UNIQUE DEFAULT gen_random_uuid()` (assigned to every user). Rate limiting, ETag / Last-Modified, role-aware projection (staff see only their approved shifts; admins see everything), and token rotation (`POST /api/calendar/token/regenerate` at line 463; `GET /api/calendar/token` at line 447) all ship. This spec extends the existing feed, it does not create a parallel one.
 
 Three subscribe buttons (deep links composed against the existing feed URL):
 
@@ -371,23 +377,23 @@ Three subscribe buttons (deep links composed against the existing feed URL):
 - Apple Calendar: `webcal://<api-host>/api/calendar/feed/<token>` (webcal scheme triggers the OS calendar subscribe sheet)
 - Outlook: Outlook's subscription URL with the feed pre-filled
 
-Subscription URL block below the buttons: read-only URL (the existing `/api/calendar/feed/:token` URL) + a Copy button (toggles to a "Copied" checkmark for 1.8 seconds). A "Regenerate URL" affordance below the Copy button calls the existing `POST /api/calendar/regenerate-token` route, with a confirm dialog warning that previously-subscribed apps will stop syncing.
+Subscription URL block below the buttons: read-only URL (the existing `/api/calendar/feed/:token` URL) + a Copy button (toggles to a "Copied" checkmark for 1.8 seconds). A "Regenerate URL" affordance below the Copy button calls the existing `POST /api/calendar/token/regenerate` route, with a confirm dialog warning that previously-subscribed apps will stop syncing.
 
 Footer note: *"Refreshes every 15 minutes. Includes your confirmed shifts, plus an all-day reminder 3 days before any unconfirmed BEO. Past shifts roll off after 30 days."*
 
 "Last sync" sub-section: shows the last time the calendar app pulled the feed (server tracks `users.last_ics_fetch_at` per user) and which app subscribed (detected via User-Agent on each fetch, persisted to `users.ui_preferences.calendar_subscribed_app`). A Disconnect button clears the tracked state but does NOT rotate the token (use the explicit Regenerate URL action for that).
 
-**Feed extensions for the staff portal.** The existing `buildCalendarFeed` builder in `server/routes/calendar.js` is extended to also emit:
+**Feed extensions for the staff portal.** The existing `buildICalFeed` builder in `server/routes/calendar.js` (line 211) is extended to also emit:
 
 - All-day VEVENTs 3 days before each unconfirmed-BEO shift: `DTSTART;VALUE=DATE = (shift_event_date - 3 days)`, `TRANSP:TRANSPARENT` (does not block the day visually), SUMMARY = `"Confirm BEO: <client>"`, DESCRIPTION includes a deep link to `https://staff.drbartender.com/shifts/<id>`. One all-day VEVENT per affected shift.
 - The shift-level VEVENTs (already in the feed) gain the staff-portal deep link in their DESCRIPTION field for staff projections.
 
 Source of "unconfirmed BEO": `drink_plans.finalized_at IS NOT NULL AND shift_requests.beo_acknowledged_at IS NULL` (the BEO spec's existing fields).
 
-**Per-fetch side effects** (already implemented in `calendar.js`; this spec extends only the projection):
+**Per-fetch side effects** (new work, NOT yet implemented in `calendar.js` despite the column existing on `users`):
 
-- `users.last_ics_fetch_at = NOW()` on every successful fetch
-- `users.ui_preferences.calendar_subscribed_app` is set per the User-Agent (Google fetches from `Calendar.google.com`, Apple from `iCal/macOS` or `iOS/`, Outlook from `Microsoft Office/Outlook`)
+- `users.last_ics_fetch_at = NOW()` written on every successful `GET /api/calendar/feed/:token` response. Wrap the existing SELECT-then-respond path with an UPDATE that runs after the 304/200 decision but before the response is sent.
+- `users.ui_preferences.calendar_subscribed_app` set per the User-Agent (Google fetches identify as `Google-Calendar-Importer` or fetch from `Calendar.google.com`; Apple from `iCal/macOS` or `iOS/`; Outlook from `Microsoft Office/Outlook`). Use `jsonb_set` to merge into the existing JSONB without clobbering other keys.
 
 Cache header is already `Cache-Control: private, max-age=900`.
 
@@ -741,9 +747,9 @@ Phase A is ~3-4 weeks of focused work. Phase B is ~1 week. Both ship as separate
 
 - All `/api/me/*` endpoints are `auth`-gated and scope every read/write by `req.user.id`. IDOR guard is in the query (`WHERE user_id = $1`), not by trusting body params. The PATCH endpoints reject any payload key that maps to a user-scoped foreign key.
 - The four drop / cover endpoints additionally verify `req.user.id === shift_requests.user_id` (you can only drop your own; admin uses different routes).
-- The calendar feed `GET /api/calendar/feed/:token` is public-by-token (matching the existing `/tip/:token` pattern). Token is a UUID assigned to every user, can be rotated via `POST /api/calendar/regenerate-token`. Rate limiting is already enforced by the existing route.
+- The calendar feed `GET /api/calendar/feed/:token` is public-by-token (matching the existing `/tip/:token` pattern). Token is a UUID assigned to every user, can be rotated via `POST /api/calendar/token/regenerate`. Rate limiting is already enforced by the existing route.
 - Push subscription PII (`endpoint` URL, `keys`) is stored as JSON in `users.staff_notification_preferences.push_subscriptions[]`. This is the standard Web Push pattern, the keys are recipient-public (used by the server to encrypt the payload, but they don't grant access to anything beyond sending notifications to that endpoint). No encryption required.
-- **Bank routing + account numbers** on `payment_profiles` are CURRENTLY stored as plaintext `TEXT` columns (verified in `server/db/schema.sql:129+`). This spec does NOT change that for v1, the existing staff-payments backend already reads/writes these as plaintext and changing the storage model is out of scope for the staff-portal redesign. See section 12 for the encryption-at-rest follow-up.
+- **Bank routing + account numbers** on `payment_profiles` are ALREADY stored as AES-256-GCM ciphertext in `VARCHAR(255)` columns (widened from TEXT around schema line 1990 by the staff-payments work). The existing `server/utils/encryption.js` encrypts on write and decrypts on read; the module fails closed in production if `BANK_ENCRYPTION_KEY` is unset. New staff-portal routes that read these columns (`GET /api/me/payment-methods` projecting last-4 of the account number) MUST call `decrypt()` before any slice or masking. The PATCH route MUST call `encrypt()` before persisting. Never log either column raw. Never project `account_number` past the last 4 digits on any client-facing endpoint.
 
 ## 11. Testing approach
 
@@ -831,7 +837,7 @@ Phase B:
   - Service worker logs push events to a dev console for debug (no PII in logs).
   - On 410 Gone, `pushSender` returns `gone:true` and the dispatcher prunes the dead subscription from `staff_notification_preferences.push_subscriptions[]`.
 - **Calendar feed PII surface.** The feed includes `event_location` and `client_name`. If a staffer's calendar is shared with a partner (read-access to their iCloud), that partner now sees client identities. Acceptable, bartenders typically share these details with their household anyway. Worth a one-line note in the AccountPage / Calendar sync sub: *"Your subscribed calendar shows client names and locations. Don't share the feed URL, it's the only thing protecting this data."*
-- **Bank PII at rest.** `payment_profiles.routing_number` and `payment_profiles.account_number` are stored as plaintext today. The redesign does not change that. Encryption-at-rest via `server/utils/encryption.js` is a v1.5 follow-up (see section 13). Until then, treat these columns as compliance-sensitive (no logging, no API surface beyond the staffer's own GET).
+- **Bank PII at rest.** `payment_profiles.routing_number` and `payment_profiles.account_number` are already AES-256-GCM ciphertext (handled by `server/utils/encryption.js`). The redesign does not change the storage model. The risk surface is the decryption path correctness: a new GET endpoint that forgets to call `decrypt()` would return raw ciphertext to the client; a PATCH that forgets to call `encrypt()` would persist plaintext that the existing read path can't make sense of. Mitigation: a small wrapper helper used by every new `payment_profiles` read/write in this redesign, plus a test that round-trips a known account number through PATCH then GET and asserts the decrypted last-4 matches.
 - **Stripe / card-payment flow is unchanged.** No risk to the existing card-tip pool logic.
 - **Worst-case bug:** the new ShiftDetail page fails to render a BEO. Fallback: the back button always works, the staffer can still see the shift on the Shifts/Mine list, and admin can still text them the BEO directly. No money or data corruption.
 
@@ -845,8 +851,8 @@ Primary surfaces to watch in production:
 
 - **Brand kit.** Asset doesn't exist; row gets added later.
 - **Admin-side BEO redesign** per `admin-os/beo.jsx` (lifecycle bar + nudge preview + activity log). Real upgrade over the BEO spec's simpler buttons-on-DrinkPlanCard pattern, but deferred to its own follow-up to keep this scope focused on the staff-side.
-- **Bank-PII encryption-at-rest.** `payment_profiles.routing_number` and `payment_profiles.account_number` are plaintext today. Move both behind `server/utils/encryption.js` (AES-256-GCM, fails-closed-in-prod) in v1.5. Touch every read site (`/api/me/payment-methods`, the staff-payments backend's payout-stub composition, admin tooling) in the same change.
-- **Plaid Link for direct-deposit onboarding.** Manual routing + account entry is v1; Plaid replaces the input form in v1.5 once the encryption migration lands, so the new flow can write encrypted from day one.
+- **Bank-PII key rotation runbook.** Encryption is shipped via `server/utils/encryption.js`, but no key-rotation procedure is documented. Land a rotation runbook in v1.5 covering: provision a new key, re-encrypt every row, verify decrypt path against the new key, then retire the old key.
+- **Plaid Link for direct-deposit onboarding.** Manual routing + account entry is v1; Plaid replaces the input form in v1.5 to reduce typo-driven payment failures and to skip the staffer having to find their checks.
 - **Per-bartender Stripe Connect.** Declined.
 - **In-portal direct chat with admin.** Declined.
 - **Post-event surveys.** Out.
