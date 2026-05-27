@@ -80,7 +80,7 @@ async function createDrinkPlan(proposalId, proposal, { skipEmail = false } = {})
     await scheduleDrinkPlanNudge(proposalId, pool);
   } catch (err) {
     Sentry.captureException(err, {
-      tags: { hook: 'createDrinkPlan_reenroll', proposalId },
+      tags: { hook: 'createDrinkPlan_postinsert', proposalId },
     });
   }
 
