@@ -5,7 +5,7 @@
  *   Returns all 7 sections in one shot (50 rows per section). Lets the
  *   front-end render every collapsible at once without a per-section fetch.
  *
- * 10 mutation endpoints (all auth + requireAdminOrManager, all audited):
+ * 8 mutation endpoints (all auth + requireAdminOrManager, all audited):
  *
  *   /duplicate/:row_id/confirm                 — flip duplicate_review → confirmed
  *   /duplicate/:row_id/promote                 — re-run Bucket A promote (skipDedup)
@@ -15,8 +15,9 @@
  *   /unmatched-payee/:legacy_payout_id/create-stub  — fresh stub + link payout
  *   /errored-row/:row_id/retry                 — re-run per-row insert
  *   /skipped-event/:row_id/promote             — re-run phase3 promotion
- *   /phase0-failure/:row_id/accept-loss        — set given_up_at + reason
- *   /phase0-failure/:row_id/revert-give-up     — clear give-up + reset attempts
+ *
+ * Phase 0 give-up endpoints (accept-loss, revert-give-up — Section 9.2 §7) live
+ * in sibling phase0.js, mounted by index.js. Extracted for file-size discipline.
  *
  * The link picker endpoints (/search/proposals, /search/users) and the
  * /link-preview pre-check live in search.js (sibling router on the same path
@@ -356,26 +357,67 @@ router.post(
     }
     const targetCcId = propRes.rows[0].cc_id;
 
-    // Set cc_event_id on the legacy row.
-    await pool.query(
-      `UPDATE legacy_cc_payments SET cc_event_id = $1 WHERE id = $2`,
-      [targetCcId, legacyId]
-    );
-
-    // Re-run the appropriate phase 4 single-row promote helper.
+    // UPDATE legacy_cc_payments.cc_event_id + promote in ONE atomic step so
+    // an exception in promote cannot leave the orphan row half-linked (cc_event_id
+    // set but promoted_*_id NULL — which would drop the row from the orphans
+    // worklist filter `cc_event_id IS NULL`, removing the operator's recovery path).
+    //
+    // Two execution paths because the helpers have different transaction shapes:
+    //   - Payment: promoteSingleLegacyPayment(id, { client }) cooperates with a
+    //     caller-managed transaction → wrap UPDATE + promote in a single BEGIN/COMMIT.
+    //   - Refund: promoteSingleLegacyRefund(id) MUST own its own connection (per
+    //     refundHelpers.js Approach A — proposal row-locks against autopay), so
+    //     we cannot share a transaction. Fallback: UPDATE first, and on promote
+    //     throw, revert cc_event_id back to NULL before re-raising. The revert
+    //     is best-effort but the failure window is one statement wide.
     let promoteResult;
-    try {
-      promoteResult = legacy.cc_type === 'Refund'
-        ? await phase4.promoteSingleLegacyRefund(legacyId)
-        : await phase4.promoteSingleLegacyPayment(legacyId);
-    } catch (err) {
-      reportException(req, err, { step: 'promote_single', legacyId });
-      throw err;
+    if (legacy.cc_type === 'Refund') {
+      // Refund path — UPDATE + explicit revert-on-throw.
+      await pool.query(
+        `UPDATE legacy_cc_payments SET cc_event_id = $1 WHERE id = $2`,
+        [targetCcId, legacyId]
+      );
+      try {
+        promoteResult = await phase4.promoteSingleLegacyRefund(legacyId);
+      } catch (err) {
+        // Revert the cc_event_id assignment so the orphan stays on the worklist.
+        try {
+          await pool.query(
+            `UPDATE legacy_cc_payments SET cc_event_id = NULL WHERE id = $1
+                AND promoted_payment_id IS NULL AND promoted_refund_id IS NULL`,
+            [legacyId]
+          );
+        } catch (revertErr) {
+          reportException(req, revertErr, { step: 'cc_event_id_revert', legacyId });
+        }
+        reportException(req, err, { step: 'promote_single', legacyId });
+        throw err;
+      }
+    } else {
+      // Payment path — shared transaction.
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `UPDATE legacy_cc_payments SET cc_event_id = $1 WHERE id = $2`,
+          [targetCcId, legacyId]
+        );
+        promoteResult = await phase4.promoteSingleLegacyPayment(legacyId, { client });
+        await client.query('COMMIT');
+      } catch (err) {
+        try { await client.query('ROLLBACK'); } catch (_) { /* swallow */ }
+        reportException(req, err, { step: 'promote_single', legacyId });
+        throw err;
+      } finally {
+        client.release();
+      }
     }
 
     // Proposal-wide recompute + re-derive (spec §9.2 §2): keep the proposal in
     // sync after the link. These helpers run across ALL cc-imported proposals
-    // but are idempotent UPDATEs; cheap enough on the small import dataset.
+    // but are idempotent UPDATEs; cheap enough on the small import dataset. They
+    // intentionally run OUTSIDE the link transaction (post-COMMIT) — they are
+    // proposal-wide cleanups that should fire only after the promote committed.
     const tail = await pool.connect();
     try {
       await phase4.recomputeAmountPaid(tail);
@@ -496,6 +538,49 @@ router.post(
         [userId, legacyPayoutId]
       );
 
+      // Capture the stub's PRE-deletes proposal set up front. We use this for
+      // both the audit log AND the post-COMMIT reaccrue loop — operating on the
+      // EXACT set of proposals the stub participated in, not the real user's
+      // full approved set (which would sweep in unrelated proposals the real
+      // user already worked).
+      const stubProposalsRes = await client.query(
+        `SELECT DISTINCT s.proposal_id
+           FROM shift_requests sr
+           JOIN shifts s ON s.id = sr.shift_id
+          WHERE sr.user_id = $1`,
+        [stubUserId]
+      );
+      inheritedProposalIds = stubProposalsRes.rows
+        .map((r) => r.proposal_id)
+        .filter((id) => id !== null && id !== undefined);
+
+      // Collision guard: reject Step 2 if BOTH stub and real user have
+      // non-approved rows on the same shift. The importer (Phase 5) writes
+      // stub shift_requests as 'approved' — a non-approved stub row implies a
+      // post-import edit. DELETE 1a only fires when stub is approved; DELETE 1b
+      // only fires when real user is approved; so a both-pending or both-denied
+      // pair would slip through and crash Step 2's UPDATE on UNIQUE(shift_id, user_id).
+      const conflictCheck = await client.query(
+        `SELECT sr.shift_id
+           FROM shift_requests sr
+           JOIN shift_requests sr2
+             ON sr.shift_id = sr2.shift_id
+            AND sr.user_id = $1
+            AND sr2.user_id = $2
+          WHERE sr.status NOT IN ('approved')
+            AND sr2.status NOT IN ('approved')
+          LIMIT 5`,
+        [stubUserId, userId]
+      );
+      if (conflictCheck.rowCount > 0) {
+        await client.query('ROLLBACK');
+        throw new ConflictError(
+          `Cannot link: stub and real user both have non-approved shift_requests on shift(s) ${conflictCheck.rows.map((r) => r.shift_id).join(', ')}. ` +
+            'Manually resolve one side in the shift admin UI before linking.',
+          'CC_LINK_NON_APPROVED_COLLISION'
+        );
+      }
+
       // Step 1a: drop now-real user's non-approved rows where stub is approved
       // on the same shift (preserve the approved money path).
       const delA = await client.query(
@@ -528,37 +613,22 @@ router.post(
       );
       deletedRows1b = delB.rows;
 
-      // Step 2: reassign any remaining stub rows to the now-real user. Step 1a/1b
-      // cleared the only paths that would collide on UNIQUE(shift_id, user_id).
+      // Step 2: reassign any remaining stub rows to the now-real user. DELETE
+      // 1a/1b cleared the approved-vs-(pending|denied) collisions; the guard
+      // above rejected the rare both-non-approved collision.
       await client.query(
         `UPDATE shift_requests SET user_id = $1 WHERE user_id = $2`,
         [userId, stubUserId]
       );
 
-      // Step 3: capture inherited proposal ids for the audit trail + reaccrue loop.
-      const inherited = await client.query(
-        `SELECT DISTINCT s.proposal_id
-           FROM shift_requests sr
-           JOIN shifts s ON s.id = sr.shift_id
-          WHERE sr.user_id = $1 AND sr.status = 'approved'`,
-        [userId]
-      );
-      inheritedProposalIds = inherited.rows
-        .map((r) => r.proposal_id)
-        .filter((id) => id !== null && id !== undefined);
-
       // Audit trail per spec §9.3.E: ONE proposal_activity_log entry per
-      // affected proposal recording the deleted rows. Combined 1a+1b deletes.
-      const allDeleted = [...deletedRows1a, ...deletedRows1b];
+      // affected proposal recording the deleted rows. The deleted_rows snapshot
+      // is the global 1a+1b set (we don't have a cheap shift→proposal map
+      // here at row-level; the proposal_id on the row itself disambiguates).
+      const allDeleted = [...deletedRows1a, ...deletedRows1b].map((d) => ({
+        shift_id: d.shift_id, was_user_id: d.user_id, was_status: d.status,
+      }));
       for (const pid of inheritedProposalIds) {
-        const proposalDeleted = allDeleted.filter((d) => {
-          // We don't have shift→proposal here at row-level cheaply; the spec
-          // captures the JSON with the affected proposal id alongside the
-          // global deleted-rows snapshot. Keep the per-proposal entry simple.
-          return true;
-        }).map((d) => ({
-          shift_id: d.shift_id, was_user_id: d.user_id, was_status: d.status,
-        }));
         await client.query(
           `INSERT INTO proposal_activity_log
              (proposal_id, action, actor_type, actor_id, details)
@@ -570,7 +640,7 @@ router.post(
               stub_user_id: stubUserId,
               now_real_user_id: userId,
               legacy_payout_id: legacyPayoutId,
-              deleted_rows: proposalDeleted,
+              deleted_rows: allDeleted,
             }),
           ]
         );
@@ -710,7 +780,10 @@ router.post(
   asyncHandler(async (req, res) => {
     const rowId = intParam('row_id', req.params.row_id);
     const payloadOverride = req.body?.payload_override;
-    if (payloadOverride !== null && payloadOverride !== undefined && typeof payloadOverride !== 'object') {
+    if (
+      payloadOverride !== null && payloadOverride !== undefined
+      && (typeof payloadOverride !== 'object' || Array.isArray(payloadOverride))
+    ) {
       throw new ValidationError(undefined, 'payload_override must be an object');
     }
 
@@ -883,94 +956,7 @@ router.post(
   })
 );
 
-// §7 — Phase 0 give-ups: accept loss (URL is permanently dead).
-router.post(
-  '/review/phase0-failure/:row_id/accept-loss',
-  auth,
-  requireAdminOrManager,
-  asyncHandler(async (req, res) => {
-    const rowId = intParam('row_id', req.params.row_id);
-    const reason = trimText('reason', req.body?.reason, { required: true, min: 1, max: 500 });
-
-    // State guard: row exists, attempts ≥ 10, not yet given up, not resolved.
-    const r = await pool.query(
-      `UPDATE cc_import_phase0_failures
-          SET given_up_at = NOW(), given_up_reason = $2
-        WHERE id = $1
-          AND given_up_at IS NULL
-          AND resolved_at IS NULL
-          AND attempt_count >= 10
-        RETURNING id, source_url, source_entity, attempt_count`,
-      [rowId, reason]
-    );
-    if (r.rowCount === 0) {
-      // Determine whether the row exists or just isn't eligible.
-      const exists = await pool.query(
-        `SELECT id, given_up_at, resolved_at, attempt_count FROM cc_import_phase0_failures WHERE id = $1`,
-        [rowId]
-      );
-      if (exists.rowCount === 0) throw new NotFoundError('row not found');
-      throw new ConflictError('row is not eligible for accept-loss (already actioned or attempt_count < 10)');
-    }
-
-    await logAdminAction({
-      actorUserId: req.user.id,
-      targetUserId: null,
-      action: 'cc_review_phase0_accept_loss',
-      metadata: {
-        row_id: rowId,
-        source_url: r.rows[0].source_url,
-        source_entity: r.rows[0].source_entity,
-        attempt_count: r.rows[0].attempt_count,
-        reason,
-      },
-    });
-
-    res.json({ ok: true });
-  })
-);
-
-// §7 — Phase 0 give-ups: revert (URL is fetchable again; reset attempt count
-// so the next phase 0 run can re-try without immediately hitting the cap).
-router.post(
-  '/review/phase0-failure/:row_id/revert-give-up',
-  auth,
-  requireAdminOrManager,
-  asyncHandler(async (req, res) => {
-    const rowId = intParam('row_id', req.params.row_id);
-
-    const r = await pool.query(
-      `UPDATE cc_import_phase0_failures
-          SET given_up_at = NULL,
-              given_up_reason = NULL,
-              attempt_count = 0
-        WHERE id = $1
-          AND given_up_at IS NOT NULL
-        RETURNING id, source_url, source_entity`,
-      [rowId]
-    );
-    if (r.rowCount === 0) {
-      const exists = await pool.query(
-        `SELECT id, given_up_at FROM cc_import_phase0_failures WHERE id = $1`,
-        [rowId]
-      );
-      if (exists.rowCount === 0) throw new NotFoundError('row not found');
-      throw new ConflictError('row is not currently in given-up state');
-    }
-
-    await logAdminAction({
-      actorUserId: req.user.id,
-      targetUserId: null,
-      action: 'cc_review_phase0_revert_give_up',
-      metadata: {
-        row_id: rowId,
-        source_url: r.rows[0].source_url,
-        source_entity: r.rows[0].source_entity,
-      },
-    });
-
-    res.json({ ok: true });
-  })
-);
+// §7 — Phase 0 give-up endpoints (accept-loss, revert-give-up) live in
+// sibling phase0.js, mounted by index.js. Extracted for file-size discipline.
 
 module.exports = router;

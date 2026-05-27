@@ -23,8 +23,14 @@ let clientId;
 let proposalNativeId, proposalCcId, proposalCcOtherId, proposalCcCcStr; // a native proposal + two CC proposals
 let stubUserId, realUserId, stubUserBId, realUserBId, stubUserCId, realUserCId;
 let stubUserDId; // Already linked: used for the create-stub failure test
+let stubUserFId, realUserFId; // Collision test (I2): both non-approved on same shift
 let dummyTargetStubId; // a stub used as the "link to stub" target → 409
 let shiftId, shiftOtherId;
+
+// Mutable: user_id returned by the create-stub success test (captured at runtime
+// so we can delete this row explicitly in after() — its email shape doesn't
+// match the broader pattern-deletes below).
+let createdStubUserId = null;
 
 // raw_imports / legacy rows
 let rawDupReviewId; // duplicate_review state row
@@ -43,8 +49,11 @@ let unmatchedPayoutStubId; // stub linked to shift_requests for the BIG test (re
 let unmatchedPayoutDelete1aId, unmatchedPayoutDelete1bId; // DELETE 1a + DELETE 1b scenarios
 let unmatchedPayoutNoStubId; // no_stub_path
 let unmatchedPayoutLinkedId; // already-linked → create-stub 409
+let unmatchedPayoutCollisionId; // Collision-guard test (I2)
 let shift1aId, shift1bId; // shifts used by the DELETE 1a / 1b scenarios
+let shiftCollisionId; // shift used by the collision-guard test
 let shiftRequest1aRealPendingId, shiftRequest1bRealApprovedId; // tracked for cleanup verification
+let shiftRequestCollisionStubId, shiftRequestCollisionRealId; // tracked for cleanup verification
 
 let phase0EligibleId, phase0NotEligibleId, phase0DoneId;
 
@@ -132,6 +141,8 @@ before(async () => {
     realUserCId = await mkReal('real-c', 'Review Real C');
     stubUserDId = await mkStub('reviewstubD:def', 'Review Stub D');
     dummyTargetStubId = await mkStub('reviewstubE:efg', 'Review Stub Target Disallowed');
+    stubUserFId = await mkStub('reviewstubF:fgh', 'Review Stub F');
+    realUserFId = await mkReal('real-f', 'Review Real F');
 
     // Client + proposals (one native, one cc-imported).
     const c1 = await c.query(
@@ -388,6 +399,35 @@ before(async () => {
     );
     unmatchedPayoutLinkedId = poE.rows[0].id;
 
+    // (f) collision-guard scenario (I2): stub + real BOTH non-approved on the
+    // same shift. The guard rejects this with 409 / CC_LINK_NON_APPROVED_COLLISION
+    // — neither row should be deleted.
+    const sf = await c.query(
+      `INSERT INTO shifts (proposal_id, client_name, event_date, start_time, positions_needed, status, created_by)
+       VALUES ($1, 'Review Test Client', CURRENT_DATE - INTERVAL '16 days', '9:00 PM', $2::jsonb, 'completed', $3)
+       RETURNING id`,
+      [proposalCcId, JSON.stringify(['Bartender']), adminId]
+    );
+    shiftCollisionId = sf.rows[0].id;
+    const srColStub = await c.query(
+      `INSERT INTO shift_requests (shift_id, user_id, status, position) VALUES ($1, $2, 'pending', 'Bartender') RETURNING id`,
+      [shiftCollisionId, stubUserFId]
+    );
+    shiftRequestCollisionStubId = srColStub.rows[0].id;
+    const srColReal = await c.query(
+      `INSERT INTO shift_requests (shift_id, user_id, status, position) VALUES ($1, $2, 'denied', 'Bartender') RETURNING id`,
+      [shiftCollisionId, realUserFId]
+    );
+    shiftRequestCollisionRealId = srColReal.rows[0].id;
+    const rawPoF = await insertRaw(c, { status: 'pending', entity: 'payouts' });
+    const poF = await c.query(
+      `INSERT INTO legacy_cc_payouts (payee_name, payee_name_normalized, payee_user_id, paid_on, amount_cents, raw_import_id)
+       VALUES ('Review Stub F', 'review stub f', $1, CURRENT_DATE - INTERVAL '105 days', 7000, $2)
+       RETURNING id`,
+      [stubUserFId, rawPoF.id]
+    );
+    unmatchedPayoutCollisionId = poF.rows[0].id;
+
     // ── ERRORED + SKIPPED ────────────────────────────────────────
     const rawErr = await insertRaw(c, { status: 'errored', entity: 'events' });
     rawErroredEventsId = rawErr.id;
@@ -469,7 +509,7 @@ after(async () => {
   if (server) await new Promise((r) => server.close(r));
 
   // Clean shift_requests first (FK from users).
-  const shiftIds = [shiftId, shiftOtherId, shift1aId, shift1bId].filter(Boolean);
+  const shiftIds = [shiftId, shiftOtherId, shift1aId, shift1bId, shiftCollisionId].filter(Boolean);
   if (shiftIds.length) {
     await pool.query(`DELETE FROM shift_requests WHERE shift_id = ANY($1::int[])`, [shiftIds]);
     await pool.query(`DELETE FROM shifts WHERE id = ANY($1::int[])`, [shiftIds]);
@@ -523,6 +563,7 @@ after(async () => {
     adminId, managerId, clientUserId,
     stubUserId, realUserId, stubUserBId, realUserBId,
     stubUserCId, realUserCId, stubUserDId, dummyTargetStubId,
+    stubUserFId, realUserFId,
   ].filter(Boolean);
   await pool.query(`DELETE FROM contractor_profiles WHERE user_id = ANY($1::int[])`, [userIds]);
 
@@ -536,17 +577,35 @@ after(async () => {
     `DELETE FROM admin_audit_log WHERE action LIKE 'cc_review_%'
                                    AND created_at > NOW() - INTERVAL '1 hour'`
   );
-  // Stub users created by create-stub success path land here:
+
+  // Explicit delete of the create-stub-success user (captured at test runtime).
+  // The success path produces emails like 'legacy-cc-createstubfixture-<hash>@drbartender.local'
+  // which the broader pattern-delete below doesn't match.
+  if (createdStubUserId) {
+    await pool.query(`DELETE FROM contractor_profiles WHERE user_id = $1`, [createdStubUserId]);
+    await pool.query(`DELETE FROM users WHERE id = $1`, [createdStubUserId]);
+  }
+
+  // Stub users created by create-stub success path land here. Parens around the
+  // OR are load-bearing — `AND ... OR ...` binds AND tighter than OR, so without
+  // parens the second branch would match any user whose email starts with
+  // `legacy-cc-solopayee-` regardless of cc_id.
   await pool.query(
     `DELETE FROM contractor_profiles WHERE user_id IN (
-       SELECT id FROM users WHERE cc_id LIKE 'legacy_cc:%' AND email LIKE '%@drbartender.local'
-                              AND email LIKE 'legacy-cc-linkedalready-%' OR email LIKE 'legacy-cc-solopayee-%'
+       SELECT id FROM users
+        WHERE cc_id LIKE 'legacy_cc:%'
+          AND email LIKE '%@drbartender.local'
+          AND (email LIKE 'legacy-cc-linkedalready-%'
+            OR email LIKE 'legacy-cc-solopayee-%'
+            OR email LIKE 'legacy-cc-createstubfixture-%')
      )`
   );
   await pool.query(
-    `DELETE FROM users WHERE cc_id LIKE 'legacy_cc:%'
-                          AND (email LIKE 'legacy-cc-linkedalready-%@drbartender.local'
-                            OR email LIKE 'legacy-cc-solopayee-%@drbartender.local')`
+    `DELETE FROM users
+      WHERE cc_id LIKE 'legacy_cc:%'
+        AND (email LIKE 'legacy-cc-linkedalready-%@drbartender.local'
+          OR email LIKE 'legacy-cc-solopayee-%@drbartender.local'
+          OR email LIKE 'legacy-cc-createstubfixture-%@drbartender.local')`
   );
   // Finally, our explicit fixture users.
   for (const id of userIds) {
@@ -920,6 +979,28 @@ test('POST /unmatched-payee/:id/link DELETE 1b: stub approved + real approved �
   assert.equal(stub.rowCount, 0, 'stub row removed by DELETE 1b');
 });
 
+test('POST /unmatched-payee/:id/link 409 CC_LINK_NON_APPROVED_COLLISION when both non-approved on same shift', async () => {
+  const r = await req(
+    'POST', `/api/admin/cc-import/review/unmatched-payee/${unmatchedPayoutCollisionId}/link`, adminToken,
+    { user_id: realUserFId }
+  );
+  assert.equal(r.status, 409);
+  const body = JSON.parse(r.body);
+  assert.equal(body.code, 'CC_LINK_NON_APPROVED_COLLISION');
+
+  // Neither shift_request was deleted (txn ROLLBACK should preserve both).
+  const stubStill = await pool.query(`SELECT id, status FROM shift_requests WHERE id = $1`, [shiftRequestCollisionStubId]);
+  assert.equal(stubStill.rowCount, 1, 'stub pending row still exists after collision rejection');
+  assert.equal(stubStill.rows[0].status, 'pending');
+  const realStill = await pool.query(`SELECT id, status FROM shift_requests WHERE id = $1`, [shiftRequestCollisionRealId]);
+  assert.equal(realStill.rowCount, 1, 'real denied row still exists after collision rejection');
+  assert.equal(realStill.rows[0].status, 'denied');
+
+  // payee_user_id rollback: stub still linked to the payout.
+  const payout = await pool.query(`SELECT payee_user_id FROM legacy_cc_payouts WHERE id = $1`, [unmatchedPayoutCollisionId]);
+  assert.equal(payout.rows[0].payee_user_id, stubUserFId, 'payout still linked to stub after rollback');
+});
+
 test('POST /unmatched-payee/:id/link no_stub_path when payout.payee_user_id IS NULL', async () => {
   const r = await req(
     'POST', `/api/admin/cc-import/review/unmatched-payee/${unmatchedPayoutNoStubId}/link`, adminToken,
@@ -982,6 +1063,9 @@ test('POST /unmatched-payee/:id/create-stub success: stub user created + payout 
   const body = JSON.parse(r.body);
   assert.ok(body.user_id);
   assert.ok(/^legacy_cc:/.test(body.cc_id || ''));
+  // Capture for explicit cleanup in after() — this user's email shape
+  // (`legacy-cc-createstubfixture-<hash>@...`) doesn't get auto-fixtured.
+  createdStubUserId = body.user_id;
 
   const u = await pool.query(`SELECT cc_id, onboarding_status FROM users WHERE id = $1`, [body.user_id]);
   assert.equal(u.rowCount, 1);

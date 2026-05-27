@@ -467,7 +467,7 @@ function LinkConfirmModal({ payeeName, user, preview, onCancel, onConfirm, busy 
         position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
         display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
       }}
-      onClick={onCancel}
+      onClick={busy ? undefined : onCancel}
     >
       <div className="card" style={{ maxWidth: 540, width: 'calc(100% - 32px)', background: 'white' }} onClick={(e) => e.stopPropagation()}>
         <div className="card-head"><h3 style={{ margin: 0, fontSize: 16 }}>Confirm link</h3></div>

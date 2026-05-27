@@ -23,11 +23,10 @@
  */
 
 const express = require('express');
-const Sentry = require('@sentry/node');
 const { pool } = require('../../../db');
 const { auth, requireAdminOrManager } = require('../../../middleware/auth');
 const asyncHandler = require('../../../middleware/asyncHandler');
-const { ValidationError, NotFoundError, ConflictError } = require('../../../utils/errors');
+const { ValidationError, NotFoundError } = require('../../../utils/errors');
 
 const router = express.Router();
 
