@@ -11,6 +11,7 @@ const {
   extractGratuityCents, proRataFeeCents,
 } = require('./payrollMath');
 const { captureProposalPaymentFees, captureTipFeesForProposal } = require('./payrollTips');
+const { isLegacyCcParticipant } = require('./payrollGuards');
 
 // Safe calendar date of a pg DATE value as 'YYYY-MM-DD'. node-postgres parses
 // a DATE at local midnight, so .toISOString() drifts the day on positive-offset
@@ -59,10 +60,22 @@ async function accruePayoutsForProposal(proposalId) {
     [proposalId]
   );
   const proposal = propRes.rows[0];
-  if (!proposal || !proposal.event_date) return;
+  if (!proposal || !proposal.event_date) {
+    return { skipped: true, reason: 'proposal_missing_or_no_event_date' };
+  }
   // Accrual is for completed events only, so it is a safe no-op when called
   // before the event has run (e.g. defensively from elsewhere).
-  if (proposal.status !== 'completed') return;
+  if (proposal.status !== 'completed') {
+    return { skipped: true, reason: 'not_completed', status: proposal.status };
+  }
+  // cc-import: never accrue payouts for an event where any participating
+  // bartender is a legacy CC stub. Fires BEFORE any DB writes — we never want
+  // to INSERT into payouts referencing a stub user (we cannot pay them
+  // through Stripe Connect anyway). See specs/2026-05-25-checkcherry-import-design.md.
+  if (await isLegacyCcParticipant(proposalId)) {
+    console.log(`[payrollAccrual] proposal #${proposalId} has legacy CC stub participants; skipping accrual.`);
+    return { skipped: true, reason: 'legacy_cc_stub_participant' };
+  }
   const eventDate = toCalendarYmd(proposal.event_date);
 
   // Capture any missing Stripe fees BEFORE opening the transaction: these are
@@ -76,6 +89,7 @@ async function accruePayoutsForProposal(proposalId) {
     Sentry.captureException(err);
   }
 
+  let payoutsCreatedCount = 0;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -86,7 +100,7 @@ async function accruePayoutsForProposal(proposalId) {
     // payroll; rolling it into the open period is a Phase 2 concern.
     if (payPeriod.status !== 'open') {
       await client.query('COMMIT');
-      return;
+      return { skipped: true, reason: 'pay_period_not_open', pay_period_status: payPeriod.status };
     }
     const payPeriodId = payPeriod.id;
 
@@ -104,7 +118,7 @@ async function accruePayoutsForProposal(proposalId) {
     );
     if (!workers.rows.length) {
       await client.query('COMMIT');
-      return;
+      return { skipped: true, reason: 'no_approved_workers' };
     }
 
     // Bartenders share gratuity and card tips; barbacks/servers do not.
@@ -202,6 +216,7 @@ async function accruePayoutsForProposal(proposalId) {
       );
       const payoutId = payoutRes.rows[0].id;
       touchedPayoutIds.add(payoutId);
+      payoutsCreatedCount += 1;
 
       // Upsert the payout_event line. Every column is set from EXCLUDED, so the
       // recompute uses the same JS-computed values as the insert.
@@ -240,6 +255,7 @@ async function accruePayoutsForProposal(proposalId) {
     );
 
     await client.query('COMMIT');
+    return { skipped: false, accrued: payoutsCreatedCount };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
