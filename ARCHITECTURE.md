@@ -394,6 +394,11 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | POST | `/messages` | Webhook secret | Receive customer message from Thumbtack thread |
 | POST | `/reviews` | Webhook secret | Receive new Thumbtack review |
 
+### Cal.com Integration — `/api/calcom`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/webhook` | Public (HMAC-signed) | Cal.com booking event receiver (see Third-Party Integrations) |
+
 ### Invoices — `/api/invoices`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -674,7 +679,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 
 **clients** — Client records
 - `name`, `email`, `phone`
-- `source`: direct | thumbtack | referral | website
+- `source`: direct | thumbtack | referral | website | calcom
 - `notes`
 - `communication_preferences` JSONB — `{sms_enabled, email_enabled, marketing_enabled}` (defaults true). Drives the Automated Communication system's send gating.
 - `email_status` (`ok` | `bad`), `phone_status` (`ok` | `bad`) — channel deliverability flags flipped on bounce/blocked-list signals.
@@ -784,6 +789,15 @@ Phase 4b adds three cross-cutting pieces. Overlap prevention: each handler carri
 - `status` TEXT NOT NULL DEFAULT `'scheduled'` CHECK (`scheduled`, `completed`, `cancelled`, `no_show`)
 - `created_at` TIMESTAMPTZ DEFAULT NOW()
 - Lookup indexes on `proposal_id` and `client_id`; partial index `idx_consults_scheduled_at(scheduled_at) WHERE status = 'scheduled'` keeps upcoming-consult queries cheap.
+- `booker_name` VARCHAR(255) — raw booker name from the Cal.com webhook payload, preserved separately from the matched/auto-created client record
+- `booker_email` VARCHAR(255) — raw booker email from the Cal.com webhook payload
+- UNIQUE constraint on `calcom_event_id` (added 2026-05-27 for webhook idempotency)
+
+**webhook_events** — Generic dedupe table for inbound webhook replay protection. Used by the Cal.com webhook (`provider='calcom'`) today; available for Stripe / Resend / future webhook providers. Pruned hourly via `webhookEventsPruneScheduler` to a 30-day window.
+- `provider` VARCHAR(50) NOT NULL — provider identifier (`'calcom'`, future `'stripe'`, etc.)
+- `event_id` TEXT NOT NULL — per-provider unique event identifier (Cal.com uses SHA-256 of the raw signed body)
+- `received_at` TIMESTAMPTZ NOT NULL DEFAULT NOW()
+- PRIMARY KEY (provider, event_id); index on `received_at` for prune
 
 ### Bartender Tip Pages
 
@@ -1111,6 +1125,19 @@ deliberate scope choice.
 - **Messages**: Customer messages stored in `thumbtack_messages`, admin notified via email
 - **Reviews**: Stored in `thumbtack_reviews`, admin notified via email
 - **Custom domain**: `api.drbartender.com` CNAME → Render, so Thumbtack endpoints are permanent regardless of hosting changes
+
+### Cal.com
+
+Self-hostable open-source scheduling platform. drb-os receives Cal.com webhooks for consult bookings.
+
+- **Hosting**: V1 uses Cal.com's hosted SaaS. V2 plan migrates to self-hosted Docker on the always-on office box, sharing the same `CAL_*` env vars (only secret + URL change at cutover). Cal.com's open-source codebase means the webhook payload shape is identical between hosted and self-hosted.
+- **Endpoint**: `POST /api/calcom/webhook`. Mounted at `server/routes/calcom.js`. Bare HTTP semantics (no AppError JSON envelopes) matching the Stripe and Resend webhook patterns.
+- **Signature scheme**: HMAC-SHA256 over the raw body, secret = `CAL_WEBHOOK_SECRET`, header `x-cal-signature-256`. Fails closed: handler returns 503 if secret unset, 400 on missing or invalid signature.
+- **Replay protection**: SHA-256 of the raw signed body recorded in the `webhook_events` table. Same body delivered twice (legitimate Cal.com retry on a 5xx, OR attacker replay) returns 200 'Already processed' without side effects.
+- **Events handled**: `BOOKING_CREATED` (auto-creates a `clients` row if booker email doesn't match an existing client, links to most recent non-terminal proposal if any), `BOOKING_CANCELLED` (defensive upsert), `BOOKING_RESCHEDULED` (in-place update with fallback to fresh-create), `BOOKING_NO_SHOW_UPDATED` (mirrors Cal.com's manual no-show marking). Other event types are logged + 200 OK so Cal.com does not retry.
+- **Side effects**: NO admin SMS or email on any booking event. Cal.com itself owns admin notification (it emails the organizer and syncs the event into the organizer's Google Calendar). drb-os silently files the booking into the `consults` table for status tracking, suppression queries (drink-plan nudge), and audit.
+- **Completion**: the linked consults row flips to `'completed'` when admin submits the existing consult form in `server/routes/drinkPlanConsult.js`. Side effect of the existing user action; no UI change.
+- **Deferred to V2 (when self-hosted)**: writing the drb-os event URL directly into Cal.com's `booking.description` via direct DB access, so the link appears in the organizer's Google Calendar entry. Today admin opens drb-os manually after seeing Cal.com's notification.
 
 ### Cloudflare R2 (File Storage)
 - **Wrapper**: `server/utils/storage.js`
