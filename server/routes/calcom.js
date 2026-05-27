@@ -171,17 +171,17 @@ async function handleCreated(payload, res) {
           }
         }
       }
-    } else {
-      // No usable email. Partial UNIQUE on clients.email permits multiple
-      // NULL-email rows, which would let the same fat-fingered booker
-      // accumulate orphan clients across multiple bookings. Soft-dedupe
-      // on (LOWER(name), phone) so repeat email-less bookings reuse the
-      // same client row.
+    } else if (phone) {
+      // No usable email but phone is present. Soft-dedupe on
+      // (LOWER(name), phone) so repeat email-less bookings reuse the
+      // same client row. Phone is the disambiguator; without it (see
+      // the !phone branch below) we always insert a fresh row to
+      // prevent name-only client takeover from a public booking page.
       const lookup = await client.query(
         `SELECT id FROM clients
          WHERE email IS NULL
            AND LOWER(name) = LOWER($1)
-           AND COALESCE(phone, '') = COALESCE($2, '')
+           AND phone = $2
          ORDER BY created_at DESC
          LIMIT 1`,
         [name, phone]
@@ -199,6 +199,21 @@ async function handleCreated(payload, res) {
         clientId = created.rows[0].id;
         createdClientInThisTx = true;
       }
+    } else {
+      // No email AND no phone: always insert fresh. Soft-dedupe by name
+      // alone would let any unauthenticated Cal.com booking with a
+      // victim's name attach to that victim's client row. Multiple
+      // orphan rows from repeat email-less + phone-less bookings is the
+      // safer failure mode; admin can manually merge if needed.
+      const created = await client.query(
+        `INSERT INTO clients (name, email, phone, source, notes)
+         VALUES ($1, NULL, NULL, 'calcom',
+                 'Auto-created from Cal.com consult booking (no email, no phone) on ' || CURRENT_DATE::text)
+         RETURNING id`,
+        [name]
+      );
+      clientId = created.rows[0].id;
+      createdClientInThisTx = true;
     }
 
     // Proposal linkage. Excludes terminal statuses ('archived', 'completed').
@@ -254,8 +269,7 @@ async function handleCancelled(payload, res) {
   }
 
   const startTime = payload?.startTime || new Date().toISOString();
-  const bookerName = String(payload?.attendees?.[0]?.name || '').trim().slice(0, 255) || null;
-  const bookerEmail = String(payload?.attendees?.[0]?.email || '').trim().toLowerCase().slice(0, 255) || null;
+  const { bookerNameRaw, bookerEmailRaw } = normalizeBooker(payload);
 
   await pool.query(
     `INSERT INTO consults
@@ -263,7 +277,7 @@ async function handleCancelled(payload, res) {
      VALUES ($1, $2, 'cancelled', $3, $4)
      ON CONFLICT (calcom_event_id) DO UPDATE
      SET status = 'cancelled'`,
-    [uid, startTime, bookerName, bookerEmail]
+    [uid, startTime, bookerNameRaw, bookerEmailRaw]
   );
 
   return res.status(200).send('OK');
@@ -276,8 +290,7 @@ async function handleRescheduled(payload, res) {
   }
 
   const oldUid = extractRescheduleOldUid(payload);
-  const bookerName = String(payload?.attendees?.[0]?.name || '').trim().slice(0, 255) || null;
-  const bookerEmail = String(payload?.attendees?.[0]?.email || '').trim().toLowerCase().slice(0, 255) || null;
+  const { bookerNameRaw, bookerEmailRaw } = normalizeBooker(payload);
 
   if (oldUid) {
     const result = await pool.query(
@@ -286,7 +299,7 @@ async function handleRescheduled(payload, res) {
            booker_name = COALESCE($3, booker_name),
            booker_email = COALESCE($4, booker_email)
        WHERE calcom_event_id = $5`,
-      [newUid, newStartTime, bookerName, bookerEmail, oldUid]
+      [newUid, newStartTime, bookerNameRaw, bookerEmailRaw, oldUid]
     );
     if (result.rowCount > 0) {
       return res.status(200).send('Rescheduled in place');
@@ -300,7 +313,12 @@ async function handleRescheduled(payload, res) {
   // original booking that we never saw.
   sentryWarn('Cal.com BOOKING_RESCHEDULED with unresolvable old uid', {
     tags: { webhook: 'calcom', triggerEvent: 'BOOKING_RESCHEDULED' },
-    extra: { newUid, payloadShape: Object.keys(payload || {}) },
+    extra: {
+      newUid,
+      reason: oldUid ? 'old_uid_not_in_db' : 'no_old_uid_in_payload',
+      oldUid: oldUid || null,
+      payloadShape: Object.keys(payload || {}),
+    },
   });
   return handleCreated(payload, res);
 }

@@ -108,6 +108,14 @@ test('extractPhone: returns null when no source matches', () => {
   assert.equal(extractPhone({}), null);
 });
 
+test('extractPhone: handles object-shaped value field', () => {
+  assert.equal(extractPhone({ responses: { phone: { value: '+15551234567', label: 'Phone' } } }), '+15551234567');
+});
+
+test('extractPhone: rejects object without value field', () => {
+  assert.equal(extractPhone({ responses: { phone: { notValue: 'x' } } }), null);
+});
+
 test('normalizeBooker: trims, length-caps, lowercases email, validates format', () => {
   const out = normalizeBooker({
     attendees: [{ name: '  Jane Smith  ', email: '  Jane@Example.COM ' }],

@@ -40,11 +40,20 @@ function extractRescheduleOldUid(payload) {
 }
 
 function extractPhone(payload) {
-  return payload?.attendees?.[0]?.phoneNumber
-      || payload?.attendees?.[0]?.phone
-      || payload?.responses?.phone
-      || payload?.customInputs?.phone
-      || null;
+  const candidates = [
+    payload?.attendees?.[0]?.phoneNumber,
+    payload?.attendees?.[0]?.phone,
+    payload?.responses?.phone,
+    payload?.customInputs?.phone,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c;
+    // Cal.com sometimes wraps form-field values as { value: '...', label: '...' }
+    if (c && typeof c === 'object' && typeof c.value === 'string' && c.value.trim()) {
+      return c.value;
+    }
+  }
+  return null;
 }
 
 function normalizeBooker(payload) {
