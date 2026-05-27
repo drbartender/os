@@ -667,10 +667,13 @@ registerHandler(
   { offsetFromEventDate: 3 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational', priority: 2, multiChannel: true }
 );
 
+// checkSuppression is pure (SELECT + branch); safe to expose.
+// resolveDelivery has DB-write side effects — DO NOT export.
 module.exports = {
   registerHandler,
   getHandlerMeta,
   dispatchPending,
+  checkSuppression,
   _clearHandlersForTest,
   _handlersForTest,
 };

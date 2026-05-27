@@ -409,6 +409,14 @@ test('registerHandler > coerces a non-true multiChannel value to false', () => {
   assert.strictEqual(meta.multiChannel, false);
 });
 
+test('checkSuppression is exported', () => {
+  // CC-import: the wrap-up preview UI calls checkSuppression directly to
+  // decide whether to render a "this message would be suppressed" badge
+  // without actually mutating any rows. Keep the export contract.
+  const dispatcher = require('./scheduledMessageDispatcher');
+  assert.strictEqual(typeof dispatcher.checkSuppression, 'function');
+});
+
 test('overlap > defers a lower-priority touch when a higher-priority one already fired today', async () => {
   // A priority-1 balance reminder already sent 1 hour ago. A priority-4 drip
   // touch on the same client+channel today must be deferred, not sent.
