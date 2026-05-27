@@ -1,6 +1,6 @@
 # Cal.com Integration
 
-**Created:** 2026-05-26 · **Branch:** `cal-com` · **Parent design:** `2026-05-20-automated-communication-design.md` (sections 6, 8.7, 3.10, 11 item 3)
+**Created:** 2026-05-26 · **Branch:** `cal-com` · **Parent design:** `2026-05-20-automated-communication-design.md` (sections 6, 8.7, 3.10, 11 item 3) · **Revised:** 2026-05-26 (folded in spec-review fleet findings)
 
 ## 1. Summary
 
@@ -16,9 +16,11 @@ Built ahead of this spec, shipped via Phase 2a of the automated-communication pr
 
 - **`consults` table** (`server/db/schema.sql:2362`): `id`, `client_id` (FK → clients ON DELETE SET NULL), `proposal_id` (FK → proposals ON DELETE SET NULL), `scheduled_at`, `calcom_event_id`, `status` (CHECK: `'scheduled' | 'completed' | 'cancelled' | 'no_show'`, default `'scheduled'`), `created_at`. Indexes on `proposal_id`, `client_id`, and a partial `(scheduled_at) WHERE status = 'scheduled'`.
 - **`scheduled_messages.entity_type` accepts `'consult'`** and the dispatcher's `lookupEntity` knows how to SELECT a consult row by id (`server/utils/scheduledMessageDispatcher.js:354`). Nothing currently schedules against this entity type, but the rails exist for future work.
-- **Post-consult client email already exists.** `server/routes/drinkPlanConsult.js` PUT `/:id/consult` (the existing admin consult-form route) persists `consult_selections`, generates the shopping list as `pending_review`, and fires the `postConsultClient` email once (gated by `isFirstTimeConsultSave`, tracked via `drink_plans.consult_filled_at`). Template at `server/utils/emailTemplates.js#postConsultClient`, formatter at `server/utils/consultRecap.js`.
+- **Post-consult client email already exists.** `server/routes/drinkPlanConsult.js` PUT `/:id/consult` (the existing admin consult-form route) persists `consult_selections`, generates the shopping list as `pending_review`, and fires the `postConsultClient` email once (gated by `isFirstTimeConsultSave`, tracked via `drink_plans.consult_filled_at`). Template at `server/utils/emailTemplates.js#postConsultClient` (re-exported from `server/utils/lifecycleEmailTemplates.js:285`), formatter at `server/utils/consultRecap.js`. The template takes `{ clientName, eventTypeLabel, formattedEventDate, drinkRecapLines, nextStepLine }`. No `consultUrl` parameter; it is a recap, not a CTA. Out of scope for this spec.
 - **Drink-plan-nudge suppression already keys on `consult_filled_at`** (`server/utils/drinkPlanNudge.js:108-125`). Once admin captures consult notes, the T-21 nudge stops firing for that proposal. No changes to this flow are needed.
 - **Three `consultUrl: null` placeholders** already wired through email + SMS templates: `server/utils/marketingHandlers.js:464` (six-months-out marketing email), `server/utils/drinkPlanNudge.js:148` (drink-plan-nudge email), `server/utils/drinkPlanNudge.js:160` (drink-plan-nudge SMS). Templates already render the consult line when the URL is set and gracefully omit it when null.
+- **Partial UNIQUE index on `clients.email`** (`server/db/schema.sql:1220`): `CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_email_unique ON clients(email) WHERE email IS NOT NULL`. This load-bearing constraint shapes the auto-create flow in Section 5.1.
+- **Stripe + Resend webhook reference pattern** (`server/routes/stripe.js:784-816`, `server/index.js:128-132`): raw body via `express.raw`, 503 on missing secret, Sentry capture on signature failure, bare `res.status().send(...)` (deliberate divergence from CLAUDE.md's `AppError` convention because Cal.com expects plain HTTP status, not JSON envelopes). The Cal.com handler mirrors this pattern exactly.
 
 ### 2.2 What is deliberately not built in V1, and why
 
@@ -26,21 +28,23 @@ Built ahead of this spec, shipped via Phase 2a of the automated-communication pr
 - **No drb-os event link inside the Cal.com calendar entry.** Cal.com's hosted v2 API does not cleanly expose a post-creation booking-update endpoint. Once Cal.com is self-hosted on the always-on office box (deferred workstream, separate project), the integration can write directly into Cal.com's Postgres `booking.description` and have Cal.com's normal sync push the drb-os URL into the Google Calendar entry. Until that lands, admin uses Cal.com's standard notification and opens the matched (or auto-created) client in drb-os manually.
 - **No save-draft vs mark-complete split on the consult form.** Existing single-action consult form ("Generate shopping list") stays as-is.
 - **No drb-os admin UI for browsing consults.** Cal.com's interface is the canonical booking browser. The drb-os `consults` table is purely internal state for status tracking, entity-typed scheduled messages, and audit.
+- **No `consultUrl` injection into the `postConsultClient` recap email.** That template is a "great talking through your drink plan" recap, not a "book another consult" CTA. Adding the booking URL here is semantically wrong. If a follow-up-consult CTA is ever wanted, that is a separate copy decision.
 
 ## 3. Goals and non-goals
 
 **Goals.**
-1. Cal.com booking events land in drb-os reliably and idempotently.
+1. Cal.com booking events land in drb-os reliably and idempotently, with replay protection against captured-signature reuse.
 2. Every Cal.com booking corresponds to a `clients` row (matched or auto-created) so admin has the client record ready before the call.
 3. The existing consult-form admin action flips the linked consults row to `'completed'`.
 4. Public booking URL surfaces in the three client comms touches that already placeholder it.
 5. Webhook signature verification fails closed.
 6. Cancel, reschedule, and no-show keep the consults row's status in sync with Cal.com.
+7. PII coming from Cal.com is normalized and length-capped before landing in our canonical `clients` table.
 
 **Non-goals.**
 1. Admin notification on any booking event (Cal.com handles).
 2. Calendar-entry enrichment with drb-os links (deferred until self-hosted).
-3. Any change to the consult-form UI, the post-consult email, or the shopping-list approval flow.
+3. Any change to the consult-form UI, the post-consult email copy or trigger, or the shopping-list approval flow.
 4. Any change to `drink_plans` schema.
 5. Cal.com event-type or availability configuration (admin sets up in Cal.com directly).
 
@@ -50,7 +54,7 @@ Built ahead of this spec, shipped via Phase 2a of the automated-communication pr
 
 New file `server/routes/calcom.js` exports an Express router with a single endpoint, `POST /webhook`. Mounted in `server/index.js` at `/api/calcom` so the public URL is `POST /api/calcom/webhook`.
 
-The handler is bare (no `auth` middleware, no `requireAdminOrManager`). Authentication is HMAC signature verification on the raw body.
+The handler is bare (no `auth` middleware, no `requireAdminOrManager`). Authentication is HMAC signature verification on the raw body, plus the replay-protection check in §4.5.
 
 ### 4.2 Raw body capture
 
@@ -65,32 +69,71 @@ The handler then reads `req.body` as a Buffer for HMAC computation, and `JSON.pa
 
 ### 4.3 Signature verification
 
-Cal.com sends `x-cal-signature-256: <hex_digest>` (per `https://cal.com/docs/core-features/webhooks`). Verification:
+Cal.com sends `x-cal-signature-256: <hex_digest>` (per `https://cal.com/docs/core-features/webhooks`). Verification, with explicit pre-checks:
 
 ```js
 const crypto = require('crypto');
+const Sentry = require('@sentry/node');
+
+// Pre-check #1: secret must be configured. Fail closed.
+if (!process.env.CAL_WEBHOOK_SECRET) {
+  console.error('[calcom] CAL_WEBHOOK_SECRET not set; rejecting webhook');
+  return res.status(503).send('Cal.com webhook not configured');
+}
+
+// Pre-check #2: signature header present.
+const provided = req.header('x-cal-signature-256') || '';
+if (!provided) {
+  Sentry.captureMessage('Cal.com webhook missing signature header', {
+    level: 'warning',
+    tags: { webhook: 'calcom', reason: 'missing_signature' },
+  });
+  return res.status(400).send('Missing signature');
+}
+
+// HMAC compare. Constant-time.
 const expected = crypto
   .createHmac('sha256', process.env.CAL_WEBHOOK_SECRET)
   .update(req.body) // raw Buffer
   .digest('hex');
-const provided = req.header('x-cal-signature-256') || '';
+
 const ok = expected.length === provided.length &&
            crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(provided));
+
 if (!ok) {
-  return res.status(400).json({ error: 'invalid_signature' });
+  console.error('[calcom] signature verification failed');
+  Sentry.captureMessage('Cal.com webhook signature failure', {
+    level: 'warning',
+    tags: { webhook: 'calcom', reason: 'invalid_signature' },
+  });
+  return res.status(400).send('Invalid signature');
 }
 ```
 
-If `CAL_WEBHOOK_SECRET` is unset, the handler returns `500` with a one-shot startup warning logged. Fails closed in production (never silently accepts an unsigned webhook).
+Mirrors the Stripe pattern at `server/routes/stripe.js:784-816` (503 on missing config, 400 + Sentry on bad sig, bare `res.status().send()`). Deliberate divergence from CLAUDE.md's `AppError` convention because webhook clients consume plain HTTP semantics, not JSON envelopes; this divergence is precedented and consistency-check should treat it as accepted.
 
-### 4.4 Dispatch on triggerEvent
+**Startup-time secret check.** On `server/index.js` boot, if `process.env.CAL_WEBHOOK_SECRET` is unset, emit a single warning via `Sentry.captureMessage(..., { level: 'warning' })` so the missed-config alarm fires even when no traffic hits the endpoint. Same pattern can ride alongside the existing scheduler-disable env-var warnings.
 
-After signature passes, parse the body and switch on `payload.triggerEvent`:
+### 4.4 Body parse and dispatch on triggerEvent
+
+After signature passes, parse the body inside a try/catch. A malformed JSON body should not throw a 500 (which Cal.com retries forever); it should be a 400.
 
 ```js
-const body = JSON.parse(req.body.toString('utf8'));
+let body;
+try {
+  body = JSON.parse(req.body.toString('utf8'));
+} catch (e) {
+  Sentry.captureMessage('Cal.com webhook JSON parse failure', {
+    level: 'warning',
+    tags: { webhook: 'calcom', reason: 'malformed_body' },
+  });
+  return res.status(400).send('Malformed body');
+}
+
 const event = body.triggerEvent;
 const data = body.payload || {};
+
+// Replay protection (see §4.5) runs here, BEFORE the dispatch switch.
 
 switch (event) {
   case 'BOOKING_CREATED':         return handleCreated(data, res);
@@ -99,14 +142,49 @@ switch (event) {
   case 'BOOKING_NO_SHOW_UPDATED': return handleNoShow(data, res);
   default:
     // BOOKING_REQUESTED, BOOKING_REJECTED, BOOKING_PAID, MEETING_STARTED,
-    // MEETING_ENDED, RECORDING_READY, FORM_SUBMITTED, etc. We do not care
-    // about these in V1. Log + 200 OK so Cal.com does not retry.
+    // MEETING_ENDED, RECORDING_READY, FORM_SUBMITTED, etc. Log + 200 OK so
+    // Cal.com does not retry.
     console.log(`[calcom] ignored event: ${event}`);
     return res.status(200).json({ ok: true, ignored: event });
 }
 ```
 
-Each handler returns `200` on success (including the no-op success of "we already had this booking"). DB errors throw and bubble to `asyncHandler`'s global error handler, which returns `500` and lets Cal.com retry.
+Each handler returns `200` on success (including the no-op success of "we already had this booking"). DB errors throw and bubble to `asyncHandler`'s global error handler, which returns `500` and lets Cal.com retry; the replay-dedupe + uniqueness guarantees in §4.5 and §5.1 make retries idempotent.
+
+### 4.5 Replay protection via `webhook_events` table
+
+`calcom_event_id` uniqueness in §5.1 dedupes legitimate Cal.com retries of the same `BOOKING_CREATED`. It does NOT dedupe an attacker who captured a valid signed body once and replays it: the cancel/reschedule/no-show handlers operate by UPDATEs keyed on `calcom_event_id`, so a replayed `BOOKING_CANCELLED` will flip a `scheduled` row to `cancelled` over and over (each call is idempotent, but a determined replay can confuse the state machine, e.g., replay a `BOOKING_CANCELLED` after a legitimate `BOOKING_RESCHEDULED` to un-do the reschedule).
+
+New table `webhook_events(provider, event_id, received_at)` with `UNIQUE (provider, event_id)`. At the top of the webhook handler (after signature verification, before dispatch), attempt an INSERT:
+
+```js
+const eventUid = extractCalcomEventUid(body); // see helper below
+if (!eventUid) {
+  Sentry.captureMessage('Cal.com webhook missing event uid', {
+    level: 'warning',
+    tags: { webhook: 'calcom', triggerEvent: event },
+  });
+  return res.status(200).send('Missing event uid (ignored)');
+}
+
+const dedupe = await pool.query(
+  `INSERT INTO webhook_events (provider, event_id, received_at)
+   VALUES ('calcom', $1, NOW())
+   ON CONFLICT (provider, event_id) DO NOTHING
+   RETURNING received_at`,
+  [eventUid]
+);
+if (dedupe.rowCount === 0) {
+  // Replay (or legitimate Cal.com retry on a 5xx, same wire shape).
+  return res.status(200).send('Already processed');
+}
+```
+
+`extractCalcomEventUid(body)` returns a per-event-instance identifier suitable for dedupe. For Cal.com, the strongest identifier we have is the booking uid PLUS the trigger event PLUS the timestamp the event was created at Cal.com's side (some events fire multiple times for the same booking, e.g., a booking can be created, cancelled, re-created; all share the same payload uid but represent different events). Construct as `${triggerEvent}:${payload.uid}:${body.createdAt}`. Cal.com always sets `createdAt` at the outer envelope.
+
+The dedupe table is retained for 30 days via a periodic prune (Section 8 schema notes this as a TODO future-spec rather than implementing it here; 30 days × current webhook volume is well under any storage concern).
+
+The legitimate-Cal.com-retry case (we 5xx'd, Cal.com re-fires same envelope) collapses with the replay case (attacker re-sends): both hit the dedupe and short-circuit. This is fine because the original processing either succeeded (no work to do) or failed (the error is in our logs/Sentry; admin debugs from there, not via Cal.com nudging us).
 
 ## 5. Event handlers
 
@@ -120,85 +198,244 @@ Inputs read from `payload`:
 | `startTime` | `payload.startTime` (ISO timestamp) |
 | `bookerName` | `payload.attendees[0].name` |
 | `bookerEmail` | `payload.attendees[0].email` |
-| `bookerPhone` | `payload.attendees[0].phoneNumber` if present, else NULL |
+| `bookerPhone` | `payload.attendees[0].phoneNumber` if present, else null. Cal.com may place phone in alternate locations depending on form configuration: handler probes `attendees[0].phoneNumber`, then `attendees[0].phone`, then `payload.responses.phone`, then `payload.customInputs.phone`. First non-empty value wins. NULL if none. |
 
-Algorithm (single transaction):
+**Normalization, before any DB write:**
 
-1. **Fast-path idempotency.** `SELECT id FROM consults WHERE calcom_event_id = $uid`. If a row exists, return `200` immediately, no further work. Cal.com retries on transient failure, so this guard prevents duplicate client auto-creates.
+```js
+const nameRaw = String(payload.attendees?.[0]?.name || '').trim();
+const name = nameRaw.slice(0, 255) || 'Unknown booker'; // clients.name VARCHAR(255) NOT NULL
 
-2. **Client lookup.** `SELECT id FROM clients WHERE LOWER(email) = LOWER($bookerEmail) LIMIT 1`.
+const emailRaw = String(payload.attendees?.[0]?.email || '').trim().toLowerCase();
+const email = emailRaw && emailRaw.length <= 255 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw)
+  ? emailRaw
+  : null; // store NULL rather than garbage; partial UNIQUE permits multiple NULLs
 
-3. **Client auto-create if not found.**
-   ```sql
-   INSERT INTO clients (name, email, phone, source, notes)
-   VALUES ($bookerName, $bookerEmail, $bookerPhone, 'calcom',
-           'Auto-created from Cal.com consult booking on ' || CURRENT_DATE::text)
-   RETURNING id;
-   ```
-   `name` is required (NOT NULL); Cal.com always provides `attendees[0].name`. Defensive: if for any reason `bookerName` is empty, fall back to the literal string `Unknown booker` so the INSERT does not fail.
-   `source = 'calcom'` requires extending the existing `clients_source_check` constraint (section 8).
-   `communication_preferences` defaults to the standard JSONB (`{"sms_enabled":true,"email_enabled":true,"marketing_enabled":true}`); not special-casing Cal.com clients.
+const phoneRaw = String(extractPhone(payload) || '').trim();
+const phone = phoneRaw.slice(0, 50) || null;
+```
 
-4. **Proposal linkage.**
-   ```sql
-   SELECT id FROM proposals
-   WHERE client_id = $clientId
-     AND status NOT IN ('archived', 'completed', 'cancelled')
-   ORDER BY created_at DESC
-   LIMIT 1;
-   ```
-   If exactly one row, use that as `proposal_id`. If multiple (rare), take most recent by `created_at`. If zero (always true for auto-created clients), `proposal_id = NULL`. Admin creates the proposal during or after the call.
+**Algorithm.** Single explicit transaction. Pseudocode shows the connection ceremony in full so the implementer cannot accidentally use `pool` directly.
 
-5. **Insert the consults row.**
-   ```sql
-   INSERT INTO consults (client_id, proposal_id, scheduled_at, calcom_event_id, status,
-                         booker_name, booker_email)
-   VALUES ($clientId, $proposalId, $startTime, $uid, 'scheduled',
-           $bookerName, $bookerEmail)
-   ON CONFLICT (calcom_event_id) DO NOTHING
-   RETURNING id;
-   ```
-   `ON CONFLICT DO NOTHING` is belt-and-suspenders alongside the step-1 fast-path; if the create handler somehow fires concurrently for the same uid, only one row wins, and the loser bails harmlessly.
+```js
+async function handleCreated(payload, res) {
+  const { uid, startTime } = extractBookingFields(payload);
+  const { name, email, phone, bookerNameRaw, bookerEmailRaw } = normalizeBooker(payload);
 
-6. Commit. Return `200`.
+  if (!uid || !startTime) {
+    Sentry.captureMessage('Cal.com BOOKING_CREATED missing uid or startTime', {
+      level: 'warning', tags: { webhook: 'calcom' },
+    });
+    return res.status(200).send('Malformed payload, ignored');
+  }
 
-`booker_name` and `booker_email` are stored on the consults row in addition to the client record to preserve the original webhook data even if the client's email is later edited in drb-os.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Fast-path optimization: skip the rest if we already have this consult.
+    // This is a perf optimization; the ON CONFLICT in step 4 is the
+    // correctness boundary that actually serializes concurrent creates.
+    const existing = await client.query(
+      'SELECT id FROM consults WHERE calcom_event_id = $1',
+      [uid]
+    );
+    if (existing.rows[0]) {
+      await client.query('COMMIT');
+      return res.status(200).send('Already filed');
+    }
+
+    // Lookup-or-create the client. The partial UNIQUE index on
+    // clients(email) WHERE email IS NOT NULL is the serialization point
+    // for concurrent auto-creates: the loser sees 23505 and we re-SELECT.
+    let clientId = null;
+    if (email) {
+      const lookup = await client.query(
+        'SELECT id FROM clients WHERE LOWER(email) = $1 LIMIT 1',
+        [email]
+      );
+      if (lookup.rows[0]) {
+        clientId = lookup.rows[0].id;
+      } else {
+        try {
+          const created = await client.query(
+            `INSERT INTO clients (name, email, phone, source, notes)
+             VALUES ($1, $2, $3, 'calcom',
+                     'Auto-created from Cal.com consult booking on ' || CURRENT_DATE::text)
+             RETURNING id`,
+            [name, email, phone]
+          );
+          clientId = created.rows[0].id;
+        } catch (err) {
+          if (err.code === '23505') {
+            // Lost the race against another concurrent create for same email.
+            const reLookup = await client.query(
+              'SELECT id FROM clients WHERE LOWER(email) = $1 LIMIT 1',
+              [email]
+            );
+            clientId = reLookup.rows[0]?.id || null;
+          } else {
+            throw err;
+          }
+        }
+      }
+    } else {
+      // No usable email. Create the client with NULL email; partial UNIQUE
+      // permits multiple NULLs. Admin can dedupe manually if needed.
+      const created = await client.query(
+        `INSERT INTO clients (name, email, phone, source, notes)
+         VALUES ($1, NULL, $2, 'calcom',
+                 'Auto-created from Cal.com consult booking (no email) on ' || CURRENT_DATE::text)
+         RETURNING id`,
+        [name, phone]
+      );
+      clientId = created.rows[0].id;
+    }
+
+    // Proposal linkage. Excludes terminal statuses.
+    // Allowed proposals.status values per schema.sql:2196 are:
+    // 'draft','sent','viewed','modified','accepted','deposit_paid',
+    // 'balance_paid','confirmed','completed','archived'. We exclude
+    // 'completed' and 'archived'; all other values are link candidates.
+    let proposalId = null;
+    if (clientId) {
+      const props = await client.query(
+        `SELECT id FROM proposals
+         WHERE client_id = $1 AND status NOT IN ('archived', 'completed')
+         ORDER BY created_at DESC LIMIT 1`,
+        [clientId]
+      );
+      proposalId = props.rows[0]?.id || null;
+    }
+
+    // Insert the consults row. ON CONFLICT is the correctness boundary:
+    // if another concurrent create handler also got past the fast-path
+    // and is racing us, exactly one will win the UNIQUE on calcom_event_id.
+    await client.query(
+      `INSERT INTO consults
+         (client_id, proposal_id, scheduled_at, calcom_event_id, status,
+          booker_name, booker_email)
+       VALUES ($1, $2, $3, $4, 'scheduled', $5, $6)
+       ON CONFLICT (calcom_event_id) DO NOTHING`,
+      [clientId, proposalId, startTime, uid, bookerNameRaw, bookerEmailRaw]
+    );
+
+    await client.query('COMMIT');
+    return res.status(200).send('OK');
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* swallow */ }
+    throw err; // bubbles to asyncHandler → 500 → Cal.com retries
+  } finally {
+    client.release();
+  }
+}
+```
+
+`booker_name` and `booker_email` on the consults row hold the RAW (pre-normalization) booker data from the webhook. This preserves the original audit trail even if the auto-created client's name/email are later edited in drb-os.
 
 ### 5.2 BOOKING_CANCELLED
 
-Defensive upsert. If we already have the booking, mark it cancelled. If we missed the original create (e.g., downtime), file a cancelled-from-the-start row so the audit trail is complete.
+Defensive upsert. If we already have the booking, mark it cancelled. If we missed the original create (e.g., downtime), file a cancelled-from-the-start row so the audit trail is complete. Single transaction; populates `booker_name`/`booker_email` on the defensive insert path.
 
-```sql
-INSERT INTO consults (calcom_event_id, scheduled_at, status, booker_name, booker_email)
-VALUES ($uid, $startTime, 'cancelled', $bookerName, $bookerEmail)
-ON CONFLICT (calcom_event_id) DO UPDATE
-SET status = 'cancelled';
+```js
+async function handleCancelled(payload, res) {
+  const uid = payload?.uid;
+  const startTime = payload?.startTime; // may be missing on some cancel payloads
+  const bookerName = String(payload?.attendees?.[0]?.name || '').trim().slice(0, 255) || null;
+  const bookerEmail = String(payload?.attendees?.[0]?.email || '').trim().toLowerCase().slice(0, 255) || null;
+
+  if (!uid) {
+    return res.status(200).send('Missing uid, ignored');
+  }
+
+  // scheduled_at is NOT NULL in the consults schema. Use the original startTime
+  // if present; otherwise fall through to NOW() so the defensive insert does
+  // not violate NOT NULL.
+  const effectiveStart = startTime || new Date().toISOString();
+
+  await pool.query(
+    `INSERT INTO consults
+       (calcom_event_id, scheduled_at, status, booker_name, booker_email)
+     VALUES ($1, $2, 'cancelled', $3, $4)
+     ON CONFLICT (calcom_event_id) DO UPDATE
+     SET status = 'cancelled'`,
+    [uid, effectiveStart, bookerName, bookerEmail]
+  );
+
+  return res.status(200).send('OK');
+}
 ```
 
-If the defensive path fires (no prior row), `client_id` and `proposal_id` stay NULL. Admin sees a cancelled-from-NULL row and treats it as a historical record. We do NOT auto-create the client on a cancellation event (creating a client for someone who already cancelled is weird).
-
-Return `200`.
+Defensive-insert path leaves `client_id` and `proposal_id` NULL. We do not auto-create a client on a cancellation event (creating a client for someone who already cancelled is a bad signal). Admin sees the cancelled-with-NULL-client row and treats it as a historical record.
 
 ### 5.3 BOOKING_RESCHEDULED
 
-Cal.com generates a new `uid` for the rescheduled booking and includes a reference to the original. The exact field name (`payload.rescheduleUid`, `payload.rescheduleId`, `payload.responses.rescheduleReason`, or nested in metadata) is verified against a live payload during implementation; assume `payload.rescheduleUid` here, fall back to scanning known alternates.
+Cal.com generates a new `uid` for the rescheduled booking and includes a reference to the original. Field name varies by Cal.com version. The handler probes a small set: `payload.rescheduleUid`, `payload.rescheduleId`, `payload.originalRescheduleEvent?.uid`, `payload.metadata?.rescheduleUid`. First non-empty wins. If none can be extracted, treats as a fresh `BOOKING_CREATED` (logged for visibility).
 
-1. `UPDATE consults SET calcom_event_id = $newUid, scheduled_at = $newStartTime, status = 'scheduled' WHERE calcom_event_id = $oldUid RETURNING id`.
-2. If 0 rows updated (we never saw the original create), fall through to the same flow as `BOOKING_CREATED` using the new uid.
+```js
+async function handleRescheduled(payload, res) {
+  const newUid = payload?.uid;
+  const newStartTime = payload?.startTime;
+  const oldUid = extractRescheduleOldUid(payload);
+  const bookerName = ... // same normalization as 5.2
+  const bookerEmail = ...
+
+  if (!newUid || !newStartTime) {
+    return res.status(200).send('Malformed payload, ignored');
+  }
+
+  if (oldUid) {
+    const result = await pool.query(
+      `UPDATE consults
+       SET calcom_event_id = $1, scheduled_at = $2, status = 'scheduled',
+           booker_name = COALESCE($3, booker_name),
+           booker_email = COALESCE($4, booker_email)
+       WHERE calcom_event_id = $5`,
+      [newUid, newStartTime, bookerName, bookerEmail, oldUid]
+    );
+    if (result.rowCount > 0) {
+      return res.status(200).send('Rescheduled in place');
+    }
+    // Fall through if we never saw the original create.
+  }
+
+  // No old-uid reference, or old uid not in our DB. Treat as fresh CREATED.
+  return handleCreated(payload, res);
+}
+```
 
 This handles both Cal.com behaviors gracefully:
-- The "single `BOOKING_RESCHEDULED` event with both uids" path (update in place).
-- The "two events: `BOOKING_CANCELLED` for old + `BOOKING_CREATED` for new" fallback (we naturally end with two rows, one cancelled + one scheduled, which is functionally correct if slightly less tidy).
-
-Return `200`.
+- "Single `BOOKING_RESCHEDULED` event with both uids" path (update in place).
+- "Two events: `BOOKING_CANCELLED` for old + `BOOKING_CREATED` for new" fallback (we naturally end with two rows, one cancelled + one scheduled, which is functionally correct if slightly less tidy).
 
 ### 5.4 BOOKING_NO_SHOW_UPDATED
 
-```sql
-UPDATE consults SET status = 'no_show' WHERE calcom_event_id = $uid;
+```js
+async function handleNoShow(payload, res) {
+  const uid = payload?.uid;
+  if (!uid) return res.status(200).send('Missing uid, ignored');
+
+  const result = await pool.query(
+    `UPDATE consults SET status = 'no_show' WHERE calcom_event_id = $1`,
+    [uid]
+  );
+
+  if (result.rowCount === 0) {
+    // Surfaces silent earlier failures: a no-show on a booking we never
+    // recorded means our BOOKING_CREATED was lost or never arrived.
+    console.warn(`[calcom] no_show for unknown uid: ${uid}`);
+    Sentry.captureMessage('Cal.com no-show for unknown booking', {
+      level: 'warning',
+      tags: { webhook: 'calcom', triggerEvent: 'BOOKING_NO_SHOW_UPDATED' },
+      extra: { uid },
+    });
+  }
+
+  return res.status(200).send('OK');
+}
 ```
 
-Idempotent. No defensive insert (a no-show on an unknown booking is too pathological to file blind). Return `200` even on zero rows updated.
+Idempotent. No defensive insert (a no-show on an unknown booking is too pathological to file blind).
 
 ### 5.5 Unhandled events
 
@@ -206,17 +443,39 @@ Idempotent. No defensive insert (a no-show on an unknown booking is too patholog
 
 ## 6. `completed` status flip
 
-Added to the existing `server/routes/drinkPlanConsult.js` PUT `/:id/consult` route. Inside the existing transaction (after the UPDATE on `drink_plans`, before COMMIT):
+Added to the existing `server/routes/drinkPlanConsult.js` PUT `/:id/consult` route. The existing handler uses `pool.connect()` + `BEGIN`/`COMMIT`/`ROLLBACK` on a pooled `client` (declared at line ~133 of the current file). The new statement runs on THAT SAME `client`, not on `pool`, so it is part of the same transaction.
 
-```sql
-UPDATE consults
-SET status = 'completed'
-WHERE proposal_id = $1
-  AND status = 'scheduled'
-  AND scheduled_at <= NOW();
+Insertion point: inside the `try` block, AFTER the existing UPDATE on `drink_plans` and BEFORE `await client.query('COMMIT')`. Wrapped in its own inner try/catch so a failure of the consults flip does NOT roll back the drink-plan / shopping-list save (that is the user's primary action; the consults-row flip is a side effect).
+
+```js
+// (existing UPDATE on drink_plans completes successfully above this point)
+
+try {
+  await client.query(
+    `UPDATE consults
+     SET status = 'completed'
+     WHERE proposal_id = $1
+       AND status = 'scheduled'
+       AND scheduled_at <= NOW()`,
+    [plan.proposal_id]
+  );
+} catch (flipErr) {
+  // Don't roll back the consult save just because the side-effect flip
+  // failed. Log + Sentry so operator can chase it.
+  console.error('[drinkPlanConsult] consults status flip failed (non-fatal):', flipErr);
+  if (process.env.SENTRY_DSN_SERVER) {
+    const Sentry = require('@sentry/node');
+    Sentry.captureException(flipErr, {
+      tags: { route: 'drinkPlanConsult/putConsult', step: 'consults_complete_flip' },
+      extra: { proposalId: plan.proposal_id },
+    });
+  }
+}
+
+await client.query('COMMIT');
 ```
 
-`$1` is the drink plan's `proposal_id`. Flips any past-and-scheduled consults for this proposal to `'completed'`. No-op if none match (admin held the consult off-platform, drink plan has no proposal, or admin re-submitted the form after already-completed runs). Idempotent on re-submission because `status = 'scheduled'` excludes already-completed rows.
+Flips any past-and-scheduled consults for this proposal to `'completed'`. No-op if none match (admin held the consult off-platform, drink plan has no proposal, or admin re-submitted the form after already-completed runs). Idempotent on re-submission because `status = 'scheduled'` excludes already-completed rows.
 
 Why `scheduled_at <= NOW()`: skips future consults. Edge case: client books consult #1, admin holds it and fills the form (#1 → completed), client books consult #2 for next week, admin re-saves the form for unrelated reasons. Without the time filter we would wrongly flip #2 to completed.
 
@@ -234,19 +493,34 @@ Replace the three `consultUrl: null` placeholders with `process.env.CAL_BOOKING_
 
 When the env var is unset, the substituted value is `null` (same as today) and existing template logic gracefully omits the consult line. When set, the line renders with the configured URL. Templates already handle both states; no template-side changes are required.
 
+**Out of scope here:** the `postConsultClient` recap email (`lifecycleEmailTemplates.js:285`) is a "great talking through your drink plan" recap, not a CTA. It is intentionally NOT given a consultUrl parameter.
+
+**Rollout note (cross-reference §13):** `CAL_BOOKING_URL` must be set on the server before the Cal.com webhook is subscribed in Cal.com's dashboard. If marketing or nudge sends fire between webhook-subscribed and env-var-set, those sends render without the consult line silently. Rollout step ordering enforces this.
+
 ## 8. Schema changes
 
-Idempotent ALTERs appended to the bottom of `server/db/schema.sql`:
+Idempotent ALTERs appended to the bottom of `server/db/schema.sql`. Source-enum migration is split into separate blocks so a failure to add the new constraint surfaces as an error rather than being silently swallowed.
 
 ```sql
 -- ─── Cal.com integration ────────────────────────────────────────
 
--- 1. Extend clients.source enum to admit 'calcom' for auto-created records.
+-- 1a. Drop old source check constraint (idempotent).
 DO $$ BEGIN
   ALTER TABLE clients DROP CONSTRAINT IF EXISTS clients_source_check;
-  ALTER TABLE clients ADD CONSTRAINT clients_source_check
-    CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- 1b. Add new source check constraint NOT VALID, then VALIDATE. If existing
+-- data violates the new enum, VALIDATE fails loudly with the offending row
+-- rather than being swallowed and leaving the constraint missing.
+-- (Plain CREATE CONSTRAINT also works since none of the existing rows
+-- should be outside the old enum, which is a subset of the new one. The
+-- NOT VALID + VALIDATE pattern is documented here for the schema-evolution
+-- discipline even though it is functionally equivalent in this case.)
+ALTER TABLE clients
+  ADD CONSTRAINT clients_source_check
+  CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom'))
+  NOT VALID;
+ALTER TABLE clients VALIDATE CONSTRAINT clients_source_check;
 
 -- 2. Booker context columns on consults, preserved separately from the
 -- (potentially-edited-later) client record.
@@ -259,7 +533,22 @@ ALTER TABLE consults ADD COLUMN IF NOT EXISTS booker_email TEXT;
 DO $$ BEGIN
   ALTER TABLE consults ADD CONSTRAINT consults_calcom_event_id_key UNIQUE (calcom_event_id);
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- 4. Generic webhook-event dedupe table for replay protection (§4.5).
+-- One row per processed event, with provider + event_id forming the
+-- dedupe key. 30-day prune is a future operational job, not implemented here.
+CREATE TABLE IF NOT EXISTS webhook_events (
+  provider VARCHAR(50) NOT NULL,
+  event_id TEXT NOT NULL,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (provider, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_events_received_at
+  ON webhook_events(received_at);
 ```
+
+The `webhook_events` table is intentionally generic (provider as a column) rather than Cal.com-specific so future webhook integrations (a hypothetical second consult provider, or a new Cal.com event flavor) can reuse the same dedupe infrastructure.
 
 No changes to `drink_plans`, `proposals`, or `scheduled_messages`.
 
@@ -269,65 +558,99 @@ Two new variables.
 
 | Variable | Purpose | Required in prod | Failure mode if unset |
 |---|---|---|---|
-| `CAL_WEBHOOK_SECRET` | HMAC-SHA256 signing secret for the Cal.com webhook. Generated when configuring the webhook in Cal.com. | Yes | Webhook handler returns 500 on every request with a one-time startup warning. Fails closed. |
-| `CAL_BOOKING_URL` | Public booking page URL. `https://cal.com/<username>/<event-type>` for hosted Cal.com, `https://book.drbartender.com/<event-type>` once self-hosted. | No | Three client touches (drink-plan nudge email + SMS, six-months-out marketing) gracefully omit the consult line. Booking-receiver still works. |
+| `CAL_WEBHOOK_SECRET` | HMAC-SHA256 signing secret for the Cal.com webhook. Generated when configuring the webhook in Cal.com. | Yes | Webhook handler returns 503 with body `'Cal.com webhook not configured'`. Startup emits Sentry warning (level=warning) once so missed-config alarm fires even with no traffic. Fails closed. |
+| `CAL_BOOKING_URL` | Public booking page URL. `https://cal.com/<username>/<event-type>` for hosted Cal.com, `https://book.drbartender.com/<event-type>` once self-hosted. | No (but see rollout §13) | Three client touches (drink-plan nudge email + SMS, six-months-out marketing) gracefully omit the consult line. Booking-receiver still works. Per §7 / §13, set BEFORE subscribing the Cal.com webhook to prevent the silent-omission window. |
 
-Documentation updates: add both to `.env.example` and to the Environment Variables table in `CLAUDE.md`. `CAL_BOOKING_URL` also needs to be set on the client side (`REACT_APP_CAL_BOOKING_URL`) if any client-side template ever needs it; in V1 all three surfaces are server-rendered so the server-side var is sufficient.
+Documentation updates: add both to `.env.example` and to the Environment Variables table in `CLAUDE.md`. All three placeholders consuming `CAL_BOOKING_URL` are server-side, so no client-side `REACT_APP_*` mirror is needed in V1.
 
 ## 10. Error handling and edge cases
 
-**Bad signature.** `400 invalid_signature`, no DB write, no log of payload contents.
+**Bad signature.** `400 'Invalid signature'`, no DB write, no log of payload contents. Sentry capture (level=warning, tag `reason=invalid_signature`).
 
-**Missing `CAL_WEBHOOK_SECRET` in prod.** `500` on every request. Startup logs a single warning. Never silently accepts unsigned input.
+**Missing signature header.** `400 'Missing signature'`, Sentry capture with `reason=missing_signature`. Common attacker probe; test case included in §12.
 
-**Cal.com retries on `5xx`.** Our handlers are idempotent via `calcom_event_id` uniqueness, so retries are safe. A handler that throws after partial work (e.g., client INSERT committed but consults INSERT failed) is impossible because both writes share one transaction.
+**Missing `CAL_WEBHOOK_SECRET` in prod.** `503` on every request with `'Cal.com webhook not configured'` body. Startup logs once and emits a Sentry warning. Never silently accepts unsigned input.
 
-**Bad payload shape.** Missing `payload.attendees`, missing `attendees[0].email`, missing `payload.uid`, missing `payload.startTime`: log the event with the offending payload (no PII beyond what Cal.com already sent us), return `200 ignored` so Cal.com does not retry. Operator follow-up via logs; in practice these shapes are stable and a violation indicates Cal.com schema drift worth investigating manually.
+**Malformed JSON body.** `400 'Malformed body'`, Sentry capture with `reason=malformed_body`. Prevents `JSON.parse` throwing a generic 500 (which Cal.com would retry forever).
 
-**Attendee name empty.** `clients.name` is NOT NULL. Fall back to literal `'Unknown booker'` so the INSERT does not throw. Admin sees this in the client record and renames it during the call.
+**Replay (captured signed body re-sent).** `webhook_events` dedupe at §4.5 short-circuits with `200 'Already processed'`. Same path also catches legitimate Cal.com retries of events we already 5xx'd on, which is fine: the original failure is in our logs/Sentry; we don't need Cal.com to keep nudging us.
 
-**Email already attached to a different client (auto-create collision).** Not possible in normal flow because lookup runs first. If two BOOKING_CREATED events for the same email arrive concurrently, the consults `ON CONFLICT (calcom_event_id) DO NOTHING` plus the transaction boundary serialize the two; whichever client INSERT lost the race produces a duplicate clients row with the same email (no UNIQUE constraint on `clients.email` exists). Acceptable; admin can dedupe manually in the very rare race. Future spec: add UNIQUE on `clients.email` if duplicates become a real problem.
+**Cal.com retries on 5xx.** Our handlers are idempotent via `calcom_event_id` uniqueness + `webhook_events` dedupe, so retries are safe. A handler that throws after partial work cannot leave partial state because both writes share one explicit transaction (§5.1).
 
-**Phone field absent or in unexpected location.** Cal.com places the phone under different keys depending on custom-field type (`attendees[0].phoneNumber`, `attendees[0].phone`, or inside `payload.responses` / `payload.customInputs`). Implementation: probe a small set of known locations in order, take the first non-empty value, fall through to NULL. Document the probe order in the handler comment.
+**Bad payload shape.** Missing `payload.attendees`, missing `attendees[0].email`, missing `payload.uid`, missing `payload.startTime`: per-handler decisions documented in §5. `BOOKING_CREATED` with no `uid` or `startTime` returns `200 'Malformed payload, ignored'` + Sentry warning. `BOOKING_CANCELLED` falls back to `effectiveStart = NOW()` if `startTime` missing (consults.scheduled_at is NOT NULL so the COALESCE is mandatory).
 
-**Rescheduled booking missing the old uid reference.** Cal.com payload schema is stable but field names for the "original booking" reference vary. Implementation probes `payload.rescheduleUid`, then `payload.rescheduleId`, then `payload.originalRescheduleEvent.uid`, then nested under `metadata`. Falls back to treating the event as a new `BOOKING_CREATED` if no old uid can be extracted, leaving a stale `scheduled` row from the original booking. Operator can clean up manually; logged for visibility.
+**Attendee name empty.** `clients.name` is NOT NULL VARCHAR(255). Normalization (§5.1) trims, length-caps at 255, and falls back to literal `'Unknown booker'`. Admin renames during the call.
 
-**Concurrent BOOKING_CREATED for the same uid.** PostgreSQL UNIQUE constraint serializes; the second transaction sees the conflict and the `ON CONFLICT DO NOTHING` returns zero rows. Handler treats that as success.
+**Attendee email empty or malformed.** Normalization rejects anything failing a basic format check and stores NULL. Partial UNIQUE permits multiple NULLs, so multiple email-less auto-created clients can coexist. Admin can dedupe manually if a real human accidentally booked twice without email.
 
-**Hosted-to-self-hosted Cal.com migration.** `CAL_WEBHOOK_SECRET` and `CAL_BOOKING_URL` change on cutover. Both are env vars editable in Render / Vercel dashboards. No code change. Cal.com booking-side migration (event types, availability, OAuth, DNS) is the separate ops workstream.
+**Email collision under concurrent BOOKING_CREATED.** Two parallel webhook handlers race to auto-create a client for the same normalized email. The partial UNIQUE on `clients(email) WHERE email IS NOT NULL` (`server/db/schema.sql:1220`) serializes them: one wins the INSERT, the other catches SQLSTATE 23505 and re-SELECTs to pick up the winner's `clientId`. Documented in the §5.1 pseudocode.
 
-## 11. Documentation updates
+**Phone field absent or in unexpected location.** Probes `attendees[0].phoneNumber`, then `attendees[0].phone`, then `responses.phone`, then `customInputs.phone`. First non-empty wins. NULL otherwise.
 
-Per the Mandatory Documentation Updates table in CLAUDE.md:
+**Rescheduled booking missing the old uid reference.** Probes `payload.rescheduleUid`, `payload.rescheduleId`, `payload.originalRescheduleEvent?.uid`, `payload.metadata?.rescheduleUid`. Falls back to treating the event as a fresh `BOOKING_CREATED` if no old uid can be extracted, leaving a stale `scheduled` row from the original booking. Operator can clean up manually; logged for visibility.
 
+**No-show event for an unknown booking.** Logs `console.warn` + Sentry warning. Returns 200. Indicates the original `BOOKING_CREATED` was lost; admin investigates from Sentry.
+
+**Hosted-to-self-hosted Cal.com migration.** `CAL_WEBHOOK_SECRET` and `CAL_BOOKING_URL` change on cutover. Both are env vars editable in Render dashboards. No code change. Cal.com booking-side migration (event types, availability, OAuth, DNS) is the separate ops workstream.
+
+## 11. Documentation and consumer updates
+
+Per the Mandatory Documentation Updates table in CLAUDE.md, plus the Cross-Cutting Consistency rule:
+
+**Documentation files:**
 - **`CLAUDE.md`**: add `CAL_WEBHOOK_SECRET` and `CAL_BOOKING_URL` to the Environment Variables table. Add Cal.com to the Tech Stack list as "Booking / scheduling (Cal.com)".
 - **`README.md`**: add `server/routes/calcom.js` to the folder-structure tree. Add `CAL_WEBHOOK_SECRET` and `CAL_BOOKING_URL` to the Environment Variables table. Add Cal.com to Tech Stack. Add a one-line entry to Key Features.
-- **`ARCHITECTURE.md`**: add `POST /api/calcom/webhook` to the API route table. Add a "Cal.com" subsection under Third-Party Integrations describing webhook events handled, signature scheme, consults-table linkage, and the deferred-V2 calendar-enrichment plan. Update the `consults` table description to include `booker_name`, `booker_email`, and the unique constraint on `calcom_event_id`. Update the `clients.source` enum value list to include `'calcom'`.
+- **`ARCHITECTURE.md`**: add `POST /api/calcom/webhook` to the API route table. Add a "Cal.com" subsection under Third-Party Integrations describing webhook events handled, signature scheme, replay-protection mechanism, consults-table linkage, and the deferred-V2 calendar-enrichment plan. Update the `consults` table description to include `booker_name`, `booker_email`, and the unique constraint on `calcom_event_id`. Update the `clients.source` enum value list to include `'calcom'`. Document the new `webhook_events` table.
 - **`.env.example`**: add both new env vars with brief inline comments.
+
+**Code files that must be updated in lockstep with the `clients.source` enum change** (Cross-Cutting Consistency rule):
+- **`server/routes/clients.js:9`**: extend `VALID_SOURCES = ['direct', 'thumbtack', 'referral', 'website']` to include `'calcom'`. The same array is referenced at lines 56 and 93 for ValidationError messages; no separate edits needed there since they use `.join(', ')`.
+- **`client/src/pages/admin/ClientsDashboard.js:18`**: extend the `SOURCE` map by adding `calcom: { label: 'Cal.com', kind: 'info' }` (or another `kind` value if `'info'` clashes visually; the dashboard already uses `neutral`, `info`, `ok`, `accent`, `violet`). Same map drives the dropdown on `:163`. Note: the existing `instagram` entry in this map is not in `VALID_SOURCES`, a pre-existing inconsistency outside this spec's scope.
 
 ## 12. Testing strategy
 
-**Webhook signature.** Unit test the verification function with: a valid signature (passes), a tampered body (fails), a missing header (fails), a wrong-case header (Express normalizes headers, but pin the behavior in a test). Use `node:test` to match the codebase pattern.
+**Webhook signature.** Unit test the verification function (with `node:test` to match codebase pattern) with cases:
+- Valid signature → passes
+- Tampered body → fails (400)
+- Missing `x-cal-signature-256` header entirely → 400 + Sentry warning (the most common attacker probe; explicit test)
+- Wrong-case header (`X-Cal-Signature-256`) → still works (Express normalizes)
+- Missing `CAL_WEBHOOK_SECRET` env var → 503 (fail-closed)
 
-**Handler idempotency.** Integration test against a Postgres test instance: fire `BOOKING_CREATED` twice with the same payload, assert one consults row and one clients row. Fire `BOOKING_CREATED` for an existing-email client, assert no duplicate clients row. Fire `BOOKING_CANCELLED` before a `BOOKING_CREATED`, assert a defensive cancelled row appears.
+**Body parsing.** Malformed JSON body → 400, not 500.
 
-**Proposal linkage.** Test three cases: client with one active proposal (links), client with two active proposals (links most recent), client with zero active proposals (NULL `proposal_id`).
+**Replay protection.** Same valid signed body delivered twice → first returns 200 with side effects, second returns 200 'Already processed' with no side effects. Different events with same booking uid but different `createdAt` → both processed (correct dedupe key includes trigger event + timestamp).
 
-**Completion flip.** Test the modified `drinkPlanConsult.js` route: drink plan with a past-scheduled consult (flips to completed), drink plan with a future-scheduled consult (untouched), drink plan with an already-completed consult (no-op), drink plan with no consult (no-op).
+**Handler idempotency.** Integration test against a Postgres test instance:
+- Fire `BOOKING_CREATED` twice with same payload → one consults row, one clients row.
+- Fire `BOOKING_CREATED` for an email matching an existing client → no duplicate clients row, consults.client_id matches.
+- Fire `BOOKING_CANCELLED` before any `BOOKING_CREATED` → defensive cancelled row appears with booker_name/booker_email populated.
+- Concurrent `BOOKING_CREATED` for two new bookings with the same email → exactly one clients row created, both consults rows reference it (loser path through 23505 catch).
+
+**PII normalization.** Booker name with embedded HTML / 1000 chars → stored as trimmed + 255-char-capped value, not raw. Booker email with mixed case / surrounding whitespace → stored as lowercased + trimmed. Booker email failing format check → stored as NULL.
+
+**Proposal linkage.** Client with one in-progress proposal (`'deposit_paid'`, `'confirmed'`, etc.) → links. Client with proposals all in `'archived'` or `'completed'` → `proposal_id = NULL`. Client with two in-progress proposals → links most recent by `created_at`.
+
+**Completion flip.** Drink plan with a past-scheduled consult → flips to completed. Drink plan with a future-scheduled consult → untouched. Drink plan with an already-completed consult → no-op. Drink plan with no consult → no-op. Forced failure of the flip UPDATE → consult save still commits, error logs + Sentry capture fires.
+
+**Defensive cancel/reschedule.** Cancel payload missing `startTime` → uses NOW() fallback. Reschedule with no recognizable old-uid field → falls back through to `handleCreated` path, logged.
 
 **URL surfacing.** Snapshot test the three templates with `CAL_BOOKING_URL` set and unset; confirm rendered output differs only by the consult line.
 
-**E2E smoke (manual, post-deploy).** Configure Cal.com webhook against the deployed `/api/calcom/webhook` endpoint. Make a test booking from a non-client email. Verify a `clients` row was auto-created with `source = 'calcom'` and a `consults` row was created with `status = 'scheduled'`. Cancel the booking in Cal.com, verify the consults row flips to `cancelled`. Reschedule another test booking, verify the consults row updates rather than duplicating.
+**E2E smoke (manual, post-deploy).** Configure Cal.com webhook against the deployed `/api/calcom/webhook` endpoint. Make a test booking from a non-client email. Verify a `clients` row was auto-created with `source = 'calcom'` and a `consults` row was created with `status = 'scheduled'` + `booker_name`/`booker_email` populated. Cancel the booking in Cal.com, verify the consults row flips to `cancelled`. Reschedule another test booking, verify the consults row updates rather than duplicating. Replay a captured signed webhook body using `curl`, verify the second delivery is dedupe-rejected with `200 'Already processed'`.
 
 ## 13. Rollout
 
-1. Merge this spec, write the implementation plan via `/writing-plans`, execute on the `cal-com` worktree branch.
-2. Set up the Cal.com hosted account (operator task, parallel): create a 15-minute consult event type, configure the booking form (name + email default, add optional phone field), connect organizer's Google Calendar, generate webhook secret.
-3. Set `CAL_WEBHOOK_SECRET` in Render. Set `CAL_BOOKING_URL` in Render. Push to main; deploy.
-4. Configure Cal.com webhook endpoint = `https://<api-domain>/api/calcom/webhook`, subscribe to `BOOKING_CREATED`, `BOOKING_CANCELLED`, `BOOKING_RESCHEDULED`, `BOOKING_NO_SHOW_UPDATED`. Paste the secret.
-5. Run the E2E smoke (section 12). Confirm webhooks land, consults rows appear, clients auto-create.
-6. Verify the three URL placeholders now render the consult line in client comms (trigger a six-months-out send manually if needed).
-7. Update `CLAUDE.md`, `README.md`, `ARCHITECTURE.md`, `.env.example` per section 11.
+Step ordering matters: env vars set, then code deployed, then Cal.com webhook subscribed. Inverting any of the first three steps creates a silent-misconfiguration window.
+
+1. **Spec → plan → implementation.** Merge this spec, write the implementation plan via `/writing-plans`, execute on the `cal-com` worktree branch.
+2. **Cal.com hosted account setup (operator task, can run in parallel with step 1).** Create a 15-minute consult event type, configure the booking form (name + email default, add optional phone field as a custom input), connect organizer's Google Calendar, generate webhook signing secret.
+3. **Set env vars BEFORE merging the code.** In Render: set `CAL_WEBHOOK_SECRET` to the secret from step 2, set `CAL_BOOKING_URL` to the public booking-page URL from step 2. Do NOT subscribe the webhook in Cal.com yet.
+4. **Merge + deploy** the implementation to main. Render auto-deploys.
+5. **Verify the endpoint responds.** `curl -X POST https://<api-domain>/api/calcom/webhook` without signature returns 400 'Missing signature'. With wrong signature returns 400 'Invalid signature'. Confirms route + signature pre-checks are live before Cal.com starts sending.
+6. **Subscribe the webhook in Cal.com.** Configure Cal.com webhook endpoint = `https://<api-domain>/api/calcom/webhook`, subscribe to `BOOKING_CREATED`, `BOOKING_CANCELLED`, `BOOKING_RESCHEDULED`, `BOOKING_NO_SHOW_UPDATED`. Paste the secret (matches what step 3 set in Render).
+7. **Run the E2E smoke (§12).** Confirm webhooks land, consults rows appear, clients auto-create, replay-dedupe works.
+8. **Verify URL placeholders render** the consult line in client comms (trigger a six-months-out send manually if needed, or wait for a real send).
+9. **Update `CLAUDE.md`, `README.md`, `ARCHITECTURE.md`, `.env.example`** per §11. Update `server/routes/clients.js` `VALID_SOURCES` and `client/src/pages/admin/ClientsDashboard.js` `SOURCE` map.
 
 ## 14. Future work (deferred V2 and beyond)
 
@@ -336,5 +659,7 @@ Per the Mandatory Documentation Updates table in CLAUDE.md:
 - **drb-os admin view for consults.** A small `/admin/consults` page if a need surfaces. Today, Cal.com's UI plus the auto-created clients view covers the access pattern.
 - **Auto-merge orphan consults on manual client creation.** If admin manually creates a client whose email matches an earlier auto-created Cal.com client, optionally merge or surface a "link existing consults?" prompt.
 - **Save-draft vs mark-complete split on the consult form.** Explicitly deferred from V1.
-- **UNIQUE constraint on `clients.email`.** Would prevent the rare concurrent-create race in section 10. Punted until duplicate clients become a real operational problem.
+- **`webhook_events` table pruning.** A periodic job that deletes rows older than 30 days. Trivial cron, separate spec.
+- **Stronger replay defenses.** Today the dedupe key includes `createdAt` from Cal.com's envelope. If an attacker can rewrite that field and re-sign, the dedupe is bypassed (but they would need the secret, in which case it's game over anyway). Optional V2: also check freshness window on `createdAt` (reject if older than 5 minutes from server time), matching Stripe/Resend timestamp-tolerance behavior.
 - **Reschedule reason capture.** Cal.com may include `responses.rescheduleReason`; we could store it on the consults row for admin context.
+- **`UNIQUE` constraint on `clients.email` (non-partial).** Today's partial UNIQUE allows multiple NULLs (intentional). If duplicate email-less clients become an operational problem, escalate to a stricter constraint.
