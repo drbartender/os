@@ -16,6 +16,7 @@ import ProposalDetailEditForm from './ProposalDetailEditForm';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
+import CcImportBadge from '../../components/admin/CcImportBadge';
 
 const STATUS = {
   draft: { label: 'Draft', kind: 'neutral' },
@@ -248,6 +249,7 @@ export default function ProposalDetail() {
                 ) : (proposal.client_name || `Proposal #${proposal.id}`)}
               </h1>
               <StatusChip kind={statusInfo.kind}>{statusInfo.label}</StatusChip>
+              <CcImportBadge ccId={proposal.cc_id} />
               {proposal.last_minute_hold && (
                 <span className="lm-hold-badge" title="Booked ≤72h out — verify staff availability before the event">
                   ⚠ Last-minute — verify staffing

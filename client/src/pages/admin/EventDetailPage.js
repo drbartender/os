@@ -19,6 +19,7 @@ import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import EventEditForm from './EventEditForm';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
+import CcImportBadge from '../../components/admin/CcImportBadge';
 
 const MenuPNG = lazy(() => import('../../components/MenuPNG/MenuPNG'));
 
@@ -205,6 +206,7 @@ export default function EventDetailPage() {
                 </button>
               ) : (proposal.client_name || 'Event')}
               {` · ${eventTypeLabel}`}
+              <CcImportBadge ccId={proposal.cc_id} />
             </h1>
             {proposal.last_minute_hold && (
               <span className="lm-hold-badge" title="Booked ≤72h out — verify staff availability before the event">
