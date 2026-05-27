@@ -131,6 +131,9 @@ app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 // Resend webhook needs raw body for svix signature verification — also BEFORE express.json()
 app.use('/api/email-marketing/webhook/resend', express.raw({ type: 'application/json' }));
 
+// Cal.com webhook needs raw body for HMAC-SHA256 signature verification, also BEFORE express.json()
+app.use('/api/calcom/webhook', express.raw({ type: 'application/json' }));
+
 // Blog admin can post TipTap-inlined images that approach 10MB; scope the big
 // limit to the blog route only. Everything else uses the 1MB default.
 app.use('/api/blog', express.json({ limit: '10mb' }));
@@ -183,6 +186,7 @@ app.use('/api/messages', require('./routes/messages'));
 app.use('/api/stripe', require('./routes/stripe'));
 app.use('/api/calendar', require('./routes/calendar'));
 app.use('/api/blog', require('./routes/blog'));
+app.use('/api/calcom', require('./routes/calcom'));
 app.use('/api/client-auth', require('./routes/clientAuth'));
 app.use('/api/client-portal', require('./routes/clientPortal'));
 app.use('/api/email-marketing', require('./routes/emailMarketing'));
