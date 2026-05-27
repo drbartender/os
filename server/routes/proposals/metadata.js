@@ -103,10 +103,20 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
   // lens) — a list is rows of events; event_date is the intuitive axis.
   const listParams = [];
   const propDate = metrics.dateClause('p.event_date', f.from, f.to, listParams);
+  const propCc = metrics.ccClause('p.', f.includeCc);
   const payParams = [];
   const payDate = metrics.dateClause('pp.created_at', f.from, f.to, payParams);
+  const payCc = metrics.ccClause('p.', f.includeCc);
   const collParams = [];
-  const collClause = metrics.dateClause('created_at', f.from, f.to, collParams);
+  // `collectedRow` queries proposal_payments without an alias on the default
+  // path. Only when a cc filter is active do we join to proposals to filter.
+  const collTable = f.includeCc === 'all' ? 'proposal_payments' : 'proposal_payments pp';
+  const collDateCol = f.includeCc === 'all' ? 'created_at' : 'pp.created_at';
+  const collJoin = f.includeCc === 'all' ? '' : ' JOIN proposals p ON p.id = pp.proposal_id';
+  const collStatusCol = f.includeCc === 'all' ? 'status' : 'pp.status';
+  const collAmountCol = f.includeCc === 'all' ? 'amount' : 'pp.amount';
+  const collDate = metrics.dateClause(collDateCol, f.from, f.to, collParams);
+  const collCc = metrics.ccClause('p.', f.includeCc);
 
   const [moneyR, outR, accR, totalR, proposalsR, paymentsR, collectedRow] = await Promise.all([
     pool.query(money.sql, money.params),
@@ -114,7 +124,7 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
     pool.query(acc.sql, acc.params),
     pool.query(
       `SELECT COUNT(*)::int AS total FROM proposals p
-       WHERE p.status NOT IN ('draft')${propDate}`, listParams),
+       WHERE p.status NOT IN ('draft')${propDate}${propCc}`, listParams),
     pool.query(`
       SELECT p.id, p.event_type, p.event_type_custom, p.event_date, p.total_price, p.amount_paid,
              p.deposit_amount, p.status, p.created_at,
@@ -123,7 +133,7 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
       FROM proposals p
       LEFT JOIN clients c ON c.id = p.client_id
       LEFT JOIN service_packages sp ON sp.id = p.package_id
-      WHERE p.status NOT IN ('draft')${propDate}
+      WHERE p.status NOT IN ('draft')${propDate}${propCc}
       ORDER BY p.event_date DESC NULLS LAST
       LIMIT $${listParams.length + 1} OFFSET $${listParams.length + 2}
     `, [...listParams, limit, offset]),
@@ -136,13 +146,13 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
       LEFT JOIN clients c ON c.id = p.client_id
       LEFT JOIN invoice_payments ip ON ip.payment_id = pp.id
       LEFT JOIN invoices i ON i.id = ip.invoice_id
-      WHERE pp.status = 'succeeded'${payDate}
+      WHERE pp.status = 'succeeded'${payDate}${payCc}
       ORDER BY pp.created_at DESC
       LIMIT 200
     `, payParams),
     pool.query(
-      `SELECT COALESCE(SUM(amount),0)::float8 AS c FROM proposal_payments
-       WHERE status='succeeded'${collClause}`, collParams),
+      `SELECT COALESCE(SUM(${collAmountCol}),0)::float8 AS c FROM ${collTable}${collJoin}
+       WHERE ${collStatusCol}='succeeded'${collDate}${collCc}`, collParams),
   ]);
 
   const booked = metrics.toDollars(moneyR.rows[0].value, { fromCents: !!money.cents });
@@ -175,9 +185,9 @@ router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (
   const wr = metrics.qWinRate(f);
   const tta = metrics.qTimeToAccept(f);
   const lost = metrics.qLostValue(f);
-  const pipeOut = metrics.qPipelineOutstanding();
+  const pipeOut = metrics.qPipelineOutstanding(f);
   const rev = metrics.qRevenue(f);
-  const paidCnt = metrics.qPaidCount();
+  const paidCnt = metrics.qPaidCount(f);
 
   // Prior-period variants (null when All time → no prior window).
   const priorF = prior ? { ...f, from: prior.from, to: prior.to } : null;
@@ -201,12 +211,12 @@ router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (
     pool.query(rev.sql, rev.params),
     pool.query(`
       SELECT status, COUNT(*)::int AS count, COALESCE(SUM(total_price),0)::float8 AS value
-      FROM proposals WHERE status IN ${PIPELINE_STATUSES} GROUP BY status
+      FROM proposals WHERE status IN ${PIPELINE_STATUSES}${metrics.ccClause('', f.includeCc)} GROUP BY status
     `),
     moneyPrior ? pool.query(moneyPrior.sql, moneyPrior.params) : Promise.resolve(null),
     outPrior ? pool.query(outPrior.sql, outPrior.params) : Promise.resolve(null),
     pool.query(paidCnt.sql, paidCnt.params),
-    pool.query(`SELECT COUNT(*)::int AS count FROM proposals WHERE status = 'archived'`),
+    pool.query(`SELECT COUNT(*)::int AS count FROM proposals WHERE status = 'archived'${metrics.ccClause('', f.includeCc)}`),
   ]);
 
   const PIPELINE_ORDER = [
