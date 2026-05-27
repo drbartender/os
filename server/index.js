@@ -263,11 +263,17 @@ async function start() {
     app.listen(PORT, () => {
       console.log(`✓ Server running on port ${PORT}`);
 
-      // Schedulers run by default on the single primary instance. Set RUN_SCHEDULERS=false
-      // on additional web instances to disable ALL schedulers, or use the per-scheduler
-      // env vars (RUN_<SCHEDULER>_SCHEDULER=false) to disable individual ones.
-
-      const globalScheduleDisabled = process.env.RUN_SCHEDULERS === 'false';
+      // Schedulers fire only when NODE_ENV=production. They send real emails
+      // (Resend) and SMS (Twilio) against the shared Neon DB; if a dev server
+      // also runs them, it iterates the same scheduled_messages rows as prod
+      // and burns through provider allotments. Local opt-in: RUN_SCHEDULERS=true
+      // (e.g. testing one handler against a scratch row). Multi-instance prod:
+      // RUN_SCHEDULERS=false on a secondary web instance to prevent duplicate
+      // runs (single-instance prod keeps the default).
+      const isProd = process.env.NODE_ENV === 'production';
+      const globalScheduleDisabled =
+        process.env.RUN_SCHEDULERS === 'false' ||
+        (!isProd && process.env.RUN_SCHEDULERS !== 'true');
       function enabled(envVar) {
         if (globalScheduleDisabled) return false;
         return process.env[envVar] !== 'false';
@@ -385,8 +391,13 @@ async function start() {
       if (!globalScheduleDisabled) {
         startStaleSchedulerMonitor();
         console.log('[schedulers] started with per-scheduler controls');
-      } else {
+      } else if (process.env.RUN_SCHEDULERS === 'false') {
         console.log('[schedulers] disabled via RUN_SCHEDULERS=false');
+      } else {
+        console.log(
+          `[schedulers] disabled: NODE_ENV='${process.env.NODE_ENV || ''}' is not 'production'. ` +
+          `Set RUN_SCHEDULERS=true to fire them locally.`
+        );
       }
     });
   } catch (err) {
