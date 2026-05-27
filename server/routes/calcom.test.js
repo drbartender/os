@@ -86,6 +86,7 @@ after(async () => {
   process.env.CAL_WEBHOOK_SECRET = ORIGINAL_SECRET;
   await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
   if (_server) await new Promise(r => _server.close(r));
+  await pool.end();
 });
 
 beforeEach(async () => {
