@@ -390,7 +390,7 @@ test('Phase 4: full refund on Bucket B (completed) — status PRESERVED, total_p
   assert.strictEqual(rr.rows[0].status, 'succeeded');
 });
 
-test('Phase 4: partial refund on balance_paid → status demotes to deposit_paid + autopay cleared', async () => {
+test('Phase 4 R002: partial refund where paid == total_after preserves balance_paid + autopay', async () => {
   const ccId = `${FIXTURE_CCID_PREFIX}R002`;
   const clientId = -94504;
   const email = `partial.refund${FIXTURE_EMAIL_DOMAIN}`;
@@ -946,6 +946,63 @@ test('promoteSingleLegacyRefund: callable externally for a freshly-set cc_event_
 
   const rr = await pool.query(`SELECT amount FROM proposal_refunds WHERE id = $1`, [r.refundId]);
   assert.strictEqual(rr.rows[0].amount, 10000);
+});
+
+test('Phase 4: paid_on NULL — created_at falls back to DEFAULT NOW() instead of NULL', async () => {
+  // Regression guard for the financial-dashboard "paid" lens (date-grouped by
+  // created_at) and the manual-reconciliation skip's ±24h window — both break
+  // when created_at lands as NULL. When CC's `Paid On` column is empty,
+  // paidOnNoonUtc returns null; the INSERT must OMIT created_at so the schema
+  // DEFAULT NOW() fires.
+  const ccId = `${FIXTURE_CCID_PREFIX}N001`;
+  const clientId = -94517;
+  const email = `null.paidon${FIXTURE_EMAIL_DOMAIN}`;
+  const eventDate = futureDate(25);
+
+  const propId = await seedProposal({
+    clientId, clientEmail: email, ccId, eventDate, totalPrice: 600, status: 'confirmed',
+  });
+
+  // Pre-insert a legacy_cc_payments row with paid_on = NULL + a non-empty
+  // payment_applied_cents value (mirrors a CC export where `Paid On` is blank).
+  const raw = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, cc_id, payload)
+     VALUES ('phase4-fixture/null-paidon', 'payments', 1, 'hash-null-paidon', NULL, '{}'::jsonb)
+     RETURNING id`
+  );
+  const rawId = raw.rows[0].id;
+  const lp = await pool.query(
+    `INSERT INTO legacy_cc_payments
+       (cc_event_id, cc_type, paid_on, payment_applied_cents, tip_cents,
+        processing_fee_cents, payment_method, processor, reference_code, raw_import_id)
+     VALUES ($1, 'Payment', NULL, $2, 0, 0, 'Credit Card', 'Stripe Express', 'ch_null_paidon_1', $3)
+     RETURNING id`,
+    [ccId, 12500, rawId]
+  );
+
+  const before = new Date();
+  const r = await phase4.promoteSingleLegacyPayment(lp.rows[0].id);
+  const after = new Date();
+  assert.strictEqual(r.status, 'promoted');
+  assert.ok(r.paymentId);
+
+  const pp = await pool.query(
+    `SELECT amount, payment_method, legacy_charge_id, created_at
+       FROM proposal_payments WHERE id = $1`, [r.paymentId]
+  );
+  assert.strictEqual(pp.rows[0].amount, 12500);
+  assert.strictEqual(pp.rows[0].payment_method, 'card');
+  assert.strictEqual(pp.rows[0].legacy_charge_id, 'ch_null_paidon_1');
+  // The critical assertion: created_at must NOT be null — DEFAULT NOW() fired.
+  assert.ok(pp.rows[0].created_at !== null, 'created_at must not be NULL');
+  assert.ok(pp.rows[0].created_at instanceof Date, 'created_at must be a Date');
+  // And it should be within the window of this test's execution (NOW() time).
+  const ts = pp.rows[0].created_at.getTime();
+  assert.ok(
+    ts >= before.getTime() - 1000 && ts <= after.getTime() + 1000,
+    `created_at ${pp.rows[0].created_at.toISOString()} should be near NOW(), not literal NULL or epoch`
+  );
 });
 
 test('Phase 4: orphan payment — CSV row matches no proposal → cc_event_id NULL, no promotion', async () => {

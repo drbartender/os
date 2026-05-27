@@ -412,24 +412,48 @@ async function promoteSingleLegacyPayment(legacyId, options = {}) {
     // a hard re-run; the outer idempotency check (promoted_payment_id) catches
     // most of those. For the no-charge-id case we rely on the promoted_payment_id
     // link being set, plus the operator's awareness of CSV re-imports.
-    const ins = await client.query(
-      `INSERT INTO proposal_payments
-         (proposal_id, amount, fee_cents, payment_type, payment_method,
-          stripe_payment_intent_id, legacy_charge_id, status, created_at)
-       VALUES ($1, $2, $3, $4, $5, NULL, $6, 'succeeded', $7)
-       ON CONFLICT (proposal_id, legacy_charge_id)
-         WHERE legacy_charge_id IS NOT NULL DO NOTHING
-       RETURNING id`,
-      [
-        proposalId,
-        legacy.payment_applied_cents,
-        legacy.processing_fee_cents,
-        paymentType,
-        paymentMethod,
-        legacyChargeId,
-        createdAt,
-      ]
-    );
+    //
+    // When CC's `Paid On` column is empty, paidOnNoonUtc returns null. We OMIT
+    // the created_at column from the INSERT so the schema's DEFAULT NOW() fires
+    // — writing literal NULL would (a) exclude the row from the financial
+    // dashboard "paid" lens (date-grouped by created_at), and (b) break the
+    // manual-reconciliation skip's ±24h window on subsequent re-runs.
+    const ins = createdAt != null
+      ? await client.query(
+          `INSERT INTO proposal_payments
+             (proposal_id, amount, fee_cents, payment_type, payment_method,
+              stripe_payment_intent_id, legacy_charge_id, status, created_at)
+           VALUES ($1, $2, $3, $4, $5, NULL, $6, 'succeeded', $7)
+           ON CONFLICT (proposal_id, legacy_charge_id)
+             WHERE legacy_charge_id IS NOT NULL DO NOTHING
+           RETURNING id`,
+          [
+            proposalId,
+            legacy.payment_applied_cents,
+            legacy.processing_fee_cents,
+            paymentType,
+            paymentMethod,
+            legacyChargeId,
+            createdAt,
+          ]
+        )
+      : await client.query(
+          `INSERT INTO proposal_payments
+             (proposal_id, amount, fee_cents, payment_type, payment_method,
+              stripe_payment_intent_id, legacy_charge_id, status)
+           VALUES ($1, $2, $3, $4, $5, NULL, $6, 'succeeded')
+           ON CONFLICT (proposal_id, legacy_charge_id)
+             WHERE legacy_charge_id IS NOT NULL DO NOTHING
+           RETURNING id`,
+          [
+            proposalId,
+            legacy.payment_applied_cents,
+            legacy.processing_fee_cents,
+            paymentType,
+            paymentMethod,
+            legacyChargeId,
+          ]
+        );
 
     let paymentId;
     if (ins.rowCount > 0) {
@@ -544,6 +568,15 @@ async function promoteSingleLegacyRefund(legacyId, options = {}) {
         await client.query('COMMIT');
         return { status: 'manual_skipped', refundId: manual.rows[0].id };
       }
+    } else {
+      // paid_on missing in CC export — we can't run the ±24h match, so the
+      // manual-reconciliation skip is bypassed for this row. Non-fatal: the
+      // refund will be inserted normally below. Operators may see a duplicate
+      // refund if a matching manual reconciliation already exists.
+      console.warn(
+        `[cc-import phase4] manual-reconciliation skip bypassed for legacy_cc_payments id=${legacyId} ` +
+        `(proposal_id=${proposalId}): paid_on is NULL — cannot match against existing manual refunds.`
+      );
     }
 
     // Lock the proposal row. Per refundHelpers.js:118-121, the SELECT locks
@@ -599,22 +632,40 @@ async function promoteSingleLegacyRefund(legacyId, options = {}) {
 
     const totalPriceAfter = Math.max(0, totalPriceBefore - refundAmountCents / 100);
 
-    // INSERT proposal_refunds.
-    const refRes = await client.query(
-      `INSERT INTO proposal_refunds
-         (proposal_id, payment_id, stripe_payment_intent_id, stripe_refund_id,
-          amount, reason, total_price_before, total_price_after,
-          issued_by, status, created_at)
-       VALUES ($1, NULL, NULL, NULL,
-               $2, $3, $4, $5,
-               NULL, 'succeeded', $6)
-       RETURNING id`,
-      [
-        proposalId, refundAmountCents,
-        'Legacy Check Cherry import — refund reason not exported',
-        totalPriceBefore, totalPriceAfter, paidOnIso,
-      ]
-    );
+    // INSERT proposal_refunds. When paidOnIso is null (CC's `Paid On` empty),
+    // OMIT created_at so the schema's DEFAULT NOW() fires — see the matching
+    // payment-INSERT comment above for the dashboard/skip-window reasoning.
+    const refRes = paidOnIso != null
+      ? await client.query(
+          `INSERT INTO proposal_refunds
+             (proposal_id, payment_id, stripe_payment_intent_id, stripe_refund_id,
+              amount, reason, total_price_before, total_price_after,
+              issued_by, status, created_at)
+           VALUES ($1, NULL, NULL, NULL,
+                   $2, $3, $4, $5,
+                   NULL, 'succeeded', $6)
+           RETURNING id`,
+          [
+            proposalId, refundAmountCents,
+            'Legacy Check Cherry import — refund reason not exported',
+            totalPriceBefore, totalPriceAfter, paidOnIso,
+          ]
+        )
+      : await client.query(
+          `INSERT INTO proposal_refunds
+             (proposal_id, payment_id, stripe_payment_intent_id, stripe_refund_id,
+              amount, reason, total_price_before, total_price_after,
+              issued_by, status)
+           VALUES ($1, NULL, NULL, NULL,
+                   $2, $3, $4, $5,
+                   NULL, 'succeeded')
+           RETURNING id`,
+          [
+            proposalId, refundAmountCents,
+            'Legacy Check Cherry import — refund reason not exported',
+            totalPriceBefore, totalPriceAfter,
+          ]
+        );
     const refundId = refRes.rows[0].id;
 
     // UPDATE #1 — money (mirrors refundHelpers.js:230-236 Approach A).
