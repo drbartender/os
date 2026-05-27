@@ -415,7 +415,7 @@ Flow:
 
 The Profile UI shows a "Pending verification, check [new email]" banner until the change confirms or expires. The banner copy includes a "Cancel pending change" affordance that marks `consumed_at = NOW()` server-side.
 
-**Phone changes get an audit-log entry.** Phone is the SMS-leg recovery channel; a takeover that flips it bypasses recovery without trace. On `PATCH /api/me/profile` when `phone` is in the body and differs from the current value, INSERT a row into `proposal_activity_log` (`actor_type='staff'`, `actor_id=req.user.id`, `entity_type='user'`, `entity_id=req.user.id`, `action='profile_phone_change'`, `details={old_phone_last4, new_phone_last4, changed_at}`). The full numbers are not logged in the audit row, only last 4.
+**Phone changes get an audit-log entry.** Phone is the SMS-leg recovery channel; a takeover that flips it bypasses recovery without trace. On `PATCH /api/me/profile` when `phone` is in the body and differs from the current value, INSERT a row into `staff_audit_log` (`user_id=req.user.id`, `actor_type='staff'`, `actor_id=req.user.id`, `action='profile_phone_change'`, `details={old_phone_last4, new_phone_last4}`). The full numbers are not logged in the audit row, only last 4. Email changes also INSERT a `staff_audit_log` row on PENDING (`action='email_change_requested'`, `details={new_email}`) AND on CONFIRM (`action='email_change_confirmed'`, `details={old_email, new_email}`).
 
 ### 6.11 AccountPage / Payment methods
 
@@ -468,7 +468,7 @@ The seven payment methods the UI surfaces map onto `payment_profiles` columns as
 
   If the PATCH clears a routing or account field (sets it to `null`), persist `null` directly (no encryption needed). If only routing is cleared but account remains, mark `preferred_payment_method='direct_deposit'` as invalid by auto-NULLing it (same auto-NULL behavior as P2P handle clears).
 
-  **Audit log on every payment-method mutation.** After the PATCH commits, INSERT into `proposal_activity_log` with `actor_type='staff'`, `actor_id=req.user.id`, `entity_type='user'`, `entity_id=req.user.id`, `action='payment_method_change'`, `details={fields_changed: ['venmo_handle','routing_number',...], cleared: [...]}`. The audit trail records WHICH fields were touched but not the new values (handles are not PII-sensitive once added but the diff doesn't need to live in the audit, `payment_profiles` itself holds current state). Same audit applies to `PUT /api/me/preferred-payment-method` (`action='preferred_payment_method_change'`, `details={from, to}`).
+  **Audit log on every payment-method mutation.** After the PATCH commits, INSERT into `staff_audit_log` with `user_id=req.user.id`, `actor_type='staff'`, `actor_id=req.user.id`, `action='payment_method_change'`, `details={fields_changed: ['venmo_handle','routing_number',...], cleared: [...]}`. The audit trail records WHICH fields were touched but not the new values (handles are not PII-sensitive once added but the diff doesn't need to live in the audit; `payment_profiles` itself holds current state). Same audit applies to `PUT /api/me/preferred-payment-method` (`action='preferred_payment_method_change'`, `details={from, to}`).
 
 - `PUT /api/me/preferred-payment-method`, body is `{ method: 'venmo' | 'cashapp' | 'paypal' | 'zelle' | 'direct_deposit' | 'check' }`. Validates that the corresponding handle column is populated (rejects 400 with `{field: 'venmo_handle', error: 'Add a Venmo handle before setting it as preferred.'}` if not). For direct_deposit, the check is "BOTH `routing_number` AND `account_number` are non-null." For check, no handle is required. Writes `payment_profiles.preferred_payment_method`.
 - `PUT /api/me/tip-card-order`, body is `{ order: ['venmo', 'card', 'cashapp', 'paypal'] }`. Writes to `users.ui_preferences.tip_card_order`. Validates that every token in the order array is one of `{'card', 'venmo', 'cashapp', 'paypal', 'zelle'}`; rejects 400 otherwise. Client serializes drag-end → PUT (no parallel PUTs); if a second drag fires before the first PUT resolves, the second drag is queued and dispatched on response.
@@ -828,9 +828,16 @@ ALTER TABLE contractor_profiles
 ALTER TABLE contractor_profiles
   ADD COLUMN IF NOT EXISTS position TEXT;
 
+-- positions_interested is free-text and often comma-separated (e.g. "Bartender, Server").
+-- Backfill takes the FIRST token (trimmed, lowercased) so the value matches a single
+-- entry from shifts.positions_needed JSONB array. Legacy staff with no application
+-- get 'bartender' as the safe default.
 UPDATE contractor_profiles cp
    SET position = COALESCE(
-     (SELECT a.positions_interested FROM applications a WHERE a.user_id = cp.user_id),
+     LOWER(TRIM(SPLIT_PART(
+       (SELECT a.positions_interested FROM applications a WHERE a.user_id = cp.user_id),
+       ',', 1
+     ))),
      'bartender'
    )
  WHERE cp.position IS NULL;
@@ -889,6 +896,22 @@ CREATE TABLE IF NOT EXISTS staff_document_history (
   replaced_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sdh_user ON staff_document_history(user_id);
+
+-- User-scoped audit log for staff portal mutations (phone change, email change,
+-- payment-method change, preferred-method flip). `proposal_activity_log` is
+-- proposal-scoped (FK to proposals) and doesn't fit user-only events; rather than
+-- abuse a NULL proposal_id, this table mirrors that schema for user-scoped events.
+CREATE TABLE IF NOT EXISTS staff_audit_log (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  actor_type VARCHAR(20) NOT NULL DEFAULT 'staff' CHECK (actor_type IN ('staff','admin','system')),
+  actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action VARCHAR(50) NOT NULL,
+  details JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_staff_audit_log_user ON staff_audit_log(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_staff_audit_log_action ON staff_audit_log(action, created_at DESC);
 ```
 
 **No data migration.** All payment handle columns and the W-9 columns already exist on `payment_profiles`; this spec only adds `zelle_handle`. The new `staff_notification_preferences` JSONB has a default value via the ALTER statement above, so backfill happens at column-creation time, not via a follow-up `UPDATE`. The existing `users.notifications_opt_in` BOOLEAN (if present) is preserved for backwards compatibility but not read by the new staff portal; admin tooling that references it is unaffected.
