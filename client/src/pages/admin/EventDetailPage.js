@@ -230,6 +230,25 @@ export default function EventDetailPage() {
                 <Icon name="pen" size={12} />Edit
               </button>
             )}
+            {/* cc-imported proposals miss the normal post-conversion nudge schedule
+                (the import happens after T-21). If a drink plan EXISTS, admins
+                can re-enroll the nudges here. The endpoint is idempotent. */}
+            {proposal.cc_id && drinkPlan && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={async () => {
+                  try {
+                    await api.post(`/admin/proposals/${proposal.id}/reenroll-drink-plan-nudge`);
+                    toast.success('Drink-plan nudges scheduled.');
+                  } catch (e) {
+                    toast.error(`Failed to schedule: ${e?.response?.data?.error || e.message}`);
+                  }
+                }}
+              >
+                Schedule drink-plan nudges
+              </button>
+            )}
           </div>
         </div>
       </div>
