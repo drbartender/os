@@ -21,6 +21,42 @@ const {
 
 const router = express.Router();
 
+// Side-effect helper: when the admin saves the consult form for a drink plan
+// linked to a proposal, flip any past-scheduled consults rows for that
+// proposal to 'completed'. Fire-and-forget — a flip failure must NOT roll
+// back the consult save itself (the user's primary action). Errors land in
+// the log + Sentry so an operator can chase them.
+async function performConsultsCompletionFlip(client, proposalId) {
+  // Guard both null AND undefined — written long-form to satisfy `eqeqeq`.
+  // Critical: the SELECT at the call site MUST include `dp.proposal_id` or
+  // this short-circuits silently in production despite tests passing (tests
+  // call this helper directly with a non-null id).
+  if (proposalId === null || proposalId === undefined) return;
+  try {
+    await client.query(
+      `UPDATE consults
+       SET status = 'completed'
+       WHERE proposal_id = $1
+         AND status = 'scheduled'
+         AND scheduled_at <= NOW()`,
+      [proposalId]
+    );
+  } catch (flipErr) {
+    // Fire-and-forget: do NOT roll back the consult save just because the
+    // side-effect flip failed. Log + Sentry so operator can chase it.
+    console.error('[drinkPlanConsult] consults status flip failed (non-fatal):', flipErr);
+    if (process.env.SENTRY_DSN_SERVER) {
+      try {
+        const Sentry = require('@sentry/node');
+        Sentry.captureException(flipErr, {
+          tags: { route: 'drinkPlanConsult/putConsult', step: 'consults_complete_flip' },
+          extra: { proposalId },
+        });
+      } catch (_) { /* sentry optional */ }
+    }
+  }
+}
+
 const VALID_BAR_TYPES = ['full_bar', 'sig_beer_wine', 'beer_wine', 'mocktails'];
 const VALID_MIXER_MODES = ['full', 'matching', 'none'];
 const MAX_LIST_ITEMS = 50;        // signatureDrinks, mocktails, customCocktails, customMocktails
@@ -136,7 +172,7 @@ router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
 
     const planRes = await client.query(
       `SELECT dp.id, dp.client_name, dp.event_date, dp.admin_notes,
-              dp.consult_filled_at,
+              dp.consult_filled_at, dp.proposal_id,
               p.guest_count
        FROM drink_plans dp
        LEFT JOIN proposals p ON p.id = dp.proposal_id
@@ -179,6 +215,11 @@ router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
        WHERE id = $4`,
       [JSON.stringify(consult), req.user.id, JSON.stringify(list), req.params.id]
     );
+
+    // Flip linked Cal.com consults row to 'completed' as a side effect of
+    // the admin saving the consult form. See spec §6. Wrapped (inside the
+    // helper) to not roll back the consult save on flip failure.
+    await performConsultsCompletionFlip(client, plan.proposal_id);
 
     await client.query('COMMIT');
     res.json({ success: true, shopping_list_source: 'consult' });
@@ -339,3 +380,4 @@ router.patch('/:id/shopping-list-source', auth, requireAdminOrManager, asyncHand
 }));
 
 module.exports = router;
+module.exports.performConsultsCompletionFlip = performConsultsCompletionFlip;
