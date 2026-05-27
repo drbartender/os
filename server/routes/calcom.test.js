@@ -396,3 +396,68 @@ test('BOOKING_CREATED: concurrent race with same email → exactly one client, o
   assert.equal(consults.rows[0].client_id, clients.rows[0].id);
   assert.equal(consults.rows[1].client_id, clients.rows[0].id);
 });
+
+// ─── BOOKING_CANCELLED tests ──────────────────────────────────────
+
+async function postCancelled(payload) {
+  return postEvent('BOOKING_CANCELLED', payload);
+}
+
+test('BOOKING_CANCELLED: flips existing scheduled row to cancelled', async () => {
+  await cleanupTestRows();
+  await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status, booker_name, booker_email)
+     VALUES ('test-uid-cancel-1', '2026-06-01T15:00:00Z', 'scheduled', 'CalcomTest Gina', 'gina@calcom-test.example')`
+  );
+  await buildApp(TEST_SECRET);
+  await postCancelled({
+    uid: 'test-uid-cancel-1',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Gina', email: 'gina@calcom-test.example' }],
+  });
+  const row = await pool.query("SELECT status FROM consults WHERE calcom_event_id = 'test-uid-cancel-1'");
+  assert.equal(row.rows[0].status, 'cancelled');
+});
+
+test('BOOKING_CANCELLED: defensive insert when no prior row exists', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  await postCancelled({
+    uid: 'test-uid-cancel-2',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Henry', email: 'henry@calcom-test.example' }],
+  });
+  const row = await pool.query(
+    "SELECT status, booker_name, booker_email, client_id FROM consults WHERE calcom_event_id = 'test-uid-cancel-2'"
+  );
+  assert.equal(row.rowCount, 1);
+  assert.equal(row.rows[0].status, 'cancelled');
+  assert.equal(row.rows[0].booker_name, 'CalcomTest Henry');
+  assert.equal(row.rows[0].booker_email, 'henry@calcom-test.example');
+  assert.equal(row.rows[0].client_id, null, 'defensive insert leaves client_id NULL');
+});
+
+test('BOOKING_CANCELLED: missing startTime falls back to NOW() (no NOT NULL violation)', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const before = Date.now();
+  await postCancelled({
+    uid: 'test-uid-cancel-3',
+    attendees: [{ name: 'CalcomTest Iris', email: 'iris@calcom-test.example' }],
+  });
+  const row = await pool.query(
+    "SELECT status, EXTRACT(EPOCH FROM scheduled_at) * 1000 AS ms FROM consults WHERE calcom_event_id = 'test-uid-cancel-3'"
+  );
+  assert.equal(row.rowCount, 1);
+  assert.equal(row.rows[0].status, 'cancelled');
+  assert.ok(Number(row.rows[0].ms) >= before, 'scheduled_at falls back to a time at-or-after the request');
+});
+
+test('BOOKING_CANCELLED: missing uid is a 200 no-op', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const res = await postCancelled({ attendees: [{ name: 'CalcomTest Jack', email: 'jack@calcom-test.example' }] });
+  assert.equal(res.status, 200);
+  const rows = await pool.query("SELECT id FROM consults WHERE booker_email = 'jack@calcom-test.example'");
+  assert.equal(rows.rowCount, 0);
+});

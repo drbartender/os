@@ -246,7 +246,27 @@ async function handleCreated(payload, res) {
     client.release();
   }
 }
-async function handleCancelled(_payload, res)   { return res.status(200).send('OK'); }
+async function handleCancelled(payload, res) {
+  const uid = payload?.uid;
+  if (!uid) {
+    return res.status(200).send('Missing uid, ignored');
+  }
+
+  const startTime = payload?.startTime || new Date().toISOString();
+  const bookerName = String(payload?.attendees?.[0]?.name || '').trim().slice(0, 255) || null;
+  const bookerEmail = String(payload?.attendees?.[0]?.email || '').trim().toLowerCase().slice(0, 255) || null;
+
+  await pool.query(
+    `INSERT INTO consults
+       (calcom_event_id, scheduled_at, status, booker_name, booker_email)
+     VALUES ($1, $2, 'cancelled', $3, $4)
+     ON CONFLICT (calcom_event_id) DO UPDATE
+     SET status = 'cancelled'`,
+    [uid, startTime, bookerName, bookerEmail]
+  );
+
+  return res.status(200).send('OK');
+}
 async function handleRescheduled(_payload, res) { return res.status(200).send('OK'); }
 async function handleNoShow(_payload, res)      { return res.status(200).send('OK'); }
 
