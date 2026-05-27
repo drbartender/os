@@ -2,19 +2,29 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement the full staff portal redesign per `docs/superpowers/specs/2026-05-27-staff-portal-redesign-design.md`. Ship a 4-tab portal (Home / Shifts / Pay / Tip Card) with an AccountPage overlay, the embedded BEO viewer on ShiftDetail, the drop / cover marketplace, light / dark theme, the calendar feed extension, and the channel-routed notifications surface (push gated to Phase B).
+**Goal:** Implement the full staff portal redesign per `docs/superpowers/specs/2026-05-27-staff-portal-redesign-design.md` (commit `c57d99b`+). Ship a 4-tab portal (Home / Shifts / Pay / Tip Card) with an AccountPage overlay, the embedded BEO viewer on ShiftDetail, the drop / cover marketplace, light / dark theme, the calendar feed extension, and the channel-routed notifications surface (push gated to Phase B).
 
-**Architecture:** Schema adds three JSONB columns on `users` (`ui_preferences`, `staff_notification_preferences`, `last_ics_fetch_at`), one column on `payment_profiles` (`zelle_handle`), one column on `contractor_profiles` (`alcohol_certification_expires_on`), five columns on `shift_requests` (cover / drop marketplace), one new table (`staff_document_history`), and widens two CHECK constraints (`users.onboarding_status` adds `'suspended'`; `scheduled_messages.channel` adds `'push'`). New server router `server/routes/staffPortal.js` mounts all `/api/me/*` endpoints. Three new server utils (`notificationChannelResolver`, `pushSender`, `staffCalendarFeedExt`). Existing `server/routes/calendar.js` extended in-place with BEO-confirm all-day VEVENTs. Existing `server/utils/scheduledMessageDispatcher.js` extended for multi-row enqueue + push channel. New React shell `client/src/components/StaffShell.js` + `StaffUserPillMenu.js` replaces `StaffLayout.js`. Eight new pages (HomePage, ShiftsPage with 3 sub-tabs, ShiftDetail, PayPage, PayoutDetail, TipCardPage, AccountPage with 5 sub-sections). Both `App.js` `HiringRoutes()` and `StaffSiteRoutes()` blocks swap `StaffLayout` → `StaffShell`. Eight old fragment files deleted after the 30-day redirect grace period begins.
+**Architecture:** Schema adds three JSONB columns on `users` (`ui_preferences`, `staff_notification_preferences`, `token_version`), one tracking column (`last_ics_fetch_at`), one column on `payment_profiles` (`zelle_handle`), one column on `contractor_profiles` (`alcohol_certification_expires_on`) plus a backfilled `position` column, five columns on `shift_requests` (cover / drop marketplace) plus `replaced_by_request_id` self-FK, three new tables (`staff_document_history`, `staff_audit_log`, `pending_email_changes`), and two `scheduled_messages` columns (`suppression_key` + an extended status enum). Two CHECK constraints widen: `users.onboarding_status` adds `'suspended'`; `scheduled_messages.channel` adds `'push'` and `.status` adds `'suppressed_by_sibling'` + `'dead_letter'`. New server router `server/routes/staffPortal.js` mounts all auth-gated `/api/me/*` endpoints. New `server/routes/emailChange.js` mounts the unauthenticated email-change confirm route. New `server/routes/adminCoverSwaps.js` mounts the JWT-verified admin cover-swap routes. Four new server utils (`notificationChannelResolver`, `pushSender`, `staffCalendarFeedExt`, `shiftTime`). Existing `server/routes/calendar.js`, `scheduledMessageDispatcher.js`, `messageScheduling.js`, `payrollAccrual.js`, `autoAssign.js`, `middleware/auth.js`, `routes/publicTip.js`, `routes/shifts.js`, `routes/me.js`, `utils/jwt.js`, `utils/tipHandleValidation.js`, `utils/smsTemplates.js`, `utils/lifecycleEmailTemplates.js`, `utils/staffShiftHandlers.js` all extended in-place. New React shell `client/src/components/StaffShell.js` + `StaffUserPillMenu.js` replaces `StaffLayout.js`. Eight new pages (HomePage, ShiftsPage with 3 sub-tabs, ShiftDetail, PayPage, PayoutDetail, TipCardPage, AccountPage with 6 sub-sections, EmailVerifyPage). Both `App.js` `HiringRoutes()` and `StaffSiteRoutes()` blocks swap `StaffLayout` → `StaffShell`. Nine old fragment files deleted after the 30-day redirect grace period begins.
 
-**Tech Stack:** Node 18 / Express 4.18, raw SQL via `pg`, React 18 (CRA), `node:test`, Sentry, Twilio (via existing `sendAndLogSms`), `web-push` (new npm in Phase 10).
+**Tech Stack:** Node 18 / Express 4.18, raw SQL via `pg`, React 18 (CRA), `node:test`, Sentry, Twilio (via existing `sendAndLogSms`), `web-push` (new npm in Phase 11).
 
 **Spec section anchors:** Every task references the relevant spec section. Read the spec section before starting the task.
 
-**Inheritance:** The BEO implementation plan (`docs/superpowers/plans/2026-05-26-beo-implementation.md`) Phases 1-5 must be merged to `main` BEFORE Task 26 of this plan (which extends `GET /api/beo/:proposalId`). Phase 6 of the BEO plan is replaced wholesale by this plan: Task 29 of BEO (standalone `StaffBeo.js`) is dropped, the BEO content moves into Task 28 here (`ShiftDetail.js`). BEO Task 31 (badges on `StaffShifts`/`StaffEvents`) is dropped because those pages no longer exist after this plan ships.
+**Inheritance:** The BEO implementation plan (`docs/superpowers/plans/2026-05-26-beo-implementation.md`) Phases 1-5 must be merged to `main` BEFORE Task 33 of this plan (which extends `GET /api/beo/:proposalId`). Phase 6 of the BEO plan is replaced wholesale by this plan: BEO Task 29 (standalone `StaffBeo.js`) is dropped, BEO Task 31 (badges on `StaffShifts`/`StaffEvents`) is dropped because those pages no longer exist after this plan ships. BEO Task 28 (DrinkPlanCard Finalize buttons) and BEO Task 30 (EventDetailPage View BEO link) are admin-side and survive untouched.
 
-**Phasing alignment:**
-- Phase A (spec section 9): Tasks 1-41. Portal shell + drop / cover + theme + AccountPage + SMS-and-email notifications only. Push column in NotificationsSection is rendered but disabled with a "Coming in v1.5" banner.
-- Phase B (spec section 9): Tasks 42-46. Push notifications + iOS coachmark + dispatcher push activation + NotificationsSection Push column unlock.
+**Phasing alignment with spec §9:**
+- Phase A (spec §9): Tasks 1-51. Portal shell + drop / cover + theme + AccountPage + SMS-and-email notifications only. Push column in NotificationsSection is rendered but disabled with a "Coming in v1.5" banner.
+- Phase B (spec §9): Tasks 52-56. Push notifications + iOS coachmark + dispatcher push activation + NotificationsSection Push column unlock.
+
+**Dead-code window fix:** The prior version of this plan mounted all the new client routes only at Task 39, leaving Tasks 24-38 unverifiable in-browser. This plan mounts a stub StaffShell + placeholder routes under `/staff-v2/*` at Task 29 (before the page implementation phase), so every subsequent client task can be verified end-to-end during implementation. The final cutover at Tasks 48-49 swaps the stub mount for the production mount.
+
+**Per-phase review-agent checkpoints** (per `feedback_execution_review_cadence.md`):
+- After Phase 1 (schema + utils): `database-review` (schema breadth) + `security-review` (notification routing + suspended-status middleware companion)
+- After Phase 4 (staff portal API): `security-review` (15 new authenticated endpoints, bank PII guard, email-change auth model, allowlist enforcement)
+- After Phase 5 (drop / cover marketplace): `code-review` + `consistency-check` (money-adjacent via pay_period processing guard + hybrid-state filter across payrollAccrual / autoAssign / team-roster)
+- After Phase 8 (pay + tip card + publicTip extension): `code-review` (money display + the load-bearing publicTip extension)
+- After Phase 11 (push): `security-review` (VAPID, service worker, subscription lifecycle)
+- Before final cutover (Tasks 48-49): the full review-before-deploy fleet.
 
 **Scope guard:** This plan implements the spec verbatim. Any deviation must be flagged and discussed before commit. No design changes during implementation.
 
@@ -29,52 +39,58 @@
 **Files:**
 - Modify: `server/db/schema.sql`
 
-- [ ] **Step 1: Read the current schema sections this task touches**
+- [ ] **Step 1: Read the schema sections this task touches**
 
-  - `users` table CHECK constraint around line 25 (`onboarding_status`)
-  - `users` table columns around line 269 (`calendar_token`) and 2232+ (`notification_preferences`, `communication_preferences`)
-  - `payment_profiles` table around line 129 + ALTERs around line 2000
-  - `contractor_profiles` table (search for `CREATE TABLE.*contractor_profiles`)
-  - `shift_requests` table
-  - `scheduled_messages` table CHECK around line 2309
-  - `pay_periods` CHECK around line 2531 (no change, just verify the values for downstream tasks)
+  Get oriented:
+  - `users` CHECK around schema.sql:24-25 (`onboarding_status`)
+  - `users` columns around schema.sql:269 (`calendar_token`) and 2232+ (`notification_preferences`, `communication_preferences`)
+  - `payment_profiles` table around schema.sql:129 + ALTERs around schema.sql:1990 (the encryption widening to VARCHAR(255))
+  - `contractor_profiles` table at schema.sql:57
+  - `shift_requests` table at schema.sql:295
+  - `scheduled_messages` table at schema.sql:2279, CHECK constraints at 2297 (entity_type) / 2307 (channel) / 2313 (status) / 2331 (existing pending-uniqueness index)
+  - `pay_periods.status` CHECK at schema.sql:2532
+  - `applications.full_name` at schema.sql:146, `applications.positions_interested` at 166
+  - `agreements.full_name` at schema.sql:99
+  - `proposal_activity_log` at schema.sql:857
+  - existing `password_reset_tokens` pattern at schema.sql:1204 (informs the `pending_email_changes` design)
 
-  Get oriented before adding ALTERs.
-
-- [ ] **Step 2: Add the new JSONB columns and tracking column on `users`**
-
-  Append to the `users`-related migration section:
+- [ ] **Step 2: New JSONB and tracking columns on `users`**
 
   ```sql
   -- ─── Staff portal: theme / tip-card order / calendar app detection ───
   ALTER TABLE users ADD COLUMN IF NOT EXISTS ui_preferences JSONB
     NOT NULL DEFAULT '{}'::jsonb;
-
   ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ics_fetch_at TIMESTAMPTZ;
 
   -- ─── Staff portal: per-category × per-channel notification routing ───
+  -- Default uses JSON literal (not jsonb_build_object) for deterministic key order
+  -- matching the existing pattern at schema.sql:2233/2248.
   ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_notification_preferences JSONB
-    NOT NULL DEFAULT jsonb_build_object(
-      'channels', jsonb_build_object(
-        'shift_offered',   '["push","sms","email"]'::jsonb,
-        'shift_decided',   '["push","sms"]'::jsonb,
-        'cover_needed',    '["push"]'::jsonb,
-        'beo_finalized',   '["push","sms","email"]'::jsonb,
-        'beo_reminder_t3', '["push","sms"]'::jsonb,
-        'schedule_change', '["push","sms","email"]'::jsonb,
-        'payday',          '["sms","email"]'::jsonb,
-        'tip_received',    '["push"]'::jsonb
-      ),
-      'push_subscriptions', '[]'::jsonb,
-      'quiet_hours', 'null'::jsonb
-    );
+    NOT NULL DEFAULT '{
+      "channels": {
+        "shift_offered":   ["push","sms","email"],
+        "shift_decided":   ["push","sms"],
+        "cover_needed":    ["push"],
+        "beo_finalized":   ["push","sms","email"],
+        "beo_reminder_t3": ["push","sms"],
+        "schedule_change": ["push","sms","email"],
+        "payday":          ["sms","email"],
+        "tip_received":    ["push"]
+      },
+      "push_subscriptions": [],
+      "quiet_hours": null
+    }'::jsonb;
+
+  -- ─── Session invalidation on email change (per spec §6.10) ───
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;
   ```
 
-- [ ] **Step 3: Widen the two CHECK constraints**
+- [ ] **Step 3: Constraint widenings**
 
-  Use the existing `DO $$ ... EXCEPTION WHEN OTHERS THEN NULL` pattern (matching `pay_periods` around line 2528):
+  Use the existing `DO $$ ... EXCEPTION WHEN OTHERS THEN NULL` pattern (matches `pay_periods` around schema.sql:2528):
 
   ```sql
+  -- onboarding_status adds 'suspended'
   DO $$ BEGIN
     ALTER TABLE users DROP CONSTRAINT IF EXISTS users_onboarding_status_check;
     ALTER TABLE users ADD CONSTRAINT users_onboarding_status_check
@@ -84,17 +100,41 @@
       ));
   EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
+  -- scheduled_messages.channel adds 'push'
   DO $$ BEGIN
     ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_channel_check;
     ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_channel_check
       CHECK (channel IN ('email','sms','push'));
   EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+  -- scheduled_messages.status adds 'suppressed_by_sibling' and 'dead_letter'
+  -- for the §6.13 dispatcher cascade. Without this widening, the cascade's
+  -- first UPDATE crashes on the existing CHECK.
+  DO $$ BEGIN
+    ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_status_check;
+    ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_status_check
+      CHECK (status IN ('pending','sent','failed','suppressed','deferred','suppressed_by_sibling','dead_letter'));
+  EXCEPTION WHEN OTHERS THEN NULL; END $$;
   ```
 
-- [ ] **Step 4: Add `shift_requests` cover / drop columns + indexes**
+- [ ] **Step 4: `scheduled_messages.suppression_key` column + indexes**
 
   ```sql
-  -- ─── Staff portal: drop / cover marketplace ───
+  ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS suppression_key TEXT;
+  CREATE INDEX IF NOT EXISTS idx_scheduled_messages_suppression_key
+    ON scheduled_messages (suppression_key)
+    WHERE suppression_key IS NOT NULL AND status = 'pending';
+
+  -- Cover-broadcast dedupe (per §6.5 runaway cap). Scoped via partial WHERE
+  -- to avoid collision with idx_scheduled_messages_pending_uniq (schema.sql:2331).
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_messages_cover_broadcast_dedupe
+    ON scheduled_messages (entity_type, entity_id, recipient_type, recipient_id, channel)
+    WHERE message_type = 'cover_broadcast' AND status IN ('pending','sent');
+  ```
+
+- [ ] **Step 5: `shift_requests` cover / drop columns + indexes**
+
+  ```sql
   ALTER TABLE shift_requests
     ADD COLUMN IF NOT EXISTS cover_requested_at TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS cover_reason TEXT,
@@ -108,20 +148,66 @@
     ON shift_requests(cover_requested_at) WHERE cover_requested_at IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_shift_requests_dropped
     ON shift_requests(dropped_at) WHERE dropped_at IS NOT NULL;
+
+  -- Hybrid-state filter index (per §6.5 / §6.18 / payrollAccrual / autoAssign update)
+  CREATE INDEX IF NOT EXISTS idx_shift_requests_active_approved
+    ON shift_requests(shift_id) WHERE status = 'approved' AND dropped_at IS NULL;
   ```
 
-- [ ] **Step 5: Add `payment_profiles.zelle_handle` + `contractor_profiles.alcohol_certification_expires_on`**
+- [ ] **Step 6: payment_profiles + contractor_profiles new columns**
 
   ```sql
   ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS zelle_handle TEXT;
 
   ALTER TABLE contractor_profiles
     ADD COLUMN IF NOT EXISTS alcohol_certification_expires_on DATE;
+
+  -- Role attestation for cover-broadcast targeting (per §6.5).
+  -- positions_interested is stored as a JSON-encoded string by Application.js,
+  -- e.g. '["Bartender","Server"]'. Backfill JSON-decodes the first element.
+  -- The CASE fallback handles any legacy CSV rows that may exist.
+  ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS position TEXT;
+
+  UPDATE contractor_profiles cp
+     SET position = COALESCE(
+       LOWER(TRIM((
+         SELECT CASE
+           WHEN a.positions_interested ~ '^\[' THEN (a.positions_interested::jsonb->>0)
+           ELSE SPLIT_PART(a.positions_interested, ',', 1)
+         END
+         FROM applications a WHERE a.user_id = cp.user_id
+       ))),
+       'bartender'
+     )
+   WHERE cp.position IS NULL;
+
+  CREATE INDEX IF NOT EXISTS idx_contractor_profiles_position
+    ON contractor_profiles(position) WHERE position IS NOT NULL;
   ```
 
-- [ ] **Step 6: Add the `staff_document_history` table**
+- [ ] **Step 7: New tables**
 
   ```sql
+  -- Pending email change verification (per §6.10)
+  CREATE TABLE IF NOT EXISTS pending_email_changes (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    new_email VARCHAR(255) NOT NULL,
+    token_hash VARCHAR(64) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    consumed_at TIMESTAMPTZ
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_email_changes_token_hash
+    ON pending_email_changes(token_hash) WHERE consumed_at IS NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_email_changes_new_email_pending
+    ON pending_email_changes(LOWER(new_email)) WHERE consumed_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_pending_email_changes_user
+    ON pending_email_changes(user_id) WHERE consumed_at IS NULL;
+  CREATE INDEX IF NOT EXISTS idx_pending_email_changes_expires
+    ON pending_email_changes(expires_at) WHERE consumed_at IS NULL;
+
+  -- Document replace history (per §6.14)
   CREATE TABLE IF NOT EXISTS staff_document_history (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -132,30 +218,68 @@
     replaced_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
   );
   CREATE INDEX IF NOT EXISTS idx_sdh_user ON staff_document_history(user_id);
+
+  -- User-scoped audit log (per §6.10 + §6.11). `proposal_activity_log` is
+  -- proposal-scoped; this table is for user-only events.
+  CREATE TABLE IF NOT EXISTS staff_audit_log (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    actor_type VARCHAR(20) NOT NULL DEFAULT 'staff' CHECK (actor_type IN ('staff','admin','system')),
+    actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    action VARCHAR(50) NOT NULL,
+    details JSONB DEFAULT '{}',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_staff_audit_log_user ON staff_audit_log(user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_staff_audit_log_action ON staff_audit_log(action, created_at DESC);
   ```
 
-- [ ] **Step 7: Apply the schema to the dev DB**
+- [ ] **Step 8: §6.13 migration guard, strip 'sms' for STOP-replied users**
+
+  ```sql
+  UPDATE users
+     SET staff_notification_preferences = jsonb_set(
+       staff_notification_preferences,
+       '{channels}',
+       (
+         SELECT jsonb_object_agg(
+           cat_key,
+           COALESCE(
+             (SELECT jsonb_agg(ch) FROM jsonb_array_elements_text(cat_val) AS ch WHERE ch <> 'sms'),
+             '[]'::jsonb
+           )
+         )
+         FROM jsonb_each(staff_notification_preferences->'channels') AS chans(cat_key, cat_val)
+       ),
+       false
+     )
+   WHERE (communication_preferences->>'sms_enabled')::boolean = false;
+  ```
+
+- [ ] **Step 9: Apply schema to dev DB**
 
   ```bash
-  npm run db:schema
+  psql "$DATABASE_URL" -f server/db/schema.sql
   ```
   Expected: clean output. Idempotent ALTERs do nothing on re-run.
 
-- [ ] **Step 8: Verify the additions**
+- [ ] **Step 10: Verify**
 
   ```bash
-  psql "$DATABASE_URL" -c "\d users" | grep -E 'ui_preferences|staff_notification_preferences|last_ics_fetch_at'
-  psql "$DATABASE_URL" -c "\d users" | grep onboarding_status   # CHECK should list 'suspended'
+  psql "$DATABASE_URL" -c "\d users" | grep -E 'ui_preferences|staff_notification_preferences|last_ics_fetch_at|token_version'
+  psql "$DATABASE_URL" -c "\d users" | grep onboarding_status
   psql "$DATABASE_URL" -c "\d shift_requests" | grep -E 'cover_requested_at|dropped_at|drop_emergency|replaced_by_request_id'
   psql "$DATABASE_URL" -c "\d payment_profiles" | grep zelle_handle
-  psql "$DATABASE_URL" -c "\d contractor_profiles" | grep alcohol_certification_expires_on
-  psql "$DATABASE_URL" -c "\d scheduled_messages" | grep channel   # CHECK should list 'push'
+  psql "$DATABASE_URL" -c "\d contractor_profiles" | grep -E 'alcohol_certification_expires_on|position'
+  psql "$DATABASE_URL" -c "\d scheduled_messages" | grep -E 'channel|status|suppression_key'
   psql "$DATABASE_URL" -c "\d staff_document_history"
+  psql "$DATABASE_URL" -c "\d staff_audit_log"
+  psql "$DATABASE_URL" -c "\d pending_email_changes"
   ```
 
-  Expected: every grep returns at least one row.
+  Every grep should return at least one row.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 11: Commit**
 
   ```bash
   git add server/db/schema.sql
@@ -166,25 +290,36 @@
 
 ### Task 2: notificationChannelResolver util
 
-**Spec ref:** Section 6.13 (critical-path override + kill-switch interaction).
+**Spec ref:** Section 6.13 (kill-switch + critical-path override + dead-letter resolution).
 
 **Files:**
 - Create: `server/utils/notificationChannelResolver.js`
 - Create: `server/utils/notificationChannelResolver.test.js`
 
-- [ ] **Step 1: Implement `pickChannelsForUserAndCategory`**
-
-  Exports a single async function. Reads `users.staff_notification_preferences` and `users.communication_preferences` in one query. Returns a deduped channel array filtered by both the per-category opt-in and the top-level kill switch, with critical-path override applied if the user has muted ALL channels for `beo_finalized` / `schedule_change` / `payday`.
+- [ ] **Step 1: Implement the resolver**
 
   ```javascript
   const { pool } = require('../db');
 
   const CRITICAL_CATEGORIES = new Set(['beo_finalized', 'schedule_change', 'payday']);
-  const CRITICAL_FALLBACK_ORDER = ['sms', 'email', 'push']; // try SMS first, then email, then push
+  const CRITICAL_FALLBACK_ORDER = ['sms', 'email', 'push'];
+
+  // Single source of truth for missing-key default lookups. Future categories
+  // added later inherit defaults without backfilling staff_notification_preferences.
+  const DEFAULT_CHANNELS = {
+    shift_offered:   ['push', 'sms', 'email'],
+    shift_decided:   ['push', 'sms'],
+    cover_needed:    ['push'],
+    beo_finalized:   ['push', 'sms', 'email'],
+    beo_reminder_t3: ['push', 'sms'],
+    schedule_change: ['push', 'sms', 'email'],
+    payday:          ['sms', 'email'],
+    tip_received:    ['push'],
+  };
 
   /**
    * Resolve the effective channel set for a categorized message.
-   * @returns {Promise<string[]>} subset of ['email','sms','push']
+   * @returns {Promise<{kind:'channels', channels:string[]} | {kind:'dead_letter', reason:string}>}
    */
   async function pickChannelsForUserAndCategory(userId, category) {
     const { rows } = await pool.query(
@@ -192,60 +327,57 @@
          FROM users WHERE id = $1`,
       [userId]
     );
-    if (rows.length === 0) return [];
+    if (rows.length === 0) return { kind: 'channels', channels: [] };
     const { prefs, comms } = rows[0];
-    const requested = Array.isArray(prefs?.channels?.[category]) ? prefs.channels[category] : [];
+    const requested = Array.isArray(prefs?.channels?.[category])
+      ? prefs.channels[category]
+      : (DEFAULT_CHANNELS[category] || []);
     const filtered = requested.filter(ch => {
       if (ch === 'sms' && comms?.sms_enabled === false) return false;
       if (ch === 'email' && comms?.email_enabled === false) return false;
       return true;
     });
-    if (filtered.length > 0) return Array.from(new Set(filtered));
+    if (filtered.length > 0) return { kind: 'channels', channels: Array.from(new Set(filtered)) };
     if (CRITICAL_CATEGORIES.has(category)) {
+      const pushSubs = Array.isArray(prefs?.push_subscriptions) ? prefs.push_subscriptions : [];
       for (const ch of CRITICAL_FALLBACK_ORDER) {
         if (ch === 'sms' && comms?.sms_enabled === false) continue;
         if (ch === 'email' && comms?.email_enabled === false) continue;
-        return [ch];
+        if (ch === 'push' && pushSubs.length === 0) continue;
+        return { kind: 'channels', channels: [ch] };
       }
+      return { kind: 'dead_letter', reason: 'all_channels_blocked' };
     }
-    return [];
+    return { kind: 'channels', channels: [] };
   }
 
-  module.exports = { pickChannelsForUserAndCategory, CRITICAL_CATEGORIES };
+  module.exports = { pickChannelsForUserAndCategory, CRITICAL_CATEGORIES, DEFAULT_CHANNELS };
   ```
 
-- [ ] **Step 2: Write tests**
+- [ ] **Step 2: Tests**
 
-  In `notificationChannelResolver.test.js`:
-  - Returns the user's opted-in channels, deduped
+  - Returns opted-in channels, deduped
   - `comms.sms_enabled=false` filters SMS from every result
   - `comms.email_enabled=false` filters email
+  - Missing category key in prefs falls back to `DEFAULT_CHANNELS`
   - Critical-path override fires when all channels for `beo_finalized` are off, prefers SMS
-  - Critical-path override degrades to email if SMS is off, then to push if both off
-  - Returns empty for unknown user
-  - Returns empty for category not in prefs (defensive)
+  - Override degrades to email if SMS globally off; to push if both off AND push subs exist
+  - Override returns `dead_letter` when SMS+email+push all blocked
+  - Returns empty `channels` array for unknown user
 
-  Use the dev DB with a freshly-inserted test user; clean up in `after()`.
-
-- [ ] **Step 3: Run the tests**
+- [ ] **Step 3: Run + commit**
 
   ```bash
   node --test server/utils/notificationChannelResolver.test.js
-  ```
-  Expected: all pass.
-
-- [ ] **Step 4: Commit**
-
-  ```bash
   git add server/utils/notificationChannelResolver.js server/utils/notificationChannelResolver.test.js
-  git commit -m "feat(staff-portal): notification channel resolver with critical-path override"
+  git commit -m "feat(staff-portal): notification channel resolver with critical-path override + dead-letter"
   ```
 
 ---
 
 ### Task 3: pushSender util (skeleton)
 
-**Spec ref:** Section 6.17 (push infrastructure). This task creates the file with a stub `sendPush` that returns `{ ok: false, gone: false }` for now. Phase 10 (Task 45) replaces the stub body with real `web-push` calls. Doing it this way keeps the dispatcher's call sites stable from Phase 3 onward.
+**Spec ref:** Section 6.17 (push infrastructure). Skeleton ships now so Phase 4 dispatcher code can import it; Phase 11 Task 55 replaces the body with real `web-push` calls.
 
 **Files:**
 - Create: `server/utils/pushSender.js`
@@ -256,21 +388,21 @@
   ```javascript
   /**
    * Send a Web Push notification. Phase A stub: returns ok:false without sending.
-   * Phase B (Task 45) replaces the body with real web-push calls.
+   * Phase B (Task 55) replaces the body with real web-push calls.
    *
    * @returns {Promise<{ok: boolean, gone?: boolean, error?: string}>}
-   *   ok:true → delivered. gone:true → subscription is 410/404, caller should prune.
    */
   async function sendPush({ subscription, title, body, url, tag, icon }) {
+    if (!process.env.VAPID_PRIVATE_KEY) {
+      return { ok: false, error: 'vapid_unset' };
+    }
     return { ok: false, error: 'push_phase_b' };
   }
 
   module.exports = { sendPush };
   ```
 
-- [ ] **Step 2: Write tests for the stub**
-
-  Single test confirming the stub returns `ok:false` with `error:'push_phase_b'`. Phase B replaces these tests with real send-path coverage.
+- [ ] **Step 2: Tests**, confirms stub returns `ok:false` with appropriate `error` and surfaces `vapid_unset` when env missing.
 
 - [ ] **Step 3: Run + commit**
 
@@ -284,15 +416,17 @@
 
 ### Task 4: enqueueCategorizedMessage helper
 
-**Spec ref:** Section 6.13 ("Dispatcher integration" subsection).
+**Spec ref:** Section 6.13 (Dispatcher integration, multi-row enqueue at scheduling time with shared `suppression_key`).
 
 **Files:**
-- Modify: `server/utils/scheduledMessages.js` (the existing scheduler-side helper file)
-- Create: `server/utils/scheduledMessages.test.js` (if it doesn't exist; otherwise extend)
+- Modify: `server/utils/messageScheduling.js` (existing, 66 lines)
+- Modify: `server/utils/messageScheduling.test.js` (extend or create)
 
-- [ ] **Step 1: Read the existing scheduledMessages.js to find the `scheduleMessage` insert helper**
+- [ ] **Step 1: Widen the `VALID_CHANNELS` Set**
 
-  Locate where rows are inserted into `scheduled_messages`. The new `enqueueCategorizedMessage` calls `pickChannelsForUserAndCategory` and inserts one row per resolved channel.
+  Line 5 currently: `const VALID_CHANNELS = new Set(['email', 'sms']);`
+  Change to: `const VALID_CHANNELS = new Set(['email', 'sms', 'push']);`
+  Required companion to the schema CHECK widening in Task 1, otherwise the existing `scheduleMessage` validator throws before any push INSERT lands.
 
 - [ ] **Step 2: Add the helper**
 
@@ -301,178 +435,266 @@
 
   /**
    * Enqueue a categorized message, fanning out to all opted-in channels.
-   * Returns the array of inserted scheduled_messages.id values.
+   * Each row carries a shared suppression_key so the dispatcher's sibling
+   * cascade can collapse them on first send.
+   *
+   * @returns {Promise<{enqueued: string[], deadLetter: boolean}>}
    */
   async function enqueueCategorizedMessage({
     userId,
     category,
-    payload,
-    sendAt,           // Date | ISO string
-    anchorEntityType, // e.g. 'shift_request', 'drink_plan'
-    anchorEntityId,
-    suppressionKey,   // optional dedupe key for the cascade
+    payload,            // { title, body, url, tag, icon, sms_template, sms_args, email_template, email_args, ... }
+    sendAt,             // Date | ISO string
+    entityType,         // one of 'proposal','shift','client','consult' (per existing CHECK)
+    entityId,
+    messageType,        // application-defined string, used as part of suppression_key
   }, client = pool) {
-    const channels = await pickChannelsForUserAndCategory(userId, category);
-    if (channels.length === 0) return [];
-    const insertedIds = [];
+    const resolved = await pickChannelsForUserAndCategory(userId, category);
+    if (resolved.kind === 'dead_letter') {
+      return { enqueued: [], deadLetter: true };
+    }
+    const channels = resolved.channels;
+    if (channels.length === 0) return { enqueued: [], deadLetter: false };
+
+    const suppressionKey = `${entityType}:${entityId}:${messageType}:${userId}`;
+    const payloadWithCounter = { ...payload, re_resolve_count: 0 };
+
+    const enqueued = [];
     for (const channel of channels) {
       const { rows } = await client.query(
         `INSERT INTO scheduled_messages
-           (user_id, category, channel, payload, send_at,
-            anchor_entity_type, anchor_entity_id, suppression_key, status)
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, 'pending')
+           (entity_id, entity_type, message_type, recipient_type, recipient_id,
+            channel, scheduled_for, status, suppression_key, error_message)
+         VALUES ($1, $2, $3, 'staff', $4, $5, $6, 'pending', $7, $8::text)
          RETURNING id`,
-        [userId, category, channel, JSON.stringify(payload), sendAt,
-         anchorEntityType, anchorEntityId, suppressionKey]
+        [entityId, entityType, messageType, userId, channel, sendAt, suppressionKey, JSON.stringify(payloadWithCounter)]
       );
-      insertedIds.push(rows[0].id);
+      enqueued.push(rows[0].id);
     }
-    return insertedIds;
+    return { enqueued, deadLetter: false };
   }
 
   module.exports.enqueueCategorizedMessage = enqueueCategorizedMessage;
   ```
 
-  Adjust column names to match the actual `scheduled_messages` schema (verify against `server/db/schema.sql` before writing).
+  Note: `scheduled_messages` has no `payload` JSONB column today; the existing dispatcher stuffs payload bits into `error_message` (per the existing pattern). Verify during execution and switch to the actual payload-carrying column.
 
-- [ ] **Step 3: Tests**
+- [ ] **Step 3: Tests**, N-channel fan-out, zero on muted non-critical, dead-letter return, suppression_key shape correct, custom client (transaction) passed through.
 
-  - Inserts N rows for an N-channel resolved set
-  - Inserts zero rows when the user has muted all channels (non-critical category)
-  - Inserts one row for a critical category that fell back to a critical-path channel
-  - Accepts a transaction client (passes the second arg through)
-  - Stores the `suppression_key` for the cascade to use
-
-- [ ] **Step 4: Run + commit**
+- [ ] **Step 4: Commit**
 
   ```bash
-  node --test server/utils/scheduledMessages.test.js
-  git add server/utils/scheduledMessages.js server/utils/scheduledMessages.test.js
-  git commit -m "feat(staff-portal): enqueueCategorizedMessage fan-out helper"
+  git add server/utils/messageScheduling.js server/utils/messageScheduling.test.js
+  git commit -m "feat(staff-portal): enqueueCategorizedMessage fan-out + VALID_CHANNELS push widening"
+  ```
+
+---
+
+### Task 5: shiftTime.js helper
+
+**Spec ref:** Section 6.5 (hours-to-event computation).
+
+**Files:**
+- Create: `server/utils/shiftTime.js`
+- Create: `server/utils/shiftTime.test.js`
+
+- [ ] **Step 1: Implement parseShiftDateTime + hoursToEvent**
+
+  ```javascript
+  /**
+   * Parse a shift's event_date + start_time into a Date in America/Chicago wall-clock.
+   * Times in shifts are stored as VARCHAR(50); per CLAUDE.md the project uses no
+   * global timezone normalization, so this helper does the conversion.
+   *
+   * @param {{event_date: string|Date, start_time: string}} shift
+   * @returns {Date}
+   */
+  function parseShiftDateTime(shift) {
+    const dateStr = typeof shift.event_date === 'string'
+      ? shift.event_date
+      : shift.event_date.toISOString().slice(0, 10);
+    const timeStr = shift.start_time || '00:00';
+    // Compose as local Chicago time, then convert. Cheapest approach using Intl.
+    // Build an ISO local-time string and parse via Date assuming Chicago TZ.
+    const [hh, mm] = timeStr.split(':');
+    // Use a quick-and-dirty timezone-aware parse via Date.UTC plus offset lookup.
+    // For mainland US, the offset is -5 or -6 depending on DST.
+    const localIso = `${dateStr}T${hh.padStart(2, '0')}:${(mm || '00').padStart(2, '0')}:00`;
+    const offset = getChicagoOffset(new Date(`${localIso}Z`));
+    return new Date(`${localIso}${offset}`);
+  }
+
+  function getChicagoOffset(d) {
+    // DST runs second Sunday of March to first Sunday of November
+    const year = d.getUTCFullYear();
+    const dstStart = nthSundayOf(year, 2, 2); // March, 2nd Sunday
+    const dstEnd   = nthSundayOf(year, 10, 1); // November, 1st Sunday
+    const ms = d.getTime();
+    return (ms >= dstStart && ms < dstEnd) ? '-05:00' : '-06:00';
+  }
+
+  function nthSundayOf(year, monthZeroBased, n) {
+    const first = new Date(Date.UTC(year, monthZeroBased, 1));
+    const dow = first.getUTCDay(); // 0=Sun
+    const firstSunday = 1 + ((7 - dow) % 7);
+    const day = firstSunday + (n - 1) * 7;
+    return Date.UTC(year, monthZeroBased, day, 2); // 2am local approximated
+  }
+
+  function hoursToEvent(shift) {
+    const eventTime = parseShiftDateTime(shift);
+    return (eventTime.getTime() - Date.now()) / 3_600_000;
+  }
+
+  module.exports = { parseShiftDateTime, hoursToEvent };
+  ```
+
+  This is a quick-and-correct-enough implementation. If `date-fns-tz` or `luxon` is already in package.json, prefer it; check first.
+
+- [ ] **Step 2: Tests**
+
+  - DST forward boundary (early March)
+  - DST backward boundary (early November)
+  - Exactly-336h returns 336 (clean-drop boundary)
+  - Exactly-72h returns 72 (cover-broadcast boundary)
+  - Past events return negative hours
+
+- [ ] **Step 3: Commit**
+
+  ```bash
+  git add server/utils/shiftTime.js server/utils/shiftTime.test.js
+  git commit -m "feat(staff-portal): shiftTime helper for parseShiftDateTime + hoursToEvent"
+  ```
+
+---
+
+### Task 6: tipHandleValidation Zelle branch
+
+**Spec ref:** Section 6.11 (Payment methods, Zelle validation).
+
+**Files:**
+- Modify: `server/utils/tipHandleValidation.js`
+- Modify: `server/utils/tipHandleValidation.test.js`
+
+- [ ] **Step 1: Add validateZelleHandle**
+
+  ```javascript
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const E164_RE  = /^\+?[1-9]\d{1,14}$/;
+
+  function validateZelleHandle(input) {
+    if (!input || typeof input !== 'string') {
+      return { valid: false, error: 'Zelle requires a phone number or email address.' };
+    }
+    const trimmed = input.trim();
+    if (EMAIL_RE.test(trimmed)) return { valid: true, normalized: trimmed.toLowerCase() };
+    if (E164_RE.test(trimmed.replace(/[\s\-()]/g, ''))) {
+      return { valid: true, normalized: trimmed.replace(/[\s\-()]/g, '') };
+    }
+    return { valid: false, error: 'Zelle requires a phone number or email address.' };
+  }
+
+  // Wire into the existing normalizeTipHandlesInPlace switch
+  // (find the switch on key name; add a `case 'zelle_handle'` branch
+  //  that calls validateZelleHandle and writes the normalized value)
+  ```
+
+- [ ] **Step 2: Tests**, email valid, US E.164 valid, formatted US phone (with dashes/parens) valid + normalized, garbage rejected.
+
+- [ ] **Step 3: Commit**
+
+  ```bash
+  git add server/utils/tipHandleValidation.js server/utils/tipHandleValidation.test.js
+  git commit -m "feat(staff-portal): tipHandleValidation Zelle branch (phone or email)"
   ```
 
 ---
 
 ## Phase 2: Dispatcher integration + calendar feed extension
 
-### Task 5: Dispatcher kill-switch re-check + push channel send
+### Task 7: Dispatcher kill-switch + push branch + sibling cascade + re-resolve
 
-**Spec ref:** Section 6.13 (Dispatcher integration). Push send path lands here behind a feature flag so Phase B can activate it by flipping the flag without re-touching this code.
+**Spec ref:** Section 6.13 (Dispatcher integration, multi-row enqueue, sibling-suppression cascade, critical-path re-resolve with counter, dead-letter Sentry + ADMIN_PHONE).
 
 **Files:**
 - Modify: `server/utils/scheduledMessageDispatcher.js`
+- Modify: `server/utils/scheduledMessageDispatcher.test.js`
 
-- [ ] **Step 1: Read the existing dispatcher loop**
+- [ ] **Step 1: Read the dispatcher loop**
 
-  Find where each `scheduled_messages` row is read and sent. Identify the branches that handle `channel='sms'` and `channel='email'`. The new `channel='push'` branch slots in beside them.
+  Locate where each `scheduled_messages` row is read and sent. The dispatcher already exports `checkSuppression`; reuse it.
 
-- [ ] **Step 2: Add the kill-switch re-check**
+- [ ] **Step 2: Kill-switch re-check at send time**
 
-  Before any channel-specific send, read the user's `communication_preferences`. Skip + mark the row `suppressed` (existing terminal status) if the channel kill switch has flipped to false since enqueue.
+  Before any channel-specific send, read the user's `communication_preferences`. Skip + mark `'suppressed'` (terminal) if the channel kill switch has flipped to false since enqueue. Reuse the existing `checkSuppression` helper rather than duplicating the SELECT.
 
-  ```javascript
-  const { rows: userRows } = await client.query(
-    `SELECT communication_preferences AS comms,
-            staff_notification_preferences AS staff_prefs
-       FROM users WHERE id = $1`,
-    [row.user_id]
-  );
-  const { comms, staff_prefs } = userRows[0] || {};
+- [ ] **Step 3: Push channel branch**
 
-  if (row.channel === 'sms' && comms?.sms_enabled === false) {
-    await markSuppressed(row.id, 'sms_kill_switch');
-    continue;
-  }
-  if (row.channel === 'email' && comms?.email_enabled === false) {
-    await markSuppressed(row.id, 'email_kill_switch');
-    continue;
-  }
+  When `row.channel === 'push'`:
+  - Open a transaction. `SELECT users.staff_notification_preferences AS prefs FROM users WHERE id = $1 FOR UPDATE` (the FOR UPDATE is the race guard for concurrent prune).
+  - Iterate `prefs.push_subscriptions[]`. For each, call `pushSender.sendPush(...)`. Survivors stay; entries returning `gone:true` are filtered.
+  - If survivors.length !== subs.length, UPDATE the prefs JSONB with the filtered array.
+  - Mark the row `sent` if any sub succeeded; `failed` otherwise.
+  - COMMIT.
+
+- [ ] **Step 4: Sibling-suppression cascade**
+
+  When a row sends successfully, in the same transaction:
+
+  ```sql
+  UPDATE scheduled_messages
+     SET status = 'suppressed_by_sibling'
+   WHERE suppression_key = $1
+     AND id <> $2
+     AND status = 'pending';
   ```
 
-- [ ] **Step 3: Add the push channel branch**
+- [ ] **Step 5: Critical-path re-resolve loop**
 
-  ```javascript
-  if (row.channel === 'push') {
-    const subs = Array.isArray(staff_prefs?.push_subscriptions) ? staff_prefs.push_subscriptions : [];
-    if (subs.length === 0) {
-      await markSuppressed(row.id, 'no_push_subscriptions');
-      continue;
-    }
-    let anyOk = false;
-    const survivors = [];
-    for (const sub of subs) {
-      const result = await pushSender.sendPush({
-        subscription: { endpoint: sub.endpoint, keys: sub.keys },
-        title: row.payload.title,
-        body:  row.payload.body,
-        url:   row.payload.url,
-        tag:   row.payload.tag || row.category,
-        icon:  row.payload.icon,
-      });
-      if (result.ok) { anyOk = true; survivors.push(sub); }
-      else if (result.gone) { /* prune */ }
-      else { survivors.push(sub); }
-    }
-    if (survivors.length !== subs.length) {
-      await client.query(
-        `UPDATE users
-            SET staff_notification_preferences =
-                jsonb_set(staff_notification_preferences, '{push_subscriptions}', $2::jsonb, true)
-          WHERE id = $1`,
-        [row.user_id, JSON.stringify(survivors)]
-      );
-    }
-    await markSent(row.id, anyOk ? 'sent' : 'failed');
-    continue;
-  }
-  ```
+  When EVERY row in a `suppression_key` group reaches a terminal status (`'sent'` / `'failed'` / `'suppressed'` / `'suppressed_by_sibling'` / `'dead_letter'`) AND the group's category is in `CRITICAL_CATEGORIES` AND the group resolved with zero `'sent'` rows:
+  - Read `payload.re_resolve_count` (default 0).
+  - If `re_resolve_count >= 2`, mark all group rows `'dead_letter'`, fire `Sentry.captureMessage('critical_path_dead_letter', { user_id, category, suppression_key })`, and IF `process.env.ADMIN_PHONE` is set send a one-shot SMS to that number via `sendAndLogSms({ to: process.env.ADMIN_PHONE, body: "DR BARTENDER: critical message dead-lettered ..." })`. Done.
+  - Else call `pickChannelsForUserAndCategory(user_id, category)` for a fresh resolution. If it returns `dead_letter`, same terminal as above. If it returns channels, enqueue ONE new `scheduled_messages` row at the first resolved channel with a NEW `suppression_key` and `payload.re_resolve_count = old + 1`.
 
-  In Phase A, every push row resolves to `failed` (because `pushSender` is the stub). The dispatcher does not retry failed rows by default, so this is safe to ship early. Phase 10 / Task 45 swaps the stub.
+- [ ] **Step 6: Audit existing readers of scheduled_messages.status**
 
-- [ ] **Step 4: Suppression-key cascade**
+  Grep for `scheduled_messages.status` and `s.status` across the codebase. Any reader that filters with `status NOT IN ('sent','failed')` to find live work must be updated to also exclude `'suppressed_by_sibling'` and `'dead_letter'` (treat both as terminal). Document the affected files in a comment block in this task's commit message.
 
-  When a row sends successfully, also mark any sibling rows (same `suppression_key`, different `channel`) as `suppressed` IF the category's payload includes `single_delivery: true`. Default category payload omits the flag, so multi-channel delivery (push + SMS) still goes out for the same event.
+- [ ] **Step 7: Tests**
 
-- [ ] **Step 5: Tests**
+  - Kill-switch re-check at send time suppresses an enqueued SMS when sms_enabled flipped false
+  - Push branch iterates subs, prunes 410s, survives transient errors
+  - Push prune uses `SELECT FOR UPDATE` (concurrent dispatch test)
+  - Sibling-suppression cascade fires on first send
+  - Re-resolve increments counter; second re-resolve at counter=2 dead-letters
+  - Dead-letter triggers Sentry + ADMIN_PHONE SMS
 
-  Extend `scheduledMessageDispatcher.test.js` with:
-  - `sms_enabled=false` at send time skips the row even though it was enqueued
-  - `push` row iterates subscriptions; in Phase A stub mode, every row ends `failed`
-  - `payload.single_delivery=true` cascades to suppress siblings on success
-  - Critical-path messages still send via remaining channel when kill switches force re-routing
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
   ```bash
   git add server/utils/scheduledMessageDispatcher.js \
           server/utils/scheduledMessageDispatcher.test.js
-  git commit -m "feat(staff-portal): dispatcher kill-switch re-check + push branch (stub send)"
+  git commit -m "feat(staff-portal): dispatcher kill-switch + push + sibling cascade + re-resolve"
   ```
 
 ---
 
-### Task 6: Calendar feed extension (BEO-confirm all-day VEVENTs)
+### Task 8: Calendar feed extension
 
-**Spec ref:** Section 6.12 (Calendar sync).
+**Spec ref:** Section 6.12 (Calendar sync, BEO-confirm all-day VEVENTs + 30-day backward cutoff + debounced last_ics_fetch_at).
 
 **Files:**
 - Create: `server/utils/staffCalendarFeedExt.js`
 - Create: `server/utils/staffCalendarFeedExt.test.js`
 - Modify: `server/routes/calendar.js`
 
-- [ ] **Step 1: Read the existing `buildCalendarFeed` in `server/routes/calendar.js`**
+- [ ] **Step 1: Read the existing builder**
 
-  Locate the VEVENT composition loop. Identify the shape of the per-shift row data (date, start, end, location, etc.). The extension reuses the same row data plus a LEFT JOIN to `drink_plans` and `shift_requests` to determine `unconfirmed BEO` shifts.
+  `buildICalFeed` at `calendar.js:211`. Identify how shift rows feed into VEVENT composition. The route also currently has only a forward `+ 365 days` window (`calendar.js:307,319`); this task adds the backward `- 30 days` cutoff.
 
-- [ ] **Step 2: Implement the extension util**
+- [ ] **Step 2: Implement the BEO-confirm extension util**
 
   ```javascript
-  /**
-   * Compose all-day VEVENT entries for unconfirmed-BEO shifts.
-   * @param {Array<{shift_id, event_date, client_name, finalized_at, beo_acknowledged_at}>} rows
-   * @param {string} portalBaseUrl  e.g. 'https://staff.drbartender.com'
-   * @returns {string[]} array of VEVENT block strings
-   */
   function buildBeoConfirmVEvents(rows, portalBaseUrl) {
     const out = [];
     for (const row of rows) {
@@ -482,139 +704,217 @@
       const reminderDate = new Date(eventDate);
       reminderDate.setUTCDate(reminderDate.getUTCDate() - 3);
       const yyyymmdd = reminderDate.toISOString().slice(0, 10).replace(/-/g, '');
-      const safeClient = escapeIcs(row.client_name || 'client');
-      const url = `${portalBaseUrl}/shifts/${row.shift_id}`;
       out.push([
         'BEGIN:VEVENT',
         `UID:beo-confirm-${row.shift_id}@drbartender.com`,
         `DTSTAMP:${nowIcs()}`,
         `DTSTART;VALUE=DATE:${yyyymmdd}`,
         `DTEND;VALUE=DATE:${addDayIcs(yyyymmdd)}`,
-        `SUMMARY:Confirm BEO: ${safeClient}`,
-        `DESCRIPTION:Open the staff portal to confirm: ${url}`,
+        `SUMMARY:Confirm BEO: ${escapeIcs(row.client_name || 'client')}`,
+        `DESCRIPTION:Open the staff portal to confirm: ${portalBaseUrl}/shifts/${row.shift_id}`,
         'TRANSP:TRANSPARENT',
         'END:VEVENT',
       ].join('\r\n'));
     }
     return out;
   }
-
-  function escapeIcs(s) { return String(s).replace(/[\\,;]/g, x => '\\' + x).replace(/\n/g, '\\n'); }
-  function nowIcs() { return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, ''); }
-  function addDayIcs(yyyymmdd) {
-    const d = new Date(`${yyyymmdd.slice(0,4)}-${yyyymmdd.slice(4,6)}-${yyyymmdd.slice(6,8)}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() + 1);
-    return d.toISOString().slice(0, 10).replace(/-/g, '');
-  }
-
+  // ...escapeIcs / nowIcs / addDayIcs helpers as before...
   module.exports = { buildBeoConfirmVEvents };
   ```
 
-- [ ] **Step 3: Wire into `calendar.js`**
+- [ ] **Step 3: Wire into `calendar.js` `buildICalFeed`**
 
-  Locate the staff projection in `buildCalendarFeed`. Extend the SQL to LEFT JOIN `drink_plans` (for `finalized_at`) and re-project `beo_acknowledged_at` from the staffer's own `shift_request`. Call `buildBeoConfirmVEvents(rows, portalBaseUrl)` and append the strings to the existing VEVENT array before serializing.
+  - LEFT JOIN `drink_plans` (for `finalized_at`) + `shift_requests` (for `beo_acknowledged_at`) in the staff-side SELECT.
+  - Add backward cutoff: `AND s.event_date >= CURRENT_DATE - INTERVAL '30 days'`.
+  - After existing VEVENTs are composed, call `buildBeoConfirmVEvents(rows, portalBaseUrl)` and append the strings.
+  - `portalBaseUrl = process.env.STAFF_URL || 'https://staff.drbartender.com'`.
 
-  `portalBaseUrl` resolves to `process.env.STAFF_URL || 'https://staff.drbartender.com'`.
+- [ ] **Step 4: Debounced last_ics_fetch_at + User-Agent detection**
 
-- [ ] **Step 4: Tests**
+  After successful 200 response (NOT 304), and bounded by a 10-minute debounce window:
 
-  In `staffCalendarFeedExt.test.js`:
-  - Emits a VEVENT for each row with `finalized_at IS NOT NULL AND beo_acknowledged_at IS NULL`
-  - Skips already-acknowledged BEOs
+  ```sql
+  UPDATE users
+     SET last_ics_fetch_at = NOW(),
+         ui_preferences = jsonb_set(ui_preferences, '{calendar_subscribed_app}', $2::jsonb, true)
+   WHERE id = $1
+     AND (last_ics_fetch_at IS NULL OR last_ics_fetch_at < NOW() - INTERVAL '10 minutes');
+  ```
+
+  `$2` is the detected app from the User-Agent: `"google"` / `"apple"` / `"outlook"` / `"other"`. Detection is best-effort; check for `Calendar.google.com`, `Google-Calendar-Importer`, `iCal/`, `iOS/`, `Microsoft Office/Outlook` substrings.
+
+- [ ] **Step 5: Tests**
+
+  - Emits all-day VEVENT for unconfirmed-finalized BEO shifts
+  - Skips already-acked BEOs
   - Skips un-finalized drink plans
-  - DTSTART is exactly 3 days before `event_date` (test boundary cases)
-  - SUMMARY escapes commas, semicolons, backslashes in client name
-  - UID is stable per shift_id (idempotent across feed fetches)
+  - DTSTART is exactly 3 days before event_date (test DST transitions)
+  - 30-day backward cutoff filters out old shifts
+  - last_ics_fetch_at write is debounced (second fetch within 10 min does nothing)
 
-- [ ] **Step 5: Manual verification**
+- [ ] **Step 6: Manual verification**
 
   ```bash
-  curl -s "http://localhost:5000/api/calendar/feed/<a-test-token>" | grep -E 'Confirm BEO|TRANSP:TRANSPARENT'
+  curl -s "http://localhost:5000/api/calendar/feed/<test-token>" | grep -E 'Confirm BEO|TRANSP:TRANSPARENT'
   ```
-  Expected: at least one block when a test shift has an unconfirmed finalized BEO 3+ days out.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
   ```bash
   git add server/utils/staffCalendarFeedExt.js \
           server/utils/staffCalendarFeedExt.test.js \
           server/routes/calendar.js
-  git commit -m "feat(staff-portal): extend calendar feed with BEO-confirm all-day VEVENTs"
+  git commit -m "feat(staff-portal): extend calendar feed with BEO-confirm VEVENTs + last_ics_fetch_at"
   ```
 
 ---
 
-## Phase 3: Staff portal API (`/api/me/*`)
+## Phase 3: Auth + middleware companions
 
-### Task 7: staffPortal.js skeleton + GET /api/me/staff-home
+### Task 9: auth.js, suspended deny + token_version compare
 
-**Spec ref:** Section 6.2 (HomePage data sources), Section 8.1 (Server new).
+**Spec ref:** Section 10 (Authorization, suspended blocks portal access), Section 6.10 (token_version bump on email change).
+
+**Files:**
+- Modify: `server/middleware/auth.js`
+- Modify: `server/middleware/auth.test.js` (extend or create)
+
+- [ ] **Step 1: Read the existing deny-list**
+
+  Around lines 41-49: the `if` branch that denies `'deactivated'` and `'rejected'`. Extend to include `'suspended'`.
+
+- [ ] **Step 2: token_version compare**
+
+  In the JWT verification path: after the token decodes, compare `decoded.token_version === user.token_version`. Reject 401 with `{error: 'session_expired', reason: 'token_version_mismatch'}` if mismatch. Existing tokens signed before this change have no `token_version` field; treat missing as `1` for backwards compat.
+
+- [ ] **Step 3: Tests**
+
+  - Suspended user gets 401/403 (whichever the existing pattern returns)
+  - Token with stale `token_version` is rejected
+  - Token without `token_version` field is accepted (legacy-token transition)
+  - Token with matching version proceeds normally
+
+- [ ] **Step 4: Commit**
+
+  ```bash
+  git add server/middleware/auth.js server/middleware/auth.test.js
+  git commit -m "feat(staff-portal): auth middleware suspended deny + token_version check"
+  ```
+
+---
+
+### Task 10: jwt.js, embed token_version on sign
+
+**Spec ref:** Section 6.10 (companion to Task 9).
+
+**Files:**
+- Modify: `server/utils/jwt.js`
+- Modify: `server/utils/jwt.test.js` (extend or create)
+
+- [ ] **Step 1: Read the sign helper**
+
+  Find where the JWT payload is composed.
+
+- [ ] **Step 2: Embed token_version**
+
+  Add `token_version: user.token_version || 1` to the payload. The sign-time SELECT may need to project this column if it doesn't already.
+
+- [ ] **Step 3: Tests**, token_version is embedded; bumping the column produces a different token; the new token still parses.
+
+- [ ] **Step 4: Commit**
+
+  ```bash
+  git add server/utils/jwt.js server/utils/jwt.test.js
+  git commit -m "feat(staff-portal): embed token_version in JWT payload"
+  ```
+
+---
+
+### Task 11: payrollAccrual.js + autoAssign.js dropped_at filter
+
+**Spec ref:** Section 6.5 (Hybrid-state rule, every downstream consumer that reads `status='approved'` must also check `dropped_at IS NULL`).
+
+**Files:**
+- Modify: `server/utils/payrollAccrual.js`
+- Modify: `server/utils/autoAssign.js`
+- Modify: relevant test files
+
+- [ ] **Step 1: payrollAccrual.js update**
+
+  Around line 115: change `WHERE sr.status = 'approved'` → `WHERE sr.status = 'approved' AND sr.dropped_at IS NULL`. Without this update, emergency-dropped staffers accrue pay automatically when `accruePayoutsForProposal` fires on event completion.
+
+- [ ] **Step 2: autoAssign.js update**
+
+  Around line 142: same filter addition on the approved-seat count. Emergency-dropped seats should be treated as vacant for re-fill.
+
+- [ ] **Step 3: Tests**
+
+  - payrollAccrual: emergency-dropped staffer does NOT accrue
+  - autoAssign: emergency-dropped seat IS counted as vacant
+  - Normal-approved staffers still process normally
+
+- [ ] **Step 4: Commit**
+
+  ```bash
+  git add server/utils/payrollAccrual.js server/utils/payrollAccrual.test.js \
+          server/utils/autoAssign.js server/utils/autoAssign.test.js
+  git commit -m "feat(staff-portal): hybrid-state filter on payrollAccrual + autoAssign (dropped_at IS NULL)"
+  ```
+
+---
+
+## Phase 4: Staff portal API + admin cover-swap
+
+### Task 12: staffPortal.js skeleton + GET /api/me/staff-home
+
+**Spec ref:** Section 6.2 (HomePage), Section 8.1.
 
 **Files:**
 - Create: `server/routes/staffPortal.js`
 - Create: `server/routes/staffPortal.test.js`
 - Modify: `server/index.js`
 
-- [ ] **Step 1: Skeleton with auth + asyncHandler**
+- [ ] **Step 1: Skeleton with auth**
 
   ```javascript
   const express = require('express');
-  const Sentry = require('@sentry/node');
   const { pool } = require('../db');
   const { auth } = require('../middleware/auth');
   const asyncHandler = require('../middleware/asyncHandler');
-  const { ValidationError, NotFoundError } = require('../utils/errors');
+  const { ValidationError, NotFoundError, PermissionError, ConflictError } = require('../utils/errors');
 
   const router = express.Router();
   router.use(auth);
 
-  // GET /api/me/staff-home
-  router.get('/staff-home', asyncHandler(async (req, res) => {
-    // ... see step 2
-  }));
+  // GET /api/me/staff-home, composite payload
+  router.get('/staff-home', asyncHandler(async (req, res) => { /* step 2 */ }));
 
   module.exports = router;
   ```
 
-- [ ] **Step 2: Implement `/staff-home` composite**
+- [ ] **Step 2: Composite /staff-home**
 
-  Single Promise.all of 4 queries:
-  - Next upcoming approved shift (LEFT JOIN drink_plans for `finalized_at`, project `beo_acknowledged_at`)
-  - Pending shift requests for this user
-  - Cover-needed broadcasts (other users' shift_requests where `cover_requested_at IS NOT NULL`), with a derived `you_are_on_team` from the same proposal's shift_requests
-  - Current pay period summary (latest `payouts` row joined to `pay_periods`)
+  Promise.all of 4 queries:
+  - Next upcoming approved shift (LEFT JOIN drink_plans for `finalized_at`, project `beo_acknowledged_at`, FILTER `dropped_at IS NULL`)
+  - Pending shift_requests for this user
+  - Cover broadcasts: shift_requests rows where `cover_requested_at IS NOT NULL` and the requester is NOT this user, with `you_are_on_team` derived from same-proposal shift_requests
+  - Current pay period summary
 
-  Return the composite shape the HomePage expects:
-
-  ```javascript
-  res.json({
-    next_shift: ..., // ShiftCard payload or null
-    pending_requests: [...],
-    cover_broadcasts: [...],
-    current_period: { projected_cents, payday, event_count, period_id } | null,
-    open_shifts_teaser: [...] // top 2 open shifts
-  });
-  ```
+  Returns: `{ next_shift, pending_requests, cover_broadcasts, current_period, open_shifts_teaser }`.
 
 - [ ] **Step 3: Mount in `server/index.js`**
 
-  Add `app.use('/api/me', require('./routes/staffPortal'));` near the other route mounts.
+  ```javascript
+  app.use('/api/me', require('./routes/staffPortal'));
+  ```
 
-  Verify `/api/me/notification-preferences` (admin) and `/api/me/tip-page` (existing in `server/routes/me.js`) do NOT collide. The existing `/api/me` mount points to `server/routes/me.js`; the new mount needs to coexist. Two options:
-  - Move the new endpoints to `/api/me-staff/*` (cleaner, no risk of order-dependent middleware bugs)
-  - Mount staffPortal AFTER me.js so the existing routes match first
-
-  Use option 1 (`/api/me-staff/*`) ONLY IF the existing me.js already owns `/api/me`. Otherwise option 2. Decide based on the actual mount order in `server/index.js`. Update the client to match.
-
-  **Decision committed at plan time:** keep the URL space `/api/me/*` and merge by routing BOTH `server/routes/me.js` and `server/routes/staffPortal.js` under the same `/api/me` mount point, with `staffPortal` mounted second. Express resolves by registration order; the existing `me.js` paths win on collision, but there are no collisions (verify via `git grep "router.\(get\|post\|put\|patch\|delete\)" server/routes/me.js`).
+  The existing `server/routes/me.js` already owns `/api/me/tip-page`, `/api/me/tips`, `/api/me/notification-preferences` and is mounted at `/api/me`. Verify no path collisions: grep both files for the new endpoints; mount `staffPortal` AFTER `me.js` so existing paths win on any collision. Document any decision in the commit message.
 
 - [ ] **Step 4: Test**
 
-  In `staffPortal.test.js`:
-  - Insert a test user with one upcoming approved shift, one pending request, one teammate-cover request
-  - Hit `GET /api/me/staff-home` with a JWT for that user
-  - Assert all 5 keys present and shaped correctly
-  - Assert IDOR: a different user's JWT gets a different payload (no leakage)
+  - Composite payload shape
+  - IDOR: different user's JWT → different payload, no leakage
+  - Auth gate: no JWT → 401
 
 - [ ] **Step 5: Commit**
 
@@ -625,9 +925,9 @@
 
 ---
 
-### Task 8: Payment methods endpoints
+### Task 13: Payment methods endpoints
 
-**Spec ref:** Section 6.11 (AccountPage / Payment methods).
+**Spec ref:** Section 6.11 (Payment methods, encrypt/decrypt, partial-update, allowlist, audit log).
 
 **Files:**
 - Modify: `server/routes/staffPortal.js`
@@ -635,147 +935,54 @@
 
 - [ ] **Step 1: GET /api/me/payment-methods**
 
-  Project all handle columns from `payment_profiles` + `preferred_payment_method`. Render the conceptual Card row server-side with a stable shape. Read `users.ui_preferences.tip_card_order` to determine the rendered order.
-
-  ```javascript
-  router.get('/payment-methods', asyncHandler(async (req, res) => {
-    const { rows } = await pool.query(
-      `SELECT venmo_handle, cashapp_handle, paypal_url, zelle_handle,
-              routing_number, account_number, payment_username,
-              preferred_payment_method
-         FROM payment_profiles WHERE user_id = $1`,
-      [req.user.id]
-    );
-    const pp = rows[0] || {};
-    const { rows: uiRows } = await pool.query(
-      `SELECT ui_preferences FROM users WHERE id = $1`, [req.user.id]
-    );
-    const order = uiRows[0]?.ui_preferences?.tip_card_order || ['card', 'venmo', 'cashapp', 'paypal', 'zelle'];
-    res.json({
-      preferred: pp.preferred_payment_method,
-      tip_card_order: order,
-      methods: {
-        card:           { kind: 'card', label: 'Card payments', always_on: true, tip_eligible: true, payroll_eligible: false },
-        venmo:          { kind: 'venmo', handle: pp.venmo_handle, tip_eligible: true, payroll_eligible: true },
-        cashapp:        { kind: 'cashapp', handle: pp.cashapp_handle, tip_eligible: true, payroll_eligible: true },
-        paypal:         { kind: 'paypal', handle: pp.paypal_url, tip_eligible: true, payroll_eligible: true },
-        zelle:          { kind: 'zelle', handle: pp.zelle_handle, tip_eligible: true, payroll_eligible: true },
-        direct_deposit: { kind: 'direct_deposit', routing: pp.routing_number, account_last4: pp.account_number ? pp.account_number.slice(-4) : null, tip_eligible: false, payroll_eligible: true },
-        check:          { kind: 'check', tip_eligible: false, payroll_eligible: true },
-      },
-    });
-  }));
-  ```
-
-  Never project full `account_number` in any response; only the last 4. This is the bank-PII guard (see spec §10, §12).
+  Decrypt routing/account on read; project ONLY `routing_number_last4` and `account_number_last4` (computed from decrypted plaintext) to the client. Never project full ciphertext. If decrypt fails (corrupt ciphertext, missing key), return the field as `null` with a Sentry-captured error rather than 500ing the whole GET. For users with no `payment_profiles` row yet (new applicants), return a synthetic empty shape with all handles `null`.
 
 - [ ] **Step 2: PATCH /api/me/payment-methods**
 
-  Accepts a partial body. Validates each handle via `server/utils/tipHandleValidation.js` (existing). Writes only present keys. Null clears.
-
-  Critical: if the PATCH clears the handle for the currently-preferred method, auto-NULL `preferred_payment_method` in the same UPDATE. Use a transaction.
+  Strict allowlist as a hardcoded const:
 
   ```javascript
-  const ALLOWED = ['venmo_handle','cashapp_handle','paypal_url','zelle_handle','routing_number','account_number','payment_username'];
-  const HANDLE_TO_METHOD = {
-    venmo_handle: 'venmo', cashapp_handle: 'cashapp', paypal_url: 'paypal',
-    zelle_handle: 'zelle', routing_number: 'direct_deposit', account_number: 'direct_deposit',
-  };
-
-  router.patch('/payment-methods', asyncHandler(async (req, res) => {
-    const body = req.body || {};
-    const keys = Object.keys(body).filter(k => ALLOWED.includes(k));
-    if (keys.length === 0) throw new ValidationError({ _form: 'No editable fields in body.' });
-    // Format validation
-    const { normalizeTipHandlesInPlace } = require('../utils/tipHandleValidation');
-    normalizeTipHandlesInPlace(body); // throws ValidationError on bad format
-    // Direct-deposit pair guard: if one of routing/account is being cleared and the other is non-null, error
-    // (or auto-clear both, pick one; spec says reject 400 in the test list)
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const setClause = keys.map((k, i) => `${k} = $${i + 2}`).join(', ');
-      const values = keys.map(k => body[k]);
-      await client.query(
-        `UPDATE payment_profiles SET ${setClause}, updated_at = NOW() WHERE user_id = $1`,
-        [req.user.id, ...values]
-      );
-      // Auto-NULL preferred if its handle was cleared
-      const { rows } = await client.query(
-        `SELECT preferred_payment_method,
-                venmo_handle, cashapp_handle, paypal_url, zelle_handle,
-                routing_number, account_number
-           FROM payment_profiles WHERE user_id = $1`,
-        [req.user.id]
-      );
-      const pp = rows[0];
-      const handleByMethod = { venmo: pp.venmo_handle, cashapp: pp.cashapp_handle, paypal: pp.paypal_url, zelle: pp.zelle_handle, direct_deposit: pp.routing_number && pp.account_number };
-      if (pp.preferred_payment_method && pp.preferred_payment_method !== 'check' && !handleByMethod[pp.preferred_payment_method]) {
-        await client.query(
-          `UPDATE payment_profiles SET preferred_payment_method = NULL WHERE user_id = $1`,
-          [req.user.id]
-        );
-      }
-      await client.query('COMMIT');
-      res.json({ ok: true });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
-  }));
+  const ALLOWED_KEYS = new Set([
+    'venmo_handle','cashapp_handle','paypal_url','zelle_handle',
+    'routing_number','account_number','payment_username'
+  ]);
   ```
+
+  Any payload key NOT in the set → reject 400 BEFORE any DB read. Then:
+  1. Validate P2P handles via `tipHandleValidation` (Zelle branch from Task 6 included).
+  2. Validate routing (9-digit ABA checksum) and account (4-17 digit length) BEFORE encryption.
+  3. SELECT existing row `FOR UPDATE`.
+  4. For changed bank fields, call `encrypt(plaintext)` via `server/utils/encryption.js` (env var: `ENCRYPTION_KEY`; module fails-closed if unset). If only routing is in the body, leave account ciphertext untouched (no decrypt+re-encrypt). Same for account-only PATCH.
+  5. If decrypt of the UNCHANGED side fails (during the preferred-method-eligibility check), log Sentry with `{user_id, column}` but proceed with the PATCH on the changed field only. Do NOT block; admin tooling repairs corrupt ciphertext.
+  6. Auto-NULL `preferred_payment_method` if the cleared field was the preferred target.
+  7. COMMIT.
+  8. After commit, INSERT into `staff_audit_log` with `(user_id=req.user.id, actor_type='staff', actor_id=req.user.id, action='payment_method_change', details={fields_changed: [...], cleared: [...]})`.
 
 - [ ] **Step 3: PUT /api/me/preferred-payment-method**
 
-  ```javascript
-  const VALID_METHODS = ['venmo','cashapp','paypal','zelle','direct_deposit','check'];
+  Validates handle column populated for the target method. For direct_deposit: BOTH routing AND account non-null. For check: no handle required. INSERT audit log `action='preferred_payment_method_change'`, `details={from, to}`.
 
-  router.put('/preferred-payment-method', asyncHandler(async (req, res) => {
-    const { method } = req.body || {};
-    if (!VALID_METHODS.includes(method)) {
-      throw new ValidationError({ method: 'Invalid method.' });
-    }
-    const { rows } = await pool.query(
-      `SELECT venmo_handle, cashapp_handle, paypal_url, zelle_handle,
-              routing_number, account_number
-         FROM payment_profiles WHERE user_id = $1`,
-      [req.user.id]
-    );
-    const pp = rows[0] || {};
-    const handleByMethod = {
-      venmo: pp.venmo_handle, cashapp: pp.cashapp_handle, paypal: pp.paypal_url, zelle: pp.zelle_handle,
-      direct_deposit: pp.routing_number && pp.account_number,
-      check: true, // check has no handle, always eligible
-    };
-    if (!handleByMethod[method]) {
-      const field = { venmo: 'venmo_handle', cashapp: 'cashapp_handle', paypal: 'paypal_url',
-                      zelle: 'zelle_handle', direct_deposit: 'routing_number' }[method];
-      throw new ValidationError({ [field]: `Add a ${method} handle before setting it as preferred.` });
-    }
-    await pool.query(
-      `UPDATE payment_profiles SET preferred_payment_method = $2 WHERE user_id = $1`,
-      [req.user.id, method]
-    );
-    res.json({ ok: true });
-  }));
-  ```
+- [ ] **Step 4: Tests**
 
-- [ ] **Step 4: Tests** for the three endpoints. Cover: GET shape; PATCH null-clears + auto-NULL of preferred; PUT rejects when handle absent; IDOR.
+  - GET projects last-4 only, never raw
+  - PATCH unknown key rejected 400 pre-DB
+  - PATCH only-routing leaves account ciphertext untouched
+  - PATCH that clears preferred target auto-NULLs preferred_payment_method
+  - Audit log row written on every mutation
+  - Decrypt-fail on unchanged side: GET returns null + Sentry; PATCH proceeds on changed field
 
 - [ ] **Step 5: Commit**
 
   ```bash
   git add server/routes/staffPortal.js server/routes/staffPortal.test.js
-  git commit -m "feat(staff-portal): payment-methods GET/PATCH + preferred-method PUT"
+  git commit -m "feat(staff-portal): payment-methods endpoints with encryption + audit + allowlist"
   ```
 
 ---
 
-### Task 9: tip-card-order, profile, ui-preferences endpoints
+### Task 14: tip-card-order, profile, ui-preferences endpoints
 
-**Spec ref:** Section 6.8 (tip card order), 6.10 (Profile), 6.16 (Theme).
+**Spec ref:** Sections 6.8, 6.10, 6.16.
 
 **Files:**
 - Modify: `server/routes/staffPortal.js`
@@ -783,75 +990,34 @@
 
 - [ ] **Step 1: PUT /api/me/tip-card-order**
 
-  ```javascript
-  const ORDER_TOKENS = new Set(['card', 'venmo', 'cashapp', 'paypal', 'zelle']);
-
-  router.put('/tip-card-order', asyncHandler(async (req, res) => {
-    const { order } = req.body || {};
-    if (!Array.isArray(order)) throw new ValidationError({ order: 'Must be an array.' });
-    for (const tok of order) {
-      if (!ORDER_TOKENS.has(tok)) throw new ValidationError({ order: `Unknown method: ${tok}` });
-    }
-    await pool.query(
-      `UPDATE users
-          SET ui_preferences = jsonb_set(ui_preferences, '{tip_card_order}', $2::jsonb, true)
-        WHERE id = $1`,
-      [req.user.id, JSON.stringify(order)]
-    );
-    res.json({ ok: true });
-  }));
-  ```
+  Body `{ order: ['venmo','card','cashapp','paypal','zelle'] }`. Validate every token against an allowed set. Write to `users.ui_preferences.tip_card_order` via `jsonb_set`.
 
 - [ ] **Step 2: PATCH /api/me/profile**
 
-  Writes to `contractor_profiles`. Allowed fields: `preferred_name`, `phone`, `email`, `street_address`, `city`, `state`, `zip_code`, `emergency_contact_name`, `emergency_contact_phone`, `emergency_contact_relationship`. Validate phone format (E.164 via existing util), email format. Reject any other key.
+  Allowlist: `preferred_name`, `phone`, `street_address`, `city`, `state`, `zip_code`, `emergency_contact_name`, `emergency_contact_phone`, `emergency_contact_relationship`. **Email is NOT here**, email changes go through the separate `request-email-change` flow.
+
+  Server-side validation: phone format (E.164 via existing util), ZIP (5 or 5+4 digits), emergency contact fields each <= 100 chars. Writes to `contractor_profiles`.
+
+  Phone change audit: if `phone` is in body and differs from current value, INSERT `staff_audit_log` with `action='profile_phone_change'`, `details={old_phone_last4, new_phone_last4}`.
 
 - [ ] **Step 3: PATCH /api/me/ui-preferences**
 
-  Merges into the JSONB:
+  Allowlist: `theme` (must be `'light'` or `'dark'`), `calendar_subscribed_app`. Merge atomically via chained `jsonb_set`.
 
-  ```javascript
-  const UI_KEYS = new Set(['theme', 'calendar_subscribed_app']);
-  const VALID_THEMES = new Set(['light', 'dark']);
-
-  router.patch('/ui-preferences', asyncHandler(async (req, res) => {
-    const body = req.body || {};
-    const keys = Object.keys(body).filter(k => UI_KEYS.has(k));
-    if (keys.length === 0) throw new ValidationError({ _form: 'Provide at least one key.' });
-    if ('theme' in body && !VALID_THEMES.has(body.theme)) {
-      throw new ValidationError({ theme: 'theme must be light or dark' });
-    }
-    // Build a partial-merge update
-    const updates = keys.map((k, i) => `jsonb_set(ui_preferences, ARRAY['${k}'], $${i + 2}::jsonb, true)`);
-    // Chained jsonb_set
-    let expr = 'ui_preferences';
-    keys.forEach((k, i) => {
-      expr = `jsonb_set(${expr}, ARRAY['${k}'], $${i + 2}::jsonb, true)`;
-    });
-    await pool.query(
-      `UPDATE users SET ui_preferences = ${expr} WHERE id = $1`,
-      [req.user.id, ...keys.map(k => JSON.stringify(body[k]))]
-    );
-    res.json({ ok: true });
-  }));
-  ```
-
-  Note: `tip_card_order` goes via the dedicated PUT route, not through this PATCH. `ui-preferences` PATCH is for `theme` + `calendar_subscribed_app` only.
-
-- [ ] **Step 4: Tests** for the three endpoints. Tip-card-order rejects unknown tokens. Profile rejects unknown keys. UI-preferences merges atomically (concurrent PATCH theme + calendar_subscribed_app from two requests both land).
+- [ ] **Step 4: Tests**, order rejects unknown tokens, profile rejects email key, phone change writes audit row.
 
 - [ ] **Step 5: Commit**
 
   ```bash
   git add server/routes/staffPortal.js server/routes/staffPortal.test.js
-  git commit -m "feat(staff-portal): tip-card-order PUT, profile + ui-preferences PATCH"
+  git commit -m "feat(staff-portal): tip-card-order, profile (no email), ui-preferences endpoints"
   ```
 
 ---
 
-### Task 10: staff-notifications + push-subscriptions endpoints
+### Task 15: staff-notifications + push-subscriptions endpoints
 
-**Spec ref:** Section 6.13 (Notifications), 6.17 (Push infrastructure).
+**Spec ref:** Section 6.13 (Notifications), Section 6.17 (Push).
 
 **Files:**
 - Modify: `server/routes/staffPortal.js`
@@ -859,120 +1025,39 @@
 
 - [ ] **Step 1: GET /api/me/staff-notifications**
 
-  ```javascript
-  router.get('/staff-notifications', asyncHandler(async (req, res) => {
-    const { rows } = await pool.query(
-      `SELECT staff_notification_preferences AS prefs,
-              communication_preferences AS comms
-         FROM users WHERE id = $1`,
-      [req.user.id]
-    );
-    res.json({
-      prefs: rows[0]?.prefs || {},
-      comms: rows[0]?.comms || {},
-    });
-  }));
-  ```
+  Returns `{ prefs: staff_notification_preferences, comms: communication_preferences }`.
 
 - [ ] **Step 2: PATCH /api/me/staff-notifications**
 
-  Body shape: `{ channels: { [category]: ['push','sms',...] } }` OR `{ quiet_hours: {...} }`. Partial merge via `jsonb_set` per category key.
-
-  ```javascript
-  const VALID_CATEGORIES = new Set([
-    'shift_offered','shift_decided','cover_needed','beo_finalized',
-    'beo_reminder_t3','schedule_change','payday','tip_received'
-  ]);
-  const VALID_CHANNELS = new Set(['push','sms','email']);
-
-  router.patch('/staff-notifications', asyncHandler(async (req, res) => {
-    const { channels, quiet_hours } = req.body || {};
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      if (channels && typeof channels === 'object') {
-        for (const [cat, chs] of Object.entries(channels)) {
-          if (!VALID_CATEGORIES.has(cat)) throw new ValidationError({ [cat]: 'Unknown category.' });
-          if (!Array.isArray(chs)) throw new ValidationError({ [cat]: 'Must be an array.' });
-          const cleaned = [...new Set(chs.filter(c => VALID_CHANNELS.has(c)))];
-          await client.query(
-            `UPDATE users
-                SET staff_notification_preferences =
-                    jsonb_set(staff_notification_preferences, ARRAY['channels',$2], $3::jsonb, true)
-              WHERE id = $1`,
-            [req.user.id, cat, JSON.stringify(cleaned)]
-          );
-        }
-      }
-      if (quiet_hours !== undefined) {
-        await client.query(
-          `UPDATE users
-              SET staff_notification_preferences =
-                  jsonb_set(staff_notification_preferences, '{quiet_hours}', $2::jsonb, true)
-            WHERE id = $1`,
-          [req.user.id, JSON.stringify(quiet_hours)]
-        );
-      }
-      await client.query('COMMIT');
-      res.json({ ok: true });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
-  }));
-  ```
+  Body shape `{ channels: { [category]: ['push','sms',...] }, quiet_hours?: {...} }`. Validate categories + channels against allowed sets. Combined-state check: if the proposed save leaves EACH critical-path category (`beo_finalized`, `schedule_change`, `payday`) individually with no deliverable channel, reject 400 with `{field: '_form', error: 'Critical messages need at least one channel.'}`. Per-category, NOT aggregate. Partial merge via `jsonb_set`.
 
 - [ ] **Step 3: POST /api/me/push-subscriptions**
 
-  Body: `{ endpoint, keys: { p256dh, auth }, user_agent }`. Validates fields. Appends to the JSONB array, replacing any existing entry with the same `endpoint`.
-
-  ```javascript
-  router.post('/push-subscriptions', asyncHandler(async (req, res) => {
-    const { endpoint, keys, user_agent } = req.body || {};
-    if (!endpoint || !keys?.p256dh || !keys?.auth) {
-      throw new ValidationError({ _form: 'endpoint + keys.p256dh + keys.auth required.' });
-    }
-    const entry = { endpoint, keys, user_agent: user_agent || req.get('user-agent') || '', subscribed_at: new Date().toISOString() };
-    await pool.query(
-      `UPDATE users
-          SET staff_notification_preferences = jsonb_set(
-            staff_notification_preferences,
-            '{push_subscriptions}',
-            COALESCE(
-              (SELECT jsonb_agg(s) FROM jsonb_array_elements(
-                COALESCE(staff_notification_preferences->'push_subscriptions','[]'::jsonb)
-              ) AS s WHERE s->>'endpoint' <> $2) || $3::jsonb,
-              $3::jsonb
-            ),
-            true
-          )
-        WHERE id = $1`,
-      [req.user.id, endpoint, JSON.stringify([entry])]
-    );
-    res.json({ ok: true });
-  }));
-  ```
+  Body `{ endpoint, keys: { p256dh, auth }, user_agent }`. Server checks for existing entry with the same `endpoint`; if found, replace in place. Else append. **Cap at 10 active subscriptions per user**: if append would exceed 10, evict the OLDEST entry (by `subscribed_at`) in the same `jsonb_set` operation. Tie-breaker on identical timestamps: keep the entry with the lower array index.
 
 - [ ] **Step 4: DELETE /api/me/push-subscriptions**
 
-  Body: `{ endpoint }`. Filters the array.
+  Body `{ endpoint }`. Filter the array.
 
-- [ ] **Step 5: Tests**: partial PATCH preserves untouched categories, push-subscription POST deduplicates on endpoint, DELETE prunes.
+- [ ] **Step 5: Tests**
+
+  - Combined-state validation rejects per-category bad state
+  - Push-subscription POST replaces existing endpoint
+  - Push-subscription POST evicts oldest at cap=10
+  - Push-subscription DELETE prunes
 
 - [ ] **Step 6: Commit**
 
   ```bash
   git add server/routes/staffPortal.js server/routes/staffPortal.test.js
-  git commit -m "feat(staff-portal): staff-notifications + push-subscriptions endpoints"
+  git commit -m "feat(staff-portal): staff-notifications + push-subscriptions endpoints (cap+LRU)"
   ```
 
 ---
 
-### Task 11: Documents replace endpoint
+### Task 16: Documents replace endpoint
 
-**Spec ref:** Section 6.14 (Documents).
+**Spec ref:** Section 6.14.
 
 **Files:**
 - Modify: `server/routes/staffPortal.js`
@@ -980,343 +1065,575 @@
 
 - [ ] **Step 1: POST /api/me/documents/:doc_type/replace**
 
-  Multipart upload via `express-fileupload` (already in stack). Validates magic bytes via `server/utils/fileValidation.js`. Uploads to R2. Writes the previous URL into `staff_document_history` BEFORE updating the active record (so a partial failure preserves the audit trail).
+  Multipart. Steps in order:
 
-  ```javascript
-  const { validateUploadedFile } = require('../utils/fileValidation');
-  const { uploadToR2 } = require('../utils/storage');
+  1. Validate `doc_type` is `'w9'` or `'alcohol_certification'`.
+  2. For `alcohol_certification`, require body `expires_on` (date string, must be > CURRENT_DATE; reject 400 otherwise).
+  3. Validate uploaded file via `isValidUpload(file)` from `server/utils/fileValidation.js` (magic-byte check, PDF/PNG/JPEG only). Cap 10 MB; reject 413.
+  4. Slugify the original filename: `[A-Za-z0-9._-]` only, strip slashes / control chars / `..`.
+  5. Compose R2 key: `staff/${doc_type}/${user_id}/${Date.now()}_${slugifiedFilename}`.
+  6. Upload to R2 via `uploadFile(buffer, r2Key)` from `server/utils/storage.js`. If R2 fails, return 502.
+  7. Open transaction:
+     - SELECT current `payment_profiles` row (W-9) or `contractor_profiles` row (alcohol cert) `FOR UPDATE`.
+     - INSERT into `staff_document_history` with `replaced_by_user_id=req.user.id`.
+     - UPDATE the active record column(s) with the new R2 key:
+       - W-9 → `payment_profiles.w9_file_url` + `w9_filename`
+       - Alcohol cert → `contractor_profiles.alcohol_certification_file_url` + `_filename` + `alcohol_certification_expires_on=$expires_on`
+     - COMMIT.
 
-  const DOC_TYPES = {
-    w9: {
-      table: 'payment_profiles',
-      urlCol: 'w9_file_url',
-      nameCol: 'w9_filename',
-      r2Prefix: 'staff/w9',
-      mimeAllow: ['application/pdf', 'image/png', 'image/jpeg'],
-    },
-    alcohol_certification: {
-      table: 'contractor_profiles',
-      urlCol: 'alcohol_certification_file_url',
-      nameCol: 'alcohol_certification_filename',
-      r2Prefix: 'staff/alcohol-cert',
-      mimeAllow: ['application/pdf', 'image/png', 'image/jpeg'],
-    },
-  };
-
-  router.post('/documents/:doc_type/replace', asyncHandler(async (req, res) => {
-    const cfg = DOC_TYPES[req.params.doc_type];
-    if (!cfg) throw new NotFoundError('Unknown document type.');
-    const file = req.files?.file;
-    if (!file) throw new ValidationError({ file: 'No file uploaded.' });
-    await validateUploadedFile(file, { allowedMimes: cfg.mimeAllow });
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows: priorRows } = await client.query(
-        `SELECT ${cfg.urlCol} AS url, ${cfg.nameCol} AS filename FROM ${cfg.table} WHERE user_id = $1`,
-        [req.user.id]
-      );
-      const prior = priorRows[0] || {};
-      // Snapshot BEFORE upload to avoid losing history on R2 failure
-      await client.query(
-        `INSERT INTO staff_document_history (user_id, doc_type, previous_url, previous_filename, replaced_by_user_id)
-         VALUES ($1, $2, $3, $4, $1)`,
-        [req.user.id, req.params.doc_type, prior.url, prior.filename]
-      );
-      // Upload outside the txn? No: R2 is the slow part; keep the txn open or upload first.
-      // Decision: upload first, then write the active record + history together. Reorder:
-      //   1. Upload to R2 (returns new URL)
-      //   2. Open txn, INSERT history, UPDATE active record, COMMIT
-      // If R2 upload fails, nothing changes in the DB. If txn fails after upload, the R2 object is orphaned (acceptable).
-      await client.query('ROLLBACK'); // discard the speculative history insert
-      const newKey = `${cfg.r2Prefix}/${req.user.id}/${Date.now()}_${file.name}`;
-      const newUrl = await uploadToR2(file.data, newKey, file.mimetype);
-
-      await client.query('BEGIN');
-      await client.query(
-        `INSERT INTO staff_document_history (user_id, doc_type, previous_url, previous_filename, replaced_by_user_id)
-         VALUES ($1, $2, $3, $4, $1)`,
-        [req.user.id, req.params.doc_type, prior.url, prior.filename]
-      );
-      await client.query(
-        `UPDATE ${cfg.table} SET ${cfg.urlCol} = $2, ${cfg.nameCol} = $3 WHERE user_id = $1`,
-        [req.user.id, newUrl, file.name]
-      );
-      await client.query('COMMIT');
-      res.json({ ok: true, url: newUrl, filename: file.name });
-    } catch (err) {
-      try { await client.query('ROLLBACK'); } catch {}
-      throw err;
-    } finally {
-      client.release();
-    }
-  }));
-  ```
-
-  The history-then-active-record order inside the same txn ensures both succeed or neither does.
+  On any failure between steps 7 sub-steps, ROLLBACK. R2 orphan object is acceptable (cleanup sweep is a §13 follow-up).
 
 - [ ] **Step 2: Tests**
 
-  - W-9 replace writes to `payment_profiles.w9_file_url`, snapshots prior into history
-  - Alcohol cert replace writes to `contractor_profiles.alcohol_certification_file_url`
-  - Invalid mime returns 400, no history row, no active-record change
-  - R2 upload failure returns 5xx, no history row, no active-record change
+  - W-9 replace writes to `payment_profiles`
+  - Alcohol cert replace requires expires_on, writes 3 fields
+  - Invalid mime → 400, no history, no active-record change
+  - File > 10 MB → 413
+  - Path traversal in filename → sanitized
+  - R2 failure → 502, no DB changes
 
 - [ ] **Step 3: Commit**
 
   ```bash
   git add server/routes/staffPortal.js server/routes/staffPortal.test.js
-  git commit -m "feat(staff-portal): document replace endpoint with history snapshot"
+  git commit -m "feat(staff-portal): documents replace endpoint with R2-first ordering + slugify + cert expiry"
   ```
 
 ---
 
-### Task 12: staffPortal.test.js round-out
+### Task 17: Email-change request + cancel endpoints (auth-gated)
 
-**Spec ref:** §11 Testing approach, "staffPortal.test.js" sub-list.
+**Spec ref:** Section 6.10.
+
+**Files:**
+- Modify: `server/routes/staffPortal.js`
+- Modify: `server/routes/staffPortal.test.js`
+- Modify: `server/middleware/rateLimiters.js` (new limiter)
+
+- [ ] **Step 1: Rate-limiter**
+
+  Add `emailChangeRequestLimiter`: 3 requests per user per 24h. Mount in `rateLimiters.js`.
+
+- [ ] **Step 2: POST /api/me/request-email-change**
+
+  Body `{ new_email }`. Auth-gated. Rate-limited.
+
+  1. Validate format. Reject 409 if any other `users.email = new_email`.
+  2. Mark any prior pending row for THIS user as `consumed_at=NOW()` (superseded).
+  3. INSERT into `pending_email_changes` with `(user_id=req.user.id, new_email, token_hash=sha256(rawToken), expires_at=NOW()+'24 hours')`. Use `ON CONFLICT (LOWER(new_email)) DO NOTHING` per the partial unique index from Task 1. If 0 rows affected, return 409 `reason='already_pending'` (another user has a pending change to this email).
+  4. Send two emails: `emailChangeVerification` to the NEW address (contains the raw token in a link to `/verify-email/:token`); `emailChangeWarning` to the OLD address (informs of the request with a "wasn't me, cancel via Profile" line).
+  5. INSERT into `staff_audit_log` with `action='email_change_requested'`, `details={new_email}`.
+
+- [ ] **Step 3: POST /api/me/cancel-pending-email-change**
+
+  Auth-gated. Marks the requesting user's pending row(s) `consumed_at=NOW()`.
+
+- [ ] **Step 4: Tests**
+
+  - Format invalid → 400
+  - Same email as current → 400
+  - Email in use elsewhere → 409 email_in_use
+  - Race: two POSTs in flight → one wins via UNIQUE index, the other gets 409 already_pending
+  - Rate-limit fires on 4th request in 24h
+  - Cancel marks pending row consumed_at
+
+- [ ] **Step 5: Commit**
+
+  ```bash
+  git add server/routes/staffPortal.js server/routes/staffPortal.test.js \
+          server/middleware/rateLimiters.js
+  git commit -m "feat(staff-portal): email-change request + cancel endpoints (rate-limited)"
+  ```
+
+---
+
+### Task 18: Email-change confirm endpoint (unauthenticated)
+
+**Spec ref:** Section 6.10 (confirm-by-token-hash, not by req.user.id).
+
+**Files:**
+- Create: `server/routes/emailChange.js`
+- Create: `server/routes/emailChange.test.js`
+- Modify: `server/index.js`
+
+- [ ] **Step 1: Skeleton (no auth middleware)**
+
+  ```javascript
+  const express = require('express');
+  const crypto = require('crypto');
+  const { pool } = require('../db');
+  const asyncHandler = require('../middleware/asyncHandler');
+  const { ValidationError, NotFoundError } = require('../utils/errors');
+
+  const router = express.Router();
+  // Note: NO router.use(auth), confirm is unauthenticated by design (§6.10)
+
+  router.post('/confirm-email-change', asyncHandler(async (req, res) => { /* step 2 */ }));
+
+  module.exports = router;
+  ```
+
+- [ ] **Step 2: Implement /confirm-email-change**
+
+  1. Body `{ token }`.
+  2. `token_hash = crypto.createHash('sha256').update(token).digest('hex')`.
+  3. SELECT the matching row: `WHERE token_hash = $1 AND consumed_at IS NULL AND expires_at > NOW()`. If none, return 410 `reason='invalid_or_expired'`. Use `crypto.timingSafeEqual` to confirm the hash match after fetch (defense against edge timing attacks).
+  4. Open transaction:
+     - SELECT current `users.email` for the affected user.
+     - UPDATE `users SET email = $new_email, token_version = token_version + 1 WHERE id = $user_id`.
+     - UPDATE `pending_email_changes SET consumed_at = NOW() WHERE id = $row_id`.
+     - INSERT into `staff_audit_log` with `action='email_change_confirmed'`, `details={old_email, new_email}`.
+     - COMMIT.
+  5. Send `emailChangeConfirmed` email to the OLD address.
+  6. Return 200 with `{ ok: true }`.
+
+- [ ] **Step 3: Mount in `server/index.js`**
+
+  ```javascript
+  app.use('/api/me', require('./routes/emailChange'));
+  ```
+
+  Mount this BEFORE the auth middleware applies to the catch-all `/api/me/*` paths. The router has no `auth` middleware so the order matters, confirm via curl that an unauthenticated POST reaches the handler.
+
+- [ ] **Step 4: Tests**
+
+  - Valid token confirms, bumps token_version
+  - Expired token → 410
+  - Consumed token → 410
+  - Unknown token → 410
+  - Lookup is by token_hash NOT by req.user.id (auth header ignored even if present)
+  - Audit log row written
+  - emailChangeConfirmed email sent to old address
+
+- [ ] **Step 5: Commit**
+
+  ```bash
+  git add server/routes/emailChange.js server/routes/emailChange.test.js server/index.js
+  git commit -m "feat(staff-portal): unauthenticated email-change confirm endpoint"
+  ```
+
+---
+
+### Task 19: Admin cover-swap routes
+
+**Spec ref:** Section 6.5 (admin one-click approve via JWT swapToken).
+
+**Files:**
+- Create: `server/routes/adminCoverSwaps.js`
+- Create: `server/routes/adminCoverSwaps.test.js`
+- Modify: `server/index.js`
+
+- [ ] **Step 1: Skeleton with auth + admin guard + JWT verify**
+
+  ```javascript
+  const express = require('express');
+  const jwt = require('jsonwebtoken');
+  const { pool } = require('../db');
+  const { auth, requireAdminOrManager } = require('../middleware/auth');
+  const asyncHandler = require('../middleware/asyncHandler');
+  const { ValidationError, NotFoundError } = require('../utils/errors');
+
+  const router = express.Router();
+  router.use(auth);
+  router.use(requireAdminOrManager);
+
+  function verifySwapToken(token) {
+    try {
+      return jwt.verify(token, process.env.JWT_SECRET);
+    } catch {
+      return null;
+    }
+  }
+
+  router.get('/cover-swaps/:swapToken', asyncHandler(async (req, res) => { /* step 2 */ }));
+  router.post('/cover-swaps/:swapToken', asyncHandler(async (req, res) => { /* step 3 */ }));
+
+  module.exports = router;
+  ```
+
+- [ ] **Step 2: GET, render the confirm payload**
+
+  1. `decoded = verifySwapToken(req.params.swapToken)`. If null, return 410 with `reason='expired_or_invalid'` (the client renders an "expired link" page).
+  2. Look up `original_request` and `new_request` by IDs from the JWT.
+  3. If `original_request.cover_requested_at IS NULL` (cascade already ran), return 200 with `{ status: 'already_resolved' }`.
+  4. Else return 200 with `{ status: 'pending', original_request, new_request, shift, original_user, new_user }`.
+
+- [ ] **Step 3: POST, trigger the cascade**
+
+  1. Same JWT verification + already-resolved guard.
+  2. Call into the existing `PUT /api/shifts/requests/:requestId` approval branch with the swap context. The cascade itself lives in Task 23 of Phase 5.
+  3. Return 200 on success.
+
+- [ ] **Step 4: Mount in `server/index.js`**
+
+  ```javascript
+  app.use('/api/admin', require('./routes/adminCoverSwaps'));
+  ```
+
+- [ ] **Step 5: Tests**
+
+  - Auth-gated: no JWT → 401
+  - Non-admin → 403
+  - Valid JWT but already resolved → 200 with `status='already_resolved'`
+  - Invalid JWT → 410
+  - Expired JWT (manually crafted) → 410
+  - Replay after cascade → already_resolved (idempotency)
+
+- [ ] **Step 6: Commit**
+
+  ```bash
+  git add server/routes/adminCoverSwaps.js server/routes/adminCoverSwaps.test.js server/index.js
+  git commit -m "feat(staff-portal): admin cover-swap routes with JWT swapToken + auth guard"
+  ```
+
+---
+
+### Task 20: staffPortal / emailChange / adminCoverSwaps test round-out
+
+**Spec ref:** §11 Testing approach.
 
 **Files:**
 - Modify: `server/routes/staffPortal.test.js`
+- Modify: `server/routes/emailChange.test.js`
+- Modify: `server/routes/adminCoverSwaps.test.js`
 
-- [ ] **Step 1: IDOR test pass**
+- [ ] **Step 1: IDOR pass**
 
-  For every PATCH / PUT / POST / DELETE endpoint added in Tasks 7-11, add a paired test that authenticates as user B and tries to mutate user A's data. Assert 403 (or 404, depending on the existing error pattern) and verify user A's row is unchanged.
+  Every PATCH / PUT / POST / DELETE on `/api/me/*`: authenticate as user B, try to mutate user A's data. Assert 403 / 404 (per existing error pattern) and verify user A's row is unchanged.
 
-- [ ] **Step 2: Auth gate pass**
+- [ ] **Step 2: Auth pass**
 
-  For every endpoint, hit it without a JWT. Assert 401.
+  Every endpoint that requires auth: hit without JWT, assert 401. Confirm endpoint that does NOT require auth: hit without JWT, ensure it reaches the handler.
 
-- [ ] **Step 3: Run the whole file**
+- [ ] **Step 3: Run + commit**
 
   ```bash
-  node --test server/routes/staffPortal.test.js
+  node --test server/routes/staffPortal.test.js \
+              server/routes/emailChange.test.js \
+              server/routes/adminCoverSwaps.test.js
+  git add server/routes/staffPortal.test.js \
+          server/routes/emailChange.test.js \
+          server/routes/adminCoverSwaps.test.js
+  git commit -m "test(staff-portal): IDOR + auth-gate coverage across new endpoints"
   ```
+
+---
+
+## Phase 5: Drop / Cover marketplace
+
+### Task 21: SMS + email templates
+
+**Spec ref:** §6.5 (cover_broadcast_sms, staff_drop_to_management_sms front-loaded), §6.10 (email-change templates).
+
+**Files:**
+- Modify: `server/utils/smsTemplates.js`
+- Modify: `server/utils/smsTemplates.test.js`
+- Modify: `server/utils/lifecycleEmailTemplates.js`
+- Modify: `server/utils/lifecycleEmailTemplates.test.js`
+
+- [ ] **Step 1: SMS templates**
+
+  - `cover_broadcast_sms({ first_initial_last_initial, client_name, event_date_short, shift_role, shift_url })`
+  - `staff_drop_to_management_sms({ staff_name, client_name, event_date_short, hours_to_event, reason })`, front-load: `"EMERGENCY DROP from ${staff_name}: ${reason_first_80}"` then append shift info.
+
+- [ ] **Step 2: Email templates**
+
+  - `emailChangeVerification({ new_email, token, expires_in_hours })`
+  - `emailChangeWarning({ old_email, new_email, cancel_url })`
+  - `emailChangeConfirmed({ old_email, new_email })`
+
+- [ ] **Step 3: Tests**, char-budget checks for SMS, template-data-substitution checks for email.
 
 - [ ] **Step 4: Commit**
 
   ```bash
-  git add server/routes/staffPortal.test.js
-  git commit -m "test(staff-portal): IDOR + auth-gate coverage across staffPortal endpoints"
+  git add server/utils/smsTemplates.js server/utils/smsTemplates.test.js \
+          server/utils/lifecycleEmailTemplates.js server/utils/lifecycleEmailTemplates.test.js
+  git commit -m "feat(staff-portal): SMS + email templates for cover broadcast, emergency drop, email change"
   ```
 
 ---
 
-## Phase 4: Drop / Cover marketplace
+### Task 22: broadcastCoverRequest helper
 
-### Task 13: SMS templates
-
-**Spec ref:** §3.3 (Drop / Cover marketplace), §6.5 (Drop / Cover flow).
-
-**Files:**
-- Modify: `server/utils/smsTemplates.js`
-- Modify: `server/utils/smsTemplates.test.js` (if exists; otherwise create)
-
-- [ ] **Step 1: Add `cover_broadcast_sms` and `staff_drop_to_management_sms`**
-
-  ```javascript
-  // Sent to qualified opted-in teammates when a staffer requests a cover
-  function cover_broadcast_sms({ first_initial_last_initial, client_name, event_date_short, shift_role, shift_url }) {
-    return `Dr Bartender: ${first_initial_last_initial} needs a cover on ${event_date_short} (${client_name}, ${shift_role}). Grab it: ${shift_url}`;
-  }
-
-  // Sent to management when an emergency drop fires
-  function staff_drop_to_management_sms({ staff_name, client_name, event_date_short, hours_to_event, reason }) {
-    return `Dr Bartender ALERT: ${staff_name} dropped ${client_name} ${event_date_short} (${hours_to_event}h out). Reason: ${reason}`;
-  }
-  ```
-
-  Keep within 160 chars where possible. Long reasons get truncated to fit.
-
-- [ ] **Step 2: Test that compiled output fits within the SMS character budget** (existing tests already do this for other templates).
-
-- [ ] **Step 3: Commit**
-
-  ```bash
-  git add server/utils/smsTemplates.js server/utils/smsTemplates.test.js
-  git commit -m "feat(staff-portal): cover-broadcast + drop-to-management SMS templates"
-  ```
-
----
-
-### Task 14: staffShiftHandlers cover-broadcast scheduling helper
-
-**Spec ref:** §6.5 (Drop / Cover flow), §6.13 (multi-row enqueue).
+**Spec ref:** §6.5 (qualified-teammate filter, transaction-split pattern, 500-cap, positions_needed tolerance).
 
 **Files:**
 - Modify: `server/utils/staffShiftHandlers.js`
 - Modify: `server/utils/staffShiftHandlers.test.js`
 
-- [ ] **Step 1: Add `broadcastCoverRequest(shiftId, requestingUserId)` helper**
-
-  Steps inside:
-  1. Look up the shift's role + event_date, client_name, proposal_id.
-  2. Query qualified teammates: users with matching role + `onboarding_status='approved'`, NOT the requesting user, who have `cover_needed` in their `staff_notification_preferences.channels` for at least one channel.
-  3. Chunk teammates into batches of 50 (Twilio rate-limit guard).
-  4. For each teammate, call `enqueueCategorizedMessage` with category `'cover_needed'`, payload containing the SMS template fields + push title/body/url.
-  5. Wrap the per-chunk loop in `await sleep(1000)` between chunks for additional backoff.
+- [ ] **Step 1: Implement broadcastCoverRequest**
 
   ```javascript
-  const { enqueueCategorizedMessage } = require('./scheduledMessages');
+  const { enqueueCategorizedMessage } = require('./messageScheduling');
 
-  async function broadcastCoverRequest(shiftId, requestingUserId, client = pool) {
-    const { rows: shiftRows } = await client.query(`
-      SELECT s.id AS shift_id, s.position, s.event_date,
+  /**
+   * Returns { broadcast_count, broadcast_truncated }.
+   * NOT a transaction. Caller must have already committed the cover_requested_at flip.
+   */
+  async function broadcastCoverRequest(shiftId, requestingUserId) {
+    // Step 1: read shift context (no row lock; the cover-request endpoint already committed)
+    const { rows: shiftRows } = await pool.query(`
+      SELECT s.id AS shift_id, s.positions_needed, s.event_date,
              p.client_name, p.id AS proposal_id
         FROM shifts s
         LEFT JOIN proposals p ON p.id = s.proposal_id
        WHERE s.id = $1
     `, [shiftId]);
-    if (shiftRows.length === 0) return [];
+    if (shiftRows.length === 0) return { broadcast_count: 0, broadcast_truncated: false };
     const shift = shiftRows[0];
 
-    const { rows: requesterRows } = await client.query(
-      `SELECT preferred_name FROM contractor_profiles WHERE user_id = $1`, [requestingUserId]
-    );
-    const requesterFirstInitial = (requesterRows[0]?.preferred_name || '').trim()[0]?.toUpperCase() || '?';
+    // Parse positions_needed tolerantly (heterogeneous shape; see §6.5)
+    let positionsNeeded = [];
+    try {
+      const parsed = JSON.parse(shift.positions_needed || '[]');
+      positionsNeeded = parsed.map(p => typeof p === 'string' ? p : p.position).filter(Boolean);
+    } catch { positionsNeeded = ['bartender']; }
 
-    const { rows: teammates } = await client.query(`
-      SELECT u.id
+    // Step 2: resolve qualified teammates (500-cap, sorted by user_id ASC for determinism)
+    const { rows: teammates } = await pool.query(`
+      SELECT u.id, cp.preferred_name
         FROM users u
-        WHERE u.onboarding_status = 'approved'
-          AND u.id <> $1
-          AND (u.staff_notification_preferences->'channels'->'cover_needed') @> '["push"]'::jsonb
-          AND EXISTS (
-            SELECT 1 FROM contractor_profiles cp
-             WHERE cp.user_id = u.id
-               AND COALESCE(cp.role_filter, 'bartender') = $2
-          )
-    `, [requestingUserId, shift.position || 'bartender']);
+        JOIN contractor_profiles cp ON cp.user_id = u.id
+       WHERE u.onboarding_status = 'approved'
+         AND u.id <> $1
+         AND cp.position = ANY($2::text[])
+         AND (u.staff_notification_preferences->'channels'->'cover_needed') <> '[]'::jsonb
+         AND NOT EXISTS (
+           SELECT 1 FROM shift_requests sr
+            WHERE sr.user_id = u.id
+              AND sr.status = 'approved'
+              AND sr.dropped_at IS NULL
+              AND EXISTS (SELECT 1 FROM shifts s2 WHERE s2.id = sr.shift_id AND s2.event_date = $3)
+         )
+       ORDER BY u.id ASC
+       LIMIT 501
+    `, [requestingUserId, positionsNeeded, shift.event_date]);
 
-    const ids = teammates.map(r => r.id);
-    const CHUNK = 50;
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      const chunk = ids.slice(i, i + CHUNK);
-      await Promise.all(chunk.map(uid => enqueueCategorizedMessage({
-        userId: uid,
+    const truncated = teammates.length > 500;
+    const targets = teammates.slice(0, 500);
+
+    // Step 3: requester display
+    const { rows: requesterRows } = await pool.query(
+      `SELECT cp.preferred_name FROM contractor_profiles cp WHERE cp.user_id = $1`,
+      [requestingUserId]
+    );
+    const requesterInitial = (requesterRows[0]?.preferred_name || '').trim()[0]?.toUpperCase() || '?';
+
+    // Step 4: chunk enqueue (25 rows per batch, 250ms application-level delay between)
+    const CHUNK = 25;
+    let totalEnqueued = 0;
+    for (let i = 0; i < targets.length; i += CHUNK) {
+      const chunk = targets.slice(i, i + CHUNK);
+      await Promise.all(chunk.map(t => enqueueCategorizedMessage({
+        userId: t.id,
         category: 'cover_needed',
         payload: {
           title: 'Cover needed',
-          body:  `${requesterFirstInitial}. needs a cover on ${formatShortDate(shift.event_date)}`,
+          body:  `${requesterInitial}. needs a cover on ${formatShortDate(shift.event_date)}`,
           url:   `https://staff.drbartender.com/shifts/${shift.shift_id}`,
           sms_template: 'cover_broadcast_sms',
-          sms_args: { first_initial_last_initial: requesterFirstInitial + '.', client_name: shift.client_name, event_date_short: formatShortDate(shift.event_date), shift_role: shift.position || 'bartender', shift_url: `https://staff.drbartender.com/shifts/${shift.shift_id}` },
+          sms_args: {
+            first_initial_last_initial: `${requesterInitial}.`,
+            client_name: shift.client_name,
+            event_date_short: formatShortDate(shift.event_date),
+            shift_role: positionsNeeded[0] || 'bartender',
+            shift_url: `https://staff.drbartender.com/shifts/${shift.shift_id}`,
+          },
         },
         sendAt: new Date(),
-        anchorEntityType: 'shift_request',
-        anchorEntityId: shift.shift_id,
-        suppressionKey: `cover_broadcast:${shift.shift_id}:${uid}`,
-      }, client)));
-      if (i + CHUNK < ids.length) await new Promise(r => setTimeout(r, 1000));
+        entityType: 'shift',
+        entityId: shift.shift_id,
+        messageType: 'cover_broadcast',
+      })));
+      totalEnqueued += chunk.length;
+      if (i + CHUNK < targets.length) await new Promise(r => setTimeout(r, 250));
     }
-    return ids;
+
+    return { broadcast_count: totalEnqueued, broadcast_truncated: truncated };
   }
 
   module.exports.broadcastCoverRequest = broadcastCoverRequest;
   ```
 
-  Verify the role-filter column name against `contractor_profiles` actual schema; adjust the WHERE clause to match.
+- [ ] **Step 2: Tests**
 
-- [ ] **Step 2: Tests**: broadcasts to qualified teammates only, excludes requester, chunks at 50, skips opt-out teammates.
+  - Broadcasts to qualified teammates only (position match)
+  - Excludes requesting user
+  - Excludes muted users (cover_needed channels empty)
+  - Excludes teammates already on a same-date approved shift (`dropped_at IS NULL`)
+  - Truncates at 500 with flag set
+  - positions_needed JSON-object shape parsed correctly (`{position: 'bartender'}` style)
+  - positions_needed string shape parsed correctly (`'bartender'` style)
 
 - [ ] **Step 3: Commit**
 
   ```bash
   git add server/utils/staffShiftHandlers.js server/utils/staffShiftHandlers.test.js
-  git commit -m "feat(staff-portal): cover-broadcast scheduling helper with rate-limit chunking"
+  git commit -m "feat(staff-portal): broadcastCoverRequest helper with positions tolerance + 500-cap"
   ```
 
 ---
 
-### Task 15: POST /api/shifts/requests/:id/drop (clean drop)
+### Task 23: POST /api/shifts/requests/:requestId/drop (clean drop)
 
-**Spec ref:** §3.3 (clean drop ≥14d, 336h).
+**Spec ref:** §6.5 (Clean drop endpoint).
 
 **Files:**
 - Modify: `server/routes/shifts.js`
 - Modify: `server/routes/shifts.test.js`
 
-- [ ] **Step 1: Read the existing shift_request mutation routes**
+- [ ] **Step 1: Implement the route**
 
-  Find existing patterns for shift-request lifecycle (deny, withdraw, etc.). The drop route mirrors them.
+  Inside one transaction:
+  1. SELECT request + linked shift + proposal `FOR UPDATE` on the shift_requests row. Also LEFT JOIN `payout_events → payouts → pay_periods` to read `pay_period_status`.
+  2. Verify ownership, pay-period not `'processing'` (NULL is fine, no payout yet), `hoursToEvent(shift) >= 336` (via the new `shiftTime.js` helper).
+  3. UPDATE `shift_requests SET status='denied', dropped_at=NOW(), drop_reason='clean_drop'`.
+  4. UPDATE the linked `shifts.status='open'` if no other `approved AND dropped_at IS NULL` staffer remains.
+  5. Suppress all pending `scheduled_messages` rows targeting this user for this shift:
 
-- [ ] **Step 2: Implement the route**
+     ```sql
+     UPDATE scheduled_messages
+        SET status = 'suppressed'
+      WHERE entity_type = 'shift' AND entity_id = $1
+        AND recipient_id = $2 AND status = 'pending';
+     ```
 
-  ```javascript
-  router.post('/requests/:id/drop', asyncHandler(async (req, res) => {
-    const requestId = parseInt(req.params.id, 10);
-    if (!requestId) throw new ValidationError({ id: 'Invalid request id.' });
+  6. Call existing `notifyAdminCategory({ category: 'urgent_staffing', subject, emailHtml, emailText, ...(daysOut <= 7 ? { smsBody } : {}) })`.
+  7. COMMIT.
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows } = await client.query(`
-        SELECT sr.id, sr.user_id, sr.shift_id, sr.status,
-               s.event_date, s.event_start_time,
-               p.id AS proposal_id, p.client_name,
-               pp.id AS pay_period_id, pp.status AS pay_period_status
-          FROM shift_requests sr
-          JOIN shifts s ON s.id = sr.shift_id
-          LEFT JOIN proposals p ON p.id = s.proposal_id
-          LEFT JOIN payout_events pe ON pe.shift_id = s.id
-          LEFT JOIN payouts po ON po.id = pe.payout_id
-          LEFT JOIN pay_periods pp ON pp.id = po.pay_period_id
-         WHERE sr.id = $1 FOR UPDATE
-      `, [requestId]);
-      if (rows.length === 0) throw new NotFoundError('Request not found.');
-      const sr = rows[0];
-      if (sr.user_id !== req.user.id) throw new PermissionError('Not your request.');
-      if (sr.status !== 'approved') throw new ConflictError('Only approved shifts can be dropped.');
+- [ ] **Step 2: Tests**
 
-      // 14-day boundary (336 hours)
-      const eventDateTime = new Date(`${sr.event_date}T${sr.event_start_time || '00:00:00'}`);
-      const hoursToEvent = (eventDateTime - Date.now()) / 3_600_000;
-      if (hoursToEvent < 336) {
-        throw new ConflictError('Use request-cover (<14d) or emergency-drop (<72h) instead.');
-      }
-      if (sr.pay_period_status === 'processing') {
-        throw new ConflictError('Pay period is processing; cannot drop now. Contact management.');
-      }
+  - 14d+1h succeeds
+  - 13d 23h returns 409 wrong_mode
+  - pay_period 'processing' returns 409 pay_period_processing
+  - NULL payout_events passes through (no processing period exists)
+  - Other approved staffers still on shift: shifts.status not flipped
+  - All staffers off shift: shifts.status flips to 'open'
+  - Other scheduled_messages targeting this user+shift suppressed
+  - IDOR: not your shift → 403
 
-      // Mark the request as dropped
-      await client.query(
-        `UPDATE shift_requests
-            SET status = 'denied', dropped_at = NOW(), drop_emergency = false
-          WHERE id = $1`,
-        [requestId]
-      );
+- [ ] **Step 3: Commit**
 
-      // Email management
-      // (use existing notifyAdminCategory or sendEmail helper; defer the SMS branch here since clean drops are email-only)
-      await notifyManagementOfDrop({ kind: 'clean', requestId, userId: req.user.id, shiftId: sr.shift_id, clientName: sr.client_name });
-
-      await client.query('COMMIT');
-      res.json({ ok: true });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
-  }));
+  ```bash
+  git add server/routes/shifts.js server/routes/shifts.test.js
+  git commit -m "feat(staff-portal): POST /requests/:id/drop (clean drop ≥14d)"
   ```
 
-  `notifyManagementOfDrop` is a small private helper that calls `notifyAdminCategory('urgent_staffing', ...)` with kind-specific copy.
+---
 
-- [ ] **Step 3: Tests**: 14d+1h succeeds; 13d 23h returns 409; pay_period 'processing' returns 409; non-approved status returns 409; IDOR returns 403.
+### Task 24: POST /api/shifts/requests/:requestId/request-cover
+
+**Spec ref:** §6.5 (Transaction A + outside-batch broadcast).
+
+**Files:**
+- Modify: `server/routes/shifts.js`
+- Modify: `server/routes/shifts.test.js`
+
+- [ ] **Step 1: Implement Transaction A + outside-batch broadcast**
+
+  Transaction A (fast):
+  1. SELECT request + shift `FOR UPDATE`. Verify ownership, pay-period not processing, `hoursToEvent ∈ [72, 336)`.
+  2. UPDATE `shift_requests SET cover_requested_at=NOW(), cover_reason=$reason` (reason truncated to 500; 413 above).
+  3. Notify management (urgent_staffing, email always, SMS if `daysOut <= 7`).
+  4. COMMIT.
+
+  Then OUTSIDE the transaction (no row lock held):
+
+  5. Call `broadcastCoverRequest(shift.id, req.user.id)` from Task 22.
+  6. Return 200 with `{ broadcast_count, broadcast_truncated }`.
+
+- [ ] **Step 2: Tests**
+
+  - 72h+1h triggers broadcast
+  - 14d+1h returns 409 wrong_mode
+  - <72h returns 409 wrong_mode
+  - 7d-1h: SMS to management
+  - 7d+1h: email-only to management
+  - Broadcast count returned in response
+  - Response time is fast (Transaction A commits quickly, broadcast runs after)
+
+- [ ] **Step 3: Commit**
+
+  ```bash
+  git add server/routes/shifts.js server/routes/shifts.test.js
+  git commit -m "feat(staff-portal): POST /requests/:id/request-cover (Transaction A + outside-batch)"
+  ```
+
+---
+
+### Task 25: POST /api/shifts/requests/:shiftId/claim-cover + cascade
+
+**Spec ref:** §6.5 (claim-cover with UPSERT + position eligibility + JWT swapToken; PUT approval branch extension for the cascade).
+
+**Files:**
+- Modify: `server/routes/shifts.js`
+- Modify: `server/routes/shifts.test.js`
+
+- [ ] **Step 1: Implement claim-cover route**
+
+  Inside one transaction:
+  1. SELECT the original cover-requesting `shift_requests` row `FOR UPDATE` (`shift_id=:shiftId AND cover_requested_at IS NOT NULL AND status='approved' AND dropped_at IS NULL`). If none: return 409 `reason='no_active_cover_request'`.
+  2. Verify `shifts.status` not `'cancelled'`, pay_period not `'processing'`.
+  3. Verify `req.user.id !== original.user_id`.
+  4. Verify position eligibility: claimer's `contractor_profiles.position` is in `shifts.positions_needed`.
+  5. UPSERT new pending row (handles `UNIQUE(shift_id, user_id)`):
+
+     ```sql
+     INSERT INTO shift_requests (shift_id, user_id, status, replaced_by_request_id)
+     VALUES ($1, $2, 'pending', $3)
+     ON CONFLICT (shift_id, user_id) DO UPDATE
+       SET status = 'pending',
+           replaced_by_request_id = EXCLUDED.replaced_by_request_id,
+           dropped_at = NULL,
+           drop_reason = NULL,
+           cover_requested_at = NULL
+       WHERE shift_requests.status <> 'approved'
+       RETURNING id;
+     ```
+
+     If `rows.length === 0`, the existing row was already approved, reject 409 `reason='already_approved'`.
+  6. Sign a swap-token JWT: `{ original_request_id, new_request_id, exp: NOW+7d, jti: uuid() }`.
+  7. Send the approve-link email to management with URL `${ADMIN_URL}/admin/shifts/cover-swaps/${swapToken}`.
+  8. COMMIT.
+
+  If the email send fails after COMMIT, log Sentry but don't roll back. Admin can still approve via the normal Shifts dashboard.
+
+- [ ] **Step 2: Extend the existing PUT /api/shifts/requests/:requestId approval branch**
+
+  When the approved request has `replaced_by_request_id` set:
+
+  Inside the same approval transaction:
+  1. UPDATE the original: `status='denied', dropped_at=NOW(), drop_reason='covered_by_request:<new_id>', cover_requested_at=NULL`.
+  2. UPDATE remaining `cover_broadcast` rows for this shift to `status='suppressed'`.
+  3. Fire `scheduleStaffShiftMessages` for the NEW staffer.
+  4. If `drink_plans.finalized_at IS NOT NULL`, schedule the BEO acknowledge-nudge for the new staffer.
+  5. COMMIT.
+
+  All 5 steps in one transaction. Mid-cascade failure rolls back: original stays active, broadcast rows stay pending so another teammate can still claim.
+
+- [ ] **Step 3: Tests**
+
+  - claim-cover successful, swap-token JWT in email
+  - Original requester cannot claim own cover
+  - Position-ineligible claimer (barback for bartender slot) → 403
+  - Concurrent claims: FOR UPDATE serializes; second sees already-covered
+  - Prior-denied row gets UPSERTed back to pending
+  - Existing approved row → 409 already_approved
+  - PUT approval cascade: original flipped to denied, broadcast rows suppressed, BEO nudge inserted
 
 - [ ] **Step 4: Commit**
 
   ```bash
   git add server/routes/shifts.js server/routes/shifts.test.js
-  git commit -m "feat(staff-portal): POST /api/shifts/requests/:id/drop (clean drop ≥14d)"
+  git commit -m "feat(staff-portal): POST /claim-cover with UPSERT + cover-approval cascade"
   ```
 
 ---
 
-### Task 16: POST /api/shifts/requests/:id/request-cover
+### Task 26: POST /api/shifts/requests/:requestId/emergency-drop
 
-**Spec ref:** §3.3 (72h to <14d cover broadcast), §6.5.
+**Spec ref:** §6.5 (emergency-drop with ADMIN_PHONE proper conflation + proposal_id derivation).
 
 **Files:**
 - Modify: `server/routes/shifts.js`
@@ -1324,84 +1641,83 @@
 
 - [ ] **Step 1: Implement the route**
 
-  Same pre-checks as drop (request ownership, status='approved', pay_period not 'processing'). Boundary: `72 <= hoursToEvent < 336`. Sets `cover_requested_at = NOW()`, `cover_reason = body.reason` (optional, defaults to null). Calls `broadcastCoverRequest(shift_id, user_id)`. Original `status` stays `'approved'`. Email management always; SMS management if `hoursToEvent <= 168` (7d).
+  UI shows PII warning under the textarea: *"Don't include sensitive medical or personal details. Admins can see this and it's retained in our records."* Body `{ reason: string (10..500 chars) }`.
 
-- [ ] **Step 2: Tests**: 72h+1h triggers broadcast, 13d 23h triggers, 14d+1h returns 409 (use drop), <72h returns 409 (use emergency), 7d-1h SMS to management, 7d+1h email-only.
+  Inside one transaction:
+  1. SELECT context `FOR UPDATE`. Verify ownership, `hoursToEvent < 72`. Pay-period guard does NOT apply.
+  2. UPDATE with `dropped_at=NOW(), drop_reason=$reason (truncated 500), drop_emergency=true`. Status stays `'approved'`.
+  3. Suppress all pending scheduled_messages for this user+shift (same UPDATE as Task 23 step 5).
+  4. Notify management:
+     - Email via `notifyAdminCategory('urgent_staffing', ...)`, resolves admin recipients from admin users' DB rows.
+     - SMS via the same `notifyAdminCategory` (admin users' phones).
+     - ADDITIONALLY: if `process.env.ADMIN_PHONE` is set, `sendAndLogSms({ to: process.env.ADMIN_PHONE, body: front_loaded_template })`. The env var is a separate emergency hotline (Dallas's personal phone), distinct from the admin-user-phone fan-out.
+     - If `ADMIN_PHONE` unset, fire `Sentry.captureMessage('Emergency-drop hotline SMS skipped: ADMIN_PHONE not configured')`.
+  5. INSERT into `proposal_activity_log` with `proposal_id=shift.proposal_id` (from the SELECT in step 1), `action='emergency_drop_requested'`, `actor_type='staff'`, `actor_id=req.user.id`, `details={reason, hours_out, shift_id, request_id}`. If `shift.proposal_id IS NULL`, skip with Sentry warning.
+  6. COMMIT.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Tests**
 
-  ```bash
-  git add server/routes/shifts.js server/routes/shifts.test.js
-  git commit -m "feat(staff-portal): POST /api/shifts/requests/:id/request-cover with broadcast"
-  ```
-
----
-
-### Task 17: POST /api/shifts/requests/:shiftId/claim-cover
-
-**Spec ref:** §6.3 (Available sub-tab cover claim), §6.5.
-
-**Files:**
-- Modify: `server/routes/shifts.js`
-- Modify: `server/routes/shifts.test.js`
-
-- [ ] **Step 1: Implement the route**
-
-  Pre-checks: shift exists, `cover_requested_at IS NOT NULL` on at least one of its `shift_requests`, the claiming user is NOT the cover-requesting user, doesn't already have an approved request on the same shift. Creates a new `shift_requests` row with `status='pending'`, `replaced_by_request_id` set to the original requester's request id (so management's one-click approve can flip both states atomically).
-
-- [ ] **Step 2: Tests**: successful claim creates pending row; double-claim is rejected; claiming your own cover is rejected.
+  - reason <10 chars → 400
+  - reason >500 chars → 413
+  - 72h+1h → 409 wrong_mode
+  - 71h 59m → succeeds, status stays approved, dropped_at set
+  - ADMIN_PHONE set → hotline SMS fires
+  - ADMIN_PHONE unset → Sentry captureMessage fires, email + admin-user SMS still go
+  - proposal_id derived from shift
 
 - [ ] **Step 3: Commit**
 
   ```bash
   git add server/routes/shifts.js server/routes/shifts.test.js
-  git commit -m "feat(staff-portal): POST /api/shifts/requests/:shiftId/claim-cover"
+  git commit -m "feat(staff-portal): POST /emergency-drop with ADMIN_PHONE hotline + audit log"
   ```
 
 ---
 
-### Task 18: POST /api/shifts/requests/:id/emergency-drop
+### Task 27: DELETE /api/shifts/requests/:requestId (Withdraw)
 
-**Spec ref:** §3.3 (<72h emergency), §6.5.
+**Spec ref:** §6.3 (Mine sub-tab Withdraw button).
 
 **Files:**
 - Modify: `server/routes/shifts.js`
 - Modify: `server/routes/shifts.test.js`
 
-- [ ] **Step 1: Implement the route**
+- [ ] **Step 1: Implement DELETE**
 
-  Pre-checks: ownership, status='approved'. Boundary: `hoursToEvent < 72`. Requires `body.reason` (min 10 chars). Sets `dropped_at = NOW()`, `drop_emergency = true`, `drop_reason = body.reason`. Status stays `'approved'` (the staffer remains on the roster; management resolves manually). Notifies management by email AND SMS (uses `staff_drop_to_management_sms` template + `ADMIN_PHONE`).
+  Verify ownership, require `status='pending'`. DELETE the row. Return 200. If `status` is approved or denied → 409 with the specific reason.
 
-  Critical: this endpoint does NOT broadcast to teammates. Emergency drops are management-handled, not crowd-sourced.
+- [ ] **Step 2: Tests**
 
-- [ ] **Step 2: Tests**: reason <10 chars returns 400; 72h+1h returns 409; 71h 59m succeeds and sends SMS+email; ADMIN_PHONE unset skips SMS but does NOT fail.
+  - Pending request DELETEs successfully
+  - Approved request → 409 already_approved
+  - IDOR: not your request → 403
 
 - [ ] **Step 3: Commit**
 
   ```bash
   git add server/routes/shifts.js server/routes/shifts.test.js
-  git commit -m "feat(staff-portal): POST /api/shifts/requests/:id/emergency-drop"
+  git commit -m "feat(staff-portal): DELETE /requests/:id Withdraw endpoint"
   ```
 
 ---
 
-### Task 19: Existing shifts endpoint projections + tests
+### Task 28: Existing shifts projection updates
 
-**Spec ref:** §6.3 (Available / Mine / Past).
+**Spec ref:** §6.3.
 
 **Files:**
 - Modify: `server/routes/shifts.js`
 - Modify: `server/routes/shifts.test.js`
 
-- [ ] **Step 1: Extend `GET /api/shifts` (staff path) projection**
+- [ ] **Step 1: Extend `GET /api/shifts` (staff path)**
 
-  Add: `drink_plan_finalized_at`, `my_beo_acknowledged_at` (LEFT JOIN on the requesting user's own `shift_request`), `cover_requested_at`, `cover_for_first_initial` (computed via JOIN to `contractor_profiles` for the cover-requesting user's first name).
+  Add to the SELECT: `drink_plan_finalized_at` (LEFT JOIN drink_plans), `my_beo_acknowledged_at` (LEFT JOIN shift_requests on requesting user), `cover_requested_at`, `cover_for_first_initial` (LEFT JOIN contractor_profiles for the cover-requesting user's preferred_name).
 
 - [ ] **Step 2: Extend `GET /api/shifts/user/:userId/events`**
 
-  Add `payout_id` per past shift_request (computed via LEFT JOIN to `payout_events.shift_id` then `payouts.id`). Verify `req.user.id === userId` (IDOR guard).
+  Verify `req.user.id === userId` (IDOR guard). Add `payout_id` per past row via LEFT JOIN to `payout_events → payouts`.
 
-- [ ] **Step 3: Tests**: verify the new projections appear in the response shape.
+- [ ] **Step 3: Tests**, new projections appear in response shape; IDOR enforced.
 
 - [ ] **Step 4: Commit**
 
@@ -1412,138 +1728,124 @@
 
 ---
 
-## Phase 5: Client shell + theme
+## Phase 6: Client shell + theme + early route mount
 
-### Task 20: Port skin-aware CSS tokens to index.css
+### Task 29: Port skin-aware CSS tokens to index.css
 
 **Spec ref:** §6.16 (Theme persistence).
 
 **Files:**
 - Modify: `client/src/index.css`
 
-- [ ] **Step 1: Read `Downloads/Dr Bartender (6)/staff/styles.css`**
+- [ ] **Step 1: Read the design source**
 
-  This is the design source. Extract the `:root`, `[data-skin="light"]`, `[data-skin="dark"]` token blocks. Look for variable names like `--ink-1`, `--surface-1`, `--accent`, `--accent-h`, etc.
+  `~/Downloads/Dr Bartender (6)/staff/styles.css` (personal-machine path; coordinate with user if running in a different environment). Extract `:root` + `[data-skin="light"]` + `[data-skin="dark"]` token blocks.
 
-- [ ] **Step 2: Append the tokens to `client/src/index.css`**
+- [ ] **Step 2: Append to client/src/index.css**
 
-  Namespace under a comment block:
+  Namespace under a comment block. Avoid collisions with existing `:root` variables. If a name conflict exists, prefix the new ones with `--sp-` (staff portal).
 
-  ```css
-  /* ─── Staff portal: skin-aware tokens ─── */
-  :root { /* defaults */ }
-  [data-skin="light"] { /* light variant */ }
-  [data-skin="dark"]  { /* dark variant */ }
-  ```
+- [ ] **Step 3: Visual check via dev tools**
 
-  Avoid overwriting any existing `:root` variables. If a name collision exists, prefix the new ones with `--sp-` (staff portal) to scope cleanly.
-
-- [ ] **Step 3: Visual check**
-
-  Start the dev server (already running per CLAUDE.md). Add `<html data-skin="dark">` manually in the browser dev tools on any existing staff page. Confirm the new tokens resolve (use Computed pane on a CSS variable like `--sp-surface-1`).
+  Open the app, manually set `<html data-skin="dark">` in DevTools, confirm computed `--sp-*` variables resolve.
 
 - [ ] **Step 4: Commit**
 
   ```bash
   git add client/src/index.css
-  git commit -m "feat(staff-portal): port skin-aware design tokens into index.css"
+  git commit -m "feat(staff-portal): port skin-aware design tokens to index.css"
   ```
 
 ---
 
-### Task 21: StaffShell.js + StaffUserPillMenu.js
+### Task 30: StaffShell.js + StaffUserPillMenu.js
 
-**Spec ref:** §6.1 (New shell + routes).
+**Spec ref:** §6.1.
 
 **Files:**
 - Create: `client/src/components/StaffShell.js`
 - Create: `client/src/components/StaffUserPillMenu.js`
 
-- [ ] **Step 1: Implement `StaffShell`**
+- [ ] **Step 1: StaffShell**
 
   Props: `tabs`, `active`, `onTabChange`, `badges`, `user`, `userMenu`, `skin`, `onSkinChange`, `children`.
 
-  Layout:
-  - `<header>` with brand mark left, user pill right (clicking opens StaffUserPillMenu)
-  - `<nav>` tab bar (4 tabs from `tabs` prop, with badge dots from `badges`)
-  - `<main>` children
-  - Sets `document.documentElement.dataset.skin = skin` on every render (or via useEffect on skin change)
+  - `<header>` with brand mark + user-pill button (opens menu).
+  - `<nav>` 4-tab bar with badge dots.
+  - `<main>` children.
+  - useEffect on skin → `document.documentElement.dataset.skin = skin`.
 
-  Use vanilla CSS classes; no styled-components.
+- [ ] **Step 2: StaffUserPillMenu**
 
-- [ ] **Step 2: Implement `StaffUserPillMenu`**
+  Modal with scrim. Avatar + name + email card, Lighting segmented control, 5 menu items (Edit profile / Calendar sync / Notification preferences / Get support / Sign out).
 
-  Modal with scrim. Contents per spec §6.1: avatar + name + email card, "Lighting" segmented control (House lights / After hours), 5 menu items (Edit profile, Calendar sync, Notification preferences, Get support, Sign out).
-
-  Lighting control wires to the `onSkinChange` callback. The 5 menu items dispatch `onClick` per item provided in the `userMenu` prop.
-
-- [ ] **Step 3: Test render in isolation**
-
-  Add a temporary mount in `client/src/pages/staff/StaffDashboard.js` (still extant in Phase 5) just to visually verify the new shell renders + the menu opens/closes. Revert that change before committing (or leave a `// TEMP-DEV` comment and remove in Task 39).
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
   ```bash
   git add client/src/components/StaffShell.js client/src/components/StaffUserPillMenu.js
-  git commit -m "feat(staff-portal): StaffShell + UserPillMenu (no theme persistence yet)"
+  git commit -m "feat(staff-portal): StaffShell + UserPillMenu (no mount yet)"
   ```
 
 ---
 
-### Task 22: Theme persistence wire-up
+### Task 31: Early stub mount + theme persistence wire-up
 
-**Spec ref:** §6.16 (Theme persistence).
+**Spec ref:** §6.16 + the dead-code-window fix.
 
 **Files:**
-- Modify: `client/src/components/StaffShell.js`
-- Modify: `client/src/utils/api.js` (if a new helper is needed)
+- Modify: `client/src/App.js`
 
-- [ ] **Step 1: Hydrate the skin from `users.ui_preferences.theme`**
+- [ ] **Step 1: Add a temporary /staff-v2 stub mount**
 
-  On mount, fetch `GET /api/me` (already returns `ui_preferences` per spec §8.2). Extract `ui_preferences.theme`. If null, fall back to `window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'`. Set `data-skin` on `documentElement` immediately.
+  Inside `StaffSiteRoutes()`, ADD a parallel route block (do NOT remove the existing StaffLayout mount yet):
 
-- [ ] **Step 2: Persist on toggle**
+  ```jsx
+  <Route path="/staff-v2/*" element={<RequirePortal><StaffShellWithThemeWiring /></RequirePortal>}>
+    <Route index element={<Placeholder name="Home" />} />
+    <Route path="shifts/*" element={<Placeholder name="Shifts" />} />
+    <Route path="pay/*" element={<Placeholder name="Pay" />} />
+    <Route path="tip-card" element={<Placeholder name="Tip Card" />} />
+    <Route path="account/:section" element={<Placeholder name="Account" />} />
+  </Route>
+  ```
 
-  The Lighting segmented control's `onChange` calls `api.patch('/me/ui-preferences', { theme: nextSkin })` AND updates `document.documentElement.dataset.skin` immediately (optimistic). On API error, revert.
+  `<Placeholder name="X">` is a trivial component rendering "X coming soon" so subsequent tasks (HomePage, ShiftsPage, etc.) can swap in their real implementations one at a time.
 
-- [ ] **Step 3: Cross-device sync verification**
+  `<StaffShellWithThemeWiring>` is a small wrapper that fetches `/api/me` on mount, hydrates skin from `ui_preferences.theme` (falls back to OS prefers-color-scheme), and wires `onSkinChange` to `PATCH /api/me/ui-preferences`.
 
-  - Sign in on browser A, set theme to dark
-  - Sign in on browser B, confirm the page loads in dark
-  - Toggle to light on browser B
-  - Reload browser A, confirm it loads in light
+- [ ] **Step 2: Verify cross-device theme persistence**
 
-- [ ] **Step 4: Commit**
+  Sign in on browser A at `/staff-v2/`, toggle theme to dark. Reload. Confirm dark persists. Sign in on browser B, confirm dark loads. Toggle to light on B. Reload A, confirm light loads.
+
+- [ ] **Step 3: Commit**
 
   ```bash
-  git add client/src/components/StaffShell.js
-  git commit -m "feat(staff-portal): theme persistence via PATCH /api/me/ui-preferences"
+  git add client/src/App.js
+  git commit -m "feat(staff-portal): /staff-v2 stub mount + theme persistence wire-up"
   ```
+
+  Note: this stub mount survives until Task 48 (the production cutover swap), at which point both blocks are unified.
 
 ---
 
-## Phase 6: Shifts surface
+## Phase 7: Shifts surface (now in-browser verifiable)
 
-### Task 23: ShiftCard.js (shared)
+### Task 32: ShiftCard.js (shared)
 
-**Spec ref:** §6.2 (HomePage), §6.3 (ShiftsPage).
+**Spec ref:** §6.2 + §6.3.
 
 **Files:**
 - Create: `client/src/components/staff/ShiftCard.js`
 
 - [ ] **Step 1: Implement the card**
 
-  Props: `shift`, `showConfirmFlag`, `onClick`, `variant` ('default' | 'pending' | 'past' | 'cover-needed').
+  Props: `shift`, `showConfirmFlag`, `onClick`, `variant`. Uses `getEventTypeLabel({ event_type, event_type_custom })` from `client/src/utils/eventTypes.js`.
 
-  Renders: date, relative day, client name, event type, location, time range, position chips, pay estimate chip, conflict warning, cover-needed banner (when applicable), confirm-needed flag.
+- [ ] **Step 2: Smoke-render in browser**
 
-  Uses the `getEventTypeLabel(...)` util from `client/src/utils/eventTypes.js` (CLAUDE.md requires this).
+  Replace one of the `<Placeholder name="Shifts">` routes with a tiny test page that renders ShiftCard with mock data.
 
-- [ ] **Step 2: Smoke render**
-
-  Mount in a Storybook-like ad-hoc file or directly in a test page (revert before commit). Confirm all 4 variants render.
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Commit + revert the test mount**
 
   ```bash
   git add client/src/components/staff/ShiftCard.js
@@ -1552,83 +1854,15 @@
 
 ---
 
-### Task 24: HomePage.js
+### Task 33: Extended GET /api/beo/:proposalId projection (team_roster)
 
-**Spec ref:** §6.2.
-
-**Files:**
-- Create: `client/src/pages/staff/HomePage.js`
-
-- [ ] **Step 1: Implement the page**
-
-  Calls `api.get('/me/staff-home')` on mount. Renders sections in order: Hero, "Needs you" tray (conditional), Next shift card (ShiftCard), This pay period tile, Open shifts teaser.
-
-  Re-fetches on tab focus (`document.addEventListener('visibilitychange', ...)`).
-
-- [ ] **Step 2: Loading + empty + error states**
-
-  Standard pattern from CLAUDE.md ("Async ops have loading, error, and empty states").
-
-- [ ] **Step 3: Verify in-browser** (dev server)
-
-  Sign in as a test staffer with one upcoming shift, one pending request, one teammate cover broadcast. Confirm all 4 sections render.
-
-- [ ] **Step 4: Commit**
-
-  ```bash
-  git add client/src/pages/staff/HomePage.js
-  git commit -m "feat(staff-portal): HomePage with staff-home composite data"
-  ```
-
----
-
-### Task 25: ShiftsPage.js with Available / Mine / Past sub-tabs
-
-**Spec ref:** §6.3.
-
-**Files:**
-- Create: `client/src/pages/staff/ShiftsPage.js`
-
-- [ ] **Step 1: Sub-tab routing**
-
-  URL-driven via `/shifts/available`, `/shifts/mine`, `/shifts/past`. Default `/shifts` redirects to `/shifts/available`. Use React Router's `useParams` or `useLocation`.
-
-- [ ] **Step 2: Available sub-tab**
-
-  Fetches `GET /api/shifts` (staff path, which excludes shifts the user is already approved on). Sorts chronologically. Renders ShiftCard per row. Cover-needed rows get the accent border + "Cover needed" chip + banner.
-
-  Request button calls `POST /api/shifts/requests` (existing endpoint) OR `POST /api/shifts/requests/:shiftId/claim-cover` if the shift has `cover_requested_at`.
-
-- [ ] **Step 3: Mine sub-tab**
-
-  Fetches `GET /api/shifts/user/:userId/events`. Renders pending requests first (faded), then approved chronologically.
-
-- [ ] **Step 4: Past sub-tab**
-
-  Same endpoint, filtered to completed shifts in reverse-chronological order. Click on card navigates to `/pay/:periodId?shift=:shiftId`.
-
-- [ ] **Step 5: Commit**
-
-  ```bash
-  git add client/src/pages/staff/ShiftsPage.js
-  git commit -m "feat(staff-portal): ShiftsPage with Available/Mine/Past sub-tabs"
-  ```
-
----
-
-### Task 26: Extended GET /api/beo/:proposalId projection (team_roster)
-
-**Spec ref:** §6.18 (Team roster on GET BEO).
+**Spec ref:** §6.18.
 
 **Files:**
 - Modify: `server/routes/beo.js`
 - Modify: `server/routes/beo.test.js`
 
-- [ ] **Step 1: Add the team_roster array to the response**
-
-  After the BEO core projection, add a query for every approved shift_request on the proposal's shifts. LEFT JOIN to `contractor_profiles` (for `preferred_name`, `phone`) and to `applications` via `users.id = applications.user_id` (for `full_name` fallback).
-
-  Compose per spec §6.18: `user_id`, `display_name` (server-side computed), `initials`, `is_me`, `role` (default 'Bartender'), `phone`, `needs_cover`.
+- [ ] **Step 1: Add team_roster array**
 
   ```javascript
   const { rows: rosterRows } = await pool.query(`
@@ -1637,85 +1871,90 @@
            sr.cover_requested_at,
            cp.preferred_name,
            cp.phone,
-           a.full_name AS legal_name,
+           a.full_name AS applications_name,
+           ag.full_name AS agreements_name,
            u.email
       FROM shift_requests sr
       JOIN shifts s ON s.id = sr.shift_id
       LEFT JOIN users u ON u.id = sr.user_id
       LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
       LEFT JOIN applications a ON a.user_id = sr.user_id
+      LEFT JOIN agreements ag ON ag.user_id = sr.user_id
      WHERE s.proposal_id = $1
        AND sr.status = 'approved'
+       AND sr.dropped_at IS NULL  -- hybrid-state filter per §6.5
        AND s.canceled_at IS NULL
      ORDER BY sr.id
   `, [proposalId]);
 
+  // Determine viewer's own approval status for this proposal
+  const { rows: viewerRows } = await pool.query(
+    `SELECT 1 FROM shift_requests sr
+       JOIN shifts s ON s.id = sr.shift_id
+      WHERE s.proposal_id = $1 AND sr.user_id = $2 AND sr.status = 'approved' AND sr.dropped_at IS NULL
+      LIMIT 1`,
+    [proposalId, req.user.id]
+  );
+  const viewerApproved = viewerRows.length > 0;
+
   function computeName(row) {
-    const fromPreferred = (row.preferred_name || '').trim();
-    if (fromPreferred) {
-      const lastInitial = (row.legal_name || '').trim().split(' ').pop()?.[0]?.toUpperCase() || '';
-      return lastInitial ? `${fromPreferred} ${lastInitial}.` : fromPreferred;
+    const preferred = (row.preferred_name || '').trim();
+    if (preferred) {
+      const legal = (row.applications_name || row.agreements_name || '').trim();
+      const last = legal.split(/\s+/).pop()?.[0]?.toUpperCase();
+      return last ? `${preferred} ${last}.` : preferred;
     }
-    const legal = (row.legal_name || '').trim();
+    const legal = (row.applications_name || row.agreements_name || '').trim();
     if (legal) {
       const parts = legal.split(/\s+/);
-      const first = parts[0];
-      const last = parts[parts.length - 1];
-      return parts.length >= 2 ? `${first} ${last[0].toUpperCase()}.` : first;
+      return parts.length >= 2 ? `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}.` : parts[0];
     }
     return (row.email || 'staff').split('@')[0];
   }
-  function computeInitials(displayName) {
-    const m = displayName.match(/(\S)\S*\s+(\S)/);
-    if (m) return (m[1] + m[2]).toUpperCase();
-    return displayName.slice(0, 2).toUpperCase();
-  }
 
-  const team_roster = rosterRows.map(row => {
-    const display_name = computeName(row);
+  const team_roster = rosterRows.map(r => {
+    const name = computeName(r);
     return {
-      user_id: row.user_id,
-      display_name,
-      initials: computeInitials(display_name),
-      is_me: row.user_id === req.user.id,
-      role: row.role || 'Bartender',
-      phone: row.phone || null,
-      needs_cover: row.cover_requested_at != null,
+      user_id: r.user_id,
+      display_name: name,
+      initials: (name.match(/(\S)\S*\s+(\S)/)?.slice(1).join('') || name.slice(0, 2)).toUpperCase(),
+      is_me: r.user_id === req.user.id,
+      role: r.role || 'Bartender',
+      // Phone gated by viewer's own approval status (§6.18)
+      phone: viewerApproved ? (r.phone || null) : null,
+      needs_cover: r.cover_requested_at != null,
     };
   });
-
-  // Add team_roster to the existing response object
   ```
 
 - [ ] **Step 2: Tests**
 
-  - Renders display_name from preferred_name + legal last-initial
-  - Falls back to legal full_name first-token + last-initial when preferred is empty
-  - Falls back to email-local-part when both are empty
-  - `is_me` flips for the requesting user's row only
-  - Sorted by shift_request.id (stable)
+  - Display name uses preferred + last initial chain
+  - Falls back through applications → agreements → email-local-part
+  - is_me flips for own row
+  - Phone NULL when viewer not approved on the proposal
+  - Phone surfaces when viewer is approved
+  - dropped_at IS NULL filters out emergency-dropped staffers
 
 - [ ] **Step 3: Commit**
 
   ```bash
   git add server/routes/beo.js server/routes/beo.test.js
-  git commit -m "feat(staff-portal): add team_roster to GET /api/beo response"
+  git commit -m "feat(staff-portal): add team_roster to GET /api/beo with dropped_at filter + phone gating"
   ```
 
 ---
 
-### Task 27: TeamRosterCard.js
+### Task 34: TeamRosterCard.js
 
-**Spec ref:** §6.4 (ShiftDetail page, "Team roster card" bullet).
+**Spec ref:** §6.4.
 
 **Files:**
 - Create: `client/src/components/staff/TeamRosterCard.js`
 
-- [ ] **Step 1: Render the roster**
+- [ ] **Step 1: Implement**
 
-  Props: `team_roster` array, `viewerUserId`. Renders only when length > 0.
-
-  Per row: avatar (initials), display_name, role label (when set), needs-cover indicator, "You" pill on own row (no role/contact actions), call/text icon buttons on others' rows that open `tel:` / `sms:` deep links.
+  Renders only when `team_roster.length > 0`. Avatar + display_name + role (when set). "You" pill on own row, no contact actions on self. Call / text icon buttons for others (only render when `phone` is non-null). "Needs cover" indicator when `needs_cover === true`.
 
 - [ ] **Step 2: Commit**
 
@@ -1726,222 +1965,255 @@
 
 ---
 
-### Task 28: ShiftDetail.js
+### Task 35: HomePage.js
 
-**Spec ref:** §6.4 (ShiftDetail page).
+**Spec ref:** §6.2.
+
+**Files:**
+- Create: `client/src/pages/staff/HomePage.js`
+- Modify: `client/src/App.js` (replace the `/staff-v2/` index `<Placeholder name="Home" />` with `<HomePage />`)
+
+- [ ] **Step 1: Implement HomePage**
+
+  Calls `api.get('/me/staff-home')` on mount + on tab focus. Renders Hero, "Needs you" tray (conditional), Next shift card, This pay period tile, Open shifts teaser. Loading / empty / error / disabled states per §6.1.5.
+
+- [ ] **Step 2: Verify in-browser**
+
+  Sign in as test staffer with one upcoming shift, one pending request, one teammate cover. Confirm all sections render at `/staff-v2/`.
+
+- [ ] **Step 3: Commit**
+
+  ```bash
+  git add client/src/pages/staff/HomePage.js client/src/App.js
+  git commit -m "feat(staff-portal): HomePage with staff-home composite data"
+  ```
+
+---
+
+### Task 36: ShiftsPage.js with sub-tabs
+
+**Spec ref:** §6.3.
+
+**Files:**
+- Create: `client/src/pages/staff/ShiftsPage.js`
+- Modify: `client/src/App.js` (swap `/staff-v2/shifts/*` placeholder for ShiftsPage)
+
+- [ ] **Step 1: Implement Available / Mine / Past sub-tabs**
+
+  URL-driven: `/staff-v2/shifts/available`, `/mine`, `/past`. Default redirects to `/available`. Empty + loading + error states per §6.1.5.
+
+- [ ] **Step 2: Wire endpoints**
+
+  Available → `/api/shifts` (staff path). Mine → `/api/shifts/user/:userId/events`. Past → same with completed filter. Withdraw button on pending rows → `DELETE /api/shifts/requests/:id`.
+
+- [ ] **Step 3: Cover-needed visual treatment + claim flow**
+
+  When `cover_requested_at IS NOT NULL`, accent border + cover-needed banner + "Cover this" button → `POST /api/shifts/requests/:shiftId/claim-cover`.
+
+- [ ] **Step 4: Verify in-browser** at `/staff-v2/shifts/`.
+
+- [ ] **Step 5: Commit**
+
+  ```bash
+  git add client/src/pages/staff/ShiftsPage.js client/src/App.js
+  git commit -m "feat(staff-portal): ShiftsPage with Available/Mine/Past sub-tabs"
+  ```
+
+---
+
+### Task 37: ShiftDetail.js + DropCoverModal.js
+
+**Spec ref:** §6.4, §6.5.
 
 **Files:**
 - Create: `client/src/pages/staff/ShiftDetail.js`
-
-- [ ] **Step 1: Implement the page**
-
-  Calls `api.get('/beo/:proposalId')` to fetch the BEO + team_roster. The proposalId comes from the shift (`shifts.proposal_id`), so this page first fetches the shift, then the BEO.
-
-  Sections per spec §6.4: back button, title, quick-status chips, key info grid, action row, "Banquet Event Order" heading, TeamRosterCard, drinks card, addons, logistics, custom menu, notes, consult input, shopping list link, Drop/Cover card, sticky Confirm action bar.
-
-  Confirm action bar calls `POST /api/beo/:proposalId/acknowledge` (existing per BEO plan Task 17).
-
-- [ ] **Step 2: Drop/Cover card placeholder**
-
-  In this task, just render a stub card "Drop or request cover →" that opens DropCoverModal (built in Task 29). The card's mode (clean drop / cover broadcast / emergency) is computed from time-to-event in hours.
-
-- [ ] **Step 3: Verify in browser**: the BEO content from the existing BEO endpoint renders correctly; team roster renders with the viewer's "You" pill.
-
-- [ ] **Step 4: Commit**
-
-  ```bash
-  git add client/src/pages/staff/ShiftDetail.js
-  git commit -m "feat(staff-portal): ShiftDetail page (BEO viewer + team roster)"
-  ```
-
----
-
-### Task 29: DropCoverModal.js + 3 mode variants
-
-**Spec ref:** §6.5 (Drop / Cover flow).
-
-**Files:**
 - Create: `client/src/components/staff/DropCoverModal.js`
+- Modify: `client/src/App.js` (add `/staff-v2/shifts/:shiftId`)
 
-- [ ] **Step 1: Mode resolution**
+- [ ] **Step 1: ShiftDetail page**
 
-  Single component accepting `shift`, `onClose`, `onSuccess`. Computes `hoursToEvent = (eventStart - Date.now()) / 3_600_000`.
+  Calls `api.get('/beo/:proposalId')` to fetch BEO + team_roster (proposalId from shift). Sections per §6.4: back, title, quick-status chips, key info grid, action row, "Banquet Event Order" heading, TeamRosterCard, drinks card, addons, logistics, custom menu, notes, consult input, shopping list link, Drop/Cover card, sticky Confirm action bar.
 
-  Three modes:
-  - `>= 336`: Clean drop. Modal copy: "Drop this shift?" + sub: "It returns to the open pool. Management is notified."
-  - `72 <= h < 336`: Cover request. Modal copy: "Request a cover" + sub explaining the broadcast.
-  - `< 72`: Emergency. Modal copy: "Emergency drop" + reason textarea (min 10 chars). Footer: "Management is alerted immediately."
+  Confirm action bar calls `POST /api/beo/:proposalId/acknowledge` (from BEO plan).
 
-  All three modes use "management" terminology, NOT "lead".
+- [ ] **Step 2: DropCoverModal with 3 modes**
 
-- [ ] **Step 2: Submit handlers**
+  Mode determined by `hoursToEvent`. Drop / Cover / Emergency. Each mode posts to its respective endpoint from Tasks 23-26. Emergency mode includes the PII warning under the textarea.
 
-  - Clean: `POST /api/shifts/requests/:id/drop`
-  - Cover: `POST /api/shifts/requests/:id/request-cover`
-  - Emergency: `POST /api/shifts/requests/:id/emergency-drop` with `{ reason }`
-
-  Each on success calls `onSuccess()` which closes the modal and re-fetches the parent ShiftDetail page (or navigates back to Shifts/Mine for clean drop).
-
-- [ ] **Step 3: Verify all three modes** in browser:
-  - Clean drop on a shift 20 days out
-  - Cover request on a shift 10 days out
-  - Emergency drop on a shift 48 hours out (with reason)
+- [ ] **Step 3: Verify** all three modes in-browser at `/staff-v2/shifts/<id>`.
 
 - [ ] **Step 4: Commit**
 
   ```bash
-  git add client/src/components/staff/DropCoverModal.js
-  git commit -m "feat(staff-portal): DropCoverModal with 3 time-based modes"
+  git add client/src/pages/staff/ShiftDetail.js client/src/components/staff/DropCoverModal.js client/src/App.js
+  git commit -m "feat(staff-portal): ShiftDetail (BEO viewer + team roster) + DropCoverModal"
   ```
 
 ---
 
-## Phase 7: Pay + Tip Card surfaces
+## Phase 8: Pay + Tip Card + publicTip extension
 
-### Task 30: PayoutEventRow.js + PayoutDetail.js
+### Task 38: PayoutEventRow.js + PayoutDetail.js
 
-**Spec ref:** §6.7 (PayoutDetail page).
+**Spec ref:** §6.7.
 
 **Files:**
 - Create: `client/src/components/staff/PayoutEventRow.js`
 - Create: `client/src/pages/staff/PayoutDetail.js`
+- Modify: `client/src/App.js`
 
-- [ ] **Step 1: PayoutEventRow**
+- [ ] **Step 1: PayoutEventRow**, one row per `payout_event`. Highlights when `?shift=` query param matches.
 
-  Renders one row per `payout_event` (one shift = one line). Shows: date, client, role, hours, base cents, gratuity cents, card-tip-net cents, late-tip-roll cents (if any), total cents in mono. Highlight border when the row's `shift_id` matches the `?shift=` URL query param.
+- [ ] **Step 2: PayoutDetail**, fetches `GET /api/payouts/:periodId` (existing). Sections per §6.7: back, title, period range + event count, banner with total + status chip, Summary card, per-event detail cards, Download PDF if paid + Email a copy + italic 1099 reminder.
 
-- [ ] **Step 2: PayoutDetail**
-
-  Fetches `GET /api/payouts/:periodId` (existing staff-payments endpoint). Sections: header (period dates, payday, total, status chip), event-rows list, adjustments (refunds / clawbacks if any), mark-paid action (admin only, hidden for staff).
-
-  Reads `?shift=` from URL; auto-scrolls to the matching row on mount.
-
-- [ ] **Step 3: Verify**: open `/pay/:periodId?shift=X` and confirm the matching row is highlighted + scrolled into view.
+- [ ] **Step 3: Verify** auto-scroll-to-shift behavior with `?shift=` query.
 
 - [ ] **Step 4: Commit**
 
   ```bash
-  git add client/src/components/staff/PayoutEventRow.js client/src/pages/staff/PayoutDetail.js
-  git commit -m "feat(staff-portal): PayoutDetail page with cross-link highlight"
+  git add client/src/components/staff/PayoutEventRow.js \
+          client/src/pages/staff/PayoutDetail.js \
+          client/src/App.js
+  git commit -m "feat(staff-portal): PayoutDetail with shift cross-link highlight + 1099 reminder"
   ```
 
 ---
 
-### Task 31: PayPage.js
+### Task 39: PayPage.js
 
 **Spec ref:** §6.6.
 
 **Files:**
 - Create: `client/src/pages/staff/PayPage.js`
+- Modify: `client/src/App.js`
 
-- [ ] **Step 1: Implement the page**
+- [ ] **Step 1: Implement**
 
-  Fetches the list of payouts for the user (existing endpoint). Renders: hero "Pay" + sub-line, current period tile at top (large), past payouts list (one card per period: dates, total, status chip).
-
-  Click on a card navigates to `/pay/:periodId`.
+  Hero "My Pay", current pay period banner with status chip, line items expandable to wage/gratuity/card-tip/adjustment breakdown, Year-to-date roll-up card, Paystubs list.
 
 - [ ] **Step 2: Commit**
 
   ```bash
-  git add client/src/pages/staff/PayPage.js
-  git commit -m "feat(staff-portal): PayPage with current-period highlight + history"
+  git add client/src/pages/staff/PayPage.js client/src/App.js
+  git commit -m "feat(staff-portal): PayPage with YTD card"
   ```
 
 ---
 
-### Task 32: TipCardPage.js
+### Task 40: TipCardPage.js
 
-**Spec ref:** §6.8 (TipCardPage).
+**Spec ref:** §6.8.
 
 **Files:**
 - Create: `client/src/pages/staff/TipCardPage.js`
+- Modify: `client/src/App.js`
 
-- [ ] **Step 1: Layout**
+- [ ] **Step 1: Implement**
 
-  Hero "Tip Card" + sub-line. QR card preview (reuse existing FakeQR-style component from MyTipPage if practical; otherwise re-implement). Action buttons: Open print page, Share link, Copy URL.
+  Hero "Tip Card" + QR card preview. "Tips received this week" card from existing `GET /api/me/tips` (`server/routes/me.js:190`). "How it's shown on your card" reorder card with drag-grip + arrow buttons. PUTs to `/api/me/tip-card-order` on every reorder; PUTs are serialized client-side (queue subsequent drags until response).
 
-  "Tips received this week" card from existing endpoint data.
-
-  "How it's shown on your card" reorder card with drag-grip + up/down arrows.
-
-- [ ] **Step 2: Drag-to-reorder**
-
-  Use `react-dnd` if already in stack; otherwise a minimal HTML5 drag-and-drop wrapper. On every reorder (drag-end OR arrow-tap), PUT `/api/me/tip-card-order` with the new order array. Optimistic update with rollback on error.
-
-- [ ] **Step 3: "Manage methods →" link**
-
-  Routes to `/account/payments`.
-
-- [ ] **Step 4: Verify**: drag to reorder, reload page, confirm new order persists. Open public `/tip/:token` page, confirm chooser order matches.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 2: Commit**
 
   ```bash
-  git add client/src/pages/staff/TipCardPage.js
+  git add client/src/pages/staff/TipCardPage.js client/src/App.js
   git commit -m "feat(staff-portal): TipCardPage with drag-to-reorder"
   ```
 
 ---
 
-## Phase 8: AccountPage
+### Task 41: publicTip.js consumer extension
 
-### Task 33: AccountPage shell + nav
+**Spec ref:** §6.8 (load-bearing for money flow).
 
-**Spec ref:** §6.9 (AccountPage shell).
+**Files:**
+- Modify: `server/routes/publicTip.js`
+- Modify: `server/routes/publicTip.test.js`
+
+- [ ] **Step 1: Extend the route**
+
+  1. JOIN `users u ON u.id = payment_profiles.user_id` to project `u.ui_preferences->'tip_card_order'`.
+  2. Add `zelle_handle` to the chooser projection.
+  3. Order the chooser methods by the staffer's saved order. Fallback: methods present on profile but absent from order array fall to end in natural order. Methods in order array but absent from profile are skipped.
+  4. Response header: `Cache-Control: private, no-cache`.
+
+- [ ] **Step 2: Tests**
+
+  - Public response carries the new Zelle handle when set
+  - Method order matches staffer's saved order
+  - Methods not on staffer's profile are skipped even if in the order array
+  - Cache-Control header set
+
+- [ ] **Step 3: End-to-end verify**
+
+  - On TipCardPage, reorder methods
+  - In another browser, hit `/tip/:token` directly
+  - Confirm order matches within seconds (no CDN staleness)
+
+- [ ] **Step 4: Commit**
+
+  ```bash
+  git add server/routes/publicTip.js server/routes/publicTip.test.js
+  git commit -m "feat(staff-portal): extend publicTip with tip_card_order + zelle_handle + no-cache"
+  ```
+
+---
+
+## Phase 9: AccountPage
+
+### Task 42: AccountPage shell + nav
+
+**Spec ref:** §6.9.
 
 **Files:**
 - Create: `client/src/pages/staff/account/AccountPage.js`
+- Modify: `client/src/App.js`
 
-- [ ] **Step 1: Implement the shell**
+- [ ] **Step 1: Shell with horizontal sub-nav**
 
-  Horizontal scrolling tab bar (`sp-acc-nav` class from design) with 5 tabs: Profile, Payments, Calendar, Notifications, Documents. URL-driven (`/account/profile`, etc.).
+  6 sub-sections: Profile / Payments / Calendar / Notifications / Documents. URL-driven via `/staff-v2/account/:section`.
 
-  Mounts the corresponding sub-section component below.
-
-- [ ] **Step 2: Back button**
-
-  Top-left back arrow returns to the previously-active main tab (Home / Shifts / Pay / Tip Card), per the `view.section` state from the design's app.jsx pattern.
+- [ ] **Step 2: Back button** returns to the previously-active main tab.
 
 - [ ] **Step 3: Commit**
 
   ```bash
-  git add client/src/pages/staff/account/AccountPage.js
+  git add client/src/pages/staff/account/AccountPage.js client/src/App.js
   git commit -m "feat(staff-portal): AccountPage shell with horizontal sub-nav"
   ```
 
 ---
 
-### Task 34: ProfileSection.js
+### Task 43: ProfileSection.js + EmailVerifyPage.js
 
-**Spec ref:** §6.10 (AccountPage / Profile).
+**Spec ref:** §6.10 (Profile + email-change verification flow).
 
 **Files:**
 - Create: `client/src/pages/staff/account/ProfileSection.js`
+- Create: `client/src/pages/staff/EmailVerifyPage.js`
+- Modify: `client/src/App.js`
 
-- [ ] **Step 1: Implement the section**
+- [ ] **Step 1: ProfileSection**
 
-  Form fields: preferred_name, phone, email, mailing address (4 sub-fields: street, city, state, zip), emergency contact (name, phone, relationship).
+  Form fields: preferred_name, phone, email, mailing address (4 sub-fields), emergency contact (name/phone/relationship). Saves via `PATCH /api/me/profile` for non-email fields.
 
-  Loads via `GET /api/me` (the existing route returns `contractor_profiles` already).
+  Email row has its own Save: opens a confirmation modal, POSTs to `/api/me/request-email-change`. Banner appears after with "Pending verification, check [new email]" + Cancel button.
 
-  Saves via `PATCH /api/me/profile` (Task 9).
+- [ ] **Step 2: EmailVerifyPage**
 
-  Submit is debounced 600ms after edit, or explicit Save button. Pick whichever feels right per the design (likely Save button to match other admin patterns).
-
-- [ ] **Step 2: Validation**
-
-  Phone: E.164 format (existing util). Email: standard regex. ZIP: 5 or 5+4 digits.
+  UNAUTHENTICATED React route at `/verify-email/:token` (added to App.js OUTSIDE `<RequirePortal>` since the user may click from a logged-out browser). Renders a "Confirm email change" page with one Confirm button. On click, POSTs to `/api/me/confirm-email-change` with `{ token }`. Success → "Email updated. Sign in again" (sign-out the current session since `token_version` bumped). Failure → "Link expired or already used."
 
 - [ ] **Step 3: Commit**
 
   ```bash
-  git add client/src/pages/staff/account/ProfileSection.js
-  git commit -m "feat(staff-portal): ProfileSection with composite address + emergency contact"
+  git add client/src/pages/staff/account/ProfileSection.js \
+          client/src/pages/staff/EmailVerifyPage.js \
+          client/src/App.js
+  git commit -m "feat(staff-portal): ProfileSection + EmailVerifyPage with verification flow"
   ```
 
 ---
 
-### Task 35: PaymentMethodsSection.js + AddMethodModal.js
+### Task 44: PaymentMethodsSection.js + AddMethodModal.js
 
 **Spec ref:** §6.11.
 
@@ -1949,27 +2221,15 @@
 - Create: `client/src/pages/staff/account/PaymentMethodsSection.js`
 - Create: `client/src/pages/staff/account/AddMethodModal.js`
 
-- [ ] **Step 1: PaymentMethodsSection top pill**
+- [ ] **Step 1: Top "Payroll routes to" pill** with [Change] action.
 
-  "Payroll routes to: [icon] [label] · [identifier]" pulled from `GET /api/me/payment-methods` (`preferred` + the corresponding method's handle).
+- [ ] **Step 2: Methods on file list**, Card always-on, P2P methods, payroll-only methods. Per-row Set as preferred (where eligible), edit, remove.
 
-- [ ] **Step 2: Methods on file list**
+- [ ] **Step 3: AddMethodModal** with category picker → method picker → input form (handle for P2P, routing/account for direct deposit, no input for check).
 
-  One row per method. Card row always rendered, "Always on" chip, non-editable. Each editable row: pencil edit (inline → PATCH on save), X remove (sets handle to null via PATCH), Set as preferred (PUT /preferred-payment-method, button hidden on payroll-ineligible Card row).
+- [ ] **Step 4: Verify**, add Venmo, set as preferred, clear it, confirm pill flips to "No payroll method set."
 
-- [ ] **Step 3: AddMethodModal**
-
-  Picker for a method category (Tip-eligible / Payroll-only) → method (Venmo, Cash App, PayPal, Zelle, Direct deposit, Check) → input form.
-
-  For Venmo / Cash App / PayPal / Zelle: single handle input. For Direct deposit: routing + account inputs (masked on display after save; never re-shown in plaintext). For Check: no input, just confirm.
-
-  On save, PATCH the corresponding column. The modal closes; the row appears with the new handle (or, for Check, just renders).
-
-- [ ] **Step 4: Footer disclaimer** (italic, per spec).
-
-- [ ] **Step 5: Verify**: add Venmo, set as preferred for payroll, clear it, confirm `preferred_payment_method` auto-flips to NULL (the top pill should now read "No payroll method set").
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
   ```bash
   git add client/src/pages/staff/account/PaymentMethodsSection.js \
@@ -1979,81 +2239,55 @@
 
 ---
 
-### Task 36: CalendarSyncSection.js
+### Task 45: CalendarSyncSection.js
 
 **Spec ref:** §6.12.
 
 **Files:**
 - Create: `client/src/pages/staff/account/CalendarSyncSection.js`
 
-- [ ] **Step 1: Subscribe buttons**
+- [ ] **Step 1: Subscribe buttons** for Google / Apple / Outlook (deep links composed against the existing feed URL with `users.calendar_token`).
 
-  Three buttons composing deep links against the existing feed URL: `${API_URL}/api/calendar/feed/${calendarToken}`.
+- [ ] **Step 2: Subscription URL block** with Copy button + Regenerate URL action calling `POST /api/calendar/token/regenerate`.
 
-  Read `users.calendar_token` via `GET /api/me` (extend that response if needed; Task 41 wraps the contract update).
+- [ ] **Step 3: Last sync sub-section** with empty-state handling for null `last_ics_fetch_at` and missing `calendar_subscribed_app` JSONB key. Tooltip on the app-name chip explaining the UA detection is best-effort.
 
-- [ ] **Step 2: Subscription URL block + Copy button**
-
-  Read-only URL display + Copy button. Copied state toggle (1.8s).
-
-- [ ] **Step 3: Last sync sub-section**
-
-  Reads `users.last_ics_fetch_at` and `users.ui_preferences.calendar_subscribed_app` from `GET /api/me`. Renders "Last synced from [App], [X minutes/hours ago]" + Disconnect button (clears `calendar_subscribed_app` via PATCH /api/me/ui-preferences).
-
-- [ ] **Step 4: Regenerate URL action**
-
-  Calls `POST /api/calendar/regenerate-token` (existing). Shows confirm dialog before firing: "Previously-subscribed apps will stop syncing. Proceed?"
-
-- [ ] **Step 5: Verify**: subscribe to the feed in Apple Calendar, confirm shifts appear; toggle an unconfirmed BEO and confirm the all-day VEVENT appears 3 days before.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
   ```bash
   git add client/src/pages/staff/account/CalendarSyncSection.js
-  git commit -m "feat(staff-portal): CalendarSyncSection (subscribe/copy/last-sync/regenerate)"
+  git commit -m "feat(staff-portal): CalendarSyncSection with empty states + token regen"
   ```
 
 ---
 
-### Task 37: NotificationsSection.js (Phase A: Push gated off)
+### Task 46: NotificationsSection.js (Phase A: Push gated off)
 
 **Spec ref:** §6.13.
 
 **Files:**
 - Create: `client/src/pages/staff/account/NotificationsSection.js`
-- Create: `client/src/pages/staff/account/IOSCoachmark.js` (stub for Phase A; full implementation in Task 44)
+- Create: `client/src/pages/staff/account/IOSCoachmark.js` (stub for Phase A)
 
-- [ ] **Step 1: 8×3 matrix render**
+- [ ] **Step 1: 8×3 matrix render** with rows from §6.13 table. Pulls from `GET /api/me/staff-notifications`. Push column disabled with "Coming in v1.5" tooltip.
 
-  Rows per the spec §6.13 table (shift_offered, shift_decided, cover_needed, beo_finalized, beo_reminder_t3, schedule_change, payday, tip_received). Columns: SMS, Email, Push.
+- [ ] **Step 2: Per-row override indicator** (§6.13 migration guard companion): when a category's SMS channel would be silently overridden by `communication_preferences.sms_enabled=false`, render a strikethrough on the SMS toggle + tooltip *"Global SMS is off (you replied STOP). Reply START to your last Dr Bartender text to re-enable."*
 
-  Each cell is a toggle. Pulls state from `GET /api/me/staff-notifications`.
+- [ ] **Step 3: Combined-state UI guard**, when proposing a save that would leave a critical category with no channel, show inline error and block the toggle.
 
-- [ ] **Step 2: Push column gated off in Phase A**
+- [ ] **Step 4: Critical-path footer copy** per §6.13.
 
-  Render the Push column toggles as disabled with a tooltip / banner: "Push notifications launch in v1.5". This makes the matrix UI ship in Phase A but the cells don't write to the API.
-
-- [ ] **Step 3: SMS + Email toggles work**
-
-  Toggling a cell PATCHes `/api/me/staff-notifications` with `{ channels: { [category]: [...new channel set] } }`. Optimistic update.
-
-- [ ] **Step 4: Critical-path footer**
-
-  Static text per §6.13: "Critical-path messages. BEO finalized, schedule changes, payday, can't be fully muted..."
-
-- [ ] **Step 5: Verify**: toggle SMS off for `shift_offered`, confirm the next test shift_offered SMS does NOT send.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
   ```bash
   git add client/src/pages/staff/account/NotificationsSection.js \
           client/src/pages/staff/account/IOSCoachmark.js
-  git commit -m "feat(staff-portal): NotificationsSection (Phase A: Push column gated)"
+  git commit -m "feat(staff-portal): NotificationsSection (Phase A: Push gated, kill-switch indicator)"
   ```
 
 ---
 
-### Task 38: DocumentsSection.js + ReplaceConfirmModal.js
+### Task 47: DocumentsSection.js + ReplaceConfirmModal.js
 
 **Spec ref:** §6.14.
 
@@ -2061,55 +2295,38 @@
 - Create: `client/src/pages/staff/account/DocumentsSection.js`
 - Create: `client/src/pages/staff/account/ReplaceConfirmModal.js`
 
-- [ ] **Step 1: Reference section**
+- [ ] **Step 1: Reference + My documents sections**
 
-  Field Guide row linking to `/field-guide` (existing route).
+  Field Guide link, W-9 row (Replace button), Independent Contractor Agreement row (no Replace), Alcohol certification row with expiry treatment (within 60 days = "Expires soon" tag + nudge, past expiry = "Expired" red tag). Empty-state copy for legacy rows with no `alcohol_certification_expires_on`.
 
-- [ ] **Step 2: My documents section**
+- [ ] **Step 2: ReplaceConfirmModal**
 
-  W-9 row, Independent Contractor Agreement row (no replace), Alcohol certification row (with expiry treatment).
+  W-9 variant: file picker. Alcohol cert variant: file picker + REQUIRED date input (must be future). Multipart POST to `/api/me/documents/:doc_type/replace`.
 
-  Expiry treatment for alcohol cert: read `contractor_profiles.alcohol_certification_expires_on`. Within 60 days → amber "Expires soon" tag + nudge sub-line. Past date → red "Expired" tag.
+- [ ] **Step 3: Other archives**, Paystubs link to `/pay`.
 
-- [ ] **Step 3: Replace flow**
-
-  Pencil icon opens ReplaceConfirmModal. Modal: title, sub, file picker, Cancel / Replace buttons. On Replace, multipart POST to `/api/me/documents/:doc_type/replace`. Show success state with "Replaced" chip on the row.
-
-- [ ] **Step 4: Other archives section**
-
-  "Paystubs (N)" row that navigates to `/pay`.
-
-- [ ] **Step 5: Verify**: replace W-9 with a PDF, confirm the active record updates AND `staff_document_history` has the snapshot. Repeat for alcohol cert.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
   ```bash
   git add client/src/pages/staff/account/DocumentsSection.js \
           client/src/pages/staff/account/ReplaceConfirmModal.js
-  git commit -m "feat(staff-portal): DocumentsSection with W-9 and alcohol-cert replace"
+  git commit -m "feat(staff-portal): DocumentsSection with replace + alcohol-cert expiry capture"
   ```
 
 ---
 
-## Phase 9: Wire-up + cleanup + docs
+## Phase 10: Cutover + cleanup + docs
 
-### Task 39: App.js mount swap (HiringRoutes + StaffSiteRoutes) + redirects
+### Task 48: App.js StaffSiteRoutes block swap (commit 1)
 
-**Spec ref:** §6.1, §8.4.
+**Spec ref:** §6.1.
 
 **Files:**
 - Modify: `client/src/App.js`
 
-- [ ] **Step 1: Replace `<StaffLayout/>` with `<StaffShell/>` in both blocks**
+- [ ] **Step 1: Swap StaffSiteRoutes block only**
 
-  - `HiringRoutes()` around line 271: `<Route element={<RequirePortal><StaffShell/></RequirePortal>}>`
-  - `StaffSiteRoutes()` around line 314: same swap.
-
-  StaffShell needs the `tabs`, `user`, `userMenu`, `skin`, `onSkinChange`, `badges` props it expects. Wrap in an outer component that hydrates from `GET /api/me`.
-
-- [ ] **Step 2: Replace the per-page Routes**
-
-  Inside each block, replace the existing child Routes with the new mount table from spec §6.1:
+  Inside `StaffSiteRoutes()` around line 298: replace `<RequirePortal><StaffLayout/></RequirePortal>` with `<RequirePortal><StaffShell.../>...</RequirePortal>`. Mount the production routes:
 
   ```jsx
   <Route path="/" element={<HomePage/>} />
@@ -2124,53 +2341,67 @@
   <Route path="/account/:section" element={<AccountPage/>} />
   ```
 
-- [ ] **Step 3: Add 30-day redirect Navigates**
+  Plus the unauth `/verify-email/:token` route mounted at the App.js root (OUTSIDE RequirePortal).
 
-  ```jsx
-  <Route path="/dashboard" element={<Navigate to="/" replace/>} />
-  <Route path="/events"    element={<Navigate to="/shifts/mine" replace/>} />
-  <Route path="/schedule"  element={<Navigate to="/shifts/mine" replace/>} />
-  <Route path="/profile"   element={<Navigate to="/account/profile" replace/>} />
-  <Route path="/resources" element={<Navigate to="/account/documents" replace/>} />
-  <Route path="/my-tip-page" element={<Navigate to="/tip-card" replace/>} />
-  ```
+  Resolve the HomePage import collision: the existing `import HomePage from './pages/website/HomePage'` at App.js:14 must be aliased: `import WebsiteHomePage from './pages/website/HomePage'` and the `/website` route element updated to `<WebsiteHomePage/>`. Then the new `import HomePage from './pages/staff/HomePage'` (lazy) goes in alongside.
 
-  Add to BOTH `HiringRoutes()` and `StaffSiteRoutes()`.
+  Keep `/my-tip-page/print` mounted (renders `<PrintTipCard/>`); the print route is shared with the public tip page and physical-card production.
 
-- [ ] **Step 4: Imports**
+  Remove the `/staff-v2/` stub mount in the same commit. Its purpose is served, production routes now live at `/`.
 
-  Add lazy imports for the new components at the top of `App.js`:
-
-  ```javascript
-  const StaffShell  = lazy(() => import('./components/StaffShell'));
-  const HomePage    = lazy(() => import('./pages/staff/HomePage'));
-  const ShiftsPage  = lazy(() => import('./pages/staff/ShiftsPage'));
-  const ShiftDetail = lazy(() => import('./pages/staff/ShiftDetail'));
-  const PayPage     = lazy(() => import('./pages/staff/PayPage'));
-  const PayoutDetail = lazy(() => import('./pages/staff/PayoutDetail'));
-  const TipCardPage = lazy(() => import('./pages/staff/TipCardPage'));
-  const AccountPage = lazy(() => import('./pages/staff/account/AccountPage'));
-  ```
-
-  Keep the existing `StaffLayout` import in place; the next task removes it.
-
-- [ ] **Step 5: Verify the build**
+- [ ] **Step 2: Verify build**
 
   ```bash
   CI=true npm --prefix client run build
   ```
-  Expected: clean build. Any unresolved import = a missing component.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 3: Commit**
 
   ```bash
   git add client/src/App.js
-  git commit -m "feat(staff-portal): mount new portal routes in App.js (both subdomain blocks)"
+  git commit -m "feat(staff-portal): mount production routes in StaffSiteRoutes (cutover step 1)"
   ```
 
 ---
 
-### Task 40: Delete old fragments
+### Task 49: App.js HiringRoutes block swap + redirects (commit 2)
+
+**Spec ref:** §6.1.
+
+**Files:**
+- Modify: `client/src/App.js`
+
+- [ ] **Step 1: Swap HiringRoutes block**
+
+  Same `StaffShell` wrapper + same production routes, but inside `HiringRoutes()` around line 273. The hiring subdomain hosts staff routes for new hires immediately post-onboarding, so the cutover must reach both blocks.
+
+- [ ] **Step 2: Redirect routes for the 30-day grace period**
+
+  Add to BOTH blocks:
+
+  ```jsx
+  <Route path="/dashboard"   element={<Navigate to="/" replace/>} />
+  <Route path="/events"      element={<Navigate to="/shifts/mine" replace/>} />
+  <Route path="/schedule"    element={<Navigate to="/shifts/mine" replace/>} />
+  <Route path="/profile"     element={<Navigate to="/account/profile" replace/>} />
+  <Route path="/resources"   element={<Navigate to="/account/documents" replace/>} />
+  <Route path="/my-tip-page" element={<Navigate to="/tip-card" replace/>} />
+  ```
+
+  Also grep for any other staff-portal sub-routes in the existing App.js or in CLIENT_FACING_SURFACES.md and add redirects for them.
+
+- [ ] **Step 3: Verify build**
+
+- [ ] **Step 4: Commit**
+
+  ```bash
+  git add client/src/App.js
+  git commit -m "feat(staff-portal): mount production routes in HiringRoutes + add redirects (cutover step 2)"
+  ```
+
+---
+
+### Task 50: Delete old fragments
 
 **Spec ref:** §6.15.
 
@@ -2181,36 +2412,29 @@
 - Delete: `client/src/pages/staff/StaffSchedule.js`
 - Delete: `client/src/pages/staff/StaffProfile.js`
 - Delete: `client/src/pages/staff/StaffResources.js`
-- Delete: `client/src/pages/staff/MyTipPage.js`
-- Delete: `client/src/pages/staff/MyTipPage.css` (if unused after MyTipPage removal)
+- Delete: `client/src/pages/staff/MyTipPage.js` + `MyTipPage.css` (if unused after MyTipPage removal)
 - Delete: `client/src/components/StaffLayout.js`
-- Modify: `client/src/App.js` (remove the lazy imports for the deleted files)
+- Modify: `client/src/App.js` (remove lazy imports for deleted files)
 
-- [ ] **Step 1: Search for any remaining imports of these files**
+- [ ] **Step 1: Search for any remaining imports**
 
   ```bash
   grep -rn "StaffDashboard\|StaffEvents\|StaffShifts\|StaffSchedule\|StaffProfile\|StaffResources\|MyTipPage\|StaffLayout" client/src
   ```
 
-  Expected after this task: only references inside `App.js` (the lazy imports being removed) and no other references.
+  Expected: only references inside `App.js` (the lazy imports being removed) and no other references.
 
-- [ ] **Step 2: Delete the files**
+- [ ] **Step 2: Delete the files and remove lazy imports from App.js**
 
-- [ ] **Step 3: Remove the lazy imports**
+  Keep `PrintTipCard.jsx`, `PrintTipCard.layouts.jsx`, `PrintTipCard.css` (print flow lives on).
 
-  From the top of `App.js`, delete the `const StaffDashboard = lazy(...)` etc. lines for every deleted file.
-
-- [ ] **Step 4: Verify build still passes**
+- [ ] **Step 3: Verify build**
 
   ```bash
   CI=true npm --prefix client run build
   ```
 
-- [ ] **Step 5: Verify PrintTipCard files remain**
-
-  `PrintTipCard.jsx`, `PrintTipCard.layouts.jsx`, `PrintTipCard.css` are kept; the print flow continues to use them via the TipCardPage's "Open print page" action.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Commit**
 
   ```bash
   git rm client/src/pages/staff/StaffDashboard.js \
@@ -2228,59 +2452,38 @@
 
 ---
 
-### Task 41: Documentation updates
+### Task 51: Documentation updates
 
-**Spec ref:** §14 Documentation updates.
+**Spec ref:** §14.
 
 **Files:**
-- Modify: `README.md`
-- Modify: `ARCHITECTURE.md`
-- Modify: `CLIENT_FACING_SURFACES.md`
+- Modify: `README.md`, `ARCHITECTURE.md`, `CLAUDE.md`, `CLIENT_FACING_SURFACES.md`
 
-- [ ] **Step 1: README.md folder tree**
+- [ ] **Step 1: README.md**, folder tree updates (new + deleted files), Key Features (new portal description).
 
-  Update the `client/src/pages/staff/` listing: remove the deleted files, add the new ones (HomePage, ShiftsPage, ShiftDetail, PayPage, PayoutDetail, TipCardPage, account/AccountPage, account/*Section files). Update `client/src/components/` and `client/src/components/staff/` sub-trees.
+- [ ] **Step 2: ARCHITECTURE.md**, API route table additions (every new `/api/me/*` + drop/cover endpoints + admin cover-swap + email-change endpoints), Database Schema additions (all new tables + columns + constraint widenings), Notifications model section (channel routing + critical-path override + dead-letter + suppression cascade).
 
-- [ ] **Step 2: README.md Key Features**
+- [ ] **Step 3: CLAUDE.md**, new env vars (VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, REACT_APP_VAPID_PUBLIC_KEY, VAPID_CONTACT_EMAIL).
 
-  Replace the staff-portal bullet with the new feature description (4 tabs, embedded BEO, drop/cover marketplace, light/dark theme, channel-routed notifications).
+- [ ] **Step 4: CLIENT_FACING_SURFACES.md**, staff portal section overhaul.
 
-- [ ] **Step 3: ARCHITECTURE.md API route table**
-
-  Add rows for every `/api/me/*` endpoint added in Tasks 7-11 and every `/api/shifts/requests/:id/*` endpoint added in Tasks 15-18. Mark the extended `/api/calendar/feed/:token` with the BEO-VEVENT extension. Mark the extended `/api/beo/:proposalId` with the `team_roster` addition.
-
-- [ ] **Step 4: ARCHITECTURE.md Database Schema**
-
-  Add the new columns + table from Task 1. Note the constraint widenings.
-
-- [ ] **Step 5: ARCHITECTURE.md notifications section**
-
-  New sub-section on channel routing: `staff_notification_preferences` shape, kill switch via `communication_preferences`, critical-path override, multi-row enqueue pattern.
-
-- [ ] **Step 6: CLIENT_FACING_SURFACES.md**
-
-  Replace the staff portal section with the new tab structure + AccountPage breakdown.
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Commit**
 
   ```bash
-  git add README.md ARCHITECTURE.md CLIENT_FACING_SURFACES.md
-  git commit -m "docs(staff-portal): folder tree + route table + schema + notifications model"
+  git add README.md ARCHITECTURE.md CLAUDE.md CLIENT_FACING_SURFACES.md
+  git commit -m "docs(staff-portal): folder tree + route table + schema + notifications + env vars"
   ```
 
 ---
 
-## Phase 10: Push notifications (Phase B per spec)
+## Phase 11: Push notifications (Phase B per spec)
 
-### Task 42: VAPID setup + env vars
+### Task 52: VAPID setup + env vars
 
 **Spec ref:** §6.17.
 
 **Files:**
-- Modify: `package.json` (server-side, root)
-- Modify: `.env.example`
-- Modify: `.claude/CLAUDE.md` (Environment Variables table)
-- Modify: `README.md` (Environment Variables table)
+- Modify: `package.json`, `.env.example`, `CLAUDE.md`, `README.md`
 
 - [ ] **Step 1: Install web-push**
 
@@ -2294,31 +2497,25 @@
   npx web-push generate-vapid-keys
   ```
 
-  Save the public + private keys.
+- [ ] **Step 3: Document env vars**
 
-- [ ] **Step 3: Add the three env vars**
+  - `VAPID_PUBLIC_KEY` (server-side)
+  - `VAPID_PRIVATE_KEY` (server-side)
+  - `REACT_APP_VAPID_PUBLIC_KEY` (client-side, same value as VAPID_PUBLIC_KEY)
+  - `VAPID_CONTACT_EMAIL` (defaults to `contact@drbartender.com`)
 
-  - `VAPID_PUBLIC_KEY` (server-side, also injected into client at build time)
-  - `VAPID_PRIVATE_KEY` (server-side only)
-  - `REACT_APP_VAPID_PUBLIC_KEY` (client-side, set to the same value as VAPID_PUBLIC_KEY)
-  - `VAPID_CONTACT_EMAIL` (server-side, set to `contact@drbartender.com` per CLAUDE.md ADMIN_EMAIL convention)
+  Add to `.env.example`, CLAUDE.md env table, README env table.
 
-  Add to `.env.example`, README env table, CLAUDE.md env table.
-
-- [ ] **Step 4: Add the production-side instruction**
-
-  Note in the env table: "Set on Render (server) AND Vercel (client) before merging Phase 10."
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
   ```bash
-  git add package.json package-lock.json .env.example .claude/CLAUDE.md README.md
+  git add package.json package-lock.json .env.example CLAUDE.md README.md
   git commit -m "chore(staff-portal): web-push + VAPID env vars for Phase B"
   ```
 
 ---
 
-### Task 43: Service worker + pushSubscribe util
+### Task 53: Service worker + pushSubscribe util
 
 **Spec ref:** §6.17.
 
@@ -2326,81 +2523,9 @@
 - Create: `client/public/staff-sw.js`
 - Create: `client/src/utils/pushSubscribe.js`
 
-- [ ] **Step 1: Service worker**
+- [ ] **Step 1: Service worker** with push + notificationclick handlers. Embed `SW_VERSION` constant at the top for cache-busting on every meaningful change.
 
-  ```javascript
-  // client/public/staff-sw.js
-  self.addEventListener('push', (event) => {
-    const data = event.data ? event.data.json() : {};
-    const { title, body, url, tag, icon } = data;
-    event.waitUntil(
-      self.registration.showNotification(title || 'Dr Bartender', {
-        body: body || '',
-        tag: tag || 'default',
-        icon: icon || '/logo192.png',
-        data: { url: url || '/' },
-      })
-    );
-  });
-  self.addEventListener('notificationclick', (event) => {
-    event.notification.close();
-    const url = event.notification.data?.url || '/';
-    event.waitUntil(
-      self.clients.matchAll({ type: 'window' }).then((clients) => {
-        for (const c of clients) {
-          if (c.url.includes(url) && 'focus' in c) return c.focus();
-        }
-        if (self.clients.openWindow) return self.clients.openWindow(url);
-      })
-    );
-  });
-  ```
-
-- [ ] **Step 2: pushSubscribe util**
-
-  ```javascript
-  // client/src/utils/pushSubscribe.js
-  import api from './api';
-
-  export function permissionState() {
-    if (!('Notification' in window)) return 'unsupported';
-    return Notification.permission; // 'default' | 'granted' | 'denied'
-  }
-
-  export async function subscribePush() {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      return { ok: false, reason: 'unsupported' };
-    }
-    const perm = await Notification.requestPermission();
-    if (perm !== 'granted') return { ok: false, reason: perm };
-
-    const reg = await navigator.serviceWorker.register('/staff-sw.js');
-    await navigator.serviceWorker.ready;
-
-    const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(process.env.REACT_APP_VAPID_PUBLIC_KEY),
-    });
-    await api.post('/me/push-subscriptions', {
-      endpoint: sub.endpoint,
-      keys: sub.toJSON().keys,
-      user_agent: navigator.userAgent,
-    });
-    return { ok: true, subscription: sub };
-  }
-
-  export async function unsubscribePush() {
-    const reg = await navigator.serviceWorker.getRegistration('/staff-sw.js');
-    if (!reg) return { ok: true };
-    const sub = await reg.pushManager.getSubscription();
-    if (!sub) return { ok: true };
-    await api.delete('/me/push-subscriptions', { data: { endpoint: sub.endpoint } });
-    await sub.unsubscribe();
-    return { ok: true };
-  }
-
-  function urlBase64ToUint8Array(base64) { /* standard helper */ }
-  ```
+- [ ] **Step 2: pushSubscribe util**, `permissionState()`, `subscribePush()`, `unsubscribePush()`. Wires to `/api/me/push-subscriptions`.
 
 - [ ] **Step 3: Commit**
 
@@ -2411,37 +2536,26 @@
 
 ---
 
-### Task 44: iOS coachmark UX
+### Task 54: iOS coachmark UX
 
-**Spec ref:** §6.13 (Push column behavior), §6.17.
+**Spec ref:** §6.13 + §6.17.
 
 **Files:**
-- Modify: `client/src/pages/staff/account/IOSCoachmark.js` (the stub from Task 37)
+- Modify: `client/src/pages/staff/account/IOSCoachmark.js` (the Phase A stub)
 - Modify: `client/src/pages/staff/account/NotificationsSection.js`
 
-- [ ] **Step 1: Detect iOS Safari without home-screen install**
+- [ ] **Step 1: iOS detection helper**
 
   ```javascript
   function isIosNeedsInstall() {
     const ua = navigator.userAgent;
-    const isIos = /iPad|iPhone|iPod/.test(ua);
-    const isStandalone = window.navigator.standalone === true;
-    return isIos && !isStandalone;
+    return /iPad|iPhone|iPod/.test(ua) && !window.navigator.standalone;
   }
   ```
 
-- [ ] **Step 2: IOSCoachmark modal**
+- [ ] **Step 2: IOSCoachmark modal** with 3-step "Add to Home Screen" walkthrough.
 
-  3-step list with icons: Share button → Add to Home Screen → Open from home screen → return here to toggle push. Single "Got it" button. Trigger from a "Show me how" link in the Push column banner when `isIosNeedsInstall()` is true.
-
-- [ ] **Step 3: NotificationsSection banner states**
-
-  Replace the Phase A "Coming in v1.5" disabled state with:
-  - `granted`: green banner "Push notifications on"
-  - `denied`: red banner with re-enable instructions
-  - `default`: neutral banner with "Enable push" CTA that calls `subscribePush()`
-  - `unsupported`: amber banner "Your browser doesn't support push"
-  - `iosNeedsInstall`: amber banner + "Show me how" link → IOSCoachmark
+- [ ] **Step 3: Replace Push column gated state in NotificationsSection** with full banner state machine: granted / denied / default / unsupported / iosNeedsInstall.
 
 - [ ] **Step 4: Commit**
 
@@ -2453,7 +2567,7 @@
 
 ---
 
-### Task 45: Activate push send path in dispatcher
+### Task 55: Activate push send path in dispatcher
 
 **Spec ref:** §6.17.
 
@@ -2461,7 +2575,7 @@
 - Modify: `server/utils/pushSender.js`
 - Modify: `server/utils/pushSender.test.js`
 
-- [ ] **Step 1: Replace the stub with real `web-push` calls**
+- [ ] **Step 1: Replace stub with real web-push**
 
   ```javascript
   const webpush = require('web-push');
@@ -2473,6 +2587,7 @@
   );
 
   async function sendPush({ subscription, title, body, url, tag, icon }) {
+    if (!process.env.VAPID_PRIVATE_KEY) return { ok: false, error: 'vapid_unset' };
     try {
       const payload = JSON.stringify({ title, body, url, tag, icon });
       await webpush.sendNotification(subscription, payload);
@@ -2483,25 +2598,13 @@
       return { ok: false, error: err?.message || 'send_failed' };
     }
   }
-
-  module.exports = { sendPush };
   ```
 
-- [ ] **Step 2: Replace the stub test with real coverage**
-
-  - Successful send returns `{ ok: true }`
-  - 410 / 404 returns `{ ok: false, gone: true }`
-  - Other errors return `{ ok: false, error: ... }`
-
-  Use a mock for `web-push` (the simplest pattern: replace the module on the require cache for the test).
+- [ ] **Step 2: Tests**, successful send, 410 returns gone:true, other errors return error string, VAPID-unset returns vapid_unset.
 
 - [ ] **Step 3: End-to-end verify**
 
-  1. Open the staff portal in Chrome.
-  2. AccountPage / Notifications → toggle a Push cell on for `shift_offered`.
-  3. Grant browser permission.
-  4. From a server console (or admin tool), enqueue a test `shift_offered` push for that user.
-  5. Confirm the notification appears on the desktop.
+  Open staff portal in Chrome → AccountPage / Notifications → toggle Push cell on → grant permission → enqueue a test push from a server console → confirm notification appears.
 
 - [ ] **Step 4: Commit**
 
@@ -2512,29 +2615,25 @@
 
 ---
 
-### Task 46: NotificationsSection Push column unlock + Phase B verification
+### Task 56: NotificationsSection Push column unlock + Phase B verification
 
 **Spec ref:** §6.13.
 
 **Files:**
 - Modify: `client/src/pages/staff/account/NotificationsSection.js`
 
-- [ ] **Step 1: Unlock the Push column**
+- [ ] **Step 1: Unlock Push column**, remove the "Coming in v1.5" disabled state. Push toggles now write to `/api/me/staff-notifications`.
 
-  Remove the Phase A "Coming in v1.5" disabled state. Push toggles now write to `/api/me/staff-notifications`.
+- [ ] **Step 2: First-toggle subscribe flow**, when a user toggles a Push cell ON for the first time AND `permissionState() === 'default'`, call `subscribePush()` first. On success, PATCH the staff-notifications channels. If permission denied, leave toggle off + update banner state.
 
-- [ ] **Step 2: First-toggle subscribe flow**
-
-  When a user toggles a Push cell ON for the first time AND `permissionState() === 'default'`, call `subscribePush()` first; if that succeeds, then PATCH the staff-notifications channels. If permission denied, leave the toggle off + update the banner state.
-
-- [ ] **Step 3: Manual verification matrix (per spec §11 Phase B)**
+- [ ] **Step 3: Manual verification matrix per spec §11 Phase B**
 
   - Push permission grant on Chrome desktop → subscribes successfully
   - Push permission grant on Android Chrome → subscribes successfully
   - iOS Safari without home-screen install → coachmark appears, toggles disabled
-  - iOS Safari with home-screen install → permission flow works, toggles enable
-  - Test BEO nudge with push-only preference → push fires, no SMS sent (assuming non-critical category)
-  - Test BEO finalized notification with all channels off → critical-path override sends SMS anyway
+  - iOS Safari with home-screen install → permission flow works
+  - BEO nudge with push-only preference → push fires, no SMS
+  - BEO finalized with all channels off → critical-path override sends SMS anyway
   - Subscription expires (simulate 410) → server removes the subscription on next attempt
 
 - [ ] **Step 4: Commit**
@@ -2548,18 +2647,23 @@
 
 ## Done.
 
-All 46 tasks across 10 phases. Phase A (Tasks 1-41) ships the new portal with SMS + email notifications and the drop / cover marketplace; Phase B (Tasks 42-46) adds push.
+All 56 tasks across 11 phases. Phase A (Tasks 1-51) ships the new portal with SMS + email notifications and the drop / cover marketplace; Phase B (Tasks 52-56) adds push.
 
-**Cross-phase test gates:**
+**Cross-phase gates:**
 
 - Before merging Phase A: run the full server test suite (`node --test server/`), the client build (`CI=true npm --prefix client run build`), and the spec §11 Phase A manual verification matrix.
-- Before merging Phase B: re-run the suite + the spec §11 Phase B manual verification matrix.
+- Before merging Phase B: re-run + the spec §11 Phase B manual verification matrix.
 - A pre-deploy `code-review`, `security-review`, `database-review`, `performance-review`, `consistency-check` agent fleet run (per CLAUDE.md Rule 6) catches integration drift across the layers.
 
 **Common pitfalls to call out during execution:**
 
-1. **Forgetting to update BOTH `App.js` route blocks** (Task 39): the new portal must work on both `staff.drbartender.com` (StaffSiteRoutes) AND the hiring subdomain (HiringRoutes), because newly-hired staff land on the hiring subdomain before the staff subdomain.
-2. **`payment_profiles.account_number` leaking in API responses** (Task 8): only project the last 4 digits. Search every new SELECT for the column name and confirm the projection.
-3. **`/api/me` mount-order collisions** (Task 7): verify the existing `server/routes/me.js` routes and the new `server/routes/staffPortal.js` routes have no path collisions before mounting both under `/api/me`.
-4. **Push subscription pruning race** (Task 45): when multiple dispatcher workers process the same user's rows concurrently, the `jsonb_set` for prune must be transaction-safe. Use `SELECT ... FOR UPDATE` on the user row inside the txn.
-5. **Calendar feed deep links breaking on token rotation** (Task 36): when a user rotates their `calendar_token`, every previously-subscribed app stops syncing. The Regenerate confirm dialog must warn before firing.
+1. **Forgetting to update BOTH `App.js` route blocks**, the new portal must work on both the staff subdomain AND the hiring subdomain; the cutover is two commits (Tasks 48 + 49) for review-revertability.
+2. **`payment_profiles.account_number` leaking in API responses** (Task 13), only project the last 4 digits AFTER decrypt. Never project raw ciphertext.
+3. **`/api/me/*` mount-order collisions** (Task 12), verify the existing `server/routes/me.js` and `server/routes/emailChange.js` (unauthenticated) and `server/routes/staffPortal.js` (auth-gated) mount orders carefully. The unauthenticated `confirm-email-change` route must reach its handler without `auth` middleware applying.
+4. **Push subscription pruning race** (Task 7), `SELECT FOR UPDATE` on the user row inside the prune transaction is load-bearing.
+5. **Calendar feed deep links breaking on token rotation** (Task 45), Regenerate URL action requires explicit confirm dialog.
+6. **`shifts.positions_needed` heterogeneous shape** (Task 22), always `typeof p === 'string' ? p : p.position` tolerantly.
+7. **Hybrid-state filter** (Tasks 11, 23, 26, 33), every consumer that reads `status='approved'` must also check `dropped_at IS NULL`. The partial index `idx_shift_requests_active_approved` makes this query fast.
+8. **`scheduled_messages.status` new terminal values** (Task 7), `'suppressed_by_sibling'` and `'dead_letter'` are TERMINAL. Any existing reader that filters `status NOT IN ('sent','failed')` to find live work must be audited.
+9. **Email-change confirm auth model** (Task 18), look up `user_id` from `pending_email_changes` via `token_hash` ONLY. NEVER from `req.user.id`. This is the load-bearing security property.
+10. **`positions_interested` is JSON-encoded** (Task 1 backfill), not comma-separated. The backfill SQL uses `(positions_interested::jsonb->>0)` with a CASE fallback for any legacy CSV rows.
