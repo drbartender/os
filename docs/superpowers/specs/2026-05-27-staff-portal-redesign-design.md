@@ -179,6 +179,7 @@ What is actually in the codebase as of this branch (verified against `server/db/
 | `/account/calendar` | AccountPage (Calendar) | Account (overlay) |
 | `/account/notifications` | AccountPage (Notifications) | Account (overlay) |
 | `/account/documents` | AccountPage (Documents) | Account (overlay) |
+| `/verify-email/:token` | EmailVerifyPage | (no tab; unauthenticated route, NOT inside `<RequirePortal>`) |
 
 **Redirects from old URLs** (in `client/vercel.json` or via `<Navigate>` in `App.js`): `/dashboard` → `/`, `/events` → `/shifts/mine`, `/schedule` → `/shifts/mine`, `/profile` → `/account/profile`, `/resources` → `/account/documents`, `/my-tip-page` → `/tip-card`. **Keep `/my-tip-page/print` mounted** (renders the existing `<PrintTipCard/>`); the print route is shared with the public tip page and physical-card production, and a redirect would break those flows. Before merging, grep `client/src/App.js` for any other staff-portal sub-routes (e.g., legacy deep links not in this table) and add redirects for them in the same change. 30-day grace period of redirects; remove after.
 
@@ -280,7 +281,7 @@ Post-submit, the Drop / Cover card on ShiftDetail flips to a green result chip: 
 
 **Common pre-check: pay-period status guard.** All four endpoints SELECT the shift's pay period via `payout_events.shift_id → payouts.pay_period_id → pay_periods.status`. If the pay period is `'processing'` (mid-payout), the drop/cover mutation is rejected 409 with `reason='pay_period_processing'`. Reason: a drop or cover flip can re-compose `payout_events` rows that are currently being settled. **NULL-payout case:** a future shift has no `payout_events` row yet (events accrue at payout time, not on shift creation). The LEFT JOIN returns NULL, the guard treats this as "no processing period to protect" and the mutation proceeds. Emergency drop bypasses this guard entirely by design (management resolves manually).
 
-**Hours-to-event computation.** `hoursToEvent = (event_datetime - NOW()) / 3600000` where `event_datetime` is composed from `shifts.event_date + shifts.start_time`. Times in `shifts` are stored as `VARCHAR(50)` in the venue's local timezone (per CLAUDE.md, no global timezone normalization); the server constructs the comparison in America/Chicago via the existing `parseShiftDateTime(shift)` helper that the BEO spec uses. Boundary semantics: `>= 336h` is clean drop, `[72h, 336h)` is cover broadcast, `< 72h` is emergency. Exactly-336 and exactly-72 fall to the higher-numbered mode (clean drop, cover broadcast respectively).
+**Hours-to-event computation.** `hoursToEvent = (event_datetime - NOW()) / 3600000` where `event_datetime` is composed from `shifts.event_date + shifts.start_time`. Times in `shifts` are stored as `VARCHAR(50)` in the venue's local timezone (per CLAUDE.md, no global timezone normalization). This spec adds a NEW helper at `server/utils/shiftTime.js` (listed in §8.1) that exports `parseShiftDateTime({ event_date, start_time }) => Date` and treats the input as America/Chicago wall-clock. The closest existing helper is `buildEventTimes` at `server/routes/calendar.js:70`, but it returns ICS-formatted strings, not a comparable JS Date, the new helper is a small dedicated parser the four drop/cover endpoints share. Boundary semantics follow the inequalities literally: `hoursToEvent >= 336` is clean drop, `72 <= hoursToEvent < 336` is cover broadcast, `hoursToEvent < 72` is emergency. Exactly 72.0 falls into cover broadcast (the table is authoritative; ignore the prose's "higher-numbered mode" phrasing in earlier drafts).
 
 **`POST /api/shifts/requests/:requestId/drop`**, clean drop, 14+ days out. Inside one transaction (`BEGIN`):
 1. SELECT request + linked shift + proposal (`FOR UPDATE` on the shift_requests row).
@@ -306,7 +307,7 @@ If hours-to-event < 336, return 409 with `reason='wrong_mode'` (defensive; UI sh
 
 7. Return 200 with `broadcast_count` describing the number of rows ENQUEUED in step 6. Note: this is enqueue count, NOT projected delivery count. The dispatcher's per-row send-time check against `communication_preferences` may still suppress individual rows.
 
-**Qualified-teammate filter.** The shift's `positions_needed` (JSONB array of role strings) is matched against each candidate's `contractor_profiles.position` value. The new `position` column is added in §7 and backfilled from `applications.positions_interested` at migration time (or `'bartender'` for legacy rows without an application). The teammate must additionally:
+**Qualified-teammate filter.** The shift's `positions_needed` is a `TEXT DEFAULT '[]'` column (per `server/db/schema.sql:280`) holding JSON-encoded data with HETEROGENEOUS shapes across the codebase: some writes produce `[{ position: 'bartender', count: 1 }]` objects (per `client/src/components/adminos/shifts.js`), others produce plain string arrays. The targeting code MUST tolerate both via the existing pattern `typeof p === 'string' ? p : p.position` (used by `server/utils/autoAssign.js:137` and `client/src/pages/staff/StaffShifts.js:103`). The candidate match is `EXISTS (SELECT 1 FROM jsonb_array_elements(positions_needed::jsonb) AS p WHERE COALESCE(p->>'position', p#>>'{}') = contractor_profiles.position)`. The new `position` column is added in §7 and backfilled from `applications.positions_interested` (JSON-decoded first element, lowercased; default `'bartender'` for legacy rows). The teammate must additionally:
 - Be on `users.onboarding_status='approved'` (NOT 'suspended' / 'deactivated' / 'rejected').
 - NOT be the requesting user.
 - Have `cover_needed` channels non-empty in `staff_notification_preferences.channels.cover_needed` (any of `'push' | 'sms' | 'email'`; the default ships with `["push"]`).
@@ -322,9 +323,13 @@ If hours-to-event < 336, return 409 with `reason='wrong_mode'` (defensive; UI sh
 2. Verify shift state: `shifts.status` is NOT `'cancelled'`. Pay period is not `'processing'` (per common pre-check).
 3. Verify the claiming user is NOT the same user who requested the cover (`req.user.id !== original.user_id`).
 4. Verify the claiming user is qualified for the shift's role (`contractor_profiles.position` matches one of `shifts.positions_needed`, same filter as the broadcast targeting). A barback cannot claim a bartender slot.
-5. Verify the claiming user does not already have a pending or approved `shift_requests` row on this shift.
-6. INSERT a new `shift_requests` row with `user_id=req.user.id`, `status='pending'`, `replaced_by_request_id=<original.id>` (the new pending row points BACK to the original; on admin approval the cascade reads this column to find which row to flip).
-7. Send a signed, expiring approve-link email to management at the standard admin contact (`/admin/shifts/cover-swaps/:swapToken` where `swapToken` is a JWT signed with `JWT_SECRET`, payload `{ original_request_id, new_request_id, exp: NOW + 7 days, jti: <uuid> }`). The admin click on the link hits a new `GET /api/admin/cover-swaps/:swapToken` route that renders a confirm page; the admin's confirm POSTs to the swap endpoint which triggers the cover-approval cascade. The cascade's idempotency check (the original's `cover_requested_at=NULL` after the first approval) protects against JWT replay within the 7-day window; an admin clicking the link a second time sees a "Cover already resolved" page. If the JWT has expired, the page renders an "expired link, find the swap in the admin Shifts dashboard" message, no automatic re-issue.
+5. Check whether the claiming user has a PRIOR `shift_requests` row on this shift (denied from an earlier request the staffer withdrew, etc.). `shift_requests` carries `UNIQUE(shift_id, user_id)` at `schema.sql:304`, so a fresh INSERT would conflict.
+6. UPSERT: `INSERT INTO shift_requests (shift_id, user_id, status, replaced_by_request_id) VALUES (...) ON CONFLICT (shift_id, user_id) DO UPDATE SET status='pending', replaced_by_request_id=EXCLUDED.replaced_by_request_id, dropped_at=NULL, drop_reason=NULL, cover_requested_at=NULL`, if a prior denied row exists, flip it back to pending; if none exists, INSERT new. The new pending row points BACK to the original cover-requester via `replaced_by_request_id`; on admin approval the cascade reads this column to find which row to flip. Reject 409 if the existing row is already `status='approved'` (the user already covered this shift; nothing to do).
+7. Send a signed, expiring approve-link email to management. URL: `/admin/shifts/cover-swaps/:swapToken` where `swapToken` is a JWT signed with `JWT_SECRET`, payload `{ original_request_id, new_request_id, exp: NOW + 7 days, jti: <uuid> }`. Two new admin routes back this:
+   - `GET /api/admin/cover-swaps/:swapToken` (listed in §8.1): `auth` middleware + admin role check + JWT verification. The auth guard is critical because URL tokens leak via Referer headers, browser history, and admin email forwarding; without it, anyone holding a stale link in their history could replay it. Renders a small confirm page.
+   - `POST /api/admin/cover-swaps/:swapToken` (listed in §8.1): same auth + JWT verification. Triggers the cover-approval cascade.
+
+   The cascade's idempotency check (the original's `cover_requested_at=NULL` after the first approval) protects against JWT replay within the 7-day window; an admin clicking the link a second time sees a "Cover already resolved" page. If the JWT has expired, the page renders an "expired link, find the swap in the admin Shifts dashboard" message; no automatic re-issue.
 8. COMMIT. Return 200.
 
 If the email send fails after COMMIT, the cover-claim pending row remains in place; admin can still approve via the normal Shifts dashboard. The send-failure is logged to Sentry but does not roll back the claim.
@@ -344,8 +349,8 @@ A mid-cascade failure rolls back the whole transaction; the original staffer rem
 2. UPDATE the request with `dropped_at=NOW(), drop_reason=reason (truncated to 500), drop_emergency=true`. Leave `status='approved'` (the staffer remains nominally on the roster).
 3. **Hybrid-state rule:** every downstream consumer that reads `shift_requests.status='approved'` MUST also check `dropped_at IS NULL` to determine whether the staffer is actually working. This rule applies to: `scheduleStaffShiftMessages` (no new SMS to the dropped staffer), `autoAssign` (treat the seat as vacant), `shift_reminder` dispatcher (skip), `payout_events` accrual (the drop_emergency case requires manual management resolution before any wage accrues). The §11 testing matrix verifies each of these.
 4. Suppress all pending `scheduled_messages` rows targeting this user for this shift (same SQL as the clean-drop step 5): `UPDATE scheduled_messages SET status='suppressed' WHERE entity_type='shift' AND entity_id=$shift_id AND recipient_id=$user_id AND status='pending'`.
-5. Notify management urgently. Email always. SMS to `ADMIN_PHONE` ONLY when the env var is set (per CLAUDE.md, `ADMIN_PHONE` is optional). If `ADMIN_PHONE` is unset, the route logs a structured warning *"Emergency-drop SMS skipped: ADMIN_PHONE not configured"* via Sentry breadcrumb so ops can spot the configuration gap. The email path is always sent and is the load-bearing notification channel. SMS body slices the reason at 80 chars to keep within the SMS budget.
-6. INSERT into `proposal_activity_log` with `action='emergency_drop_requested'`, `actor_type='staff'`, `actor_id=req.user.id`, `details={reason, hours_out, shift_id, request_id}`.
+5. Notify management urgently. Email always via `notifyAdminCategory('urgent_staffing', ...)`, which resolves admin recipients from admin users' `contractor_profiles.phone` for SMS and admin users' `users.email` for email (NOT from the `ADMIN_PHONE` env var). Additionally, IF `ADMIN_PHONE` env var is set, send a one-shot SMS to that number too via `sendAndLogSms({ to: process.env.ADMIN_PHONE, body })`, the env var is a separate emergency hotline (Dallas's personal phone) per CLAUDE.md, distinct from the admin-user-phone fan-out. If `ADMIN_PHONE` is unset, log a structured warning *"Emergency-drop hotline SMS skipped: ADMIN_PHONE not configured"* via `Sentry.captureMessage` (NOT a breadcrumb, breadcrumbs need a transaction context) so ops can spot the configuration gap. SMS body slices the reason at 80 chars with the front-loaded template: `"EMERGENCY DROP from ${name}: ${reason_first_80}"`.
+6. INSERT into `proposal_activity_log` with `proposal_id=shift.proposal_id` (derived from the SELECT in step 1), `action='emergency_drop_requested'`, `actor_type='staff'`, `actor_id=req.user.id`, `details={reason, hours_out, shift_id, request_id}`. If `shift.proposal_id IS NULL` (orphan shift), skip the insert with a Sentry warning; orphan shifts are an admin-side data-integrity bug, not a staff-portal concern.
 7. COMMIT. Return 200.
 
 ### 6.6 PayPage
@@ -404,16 +409,32 @@ Save button in the card header. On save, posts to `PATCH /api/me/profile`. Serve
 
 **Email change is a separate flow, not a synchronous PATCH.** A compromised account that can flip `users.email` instantly bypasses password-reset email verification.
 
-Flow:
-1. Client opens a confirmation modal: *"Change your email? We'll send a verification link to the new address. Your current login stays active until you click the link."*
-2. Server-side validation on Save: email format (existing regex). Reject 409 `reason='email_in_use'` if another `users` row has this email. Reject 409 `reason='already_pending'` if another user has a pending change to this email. If THIS user already has a prior pending row, mark it `consumed_at=NOW()` (superseded) before inserting the new one (most-recent-wins).
-3. Server generates a 32-byte random token. Stores `token_hash = SHA-256(token)` in `pending_email_changes` (schema in §7). The raw token is included only in the verification email URL; a DB leak does not grant verification rights.
-4. Row shape: `(user_id, new_email, token_hash, expires_at = NOW() + INTERVAL '24 hours')`.
-5. Verification email sent to the NEW address with a link to a CLIENT-side React route `https://staff.drbartender.com/verify-email/:token` that renders a "Confirm email change" page with a single Confirm button. Clicking Confirm POSTs to `POST /api/me/confirm-email-change` with `{ token }` in the body. The GET landing page does NOT consume the token (so email clients' auto-prefetch can't accidentally confirm).
-6. On confirm POST: server hashes the token, finds the matching row where `consumed_at IS NULL AND expires_at > NOW()`, sets `users.email = new_email` AND `pending_email_changes.consumed_at = NOW()` in one transaction. Subsequent clicks on the same link see `consumed_at != NULL` and render a "Already used" page.
-7. Expired rows are purged by a low-frequency cleanup scheduler (daily; non-urgent, the `consumed_at IS NULL` filter is the operational gate).
+Endpoints (all listed in §8.1):
+- `POST /api/me/request-email-change`, auth-gated, scoped by `req.user.id`. Validates + creates the pending row + sends verification email.
+- `POST /api/me/confirm-email-change`, **NOT auth-gated** (the user clicking the link from the new-email inbox may not be signed in, or may be signed in as a different account). Looks up the pending row by `token_hash` ONLY; the `user_id` to mutate comes from the pending row, NEVER from `req.user.id`. This is the load-bearing security property: a signed-in attacker cannot replay a victim's leaked token against their own account.
+- `POST /api/me/cancel-pending-email-change`, auth-gated. Marks the requesting user's most recent pending row `consumed_at=NOW()`.
 
-The Profile UI shows a "Pending verification, check [new email]" banner until the change confirms or expires. The banner copy includes a "Cancel pending change" affordance that marks `consumed_at = NOW()` server-side.
+Flow:
+1. Rate-limit guard on `POST /api/me/request-email-change`: 3 pending requests per user per 24h (via the existing `server/middleware/rateLimiters.js`). Prevents weaponized harassment via verification-email floods to a victim.
+2. Client opens a confirmation modal: *"Change your email? We'll send a verification link to the new address. Your current login stays active until you click the link."*
+3. Server-side validation: email format (existing regex). Reject 409 `reason='email_in_use'` if another `users` row has this email. The new UNIQUE INDEX in §7 on `pending_email_changes.LOWER(new_email) WHERE consumed_at IS NULL` enforces the "no two users have a pending change to the same email" rule atomically via `ON CONFLICT (LOWER(new_email)) DO NOTHING` then check rows-affected (race-safe). If THIS user already has a prior pending row, mark it `consumed_at=NOW()` (superseded) before inserting the new one (most-recent-wins).
+4. Server generates a 32-byte random token via `crypto.randomBytes(32).toString('base64url')`. Stores `token_hash = sha256(token)` (64-hex-char) in `pending_email_changes` (schema in §7). The raw token is included only in the verification email URL; a DB leak does not grant verification rights.
+5. Row shape: `(user_id, new_email, token_hash, expires_at = NOW() + INTERVAL '24 hours')`.
+6. **Notify the OLD email address** at the same time, separate from the new-address verification. Subject: *"Email change requested on your Dr Bartender account"*. Body: *"Someone (probably you) just asked to change your account email to [new_email]. Your account stays on the current address until that change is confirmed via a link sent to the new address. If this wasn't you, sign in now and tap Cancel pending change in your Profile, or reach out to support@drbartender.com."* This is the takeover-recovery signal.
+7. Verification email sent to the NEW address with a link to a CLIENT-side React route `https://staff.drbartender.com/verify-email/:token` (NEW unauthenticated route in App.js, does NOT live under `<RequirePortal>`; the user may click the link from a logged-out browser). The route renders a "Confirm email change" page with a single Confirm button. Clicking Confirm POSTs to `POST /api/me/confirm-email-change` with `{ token }` in the body. The GET landing page does NOT consume the token (so email clients' auto-prefetch can't accidentally confirm).
+8. On confirm POST: server hashes the token with `crypto.timingSafeEqual` after row fetch (defense against any edge timing leaks on the indexed lookup). Finds the matching row where `consumed_at IS NULL AND expires_at > NOW()`. In one transaction:
+   - SELECT the row + the current `users.email` for the affected user
+   - UPDATE `users SET email = new_email`
+   - UPDATE `pending_email_changes SET consumed_at = NOW()` for this row
+   - INSERT `staff_audit_log (action='email_change_confirmed', details={old_email, new_email})`
+   - **Bump `users.token_version`** (new column, added in §7) so every existing JWT for this user becomes invalid, the legitimate owner OR the attacker, whoever started the flow, is forced to sign in again with the new email. (Existing auth middleware reads `users.token_version` and rejects tokens with a stale version.)
+   - Send a final notification email to the OLD address: *"Your account email has been changed to [new_email]. If this wasn't you, contact support immediately."*
+9. Subsequent clicks on the same link see `consumed_at IS NOT NULL` and render a "Already used" page.
+10. Expired rows are purged by a daily cleanup scheduler.
+
+The Profile UI shows a "Pending verification, check [new email]" banner until the change confirms or expires. The banner copy includes a "Cancel pending change" affordance that posts to `POST /api/me/cancel-pending-email-change` (marks `consumed_at = NOW()`). After expiry, the banner disappears on the next page load (the next `/api/me` fetch returns no pending row).
+
+The verification email body is a new template `emailChangeVerification` in `server/utils/lifecycleEmailTemplates.js`; the old-address warning email is `emailChangeWarning`. Both follow the existing template patterns. Resend rejection / hard bounce: the request still succeeds at the API layer (the pending row is created); the staffer can attempt re-send via the Cancel + re-request flow. Bounce reports surface via the existing Resend webhook handler at `server/routes/webhooks/resend.js`.
 
 **Phone changes get an audit-log entry.** Phone is the SMS-leg recovery channel; a takeover that flips it bypasses recovery without trace. On `PATCH /api/me/profile` when `phone` is in the body and differs from the current value, INSERT a row into `staff_audit_log` (`user_id=req.user.id`, `actor_type='staff'`, `actor_id=req.user.id`, `action='profile_phone_change'`, `details={old_phone_last4, new_phone_last4}`). The full numbers are not logged in the audit row, only last 4. Email changes also INSERT a `staff_audit_log` row on PENDING (`action='email_change_requested'`, `details={new_email}`) AND on CONFIRM (`action='email_change_confirmed'`, `details={old_email, new_email}`).
 
@@ -580,7 +601,7 @@ Existing rows with `channel='sms'` or `'email'` continue to work unchanged; the 
 
 The array is capped at 10 active subscriptions per user. When a new subscription would push the count above 10, the OLDEST entry (by `subscribed_at`) is evicted in the same `jsonb_set` operation (LRU prune). This prevents unbounded growth from a buggy client that re-subscribes on every page load.
 
-**Re-resolve after sibling-cascade for critical-path categories.** When the dispatcher marks every row in a suppression_key group as terminal (`suppressed` / `suppressed_by_sibling` / `failed`) AND the category is in `CRITICAL_CATEGORIES`, the dispatcher re-runs `pickChannelsForUserAndCategory(user_id, category)` to get a fresh resolution against the CURRENT state of `communication_preferences` and `staff_notification_preferences`, then enqueues one new `scheduled_messages` row at that resolved channel with a fresh `suppression_key`. If the re-resolve returns `dead_letter`, the dispatcher marks the original group as `dead_letter` and fires the Sentry capture. This prevents the failure mode where a critical message is enqueued multi-row, the user flips SMS off, every row gets suppressed, and the user silently never hears about it.
+**Re-resolve after sibling-cascade for critical-path categories.** When the dispatcher marks every row in a suppression_key group as terminal (`suppressed` / `suppressed_by_sibling` / `failed`) AND the category is in `CRITICAL_CATEGORIES`, the dispatcher re-runs `pickChannelsForUserAndCategory(user_id, category)` to get a fresh resolution against the CURRENT state of `communication_preferences` and `staff_notification_preferences`, then enqueues one new `scheduled_messages` row at that resolved channel with a fresh `suppression_key`. Each re-resolve increments a `re_resolve_count` on the row's `payload` JSON (added at enqueue time; default 0). When `re_resolve_count >= 2`, the dispatcher stops re-resolving and marks the row `dead_letter` + fires the Sentry capture, even if the resolver would still return live channels. This bounds the worst case (push subs all dead AND user toggles SMS off AND quiet hours active) at three send attempts total per critical message, not an infinite loop. Out-of-band alert: in addition to the Sentry capture, dead-letter resolution sends a one-shot SMS to `ADMIN_PHONE` (if set) with body `"DR BARTENDER: critical message dead-lettered for user ${user_id} category ${category}, check Sentry"` so ops sees it even if Sentry's noisy.
 
 ### 6.14 AccountPage / Documents
 
@@ -699,7 +720,7 @@ Replaced wholesale. Delete in the same change:
 
 The BEO spec's `GET /api/beo/:proposalId` response includes a `shift_requests` array. Extend the projection to include the team roster as a derived field per the design's `team_roster[]` shape:
 
-- For each approved shift_request on a non-cancelled shift linked to the proposal:
+- For each `shift_requests` row where `status='approved' AND dropped_at IS NULL` (the hybrid-state filter from §6.5: emergency-dropped staffers stay `status='approved'` for management to resolve, but they are NOT on the active roster) on a non-cancelled shift linked to the proposal:
   - `user_id`
   - `display_name` (composed server-side). Resolution chain, first match wins:
     1. `contractor_profiles.preferred_name` if non-empty, paired with the last-initial from `applications.full_name` if available (e.g., `"Rosa M."`). If `applications.full_name` is NULL (legacy staffer without an application row, possible for the oldest hires), use `agreements.full_name` (LEFT JOIN `agreements ON agreements.user_id = users.id`). If both are NULL, render the preferred name alone (`"Rosa"`).
@@ -724,6 +745,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ui_preferences JSONB
 
 -- Per-user last calendar-feed fetch timestamp (powers the Account / Calendar "Last sync" panel)
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ics_fetch_at TIMESTAMPTZ;
+
+-- Token version for session-invalidation on email change (per §6.10).
+-- Existing JWTs embed the token_version at sign time; auth middleware rejects any
+-- token whose version is below the current value. Bumped on email-change confirm
+-- so the legitimate owner OR the attacker (whoever started the flow) must sign in
+-- again with the new email.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;
 
 -- Staff-side per-category × per-channel notification routing + push subscriptions
 -- (separate from the existing admin-only users.notification_preferences).
@@ -813,6 +841,11 @@ CREATE INDEX IF NOT EXISTS idx_shift_requests_cover_requested
 CREATE INDEX IF NOT EXISTS idx_shift_requests_dropped
   ON shift_requests(dropped_at) WHERE dropped_at IS NOT NULL;
 
+-- Partial index for the hybrid-state filter that payrollAccrual / autoAssign / team-roster
+-- queries all use after the emergency-drop rule lands ("approved AND not dropped").
+CREATE INDEX IF NOT EXISTS idx_shift_requests_active_approved
+  ON shift_requests(shift_id) WHERE status = 'approved' AND dropped_at IS NULL;
+
 -- One new handle column on payment_profiles (Zelle); all other handle columns and the W-9 columns
 -- already exist on payment_profiles (verified against server/db/schema.sql:129+ and :2000+).
 ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS zelle_handle TEXT;
@@ -828,15 +861,20 @@ ALTER TABLE contractor_profiles
 ALTER TABLE contractor_profiles
   ADD COLUMN IF NOT EXISTS position TEXT;
 
--- positions_interested is free-text and often comma-separated (e.g. "Bartender, Server").
--- Backfill takes the FIRST token (trimmed, lowercased) so the value matches a single
--- entry from shifts.positions_needed JSONB array. Legacy staff with no application
--- get 'bartender' as the safe default.
+-- applications.positions_interested is a JSON-encoded string (e.g. '["bartender","barback"]')
+-- written by client/src/pages/Application.js:179 via JSON.stringify(selectedPositions).
+-- Backfill JSON-decodes and takes the FIRST element, lowercased + trimmed. Legacy staff
+-- with no application row get 'bartender' as the safe default. Wrapped in defensive
+-- jsonb cast: if a row is malformed (legacy seed in comma-separated text format), the
+-- nested CASE falls through to the SPLIT_PART path for migration safety.
 UPDATE contractor_profiles cp
    SET position = COALESCE(
-     LOWER(TRIM(SPLIT_PART(
-       (SELECT a.positions_interested FROM applications a WHERE a.user_id = cp.user_id),
-       ',', 1
+     LOWER(TRIM((
+       SELECT CASE
+         WHEN a.positions_interested ~ '^\[' THEN (a.positions_interested::jsonb->>0)
+         ELSE SPLIT_PART(a.positions_interested, ',', 1)
+       END
+       FROM applications a WHERE a.user_id = cp.user_id
      ))),
      'bartender'
    )
@@ -857,7 +895,10 @@ UPDATE users u
      (
        SELECT jsonb_object_agg(
          cat_key,
-         (SELECT jsonb_agg(ch) FROM jsonb_array_elements_text(cat_val) AS ch WHERE ch <> 'sms')
+         COALESCE(
+           (SELECT jsonb_agg(ch) FROM jsonb_array_elements_text(cat_val) AS ch WHERE ch <> 'sms'),
+           '[]'::jsonb
+         )
        )
        FROM jsonb_each(staff_notification_preferences->'channels') AS chans(cat_key, cat_val)
      ),
@@ -880,6 +921,8 @@ CREATE TABLE IF NOT EXISTS pending_email_changes (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_email_changes_token_hash
   ON pending_email_changes(token_hash) WHERE consumed_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_email_changes_new_email_pending
+  ON pending_email_changes(LOWER(new_email)) WHERE consumed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_pending_email_changes_user
   ON pending_email_changes(user_id) WHERE consumed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_pending_email_changes_expires
@@ -925,7 +968,16 @@ CREATE INDEX IF NOT EXISTS idx_staff_audit_log_action ON staff_audit_log(action,
 
 ### 8.1 Server (new)
 
-- `server/routes/staffPortal.js`, composite endpoints used by Home and other pages: `GET /api/me/staff-home`, `GET /api/me/payment-methods`, `PATCH /api/me/payment-methods`, `PUT /api/me/preferred-payment-method`, `PUT /api/me/tip-card-order`, `PATCH /api/me/profile`, `PATCH /api/me/ui-preferences`, `GET /api/me/staff-notifications`, `PATCH /api/me/staff-notifications`, `POST /api/me/push-subscriptions`, `DELETE /api/me/push-subscriptions`, `POST /api/me/documents/:doc_type/replace`. All `auth`-gated, no `requireAdminOrManager`, scoped by `req.user.id`. The four drop / cover endpoints (`POST /api/shifts/requests/:id/drop`, `/request-cover`, `/claim-cover`, `/emergency-drop`) live in `server/routes/shifts.js`, not this file.
+- `server/routes/staffPortal.js`, composite endpoints used by Home and other pages: `GET /api/me/staff-home`, `GET /api/me/payment-methods`, `PATCH /api/me/payment-methods`, `PUT /api/me/preferred-payment-method`, `PUT /api/me/tip-card-order`, `PATCH /api/me/profile`, `PATCH /api/me/ui-preferences`, `GET /api/me/staff-notifications`, `PATCH /api/me/staff-notifications`, `POST /api/me/push-subscriptions`, `DELETE /api/me/push-subscriptions`, `POST /api/me/documents/:doc_type/replace`, `POST /api/me/request-email-change`, `POST /api/me/cancel-pending-email-change`. All `auth`-gated, no `requireAdminOrManager`, scoped by `req.user.id`. The drop / cover endpoints (`POST /api/shifts/requests/:id/drop`, `/request-cover`, `/claim-cover`, `/emergency-drop`, plus the new `DELETE /api/shifts/requests/:requestId` for the §6.3 Withdraw flow) live in `server/routes/shifts.js`. `POST /api/me/confirm-email-change` (NOT auth-gated; looks up `user_id` from `pending_email_changes` via `token_hash` only, see §6.10) lives on its own minimal `server/routes/emailChange.js` so the unauthenticated handler isn't tucked under the auth-gated router.
+- `server/routes/emailChange.js`, NEW. `POST /api/me/confirm-email-change`, unauthenticated, body `{ token }`, hashes the token + finds the pending row + executes the multi-step transaction described in §6.10 step 8. Mounted in `server/index.js` before any auth middleware.
+- `server/routes/adminCoverSwaps.js`, NEW. `GET /api/admin/cover-swaps/:swapToken` + `POST /api/admin/cover-swaps/:swapToken`. Both `auth` + admin role check + JWT verification (per §6.5). The GET renders the confirm page payload; the POST triggers the cover-approval cascade.
+- `server/utils/shiftTime.js`, NEW. Exports `parseShiftDateTime({ event_date, start_time }) => Date` (treats input as America/Chicago wall-clock) and `hoursToEvent(shift) => number`. Replaces the fabricated `parseShiftDateTime` reference from prior drafts. Co-located with `calendar.js`'s `buildEventTimes` helper but separate (different return shape).
+- `server/utils/pushSender.js`, wraps `web-push` npm. Exports `sendPush({ subscription, title, body, url, tag, icon })`. Returns `{ ok: true }` on success or `{ ok: false, gone: true }` for 410 / 404 (caller prunes the subscription).
+- `server/utils/notificationChannelResolver.js`, `pickChannelsForUserAndCategory(userId, category) => Promise<string[]>`. Reads `users.staff_notification_preferences` AND `users.communication_preferences` and returns the effective channel set (after kill-switch suppression + critical-path override). Pure helper, no I/O beyond the one user-row read. Includes a `DEFAULT_CHANNELS` const matching the §6.13 defaults table; future categories added later inherit defaults without backfill.
+- `server/utils/staffCalendarFeedExt.js`, the VEVENT-list extension that the existing `server/routes/calendar.js` builder calls into to produce the BEO-confirm all-day reminders.
+- `server/routes/staffPortal.test.js`, endpoint contract tests.
+- `server/routes/emailChange.test.js`, `server/routes/adminCoverSwaps.test.js`, contract + auth tests for the new routes.
+- `server/utils/pushSender.test.js`, `server/utils/notificationChannelResolver.test.js`, `server/utils/staffCalendarFeedExt.test.js`, `server/utils/shiftTime.test.js`.
 - `server/utils/pushSender.js`, wraps `web-push` npm. Exports `sendPush({ subscription, title, body, url, tag, icon })`. Returns `{ ok: true }` on success or `{ ok: false, gone: true }` for 410 / 404 (caller prunes the subscription).
 - `server/utils/notificationChannelResolver.js`, `pickChannelsForUserAndCategory(userId, category) => Promise<string[]>`. Reads `users.staff_notification_preferences` AND `users.communication_preferences` and returns the effective channel set (after kill-switch suppression + critical-path override). Pure helper, no I/O beyond the one user-row read.
 - `server/utils/staffCalendarFeedExt.js`, the VEVENT-list extension that the existing `server/routes/calendar.js` builder calls into to produce the BEO-confirm all-day reminders. Co-located with the existing builder rather than a parallel file.
@@ -935,13 +987,19 @@ CREATE INDEX IF NOT EXISTS idx_staff_audit_log_action ON staff_audit_log(action,
 ### 8.2 Server (modify)
 
 - `server/db/schema.sql`, all schema additions in section 7.
-- `server/routes/shifts.js`, new drop / cover endpoints (`POST /requests/:id/drop`, `/request-cover`, `/claim-cover`, `/emergency-drop`). The existing routes also gain projection updates for the new pages: `GET /shifts` (staff path) adds `drink_plan_finalized_at`, `my_beo_acknowledged_at`, `cover_requested_at`, `cover_for_first_initial`; `GET /shifts/user/:userId/events` adds `payout_id` per past row (computed via a join to `payout_events`).
+- `server/routes/shifts.js`, new drop / cover endpoints (`POST /requests/:id/drop`, `/request-cover`, `/claim-cover`, `/emergency-drop`, `DELETE /requests/:id` for the Withdraw flow). The existing `PUT /api/shifts/requests/:requestId` approval branch is extended to detect `replaced_by_request_id IS NOT NULL` and run the cover-approval cascade described in §6.5. The existing routes also gain projection updates for the new pages: `GET /shifts` (staff path) adds `drink_plan_finalized_at`, `my_beo_acknowledged_at`, `cover_requested_at`, `cover_for_first_initial`; `GET /shifts/user/:userId/events` adds `payout_id` per past row (computed via a join to `payout_events`).
+- `server/utils/payrollAccrual.js` (existing), extend the `WHERE sr.status = 'approved'` filter at line 115 to `WHERE sr.status = 'approved' AND sr.dropped_at IS NULL`. Without this update, emergency-dropped staffers accrue pay automatically when `accruePayoutsForProposal` fires on event completion. Required companion to §6.5's hybrid-state rule.
+- `server/utils/autoAssign.js` (existing), extend the approved-seat count at line 142 to filter `dropped_at IS NULL` so emergency-dropped seats are correctly counted as vacant for re-fill. Same hybrid-state-rule companion.
+- `server/middleware/auth.js`, extend the existing deny-list around line 41-49 to include `'suspended'` alongside `'deactivated'` and `'rejected'`. Required companion to the `users_onboarding_status_check` widening in §7. Same file also reads the new `users.token_version` column: when verifying a JWT, compare `decoded.token_version === user.token_version`; reject if mismatch (forces re-auth after email change per §6.10).
+- `server/utils/jwt.js` (or wherever token-signing happens), embed `users.token_version` into the JWT payload on every sign. Existing tokens (signed before this change) lack the field, treat missing as version 1 for backwards compat.
 - `server/routes/calendar.js`, extend `buildICalFeed` (the existing builder at line 211 powering `GET /api/calendar/feed/:token`) to call into `staffCalendarFeedExt` for the all-day "Confirm BEO" VEVENTs on unconfirmed-BEO shifts. Same change adds the backward 30-day cutoff on past shifts and the per-fetch `last_ics_fetch_at` UPDATE (debounced; see §6.12). No new route, no parallel builder.
 - `server/utils/scheduledMessageDispatcher.js`, three changes: (1) before dispatching any row, re-check `users.communication_preferences` and skip rows whose channel kill switch has been turned off since enqueue; (2) for `channel='push'` rows, iterate `users.staff_notification_preferences.push_subscriptions[]` and call `pushSender.sendPush`; prune subscriptions that return `gone:true`; (3) the existing per-category suppression cascade extends to cover the multi-row push+sms+email enqueue pattern (one logical event = one suppression key).
 - `server/utils/messageScheduling.js` (the existing scheduler-side helper, 66 lines), add `enqueueCategorizedMessage(userId, category, payload)` that resolves channels via `notificationChannelResolver` and inserts one `scheduled_messages` row per resolved channel. Also widen the hardcoded `VALID_CHANNELS = new Set(['email', 'sms'])` at line 5 to include `'push'`, otherwise the existing `scheduleMessage` validator throws before any push INSERT lands.
 - `server/index.js`, mount `/api/me/*` (the staffPortal router) under the existing app instance. The existing `/api/calendar/*` mount stays.
 - `server/utils/staffShiftHandlers.js`, cover-broadcast scheduling helper: when a `request-cover` endpoint fires, schedule cover-broadcast `scheduled_messages` rows per opted-in qualified teammate via `enqueueCategorizedMessage(teammateId, 'cover_needed', ...)`. The Twilio rate-limit guard from the BEO spec applies (chunked sends, exponential backoff on 429).
 - `server/utils/smsTemplates.js`, new `cover_broadcast_sms` template + `staff_drop_to_management_sms` for the management-side urgent notifications on emergency drops.
+- `server/utils/lifecycleEmailTemplates.js`, new templates: `emailChangeVerification` (sent to NEW email, contains the verification link) + `emailChangeWarning` (sent to OLD email on request) + `emailChangeConfirmed` (sent to OLD email after confirm).
+- `server/utils/tipHandleValidation.js`, add a `validateZelleHandle(input)` function that returns `{ valid: true }` if the input matches either E.164 phone (`^\+?[1-9]\d{1,14}$`) or RFC-5322 email (use the existing email regex from the same file), else `{ valid: false, error: 'Zelle requires a phone number or email address.' }`. Wire into the existing `normalizeTipHandlesInPlace` switch.
 - `server/routes/me.js` (existing), `GET /api/me` extended to include `staff_notification_preferences`, `ui_preferences`, and a flattened payment-methods snapshot, so the StaffShell can render without multiple GETs. **Push subscriptions are NOT projected** in the global `/api/me` payload (they bloat the response and aren't needed for page render); the AccountPage / Notifications section makes a separate `GET /api/me/staff-notifications` for the full prefs blob. The existing `GET /api/me/tip-page` route stays unchanged (now consumed by both TipCardPage and the AccountPage / Payment methods Card-row metadata).
 - `server/routes/publicTip.js`, JOIN `users` to project `ui_preferences->'tip_card_order'`; add `zelle_handle` to the chooser projection; order the chooser methods by the staffer's saved order with fallback to natural order for methods not in the array. Without this, drag-reorder and the new Zelle column silently fail to surface on the QR-scan path (§6.8).
 - `server/middleware/auth.js`, extend the existing deny-list around line 41-49 to include `'suspended'` alongside `'deactivated'` and `'rejected'`. Required companion to the `users_onboarding_status_check` widening in §7.
@@ -1011,7 +1069,7 @@ Phase A is ~3-4 weeks of focused work. Phase B is ~1 week. Both ship as separate
 - The calendar feed `GET /api/calendar/feed/:token` is public-by-token (matching the existing `/tip/:token` pattern). Token is a UUID assigned to every user, can be rotated via `POST /api/calendar/token/regenerate`. Rate limiting is already enforced by the existing route.
 - **`onboarding_status='suspended'` blocks portal access.** Adding the value to the CHECK constraint (§7) is paired with a `server/middleware/auth.js` deny-list update: the existing branch that denies `'deactivated'` and `'rejected'` extends to `'suspended'`. A suspended staffer's session token is still valid until expiry, but every `/api/me/*` request returns 401 (or 403 with a "suspended, contact management" payload, pick during implementation). Without this middleware change, the new CHECK value is cosmetic and the spec ships a security tripwire.
 - Push subscription PII (`endpoint` URL, `keys`) is stored as JSON in `users.staff_notification_preferences.push_subscriptions[]`. This is the standard Web Push pattern, the keys are recipient-public (used by the server to encrypt the payload, but they don't grant access to anything beyond sending notifications to that endpoint). No encryption required.
-- **Bank routing + account numbers** on `payment_profiles` are ALREADY stored as AES-256-GCM ciphertext in `VARCHAR(255)` columns (widened from TEXT around schema line 1990 by the staff-payments work). The existing `server/utils/encryption.js` encrypts on write and decrypts on read; the module fails closed in production if `BANK_ENCRYPTION_KEY` is unset. New staff-portal routes that read these columns (`GET /api/me/payment-methods` projecting last-4 of the account number) MUST call `decrypt()` before any slice or masking. The PATCH route MUST call `encrypt()` before persisting. Never log either column raw. Never project `account_number` past the last 4 digits on any client-facing endpoint.
+- **Bank routing + account numbers** on `payment_profiles` are ALREADY stored as AES-256-GCM ciphertext in `VARCHAR(255)` columns (widened from VARCHAR(20)/VARCHAR(30) at schema line 1992 by the staff-payments work). The existing `server/utils/encryption.js` encrypts on write and decrypts on read; the module fails closed in production if `ENCRYPTION_KEY` is unset (verified at `server/utils/encryption.js:6` and `.env.example:16`). New staff-portal routes that read these columns (`GET /api/me/payment-methods` projecting last-4 of the account number) MUST call `decrypt()` before any slice or masking. The PATCH route MUST call `encrypt()` before persisting. Never log either column raw. Never project `account_number` past the last 4 digits on any client-facing endpoint.
 
 ## 11. Testing approach
 
