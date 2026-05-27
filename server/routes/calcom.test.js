@@ -530,3 +530,38 @@ test('BOOKING_RESCHEDULED: missing newUid or newStartTime is 200 ignored', async
   assert.equal(res.status, 200);
   assert.match(res.text, /malformed|ignored/i);
 });
+
+test('BOOKING_RESCHEDULED: oldUid present but no row matches → falls through to handleCreated', async () => {
+  // The Sentry warning's documented promise: when we get a reschedule for
+  // an oldUid we never recorded (e.g., we had downtime when the original
+  // CREATE fired), the handler falls through to handleCreated and files
+  // the new uid as a fresh booking. This locks that behavior against
+  // regression.
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  await postRescheduled({
+    uid: 'test-uid-resched-orphan-new',
+    startTime: '2026-06-08T15:00:00Z',
+    rescheduleUid: 'test-uid-resched-orphan-old-never-existed',
+    attendees: [{ name: 'CalcomTest Mona', email: 'mona@calcom-test.example' }],
+  });
+
+  // Old uid should not exist in our DB (we never seeded it).
+  const old = await pool.query(
+    "SELECT id FROM consults WHERE calcom_event_id = 'test-uid-resched-orphan-old-never-existed'"
+  );
+  assert.equal(old.rowCount, 0, 'old uid was never in our DB to begin with');
+
+  // New uid was filed as fresh via handleCreated's auto-create flow.
+  const consult = await pool.query(
+    "SELECT status FROM consults WHERE calcom_event_id = 'test-uid-resched-orphan-new'"
+  );
+  assert.equal(consult.rowCount, 1);
+  assert.equal(consult.rows[0].status, 'scheduled');
+
+  // handleCreated's auto-create also fired (since 'mona' was not a known client).
+  const client = await pool.query(
+    "SELECT id FROM clients WHERE email = 'mona@calcom-test.example'"
+  );
+  assert.equal(client.rowCount, 1, 'handleCreated auto-created the client');
+});
