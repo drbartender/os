@@ -145,7 +145,7 @@ async function handleDrinkPlanNudgeEmail({ entity }) {
     eventTypeLabel: eventLabel(ctx),
     eventDateDisplay: eventDateSms(ctx.event_date),
     plannerUrl: ctx.token ? `${PUBLIC_SITE_URL}/plan/${ctx.token}` : `${PUBLIC_SITE_URL}/plan`,
-    consultUrl: null, // wired to Cal.com once the integration plan lands
+    consultUrl: process.env.CAL_BOOKING_URL || null,
     phone: process.env.ADMIN_PHONE || null,
   });
   await sendEmail({ to: ctx.client_email, ...tpl });
@@ -157,7 +157,7 @@ async function handleDrinkPlanNudgeSms({ entity }) {
   const body = smsTemplates.drinkPlanNudgeSms({
     eventDate: eventDateSms(ctx.event_date),
     plannerUrl: ctx.token ? `${PUBLIC_SITE_URL}/plan/${ctx.token}` : `${PUBLIC_SITE_URL}/plan`,
-    consultUrl: null, // wired to Cal.com once the integration plan lands
+    consultUrl: process.env.CAL_BOOKING_URL || null,
   });
   await sendAndLogSms({
     to: ctx.client_phone,
