@@ -51,7 +51,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const toast = useToast();
   const filter = useMetricsFilter();
-  const { from, to, basis } = filter;
+  const { from, to, basis, includeCc } = filter;
 
   const [stats, setStats] = useState(EMPTY_STATS);
   const [shifts, setShifts] = useState([]);
@@ -63,10 +63,11 @@ export default function Dashboard() {
   useEffect(() => {
     const params = { basis };
     if (from && to) { params.from = from; params.to = to; }
+    if (includeCc && includeCc !== 'all') params.include_cc = includeCc;
     api.get('/proposals/dashboard-stats', { params })
       .then(r => setStats(r.data || EMPTY_STATS))
       .catch(() => toast.error('Dashboard metrics failed to load. Try refreshing.'));
-  }, [from, to, basis, toast]);
+  }, [from, to, basis, includeCc, toast]);
 
   // Operational zone — exempt from the filter, loads once.
   useEffect(() => {

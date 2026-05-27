@@ -20,7 +20,7 @@ const LENS_LABEL = { booked: 'Booked', scheduled: 'Scheduled', paid: 'Paid' };
 export default function FinancialsDashboard() {
   const toast = useToast();
   const filter = useMetricsFilter();
-  const { from, to, basis } = filter;
+  const { from, to, basis, includeCc } = filter;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -28,11 +28,12 @@ export default function FinancialsDashboard() {
     setLoading(true);
     const params = { basis };
     if (from && to) { params.from = from; params.to = to; }
+    if (includeCc && includeCc !== 'all') params.include_cc = includeCc;
     api.get('/proposals/financials', { params })
       .then(r => setData(r.data))
       .catch((err) => toast.error(err.message || 'Failed to load financial data. Try refreshing.'))
       .finally(() => setLoading(false));
-  }, [from, to, basis, toast]);
+  }, [from, to, basis, includeCc, toast]);
 
   const summary = data?.summary;
   const proposals = data?.proposals;
