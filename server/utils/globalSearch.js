@@ -71,7 +71,7 @@ async function runGlobalSearch(rawQuery) {
   const params = [likeTerm, phoneTerm, GROUP_LIMIT];
 
   const clientsSql = `
-    SELECT c.id, c.name, c.email, c.phone
+    SELECT c.id, c.name, c.email, c.phone, c.cc_id
     FROM clients c
     WHERE LOWER(c.name) LIKE $1 ESCAPE '\\'
        OR LOWER(c.email) LIKE $1 ESCAPE '\\'
@@ -82,7 +82,8 @@ async function runGlobalSearch(rawQuery) {
 
   const proposalsSql = `
     SELECT p.id, c.name AS client_name, p.event_type, p.event_type_custom,
-           to_char(p.event_date, 'FMMon FMDD, YYYY') AS event_date_label
+           to_char(p.event_date, 'FMMon FMDD, YYYY') AS event_date_label,
+           p.cc_id AS proposal_cc_id, c.cc_id AS client_cc_id
     FROM proposals p
     JOIN clients c ON c.id = p.client_id
     WHERE p.status NOT IN ('deposit_paid','balance_paid','confirmed','completed','archived')
@@ -97,7 +98,8 @@ async function runGlobalSearch(rawQuery) {
 
   const eventsSql = `
     SELECT p.id, c.name AS client_name, p.event_type, p.event_type_custom,
-           to_char(p.event_date, 'FMMon FMDD, YYYY') AS event_date_label
+           to_char(p.event_date, 'FMMon FMDD, YYYY') AS event_date_label,
+           p.cc_id AS proposal_cc_id, c.cc_id AS client_cc_id
     FROM proposals p
     JOIN clients c ON c.id = p.client_id
     WHERE p.status IN ('deposit_paid','balance_paid','confirmed','completed')
@@ -113,7 +115,7 @@ async function runGlobalSearch(rawQuery) {
   const staffSql = `
     SELECT u.id,
            COALESCE(cp.preferred_name, a.full_name, u.email) AS name,
-           u.onboarding_status
+           u.onboarding_status, u.cc_id
     FROM users u
     LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
     LEFT JOIN applications a ON a.user_id = u.id
@@ -143,24 +145,30 @@ async function runGlobalSearch(rawQuery) {
       id: r.id,
       name: r.name,
       detail: r.email || formatPhoneDisplay(r.phone),
+      cc_id: r.cc_id,
     })),
     proposals: proposals.rows.map((r) => ({
       type: 'proposal',
       id: r.id,
       name: r.client_name,
       detail: eventDetail(r),
+      proposal_cc_id: r.proposal_cc_id,
+      client_cc_id: r.client_cc_id,
     })),
     events: events.rows.map((r) => ({
       type: 'event',
       id: r.id,
       name: r.client_name,
       detail: eventDetail(r),
+      proposal_cc_id: r.proposal_cc_id,
+      client_cc_id: r.client_cc_id,
     })),
     staff: staff.rows.map((r) => ({
       type: 'staff',
       id: r.id,
       name: r.name,
       detail: humanizeStaffStatus(r.onboarding_status),
+      cc_id: r.cc_id,
     })),
   };
 }

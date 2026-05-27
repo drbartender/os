@@ -367,6 +367,11 @@ async function start() {
       // tick so it can resolve these staff message types.
       require('./utils/staffShiftHandlers').registerStaffShiftHandlers();
 
+      // cc-import: post-event wrap-up email handler (admin-triggered bulk send
+      // for imported Check Cherry events). Synchronous; must run before the
+      // dispatcher's first tick so it can resolve post_event_wrap_up_email rows.
+      require('./utils/ccWrapUpHandler').registerCcWrapUpHandler();
+
       // Scheduled-messages dispatcher — every 5 min, picks up pending rows
       if (enabled('RUN_MESSAGE_DISPATCHER_SCHEDULER')) {
         const wrapped = wrapScheduler('message_dispatcher', 300, dispatchPending);

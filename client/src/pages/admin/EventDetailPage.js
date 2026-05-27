@@ -19,6 +19,7 @@ import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import EventEditForm from './EventEditForm';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
+import CcImportBadge from '../../components/admin/CcImportBadge';
 
 const MenuPNG = lazy(() => import('../../components/MenuPNG/MenuPNG'));
 
@@ -205,6 +206,7 @@ export default function EventDetailPage() {
                 </button>
               ) : (proposal.client_name || 'Event')}
               {` · ${eventTypeLabel}`}
+              <CcImportBadge ccId={proposal.cc_id} />
             </h1>
             {proposal.last_minute_hold && (
               <span className="lm-hold-badge" title="Booked ≤72h out — verify staff availability before the event">
@@ -228,6 +230,25 @@ export default function EventDetailPage() {
             {!editing && (
               <button type="button" className="btn btn-secondary" onClick={() => setEditing(true)}>
                 <Icon name="pen" size={12} />Edit
+              </button>
+            )}
+            {/* cc-imported proposals miss the normal post-conversion nudge schedule
+                (the import happens after T-21). If a drink plan EXISTS, admins
+                can re-enroll the nudges here. The endpoint is idempotent. */}
+            {proposal.cc_id && drinkPlan && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={async () => {
+                  try {
+                    await api.post(`/admin/proposals/${proposal.id}/reenroll-drink-plan-nudge`);
+                    toast.success('Drink-plan nudges scheduled.');
+                  } catch (e) {
+                    toast.error(`Failed to schedule: ${e?.response?.data?.error || e.message}`);
+                  }
+                }}
+              >
+                Schedule drink-plan nudges
               </button>
             )}
           </div>

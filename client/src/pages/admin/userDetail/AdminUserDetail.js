@@ -67,6 +67,12 @@ export default function AdminUserDetail() {
   const [userMsgSending, setUserMsgSending] = useState(false);
   const [userMsgResult, setUserMsgResult] = useState(null);
 
+  // cc-import affordances (Task 22): proposal ids on which this user is
+  // co-participant with a legacy CC stub user. Drives the "Re-accrue payouts"
+  // section below. Empty array = section hidden.
+  const [stubCoProposals, setStubCoProposals] = useState([]);
+  const [reaccruing, setReaccruing] = useState(false);
+
   // Initial load
   useEffect(() => {
     api.get(`/admin/users/${id}`)
@@ -98,6 +104,14 @@ export default function AdminUserDetail() {
       .finally(() => setSeniorityLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.user?.id, id]);
+
+  // Stub-co-participated proposals (cc-import re-accrue affordance). Loaded
+  // once on mount; the endpoint is admin-only and cheap (one indexed query).
+  useEffect(() => {
+    api.get(`/admin/users/${id}/stub-co-participated-proposals`)
+      .then(r => setStubCoProposals(r.data?.proposal_ids || []))
+      .catch(() => setStubCoProposals([]));
+  }, [id]);
 
   // Lazy-load messages only when the tab opens
   useEffect(() => {
@@ -383,6 +397,49 @@ export default function AdminUserDetail() {
           </div>
         </div>
       </div>
+
+      {/* ── cc-import re-accrue (Task 22) ─────────────────
+          Only renders when this user co-participated on a proposal with a
+          legacy CC stub user. The endpoint is idempotent (UPSERT semantics);
+          accruePayoutsForProposal returns 'skipped' when nothing changed. */}
+      {stubCoProposals.length > 0 && (
+        <section className="card" style={{ marginBottom: 'var(--gap)', padding: '1.25rem 1.5rem' }}>
+          <h3 style={{ fontSize: 16, margin: '0 0 6px' }}>Re-accrue payouts</h3>
+          <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: '0 0 12px' }}>
+            This user participated on {stubCoProposals.length} {stubCoProposals.length === 1 ? 'proposal' : 'proposals'} with legacy CC stub co-participants.
+            Re-run payroll accrual once the stubs are linked or removed.
+          </p>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={reaccruing}
+            onClick={async () => {
+              setReaccruing(true);
+              const results = [];
+              for (const pid of stubCoProposals) {
+                try {
+                  const r = await api.post(`/admin/proposals/${pid}/reaccrue-payout`);
+                  results.push({ pid, ok: true, result: r.data?.result });
+                } catch (e) {
+                  results.push({ pid, ok: false, error: e?.response?.data?.error || e.message });
+                }
+              }
+              setReaccruing(false);
+              const succeeded = results.filter(r => r.ok).length;
+              const failed = results.length - succeeded;
+              if (failed === 0) {
+                toast.success(`Re-accrued ${succeeded} ${succeeded === 1 ? 'proposal' : 'proposals'}.`);
+              } else {
+                toast.error(`Re-accrued ${succeeded}, ${failed} failed (see console).`);
+                // eslint-disable-next-line no-console
+                console.warn('reaccrue failures:', results.filter(r => !r.ok));
+              }
+            }}
+          >
+            {reaccruing ? 'Re-accruing...' : 'Re-accrue all'}
+          </button>
+        </section>
+      )}
 
       {/* ── Tabs ────────────────────────────────────────── */}
       <div className="hstack" style={{ marginBottom: 14, borderBottom: '1px solid var(--line-1)', flexWrap: 'wrap' }}>

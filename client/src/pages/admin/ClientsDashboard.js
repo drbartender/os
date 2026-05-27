@@ -14,6 +14,7 @@ import ClickableRow from '../../components/ClickableRow';
 import useDrawerParam from '../../hooks/useDrawerParam';
 import ClientDrawer from '../../components/adminos/drawers/ClientDrawer';
 import { fmt$, fmtDate } from '../../components/adminos/format';
+import CcImportBadge from '../../components/admin/CcImportBadge';
 
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
@@ -218,6 +219,7 @@ export default function ClientsDashboard() {
                       <div className="hstack">
                         <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{initialsOf(c.name)}</div>
                         <strong>{c.name}</strong>
+                        <CcImportBadge ccId={c.cc_id} />
                       </div>
                     </td>
                     <td>

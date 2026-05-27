@@ -211,6 +211,15 @@ async function scheduleDrinkPlanNudge(proposalId, executor) {
   if (proposal.status === 'archived') return;
   if (!proposal.client_id || !proposal.event_date) return;
 
+  // CC-import: events without a drink plan never get nudged. See specs/2026-05-25-checkcherry-import-design.md §9.3.D.
+  const planRes = await exec.query(
+    'SELECT 1 FROM drink_plans WHERE proposal_id = $1 LIMIT 1',
+    [proposalId]
+  );
+  if (planRes.rowCount === 0) {
+    return; // No drink plan exists; nothing to nudge about.
+  }
+
   const scheduledFor = computeScheduledFor('drink_plan_nudge', proposal);
   // Both rows share the same send instant; scheduleMessage is idempotent.
   await scheduleMessage({

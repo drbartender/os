@@ -14,6 +14,7 @@ const { pool } = require('../db');
 const { findOpenPeriodForDate } = require('./payrollProcessing');
 const { payPeriodForDate, computePayday } = require('./payrollPeriods');
 const { splitEvenly } = require('./payrollMath');
+const { isLegacyCcStubUser } = require('./payrollGuards');
 
 async function clawbackTip(tipId, newCumulativeRefundedCents) {
   const client = await pool.connect();
@@ -21,12 +22,27 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
     await client.query('BEGIN');
 
     const tipRes = await client.query(
-      `SELECT id, shift_id, amount_cents, fee_cents, refunded_amount_cents
+      `SELECT id, shift_id, amount_cents, fee_cents, refunded_amount_cents, target_user_id
          FROM tips WHERE id = $1 FOR UPDATE`,
       [tipId]
     );
     const tip = tipRes.rows[0];
     if (!tip) { await client.query('ROLLBACK'); return null; }
+
+    // cc-import: tips paid TO a legacy_cc:* stub bartender never had a modern
+    // payout to claw back FROM (stubs are imports-only, no Stripe Connect).
+    // Fires BEFORE any DB writes — leaves refunded_amount_cents at the prior
+    // value so a re-run after a future de-stub can replay. clawbackTipByPaymentIntent
+    // inherits this skip automatically since it calls clawbackTip internally.
+    if (await isLegacyCcStubUser(tip.target_user_id, client)) {
+      Sentry.captureMessage('clawbackTip: target is legacy_cc stub; skipping', {
+        level: 'info',
+        tags: { util: 'payrollClawback', step: 'skip_legacy_cc_stub' },
+        extra: { tipId, targetUserId: tip.target_user_id },
+      });
+      await client.query('ROLLBACK');
+      return { skipped: true, reason: 'legacy_cc_stub_target' };
+    }
 
     const original = Number(tip.amount_cents);
     const newAmt = Math.max(0, Math.min(Number(newCumulativeRefundedCents) || 0, original));

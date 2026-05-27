@@ -112,14 +112,20 @@ function _handlersForTest() {
 
 // ─── Built-in suppression checks ──────────────────────────────
 
-// Entity and recipient are guaranteed non-null when this runs: the dispatcher
-// dispatchRow() rejects missing-lookup rows with status='failed' before
-// calling this function. This is a deliberate divergence from the in-app
-// shouldSendImmediate() in messageSuppression.js, which treats a missing
-// client as 'bad_contact' (silent suppression). Scheduled rows with bad
-// references are data integrity issues we want surfaced as 'failed', not
+// Entity and recipient are guaranteed non-null when this runs via the
+// dispatcher: dispatchRow() rejects missing-lookup rows with status='failed'
+// before calling this function. This is a deliberate divergence from the
+// in-app shouldSendImmediate() in messageSuppression.js, which treats a
+// missing client as 'bad_contact' (silent suppression). Scheduled rows with
+// bad references are data integrity issues we want surfaced as 'failed', not
 // hidden behind 'suppressed'.
+//
+// External callers via the public export (cc-import wrap-up preview UI) must
+// defensively pass at least a `row` shape; the guard below returns null on
+// missing `row` so the preview surface sees a clean no-suppression result
+// instead of crashing on property access.
 async function checkSuppression({ row, entity, recipient }) {
+  if (!row) return null; // Defensive: external callers (cc-import wrap-up preview) may invoke without a row.
   // Archived-proposal cascade — universal rule per spec section 7.1.
   if (row.entity_type === 'proposal' && entity && entity.status === 'archived') {
     return 'archived: proposal is archived, cascade rule applies';
@@ -668,10 +674,13 @@ registerHandler(
   { offsetFromEventDate: 3 * DAY_SECONDS, anchor: 'balance_due_date', category: 'operational', priority: 2, multiChannel: true }
 );
 
+// checkSuppression is pure (SELECT + branch); safe to expose.
+// resolveDelivery has DB-write side effects — DO NOT export.
 module.exports = {
   registerHandler,
   getHandlerMeta,
   dispatchPending,
+  checkSuppression,
   _clearHandlersForTest,
   _handlersForTest,
 };
