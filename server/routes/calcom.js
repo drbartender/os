@@ -335,19 +335,25 @@ async function handleNoShow(payload, res) {
   }
 
   // status <> 'completed' guards against a late no-show flip overwriting an
-  // admin's manual completion. The zero-row branch below already covers the
-  // "uid not in DB" case; with this WHERE it also fires when the row exists
-  // but is `completed`, which is the right operator signal.
+  // admin's manual completion. The zero-row branch below covers two cases
+  // now: uid not in DB, and uid present but already completed. We probe with
+  // one extra SELECT on the rare miss path so the Sentry signal carries a
+  // `reason` discriminator (mirrors the pattern in handleRescheduled).
   const result = await pool.query(
     `UPDATE consults SET status = 'no_show' WHERE calcom_event_id = $1 AND status <> 'completed'`,
     [uid]
   );
 
   if (result.rowCount === 0) {
-    console.warn(`[calcom] no_show for unknown or completed uid: ${uid}`);
-    sentryWarn('Cal.com no-show for unknown or completed booking', {
-      tags: { webhook: 'calcom', triggerEvent: 'BOOKING_NO_SHOW_UPDATED' },
-      extra: { uid },
+    const probe = await pool.query(
+      `SELECT status FROM consults WHERE calcom_event_id = $1`,
+      [uid]
+    );
+    const reason = probe.rowCount === 0 ? 'unknown_uid' : 'already_completed';
+    console.warn(`[calcom] no_show skipped (${reason}): ${uid}`);
+    sentryWarn('Cal.com no-show skipped', {
+      tags: { webhook: 'calcom', triggerEvent: 'BOOKING_NO_SHOW_UPDATED', reason },
+      extra: { uid, reason },
     });
   }
 

@@ -22,6 +22,13 @@ async function pruneOldWebhookEvents() {
     );
     batch = result.rowCount;
     totalDeleted += batch;
+    // Yield between full batches so live webhook traffic can acquire pool
+    // slots during a long-quiet-period recovery (paused scheduler leaving
+    // millions of rows aged-out at once). Skip the yield on the terminal
+    // partial batch.
+    if (batch === PRUNE_BATCH_SIZE) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
   } while (batch === PRUNE_BATCH_SIZE);
   return totalDeleted;
 }
