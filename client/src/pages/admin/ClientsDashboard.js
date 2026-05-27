@@ -18,6 +18,7 @@ import { fmt$, fmtDate } from '../../components/adminos/format';
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
   thumbtack: { label: 'Thumbtack', kind: 'info' },
+  calcom:    { label: 'Cal.com',   kind: 'info' },
   referral:  { label: 'Referral',  kind: 'ok' },
   website:   { label: 'Website',   kind: 'accent' },
   instagram: { label: 'Instagram', kind: 'violet' },

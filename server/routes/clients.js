@@ -6,7 +6,7 @@ const { ValidationError, NotFoundError } = require('../utils/errors');
 
 const router = express.Router();
 
-const VALID_SOURCES = ['direct', 'thumbtack', 'referral', 'website'];
+const VALID_SOURCES = ['direct', 'thumbtack', 'referral', 'website', 'calcom'];
 
 /** GET /api/clients — list all clients with per-client aggregates.
  *  `events_count` counts paid/confirmed/completed proposals; `lifetime_value`
