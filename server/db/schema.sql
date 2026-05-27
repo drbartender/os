@@ -2597,3 +2597,175 @@ CREATE INDEX IF NOT EXISTS idx_tips_unassigned_recent
 -- order by pay_period.start_date). The join key on payouts is the contractor.
 CREATE INDEX IF NOT EXISTS idx_payouts_contractor_id
   ON payouts(contractor_id);
+
+-- ─── CC Import: legacy_cc_raw_imports — verbatim source of truth ─────
+CREATE TABLE IF NOT EXISTS legacy_cc_raw_imports (
+  id BIGSERIAL PRIMARY KEY,
+  source_file TEXT NOT NULL,
+  source_entity TEXT NOT NULL,          -- 'events' | 'clients' | 'payments' | 'leads' | 'invoices' | 'payouts' | 'wix_field_guide' | 'wix_contractor' | 'wix_payment_info'
+  source_row_number INTEGER NOT NULL,   -- CSV-record (not line)
+  source_row_hash TEXT NOT NULL,        -- sha256 of canonicalized JSON
+  cc_id TEXT,                           -- CC ID when present; NULL for payments/payouts/leads/invoices
+  payload JSONB NOT NULL,
+  import_status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (import_status IN ('pending','promoted','archived','skipped','duplicate_review','duplicate_confirmed','errored')),
+  import_notes JSONB,                   -- conventions: {candidate_proposal_id,...}; {error,column,value,phase}; {resolved_by_user_id,resolved_at,decision}; {reason,package_name}
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (source_file, source_row_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_raw_imports_entity ON legacy_cc_raw_imports(source_entity);
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_raw_imports_cc_id ON legacy_cc_raw_imports(cc_id) WHERE cc_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_raw_imports_review ON legacy_cc_raw_imports(import_status) WHERE import_status IN ('duplicate_review','errored');
+
+-- ─── CC Import: legacy_cc_proposals — Bucket C archive ───────────────
+CREATE TABLE IF NOT EXISTS legacy_cc_proposals (
+  cc_id TEXT PRIMARY KEY,
+  status TEXT NOT NULL,                 -- verbatim CC status string
+  client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  client_email_normalized TEXT,
+  client_name TEXT,
+  event_date DATE,
+  event_type TEXT,                      -- always NULL from 2026-05-25 export
+  package_name TEXT,
+  service_name TEXT,
+  brand TEXT,
+  venue_name TEXT,
+  venue_full_address TEXT,
+  estimated_guests INTEGER,
+  source TEXT,
+  lead_type TEXT,
+  package_amount_cents INTEGER,
+  public_notes TEXT,
+  private_notes TEXT,
+  booked_at TIMESTAMPTZ,
+  raw_import_id BIGINT NOT NULL REFERENCES legacy_cc_raw_imports(id) ON DELETE RESTRICT,
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_proposals_client_id ON legacy_cc_proposals(client_id);
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_proposals_email ON legacy_cc_proposals(client_email_normalized);
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_proposals_event_date ON legacy_cc_proposals(event_date);
+
+-- ─── CC Import: legacy_cc_payments — 337 payment+refund rows ─────────
+CREATE TABLE IF NOT EXISTS legacy_cc_payments (
+  id BIGSERIAL PRIMARY KEY,
+  cc_event_id TEXT,                     -- resolved during Phase 4; NULL on orphan
+  cc_event_title TEXT,
+  cc_type TEXT NOT NULL CHECK (cc_type IN ('Payment','Refund')),
+  paid_on DATE,
+  event_date DATE,
+  payment_applied_cents INTEGER NOT NULL,  -- absolute value (sign carried by cc_type)
+  tip_cents INTEGER NOT NULL DEFAULT 0,
+  processing_fee_cents INTEGER NOT NULL DEFAULT 0,
+  net_cents INTEGER,
+  event_total_cents INTEGER,
+  taxable_cents INTEGER,
+  total_adjustment_cents INTEGER,
+  tax_rate_pct NUMERIC(5,3),
+  tax_collected_cents INTEGER,
+  payment_method TEXT,                  -- raw CC value
+  processor TEXT,                       -- 'Stripe Express' | 'Custom'
+  receipt_number TEXT,
+  invoice_number TEXT,
+  reference_code TEXT,                  -- ch_... when Stripe
+  paid_by TEXT,
+  assigned_staff TEXT,
+  public_notes TEXT,
+  private_notes TEXT,
+  notes TEXT,                           -- operator note set by Review page's dismiss action
+  dismissed_at TIMESTAMPTZ,             -- set when operator dismisses orphan-payment (removes from active queue)
+  promoted_payment_id INTEGER REFERENCES proposal_payments(id) ON DELETE SET NULL,
+  promoted_refund_id  INTEGER REFERENCES proposal_refunds(id)  ON DELETE SET NULL,
+  raw_import_id BIGINT NOT NULL REFERENCES legacy_cc_raw_imports(id) ON DELETE RESTRICT,
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (raw_import_id),
+  CHECK (NOT (promoted_payment_id IS NOT NULL AND promoted_refund_id IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_payments_cc_event_id ON legacy_cc_payments(cc_event_id);
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_payments_paid_on ON legacy_cc_payments(paid_on);
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_payments_reference ON legacy_cc_payments(reference_code) WHERE reference_code IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_payments_active ON legacy_cc_payments(id) WHERE dismissed_at IS NULL;
+
+-- ─── CC Import: legacy_cc_payouts — historical staff payouts ─────────
+CREATE TABLE IF NOT EXISTS legacy_cc_payouts (
+  id BIGSERIAL PRIMARY KEY,
+  payee_name TEXT NOT NULL,
+  payee_name_normalized TEXT NOT NULL,
+  payee_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  paid_on DATE NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  reference_role TEXT,
+  category TEXT,
+  raw_import_id BIGINT NOT NULL REFERENCES legacy_cc_raw_imports(id) ON DELETE RESTRICT,
+  imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (raw_import_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_payouts_payee_user ON legacy_cc_payouts(payee_user_id);
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_payouts_paid_on   ON legacy_cc_payouts(paid_on);
+CREATE INDEX IF NOT EXISTS idx_legacy_cc_payouts_payee_normalized ON legacy_cc_payouts(payee_name_normalized);
+
+-- ─── CC Import: cc_import_phase0_failures — durable retry queue ──────
+CREATE TABLE IF NOT EXISTS cc_import_phase0_failures (
+  id SERIAL PRIMARY KEY,
+  source_url TEXT NOT NULL,
+  source_entity TEXT NOT NULL,
+  source_row_hash TEXT NOT NULL,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  last_attempted_at TIMESTAMPTZ,
+  resolved_at TIMESTAMPTZ,
+  resolved_r2_key TEXT,
+  given_up_at TIMESTAMPTZ,              -- operator marked accepted-loss; counts as 'resolved' for the sunset gate
+  given_up_reason TEXT,
+  UNIQUE (source_url, source_entity)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cc_import_phase0_failures_active
+  ON cc_import_phase0_failures(attempt_count)
+  WHERE resolved_at IS NULL AND given_up_at IS NULL;
+
+-- ─── CC Import: cc_import_runs — run log ─────────────────────────────
+CREATE TABLE IF NOT EXISTS cc_import_runs (
+  id SERIAL PRIMARY KEY,
+  phase INTEGER NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'running'
+    CHECK (status IN ('running', 'succeeded', 'failed', 'partial')),
+  rows_processed INTEGER NOT NULL DEFAULT 0,
+  rows_inserted INTEGER NOT NULL DEFAULT 0,
+  rows_skipped  INTEGER NOT NULL DEFAULT 0,
+  rows_errored  INTEGER NOT NULL DEFAULT 0,
+  error_summary TEXT,
+  notes JSONB NOT NULL DEFAULT '[]'
+);
+
+-- ─── CC Import: columns added to existing tables ─────────────────────
+ALTER TABLE clients   ADD COLUMN IF NOT EXISTS cc_id TEXT;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS cc_id TEXT;
+ALTER TABLE users     ADD COLUMN IF NOT EXISTS cc_id TEXT;
+
+ALTER TABLE proposal_payments ADD COLUMN IF NOT EXISTS legacy_charge_id TEXT;
+COMMENT ON COLUMN proposal_payments.legacy_charge_id IS
+  'Stripe charge id (ch_...) imported from Check Cherry. NEVER use for Stripe API calls — pass to stripe.refunds.create as `charge:` not `payment_intent:`. New native rows leave this NULL.';
+
+ALTER TABLE proposal_payments ADD COLUMN IF NOT EXISTS payment_method TEXT;
+COMMENT ON COLUMN proposal_payments.payment_method IS
+  'Free-form method label: card | card_external | cash | check | paypal | other | unknown. Populated by CC import; nullable on native rows.';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_cc_id   ON clients(cc_id)   WHERE cc_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_cc_id ON proposals(cc_id) WHERE cc_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cc_id     ON users(cc_id)     WHERE cc_id IS NOT NULL;
+
+-- Per-proposal uniqueness for charge dedup on re-runs.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_payments_legacy_charge_unique
+  ON proposal_payments(proposal_id, legacy_charge_id)
+  WHERE legacy_charge_id IS NOT NULL;
+
+-- Global uniqueness — same Stripe charge across proposals indicates a misroute.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_payments_legacy_charge_global
+  ON proposal_payments(legacy_charge_id)
+  WHERE legacy_charge_id IS NOT NULL;
