@@ -808,6 +808,73 @@ test('POST /orphan-payment/:id/link 409 when row already dismissed', async () =>
   assert.equal(r.status, 409);
 });
 
+test('POST /orphan-payment/:id/link suppresses stale balance reminders when legacy payment fully settles a future proposal', async () => {
+  // A cc-imported proposal with a future event_date and a pending balance_reminder.
+  // The legacy payment we link covers total_price in full, so post-link the
+  // proposal is paid AND the pending reminder must flip to 'suppressed' (otherwise
+  // it fires even though balance is 0).
+  const cliRes = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Fix1 Client', $1, '555-0190') RETURNING id`,
+    [`fix1-${Date.now()}@example.com`]
+  );
+  const fix1ClientId = cliRes.rows[0].id;
+  const propRes = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
+     VALUES ($1, 'confirmed', CURRENT_DATE + INTERVAL '30 days', 500, 0,
+             'cc-fix1-' || gen_random_uuid()::text, gen_random_uuid(), 'birthday-party')
+     RETURNING id, cc_id`,
+    [fix1ClientId]
+  );
+  const proposalId = propRes.rows[0].id;
+  const proposalCcIdLocal = propRes.rows[0].cc_id;
+
+  const smRes = await pool.query(
+    `INSERT INTO scheduled_messages
+       (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for, status)
+     VALUES ('proposal', $1, 'balance_reminder_non_autopay_t3', 'client', $2, 'email',
+             NOW() + INTERVAL '20 days', 'pending')
+     RETURNING id`,
+    [proposalId, fix1ClientId]
+  );
+  const smId = smRes.rows[0].id;
+
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix1-orphan')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+
+  const legacyRes = await pool.query(
+    `INSERT INTO legacy_cc_payments
+       (cc_event_title, cc_type, paid_on, payment_applied_cents, payment_method, raw_import_id)
+     VALUES ('Fix1 Test', 'Payment', CURRENT_DATE - INTERVAL '5 days', 50000, 'card', $1)
+     RETURNING id`,
+    [rawImportId]
+  );
+  const legacyId = legacyRes.rows[0].id;
+
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcIdLocal });
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.ok, true);
+
+    const after = await pool.query('SELECT status FROM scheduled_messages WHERE id = $1', [smId]);
+    assert.equal(after.rows[0].status, 'suppressed');
+  } finally {
+    await pool.query('DELETE FROM scheduled_messages WHERE id = $1', [smId]);
+    await pool.query('DELETE FROM proposal_payments WHERE proposal_id = $1', [proposalId]);
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [fix1ClientId]);
+  }
+});
+
 // ── §2 orphan-payment/:id/dismiss ─────────────────────────────────
 
 test('POST /orphan-payment/:id/dismiss rejects non-integer legacy_id', async () => {

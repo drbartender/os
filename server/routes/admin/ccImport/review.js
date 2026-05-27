@@ -422,6 +422,10 @@ router.post(
     try {
       await phase4.recomputeAmountPaid(tail);
       await phase4.rederivePaymentTypeAndStatus(tail);
+      // Mirror phase4.run() — when a manual link fully settles a future proposal,
+      // any already-scheduled balance_* rows must be suppressed so they don't
+      // fire. No BEGIN on this connection, so the UPDATE auto-commits.
+      await phase4.suppressStaleBalanceReminders(tail);
     } finally {
       tail.release();
     }

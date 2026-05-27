@@ -163,13 +163,6 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 **Why deferred:** Admin-flow correctness bug, not a money or security defect. The cc-import review page is operator-only and CC-import is a one-time historical migration — exposure window is narrow.
 **Next step:** Branch on the helper's returned status. On non-success: surface the error to the operator (HTTP 4xx with the status code), DO NOT recompute amount_paid, DO NOT audit-log a success, and leave `cc_event_id` NULL so the row stays in the review queue.
 
-### CC-Import: orphan-payment link skips `suppressStaleBalanceReminders`
-
-**Source:** 2026-05-27 push pre-review (Codex code-review, P2).
-**What:** `server/routes/admin/ccImport/review.js:423-424` — after a successful orphan-payment link, the route recomputes `amount_paid` + proposal status but does NOT call `suppressStaleBalanceReminders()`. If the legacy payment fully settles a future-dated imported proposal, scheduled `balance_due_*` rows in `scheduled_messages` stay `pending` and fire even though the balance is paid. The initial-import path in `scripts/cc-import/phases/phase4.js` already calls suppress; the manual link path is the gap.
-**Why deferred:** Narrow trigger (operator links a payment that fully settles a future event). Pre-empted manually until fixed: operator can clear stale rows from `scheduled_messages` after the link.
-**Next step:** Add the `suppressStaleBalanceReminders(proposalId)` call inside the same transaction after `recomputeAmountPaid`, mirroring phase4's order.
-
 ### CC-Import: `promoteBucketA` hardcodes Bucket A on errored-row + skipped-event retry
 
 **Source:** 2026-05-27 push pre-review (Codex code-review, P1).
