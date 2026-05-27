@@ -57,8 +57,8 @@ function proposalSent({ clientName, eventTypeLabel = 'event', proposalUrl, planU
     subject: `Your Proposal for your ${eventTypeLabel} — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Proposal is Ready!</h2>
-      <p>Hi ${name},</p>
-      <p>We've put together a proposal for your <strong>${eventTypeLabel}</strong>. Take a look, review the details, and sign when you're ready.</p>
+      <p>Hi ${esc(name)},</p>
+      <p>We've put together a proposal for your <strong>${esc(eventTypeLabel)}</strong>. Take a look, review the details, and sign when you're ready.</p>
       ${ctaButton(proposalUrl, 'View Proposal')}
       ${planSection}
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
@@ -74,8 +74,8 @@ function proposalSignedConfirmation({ clientName, eventTypeLabel = 'event' }) {
     subject: `Proposal Signed — your ${eventTypeLabel} — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Thank You for Signing!</h2>
-      <p>Hi ${name},</p>
-      <p>We've received your signed proposal for your <strong>${eventTypeLabel}</strong>. We're excited to work with you!</p>
+      <p>Hi ${esc(name)},</p>
+      <p>We've received your signed proposal for your <strong>${esc(eventTypeLabel)}</strong>. We're excited to work with you!</p>
       <p><strong>Next step:</strong> Submit your deposit to lock in your date. You'll receive payment instructions shortly, or you can pay directly from the proposal page.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
       <p>Cheers,<br/>The Dr. Bartender Team</p>
@@ -138,8 +138,8 @@ function paymentReceivedClient({ clientName, eventTypeLabel = 'event', amount, p
     subject: `Payment Received — your ${eventTypeLabel} — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Payment Received!</h2>
-      <p>Hi ${name},</p>
-      <p>We've received your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${eventTypeLabel}</strong>.</p>
+      <p>Hi ${esc(name)},</p>
+      <p>We've received your <strong>${paymentType}</strong> of <strong>$${amount}</strong> for your <strong>${esc(eventTypeLabel)}</strong>.</p>
       ${lastMinuteCaveatHtml(lastMinute)}
       <p>Thank you! We'll be in touch with next steps as your event date approaches.</p>
       <p style="font-size:14px;color:${BRAND.secondary};">If you have any questions, just reply to this email.</p>
@@ -155,7 +155,7 @@ function clientOtp({ name, otp }) {
     subject: 'Your Dr. Bartender login code',
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Your Login Code</h2>
-      <p>Hi ${n},</p>
+      <p>Hi ${esc(n)},</p>
       <p>Use the code below to sign in to your Dr. Bartender client portal:</p>
       <div style="text-align:center;margin:2rem 0;">
         <span style="display:inline-block;padding:16px 32px;background:${BRAND.bg};border:2px solid ${BRAND.secondary};border-radius:8px;font-size:32px;font-weight:bold;letter-spacing:8px;color:${BRAND.primary};">${otp}</span>
@@ -334,7 +334,7 @@ function clientSignedAdmin({ clientName, eventTypeLabel = 'event', proposalId, a
     subject: `Proposal Signed: ${name} — ${eventTypeLabel} (#${proposalId})`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Proposal Signed</h2>
-      <p><strong>${name}</strong> has signed the proposal for their <strong>${eventTypeLabel}</strong> (#${proposalId}).</p>
+      <p><strong>${esc(name)}</strong> has signed the proposal for their <strong>${esc(eventTypeLabel)}</strong> (#${proposalId}).</p>
       <p>The proposal status has been updated to <strong>accepted</strong>. Next step: collect the deposit.</p>
       ${ctaButton(adminUrl, 'View Proposal')}
     `),
@@ -348,7 +348,7 @@ function paymentReceivedAdmin({ clientName, eventTypeLabel = 'event', amount, pa
     subject: `Payment Received: $${amount} — ${name}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Payment Received</h2>
-      <p><strong>${name}</strong> paid <strong>$${amount}</strong> (${paymentType}) for their <strong>${eventTypeLabel}</strong> (#${proposalId}).</p>
+      <p><strong>${esc(name)}</strong> paid <strong>$${amount}</strong> (${paymentType}) for their <strong>${esc(eventTypeLabel)}</strong> (#${proposalId}).</p>
       ${ctaButton(adminUrl, 'View Proposal')}
     `),
     text: `${name} paid $${amount} (${paymentType}) for their ${eventTypeLabel} (#${proposalId}). View: ${adminUrl}`,
@@ -361,7 +361,7 @@ function signedAndPaidAdmin({ clientName, eventTypeLabel = 'event', amount, paym
     subject: `Signed & Paid ($${amount}): ${name} — ${eventTypeLabel} (#${proposalId})`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Signed & Paid</h2>
-      <p><strong>${name}</strong> signed the proposal and paid <strong>$${amount}</strong> (${paymentType}) for their <strong>${eventTypeLabel}</strong> (#${proposalId}).</p>
+      <p><strong>${esc(name)}</strong> signed the proposal and paid <strong>$${amount}</strong> (${paymentType}) for their <strong>${esc(eventTypeLabel)}</strong> (#${proposalId}).</p>
       ${ctaButton(adminUrl, 'View Proposal')}
     `),
     text: `${name} signed the proposal and paid $${amount} (${paymentType}) for their ${eventTypeLabel} (#${proposalId}). View: ${adminUrl}`,
@@ -392,7 +392,7 @@ function newApplicationAdmin({ applicantName, applicantEmail, adminUrl }) {
     subject: `New Application: ${applicantName}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Staff Application</h2>
-      <p><strong>${applicantName}</strong> (${applicantEmail}) has submitted an application.</p>
+      <p><strong>${esc(applicantName)}</strong> (${esc(applicantEmail)}) has submitted an application.</p>
       ${ctaButton(adminUrl, 'Review Applications')}
     `),
     text: `New application from ${applicantName} (${applicantEmail}). Review at: ${adminUrl}`,
@@ -405,7 +405,7 @@ function shiftRequestAdmin({ staffName, eventTypeLabel = 'event', eventDate, pos
     subject: `Shift Request: ${staffName} — ${eventTypeLabel}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Shift Request</h2>
-      <p><strong>${staffName}</strong> has requested to work as <strong>${position}</strong> at ${eventPhrase} on ${eventDate}.</p>
+      <p><strong>${esc(staffName)}</strong> has requested to work as <strong>${esc(position)}</strong> at ${esc(eventPhrase)} on ${esc(eventDate)}.</p>
       ${ctaButton(adminUrl, 'View Shift Requests')}
     `),
     text: `${staffName} requested to work ${position} at ${eventPhrase} on ${eventDate}. Review at: ${adminUrl}`,
@@ -421,20 +421,20 @@ function shiftRequestApproved({ staffName, eventTypeLabel = 'event', eventDate, 
   const name = staffName || 'there';
   const eventPhrase = eventTypeLabel === 'event' ? 'an upcoming event' : `an upcoming ${eventTypeLabel} event`;
   const setupRow = setupTime
-    ? `<tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Setup / arrive by</td><td style="padding:8px 12px;">${setupTime}</td></tr>`
+    ? `<tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Setup / arrive by</td><td style="padding:8px 12px;">${esc(setupTime)}</td></tr>`
     : '';
   const setupText = setupTime ? ` Setup / arrive by ${setupTime}.` : '';
   return {
     subject: `You're Confirmed: ${eventTypeLabel} on ${eventDate} — Dr. Bartender`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">You're Confirmed!</h2>
-      <p>Hi ${name},</p>
-      <p>Great news — you've been confirmed to work ${eventPhrase}.</p>
+      <p>Hi ${esc(name)},</p>
+      <p>Great news — you've been confirmed to work ${esc(eventPhrase)}.</p>
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
-        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:100px;">Date</td><td style="padding:8px 12px;">${eventDate}</td></tr>
-        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Time</td><td style="padding:8px 12px;">${startTime} – ${endTime}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:100px;">Date</td><td style="padding:8px 12px;">${esc(eventDate)}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Time</td><td style="padding:8px 12px;">${esc(startTime)} – ${esc(endTime)}</td></tr>
         ${setupRow}
-        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Location</td><td style="padding:8px 12px;">${location}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Location</td><td style="padding:8px 12px;">${esc(location)}</td></tr>
       </table>
       <p>Please arrive on time and in proper uniform. See you there!</p>
       <p>— The Dr. Bartender Team</p>
@@ -559,7 +559,7 @@ function abandonedQuote({ clientName, resumeUrl }) {
     subject: 'Still planning your event? Your quote is waiting',
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">Pick Up Where You Left Off</h2>
-      <p>Hi ${name},</p>
+      <p>Hi ${esc(name)},</p>
       <p>We noticed you started putting together a quote for your event but didn't finish.
          No worries — your progress is saved and ready for you!</p>
       ${ctaButton(resumeUrl, 'Continue Your Quote')}
@@ -605,7 +605,7 @@ function wrapMarketingEmail(innerHtml, unsubscribeUrl) {
 // ─── Thumbtack Admin Notifications ──────────────────────────────
 
 function newThumbtackLeadAdmin({ customerName, customerPhone, category, description, location, eventDate, details, adminUrl }) {
-  const name = esc(customerName) || 'Unknown';
+  const name = esc(customerName || 'Unknown');
   const detailRows = (details || [])
     .map(d => `<tr><td style="padding:6px 12px;font-weight:bold;color:${BRAND.secondary};vertical-align:top;width:140px;">${esc(d.question)}</td><td style="padding:6px 12px;">${esc(d.answer)}</td></tr>`)
     .join('');
@@ -615,7 +615,7 @@ function newThumbtackLeadAdmin({ customerName, customerPhone, category, descript
   const dateStr = eventDate ? new Date(eventDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : 'Not specified';
 
   return {
-    subject: `New Thumbtack Lead: ${esc(customerName) || 'Unknown'}`,
+    subject: `New Thumbtack Lead: ${esc(customerName || 'Unknown')}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Thumbtack Lead</h2>
       <p style="background:#fff3cd;border:1px solid #ffc107;padding:12px;border-radius:6px;font-weight:bold;">
@@ -623,9 +623,9 @@ function newThumbtackLeadAdmin({ customerName, customerPhone, category, descript
       </p>
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:120px;">Name</td><td style="padding:8px 12px;">${name}</td></tr>
-        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Phone</td><td style="padding:8px 12px;">${esc(customerPhone) || 'N/A'}</td></tr>
-        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Category</td><td style="padding:8px 12px;">${esc(category) || 'N/A'}</td></tr>
-        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Location</td><td style="padding:8px 12px;">${esc(location) || 'N/A'}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Phone</td><td style="padding:8px 12px;">${esc(customerPhone || 'N/A')}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Category</td><td style="padding:8px 12px;">${esc(category || 'N/A')}</td></tr>
+        <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Location</td><td style="padding:8px 12px;">${esc(location || 'N/A')}</td></tr>
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};">Event Date</td><td style="padding:8px 12px;">${dateStr}</td></tr>
       </table>
       ${description ? `<p><strong>Description:</strong> ${esc(description)}</p>` : ''}
@@ -637,10 +637,10 @@ function newThumbtackLeadAdmin({ customerName, customerPhone, category, descript
 }
 
 function newThumbtackMessageAdmin({ customerName, text, adminUrl }) {
-  const name = esc(customerName) || 'A customer';
+  const name = esc(customerName || 'A customer');
   const rawPreview = text && text.length > 300 ? text.slice(0, 300) + '...' : (text || '(no text)');
   return {
-    subject: `Thumbtack Message from ${esc(customerName) || 'A customer'}`,
+    subject: `Thumbtack Message from ${esc(customerName || 'A customer')}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Thumbtack Message</h2>
       <p><strong>${name}</strong> sent a message via Thumbtack:</p>
@@ -654,10 +654,10 @@ function newThumbtackMessageAdmin({ customerName, text, adminUrl }) {
 }
 
 function newThumbtackReviewAdmin({ reviewerName, rating, reviewText }) {
-  const name = esc(reviewerName) || 'A customer';
+  const name = esc(reviewerName || 'A customer');
   const stars = rating !== null && rating !== undefined ? '★'.repeat(Math.round(rating)) + '☆'.repeat(5 - Math.round(rating)) : 'N/A';
   return {
-    subject: `New Thumbtack Review: ${stars} from ${esc(reviewerName) || 'A customer'}`,
+    subject: `New Thumbtack Review: ${stars} from ${esc(reviewerName || 'A customer')}`,
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Thumbtack Review</h2>
       <p style="font-size:24px;margin:0.5rem 0;">${stars}</p>
@@ -967,6 +967,7 @@ module.exports = {
   drinkPlanBalanceUpdate: lifecycle.drinkPlanBalanceUpdate,
   shoppingListReady: lifecycle.shoppingListReady,
   postConsultClient: lifecycle.postConsultClient,
+  lastMinuteStaffingConfirmation: lifecycle.lastMinuteStaffingConfirmation,
   // Pre-event reminder emails (Plan 2c)
   eventWeekReminderClient,
   rescheduleNotificationClient,

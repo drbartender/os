@@ -1,7 +1,7 @@
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
-const { publicLimiter } = require('../../middleware/rateLimiters');
+const { publicLimiter, signLimiter } = require('../../middleware/rateLimiters');
 const { sendEmail } = require('../../utils/email');
 const emailTemplates = require('../../utils/emailTemplates');
 const { notifyAdminCategory } = require('../../utils/adminNotifications');
@@ -114,7 +114,7 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
 const PROPOSAL_DOCUMENT_VERSION = 'event-services-agreement-v2';
 
 /** POST /api/proposals/t/:token/sign — client signs and accepts proposal */
-router.post('/t/:token/sign', publicLimiter, asyncHandler(async (req, res) => {
+router.post('/t/:token/sign', signLimiter, asyncHandler(async (req, res) => {
   const { client_signed_name, client_signature_data, client_signature_method,
     venue_name, venue_street, venue_city, venue_state, venue_zip } = req.body;
   const fieldErrors = {};

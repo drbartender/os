@@ -172,11 +172,15 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
       [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round((newAmountPaid - currentPaid) * 100)]
     );
 
-    // Log activity
+    // Log activity. The capped delta (newAmountPaid - currentPaid) is the
+    // true amount applied to the ledger — record THAT in the audit trail,
+    // not the raw admin-supplied paymentAmount, so an over-payment entry
+    // does not show "$X paid" when only $Y was actually applied.
+    const appliedAmount = newAmountPaid - currentPaid;
     await dbClient.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, $2, 'admin', $3, $4)`,
       [proposal.id, isFullyPaid ? 'paid_in_full' : 'deposit_paid', req.user.id,
-        JSON.stringify({ amount: paymentAmount, method: method || 'manual', new_total_paid: newAmountPaid })]
+        JSON.stringify({ amount: appliedAmount, method: method || 'manual', new_total_paid: newAmountPaid })]
     );
 
     // Link payment to the oldest open invoice

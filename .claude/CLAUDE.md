@@ -232,6 +232,8 @@ CLAUDE.md is the rules doc — most structural updates land in `README.md` (fold
 
 This project is vibe-coded — the author relies on Claude to catch issues. Verification has two layers: an inline self-check on every change (below), and opus-powered review agents triggered automatically before code-touching pushes (see Git Workflow Rule 6 + Pre-Push Procedure). Agent specs live in `.claude/agents/` — what each agent checks is documented there, not duplicated here.
 
+**Design-stage review fleet.** Explicit-only Claude agents for reviewing specs and plans BEFORE any code is written. `/review-spec` runs three agents (`spec-grounding`, `spec-gaps`, `spec-risk`) in parallel on a spec doc. `/review-plan` runs three agents (`plan-fidelity`, `plan-decomposition`, `plan-feasibility`) in parallel on an implementation plan. Natural-language triggers ("review the spec", "review the plan", "design review") route to the same commands. Both resolve to the most recent file in `docs/superpowers/specs/` or `docs/superpowers/plans/` unless an explicit path is given. Report-only; no auto-fix. Complements `/gemini-spec` rather than replacing it.
+
 ### Inline Self-Check (Every Change — Free)
 
 Before presenting ANY code change, silently verify:

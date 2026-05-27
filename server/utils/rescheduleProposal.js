@@ -6,6 +6,7 @@ const { resolveEventTimezone, formatEventLocalTime } = require('./eventTimezone'
 const { getHandlerMeta } = require('./scheduledMessageDispatcher');
 const { shouldSendImmediate } = require('./messageSuppression');
 const { computeScheduledFor, schedulePreEventReminders } = require('./preEventScheduling');
+const { getBookingWindow } = require('./bookingWindow');
 
 /**
  * Normalize a bare-DATE value (`event_date`, `balance_due_date`) to a
@@ -467,6 +468,35 @@ async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
     // long_lead row doesn't roll back the date change.
     console.warn('[rescheduleProposal] post-reanchor eligibility re-evaluation failed (non-fatal):', evalErr.message);
   }
+
+  // Touch 2.2 prerequisite: keep last_minute_hold consistent with the new
+  // event_date/event_start_time. A held proposal moved past 72h becomes
+  // unheld; a non-held proposal moved into 72h becomes held. The actual
+  // notification fires from confirmStaffingIfFullyStaffed only when the
+  // next staffing-fill flips a held proposal; this hook just keeps the
+  // flag in sync with the booking window.
+  //
+  // getBookingWindow returns { hoursUntilEvent, fullPaymentRequired,
+  // lastMinuteHold } and takes an options object (NOT a row); see
+  // bookingWindow.js:39.
+  // NOTE: `updated` must include `last_minute_hold`. The crud.js PATCH path
+  // supplies it via `UPDATE proposals ... RETURNING *`; the convenience-path
+  // `rescheduleProposal()` below accepts whatever its caller passes (tests
+  // pass the full row). If a future caller narrows the projection to omit
+  // last_minute_hold, `updated.last_minute_hold` becomes undefined and the
+  // comparison `undefined !== lastMinuteHold` is always true, so the UPDATE
+  // would fire on every reschedule (harmless but wasteful).
+  const { lastMinuteHold } = getBookingWindow({
+    eventDate: updated.event_date,
+    eventStartTime: updated.event_start_time,
+  });
+  if (updated.last_minute_hold !== lastMinuteHold) {
+    await client.query(
+      'UPDATE proposals SET last_minute_hold = $1 WHERE id = $2',
+      [lastMinuteHold, proposalId]
+    );
+  }
+
   return { shouldSendEmail: true };
 }
 

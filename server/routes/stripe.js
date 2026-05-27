@@ -2,7 +2,7 @@ const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, adminOnly, requireAdminOrManager } = require('../middleware/auth');
-const { publicLimiter } = require('../middleware/rateLimiters');
+const { publicLimiter, publicReadLimiter } = require('../middleware/rateLimiters');
 const { createEventShifts } = require('../utils/eventCreation');
 const { getBookingWindow } = require('../utils/bookingWindow');
 const { notifyLastMinuteBooking } = require('../utils/lastMinuteAlert');
@@ -21,6 +21,7 @@ const { AppError, ValidationError, ConflictError, NotFoundError, ExternalService
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../utils/urls');
 const { matchTipToEvent } = require('../utils/payrollTips');
 const { clawbackTipByPaymentIntent } = require('../utils/payrollClawback');
+const { esc } = require('../utils/htmlEscape');
 
 const router = express.Router();
 
@@ -38,7 +39,7 @@ const {
 const DEPOSIT_AMOUNT = parseInt(process.env.STRIPE_DEPOSIT_AMOUNT, 10) || 10000; // $100.00
 
 /** GET /api/stripe/publishable-key — returns the active publishable key */
-router.get('/publishable-key', (_req, res) => {
+router.get('/publishable-key', publicReadLimiter, (_req, res) => {
   res.json({ key: getPublishableKey() || null });
 });
 
@@ -1359,13 +1360,12 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         await notifyAdminCategory({
           category: 'payment_failure',
           subject: `Payment failed: ${failClient} (${eventLabelFor(failPi)})`,
-          emailHtml: `<p>A ${paymentType} payment of ${failAmount} failed for <strong>${failClient}</strong>.</p><p><strong>Reason:</strong> ${failReason}</p><p><a href="${ADMIN_URL}/proposals/${proposalId}">View Proposal</a></p>`,
+          emailHtml: `<p>A ${esc(paymentType)} payment of ${esc(failAmount)} failed for <strong>${esc(failClient)}</strong>.</p><p><strong>Reason:</strong> ${esc(failReason)}</p><p><a href="${ADMIN_URL}/proposals/${esc(proposalId)}">View Proposal</a></p>`,
           emailText: `A ${paymentType} payment of ${failAmount} failed for ${failClient}. Reason: ${failReason}. ${ADMIN_URL}/proposals/${proposalId}`,
         });
 
-        // Client-facing payment-failure email (throttled one per 24h per
-        // proposal). Extracted to a sibling util to keep this over-cap file
-        // from growing; the helper owns its own error handling.
+        // Client-facing payment-failure email (throttled 1/24h per proposal),
+        // extracted to a sibling util so this over-cap file stays flat.
         await notifyClientPaymentFailed({ proposalId, paymentIntentId: intent.id });
       } catch (err) {
         if (process.env.SENTRY_DSN_SERVER) {
@@ -1478,14 +1478,13 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         );
         isFirstDelivery = inserted.rowCount === 1;
 
+        // Unconditional: a payment_intent.succeeded that claimed isFirstDelivery first must not leave this link row 'pending' (would let it be reused). Scoped to proposal_id so a reused/orphaned link cannot mark sibling sessions succeeded.
+        await dbClient.query("UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1 AND proposal_id = $2", [session.payment_link, proposalId]);
+
         if (isFirstDelivery) {
           await dbClient.query(
             "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'archived')",
             [proposalId]
-          );
-          await dbClient.query(
-            "UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1",
-            [session.payment_link]
           );
           await dbClient.query(
             `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'deposit_paid', 'system', $2)`,

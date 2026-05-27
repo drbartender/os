@@ -192,6 +192,7 @@ dr-bartender/
 │   │   ├── googlePlaces.js     # Google Places venue-search proxy
 │   │   ├── invoiceHelpers.js   # Invoice auto-generation, line items, locking
 │   │   ├── lastMinuteAlert.js  # Last-minute (<72h) booking SMS alert dispatch (admin + broad staff blast, idempotent)
+│   │   ├── lastMinuteStaffingConfirmation.js  # Touch 2.2: bartender-list renderer + notify fn + atomic-flip trigger
 │   │   ├── lifecycleEmailTemplates.js # Lifecycle email templates split out of emailTemplates.js
 │   │   ├── messageScheduling.js # scheduleMessage(...): idempotent insert of a future touch into the scheduled_messages table
 │   │   ├── messageSuppression.js # shouldSendImmediate(...): shared archive / comm-prefs / bad-contact gate for immediate-send paths
@@ -394,3 +395,11 @@ The React app is deployed separately on Vercel. `client/vercel.json` handles SPA
 
 ### Database
 Schema is auto-initialized on server start via `server/db/index.js`, which runs `schema.sql`. All DDL is idempotent (`IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`).
+
+## Operational Runbook
+
+### Weekly dispute-email-bailout sweep
+
+The dispute-won email notification (fires on Stripe `charge.dispute.funds_reinstated`) auto-abandons after 3 failed send attempts. The DB column `tips.dispute_email_failed_at` is the canonical "needs manual reconciliation" marker; the accompanying Sentry alert is best-effort.
+
+**Weekly:** run the sweep query documented in `ARCHITECTURE.md` ("Weekly dispute-email-bailout sweep") to catch any abandonment whose Sentry alert was lost. The spec at `docs/superpowers/specs/2026-05-25-dispute-email-retry-bailout-design.md` carries the recovery runbook.

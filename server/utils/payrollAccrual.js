@@ -241,7 +241,7 @@ async function accruePayoutsForProposal(proposalId) {
 
     await client.query('COMMIT');
   } catch (err) {
-    await client.query('ROLLBACK');
+    try { await client.query('ROLLBACK'); } catch (_) { /* already rolled back or connection dropped */ }
     throw err;
   } finally {
     client.release();

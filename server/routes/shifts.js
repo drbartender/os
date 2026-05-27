@@ -14,6 +14,7 @@ const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError, PermissionError } = require('../utils/errors');
 const { ADMIN_URL } = require('../utils/urls');
 const { scheduleStaffShiftMessages, notifyStaffOfCancellation } = require('../utils/staffShiftHandlers');
+const { confirmStaffingIfFullyStaffed } = require('../utils/lastMinuteStaffingConfirmation');
 
 const router = express.Router();
 
@@ -665,8 +666,18 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
     console.error('Staff assignment email failed (non-blocking):', emailErr.message);
   }
 
-  // If this assignment fills the shift, clear the proposal's last-minute hold.
-  await clearHoldIfFullyStaffed(req.params.id);
+  // If this assignment fills the shift, clear the proposal's last-minute hold
+  // AND fire Touch 2.2 (client confirmation email + SMS naming the bartender).
+  // Fire-and-forget: the helper has its own outer try/catch + Sentry; awaiting
+  // would block the response on Resend + Twilio round-trips. The .catch is
+  // belt-and-suspenders so a future refactor that lets a rejection escape the
+  // helper still lands a route-tagged Sentry event.
+  confirmStaffingIfFullyStaffed(req.params.id).catch((confErr) => {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(confErr, { tags: { route: 'shifts/assign', issue: 'staffing-confirmation' } });
+    }
+    console.error('[shifts] staffing-confirmation hook failed (non-blocking):', confErr.message);
+  });
 
   // Schedule the day-before reminder + post-event thank-you SMS for everyone
   // approved on this shift (idempotent). Best-effort: a scheduling failure
@@ -780,10 +791,17 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
       console.error('Shift approval email failed (non-blocking):', emailErr);
     }
 
-    // Approving this request may have fully staffed the shift — clear the
-    // linked proposal's last-minute hold if so. result.rows[0] is the updated
-    // shift_request, so its shift_id is in hand (no extra lookup needed).
-    await clearHoldIfFullyStaffed(result.rows[0].shift_id);
+    // Approving this request may have fully staffed the shift, so clear the
+    // linked proposal's last-minute hold AND fire Touch 2.2 if so.
+    // result.rows[0] is the updated shift_request, so its shift_id is in hand.
+    // Fire-and-forget with belt-and-suspenders .catch (mirrors the /assign
+    // call site above, see comment there).
+    confirmStaffingIfFullyStaffed(result.rows[0].shift_id).catch((confErr) => {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(confErr, { tags: { route: 'shifts/approve', issue: 'staffing-confirmation' } });
+      }
+      console.error('[shifts] staffing-confirmation hook failed (non-blocking):', confErr.message);
+    });
 
     // Schedule staff reminder + thank-you SMS (idempotent, best-effort).
     try {
@@ -817,43 +835,5 @@ router.post('/:id/auto-assign', auth, requireStaffing, asyncHandler(async (req, 
   const result = await autoAssignShift(req.params.id, { dryRun: !!dry_run });
   res.json(result);
 }));
-
-/**
- * Clear the linked proposal's last-minute hold once its shift is fully staffed.
- * "Fully staffed" = approved shift_requests count >= positions_needed length —
- * the SAME definition autoAssign uses for slotsRemaining. Non-blocking: a
- * failure here must never break the approve/assign response (the staffing
- * action itself already succeeded). The UPDATE is guarded with
- * `AND last_minute_hold = true` so it is a no-op on non-held proposals.
- */
-async function clearHoldIfFullyStaffed(shiftId) {
-  try {
-    const s = await pool.query(
-      'SELECT proposal_id, positions_needed FROM shifts WHERE id = $1',
-      [shiftId]
-    );
-    const row = s.rows[0];
-    if (!row || !row.proposal_id) return;
-    let needed = 0;
-    try {
-      needed = JSON.parse(row.positions_needed || '[]').length;
-    } catch (_) {
-      needed = 0;
-    }
-    if (needed <= 0) return;
-    const a = await pool.query(
-      "SELECT COUNT(*)::int AS n FROM shift_requests WHERE shift_id = $1 AND status = 'approved'",
-      [shiftId]
-    );
-    if (a.rows[0].n >= needed) {
-      await pool.query(
-        'UPDATE proposals SET last_minute_hold = false WHERE id = $1 AND last_minute_hold = true',
-        [row.proposal_id]
-      );
-    }
-  } catch (e) {
-    console.error('[shifts] clearHoldIfFullyStaffed failed (non-blocking):', e.message);
-  }
-}
 
 module.exports = router;
