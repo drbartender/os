@@ -7,6 +7,13 @@ const { getHandlerMeta } = require('./scheduledMessageDispatcher');
 const { shouldSendImmediate } = require('./messageSuppression');
 const { computeScheduledFor, schedulePreEventReminders } = require('./preEventScheduling');
 
+// Defense-in-depth: even though post_event_wrap_up_email registers with
+// offsetFromEventDate: null (which already short-circuits via the
+// `if (!newScheduledFor) continue;` branch in reanchorPendingMessages),
+// keep an explicit skip set so a future handler-meta change can't silently
+// re-anchor wrap-up rows.
+const SKIP_REANCHOR_TYPES = new Set(['post_event_wrap_up_email']);
+
 /**
  * Normalize a bare-DATE value (`event_date`, `balance_due_date`) to a
  * 'YYYY-MM-DD' string. The `pg` driver returns `DATE` columns as JS `Date`
@@ -134,6 +141,7 @@ async function reanchorPendingMessages(client, proposalId) {
 
   let updated = 0;
   for (const row of pendingRes.rows) {
+    if (SKIP_REANCHOR_TYPES.has(row.message_type)) continue;
     const meta = getHandlerMeta(row.message_type);
     if (!meta) {
       console.warn(`[rescheduleProposal] no handler metadata for message_type=${row.message_type} (row id=${row.id}); leaving scheduled_for unchanged`);
