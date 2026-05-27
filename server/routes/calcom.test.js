@@ -189,3 +189,210 @@ test('webhook: dedupe treats different bodies as different events', async () => 
   );
   assert.equal(Number(dedupeRows.rows[0].n), 2);
 });
+
+// ─── BOOKING_CREATED tests ────────────────────────────────────────
+
+async function postCreated(payload) {
+  // Uses the postEvent helper added in the Wave 2 fix-fold-in commit.
+  return postEvent('BOOKING_CREATED', payload);
+}
+
+async function cleanupTestRows() {
+  await pool.query("DELETE FROM consults WHERE calcom_event_id LIKE 'test-%' OR booker_email LIKE '%@calcom-test.example'");
+  await pool.query("DELETE FROM clients WHERE email LIKE '%@calcom-test.example' OR name LIKE 'CalcomTest%'");
+  await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
+}
+
+// Helper to insert a proposals row covering all NOT NULL columns.
+// proposals NOT NULL set (per schema.sql):
+//   event_duration_hours DEFAULT 4, guest_count DEFAULT 50,
+//   pricing_snapshot DEFAULT '{}', status DEFAULT 'draft'.
+// We omit those with defaults; we DO supply event_date, event_type,
+// total_price, balance_due_date because tests assert on them.
+async function insertTestProposal(clientId, status, eventDateOffset = 30, total = 100000) {
+  const r = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, event_type, total_price, balance_due_date)
+     VALUES ($1, $2, CURRENT_DATE + ($3 || ' days')::INTERVAL, 'birthday-party', $4, CURRENT_DATE + INTERVAL '14 days')
+     RETURNING id`,
+    [clientId, status, String(eventDateOffset), total]
+  );
+  return r.rows[0].id;
+}
+
+test('BOOKING_CREATED: returns 200 ignored when uid missing', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const res = await postCreated({ startTime: '2026-06-01T15:00:00Z', attendees: [{ name: 'CalcomTest A', email: 'a@calcom-test.example' }] });
+  assert.equal(res.status, 200);
+  assert.match(res.text, /malformed|ignored/i);
+  const rows = await pool.query("SELECT id FROM consults WHERE booker_email = 'a@calcom-test.example'");
+  assert.equal(rows.rowCount, 0);
+});
+
+test('BOOKING_CREATED: creates client + consult on unknown email', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const res = await postCreated({
+    uid: 'test-uid-create-1',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Alice', email: 'alice@calcom-test.example', phoneNumber: '+15551110001' }],
+  });
+  assert.equal(res.status, 200);
+
+  const clients = await pool.query("SELECT id, name, email, phone, source FROM clients WHERE email = 'alice@calcom-test.example'");
+  assert.equal(clients.rowCount, 1);
+  assert.equal(clients.rows[0].name, 'CalcomTest Alice');
+  assert.equal(clients.rows[0].source, 'calcom');
+  assert.equal(clients.rows[0].phone, '+15551110001');
+
+  const consults = await pool.query("SELECT id, client_id, calcom_event_id, scheduled_at, status, booker_name, booker_email FROM consults WHERE calcom_event_id = 'test-uid-create-1'");
+  assert.equal(consults.rowCount, 1);
+  assert.equal(consults.rows[0].status, 'scheduled');
+  assert.equal(consults.rows[0].client_id, clients.rows[0].id);
+  assert.equal(consults.rows[0].booker_email, 'alice@calcom-test.example');
+});
+
+test('BOOKING_CREATED: links to existing client on known email', async () => {
+  await cleanupTestRows();
+  const existing = await pool.query(
+    `INSERT INTO clients (name, email, source) VALUES ('CalcomTest Bob', 'bob@calcom-test.example', 'direct') RETURNING id`
+  );
+  const existingId = existing.rows[0].id;
+
+  await buildApp(TEST_SECRET);
+  await postCreated({
+    uid: 'test-uid-create-2',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Bob', email: 'bob@calcom-test.example' }],
+  });
+
+  const clients = await pool.query("SELECT id FROM clients WHERE email = 'bob@calcom-test.example'");
+  assert.equal(clients.rowCount, 1, 'no duplicate client created');
+
+  const consults = await pool.query("SELECT client_id FROM consults WHERE calcom_event_id = 'test-uid-create-2'");
+  assert.equal(consults.rows[0].client_id, existingId);
+});
+
+test('BOOKING_CREATED: idempotent retry does not duplicate rows', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const payload = {
+    uid: 'test-uid-create-3',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Carol', email: 'carol@calcom-test.example' }],
+  };
+  await postCreated(payload);
+  // First call hits dedupe table, so direct replay returns dedupe. Test the
+  // idempotent FAST-PATH instead: clear webhook_events and re-post.
+  await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
+  await postCreated(payload);
+  const consults = await pool.query("SELECT id FROM consults WHERE calcom_event_id = 'test-uid-create-3'");
+  assert.equal(consults.rowCount, 1);
+  const clients = await pool.query("SELECT id FROM clients WHERE email = 'carol@calcom-test.example'");
+  assert.equal(clients.rowCount, 1);
+});
+
+test('BOOKING_CREATED: NULL-email path soft-dedupes by name+phone', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const payload1 = {
+    uid: 'test-uid-create-noemail-1',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Dave', email: '', phoneNumber: '+15551110002' }],
+  };
+  await postCreated(payload1);
+
+  await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
+  const payload2 = {
+    uid: 'test-uid-create-noemail-2',
+    startTime: '2026-06-08T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Dave', email: '', phoneNumber: '+15551110002' }],
+  };
+  await postCreated(payload2);
+
+  const clients = await pool.query(
+    "SELECT id FROM clients WHERE name = 'CalcomTest Dave' AND phone = '+15551110002' AND email IS NULL"
+  );
+  assert.equal(clients.rowCount, 1, 'second NULL-email booking reuses the first auto-created client');
+
+  const consults = await pool.query(
+    "SELECT calcom_event_id FROM consults WHERE booker_name = 'CalcomTest Dave' ORDER BY calcom_event_id"
+  );
+  assert.equal(consults.rowCount, 2);
+});
+
+test('BOOKING_CREATED: links to most recent non-terminal proposal', async () => {
+  await cleanupTestRows();
+  const c = await pool.query(
+    `INSERT INTO clients (name, email, source) VALUES ('CalcomTest Eve', 'eve@calcom-test.example', 'direct') RETURNING id`
+  );
+  const clientId = c.rows[0].id;
+  await insertTestProposal(clientId, 'sent', 60);                  // older active
+  const newerId = await insertTestProposal(clientId, 'deposit_paid', 30, 200000); // most recent active
+  await insertTestProposal(clientId, 'archived', 15, 50000);       // archived (excluded)
+
+  await buildApp(TEST_SECRET);
+  await postCreated({
+    uid: 'test-uid-create-link',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Eve', email: 'eve@calcom-test.example' }],
+  });
+
+  const consults = await pool.query("SELECT proposal_id FROM consults WHERE calcom_event_id = 'test-uid-create-link'");
+  assert.equal(consults.rows[0].proposal_id, newerId);
+});
+
+test('BOOKING_CREATED: NULL proposal_id when client has only archived/completed proposals', async () => {
+  await cleanupTestRows();
+  const c = await pool.query(
+    `INSERT INTO clients (name, email, source) VALUES ('CalcomTest Frank', 'frank@calcom-test.example', 'direct') RETURNING id`
+  );
+  await insertTestProposal(c.rows[0].id, 'completed', -30);
+
+  await buildApp(TEST_SECRET);
+  await postCreated({
+    uid: 'test-uid-create-no-link',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Frank', email: 'frank@calcom-test.example' }],
+  });
+  const consults = await pool.query("SELECT proposal_id FROM consults WHERE calcom_event_id = 'test-uid-create-no-link'");
+  assert.equal(consults.rows[0].proposal_id, null);
+});
+
+test('BOOKING_CREATED: concurrent race with same email → exactly one client, orphan cleaned up', async () => {
+  // Spec §12 explicitly requires this test. Exercises the partial-UNIQUE
+  // serialization in clients(email), the 23505 catch branch, and the
+  // orphan-cleanup branch in the handler. Without this test, regressions
+  // in those code paths would not be caught.
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+
+  const email = 'race@calcom-test.example';
+  const payloadA = {
+    uid: 'test-uid-race-A',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Race', email }],
+  };
+  const payloadB = {
+    uid: 'test-uid-race-B',
+    startTime: '2026-06-08T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Race', email }],
+  };
+
+  // True parallel: kick both off without awaiting, then Promise.all.
+  // Postgres' partial UNIQUE on clients(email) WHERE email IS NOT NULL
+  // serializes the concurrent INSERTs; the loser catches 23505 and
+  // re-SELECTs the winner's id. Both consults rows reference the same
+  // (single) client; no orphan is left behind.
+  await Promise.all([postCreated(payloadA), postCreated(payloadB)]);
+
+  const clients = await pool.query("SELECT id FROM clients WHERE email = $1", [email]);
+  assert.equal(clients.rowCount, 1, 'partial UNIQUE serializes auto-creates → exactly one client');
+
+  const consults = await pool.query(
+    "SELECT client_id FROM consults WHERE calcom_event_id LIKE 'test-uid-race-%' ORDER BY calcom_event_id"
+  );
+  assert.equal(consults.rowCount, 2, 'both bookings filed');
+  assert.equal(consults.rows[0].client_id, clients.rows[0].id);
+  assert.equal(consults.rows[1].client_id, clients.rows[0].id);
+});
