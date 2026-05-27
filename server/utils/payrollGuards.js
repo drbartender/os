@@ -17,7 +17,11 @@ const { pool } = require('../db');
  * one bartender on the event is a stub, the whole accrual is skipped.
  */
 async function isLegacyCcParticipant(proposalId, client = pool) {
-  if (!Number.isInteger(proposalId)) return false;
+  // Coerce defensively so a caller that passes req.params.id (a string)
+  // doesn't silently bypass the guard. SERIAL ids are always >= 1, so 0
+  // and negatives are not valid proposal ids and short-circuit cheaply.
+  const n = Number(proposalId);
+  if (!Number.isInteger(n) || n <= 0) return false;
   const r = await client.query(
     `SELECT 1 FROM shift_requests sr
        JOIN shifts s ON s.id = sr.shift_id
@@ -26,7 +30,7 @@ async function isLegacyCcParticipant(proposalId, client = pool) {
         AND sr.status = 'approved'
         AND u.cc_id LIKE 'legacy_cc:%'
       LIMIT 1`,
-    [proposalId]
+    [n]
   );
   return r.rowCount > 0;
 }
@@ -37,10 +41,12 @@ async function isLegacyCcParticipant(proposalId, client = pool) {
  * payroll work for tips paid to imported-stub bartenders.
  */
 async function isLegacyCcStubUser(userId, client = pool) {
-  if (!Number.isInteger(userId)) return false;
+  // See isLegacyCcParticipant — same defensive coerce for string callers.
+  const n = Number(userId);
+  if (!Number.isInteger(n) || n <= 0) return false;
   const r = await client.query(
     `SELECT 1 FROM users WHERE id = $1 AND cc_id LIKE 'legacy_cc:%' LIMIT 1`,
-    [userId]
+    [n]
   );
   return r.rowCount > 0;
 }
