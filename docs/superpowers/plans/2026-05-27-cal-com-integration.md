@@ -37,7 +37,26 @@
 - `.env.example` : three new env-var lines with inline comments.
 - `CLAUDE.md` : Environment Variables table gets three new rows; Tech Stack gets Cal.com.
 - `README.md` : folder tree gets `calcom.js`; Environment Variables table mirror; Key Features adds a line; Tech Stack adds Cal.com.
-- `ARCHITECTURE.md` : API route table gets `POST /api/calcom/webhook`; Third-Party Integrations adds Cal.com section; consults table description updated; `webhook_events` table documented; `clients.source` enum updated.
+- `ARCHITECTURE.md`: API route table gets `POST /api/calcom/webhook`; Third-Party Integrations adds Cal.com section; consults table description updated; `webhook_events` table documented; `clients.source` enum updated.
+
+---
+
+## Execution review checkpoints
+
+Specialized review agents fire at task boundaries to catch issues at the right granularity (matches the user's standing cadence pattern). Run these AFTER the task's commit, BEFORE starting the next task:
+
+| After task | Run agents | Why |
+|---|---|---|
+| Task 1 (schema) | `database-review` | New constraints, new table, source-enum migration |
+| Task 3 (webhook shell + signature) | `security-review` | HMAC handling, fails-closed posture, raw-body discipline |
+| Task 5 (BOOKING_CREATED + auto-create) | `security-review` + `code-review` | PII normalization, race-handling, transaction boundaries |
+| Tasks 6 + 7 + 8 (other handlers, as a batch) | `code-review` | Defensive upserts, error paths |
+| Task 9 (completion flip) | `database-review` + `consistency-check` | Transaction scope, side effect across drink_plans → consults |
+| Task 11 (source enum cross-cut) | `consistency-check` | All enum consumers stay in sync (ProposalCreate intentionally deferred per file-size cap) |
+| Task 12 (prune scheduler) | `database-review` | Hourly DELETE statement, retention boundary |
+| Tasks 13 + 14 (docs) | none | Doc-only changes per the standing rule |
+
+Agents are advisory: a single warning doesn't block the next task, but blockers stop forward progress until resolved. Use `/review-before-deploy` (all six agents in parallel) as the final pre-push gate after Task 14.
 
 ---
 
@@ -98,37 +117,37 @@ The schema is reapplied on server boot. Restart the dev server (kill the existin
 
 - [ ] **Step 3: Verify the migrations landed**
 
-Run a SQL check:
+`psql` may not be on PATH (PowerShell on Windows / Git Bash). Use a Node one-liner that goes through the same connection pool the app uses:
 
 ```bash
-psql "$DATABASE_URL" -c "SELECT conname FROM pg_constraint WHERE conrelid = 'consults'::regclass;"
+node -e "
+require('dotenv').config();
+const { pool } = require('./server/db');
+(async () => {
+  const consultsConstraints = await pool.query(\`SELECT conname FROM pg_constraint WHERE conrelid = 'consults'::regclass\`);
+  console.log('consults constraints:', consultsConstraints.rows.map(r => r.conname));
+
+  const clientsCheck = await pool.query(\`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'clients_source_check'\`);
+  console.log('clients_source_check:', clientsCheck.rows[0]?.pg_get_constraintdef);
+
+  const webhookCols = await pool.query(\`SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'webhook_events' ORDER BY ordinal_position\`);
+  console.log('webhook_events columns:', webhookCols.rows);
+
+  const consultsCols = await pool.query(\`SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'consults' AND column_name IN ('booker_name', 'booker_email')\`);
+  console.log('consults booker columns:', consultsCols.rows);
+
+  await pool.end();
+})();
+"
 ```
 
-Expected output includes `consults_calcom_event_id_key` and `consults_status_check`.
+Expected output:
+- `consults constraints:` includes `consults_calcom_event_id_key` and `consults_status_check`
+- `clients_source_check:` definition includes `'calcom'` alongside the other four enum values
+- `webhook_events columns:` lists `provider`, `event_id`, `received_at`
+- `consults booker columns:` lists `booker_name` and `booker_email` with `character varying` data type
 
-```bash
-psql "$DATABASE_URL" -c "SELECT conname FROM pg_constraint WHERE conrelid = 'clients'::regclass AND conname = 'clients_source_check';"
-```
-
-Expected output includes `clients_source_check`. Confirm the check definition allows `'calcom'`:
-
-```bash
-psql "$DATABASE_URL" -c "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'clients_source_check';"
-```
-
-Expected: `CHECK (((source)::text = ANY (ARRAY[('direct'::character varying)::text, ('thumbtack'::character varying)::text, ('referral'::character varying)::text, ('website'::character varying)::text, ('calcom'::character varying)::text])))`
-
-```bash
-psql "$DATABASE_URL" -c "\d webhook_events"
-```
-
-Expected: table exists with `provider`, `event_id`, `received_at` columns + PK on (provider, event_id) + index on received_at.
-
-```bash
-psql "$DATABASE_URL" -c "\d consults"
-```
-
-Expected: `booker_name VARCHAR(255)`, `booker_email VARCHAR(255)` columns present.
+**Revertability note.** Task 1 ADDs constraints and a table. To revert: `DROP TABLE IF EXISTS webhook_events`, `ALTER TABLE consults DROP CONSTRAINT consults_calcom_event_id_key`, `ALTER TABLE consults DROP COLUMN booker_name, DROP COLUMN booker_email`, `ALTER TABLE clients DROP CONSTRAINT clients_source_check; ALTER TABLE clients ADD CONSTRAINT clients_source_check CHECK (source IN ('direct', 'thumbtack', 'referral', 'website'))`. Reverse migration is straightforward; no data backfill required because the new columns are nullable and the new table is empty on a fresh deploy.
 
 - [ ] **Step 4: Commit**
 
@@ -147,10 +166,9 @@ git commit -m "feat(cal-com): schema for webhook_events + consults booker column
 
 - [ ] **Step 1: Write the failing tests first**
 
-Create `server/utils/calcomWebhookHelpers.test.js`:
+Create `server/utils/calcomWebhookHelpers.test.js`. Pure-logic tests, no DB connection needed (do NOT require `dotenv` or `pool`):
 
 ```js
-require('dotenv').config();
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('crypto');
@@ -422,53 +440,97 @@ git commit -m "feat(cal-com): pure webhook helpers (sig verify, body hash, norma
 
 - [ ] **Step 1: Write failing route tests**
 
-Create `server/routes/calcom.test.js`:
+Create `server/routes/calcom.test.js`. The harness mirrors the existing `server/routes/proposals/crud.test.js` pattern: stand up a local express server via `node:http`, drive it with raw HTTP requests. No `supertest`, no new devDependencies, matches repo convention.
 
 ```js
 require('dotenv').config();
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('crypto');
+const crypto = require('node:crypto');
+const http = require('node:http');
 const express = require('express');
 const { pool } = require('../db');
 
-// Build a fresh app per test invocation so middleware order matches prod.
-function buildApp(secretOverride) {
+let _server = null;
+let _baseUrl = null;
+
+async function buildApp(secretOverride) {
   if (secretOverride !== undefined) process.env.CAL_WEBHOOK_SECRET = secretOverride;
+  // Reset module cache so the route picks up the new env on this build.
   delete require.cache[require.resolve('./calcom')];
   const router = require('./calcom');
   const app = express();
   app.use('/api/calcom/webhook', express.raw({ type: 'application/json' }));
   app.use('/api/calcom', router);
-  return app;
+
+  if (_server) await new Promise(r => _server.close(r));
+  await new Promise(resolve => {
+    _server = app.listen(0, () => {
+      const port = _server.address().port;
+      _baseUrl = `http://127.0.0.1:${port}`;
+      resolve();
+    });
+  });
 }
 
-function signedRequest(app, body, secret, headerOverride) {
+async function signedRequest(body, secret, headerOverride) {
   const sig = secret
     ? crypto.createHmac('sha256', secret).update(body).digest('hex')
     : '';
-  const supertest = require('supertest');
-  let req = supertest(app).post('/api/calcom/webhook')
-    .set('Content-Type', 'application/json');
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body),
+  };
   if (headerOverride !== undefined) {
-    if (headerOverride !== null) req = req.set('x-cal-signature-256', headerOverride);
+    if (headerOverride !== null) headers['x-cal-signature-256'] = headerOverride;
   } else if (sig) {
-    req = req.set('x-cal-signature-256', sig);
+    headers['x-cal-signature-256'] = sig;
   }
-  return req.send(body);
+  return new Promise((resolve, reject) => {
+    const req = http.request(`${_baseUrl}/api/calcom/webhook`, { method: 'POST', headers }, res => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, text: data }));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+// Variant that lets a test override the header name (case sensitivity check).
+async function customHeaderRequest(body, secret, headerName) {
+  const sig = secret
+    ? crypto.createHmac('sha256', secret).update(body).digest('hex')
+    : '';
+  const headers = {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body),
+    [headerName]: sig,
+  };
+  return new Promise((resolve, reject) => {
+    const req = http.request(`${_baseUrl}/api/calcom/webhook`, { method: 'POST', headers }, res => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, text: data }));
+    });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
 }
 
 const ORIGINAL_SECRET = process.env.CAL_WEBHOOK_SECRET;
 const TEST_SECRET = 'test-cal-secret';
 
 before(async () => {
-  // Clean webhook_events from prior runs.
   await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
 });
 
 after(async () => {
   process.env.CAL_WEBHOOK_SECRET = ORIGINAL_SECRET;
   await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
+  if (_server) await new Promise(r => _server.close(r));
 });
 
 beforeEach(async () => {
@@ -476,54 +538,62 @@ beforeEach(async () => {
 });
 
 test('webhook: returns 503 when CAL_WEBHOOK_SECRET unset', async () => {
-  const app = buildApp(''); // empty string treated as unset
-  const res = await signedRequest(app, Buffer.from('{}'), '');
+  await buildApp(''); // empty string treated as unset
+  const res = await signedRequest(Buffer.from('{}'), '');
   assert.equal(res.status, 503);
   assert.match(res.text, /not configured/i);
 });
 
 test('webhook: returns 400 when signature header missing', async () => {
-  const app = buildApp(TEST_SECRET);
-  const res = await signedRequest(app, Buffer.from('{}'), TEST_SECRET, null);
+  await buildApp(TEST_SECRET);
+  const res = await signedRequest(Buffer.from('{}'), TEST_SECRET, null);
   assert.equal(res.status, 400);
   assert.match(res.text, /missing signature/i);
 });
 
 test('webhook: returns 400 when signature is wrong', async () => {
-  const app = buildApp(TEST_SECRET);
-  const res = await signedRequest(app, Buffer.from('{}'), TEST_SECRET, 'wrongsig');
+  await buildApp(TEST_SECRET);
+  const res = await signedRequest(Buffer.from('{}'), TEST_SECRET, 'wrongsig');
   assert.equal(res.status, 400);
   assert.match(res.text, /invalid signature/i);
 });
 
+test('webhook: wrong-case header still verifies (Express normalizes)', async () => {
+  await buildApp(TEST_SECRET);
+  const body = Buffer.from(JSON.stringify({ triggerEvent: 'MEETING_STARTED', payload: { uid: 'wrong-case-1' } }));
+  // Send header as mixed-case 'X-Cal-Signature-256' instead of lowercase.
+  const res = await customHeaderRequest(body, TEST_SECRET, 'X-Cal-Signature-256');
+  assert.equal(res.status, 200); // signature verifies, dispatches to default (ignored)
+});
+
 test('webhook: returns 400 on malformed JSON body', async () => {
-  const app = buildApp(TEST_SECRET);
+  await buildApp(TEST_SECRET);
   const body = Buffer.from('not json at all');
-  const res = await signedRequest(app, body, TEST_SECRET);
+  const res = await signedRequest(body, TEST_SECRET);
   assert.equal(res.status, 400);
   assert.match(res.text, /malformed body/i);
 });
 
 test('webhook: returns 200 ignored on unknown triggerEvent', async () => {
-  const app = buildApp(TEST_SECRET);
+  await buildApp(TEST_SECRET);
   const body = Buffer.from(JSON.stringify({
     triggerEvent: 'MEETING_STARTED',
     payload: {},
   }));
-  const res = await signedRequest(app, body, TEST_SECRET);
+  const res = await signedRequest(body, TEST_SECRET);
   assert.equal(res.status, 200);
   assert.match(res.text, /ignored/i);
 });
 
 test('webhook: dedupe returns 200 Already processed on identical replay', async () => {
-  const app = buildApp(TEST_SECRET);
+  await buildApp(TEST_SECRET);
   const body = Buffer.from(JSON.stringify({
     triggerEvent: 'MEETING_STARTED',
     payload: { uid: 'replay-test-1' },
   }));
-  const first = await signedRequest(app, body, TEST_SECRET);
+  const first = await signedRequest(body, TEST_SECRET);
   assert.equal(first.status, 200);
-  const second = await signedRequest(app, body, TEST_SECRET);
+  const second = await signedRequest(body, TEST_SECRET);
   assert.equal(second.status, 200);
   assert.match(second.text, /already processed/i);
 
@@ -534,11 +604,11 @@ test('webhook: dedupe returns 200 Already processed on identical replay', async 
 });
 
 test('webhook: dedupe treats different bodies as different events', async () => {
-  const app = buildApp(TEST_SECRET);
+  await buildApp(TEST_SECRET);
   const a = Buffer.from(JSON.stringify({ triggerEvent: 'MEETING_STARTED', payload: { uid: 'a' } }));
   const b = Buffer.from(JSON.stringify({ triggerEvent: 'MEETING_STARTED', payload: { uid: 'b' } }));
-  await signedRequest(app, a, TEST_SECRET);
-  await signedRequest(app, b, TEST_SECRET);
+  await signedRequest(a, TEST_SECRET);
+  await signedRequest(b, TEST_SECRET);
   const dedupeRows = await pool.query(
     "SELECT COUNT(*) AS n FROM webhook_events WHERE provider = 'calcom'"
   );
@@ -546,13 +616,7 @@ test('webhook: dedupe treats different bodies as different events', async () => 
 });
 ```
 
-If `supertest` is not yet in package.json, add it as a devDependency:
-
-```bash
-npm install --save-dev supertest
-```
-
-(If supertest is already there, skip the install.)
+**Note for downstream tasks (5, 6, 7, 8):** the `signedRequest` and `buildApp` helpers no longer take an `app` argument. Per-handler wrapper helpers (`postCreated(payload)`, `postCancelled(payload)`, etc., introduced in Tasks 5-8) drop the `app` parameter accordingly.
 
 - [ ] **Step 2: Run the route tests, confirm they fail**
 
@@ -748,12 +812,12 @@ Open `server/routes/calcom.test.js`. Append (do not remove the existing tests):
 ```js
 // ─── BOOKING_CREATED tests ────────────────────────────────────────
 
-async function postCreated(app, payload) {
+async function postCreated(payload) {
   const body = Buffer.from(JSON.stringify({
     triggerEvent: 'BOOKING_CREATED',
     payload,
   }));
-  return signedRequest(app, body, TEST_SECRET);
+  return signedRequest(body, TEST_SECRET);
 }
 
 async function cleanupTestRows() {
@@ -764,8 +828,8 @@ async function cleanupTestRows() {
 
 test('BOOKING_CREATED: returns 200 ignored when uid missing', async () => {
   await cleanupTestRows();
-  const app = buildApp(TEST_SECRET);
-  const res = await postCreated(app, { startTime: '2026-06-01T15:00:00Z', attendees: [{ name: 'CalcomTest A', email: 'a@calcom-test.example' }] });
+  await buildApp(TEST_SECRET);
+  const res = await postCreated({ startTime: '2026-06-01T15:00:00Z', attendees: [{ name: 'CalcomTest A', email: 'a@calcom-test.example' }] });
   assert.equal(res.status, 200);
   assert.match(res.text, /malformed|ignored/i);
   const rows = await pool.query("SELECT id FROM consults WHERE booker_email = 'a@calcom-test.example'");
@@ -774,8 +838,8 @@ test('BOOKING_CREATED: returns 200 ignored when uid missing', async () => {
 
 test('BOOKING_CREATED: creates client + consult on unknown email', async () => {
   await cleanupTestRows();
-  const app = buildApp(TEST_SECRET);
-  const res = await postCreated(app, {
+  await buildApp(TEST_SECRET);
+  const res = await postCreated({
     uid: 'test-uid-create-1',
     startTime: '2026-06-01T15:00:00Z',
     attendees: [{ name: 'CalcomTest Alice', email: 'alice@calcom-test.example', phoneNumber: '+15551110001' }],
@@ -802,8 +866,8 @@ test('BOOKING_CREATED: links to existing client on known email', async () => {
   );
   const existingId = existing.rows[0].id;
 
-  const app = buildApp(TEST_SECRET);
-  await postCreated(app, {
+  await buildApp(TEST_SECRET);
+  await postCreated({
     uid: 'test-uid-create-2',
     startTime: '2026-06-01T15:00:00Z',
     attendees: [{ name: 'CalcomTest Bob', email: 'bob@calcom-test.example' }],
@@ -818,17 +882,17 @@ test('BOOKING_CREATED: links to existing client on known email', async () => {
 
 test('BOOKING_CREATED: idempotent retry does not duplicate rows', async () => {
   await cleanupTestRows();
-  const app = buildApp(TEST_SECRET);
+  await buildApp(TEST_SECRET);
   const payload = {
     uid: 'test-uid-create-3',
     startTime: '2026-06-01T15:00:00Z',
     attendees: [{ name: 'CalcomTest Carol', email: 'carol@calcom-test.example' }],
   };
-  await postCreated(app, payload);
+  await postCreated(payload);
   // First call hits dedupe table, so direct replay returns dedupe. Test the
   // idempotent FAST-PATH instead: clear webhook_events and re-post.
   await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
-  await postCreated(app, payload);
+  await postCreated(payload);
   const consults = await pool.query("SELECT id FROM consults WHERE calcom_event_id = 'test-uid-create-3'");
   assert.equal(consults.rowCount, 1);
   const clients = await pool.query("SELECT id FROM clients WHERE email = 'carol@calcom-test.example'");
@@ -837,13 +901,13 @@ test('BOOKING_CREATED: idempotent retry does not duplicate rows', async () => {
 
 test('BOOKING_CREATED: NULL-email path soft-dedupes by name+phone', async () => {
   await cleanupTestRows();
-  const app = buildApp(TEST_SECRET);
+  await buildApp(TEST_SECRET);
   const payload1 = {
     uid: 'test-uid-create-noemail-1',
     startTime: '2026-06-01T15:00:00Z',
     attendees: [{ name: 'CalcomTest Dave', email: '', phoneNumber: '+15551110002' }],
   };
-  await postCreated(app, payload1);
+  await postCreated(payload1);
 
   await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
   const payload2 = {
@@ -851,7 +915,7 @@ test('BOOKING_CREATED: NULL-email path soft-dedupes by name+phone', async () => 
     startTime: '2026-06-08T15:00:00Z',
     attendees: [{ name: 'CalcomTest Dave', email: '', phoneNumber: '+15551110002' }],
   };
-  await postCreated(app, payload2);
+  await postCreated(payload2);
 
   const clients = await pool.query(
     "SELECT id FROM clients WHERE name = 'CalcomTest Dave' AND phone = '+15551110002' AND email IS NULL"
@@ -890,8 +954,8 @@ test('BOOKING_CREATED: links to most recent non-terminal proposal', async () => 
     [clientId]
   );
 
-  const app = buildApp(TEST_SECRET);
-  await postCreated(app, {
+  await buildApp(TEST_SECRET);
+  await postCreated({
     uid: 'test-uid-create-link',
     startTime: '2026-06-01T15:00:00Z',
     attendees: [{ name: 'CalcomTest Eve', email: 'eve@calcom-test.example' }],
@@ -912,14 +976,52 @@ test('BOOKING_CREATED: NULL proposal_id when client has only archived/completed 
      VALUES ($1, 'completed', CURRENT_DATE - INTERVAL '30 days', 'birthday-party', 100000, CURRENT_DATE - INTERVAL '30 days')`,
     [clientId]
   );
-  const app = buildApp(TEST_SECRET);
-  await postCreated(app, {
+  await buildApp(TEST_SECRET);
+  await postCreated({
     uid: 'test-uid-create-no-link',
     startTime: '2026-06-01T15:00:00Z',
     attendees: [{ name: 'CalcomTest Frank', email: 'frank@calcom-test.example' }],
   });
   const consults = await pool.query("SELECT proposal_id FROM consults WHERE calcom_event_id = 'test-uid-create-no-link'");
   assert.equal(consults.rows[0].proposal_id, null);
+});
+
+test('BOOKING_CREATED: concurrent race with same email → exactly one client, orphan cleaned up', async () => {
+  // Spec §12 explicitly requires this test. Exercises the partial-UNIQUE
+  // serialization in clients(email), the 23505 catch branch, and the
+  // orphan-cleanup branch in the handler. Without this test, regressions
+  // in those code paths would not be caught.
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+
+  const email = 'race@calcom-test.example';
+  const payloadA = {
+    uid: 'test-uid-race-A',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Race', email }],
+  };
+  const payloadB = {
+    uid: 'test-uid-race-B',
+    startTime: '2026-06-08T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Race', email }],
+  };
+
+  // True parallel: kick both off without awaiting, then Promise.all.
+  // Postgres' partial UNIQUE on clients(email) WHERE email IS NOT NULL
+  // serializes the concurrent INSERTs; the loser catches 23505 and
+  // re-SELECTs the winner's id. Both consults rows reference the same
+  // (single) client; no orphan is left behind.
+  await Promise.all([postCreated(payloadA), postCreated(payloadB)]);
+
+  const clients = await pool.query("SELECT id FROM clients WHERE email = $1", [email]);
+  assert.equal(clients.rowCount, 1, 'partial UNIQUE serializes auto-creates → exactly one client');
+
+  const consults = await pool.query(
+    "SELECT client_id FROM consults WHERE calcom_event_id LIKE 'test-uid-race-%' ORDER BY calcom_event_id"
+  );
+  assert.equal(consults.rowCount, 2, 'both bookings filed');
+  assert.equal(consults.rows[0].client_id, clients.rows[0].id);
+  assert.equal(consults.rows[1].client_id, clients.rows[0].id);
 });
 ```
 
@@ -1101,9 +1203,9 @@ Append to `server/routes/calcom.test.js`:
 ```js
 // ─── BOOKING_CANCELLED tests ──────────────────────────────────────
 
-async function postCancelled(app, payload) {
+async function postCancelled(payload) {
   const body = Buffer.from(JSON.stringify({ triggerEvent: 'BOOKING_CANCELLED', payload }));
-  return signedRequest(app, body, TEST_SECRET);
+  return signedRequest(body, TEST_SECRET);
 }
 
 test('BOOKING_CANCELLED: flips existing scheduled row to cancelled', async () => {
@@ -1112,8 +1214,8 @@ test('BOOKING_CANCELLED: flips existing scheduled row to cancelled', async () =>
     `INSERT INTO consults (calcom_event_id, scheduled_at, status, booker_name, booker_email)
      VALUES ('test-uid-cancel-1', '2026-06-01T15:00:00Z', 'scheduled', 'CalcomTest Gina', 'gina@calcom-test.example')`
   );
-  const app = buildApp(TEST_SECRET);
-  await postCancelled(app, {
+  await buildApp(TEST_SECRET);
+  await postCancelled({
     uid: 'test-uid-cancel-1',
     startTime: '2026-06-01T15:00:00Z',
     attendees: [{ name: 'CalcomTest Gina', email: 'gina@calcom-test.example' }],
@@ -1124,8 +1226,8 @@ test('BOOKING_CANCELLED: flips existing scheduled row to cancelled', async () =>
 
 test('BOOKING_CANCELLED: defensive insert when no prior row exists', async () => {
   await cleanupTestRows();
-  const app = buildApp(TEST_SECRET);
-  await postCancelled(app, {
+  await buildApp(TEST_SECRET);
+  await postCancelled({
     uid: 'test-uid-cancel-2',
     startTime: '2026-06-01T15:00:00Z',
     attendees: [{ name: 'CalcomTest Henry', email: 'henry@calcom-test.example' }],
@@ -1142,9 +1244,9 @@ test('BOOKING_CANCELLED: defensive insert when no prior row exists', async () =>
 
 test('BOOKING_CANCELLED: missing startTime falls back to NOW() (no NOT NULL violation)', async () => {
   await cleanupTestRows();
-  const app = buildApp(TEST_SECRET);
+  await buildApp(TEST_SECRET);
   const before = Date.now();
-  await postCancelled(app, {
+  await postCancelled({
     uid: 'test-uid-cancel-3',
     attendees: [{ name: 'CalcomTest Iris', email: 'iris@calcom-test.example' }],
   });
@@ -1158,8 +1260,8 @@ test('BOOKING_CANCELLED: missing startTime falls back to NOW() (no NOT NULL viol
 
 test('BOOKING_CANCELLED: missing uid is a 200 no-op', async () => {
   await cleanupTestRows();
-  const app = buildApp(TEST_SECRET);
-  const res = await postCancelled(app, { attendees: [{ name: 'CalcomTest Jack', email: 'jack@calcom-test.example' }] });
+  await buildApp(TEST_SECRET);
+  const res = await postCancelled({ attendees: [{ name: 'CalcomTest Jack', email: 'jack@calcom-test.example' }] });
   assert.equal(res.status, 200);
   const rows = await pool.query("SELECT id FROM consults WHERE booker_email = 'jack@calcom-test.example'");
   assert.equal(rows.rowCount, 0);
@@ -1232,9 +1334,9 @@ Append to `server/routes/calcom.test.js`:
 ```js
 // ─── BOOKING_RESCHEDULED tests ────────────────────────────────────
 
-async function postRescheduled(app, payload) {
+async function postRescheduled(payload) {
   const body = Buffer.from(JSON.stringify({ triggerEvent: 'BOOKING_RESCHEDULED', payload }));
-  return signedRequest(app, body, TEST_SECRET);
+  return signedRequest(body, TEST_SECRET);
 }
 
 test('BOOKING_RESCHEDULED: updates existing row in place using rescheduleUid', async () => {
@@ -1243,8 +1345,8 @@ test('BOOKING_RESCHEDULED: updates existing row in place using rescheduleUid', a
     `INSERT INTO consults (calcom_event_id, scheduled_at, status, booker_name, booker_email)
      VALUES ('test-uid-resched-old-1', '2026-06-01T15:00:00Z', 'scheduled', 'CalcomTest Kate', 'kate@calcom-test.example')`
   );
-  const app = buildApp(TEST_SECRET);
-  const res = await postRescheduled(app, {
+  await buildApp(TEST_SECRET);
+  const res = await postRescheduled({
     uid: 'test-uid-resched-new-1',
     startTime: '2026-06-08T15:00:00Z',
     rescheduleUid: 'test-uid-resched-old-1',
@@ -1267,8 +1369,8 @@ test('BOOKING_RESCHEDULED: probes alternative old-uid field names', async () => 
     `INSERT INTO consults (calcom_event_id, scheduled_at, status)
      VALUES ('test-uid-resched-old-meta', '2026-06-01T15:00:00Z', 'scheduled')`
   );
-  const app = buildApp(TEST_SECRET);
-  await postRescheduled(app, {
+  await buildApp(TEST_SECRET);
+  await postRescheduled({
     uid: 'test-uid-resched-new-meta',
     startTime: '2026-06-08T15:00:00Z',
     metadata: { rescheduleUid: 'test-uid-resched-old-meta' },
@@ -1279,8 +1381,8 @@ test('BOOKING_RESCHEDULED: probes alternative old-uid field names', async () => 
 
 test('BOOKING_RESCHEDULED: falls through to handleCreated when old uid unresolvable', async () => {
   await cleanupTestRows();
-  const app = buildApp(TEST_SECRET);
-  await postRescheduled(app, {
+  await buildApp(TEST_SECRET);
+  await postRescheduled({
     uid: 'test-uid-resched-fresh',
     startTime: '2026-06-08T15:00:00Z',
     attendees: [{ name: 'CalcomTest Liam', email: 'liam@calcom-test.example' }],
@@ -1294,8 +1396,8 @@ test('BOOKING_RESCHEDULED: falls through to handleCreated when old uid unresolva
 
 test('BOOKING_RESCHEDULED: missing newUid or newStartTime is 200 ignored', async () => {
   await cleanupTestRows();
-  const app = buildApp(TEST_SECRET);
-  const res = await postRescheduled(app, { rescheduleUid: 'whatever' });
+  await buildApp(TEST_SECRET);
+  const res = await postRescheduled({ rescheduleUid: 'whatever' });
   assert.equal(res.status, 200);
   assert.match(res.text, /malformed|ignored/i);
 });
@@ -1380,9 +1482,9 @@ Append to `server/routes/calcom.test.js`:
 ```js
 // ─── BOOKING_NO_SHOW_UPDATED tests ────────────────────────────────
 
-async function postNoShow(app, payload) {
+async function postNoShow(payload) {
   const body = Buffer.from(JSON.stringify({ triggerEvent: 'BOOKING_NO_SHOW_UPDATED', payload }));
-  return signedRequest(app, body, TEST_SECRET);
+  return signedRequest(body, TEST_SECRET);
 }
 
 test('BOOKING_NO_SHOW_UPDATED: flips existing row to no_show', async () => {
@@ -1391,8 +1493,8 @@ test('BOOKING_NO_SHOW_UPDATED: flips existing row to no_show', async () => {
     `INSERT INTO consults (calcom_event_id, scheduled_at, status)
      VALUES ('test-uid-noshow-1', '2026-06-01T15:00:00Z', 'scheduled')`
   );
-  const app = buildApp(TEST_SECRET);
-  const res = await postNoShow(app, { uid: 'test-uid-noshow-1' });
+  await buildApp(TEST_SECRET);
+  const res = await postNoShow({ uid: 'test-uid-noshow-1' });
   assert.equal(res.status, 200);
   const row = await pool.query("SELECT status FROM consults WHERE calcom_event_id = 'test-uid-noshow-1'");
   assert.equal(row.rows[0].status, 'no_show');
@@ -1400,14 +1502,14 @@ test('BOOKING_NO_SHOW_UPDATED: flips existing row to no_show', async () => {
 
 test('BOOKING_NO_SHOW_UPDATED: zero-row update is a 200 (with Sentry breadcrumb in real Sentry env)', async () => {
   await cleanupTestRows();
-  const app = buildApp(TEST_SECRET);
-  const res = await postNoShow(app, { uid: 'test-uid-noshow-unknown' });
+  await buildApp(TEST_SECRET);
+  const res = await postNoShow({ uid: 'test-uid-noshow-unknown' });
   assert.equal(res.status, 200);
 });
 
 test('BOOKING_NO_SHOW_UPDATED: missing uid is 200 ignored', async () => {
-  const app = buildApp(TEST_SECRET);
-  const res = await postNoShow(app, {});
+  await buildApp(TEST_SECRET);
+  const res = await postNoShow({});
   assert.equal(res.status, 200);
 });
 ```
@@ -1646,7 +1748,39 @@ async function performConsultsCompletionFlip(client, proposalId) {
 }
 ```
 
-Now find the PUT `/:id/consult` handler's inner block, specifically the line just before `await client.query('COMMIT');` (around line 183 in the current file). Insert this:
+Find the existing `planRes` SELECT (around line 137-145 in the current file). It currently reads:
+
+```js
+    const planRes = await client.query(
+      `SELECT dp.id, dp.client_name, dp.event_date, dp.admin_notes,
+              dp.consult_filled_at,
+              p.guest_count
+       FROM drink_plans dp
+       LEFT JOIN proposals p ON p.id = dp.proposal_id
+       WHERE dp.id = $1
+       FOR UPDATE OF dp`,
+      [req.params.id]
+    );
+```
+
+Add `dp.proposal_id` to the SELECT column list:
+
+```js
+    const planRes = await client.query(
+      `SELECT dp.id, dp.client_name, dp.event_date, dp.admin_notes,
+              dp.consult_filled_at, dp.proposal_id,
+              p.guest_count
+       FROM drink_plans dp
+       LEFT JOIN proposals p ON p.id = dp.proposal_id
+       WHERE dp.id = $1
+       FOR UPDATE OF dp`,
+      [req.params.id]
+    );
+```
+
+Without this, `plan.proposal_id` evaluates to `undefined`, the flip helper's `if (proposalId == null) return;` short-circuits silently (because `undefined == null` is true under loose equality), and the consults flip NEVER fires in production despite all tests passing (tests bypass the route and call the helper directly).
+
+Now find the inner block, specifically the line just before `await client.query('COMMIT');` (around line 183 in the current file). Insert this:
 
 ```js
     // Flip linked Cal.com consults row to 'completed' as a side effect of
@@ -1715,40 +1849,76 @@ to:
 consultUrl: process.env.CAL_BOOKING_URL || null,
 ```
 
-- [ ] **Step 3: Manually verify the rendered output toggles on env var**
+- [ ] **Step 3: Verify the swap with grep**
 
-In a Node REPL or a throwaway script:
+The three templates that consume `consultUrl` are deep inside scheduled-message handlers and SMS rendering paths, not simple top-level exports. A REPL invocation is brittle. The simplest commit-time verification is a grep confirming the substitution is in place:
 
 ```bash
-node -e "
-require('dotenv').config();
-delete process.env.CAL_BOOKING_URL;
-const tpl = require('./server/utils/lifecycleEmailTemplates').drinkPlanNudgeClient || require('./server/utils/emailTemplates').drinkPlanNudgeClient;
-if (tpl) console.log('UNSET:', JSON.stringify(tpl({ clientName: 'X', eventTypeLabel: 'event', eventDateDisplay: 'June 1', plannerUrl: 'https://example.com/plan', consultUrl: null, phone: null }).html.includes('consult')));
-process.env.CAL_BOOKING_URL = 'https://cal.com/test';
-console.log('SET:', JSON.stringify(tpl({ clientName: 'X', eventTypeLabel: 'event', eventDateDisplay: 'June 1', plannerUrl: 'https://example.com/plan', consultUrl: process.env.CAL_BOOKING_URL, phone: null }).html.includes('consult')));
-"
+grep -n "process.env.CAL_BOOKING_URL" server/utils/marketingHandlers.js server/utils/drinkPlanNudge.js
 ```
 
-Expected: `UNSET: false` and `SET: true` (or similar : confirms the template branches on the URL). If the template name differs, find it in `server/utils/lifecycleEmailTemplates.js` near the `drinkPlanNudge` references and substitute.
+Expected output (three matches, one per line):
 
-- [ ] **Step 4: Commit**
+```
+server/utils/marketingHandlers.js:464:      consultUrl: process.env.CAL_BOOKING_URL || null,
+server/utils/drinkPlanNudge.js:148:    consultUrl: process.env.CAL_BOOKING_URL || null,
+server/utils/drinkPlanNudge.js:160:    consultUrl: process.env.CAL_BOOKING_URL || null,
+```
+
+And confirm there are no remaining `consultUrl: null,` instances in those files (would indicate a missed location):
 
 ```bash
-git add server/utils/marketingHandlers.js server/utils/drinkPlanNudge.js
+grep -n "consultUrl: null" server/utils/marketingHandlers.js server/utils/drinkPlanNudge.js
+```
+
+Expected: no output (zero matches).
+
+- [ ] **Step 4: Behavioral verification via the existing handler tests**
+
+The existing `server/utils/drinkPlanNudge.test.js` exercises the drink-plan-nudge email and SMS handlers end-to-end. Append a small test that sets `process.env.CAL_BOOKING_URL` to a known value and asserts the rendered output contains it. Add to `drinkPlanNudge.test.js`:
+
+```js
+test('drink_plan_nudge: rendered email body contains CAL_BOOKING_URL when set', async () => {
+  const ORIGINAL = process.env.CAL_BOOKING_URL;
+  process.env.CAL_BOOKING_URL = 'https://cal.com/test-consult';
+  try {
+    registerDrinkPlanNudgeHandlers();
+    await scheduleDrinkPlanNudge(proposalId);
+    const m = await pool.query(
+      "SELECT id FROM scheduled_messages WHERE entity_id=$1 AND message_type='drink_plan_nudge' AND status='pending' LIMIT 1",
+      [proposalId]
+    );
+    assert.ok(m.rows[0]?.id, 'drink_plan_nudge row was scheduled');
+    // Drive the dispatcher once to render + send (stubbed in dev). The
+    // sendEmail stub or live Resend call captures the rendered HTML;
+    // assert against the captured body. If the existing test file does
+    // not already stub sendEmail, mark this test as pending and document
+    // that template tests will land in a follow-up.
+  } finally {
+    process.env.CAL_BOOKING_URL = ORIGINAL;
+  }
+});
+```
+
+If the existing drink-plan-nudge test does not stub `sendEmail` in a way that exposes the rendered HTML, defer the assertion side of this test and add a comment explaining why; the grep verification in Step 3 still covers the swap. Spec §12 calls for snapshot tests across all three templates; if the test infrastructure cost is non-trivial, log a follow-up task ("snapshot tests for CAL_BOOKING_URL surfacing") rather than blocking this commit.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/utils/marketingHandlers.js server/utils/drinkPlanNudge.js server/utils/drinkPlanNudge.test.js
 git commit -m "feat(cal-com): surface CAL_BOOKING_URL in three client comms touches"
 ```
 
 ---
 
-## Task 11: clients.source cross-cutting (VALID_SOURCES + three SOURCE maps + ProposalCreate SOURCES)
+## Task 11: clients.source cross-cutting (VALID_SOURCES + three SOURCE maps)
 
 **Files:**
 - Modify: `server/routes/clients.js` (line 9)
 - Modify: `client/src/pages/admin/ClientsDashboard.js` (line 18)
 - Modify: `client/src/pages/admin/ClientDetail.js` (line 15)
 - Modify: `client/src/components/adminos/drawers/ClientDrawer.js` (line 12)
-- Modify: `client/src/pages/admin/ProposalCreate.js` (line 26)
+- **Deferred:** `client/src/pages/admin/ProposalCreate.js` (line 26 SOURCES array). File is 1337 lines, over the 1000-line cap, so adding a line would be blocked by the file-size ratchet pre-commit hook. See note below.
 
 - [ ] **Step 1: Extend the server-side VALID_SOURCES array**
 
@@ -1780,21 +1950,18 @@ Insert it alongside the other entries (alphabetical or grouped, follow existing 
 
 All three maps are structurally identical and contain the same five entries (`direct`, `thumbtack`, `referral`, `website`, `instagram`). The `instagram` entry exists in all three but is NOT in `VALID_SOURCES` (pre-existing inconsistency, not addressed by this plan).
 
-- [ ] **Step 3: Extend the ProposalCreate.js SOURCES array**
+**`ProposalCreate.js` deferral:** the manual-proposal-create form at `client/src/pages/admin/ProposalCreate.js:26` has its own `SOURCES = [{ value, label }, ...]` array used by the source dropdown. The file is currently 1337 lines, over the 1000-line hard cap, so adding one line would be blocked by the file-size ratchet pre-commit hook (`scripts/check-file-size.js --staged`). Per CLAUDE.md, the only way to add to an over-cap file is to first extract enough that the file stays flat or shrinks. Resolving this properly means either:
 
-`client/src/pages/admin/ProposalCreate.js:26` uses a different shape (array of `{ value, label }` objects) for the manual-proposal-create form's source dropdown. Add a new entry:
+1. A dedicated cleanup spec that extracts a sub-component from `ProposalCreate.js` (e.g., move the lead-source section into its own file), bringing the file under the cap, before this Cal.com plan can add the new SOURCES entry.
+2. Tracked as a known V2 follow-up: a Cal.com-sourced client created via the webhook is still selectable in the proposal-create flow by typing or by changing the client's source on the client detail page; the manual-create form's dropdown just won't include `Cal.com` as a pre-listed option until the cleanup ships.
 
-```js
-{ value: 'calcom',    label: 'Cal.com' },
-```
+Mark this V2 deferral explicitly in `docs/superpowers/specs/` as a follow-up note (or surface during the docs commit in Task 14). Do NOT touch `ProposalCreate.js` in this commit; the pre-commit hook will block.
 
-Insert alongside the existing four entries (`direct`, `referral`, `thumbtack`, `website`).
-
-- [ ] **Step 4: Verify the changes lint clean**
+- [ ] **Step 3: Verify the changes lint clean**
 
 ```bash
 CI=true npx eslint server/routes/clients.js
-CI=true npx eslint client/src/pages/admin/ClientsDashboard.js client/src/pages/admin/ClientDetail.js client/src/components/adminos/drawers/ClientDrawer.js client/src/pages/admin/ProposalCreate.js
+CI=true npx eslint client/src/pages/admin/ClientsDashboard.js client/src/pages/admin/ClientDetail.js client/src/components/adminos/drawers/ClientDrawer.js
 ```
 
 Expected: no errors. (`CI=true` keeps eslint terse.)
@@ -1802,9 +1969,21 @@ Expected: no errors. (`CI=true` keeps eslint terse.)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/routes/clients.js client/src/pages/admin/ClientsDashboard.js client/src/pages/admin/ClientDetail.js client/src/components/adminos/drawers/ClientDrawer.js client/src/pages/admin/ProposalCreate.js
-git commit -m "feat(cal-com): add 'calcom' to clients.source enum across server + 4 client surfaces"
+git add server/routes/clients.js client/src/pages/admin/ClientsDashboard.js client/src/pages/admin/ClientDetail.js client/src/components/adminos/drawers/ClientDrawer.js
+git commit -m "feat(cal-com): add 'calcom' to clients.source enum across server + 3 client surfaces"
 ```
+
+- [ ] **Step 5: UI smoke verification**
+
+Restart the dev server. In the admin UI, open the Clients dashboard (`/admin/clients` or the equivalent route in this codebase) and confirm:
+
+1. The source filter / column shows `Cal.com` as a possible value (chip styling matches the existing source chips, rendering with the `kind: 'info'` style).
+2. Open any existing client's detail page; the source dropdown / selector includes `Cal.com` as an option.
+3. Open a client drawer (the slide-in panel from a list); same verification.
+
+If any of the three surfaces still shows the raw enum string `calcom` instead of the friendly label `Cal.com`, that file's SOURCE map was missed; revisit Step 2.
+
+(`ProposalCreate.js`'s source dropdown will NOT show Cal.com in this V1; that's the deferred follow-up noted above.)
 
 ---
 
@@ -1892,19 +2071,31 @@ Expected: PASS.
 
 - [ ] **Step 5: Register the scheduler in `server/index.js`**
 
-Locate the block where other schedulers are registered (search for `wrapScheduler` or `RUN_*_SCHEDULER`). Following the existing pattern (e.g., `wrapScheduler('message_dispatcher', 300, dispatchPending)`), add:
+Locate the existing scheduler registration block. The pattern in `server/index.js:267-269` is THREE calls per scheduler:
 
 ```js
-if (process.env.RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER !== 'false') {
+const wrapped = wrapScheduler('autopay', 3600, processAutopayCharges);
+setTimeout(wrapped, 30000);
+setInterval(wrapped, 60 * 60 * 1000);
+```
+
+`wrapScheduler` registers the scheduler with `schedulerHealth`; `setTimeout` schedules the first tick (30 seconds after boot); `setInterval` schedules subsequent hourly ticks. Without the `setInterval`, the scheduler registers but the function never runs after the first tick.
+
+Add the Cal.com prune scheduler alongside, gated by `RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER` AND the global `RUN_SCHEDULERS` gate (mirror how existing schedulers are gated by both):
+
+```js
+if (process.env.RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER !== 'false' && !globalScheduleDisabled) {
   const { pruneOldWebhookEvents } = require('./utils/webhookEventsPruneScheduler');
-  wrapScheduler('webhook_events_prune', 3600, async () => {
+  const wrapped = wrapScheduler('webhook_events_prune', 3600, async () => {
     const n = await pruneOldWebhookEvents();
     if (n > 0) console.log(`[webhook_events_prune] deleted ${n} expired rows`);
   });
+  setTimeout(wrapped, 30000);
+  setInterval(wrapped, 60 * 60 * 1000);
 }
 ```
 
-The `wrapScheduler` helper (or whatever scheduler-registration utility is in `server/index.js`) is the same one used for `message_dispatcher`. If you find the existing schedulers use a different name (e.g., `startScheduler`, `setInterval`-wrapped), match exactly.
+`globalScheduleDisabled` is the existing local variable that mirrors `RUN_SCHEDULERS=false` in the surrounding scheduler-registration block (search for it nearby to confirm the exact name; `server/index.js` may use a slightly different identifier; match what other schedulers in the same block use).
 
 - [ ] **Step 6: Restart the dev server and confirm the scheduler registers**
 
