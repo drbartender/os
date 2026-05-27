@@ -333,6 +333,19 @@ async function start() {
         clearHealthRow('labrat_purge');
       }
 
+      // Webhook events prune — drop webhook_events rows older than 30 days
+      if (enabled('RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER')) {
+        const { pruneOldWebhookEvents } = require('./utils/webhookEventsPruneScheduler');
+        const wrapped = wrapScheduler('webhook_events_prune', 3600, async () => {
+          const n = await pruneOldWebhookEvents();
+          if (n > 0) console.log(`[webhook_events_prune] deleted ${n} expired rows`);
+        });
+        setTimeout(wrapped, 30000);
+        setInterval(wrapped, 60 * 60 * 1000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('webhook_events_prune');
+      }
+
       // Pre-event reminder handlers (event_week_reminder, long_lead_t30_recap).
       // Must register before the dispatcher's first tick so it can resolve them.
       require('./utils/preEventHandlers').registerAll();
