@@ -717,3 +717,81 @@ test('Phase 3: re-run is idempotent — second run with same CSV does not double
   );
   assert.strictEqual(countRes.rows[0].n, 1);
 });
+
+test('Phase 3 re-run: auto-comms enrollment fires for already-promoted Bucket A', async () => {
+  // Spec §8.3 "Re-call safety": if a prior run promoted the proposal but
+  // crashed (or had a Sentry-swallowed error) mid-enrollment, the next Phase 3
+  // run must re-attempt enrollment for that already-promoted proposal. We
+  // simulate the crash by wiping scheduled_messages after run 1, then verify
+  // run 2 (a) does not double-insert the proposal and (b) re-enrolls comms.
+  const ccId = `${FIXTURE_CCID_PREFIX}rerun001`;
+  const clientId = -93510;
+  const email = `rerun.client${FIXTURE_EMAIL_DOMAIN}`;
+  await seedClient({ id: clientId, email, name: 'Re-run Client' });
+
+  const csvRow = {
+    'ID': ccId,
+    'Status': 'Confirmed',
+    // Far-future event so multiple comms handlers fire (new_year_hello, etc).
+    'Event Date': futureDateCc(400),
+    'Start Time': '6:00 PM',
+    'Length': '4 hours',
+    'Package Name': 'The Core Reaction',
+    'Package Amount': '$650',
+    'Venue City': 'Chicago',
+    'Venue State/Province': 'IL',
+    'Contact Email(s)': email,
+    'Estimated Number of Guests': '50',
+  };
+  const dir = makeCcDir([csvRow]);
+
+  // Run 1: clean promotion + enrollment.
+  const r1 = await phase3.run({
+    ccDir: dir, captureMessage: () => {}, captureException: () => {},
+  });
+  assert.strictEqual(r1.errored, 0);
+  assert.strictEqual(r1.bucketCounts.A, 1);
+  assert.strictEqual(r1.bucketAPromotedIds.length, 1);
+  const proposalId = r1.bucketAPromotedIds[0];
+
+  const sm1Count = (await pool.query(
+    `SELECT COUNT(*)::int AS n FROM scheduled_messages
+      WHERE entity_type = 'proposal' AND entity_id = $1`,
+    [proposalId]
+  )).rows[0].n;
+  assert.ok(sm1Count > 0, `expected enrollment after run 1, got ${sm1Count}`);
+
+  // Simulate a prior-run enrollment crash: wipe the scheduled_messages rows.
+  await pool.query(
+    `DELETE FROM scheduled_messages WHERE entity_type = 'proposal' AND entity_id = $1`,
+    [proposalId]
+  );
+
+  // Run 2: same CSV. INSERT ... ON CONFLICT (cc_id) DO NOTHING fires →
+  // promoteBucketA returns 'already_promoted' → run() must still include this
+  // proposalId in bucketAPromotedIds so the comms loop re-enrolls.
+  const r2 = await phase3.run({
+    ccDir: dir, captureMessage: () => {}, captureException: () => {},
+  });
+  assert.strictEqual(r2.errored, 0);
+  assert.strictEqual(r2.skipped, 1);
+  // The proposal id must be re-included for the enrollment loop.
+  assert.strictEqual(r2.bucketAPromotedIds.length, 1);
+  assert.strictEqual(r2.bucketAPromotedIds[0], proposalId);
+
+  // Proposal was NOT re-inserted — same id, still exactly one row.
+  const countRes = await pool.query(
+    `SELECT id FROM proposals WHERE cc_id = $1`,
+    [ccId]
+  );
+  assert.strictEqual(countRes.rowCount, 1);
+  assert.strictEqual(countRes.rows[0].id, proposalId);
+
+  // scheduled_messages were re-enrolled.
+  const sm2Count = (await pool.query(
+    `SELECT COUNT(*)::int AS n FROM scheduled_messages
+      WHERE entity_type = 'proposal' AND entity_id = $1`,
+    [proposalId]
+  )).rows[0].n;
+  assert.ok(sm2Count > 0, `expected re-enrollment after run 2, got ${sm2Count}`);
+});

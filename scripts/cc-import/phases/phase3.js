@@ -420,9 +420,15 @@ async function insertShift(client, proposalId, ctx, opts) {
  * @param {number|null} [options.sourceRunId=null] — cc_import_runs.id for audit
  * @param {import('pg').PoolClient} [options.client] — caller-managed pg client
  * @param {Date} [options.today] — UTC midnight for the date clamp
- * @returns {Promise<{status: 'promoted'|'duplicate_review'|'errored'|'skipped',
+ * @returns {Promise<{status: 'promoted'|'already_promoted'|'duplicate_review'|'errored',
  *                    proposalId?: number, shiftId?: number,
  *                    rawImportId?: number, unmatched?: object[], error?: string}>}
+ *
+ * Re-run safety (spec §8.3): when the proposal was inserted on a prior run, the
+ * INSERT ... ON CONFLICT (cc_id) DO NOTHING returns 0 rows; we look up the
+ * existing proposal id and return `'already_promoted'` so the caller can still
+ * (idempotently) re-enroll auto-comms if a prior run crashed mid-enrollment.
+ * We do NOT re-insert shifts, shift_requests, or activity_log on this branch.
  *
  * Does NOT enroll auto-comms — caller is responsible (so re-promotion from
  * Task 19's UI also gets to decide whether to enroll).
@@ -511,10 +517,14 @@ async function _promote(payload, options) {
       pricingSnapshot, adminNotes, createdByUserId, createdAt,
     });
     if (!ins) {
-      // ON CONFLICT (cc_id) — already promoted on a prior run. Treat as skipped.
+      // ON CONFLICT (cc_id) — already promoted on a prior run. Return the
+      // existing proposal id so the caller can re-attempt auto-comms enrollment
+      // (idempotent via scheduleMessage's ON CONFLICT). We deliberately do NOT
+      // re-insert shifts / shift_requests / activity_log here — those were
+      // written on the original run.
       const r = await client.query(`SELECT id FROM proposals WHERE cc_id = $1`, [ctx.ccId]);
       const existingId = r.rowCount ? r.rows[0].id : null;
-      return { status: 'skipped', proposalId: existingId, reason: 'cc_id_already_present' };
+      return { status: 'already_promoted', proposalId: existingId, shiftId: null, reason: 'cc_id_already_present' };
     }
     const proposalId = ins.id;
 
@@ -730,13 +740,20 @@ async function run({
             });
             bucketCounts.dup++;
             inserted++; // raw row IS modified → count as inserted per convention
-          } else if (result.status === 'skipped') {
-            // cc_id already present → leave raw row marked 'promoted' (it was
-            // promoted on a prior run, this is just a re-run no-op).
+          } else if (result.status === 'already_promoted') {
+            // cc_id already present from a prior run. Re-mark the raw row
+            // 'promoted' (idempotent) and — for Bucket A only — re-enqueue the
+            // proposal for the auto-comms enrollment loop after COMMIT, so a
+            // crashed prior enrollment can recover. scheduleMessage's
+            // ON CONFLICT (entity_id, ..., status='pending') DO NOTHING keeps
+            // re-enrollment naturally idempotent (spec §8.3 "Re-call safety").
             await markRawStatus(client, rawImportId, 'promoted', {
               source_run_id: runId, proposal_id: result.proposalId, bucket,
               reason: 'cc_id_already_present',
             });
+            if (bucket === 'A' && result.proposalId) {
+              bucketAPromotedIds.push(result.proposalId);
+            }
             skipped++;
           } else {
             // errored
