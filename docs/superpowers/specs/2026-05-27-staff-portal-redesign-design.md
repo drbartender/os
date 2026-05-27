@@ -223,7 +223,7 @@ Sort stays chronological regardless of cover status. Cover-needed badge is the v
 
 Submitting a request on a cover-needed shift posts to `POST /api/shifts/requests/:shiftId/claim-cover` (new endpoint) rather than the generic request. Both flows create `shift_requests` rows but the claim-cover path also ties the new request to the original cover request for management's one-click swap approval.
 
-**Mine** sub-tab. Pending requests (status `pending`) first, then upcoming approved shifts in chronological order. Pending rows are slightly faded (`opacity: 0.85`) with a "Withdraw" button. Approved rows use the same ShiftCard as Home, with `showConfirmFlag`.
+**Mine** sub-tab. Pending requests (status `pending`) first, then upcoming approved shifts in chronological order. Pending rows are slightly faded (`opacity: 0.85`) with a "Withdraw" button. Approved rows use the same ShiftCard as Home, with `showConfirmFlag`. The Withdraw button calls `DELETE /api/shifts/requests/:requestId` (new endpoint, in `server/routes/shifts.js`): verifies ownership, requires `status='pending'` (you can only withdraw a pending request; an approved shift drops via the §6.5 flow), DELETEs the row. Withdrawal does NOT need to touch `shifts.status` because the staffer was never approved. Returns 200 on success, 409 with `reason='already_approved'` if the status changed under the user's feet.
 
 **Past** sub-tab. Completed shifts in reverse-chronological order. Each card opens PayoutDetail at the matching shift line (`/pay/:periodId?shift=:shiftId`) NOT ShiftDetail. Status chip is Paid (green) or Processing (info-blue) per the linked pay period's status. Card foot shows the line-total `$` earned for that shift in mono.
 
@@ -278,42 +278,56 @@ Post-submit, the Drop / Cover card on ShiftDetail flips to a green result chip: 
 
 **Endpoints** (new, in `server/routes/shifts.js`). All four are `auth`-gated. The three `/:requestId/*` endpoints additionally enforce `req.user.id === shift_requests.user_id` (own-request ownership). The `/:shiftId/claim-cover` endpoint enforces a state check, not ownership (see below).
 
-**Common pre-check: pay-period status guard.** All four endpoints SELECT the shift's pay period via `payout_events.shift_id → payouts.pay_period_id → pay_periods.status`. If the pay period is `'processing'` (mid-payout), the drop/cover mutation is rejected 409 with `reason='pay_period_processing'`. Reason: a drop or cover flip can re-compose `payout_events` rows that are currently being settled. Emergency drop bypasses this guard by design (management resolves manually).
+**Common pre-check: pay-period status guard.** All four endpoints SELECT the shift's pay period via `payout_events.shift_id → payouts.pay_period_id → pay_periods.status`. If the pay period is `'processing'` (mid-payout), the drop/cover mutation is rejected 409 with `reason='pay_period_processing'`. Reason: a drop or cover flip can re-compose `payout_events` rows that are currently being settled. **NULL-payout case:** a future shift has no `payout_events` row yet (events accrue at payout time, not on shift creation). The LEFT JOIN returns NULL, the guard treats this as "no processing period to protect" and the mutation proceeds. Emergency drop bypasses this guard entirely by design (management resolves manually).
+
+**Hours-to-event computation.** `hoursToEvent = (event_datetime - NOW()) / 3600000` where `event_datetime` is composed from `shifts.event_date + shifts.start_time`. Times in `shifts` are stored as `VARCHAR(50)` in the venue's local timezone (per CLAUDE.md, no global timezone normalization); the server constructs the comparison in America/Chicago via the existing `parseShiftDateTime(shift)` helper that the BEO spec uses. Boundary semantics: `>= 336h` is clean drop, `[72h, 336h)` is cover broadcast, `< 72h` is emergency. Exactly-336 and exactly-72 fall to the higher-numbered mode (clean drop, cover broadcast respectively).
 
 **`POST /api/shifts/requests/:requestId/drop`**, clean drop, 14+ days out. Inside one transaction (`BEGIN`):
 1. SELECT request + linked shift + proposal (`FOR UPDATE` on the shift_requests row).
 2. Verify `req.user.id === shift_requests.user_id`. Verify pay-period not `'processing'`. Verify hours-to-event >= 336.
 3. UPDATE `shift_requests SET status='denied', dropped_at=NOW(), drop_reason='clean_drop'`.
 4. UPDATE the linked `shifts.status='open'` if no other approved staffer remains.
-5. Suppress any scheduled `cover_broadcast` rows for this shift (the broadcast may have just fired moments before the staffer dropped).
+5. Suppress all pending `scheduled_messages` rows targeting this user for this shift, NOT just `cover_broadcast`: `UPDATE scheduled_messages SET status='suppressed' WHERE entity_type='shift' AND entity_id=$shift_id AND recipient_id=$user_id AND status='pending'`. This covers BEO unack nudges, shift reminders, and any other Phase 4a staff handler rows that would otherwise fire to a dropped user.
 6. Call `notifyAdminCategory({ category: 'urgent_staffing', subject, emailHtml, emailText, ...(daysOut <= 7 ? { smsBody } : {}) })`.
 7. COMMIT. Return 200.
 
 If hours-to-event < 336, return 409 with `reason='wrong_mode'` (defensive; UI should not show the Drop button below that threshold).
 
-**`POST /api/shifts/requests/:requestId/request-cover`**, cover broadcast, 72h to under 14d. Inside one transaction:
+**`POST /api/shifts/requests/:requestId/request-cover`**, cover broadcast, 72h to under 14d. **Transaction A** (fast, holds row lock):
 1. SELECT request + shift (`FOR UPDATE`). Verify ownership, pay-period not `'processing'`, hours-to-event in `[72, 336)`.
 2. UPDATE `shift_requests SET cover_requested_at=NOW(), cover_reason=$reason` (reason capped at 500 chars server-side; longer payloads return 413). Staffer remains `status='approved'`.
-3. Resolve qualified-teammate list (see below).
-4. Insert one `scheduled_messages` row per teammate per opted-in channel for `message_type='cover_broadcast'`, `entity_type='shift'`, `entity_id=shift.id`, `recipient_type='staff'`, `recipient_id=teammate.id`. Insertion is idempotent via `INSERT ... ON CONFLICT DO NOTHING` keyed on the unique index added in §7 (`UNIQUE (entity_type, entity_id, recipient_id, channel, message_type)` partial WHERE `message_type='cover_broadcast'`).
-5. Notify management (urgent_staffing, email always, SMS if `daysOut <= 7`).
-6. COMMIT. Return 200 with `broadcast_count`.
+3. Resolve qualified-teammate list (see below). Capture the list to memory.
+4. Notify management (urgent_staffing, email always, SMS if `daysOut <= 7`).
+5. COMMIT.
 
-**Qualified-teammate filter** (replaces the spec's prior `applications.positions_interested` reference, which is unreliable because legacy active staff may have no `applications` row): the shift's `positions_needed` (JSONB array of role strings) is matched against each candidate user's role attestation via `contractor_profiles.position` IF set, else any approved staff is considered qualified for `'bartender'`. The teammate must additionally:
+**Then, outside any transaction** (no row lock held, no pool connection retained):
+
+6. Insert `scheduled_messages` rows in batches of 25 with a 250 ms `setTimeout` between batches (application-level, not `pg_sleep`). Each row is `message_type='cover_broadcast'`, `entity_type='shift'`, `entity_id=shift.id`, `recipient_type='staff'`, `recipient_id=teammate.id`, with the channel resolved by `pickChannelsForUserAndCategory(teammate.id, 'cover_needed')`. Insertion is idempotent via `INSERT ... ON CONFLICT DO NOTHING` keyed on the partial unique index `idx_scheduled_messages_cover_broadcast_dedupe` (per §7). If the application crashes mid-batch, the next request-cover retry resumes cleanly because the existing rows are deduped on the unique index.
+
+7. Return 200 with `broadcast_count` describing the number of rows ENQUEUED in step 6. Note: this is enqueue count, NOT projected delivery count. The dispatcher's per-row send-time check against `communication_preferences` may still suppress individual rows.
+
+**Qualified-teammate filter.** The shift's `positions_needed` (JSONB array of role strings) is matched against each candidate's `contractor_profiles.position` value. The new `position` column is added in §7 and backfilled from `applications.positions_interested` at migration time (or `'bartender'` for legacy rows without an application). The teammate must additionally:
 - Be on `users.onboarding_status='approved'` (NOT 'suspended' / 'deactivated' / 'rejected').
 - NOT be the requesting user.
 - Have `cover_needed` channels non-empty in `staff_notification_preferences.channels.cover_needed` (any of `'push' | 'sms' | 'email'`; the default ships with `["push"]`).
 - NOT already have an `approved` shift_request on the same `event_date` (avoid double-booking the prospective replacement).
 
-**Twilio rate-limit guard.** When the broadcast resolves to N SMS rows, chunk insertion at 25 rows per batch with a 250ms `pg_sleep` between batches (small enough to be invisible to the user; bounded enough that even a 200-teammate blast spreads over 2 seconds, well below the Twilio 1-msg/sec/number default). The dispatcher's existing exponential-backoff on 429 from Twilio is unchanged. A hard cap of 500 broadcast rows per shift_id prevents runaway (unique index already enforces one-row-per-teammate-per-channel).
+**Twilio rate-limit + runaway guard.** Two layers:
+- Per-broadcast pacing: 25 rows per insert batch with 250 ms application-level delays between batches (NOT `pg_sleep` inside any transaction). A 500-teammate broadcast spreads over 5 seconds without holding any row lock.
+- Per-shift cap: hard limit of 500 rows enqueued per `shift_id` for `message_type='cover_broadcast'`. If the qualified-teammate list exceeds 500 after filtering, the broadcast TRUNCATES to the first 500 (sorted by user_id ASC for determinism) and the response includes `broadcast_truncated: true`. Admin email also flags the truncation so management can manually re-broadcast if needed.
+- Dispatcher-level: the existing exponential-backoff on Twilio 429 responses handles the actual send-side rate limit.
 
 **`POST /api/shifts/requests/:shiftId/claim-cover`**, a teammate claims an active cover request. Inside one transaction:
-1. SELECT the shift + EXISTS-check that at least one `shift_requests` row for this `shift_id` has `cover_requested_at IS NOT NULL AND status='approved'` (the cover-requesting row is still active). Verify the shift's pay period is not `'processing'`. Verify `shifts.status` is NOT `'cancelled'`. If any check fails, return 409 with the specific reason. **These checks are the IDOR / state guard**, without them, a malicious user could create a fake pending row against any shift_id.
-2. Verify the claiming user is NOT the same user who requested the cover.
-3. Verify the claiming user does not already have a pending or approved `shift_requests` row on this shift.
-4. INSERT a new `shift_requests` row with `user_id=req.user.id`, `status='pending'`, `replaced_by_request_id=<original-requester's-shift_request-id>` (the new pending row points BACK to the original; on admin approval the cascade reads this column to find which row to flip).
-5. Send a signed, expiring approve-link email to management (`/admin/shifts/cover-swaps/:swapToken` where `swapToken` is a JWT signed with `JWT_SECRET`, payload `{ original_request_id, new_request_id, exp: NOW + 7 days }`). The admin click on the link triggers the standard `PUT /api/shifts/requests/:requestId` approval with both IDs. Never use a raw `?action=approve&id=N` query string.
-6. COMMIT. Return 200.
+1. SELECT the original cover-requesting `shift_requests` row (`FOR UPDATE`), the row where `shift_id=:shiftId AND cover_requested_at IS NOT NULL AND status='approved' AND dropped_at IS NULL`. If no such row exists, return 409 with `reason='no_active_cover_request'`. Adding `dropped_at IS NULL` prevents claiming a cover on an emergency-dropped row whose `cover_requested_at` was stale. Adding `FOR UPDATE` here is the concurrency guard: two simultaneous claims serialize on this row lock, so the loser sees the same SELECT after the winner's INSERT and proceeds against a still-active state (or sees the swap completed via the cascade and the row's `cover_requested_at=NULL`, then rejects 409 `reason='already_covered'`).
+2. Verify shift state: `shifts.status` is NOT `'cancelled'`. Pay period is not `'processing'` (per common pre-check).
+3. Verify the claiming user is NOT the same user who requested the cover (`req.user.id !== original.user_id`).
+4. Verify the claiming user is qualified for the shift's role (`contractor_profiles.position` matches one of `shifts.positions_needed`, same filter as the broadcast targeting). A barback cannot claim a bartender slot.
+5. Verify the claiming user does not already have a pending or approved `shift_requests` row on this shift.
+6. INSERT a new `shift_requests` row with `user_id=req.user.id`, `status='pending'`, `replaced_by_request_id=<original.id>` (the new pending row points BACK to the original; on admin approval the cascade reads this column to find which row to flip).
+7. Send a signed, expiring approve-link email to management at the standard admin contact (`/admin/shifts/cover-swaps/:swapToken` where `swapToken` is a JWT signed with `JWT_SECRET`, payload `{ original_request_id, new_request_id, exp: NOW + 7 days, jti: <uuid> }`). The admin click on the link hits a new `GET /api/admin/cover-swaps/:swapToken` route that renders a confirm page; the admin's confirm POSTs to the swap endpoint which triggers the cover-approval cascade. The cascade's idempotency check (the original's `cover_requested_at=NULL` after the first approval) protects against JWT replay within the 7-day window; an admin clicking the link a second time sees a "Cover already resolved" page. If the JWT has expired, the page renders an "expired link, find the swap in the admin Shifts dashboard" message, no automatic re-issue.
+8. COMMIT. Return 200.
+
+If the email send fails after COMMIT, the cover-claim pending row remains in place; admin can still approve via the normal Shifts dashboard. The send-failure is logged to Sentry but does not roll back the claim.
 
 **Cover-approval cascade** (runs inside the existing `PUT /api/shifts/requests/:requestId` approval branch when the new request has `replaced_by_request_id` set). Wrapped in a single transaction:
 1. Approve the new request: `UPDATE shift_requests SET status='approved' WHERE id=$new`.
@@ -325,13 +339,14 @@ If hours-to-event < 336, return 409 with `reason='wrong_mode'` (defensive; UI sh
 
 A mid-cascade failure rolls back the whole transaction; the original staffer remains the active one and the broadcast rows stay pending so a different teammate can still claim.
 
-**`POST /api/shifts/requests/:requestId/emergency-drop`**, under 72h. Body: `{ reason: string (10..500 chars) }`. Inside one transaction:
+**`POST /api/shifts/requests/:requestId/emergency-drop`**, under 72h. Body: `{ reason: string (10..500 chars) }`. The textarea in the UI carries a one-line warning under the field: *"Don't include sensitive medical or personal details. Admins can see this and it's retained in our records."* Inside one transaction:
 1. SELECT context (`FOR UPDATE`). Verify ownership, hours-to-event < 72. Pay-period processing-status guard does NOT apply (management resolves manually; an emergency drop is not blocked by an in-flight payout).
 2. UPDATE the request with `dropped_at=NOW(), drop_reason=reason (truncated to 500), drop_emergency=true`. Leave `status='approved'` (the staffer remains nominally on the roster).
 3. **Hybrid-state rule:** every downstream consumer that reads `shift_requests.status='approved'` MUST also check `dropped_at IS NULL` to determine whether the staffer is actually working. This rule applies to: `scheduleStaffShiftMessages` (no new SMS to the dropped staffer), `autoAssign` (treat the seat as vacant), `shift_reminder` dispatcher (skip), `payout_events` accrual (the drop_emergency case requires manual management resolution before any wage accrues). The §11 testing matrix verifies each of these.
-4. Notify management urgently (email + SMS regardless of days-out). SMS body slices the reason at 80 chars to keep within the SMS budget.
-5. INSERT into `proposal_activity_log` with `action='emergency_drop_requested'`, `actor_type='staff'`, `actor_id=req.user.id`, `details={reason, hours_out, shift_id, request_id}`.
-6. COMMIT. Return 200.
+4. Suppress all pending `scheduled_messages` rows targeting this user for this shift (same SQL as the clean-drop step 5): `UPDATE scheduled_messages SET status='suppressed' WHERE entity_type='shift' AND entity_id=$shift_id AND recipient_id=$user_id AND status='pending'`.
+5. Notify management urgently. Email always. SMS to `ADMIN_PHONE` ONLY when the env var is set (per CLAUDE.md, `ADMIN_PHONE` is optional). If `ADMIN_PHONE` is unset, the route logs a structured warning *"Emergency-drop SMS skipped: ADMIN_PHONE not configured"* via Sentry breadcrumb so ops can spot the configuration gap. The email path is always sent and is the load-bearing notification channel. SMS body slices the reason at 80 chars to keep within the SMS budget.
+6. INSERT into `proposal_activity_log` with `action='emergency_drop_requested'`, `actor_type='staff'`, `actor_id=req.user.id`, `details={reason, hours_out, shift_id, request_id}`.
+7. COMMIT. Return 200.
 
 ### 6.6 PayPage
 
@@ -366,8 +381,9 @@ Reorder persists immediately on drag-end or arrow-tap to `users.ui_preferences.t
 1. JOIN `users u ON u.id = payment_profiles.user_id` so the route can project `u.ui_preferences->'tip_card_order'` into the response.
 2. Include the new `zelle_handle` in the chooser projection alongside Venmo / Cash App / PayPal.
 3. Order the chooser methods by the projected `tip_card_order` array; methods present on the staffer's profile but absent from the order array fall to the end in their natural order. Methods in the order array but absent from the staffer's profile are skipped.
+4. Set `Cache-Control: private, no-cache` on the response (or `max-age=60` if a small cache window is acceptable). The route is public-by-token so any proxy/CDN cache can serve stale order to guests for minutes after a staffer reorders. CLAUDE.md doesn't pin the policy; pick `private, no-cache` for v1 since the QR-scan path is the money flow.
 
-Without this consumer update, a staffer's drag-reorder + Zelle handle would silently NOT appear on the QR-scan path, guests would see a stale order from the old route logic. §11 testing must verify the public `/tip/:token` response matches the staffer's TipCardPage rendering.
+Without this consumer update, a staffer's drag-reorder + Zelle handle would silently NOT appear on the QR-scan path, guests would see a stale order from the old route logic. §11 testing must verify the public `/tip/:token` response matches the staffer's TipCardPage rendering within seconds.
 
 **No "Tips route to" pill** on this page. Preferred-for-tips does not exist as a concept (the QR opens a chooser).
 
@@ -386,7 +402,20 @@ Personal info card with:
 
 Save button in the card header. On save, posts to `PATCH /api/me/profile`. Server-side validation: phone format (E.164 via existing util), email format, ZIP (5 or 5+4 digits), emergency contact fields each <= 100 chars. The PATCH writes to `contractor_profiles` columns directly.
 
-**Email change is a separate flow, not a synchronous PATCH.** A compromised account that can flip `users.email` instantly bypasses password-reset email verification. When the user edits the email field, the client opens a confirmation modal: *"Change your email? We'll send a verification link to the new address. Your current login stays active until you click the link."* On Save, the server inserts a row into a new `pending_email_changes` table (or reuses the existing pattern if one exists; verify during execution against `server/db/schema.sql`) with `(user_id, new_email, token, expires_at)`. A verification email goes to the NEW address with a link to `POST /api/me/confirm-email-change/:token`. Only on link click does `users.email` flip. If the token expires (24h default), the pending row is purged on next cleanup. The Profile UI shows a "Pending verification, check [new email]" banner until the change confirms or expires.
+**Email change is a separate flow, not a synchronous PATCH.** A compromised account that can flip `users.email` instantly bypasses password-reset email verification.
+
+Flow:
+1. Client opens a confirmation modal: *"Change your email? We'll send a verification link to the new address. Your current login stays active until you click the link."*
+2. Server-side validation on Save: email format (existing regex). Reject 409 `reason='email_in_use'` if another `users` row has this email. Reject 409 `reason='already_pending'` if another user has a pending change to this email. If THIS user already has a prior pending row, mark it `consumed_at=NOW()` (superseded) before inserting the new one (most-recent-wins).
+3. Server generates a 32-byte random token. Stores `token_hash = SHA-256(token)` in `pending_email_changes` (schema in §7). The raw token is included only in the verification email URL; a DB leak does not grant verification rights.
+4. Row shape: `(user_id, new_email, token_hash, expires_at = NOW() + INTERVAL '24 hours')`.
+5. Verification email sent to the NEW address with a link to a CLIENT-side React route `https://staff.drbartender.com/verify-email/:token` that renders a "Confirm email change" page with a single Confirm button. Clicking Confirm POSTs to `POST /api/me/confirm-email-change` with `{ token }` in the body. The GET landing page does NOT consume the token (so email clients' auto-prefetch can't accidentally confirm).
+6. On confirm POST: server hashes the token, finds the matching row where `consumed_at IS NULL AND expires_at > NOW()`, sets `users.email = new_email` AND `pending_email_changes.consumed_at = NOW()` in one transaction. Subsequent clicks on the same link see `consumed_at != NULL` and render a "Already used" page.
+7. Expired rows are purged by a low-frequency cleanup scheduler (daily; non-urgent, the `consumed_at IS NULL` filter is the operational gate).
+
+The Profile UI shows a "Pending verification, check [new email]" banner until the change confirms or expires. The banner copy includes a "Cancel pending change" affordance that marks `consumed_at = NOW()` server-side.
+
+**Phone changes get an audit-log entry.** Phone is the SMS-leg recovery channel; a takeover that flips it bypasses recovery without trace. On `PATCH /api/me/profile` when `phone` is in the body and differs from the current value, INSERT a row into `proposal_activity_log` (`actor_type='staff'`, `actor_id=req.user.id`, `entity_type='user'`, `entity_id=req.user.id`, `action='profile_phone_change'`, `details={old_phone_last4, new_phone_last4, changed_at}`). The full numbers are not logged in the audit row, only last 4.
 
 ### 6.11 AccountPage / Payment methods
 
@@ -428,14 +457,18 @@ The seven payment methods the UI surfaces map onto `payment_profiles` columns as
 **Endpoints** (all on `server/routes/me.js`, auth-gated, scoped by `req.user.id`):
 
 - `GET /api/me/payment-methods`, projects all P2P handle columns from `payment_profiles` raw (Venmo / Cash App / PayPal / Zelle are plaintext). For direct deposit, projects `routing_number_last4` (computed as `last 4 chars of decrypt(routing_number)`) and `account_number_last4` (same pattern). **NEVER projects full `routing_number` or `account_number` to the client**, only last-4. Decryption goes through `server/utils/encryption.js`; if decrypt fails (corrupt ciphertext, missing key), the route returns the field as `null` with a Sentry-captured error rather than 500ing the whole GET. Also returns `preferred_payment_method` and the conceptual Card row metadata (server-rendered with a stable shape so the client doesn't need to know whether it's a real DB row). When the user has no `payment_profiles` row yet (new applicant pre-payment-setup), the route returns a synthetic empty shape with all handles `null` rather than 404, so the AccountPage renders as "no methods yet."
-- `PATCH /api/me/payment-methods`, body is a partial map: `{ venmo_handle?, cashapp_handle?, paypal_url?, zelle_handle?, routing_number?, account_number?, payment_username? }`. Writes only the keys present; null clears. Validates P2P handles server-side via `server/utils/tipHandleValidation.js` (the existing util used by the tip-page route). Validates Zelle handle as either E.164 phone or RFC-5322 email (Zelle accepts both); add a `zelle` branch to `tipHandleValidation` for this. For routing/account, validates ABA-checksum on routing and length on account (9-digit routing, 4-17 digit account) BEFORE encryption. **Encryption flow for routing/account** (load-bearing):
+- `PATCH /api/me/payment-methods`, body is a partial map drawn from a STRICT allowlist: `{ venmo_handle?, cashapp_handle?, paypal_url?, zelle_handle?, routing_number?, account_number?, payment_username? }`. Any key outside this set causes the request to reject 400 with `{field: 'body', error: 'Unknown field: <name>'}` BEFORE any DB read, defense against payload smuggling like `{ user_id: 99, ... }`. The allowlist is a hardcoded const in the route handler, not derived from `Object.keys`. Writes only the allowlisted keys present; null clears. Validates P2P handles server-side via `server/utils/tipHandleValidation.js`. Validates Zelle handle as either E.164 phone or RFC-5322 email (Zelle accepts both); add a `zelle` branch to `tipHandleValidation` for this. For routing/account, validates ABA-checksum on routing and length on account (9-digit routing, 4-17 digit account) BEFORE encryption. **Encryption flow for routing/account** (load-bearing):
 
   1. SELECT the existing `payment_profiles` row (`FOR UPDATE`).
-  2. If only `routing_number` is in the PATCH body, leave `account_number` ciphertext untouched (do NOT decrypt + re-encrypt the unchanged field, it adds nothing and risks corruption if the key cycles mid-request). Same for account-only PATCH.
-  3. For each changed bank field, run `encrypt(plaintext)` via `server/utils/encryption.js` and write the resulting ciphertext to the column.
+  2. If only `routing_number` is in the PATCH body, leave `account_number` ciphertext untouched (do NOT decrypt + re-encrypt the unchanged field, it adds nothing and risks corruption if the key cycles mid-request). Same for account-only PATCH. Validation on the unchanged side is skipped, the existing ciphertext is trusted as-stored.
+  3. For each changed bank field, run `encrypt(plaintext)` via `server/utils/encryption.js` and write the resulting ciphertext to the column. If `encrypt()` raises (key missing, fail-closed in prod per CLAUDE.md), the route returns 500 with `{error: 'encryption_unavailable'}` and the transaction rolls back.
   4. COMMIT.
 
+  **Decrypt failures on unchanged sides.** If a partial PATCH validates routing successfully but the EXISTING `account_number` ciphertext fails to decrypt during the preferred-method-eligibility check (next paragraph), the route does NOT auto-clear the corrupt field. It logs a Sentry error with `{user_id, column: 'account_number'}` and proceeds with the PATCH (only writes the changed field). Admin tooling is responsible for repairing corrupt ciphertext; the staff portal does not attempt rescue.
+
   If the PATCH clears a routing or account field (sets it to `null`), persist `null` directly (no encryption needed). If only routing is cleared but account remains, mark `preferred_payment_method='direct_deposit'` as invalid by auto-NULLing it (same auto-NULL behavior as P2P handle clears).
+
+  **Audit log on every payment-method mutation.** After the PATCH commits, INSERT into `proposal_activity_log` with `actor_type='staff'`, `actor_id=req.user.id`, `entity_type='user'`, `entity_id=req.user.id`, `action='payment_method_change'`, `details={fields_changed: ['venmo_handle','routing_number',...], cleared: [...]}`. The audit trail records WHICH fields were touched but not the new values (handles are not PII-sensitive once added but the diff doesn't need to live in the audit, `payment_profiles` itself holds current state). Same audit applies to `PUT /api/me/preferred-payment-method` (`action='preferred_payment_method_change'`, `details={from, to}`).
 
 - `PUT /api/me/preferred-payment-method`, body is `{ method: 'venmo' | 'cashapp' | 'paypal' | 'zelle' | 'direct_deposit' | 'check' }`. Validates that the corresponding handle column is populated (rejects 400 with `{field: 'venmo_handle', error: 'Add a Venmo handle before setting it as preferred.'}` if not). For direct_deposit, the check is "BOTH `routing_number` AND `account_number` are non-null." For check, no handle is required. Writes `payment_profiles.preferred_payment_method`.
 - `PUT /api/me/tip-card-order`, body is `{ order: ['venmo', 'card', 'cashapp', 'paypal'] }`. Writes to `users.ui_preferences.tip_card_order`. Validates that every token in the order array is one of `{'card', 'venmo', 'cashapp', 'paypal', 'zelle'}`; rejects 400 otherwise. Client serializes drag-end → PUT (no parallel PUTs); if a second drag fires before the first PUT resolves, the second drag is queued and dispatched on response.
@@ -467,7 +500,7 @@ Footer note: *"Refreshes every 5 minutes. Includes your confirmed shifts, plus a
 
 Source of "unconfirmed BEO": `drink_plans.finalized_at IS NOT NULL AND shift_requests.beo_acknowledged_at IS NULL` (the BEO spec's existing fields).
 
-**Per-fetch side effects** (new work, NOT yet implemented in `calendar.js` despite the column existing on `users`):
+**Per-fetch side effects** (new work, NOT yet implemented in `calendar.js`. The `users.last_ics_fetch_at` column is also new, added by §7):
 
 - `users.last_ics_fetch_at = NOW()` written on every successful `GET /api/calendar/feed/:token` response, **debounced** to once per 10 minutes (`UPDATE users SET last_ics_fetch_at = NOW() WHERE id = $1 AND (last_ics_fetch_at IS NULL OR last_ics_fetch_at < NOW() - INTERVAL '10 minutes')`). Without debounce, a staffer subscribed on iPhone + Mac + iPad would generate ~864 writes/day on the `users` row across all staff; the WHERE clause makes the update a no-op on hot fetches.
 - `users.ui_preferences.calendar_subscribed_app` set per the User-Agent (Google fetches identify as `Google-Calendar-Importer` or fetch from `Calendar.google.com`; Apple from `iCal/macOS` or `iOS/`; Outlook from `Microsoft Office/Outlook`). Use `jsonb_set` to merge into the existing JSONB without clobbering other keys. Same 10-min debounce condition applies, the UA detection should only re-run when the timestamp also updates.
@@ -525,7 +558,11 @@ New endpoints (`server/routes/staffPortal.js`, auth-gated, no admin guard, scope
 - `POST /api/me/push-subscriptions`, body is a `PushSubscription` JSON from the browser plus the User-Agent. Appends to `staff_notification_preferences.push_subscriptions[]`. Returns 200.
 - `DELETE /api/me/push-subscriptions`, body is `{ endpoint: '...' }`. Removes the matching subscription.
 
-**Top-level kill switch.** `users.communication_preferences` is honored at TWO points: (1) the UI surface, the AccountPage / Notifications panel shows the current values and explains that they override all per-category toggles; (2) the server enforcement, every PATCH path that toggles a critical-path category off, AND the existing endpoint that flips `communication_preferences.sms_enabled` / `email_enabled`, validates the combined state: if a save would leave every critical-path category (`beo_finalized`, `schedule_change`, `payday`) with no deliverable channel (no global SMS, no global email, no push permission granted), the server rejects 400 with `{field: '_form', error: 'Critical messages need at least one channel. Turn one on first.'}`. UI client mirrors this check for instant feedback but is not the only line of defense. Quiet hours, if non-null, suppress non-critical pushes during the window; critical-path pushes ignore quiet hours.
+**Top-level kill switch.** `users.communication_preferences` is honored at TWO points: (1) the UI surface, the AccountPage / Notifications panel shows the current values and explains that they override all per-category toggles; (2) the server enforcement, every PATCH path that toggles a critical-path category off validates the combined state: if the proposed save would leave EACH of the three critical-path categories (`beo_finalized`, `schedule_change`, `payday`) individually with no deliverable channel, the server rejects 400 with `{field: '_form', error: 'Critical messages need at least one channel. Turn one on first.'}`. The check is per-category, not aggregate: a save that mutes only `payday` is fine if `beo_finalized` and `schedule_change` still have channels. Note: `communication_preferences.sms_enabled` is flipped today only via the STOP / START SMS keyword path at `server/utils/smsInbound.js` (there is no PATCH endpoint for staff to flip the kill switch directly); this spec does not add one. UI client mirrors this check for instant feedback but is not the only line of defense. Quiet hours, if non-null, suppress non-critical pushes during the window; critical-path pushes ignore quiet hours.
+
+**Migration guard.** Existing users may already be in a bad state at the migration cutover: a prior STOP reply flipped `communication_preferences.sms_enabled=false`, AND their default `staff_notification_preferences.channels` includes SMS for critical categories. On their first unrelated PATCH after migration, the strict critical-path validation would 400 them with no path to fix it through the new UI. To prevent this:
+1. Run a one-time migration UPDATE in §7: for users whose `sms_enabled=false` from a prior STOP keyword, strip `'sms'` from every category in their `staff_notification_preferences.channels` so the post-migration state is internally consistent (no SMS channel listed where SMS is globally killed).
+2. The per-row override indicator in the AccountPage UI: when a category's SMS channel would be silently overridden by `communication_preferences.sms_enabled=false`, render a subtle strikethrough on the SMS toggle plus a tooltip *"Global SMS is off (you replied STOP). Reply START to your last Dr Bartender text to re-enable."*
 
 **Critical-path override.** Three categories are critical: `beo_finalized`, `schedule_change`, `payday`. `pickChannelsForUserAndCategory(userId, category)` enforces: if ALL of a critical category's channels are toggled off in the user's prefs, fall back to a single deterministic channel (SMS for shift-related, email for payday). This fallback is itself gated by `communication_preferences`, if the user has turned off SMS globally, the critical-path override picks email instead. If BOTH SMS and email are globally off, the override returns the user's push subscription set IF any are present; if no push subscriptions exist either, the override returns `{ kind: 'dead_letter', reason: 'all_channels_blocked' }`. The dispatcher receiving a `dead_letter` resolution marks the row `status='dead_letter'` and fires `Sentry.captureMessage('critical_path_dead_letter', { user_id, category, message_type })` for ops visibility. The Sentry capture also fires every time a critical-path override degrades (e.g., push → SMS fallback) so ops can detect silent channel substitution before staffers complain. Footer copy: *"Critical-path messages. BEO finalized, schedule changes, payday, can't be fully muted. We'll deliver them through whatever channel is still on."*
 
@@ -539,7 +576,11 @@ New endpoints (`server/routes/staffPortal.js`, auth-gated, no admin guard, scope
 
 Existing rows with `channel='sms'` or `'email'` continue to work unchanged; the new code path is additive.
 
-**Push subscription dedupe.** `POST /api/me/push-subscriptions` accepts `{ endpoint, keys, user_agent }`. Server-side, before INSERT, the route checks `staff_notification_preferences.push_subscriptions[]` for an existing entry with the same `endpoint`. If found, that entry is replaced in place (keys + user_agent + `subscribed_at` updated). This handles the same-browser-toggle-off-then-on case cleanly, and the rare case where the keys rotate without the endpoint changing.
+**Push subscription dedupe + cap.** `POST /api/me/push-subscriptions` accepts `{ endpoint, keys, user_agent }`. Server-side, before INSERT, the route checks `staff_notification_preferences.push_subscriptions[]` for an existing entry with the same `endpoint`. If found, that entry is replaced in place (keys + user_agent + `subscribed_at` updated). This handles the same-browser-toggle-off-then-on case cleanly, and the rare case where the keys rotate without the endpoint changing.
+
+The array is capped at 10 active subscriptions per user. When a new subscription would push the count above 10, the OLDEST entry (by `subscribed_at`) is evicted in the same `jsonb_set` operation (LRU prune). This prevents unbounded growth from a buggy client that re-subscribes on every page load.
+
+**Re-resolve after sibling-cascade for critical-path categories.** When the dispatcher marks every row in a suppression_key group as terminal (`suppressed` / `suppressed_by_sibling` / `failed`) AND the category is in `CRITICAL_CATEGORIES`, the dispatcher re-runs `pickChannelsForUserAndCategory(user_id, category)` to get a fresh resolution against the CURRENT state of `communication_preferences` and `staff_notification_preferences`, then enqueues one new `scheduled_messages` row at that resolved channel with a fresh `suppression_key`. If the re-resolve returns `dead_letter`, the dispatcher marks the original group as `dead_letter` and fires the Sentry capture. This prevents the failure mode where a critical message is enqueued multi-row, the user flips SMS off, every row gets suppressed, and the user silently never hears about it.
 
 ### 6.14 AccountPage / Documents
 
@@ -561,24 +602,29 @@ Two main sections + a small "Other archives" cross-link section.
 
 - "Paystubs (N)" row that taps to `/pay`.
 
-**Replace flow:**
+**Replace flow.** The modal varies by doc_type:
+- **W-9**: file picker only. The W-9 has no expiry concept on staff_payment_profiles.
+- **Alcohol certification**: file picker PLUS a required date input for the new `expires_on`. The date must be in the future (server-side validation: `expires_on > CURRENT_DATE`); the modal disables the Replace button until the date is set. The submit body includes `{ expires_on: 'YYYY-MM-DD' }` alongside the multipart file.
+- **Independent Contractor Agreement**: no Replace (signed legal doc).
+
+Common to both replaceable types:
 
 1. Tap the Replace pencil icon on a replaceable row → opens the ReplaceConfirmModal.
 2. Modal title: "Replace your [W-9 / alcohol certification]?"
 3. Modal sub: "The new file becomes your active record. Choose a PDF or photo."
 4. File picker (accept `.pdf,.png,.jpg,.jpeg`); after selection, the chosen file's name + size shows in the modal.
 5. Buttons: Cancel / Replace (primary, disabled until a file is chosen).
-6. On Replace, POST to `POST /api/me/documents/:doc_type/replace` (multipart). `doc_type` is `'w9'` or `'alcohol_certification'`. The route honors the standard upload contract: `express-fileupload` parses the multipart, then `server/utils/fileValidation.js` (`isValidUpload(file)`) magic-byte validates the file (PDF / PNG / JPEG only), reject 400 if the magic bytes don't match the claimed MIME, regardless of the file extension. Cap at 10 MB; reject 413 above. Execution order is load-bearing:
+6. On Replace, POST to `POST /api/me/documents/:doc_type/replace` (multipart). `doc_type` is `'w9'` or `'alcohol_certification'`. For `alcohol_certification`, the request body MUST include `expires_on` (date string, must be > CURRENT_DATE, reject 400 with `{field: 'expires_on', error: 'Expiry date must be in the future.'}` otherwise). The route honors the standard upload contract: `express-fileupload` parses the multipart, then `server/utils/fileValidation.js` (`isValidUpload(file)`) magic-byte validates the file (PDF / PNG / JPEG only), reject 400 if the magic bytes don't match the claimed MIME, regardless of the file extension. Cap at 10 MB; reject 413 above. **Filename sanitization**: the original filename is slugified to `[A-Za-z0-9._-]` only (strip slashes, traversal sequences, control chars) before interpolation into the R2 key, `fileValidation.js` validates magic bytes but NOT filename safety. Execution order is load-bearing:
 
    1. Validate the file (magic bytes + size). Fail before any side effect if the file is bad.
    2. Upload to R2 via `uploadFile(buffer, filename)` (per `server/utils/storage.js`, note: returns no URL, the file is keyed by `filename`; subsequent reads use `getSignedUrl(filename)` for 15-min-expiry access). Compute a deterministic R2 key like `staff/${doc_type}/${user_id}/${Date.now()}_${original_filename}` so re-uploads don't collide. If R2 upload fails, return 502 and nothing in the DB changes.
    3. Open transaction. SELECT the current `payment_profiles` row (W-9) or `contractor_profiles` row (alcohol cert) `FOR UPDATE` so a concurrent admin replace doesn't interleave.
    4. INSERT the previous URL + filename into `staff_document_history` (`replaced_by_user_id = req.user.id`).
-   5. UPDATE the active record column with the new R2 key:
+   5. UPDATE the active record column(s) with the new R2 key:
       - `doc_type='w9'` → `payment_profiles.w9_file_url` + `payment_profiles.w9_filename` (NOT `contractor_profiles`)
-      - `doc_type='alcohol_certification'` → `contractor_profiles.alcohol_certification_file_url` + `contractor_profiles.alcohol_certification_filename`
-   6. INSERT into `proposal_activity_log`? No, replacements are user-scoped, not proposal-scoped. Instead INSERT into a new `audit_log` entry (or reuse `staff_document_history` itself as the audit trail; the history row IS the audit). The history row already carries `replaced_at`, `replaced_by_user_id`, and the prior state. Confirm during execution whether a separate admin-visible audit feed is needed.
-   7. COMMIT. On any failure between step 3 and step 6, ROLLBACK leaves the active record unchanged. The orphan R2 object from step 2 is acceptable (storage cost is negligible; a cleanup sweep can collect orphans later).
+      - `doc_type='alcohol_certification'` → `contractor_profiles.alcohol_certification_file_url` + `contractor_profiles.alcohol_certification_filename` + `contractor_profiles.alcohol_certification_expires_on = $expires_on`
+   6. **Audit trail decision.** `staff_document_history` IS the audit trail; no separate audit-log table is needed for this surface. The history row carries `replaced_at`, `replaced_by_user_id`, the prior `previous_url`, and the prior `previous_filename`. Admin-side visibility (a "Previous versions" expander in `client/src/pages/admin/userDetail/tabs/DocumentsTab.js`) is a follow-up listed in §13, not in this scope.
+   7. COMMIT. On any failure between step 3 and step 6, ROLLBACK leaves the active record unchanged. The orphan R2 object from step 2 is acceptable (storage cost is negligible; a cleanup sweep can collect orphans later, see §13 follow-up).
 
    The `staff_document_history` row schema:
 
@@ -680,22 +726,24 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ui_preferences JSONB
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ics_fetch_at TIMESTAMPTZ;
 
 -- Staff-side per-category × per-channel notification routing + push subscriptions
--- (separate from the existing admin-only users.notification_preferences)
+-- (separate from the existing admin-only users.notification_preferences).
+-- Default uses '{...}'::jsonb literal (not jsonb_build_object) to match the existing
+-- pattern at schema.sql:2233/2248 and produce a deterministic JSON key order.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_notification_preferences JSONB
-  NOT NULL DEFAULT jsonb_build_object(
-    'channels', jsonb_build_object(
-      'shift_offered',   '["push","sms","email"]'::jsonb,
-      'shift_decided',   '["push","sms"]'::jsonb,
-      'cover_needed',    '["push"]'::jsonb,
-      'beo_finalized',   '["push","sms","email"]'::jsonb,
-      'beo_reminder_t3', '["push","sms"]'::jsonb,
-      'schedule_change', '["push","sms","email"]'::jsonb,
-      'payday',          '["sms","email"]'::jsonb,
-      'tip_received',    '["push"]'::jsonb
-    ),
-    'push_subscriptions', '[]'::jsonb,
-    'quiet_hours', 'null'::jsonb
-  );
+  NOT NULL DEFAULT '{
+    "channels": {
+      "shift_offered":   ["push","sms","email"],
+      "shift_decided":   ["push","sms"],
+      "cover_needed":    ["push"],
+      "beo_finalized":   ["push","sms","email"],
+      "beo_reminder_t3": ["push","sms"],
+      "schedule_change": ["push","sms","email"],
+      "payday":          ["sms","email"],
+      "tip_received":    ["push"]
+    },
+    "push_subscriptions": [],
+    "quiet_hours": null
+  }'::jsonb;
 
 -- Widen onboarding_status enum to include 'suspended' (active staff who break the rules)
 -- NOTE: widening the CHECK alone is INSUFFICIENT. server/middleware/auth.js:41-49 currently
@@ -721,32 +769,35 @@ DO $$ BEGIN
     CHECK (channel IN ('email','sms','push'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
--- Sibling-suppression unique index (per §6.13 dispatcher cascade)
--- One row per (entity, recipient, channel, message_type) prevents duplicate enqueues
--- on retry and supports the broadcast-runaway cap from §6.5.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_messages_dedupe
-  ON scheduled_messages (entity_type, entity_id, recipient_type, recipient_id, channel, message_type)
-  WHERE status IN ('pending','sent');
+-- Widen scheduled_messages.status enum for the §6.13 dispatcher cascade.
+-- New terminal values:
+--   'suppressed_by_sibling' = another channel in the same suppression_key group sent first
+--   'dead_letter'           = critical-path override could not resolve any deliverable channel
+-- Without this widening, the cascade's first UPDATE crashes on the existing CHECK.
+DO $$ BEGIN
+  ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_status_check;
+  ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_status_check
+    CHECK (status IN ('pending','sent','failed','suppressed','deferred','suppressed_by_sibling','dead_letter'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
--- ALTER race backfill. The `staff_notification_preferences` default lands at column-creation,
--- but if any concurrent INSERT happens during the ALTER's metadata catch-up, NULL can slip in.
--- This UPDATE is idempotent and cleans up any stragglers.
-UPDATE users
-   SET staff_notification_preferences = jsonb_build_object(
-     'channels', jsonb_build_object(
-       'shift_offered',   '["push","sms","email"]'::jsonb,
-       'shift_decided',   '["push","sms"]'::jsonb,
-       'cover_needed',    '["push"]'::jsonb,
-       'beo_finalized',   '["push","sms","email"]'::jsonb,
-       'beo_reminder_t3', '["push","sms"]'::jsonb,
-       'schedule_change', '["push","sms","email"]'::jsonb,
-       'payday',          '["sms","email"]'::jsonb,
-       'tip_received',    '["push"]'::jsonb
-     ),
-     'push_subscriptions', '[]'::jsonb,
-     'quiet_hours', 'null'::jsonb
-   )
- WHERE staff_notification_preferences IS NULL;
+-- Suppression-key column for the §6.13 sibling-suppression cascade.
+-- Set by enqueueCategorizedMessage to a stable derived value:
+--   ${entity_type}:${entity_id}:${message_type}:${recipient_id}
+-- When one row in the group succeeds, the dispatcher updates the remaining pending
+-- rows in the same group to status='suppressed_by_sibling' in one UPDATE.
+ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS suppression_key TEXT;
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_suppression_key
+  ON scheduled_messages (suppression_key)
+  WHERE suppression_key IS NOT NULL AND status = 'pending';
+
+-- Cover-broadcast dedupe (per §6.5 runaway cap). Scoped to message_type='cover_broadcast'
+-- to avoid collision with the existing idx_scheduled_messages_pending_uniq (schema.sql:2331)
+-- which already enforces uniqueness on the same column tuple for status='pending'.
+-- Combined with the application-layer cap of 500 rows per shift_id, this prevents
+-- duplicate enqueues on retry without blocking legitimate re-enqueues of other types.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_messages_cover_broadcast_dedupe
+  ON scheduled_messages (entity_type, entity_id, recipient_type, recipient_id, channel)
+  WHERE message_type = 'cover_broadcast' AND status IN ('pending','sent');
 
 -- Drop / cover marketplace columns on shift_requests
 ALTER TABLE shift_requests
@@ -769,6 +820,63 @@ ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS zelle_handle TEXT;
 -- Alcohol certification expiry tracking (for the 60-day expires-soon nudge)
 ALTER TABLE contractor_profiles
   ADD COLUMN IF NOT EXISTS alcohol_certification_expires_on DATE;
+
+-- Role attestation column for cover-broadcast targeting (per §6.5).
+-- Populated at signup from applications.positions_interested[0] (the primary role).
+-- Backfill UPDATE below seeds existing rows from their application; rows with no
+-- application fall back to 'bartender' as the safe default.
+ALTER TABLE contractor_profiles
+  ADD COLUMN IF NOT EXISTS position TEXT;
+
+UPDATE contractor_profiles cp
+   SET position = COALESCE(
+     (SELECT a.positions_interested FROM applications a WHERE a.user_id = cp.user_id),
+     'bartender'
+   )
+ WHERE cp.position IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_contractor_profiles_position
+  ON contractor_profiles(position) WHERE position IS NOT NULL;
+
+-- §6.13 migration guard: users who replied STOP previously have sms_enabled=false on
+-- communication_preferences, but the new staff_notification_preferences default
+-- still lists 'sms' for several categories. The first PATCH after migration would
+-- trip the critical-path validation. Strip 'sms' from every channels array for
+-- those users so the post-migration state is internally consistent.
+UPDATE users u
+   SET staff_notification_preferences = jsonb_set(
+     staff_notification_preferences,
+     '{channels}',
+     (
+       SELECT jsonb_object_agg(
+         cat_key,
+         (SELECT jsonb_agg(ch) FROM jsonb_array_elements_text(cat_val) AS ch WHERE ch <> 'sms')
+       )
+       FROM jsonb_each(staff_notification_preferences->'channels') AS chans(cat_key, cat_val)
+     ),
+     false
+   )
+ WHERE (communication_preferences->>'sms_enabled')::boolean = false;
+
+-- Pending-email-change verification flow (per §6.10). Patterns after the existing
+-- password_reset_tokens table (schema.sql:1204). The token is a UUID stored hashed
+-- (SHA-256) so a DB leak doesn't grant verification rights; the unhashed token only
+-- exists in the outgoing verification email and the user's clipboard.
+CREATE TABLE IF NOT EXISTS pending_email_changes (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  new_email VARCHAR(255) NOT NULL,
+  token_hash VARCHAR(64) NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  consumed_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_email_changes_token_hash
+  ON pending_email_changes(token_hash) WHERE consumed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pending_email_changes_user
+  ON pending_email_changes(user_id) WHERE consumed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pending_email_changes_expires
+  ON pending_email_changes(expires_at) WHERE consumed_at IS NULL;
 
 -- Document replace history (snapshot of the previous file before a Replace overwrites the active record)
 CREATE TABLE IF NOT EXISTS staff_document_history (
