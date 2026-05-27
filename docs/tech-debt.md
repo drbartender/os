@@ -149,6 +149,13 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 **Why deferred:** Scale concern, not a current problem.
 **Next step:** Add partial indexes on `email_sends(campaign_id) WHERE status = 'opened'` / `WHERE status = 'clicked'`, OR refactor to a single aggregated subquery with `COUNT(*) FILTER (WHERE status = ...)`.
 
+### metricsQueries `include_cc` filter join lacks composite index
+
+**Source:** 2026-05-27 push pre-review (performance-review agent, finding L4).
+**What:** `server/utils/metricsQueries.js:200-203, 263-272` — the `include_cc !== 'all'` paid-money branch joins `proposal_payments → proposals` on every Financials/Dashboard call and adds `p.cc_id IS NULL` / `IS NOT NULL`. The join key on `pp.proposal_id` is FK-indexed, but there's no composite `(proposal_id, cc_id)` and the existing partial unique `idx_proposals_cc_id` (schema 2805) only covers the `IS NOT NULL` selectivity path.
+**Why deferred:** Fine at current volumes — `proposals` is small. Only becomes a problem once `proposal_payments` crosses ~100k rows. The `include_cc` chip itself was just wired (commit `c4a18e1`) so usage data starts now.
+**Next step:** Revisit once the financials dashboard slows on a CC-heavy filter. Likely fix: add `CREATE INDEX idx_proposals_id_cc_id ON proposals(id, cc_id)` — covers both `IS NULL` and `IS NOT NULL` branches via index-only scan.
+
 ### admin.js applications filter CASE expression blocks index
 
 **Source:** 2026-04-24 push pre-review (database-review agent).
