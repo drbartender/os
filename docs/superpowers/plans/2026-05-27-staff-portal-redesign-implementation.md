@@ -10,7 +10,7 @@
 
 **Spec section anchors:** Every task references the relevant spec section. Read the spec section before starting the task.
 
-**Inheritance:** The BEO implementation plan (`docs/superpowers/plans/2026-05-26-beo-implementation.md`) Phases 1-5 must be merged to `main` BEFORE Task 33 of this plan (which extends `GET /api/beo/:proposalId`). Phase 6 of the BEO plan is replaced wholesale by this plan: BEO Task 29 (standalone `StaffBeo.js`) is dropped, BEO Task 31 (badges on `StaffShifts`/`StaffEvents`) is dropped because those pages no longer exist after this plan ships. BEO Task 28 (DrinkPlanCard Finalize buttons) and BEO Task 30 (EventDetailPage View BEO link) are admin-side and survive untouched.
+**Inheritance:** The BEO implementation plan (`docs/superpowers/plans/2026-05-26-beo-implementation.md`) Phases 1-5 must be merged to `main` BEFORE Phase 2 of this plan. Task 8 (calendar feed) LEFT JOINs `drink_plans.finalized_at` + `shift_requests.beo_acknowledged_at` (BEO Phase 1 columns); Task 12 (staff-home), Task 25 (cascade), Task 28 (shifts projection), Task 33 (BEO extension), and Task 37 (ShiftDetail) all depend on those columns too. Phase 6 of the BEO plan is replaced wholesale by this plan: BEO Task 29 (standalone `StaffBeo.js`) is dropped, BEO Task 31 (badges on `StaffShifts`/`StaffEvents`) is dropped because those pages no longer exist after this plan ships. BEO Task 28 (DrinkPlanCard Finalize buttons) and BEO Task 30 (EventDetailPage View BEO link) are admin-side and survive untouched.
 
 **Phasing alignment with spec §9:**
 - Phase A (spec §9): Tasks 1-51. Portal shell + drop / cover + theme + AccountPage + SMS-and-email notifications only. Push column in NotificationsSection is rendered but disabled with a "Coming in v1.5" banner.
@@ -19,8 +19,10 @@
 **Dead-code window fix:** The prior version of this plan mounted all the new client routes only at Task 39, leaving Tasks 24-38 unverifiable in-browser. This plan mounts a stub StaffShell + placeholder routes under `/staff-v2/*` at Task 29 (before the page implementation phase), so every subsequent client task can be verified end-to-end during implementation. The final cutover at Tasks 48-49 swaps the stub mount for the production mount.
 
 **Per-phase review-agent checkpoints** (per `feedback_execution_review_cadence.md`):
-- After Phase 1 (schema + utils): `database-review` (schema breadth) + `security-review` (notification routing + suspended-status middleware companion)
-- After Phase 4 (staff portal API): `security-review` (15 new authenticated endpoints, bank PII guard, email-change auth model, allowlist enforcement)
+- After Phase 1 (schema + utils): `database-review` (schema breadth, constraint widenings, partial indexes, new tables)
+- After Phase 2 (dispatcher cascade + calendar feed): `code-review` + `security-review` (multi-row enqueue + sibling cascade + critical-path re-resolve is the riskiest single change in the plan; calendar feed surfaces client PII)
+- After Phase 3 (auth + payroll companions): `security-review` (suspended-status auth deny-list) + `database-review` (payrollAccrual + autoAssign dropped_at filter touches money paths)
+- After Phase 4 (staff portal API): `security-review` (new authenticated endpoints, bank PII guard, email-change auth model, allowlist enforcement)
 - After Phase 5 (drop / cover marketplace): `code-review` + `consistency-check` (money-adjacent via pay_period processing guard + hybrid-state filter across payrollAccrual / autoAssign / team-roster)
 - After Phase 8 (pay + tip card + publicTip extension): `code-review` (money display + the load-bearing publicTip extension)
 - After Phase 11 (push): `security-review` (VAPID, service worker, subscription lifecycle)
@@ -82,7 +84,10 @@
     }'::jsonb;
 
   -- ─── Session invalidation on email change (per spec §6.10) ───
-  ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 1;
+  -- NOTE: users.token_version ALREADY exists at schema.sql:271 with DEFAULT 0.
+  -- It's already enforced by middleware/auth.js:38 and signed in routes/auth.js:66/149/338
+  -- with `?? 0` fallback. No new column needed. Email-change confirm at Task 18 just
+  -- does `UPDATE users SET token_version = token_version + 1 WHERE id = $1`.
   ```
 
 - [ ] **Step 3: Constraint widenings**
@@ -117,13 +122,22 @@
   EXCEPTION WHEN OTHERS THEN NULL; END $$;
   ```
 
-- [ ] **Step 4: `scheduled_messages.suppression_key` column + indexes**
+- [ ] **Step 4: `scheduled_messages.suppression_key` + `payload` columns + indexes**
 
   ```sql
   ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS suppression_key TEXT;
   CREATE INDEX IF NOT EXISTS idx_scheduled_messages_suppression_key
     ON scheduled_messages (suppression_key)
     WHERE suppression_key IS NOT NULL AND status = 'pending';
+
+  -- Per-row payload for category-driven messages (cover_broadcast, beo_*, payday, etc.).
+  -- The existing dispatcher uses registerHandler(message_type, handler) where handlers
+  -- recompute content from entity/recipient lookups; the new staff-portal messages
+  -- carry data that doesn't naturally derive from entity (truncated reasons, SMS
+  -- template + args, re_resolve_count). This column is the payload-delivery vehicle
+  -- enqueueCategorizedMessage uses (Task 4).
+  ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS payload JSONB
+    NOT NULL DEFAULT '{}'::jsonb;
 
   -- Cover-broadcast dedupe (per §6.5 runaway cap). Scoped via partial WHERE
   -- to avoid collision with idx_scheduled_messages_pending_uniq (schema.sql:2331).
@@ -464,8 +478,8 @@
       const { rows } = await client.query(
         `INSERT INTO scheduled_messages
            (entity_id, entity_type, message_type, recipient_type, recipient_id,
-            channel, scheduled_for, status, suppression_key, error_message)
-         VALUES ($1, $2, $3, 'staff', $4, $5, $6, 'pending', $7, $8::text)
+            channel, scheduled_for, status, suppression_key, payload)
+         VALUES ($1, $2, $3, 'staff', $4, $5, $6, 'pending', $7, $8::jsonb)
          RETURNING id`,
         [entityId, entityType, messageType, userId, channel, sendAt, suppressionKey, JSON.stringify(payloadWithCounter)]
       );
@@ -477,7 +491,7 @@
   module.exports.enqueueCategorizedMessage = enqueueCategorizedMessage;
   ```
 
-  Note: `scheduled_messages` has no `payload` JSONB column today; the existing dispatcher stuffs payload bits into `error_message` (per the existing pattern). Verify during execution and switch to the actual payload-carrying column.
+  The new `scheduled_messages.payload JSONB` column is added in Task 1 Step 4 specifically to carry per-row payload data for category-driven messages (cover_broadcast, beo_*, payday, etc.). The existing dispatcher pattern (`registerHandler(message_type, handlerFn)`) where handlers recompute content from entity/recipient lookups is unchanged, handlers for the new message_types either read from `payload` directly OR continue to derive from entity/recipient when applicable.
 
 - [ ] **Step 3: Tests**, N-channel fan-out, zero on muted non-critical, dead-letter return, suppression_key shape correct, custom client (transaction) passed through.
 
@@ -668,6 +682,9 @@
   - Sibling-suppression cascade fires on first send
   - Re-resolve increments counter; second re-resolve at counter=2 dead-letters
   - Dead-letter triggers Sentry + ADMIN_PHONE SMS
+  - **Degradation breadcrumb**: every time the critical-path override silently substitutes a channel (e.g., requested push → actually sent SMS because no subs), fire `Sentry.addBreadcrumb({ category: 'notifications', message: 'critical_path_degraded', data: { user_id, category, requested, delivered } })`. Spec §6.13 calls this out separately from the dead-letter capture so ops can detect silent channel substitution before staffers complain.
+
+  **Note on Step 2 redundancy:** `checkSuppression` at `server/utils/scheduledMessageDispatcher.js:158-166` already does the staff/admin per-channel comm-prefs check, and is called immediately before send in `dispatchRow` at line 426. The "kill-switch re-check" this task adds is therefore extending that helper to handle the new `'push'` channel case, not introducing a new code path.
 
 - [ ] **Step 8: Commit**
 
@@ -771,62 +788,37 @@
 
 ## Phase 3: Auth + middleware companions
 
-### Task 9: auth.js, suspended deny + token_version compare
+### Task 9: auth.js, suspended deny
 
-**Spec ref:** Section 10 (Authorization, suspended blocks portal access), Section 6.10 (token_version bump on email change).
+**Spec ref:** Section 10 (Authorization, suspended blocks portal access).
 
 **Files:**
 - Modify: `server/middleware/auth.js`
 - Modify: `server/middleware/auth.test.js` (extend or create)
 
+**Pre-execution note:** The `token_version` mechanic is ALREADY shipped. `users.token_version INTEGER NOT NULL DEFAULT 0` exists at `schema.sql:271`. The middleware already does the compare at `server/middleware/auth.js:38` via `(u.token_version ?? 0) !== (decoded.tokenVersion ?? 0)`. JWT signing already embeds it inline in `server/routes/auth.js:66/149/338` with `tokenVersion: user.token_version ?? 0`. Password reset already bumps it at `routes/auth.js:444`. So this task collapses to JUST the suspended deny-list extension. The email-change confirm at Task 18 just adds `token_version = token_version + 1` to its UPDATE; that flows through the existing machinery automatically.
+
 - [ ] **Step 1: Read the existing deny-list**
 
-  Around lines 41-49: the `if` branch that denies `'deactivated'` and `'rejected'`. Extend to include `'suspended'`.
+  Around `server/middleware/auth.js:41-49`: the `if` branch that denies `'deactivated'` and `'rejected'`. Extend to include `'suspended'`.
 
-- [ ] **Step 2: token_version compare**
+- [ ] **Step 2: Tests**
 
-  In the JWT verification path: after the token decodes, compare `decoded.token_version === user.token_version`. Reject 401 with `{error: 'session_expired', reason: 'token_version_mismatch'}` if mismatch. Existing tokens signed before this change have no `token_version` field; treat missing as `1` for backwards compat.
+  - Suspended user gets the same response shape as deactivated/rejected (whichever the existing pattern is, 401 or 403)
+  - Active-approved user still passes
 
-- [ ] **Step 3: Tests**
-
-  - Suspended user gets 401/403 (whichever the existing pattern returns)
-  - Token with stale `token_version` is rejected
-  - Token without `token_version` field is accepted (legacy-token transition)
-  - Token with matching version proceeds normally
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
   ```bash
   git add server/middleware/auth.js server/middleware/auth.test.js
-  git commit -m "feat(staff-portal): auth middleware suspended deny + token_version check"
+  git commit -m "feat(staff-portal): auth middleware adds 'suspended' to deny-list"
   ```
 
 ---
 
-### Task 10: jwt.js, embed token_version on sign
+### Task 10: ~~jwt.js embed token_version~~ (REMOVED, already shipped)
 
-**Spec ref:** Section 6.10 (companion to Task 9).
-
-**Files:**
-- Modify: `server/utils/jwt.js`
-- Modify: `server/utils/jwt.test.js` (extend or create)
-
-- [ ] **Step 1: Read the sign helper**
-
-  Find where the JWT payload is composed.
-
-- [ ] **Step 2: Embed token_version**
-
-  Add `token_version: user.token_version || 1` to the payload. The sign-time SELECT may need to project this column if it doesn't already.
-
-- [ ] **Step 3: Tests**, token_version is embedded; bumping the column produces a different token; the new token still parses.
-
-- [ ] **Step 4: Commit**
-
-  ```bash
-  git add server/utils/jwt.js server/utils/jwt.test.js
-  git commit -m "feat(staff-portal): embed token_version in JWT payload"
-  ```
+**Removed.** JWT signing is inline in `server/routes/auth.js` (lines 66, 149, 338) and already embeds `tokenVersion: user.token_version ?? 0`. Password reset at `routes/auth.js:444` already bumps the column. No file or task needed. Email-change confirm at Task 18 just does the same `UPDATE users SET token_version = token_version + 1` and the existing machinery picks it up. This tombstone preserves the original task numbering for downstream cross-references.
 
 ---
 
@@ -1042,6 +1034,8 @@
 - [ ] **Step 5: Tests**
 
   - Combined-state validation rejects per-category bad state
+  - **Per-category-not-aggregate**: a save that mutes ONLY `payday` (leaving `beo_finalized` + `schedule_change` with channels) is ACCEPTED. The check is per-category, not aggregate (spec §6.13 nuance).
+  - A save that would leave any single critical-path category with no deliverable channel is rejected (test each of the three critical categories independently).
   - Push-subscription POST replaces existing endpoint
   - Push-subscription POST evicts oldest at cap=10
   - Push-subscription DELETE prunes
@@ -1137,12 +1131,31 @@
   - Rate-limit fires on 4th request in 24h
   - Cancel marks pending row consumed_at
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add the cleanup scheduler** (spec §6.10 step 10)
+
+  Create `server/utils/pendingEmailChangeCleanup.js`. Exports `purgeExpiredPendingEmailChanges()` which does:
+
+  ```sql
+  DELETE FROM pending_email_changes
+   WHERE consumed_at IS NOT NULL OR expires_at < NOW() - INTERVAL '7 days';
+  ```
+
+  (Consumed rows are kept for 7 days as a thin audit trail before purge, `staff_audit_log` carries the long-term record.)
+
+  Wire into the existing scheduler pattern at `server/utils/schedulers.js` (or wherever the existing labrat/quote-draft cleanup schedulers live). Add a `RUN_PENDING_EMAIL_CLEANUP_SCHEDULER` env var (defaults on, set `false` to disable) matching the existing `RUN_*_SCHEDULER` pattern from CLAUDE.md. Tick interval: daily.
+
+  Document the new env var in `.env.example` and CLAUDE.md.
+
+- [ ] **Step 6: Commit**
 
   ```bash
   git add server/routes/staffPortal.js server/routes/staffPortal.test.js \
-          server/middleware/rateLimiters.js
-  git commit -m "feat(staff-portal): email-change request + cancel endpoints (rate-limited)"
+          server/middleware/rateLimiters.js \
+          server/utils/pendingEmailChangeCleanup.js \
+          server/utils/pendingEmailChangeCleanup.test.js \
+          server/utils/schedulers.js \
+          .env.example CLAUDE.md
+  git commit -m "feat(staff-portal): email-change request + cancel + daily cleanup scheduler"
   ```
 
 ---
@@ -1261,7 +1274,7 @@
 - [ ] **Step 3: POST, trigger the cascade**
 
   1. Same JWT verification + already-resolved guard.
-  2. Call into the existing `PUT /api/shifts/requests/:requestId` approval branch with the swap context. The cascade itself lives in Task 23 of Phase 5.
+  2. Call into the existing `PUT /api/shifts/requests/:requestId` approval branch with the swap context. The cascade itself is built in Task 25 Step 2 of Phase 5.
   3. Return 200 on success.
 
 - [ ] **Step 4: Mount in `server/index.js`**
@@ -1354,13 +1367,16 @@
 
 ---
 
-### Task 22: broadcastCoverRequest helper
+### Task 22: broadcastCoverRequest helper + SKIP_REANCHOR_TYPES update
 
-**Spec ref:** §6.5 (qualified-teammate filter, transaction-split pattern, 500-cap, positions_needed tolerance).
+**Spec ref:** §6.5 (qualified-teammate filter, transaction-split pattern, 500-cap, positions_needed tolerance), §5.6 (SKIP_REANCHOR_TYPES).
+
+**File-size guard.** `server/utils/staffShiftHandlers.js` is 742 lines today (over the 700 soft cap per CLAUDE.md). This task creates the helper in a NEW sibling file `server/utils/coverBroadcast.js` rather than appending to `staffShiftHandlers.js`. Keeps both files clean.
 
 **Files:**
-- Modify: `server/utils/staffShiftHandlers.js`
-- Modify: `server/utils/staffShiftHandlers.test.js`
+- Create: `server/utils/coverBroadcast.js`
+- Create: `server/utils/coverBroadcast.test.js`
+- Modify: `server/utils/rescheduleProposal.js` (SKIP_REANCHOR_TYPES update, see Step 4)
 
 - [ ] **Step 1: Implement broadcastCoverRequest**
 
@@ -1466,11 +1482,28 @@
   - positions_needed JSON-object shape parsed correctly (`{position: 'bartender'}` style)
   - positions_needed string shape parsed correctly (`'bartender'` style)
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Update SKIP_REANCHOR_TYPES** (spec §5.6)
+
+  In `server/utils/rescheduleProposal.js`, line 16 currently reads:
+  ```javascript
+  const SKIP_REANCHOR_TYPES = new Set(['post_event_wrap_up_email']);
+  ```
+  Add `'cover_broadcast'` (created by this task) and `'beo_unack_nudge_sms'` (from the BEO plan, if not already present):
+  ```javascript
+  const SKIP_REANCHOR_TYPES = new Set([
+    'post_event_wrap_up_email',
+    'cover_broadcast',
+    'beo_unack_nudge_sms',
+  ]);
+  ```
+  Reasoning: cover broadcasts target a SPECIFIC shift in a SPECIFIC time window (12h–14d out). If the proposal's event date moves, a stale broadcast referring to the old date would be misleading. The cover-request flow re-runs from scratch on the new date if the original requester still wants out.
+
+- [ ] **Step 4: Commit**
 
   ```bash
-  git add server/utils/staffShiftHandlers.js server/utils/staffShiftHandlers.test.js
-  git commit -m "feat(staff-portal): broadcastCoverRequest helper with positions tolerance + 500-cap"
+  git add server/utils/coverBroadcast.js server/utils/coverBroadcast.test.js \
+          server/utils/rescheduleProposal.js
+  git commit -m "feat(staff-portal): coverBroadcast helper + SKIP_REANCHOR_TYPES update"
   ```
 
 ---
@@ -1479,9 +1512,12 @@
 
 **Spec ref:** §6.5 (Clean drop endpoint).
 
+**File-size guard.** `server/routes/shifts.js` is 839 lines today. Tasks 23-27 add 5 new endpoints (each ~50-100 lines with transactions / validation), landing them all in `shifts.js` would push it to ~1100 lines, breaching the 1000-line HARD cap; the pre-commit hook would BLOCK the commits. Tasks 23-27 therefore land the new endpoints in a NEW sibling file `server/routes/staffShiftActions.js`, mounted at the same `/api/shifts` prefix in `server/index.js`. Existing `shifts.js` routes (and Task 28's projection updates) stay where they are. Pattern: matches `server/routes/proposals/` per-concern split.
+
 **Files:**
-- Modify: `server/routes/shifts.js`
-- Modify: `server/routes/shifts.test.js`
+- Create: `server/routes/staffShiftActions.js` (this task creates the file with router skeleton + the drop endpoint)
+- Create: `server/routes/staffShiftActions.test.js`
+- Modify: `server/index.js` (mount the new router at `/api/shifts`)
 
 - [ ] **Step 1: Implement the route**
 
@@ -1516,8 +1552,9 @@
 - [ ] **Step 3: Commit**
 
   ```bash
-  git add server/routes/shifts.js server/routes/shifts.test.js
-  git commit -m "feat(staff-portal): POST /requests/:id/drop (clean drop ≥14d)"
+  git add server/routes/staffShiftActions.js server/routes/staffShiftActions.test.js \
+          server/index.js
+  git commit -m "feat(staff-portal): staffShiftActions router + POST /requests/:id/drop"
   ```
 
 ---
@@ -1525,6 +1562,8 @@
 ### Task 24: POST /api/shifts/requests/:requestId/request-cover
 
 **Spec ref:** §6.5 (Transaction A + outside-batch broadcast).
+
+**Files:** Modify `server/routes/staffShiftActions.js` (extend with the new endpoint; Tasks 25-27 also land here).
 
 **Files:**
 - Modify: `server/routes/shifts.js`
@@ -1556,7 +1595,7 @@
 - [ ] **Step 3: Commit**
 
   ```bash
-  git add server/routes/shifts.js server/routes/shifts.test.js
+  git add server/routes/staffShiftActions.js server/routes/staffShiftActions.test.js
   git commit -m "feat(staff-portal): POST /requests/:id/request-cover (Transaction A + outside-batch)"
   ```
 
@@ -1567,7 +1606,9 @@
 **Spec ref:** §6.5 (claim-cover with UPSERT + position eligibility + JWT swapToken; PUT approval branch extension for the cascade).
 
 **Files:**
-- Modify: `server/routes/shifts.js`
+- Modify: `server/routes/staffShiftActions.js` (claim-cover endpoint)
+- Modify: `server/routes/staffShiftActions.test.js`
+- Modify: `server/routes/shifts.js` (the cascade extends the EXISTING `PUT /api/shifts/requests/:requestId` approval branch, that endpoint lives in `shifts.js` already)
 - Modify: `server/routes/shifts.test.js`
 
 - [ ] **Step 1: Implement claim-cover route**
@@ -1625,8 +1666,9 @@
 - [ ] **Step 4: Commit**
 
   ```bash
-  git add server/routes/shifts.js server/routes/shifts.test.js
-  git commit -m "feat(staff-portal): POST /claim-cover with UPSERT + cover-approval cascade"
+  git add server/routes/staffShiftActions.js server/routes/staffShiftActions.test.js \
+          server/routes/shifts.js server/routes/shifts.test.js
+  git commit -m "feat(staff-portal): POST /claim-cover with UPSERT + cover-approval cascade in PUT branch"
   ```
 
 ---
@@ -1636,8 +1678,8 @@
 **Spec ref:** §6.5 (emergency-drop with ADMIN_PHONE proper conflation + proposal_id derivation).
 
 **Files:**
-- Modify: `server/routes/shifts.js`
-- Modify: `server/routes/shifts.test.js`
+- Modify: `server/routes/staffShiftActions.js`
+- Modify: `server/routes/staffShiftActions.test.js`
 
 - [ ] **Step 1: Implement the route**
 
@@ -1668,7 +1710,7 @@
 - [ ] **Step 3: Commit**
 
   ```bash
-  git add server/routes/shifts.js server/routes/shifts.test.js
+  git add server/routes/staffShiftActions.js server/routes/staffShiftActions.test.js
   git commit -m "feat(staff-portal): POST /emergency-drop with ADMIN_PHONE hotline + audit log"
   ```
 
@@ -1679,8 +1721,8 @@
 **Spec ref:** §6.3 (Mine sub-tab Withdraw button).
 
 **Files:**
-- Modify: `server/routes/shifts.js`
-- Modify: `server/routes/shifts.test.js`
+- Modify: `server/routes/staffShiftActions.js`
+- Modify: `server/routes/staffShiftActions.test.js`
 
 - [ ] **Step 1: Implement DELETE**
 
@@ -1695,7 +1737,7 @@
 - [ ] **Step 3: Commit**
 
   ```bash
-  git add server/routes/shifts.js server/routes/shifts.test.js
+  git add server/routes/staffShiftActions.js server/routes/staffShiftActions.test.js
   git commit -m "feat(staff-portal): DELETE /requests/:id Withdraw endpoint"
   ```
 
@@ -1794,6 +1836,8 @@
 
 **Files:**
 - Modify: `client/src/App.js`
+- Create: `client/src/components/StaffShellWithThemeWiring.js` (small wrapper around StaffShell that fetches `/api/me` on mount, hydrates theme from `ui_preferences.theme`, falls back to `prefers-color-scheme`, persists toggles via `PATCH /api/me/ui-preferences`)
+- Create: `client/src/components/staff/Placeholder.js` (trivial component rendering `<div className="sp-placeholder">{name} coming soon</div>`, replaced one-by-one as Tasks 32-47 land their real implementations)
 
 - [ ] **Step 1: Add a temporary /staff-v2 stub mount**
 
@@ -2110,7 +2154,7 @@
 
 - [ ] **Step 1: Implement**
 
-  Hero "Tip Card" + QR card preview. "Tips received this week" card from existing `GET /api/me/tips` (`server/routes/me.js:190`). "How it's shown on your card" reorder card with drag-grip + arrow buttons. PUTs to `/api/me/tip-card-order` on every reorder; PUTs are serialized client-side (queue subsequent drags until response).
+  Hero "Tip Card" + QR card preview + a row of three action buttons per spec §6.8: **Open print page** (opens `/my-tip-page/print` in a new tab), **Share link** (system share sheet via `navigator.share()` falling back to copy), **Copy URL** (clipboard write with "Copied" toast). "Tips received this week" card from existing `GET /api/me/tips` (`server/routes/me.js:190`). "How it's shown on your card" reorder card with drag-grip + arrow buttons. PUTs to `/api/me/tip-card-order` on every reorder; PUTs are serialized client-side (queue subsequent drags until response).
 
 - [ ] **Step 2: Commit**
 
@@ -2170,7 +2214,7 @@
 
 - [ ] **Step 1: Shell with horizontal sub-nav**
 
-  6 sub-sections: Profile / Payments / Calendar / Notifications / Documents. URL-driven via `/staff-v2/account/:section`.
+  5 sub-sections: Profile / Payments / Calendar / Notifications / Documents. URL-driven via `/staff-v2/account/:section`.
 
 - [ ] **Step 2: Back button** returns to the previously-active main tab.
 
@@ -2227,14 +2271,16 @@
 
 - [ ] **Step 3: AddMethodModal** with category picker → method picker → input form (handle for P2P, routing/account for direct deposit, no input for check).
 
-- [ ] **Step 4: Verify**, add Venmo, set as preferred, clear it, confirm pill flips to "No payroll method set."
+- [ ] **Step 4: Footer disclaimer** rendered verbatim from spec §6.11 / §3.4: *"Card payments settle through Dr. Bartender and appear as card_tip_net_cents on your paystub. It's your responsibility to enter handles correctly. Payments sent to typos are not our liability."* Italic small text below the methods list.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Verify**, add Venmo, set as preferred, clear it, confirm pill flips to "No payroll method set."
+
+- [ ] **Step 6: Commit**
 
   ```bash
   git add client/src/pages/staff/account/PaymentMethodsSection.js \
           client/src/pages/staff/account/AddMethodModal.js
-  git commit -m "feat(staff-portal): PaymentMethodsSection + AddMethodModal"
+  git commit -m "feat(staff-portal): PaymentMethodsSection + AddMethodModal with disclaimer"
   ```
 
 ---
@@ -2326,7 +2372,7 @@
 
 - [ ] **Step 1: Swap StaffSiteRoutes block only**
 
-  Inside `StaffSiteRoutes()` around line 298: replace `<RequirePortal><StaffLayout/></RequirePortal>` with `<RequirePortal><StaffShell.../>...</RequirePortal>`. Mount the production routes:
+  Inside `StaffSiteRoutes()` (the function starts at line 298): the `<RequirePortal><StaffLayout/></RequirePortal>` wrapper is at line 316. Replace it with `<RequirePortal><StaffShell.../>...</RequirePortal>`. Mount the production routes:
 
   ```jsx
   <Route path="/" element={<HomePage/>} />
