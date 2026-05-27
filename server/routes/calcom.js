@@ -304,7 +304,27 @@ async function handleRescheduled(payload, res) {
   });
   return handleCreated(payload, res);
 }
-async function handleNoShow(_payload, res)      { return res.status(200).send('OK'); }
+async function handleNoShow(payload, res) {
+  const uid = payload?.uid;
+  if (!uid) {
+    return res.status(200).send('Missing uid, ignored');
+  }
+
+  const result = await pool.query(
+    `UPDATE consults SET status = 'no_show' WHERE calcom_event_id = $1`,
+    [uid]
+  );
+
+  if (result.rowCount === 0) {
+    console.warn(`[calcom] no_show for unknown uid: ${uid}`);
+    sentryWarn('Cal.com no-show for unknown booking', {
+      tags: { webhook: 'calcom', triggerEvent: 'BOOKING_NO_SHOW_UPDATED' },
+      extra: { uid },
+    });
+  }
+
+  return res.status(200).send('OK');
+}
 
 module.exports = router;
 module.exports._handlers = { handleCreated, handleCancelled, handleRescheduled, handleNoShow };

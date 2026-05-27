@@ -565,3 +565,35 @@ test('BOOKING_RESCHEDULED: oldUid present but no row matches → falls through t
   );
   assert.equal(client.rowCount, 1, 'handleCreated auto-created the client');
 });
+
+// ─── BOOKING_NO_SHOW_UPDATED tests ────────────────────────────────
+
+async function postNoShow(payload) {
+  return postEvent('BOOKING_NO_SHOW_UPDATED', payload);
+}
+
+test('BOOKING_NO_SHOW_UPDATED: flips existing row to no_show', async () => {
+  await cleanupTestRows();
+  await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status)
+     VALUES ('test-uid-noshow-1', '2026-06-01T15:00:00Z', 'scheduled')`
+  );
+  await buildApp(TEST_SECRET);
+  const res = await postNoShow({ uid: 'test-uid-noshow-1' });
+  assert.equal(res.status, 200);
+  const row = await pool.query("SELECT status FROM consults WHERE calcom_event_id = 'test-uid-noshow-1'");
+  assert.equal(row.rows[0].status, 'no_show');
+});
+
+test('BOOKING_NO_SHOW_UPDATED: zero-row update is a 200 (with Sentry breadcrumb in real Sentry env)', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const res = await postNoShow({ uid: 'test-uid-noshow-unknown' });
+  assert.equal(res.status, 200);
+});
+
+test('BOOKING_NO_SHOW_UPDATED: missing uid is 200 ignored', async () => {
+  await buildApp(TEST_SECRET);
+  const res = await postNoShow({});
+  assert.equal(res.status, 200);
+});
