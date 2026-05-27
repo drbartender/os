@@ -2600,3 +2600,42 @@ CREATE INDEX IF NOT EXISTS idx_tips_unassigned_recent
 -- order by pay_period.start_date). The join key on payouts is the contractor.
 CREATE INDEX IF NOT EXISTS idx_payouts_contractor_id
   ON payouts(contractor_id);
+
+-- ─── Cal.com integration (2026-05-27) ──────────────────────────
+
+-- 1a. Drop old clients.source check constraint (idempotent).
+DO $$ BEGIN
+  ALTER TABLE clients DROP CONSTRAINT IF EXISTS clients_source_check;
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- 1b. Add new clients.source check constraint. NOT VALID + VALIDATE
+-- surfaces any out-of-enum existing rows loudly rather than swallowing.
+ALTER TABLE clients
+  ADD CONSTRAINT clients_source_check
+  CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom'))
+  NOT VALID;
+ALTER TABLE clients VALIDATE CONSTRAINT clients_source_check;
+
+-- 2. Booker context columns on consults (raw webhook data, preserved
+-- separately from the potentially-edited-later client record).
+ALTER TABLE consults ADD COLUMN IF NOT EXISTS booker_name VARCHAR(255);
+ALTER TABLE consults ADD COLUMN IF NOT EXISTS booker_email VARCHAR(255);
+
+-- 3. Unique constraint on calcom_event_id for webhook idempotency.
+-- Nullable column; PostgreSQL UNIQUE permits multiple NULLs.
+DO $$ BEGIN
+  ALTER TABLE consults ADD CONSTRAINT consults_calcom_event_id_key UNIQUE (calcom_event_id);
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- 4. Generic webhook-event dedupe table (replay protection).
+-- One row per processed event; (provider, event_id) is the dedupe key.
+-- Pruned hourly to 30-day window by webhookEventsPruneScheduler.
+CREATE TABLE IF NOT EXISTS webhook_events (
+  provider VARCHAR(50) NOT NULL,
+  event_id TEXT NOT NULL,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (provider, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_events_received_at
+  ON webhook_events(received_at);
