@@ -32,10 +32,13 @@ function _resolveDisplayName(row) {
  */
 function renderBartenderList(bartenders) {
   const parts = bartenders.map((b) => {
-    // Defensive: strip CR/LF from preferred_name so a stray newline cannot
-    // line-break the email subject or plain-text body.
+    // Defensive: strip CR/LF from both `name` (preferred_name) and the
+    // phone display so a stray newline cannot line-break the email subject
+    // or plain-text body. Phone is already digits-only via extractDigits,
+    // but the fallback path in formatPhoneDisplay returns the raw string,
+    // so the strip closes the only remaining injection path.
     const name = _resolveDisplayName(b).replace(/[\r\n]+/g, ' ');
-    const display = formatPhoneDisplay(b.phone);
+    const display = formatPhoneDisplay(b.phone).replace(/[\r\n]+/g, ' ');
     return display ? `${name} (${display})` : name;
   });
   if (parts.length === 0) return '';
