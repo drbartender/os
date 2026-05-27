@@ -394,6 +394,11 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | POST | `/messages` | Webhook secret | Receive customer message from Thumbtack thread |
 | POST | `/reviews` | Webhook secret | Receive new Thumbtack review |
 
+### Cal.com Integration — `/api/calcom`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/webhook` | Public (HMAC-signed) | Cal.com booking event receiver (see Third-Party Integrations) |
+
 ### Invoices — `/api/invoices`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -453,6 +458,37 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | POST | `/tip-feedback/:id/review` | Admin | Mark a feedback row as reviewed (records reviewer + timestamp). |
 | GET | `/tester-bugs` | Admin/Manager | List Lab Rat bug reports (filter `?status=open\|fixed\|wontfix\|all` and `?missionId=...`). Returns `{ bugs, openCountByMission }`. |
 | PATCH | `/tester-bugs/:id` | Admin/Manager | Update a bug's triage state — body `{ status?, fixCommitSha?, notes? }`. Bumps `status_updated_at`. |
+| GET | `/users/:id/stub-co-participated-proposals` | Admin/Manager | Proposals where the given user co-participated on a shift with a legacy CC stub. Powers the user-detail "Co-participated with a CC stub" affordance. |
+| POST | `/proposals/:id/reenroll-drink-plan-nudge` | Admin/Manager | Re-schedule the drink-plan nudge (email + SMS) for a CC-imported proposal that now has a `drink_plans` row. Idempotent — duplicate-pending insert no-ops. Mounted from `routes/admin/ccImport/proposalActions.js`. |
+| POST | `/proposals/:id/reaccrue-payout` | Admin/Manager | Re-run `accruePayoutsForProposal` for a CC proposal after stub cleanup. Returns the structured `{ skipped, reason }` result. Mounted from `routes/admin/ccImport/proposalActions.js`. |
+
+### CC Import Admin — `/api/admin/cc-import`
+All endpoints require `auth + requireAdminOrManager` unless otherwise noted. The `include_stubs=true` knob on `/search/users` 403s for managers because the legacy stub email could expose contractor-identity-derived data. Mutations write to `admin_audit_log` via `logAdminAction`. Spec reference: `docs/superpowers/specs/2026-05-25-checkcherry-import-design.md` §9.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/wrap-up` | Admin/Manager | Bucket B wrap-up worklist (cc-imported, status='completed', past event_date). Filterable `?filter=needs-wrapup\|all`, `?range=since-import\|last-30`, paginated. |
+| POST | `/wrap-up/preview` | Admin/Manager | Pre-flight delivery breakdown for selected ids (uses `resolveChannelFallback`, no DB writes — confirmation modal). |
+| POST | `/wrap-up/enqueue` | Admin/Manager | Schedules `post_event_wrap_up_email` messages for selected proposals (best-effort per id with a per-row outcome enum). |
+| GET | `/review` | Admin/Manager | All 7 sections in one shot: duplicates / orphan payments / unmatched payees / errored rows / skipped events / Phase 0 eligible + done, plus `lastRun` telemetry. |
+| POST | `/review/duplicate/:row_id/confirm` | Admin/Manager | Flip a duplicate_review row to duplicate_confirmed (operator says yes, this IS a dup). |
+| POST | `/review/duplicate/:row_id/promote` | Admin/Manager | Re-run Bucket A promote on the suspect row with `skipDedup` (operator says no, this is NOT a dup). |
+| POST | `/review/orphan-payment/:legacy_id/link` | Admin/Manager | Set `cc_event_id` + promote the legacy payment into `proposal_payments` (or `proposal_refunds`) inside a transaction. |
+| POST | `/review/orphan-payment/:legacy_id/dismiss` | Admin/Manager | Mark the orphan payment dismissed (sets `dismissed_at` + operator notes). |
+| POST | `/review/unmatched-payee/:legacy_payout_id/link` | Admin/Manager | Reassign the stub's `shift_requests` to a real user, mark stubs accordingly, link the payout, audit-log. |
+| POST | `/review/unmatched-payee/:legacy_payout_id/create-stub` | Admin/Manager | Create a fresh `legacy_cc:` stub user and link the payout to it. |
+| POST | `/review/errored-row/:row_id/retry` | Admin/Manager | Re-run the per-row insert for an errored `legacy_cc_raw_imports` row. |
+| POST | `/review/skipped-event/:row_id/promote` | Admin/Manager | Re-run Phase 3 promotion for a previously skipped event row. |
+| POST | `/review/phase0-failure/:row_id/accept-loss` | Admin/Manager | Mark a Phase 0 attachment fetch failure as accepted-loss (sets `given_up_at` + reason; gated on `attempt_count >= 10`). |
+| POST | `/review/phase0-failure/:row_id/revert-give-up` | Admin/Manager | Reverse an accept-loss (clears `given_up_at` + resets `attempt_count`). |
+| GET | `/search/proposals?q=&limit=&offset=` | Admin/Manager | Typeahead picker for the orphan-payment "link to proposal" UI (matches client name ILIKE OR proposal `cc_id`). |
+| GET | `/search/users?q=&include_stubs=&limit=&offset=` | Admin/Manager (`include_stubs=true` admin-only) | Typeahead picker for the unmatched-payee "link to user" UI. Stubs (cc_id LIKE 'legacy_cc:%') excluded by default. |
+| GET | `/review/unmatched-payee/:legacy_payout_id/link-preview?user_id=` | Admin/Manager | Pre-flight counts for the link-confirmation modal (shift_requests to be reassigned per the precheck SELECT). |
+
+### Proposal-level legacy CC payments — `/api/proposals`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/:id/legacy-cc-payments` | `auth, adminOnly` | Lists CC-imported `proposal_payments` rows (where `legacy_charge_id IS NOT NULL`) for the admin-only `LegacyCcPaymentsPanel` on ProposalDetail. Warns the operator that the DRB OS Refund button is wired to PaymentIntents and cannot reach these legacy Stripe charges — refunds happen in the Stripe dashboard with a manual `proposal_refunds` row whose `reason` starts with "Manual Stripe reconciliation". |
 
 ### Other
 | Method | Path | Auth | Description |
@@ -674,7 +710,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 
 **clients** — Client records
 - `name`, `email`, `phone`
-- `source`: direct | thumbtack | referral | website
+- `source`: direct | thumbtack | referral | website | calcom
 - `notes`
 - `communication_preferences` JSONB — `{sms_enabled, email_enabled, marketing_enabled}` (defaults true). Drives the Automated Communication system's send gating.
 - `email_status` (`ok` | `bad`), `phone_status` (`ok` | `bad`) — channel deliverability flags flipped on bounce/blocked-list signals.
@@ -764,6 +800,8 @@ best-effort hooks beside the existing email send, gated by
 
 Staff-facing SMS (Phase 4a) is handled by `server/utils/staffShiftHandlers.js`: scheduled `shift_reminder` (day before the event) and `staff_thank_you` (after the event) message types, plus immediate schedule-change and cancellation/unassignment notices gated by an admin toggle on the event editor.
 
+*CC-import wrap-up handler:* `server/utils/ccWrapUpHandler.js` registers a single message type `post_event_wrap_up_email` (anchor `event_date`, category `operational`, priority 3, `offsetFromEventDate: null`, `cooldownExempt: true`, `multiChannel: false`) used by the `/admin/cc-import/wrap-up` enqueue endpoint to fire a one-shot recap email at admin-chosen times for imported events that pre-date the importer cutover. Body lives in `server/utils/ccWrapUpEmailTemplate.js`. Registration is boot-wired in `server/index.js` (around line 343) so the dispatcher's first tick can resolve the type. The `category: 'operational'` registration deliberately bypasses the marketing-enabled gate, and `cooldownExempt: true` keeps the wrap-up email separate from the daily-overlap dedupe so the operator can sequence batches without false collisions.
+
 Phase 4b adds three cross-cutting pieces. Overlap prevention: each handler carries a `priority` (1-5) and `cooldownExempt` flag; `dispatchPending` defers a colliding lower-priority touch 24h by writing `status='deferred'`, then reactivates deferred rows when they next come due. Delivery-failure fallback: a Resend hard bounce flips `clients.email_status='bad'` and a Twilio failure flips `phone_status='bad'`; the dispatcher substitutes the alternate channel for single-channel operational touches, and suspends a client's remaining automation when both channels are dead. Multi-admin notifications: `notifyAdminCategory` (in `server/utils/adminNotifications.js`) fans a notification out to every admin/manager whose `users.notification_preferences` subscribes them to the category, joining `contractor_profiles` for SMS.
 
 **scheduler_health** — Heartbeat table for the Automated Communication Foundation schedulers. Each scheduler writes its `last_run_at` on every tick; a monitoring loop alerts via Sentry when any scheduler hasn't checked in within 2x its expected interval.
@@ -784,6 +822,15 @@ Phase 4b adds three cross-cutting pieces. Overlap prevention: each handler carri
 - `status` TEXT NOT NULL DEFAULT `'scheduled'` CHECK (`scheduled`, `completed`, `cancelled`, `no_show`)
 - `created_at` TIMESTAMPTZ DEFAULT NOW()
 - Lookup indexes on `proposal_id` and `client_id`; partial index `idx_consults_scheduled_at(scheduled_at) WHERE status = 'scheduled'` keeps upcoming-consult queries cheap.
+- `booker_name` VARCHAR(255) — raw booker name from the Cal.com webhook payload, preserved separately from the matched/auto-created client record
+- `booker_email` VARCHAR(255) — raw booker email from the Cal.com webhook payload
+- UNIQUE constraint on `calcom_event_id` (added 2026-05-27 for webhook idempotency)
+
+**webhook_events** — Generic dedupe table for inbound webhook replay protection. Used by the Cal.com webhook (`provider='calcom'`) today; available for Stripe / Resend / future webhook providers. Pruned hourly via `webhookEventsPruneScheduler` to a 30-day window.
+- `provider` VARCHAR(50) NOT NULL — provider identifier (`'calcom'`, future `'stripe'`, etc.)
+- `event_id` TEXT NOT NULL — per-provider unique event identifier (Cal.com uses SHA-256 of the raw signed body)
+- `received_at` TIMESTAMPTZ NOT NULL DEFAULT NOW()
+- PRIMARY KEY (provider, event_id); index on `received_at` for prune
 
 ### Bartender Tip Pages
 
@@ -967,6 +1014,52 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 - `negotiation_id` (nullable), `rating` NUMERIC(2,1), `review_text`, `reviewer_name`
 - `raw_payload` JSONB
 
+### Check Cherry Import Tables
+
+One-time migration of legacy proposals, events, payments, payouts, leads, and invoices from Check Cherry. The staging tables remain in the schema after cutover so the Review page can keep surfacing operator triage queues, and so a re-run of any phase stays idempotent against the verbatim source rows.
+
+**legacy_cc_raw_imports** — Generic JSON staging row, one per imported CSV record (every source file, every entity)
+- `id` BIGSERIAL PK
+- `source_file`, `source_entity` ('events' | 'clients' | 'payments' | 'leads' | 'invoices' | 'payouts' | 'wix_field_guide' | 'wix_contractor' | 'wix_payment_info'), `source_row_number`, `source_row_hash` (sha256 of canonicalized JSON)
+- `cc_id` TEXT — present on entity rows that carry one; NULL for payments/payouts/leads/invoices
+- `payload` JSONB — verbatim row
+- `import_status` TEXT NOT NULL DEFAULT 'pending' CHECK ('pending' | 'promoted' | 'archived' | 'skipped' | 'duplicate_review' | 'duplicate_confirmed' | 'errored')
+- `import_notes` JSONB — operator + importer annotations (`{candidate_proposal_id,...}`, `{error,column,value,phase}`, `{resolved_by_user_id,resolved_at,decision}`, etc.)
+- UNIQUE `(source_file, source_row_number)` makes re-runs no-op; indexes on `source_entity`, `cc_id` (partial), and `import_status WHERE IN ('duplicate_review','errored')` for the Review page.
+
+**legacy_cc_proposals** — Bucket C archive table (rows the importer chose not to promote into `proposals`)
+- `cc_id` TEXT PK; verbatim CC `status`, `client_id` FK→clients (nullable), normalized client email + name, `event_date`, `package_name`, `service_name`, `brand`, venue fields, `estimated_guests`, `source`, `lead_type`, `package_amount_cents`, public + private notes, `booked_at`
+- `raw_import_id` BIGINT FK→legacy_cc_raw_imports (ON DELETE RESTRICT) ties each archive row back to its source
+
+**legacy_cc_payments** — Promoted payment and refund rows (337 from the 2026-05-25 export)
+- `id` BIGSERIAL PK; `cc_event_id` TEXT (resolved during Phase 4, NULL on orphan), `cc_event_title`, `cc_type` CHECK ('Payment' | 'Refund')
+- `paid_on`, `event_date`, `payment_applied_cents` (absolute value, sign carried by `cc_type`), `tip_cents`, `processing_fee_cents`, `net_cents`, `event_total_cents`, plus the CC-side totals/tax fields
+- `payment_method`, `processor` ('Stripe Express' | 'Custom'), `receipt_number`, `invoice_number`, `reference_code` (`ch_…` when Stripe), `paid_by`, `assigned_staff`, public + private + operator notes
+- `dismissed_at` TIMESTAMPTZ — set when the operator dismisses an orphan-payment from the Review page (removes from the active queue)
+- `promoted_payment_id` FK→proposal_payments (SET NULL), `promoted_refund_id` FK→proposal_refunds (SET NULL) — only one of the two is populated on promotion (CHECK guard)
+- `raw_import_id` UNIQUE FK→legacy_cc_raw_imports (ON DELETE RESTRICT) — one staging row per legacy payment
+
+**legacy_cc_payouts** — Historical staff payouts from CC
+- `id` BIGSERIAL PK; `payee_name`, `payee_name_normalized`, `payee_user_id` FK→users (SET NULL — set on link from the Review page), `paid_on`, `amount_cents`, `reference_role`, `category`
+- `raw_import_id` UNIQUE FK→legacy_cc_raw_imports (ON DELETE RESTRICT)
+- Indexes on `payee_user_id`, `paid_on`, `payee_name_normalized` support the unmatched-payee picker
+
+**cc_import_phase0_failures** — Durable retry queue for Phase 0 attachment fetches
+- `id` SERIAL PK; `source_url`, `source_entity`, `source_row_hash`
+- `attempt_count` INTEGER DEFAULT 0, `last_error`, `last_attempted_at`, `resolved_at`, `resolved_r2_key`
+- `given_up_at`, `given_up_reason` — operator marked the loss accepted (counts as 'resolved' for the sunset gate)
+- UNIQUE `(source_url, source_entity)`; partial index `idx_cc_import_phase0_failures_active(attempt_count) WHERE resolved_at IS NULL AND given_up_at IS NULL` keeps the retry sweep cheap
+
+**cc_import_runs** — Per-run telemetry log
+- `id` SERIAL PK; `phase` INTEGER, `started_at`, `finished_at`, `status` CHECK ('running' | 'succeeded' | 'failed' | 'partial')
+- `rows_processed`, `rows_inserted`, `rows_skipped`, `rows_errored`, `error_summary`, `notes` JSONB (audit trail per row decision when relevant)
+
+### Columns added to existing tables (CC import)
+
+- **`clients.cc_id` TEXT**, **`proposals.cc_id` TEXT**, **`users.cc_id` TEXT** — partial unique indexes `WHERE cc_id IS NOT NULL` on each. Real CC ids on `clients` / `proposals`; on `users` the value is a stub-format prefix `legacy_cc:<scope>:<id>` for imported bartenders we cannot pay through the modern payouts system. The `cc_id LIKE 'legacy_cc:%'` predicate is the canonical stub check used by `server/utils/payrollGuards.js`.
+- **`proposal_payments.legacy_charge_id` TEXT** — Stripe charge id (`ch_…`) imported from Check Cherry. NEVER pass to Stripe API as `payment_intent:` — it MUST be `charge:`. Native (non-import) rows leave it NULL. Per-proposal partial unique index for re-run dedup; global partial unique index catches a misroute across proposals.
+- **`proposal_payments.payment_method` TEXT** — free-form method label (`card` | `card_external` | `cash` | `check` | `paypal` | `other` | `unknown`). Populated by the importer; nullable on native rows.
+
 ### Cross-Cutting Patterns
 - All tables have `created_at` / `updated_at` with auto-update triggers
 - UUID tokens on `drink_plans`, `proposals`, and `quote_drafts` for public access without auth
@@ -1072,6 +1165,20 @@ payment naturally sets `status='balance_paid'`, which the scheduler never
 claims). Refunds on the rare unstaffable case are manual (Stripe dashboard) by
 deliberate scope choice.
 
+## CC-Import Behavior Changes
+
+The Check Cherry import landed several skip gates and best-effort hooks across the money path, drink-plan scheduling, and reschedule code. They are documented here as a single load-bearing list because each one is invisible-by-design (the data flow looks identical on a normal proposal) and easy to lose on a refactor.
+
+1. **`scheduleDrinkPlanNudge` early-return when no drink plan exists** (`server/utils/drinkPlanNudge.js:215-221`). Before scheduling the email + SMS nudge rows, the helper checks `SELECT 1 FROM drink_plans WHERE proposal_id = $1 LIMIT 1` and returns early if none. CC-imported proposals are created without drink plans; without this guard every `paymentIntent.succeeded` retransmission and every reschedule cascade would re-fan a nudge into the dispatcher. Pre-existing tests now seed a `drink_plans` row before invoking the helper.
+
+2. **`createDrinkPlan` post-insert hook fires `scheduleDrinkPlanNudge` best-effort** (`server/utils/eventCreation.js:77-86`). Whenever a drink plan is created (admin route OR the Stripe deposit webhook flow), the helper is invoked in a try/catch that reports to Sentry on failure. The drink plan persists either way — scheduling is not on the durability boundary. This is the re-enroll path for cc-imported proposals whose drink plan is created post-import.
+
+3. **`accruePayoutsForProposal` skips when any participant is a legacy CC stub** (`server/utils/payrollAccrual.js:71-78`, helper in `server/utils/payrollGuards.js`). Returns `{ skipped: true, reason: 'legacy_cc_stub_participant' }` BEFORE any DB writes — we never want to INSERT into `payouts` referencing a stub user (we cannot pay them through Stripe Connect anyway). The check is per-proposal because the whole event's accrual is structurally atomic. After the operator clears stubs from `/admin/cc-import/review`, the admin can re-fire via `POST /admin/proposals/:id/reaccrue-payout`.
+
+4. **`rollForwardLateTip` + `clawbackTip` skip when the tip target is a legacy CC stub**. Same `{ skipped, reason }` shape, gated by `isLegacyCcStubUser(userId)` from `payrollGuards.js`. A tip paid to a stub never enters the modern payout ledger; the operator deals with it via Stripe dashboard plus a manual `proposal_refunds` row if needed.
+
+5. **`SKIP_REANCHOR_TYPES` in `server/utils/rescheduleProposal.js:15`** — defense-in-depth set of cc-import-injected scheduled-message types that must NOT be re-anchored when an imported proposal's `event_date` moves. Currently `Set(['post_event_wrap_up_email'])`. The wrap-up handler already registers with `offsetFromEventDate: null` (which short-circuits via the `if (!newScheduledFor) continue;` branch in `reanchorPendingMessages`), but the explicit skip set guarantees a future handler-meta change cannot silently start re-anchoring wrap-up rows.
+
 ## Third-Party Integrations
 
 ### Stripe (Payments)
@@ -1111,6 +1218,19 @@ deliberate scope choice.
 - **Messages**: Customer messages stored in `thumbtack_messages`, admin notified via email
 - **Reviews**: Stored in `thumbtack_reviews`, admin notified via email
 - **Custom domain**: `api.drbartender.com` CNAME → Render, so Thumbtack endpoints are permanent regardless of hosting changes
+
+### Cal.com
+
+Self-hostable open-source scheduling platform. drb-os receives Cal.com webhooks for consult bookings.
+
+- **Hosting**: V1 uses Cal.com's hosted SaaS. V2 plan migrates to self-hosted Docker on the always-on office box, sharing the same `CAL_*` env vars (only secret + URL change at cutover). Cal.com's open-source codebase means the webhook payload shape is identical between hosted and self-hosted.
+- **Endpoint**: `POST /api/calcom/webhook`. Mounted at `server/routes/calcom.js`. Bare HTTP semantics (no AppError JSON envelopes) matching the Stripe and Resend webhook patterns.
+- **Signature scheme**: HMAC-SHA256 over the raw body, secret = `CAL_WEBHOOK_SECRET`, header `x-cal-signature-256`. Fails closed: handler returns 503 if secret unset, 400 on missing or invalid signature.
+- **Replay protection**: SHA-256 of the raw signed body recorded in the `webhook_events` table. Same body delivered twice (legitimate Cal.com retry on a 5xx, OR attacker replay) returns 200 'Already processed' without side effects.
+- **Events handled**: `BOOKING_CREATED` (auto-creates a `clients` row if booker email doesn't match an existing client, links to most recent non-terminal proposal if any), `BOOKING_CANCELLED` (defensive upsert), `BOOKING_RESCHEDULED` (in-place update with fallback to fresh-create), `BOOKING_NO_SHOW_UPDATED` (mirrors Cal.com's manual no-show marking). Other event types are logged + 200 OK so Cal.com does not retry.
+- **Side effects**: NO admin SMS or email on any booking event. Cal.com itself owns admin notification (it emails the organizer and syncs the event into the organizer's Google Calendar). drb-os silently files the booking into the `consults` table for status tracking, suppression queries (drink-plan nudge), and audit.
+- **Completion**: the linked consults row flips to `'completed'` when admin submits the existing consult form in `server/routes/drinkPlanConsult.js`. Side effect of the existing user action; no UI change.
+- **Deferred to V2 (when self-hosted)**: writing the drb-os event URL directly into Cal.com's `booking.description` via direct DB access, so the link appears in the organizer's Google Calendar entry. Today admin opens drb-os manually after seeing Cal.com's notification.
 
 ### Cloudflare R2 (File Storage)
 - **Wrapper**: `server/utils/storage.js`
@@ -1187,3 +1307,21 @@ SELECT id, dispute_email_failed_at, amount_cents, shift_id, target_user_id
 ```
 
 For each row, follow the manual recovery runbook in `docs/superpowers/specs/2026-05-25-dispute-email-retry-bailout-design.md`. Before posting any adjustment, search `proposal_activity_log` by `tip_id` to avoid double-paying bartenders (the `Promise.race` timeout in `notifyDisputeWon` aborts the awaiter but does not cancel the in-flight Resend request, so the email may have actually delivered server-side even when the function treated it as a failure).
+
+## Plan-execution review cadence
+
+When executing a multi-batch plan via subagent-driven development, the implementer dispatches specialized review agents at batch checkpoints matched to what each batch actually changed, in addition to the pre-push fleet that always runs all 5 non-UI agents per CLAUDE.md Rule 6. This is the cadence that worked for the cc-import rollout and is the default reference for future multi-batch plans (see project memory `feedback_execution_review_cadence.md`):
+
+| Batch type | Review agent(s) at the batch checkpoint |
+|---|---|
+| Schema migration | `database-review` |
+| Money-path / payroll | `code-review` + `consistency-check` |
+| Dispatcher / scheduler integration | `consistency-check` |
+| Importer foundation library | `code-review` |
+| Phase 3 (proposals/shifts writes) | `database-review` + `consistency-check` |
+| Phase 4 (payments/refunds) | `database-review` + `security-review` + `consistency-check` |
+| Admin pages (12+ endpoints, auth-sensitive) | `security-review` + `code-review` |
+| Dashboard SQL filter helpers | `database-review` |
+| UI affordances + cc_id consumer enumeration | `consistency-check` + `code-review` |
+
+The per-batch checkpoints catch the issues that the broader pre-push fleet would also catch but later in the cycle, and they let each batch land verifiably clean before the next batch is built on top of it. The pre-push fleet remains the gate before the deploying push.

@@ -12,6 +12,7 @@ CLAUDE.md is the **rules doc**. Structural reference (folder tree, route table) 
 - **Payments**: Stripe (server SDK + React Elements)
 - **Email**: Resend
 - **SMS**: Twilio
+- **Booking / scheduling**: Cal.com (webhook integration; self-hosted target for V2)
 - **Venue search**: Google Places API (New) for venue-name autocomplete
 - **Rich Text Editor**: TipTap (ProseMirror-based WYSIWYG) for blog admin
 - **HTML Sanitization**: DOMPurify + jsdom (server-side, for blog post bodies)
@@ -30,9 +31,10 @@ See `.env.example` for the full list. Key ones:
 | `DATABASE_URL` | PostgreSQL connection string |
 | `JWT_SECRET` | Token signing key |
 | `UNSUBSCRIBE_SECRET` | Optional. Separate signing key for unsubscribe/marketing-link JWTs (365-day lifetime). Falls back to `JWT_SECRET` if unset. |
-| `RUN_SCHEDULERS` | Set to `false` on additional web instances to prevent duplicate scheduler runs. Default (unset) runs schedulers — single-instance deploys unaffected. |
+| `RUN_SCHEDULERS` | Schedulers fire only when `NODE_ENV=production` (Render's default). In any other environment they default to OFF, so a local dev server never burns Resend/Twilio allotments by iterating the shared Neon DB. Set `RUN_SCHEDULERS=true` to force-on locally (testing a handler against a scratch row). Set `RUN_SCHEDULERS=false` on a secondary prod instance to prevent duplicate runs. |
 | `RUN_AUTOPAY_SCHEDULER` / `RUN_AUTOCOMPLETE_SCHEDULER` / `RUN_AUTO_ASSIGN_SCHEDULER` / `RUN_SEQUENCE_SCHEDULER` / `RUN_QUOTE_DRAFT_CLEANUP_SCHEDULER` / `RUN_LABRAT_PURGE_SCHEDULER` | Optional. Per-scheduler disable. Set to `false` to disable that specific scheduler. Honored only when `RUN_SCHEDULERS` is not `false` (global flag wins). |
 | `RUN_MESSAGE_DISPATCHER_SCHEDULER` | Optional. Set to `false` to disable the scheduled-message dispatcher (balance reminders, plus future drip / event-week handlers). Defaults on. Honored only when `RUN_SCHEDULERS` is not `false` (global flag wins). |
+| `RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER` | Optional. Set to `false` to disable the hourly `webhook_events` 30-day prune. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `CLIENT_URL` | Admin/staff frontend origin (CORS + admin dashboard links in emails). In prod: `https://admin.drbartender.com` |
 | `PUBLIC_SITE_URL` | Public marketing site origin used in client-facing token URLs (proposal, drink plan, invoice, shopping list). In prod: `https://drbartender.com` |
 | `STAFF_URL` | Staff portal origin in hire-confirmation emails. Optional — defaults to `https://staff.drbartender.com`. |
@@ -50,6 +52,8 @@ See `.env.example` for the full list. Key ones:
 | `ADMIN_EMAIL` | Admin inbox address. Seed-account email, and the default `Reply-To` on every client-facing email sent via `sendEmail`. Set to a monitored inbox in prod so client replies do not bounce. Falls through to no `Reply-To` header when unset. |
 | `ADMIN_PHONE` | Optional. E.164 number for last-minute (<72h) booking SMS alerts. Unset → admin SMS skipped; broad staff blast still fires. |
 | `THUMBTACK_WEBHOOK_SECRET` | Shared secret for Thumbtack webhook auth |
+| `CAL_WEBHOOK_SECRET` | HMAC-SHA256 signing secret for the Cal.com webhook. Fails closed: webhook returns 503 if unset. |
+| `CAL_BOOKING_URL` | Public Cal.com booking page URL. Surfaced in 3 client comms touches (drink-plan nudge email + SMS, six-months-out marketing). Optional; templates omit the consult line when unset. |
 | `GOOGLE_PLACES_API_KEY` | Google Places API (New) key for venue-name search. Server-only. When unset, venue search degrades to a plain text input. |
 | `REACT_APP_API_URL` | Client-side API base URL (set in client/.env.production) |
 | `SENTRY_DSN_SERVER` | Server-side Sentry DSN (optional in dev; required in prod) |

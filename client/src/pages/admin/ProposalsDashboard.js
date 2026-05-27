@@ -9,6 +9,7 @@ import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
 import { fmt$, fmtDate, relDay } from '../../components/adminos/format';
 import ClickableRow from '../../components/ClickableRow';
+import CcImportBadge from '../../components/admin/CcImportBadge';
 
 // Mirrors `proposals_status_check` in server/db/schema.sql. Keep in sync —
 // the constraint allows draft/sent/viewed/modified/accepted/deposit_paid/
@@ -166,6 +167,7 @@ export default function ProposalsDashboard() {
                   <ClickableRow key={p.id} to={`/proposals/${p.id}`}>
                     <td>
                       <strong>{p.client_name || '—'}</strong>
+                      <CcImportBadge ccId={p.proposal_cc_id} />
                       {p.client_email && <div className="sub">{p.client_email}</div>}
                     </td>
                     <td>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</td>

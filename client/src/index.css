@@ -906,6 +906,28 @@ a:hover { color: var(--cream-text); text-decoration: underline; }
 .badge-reviewed { background: #F0EAF8; color: #5C2D91; border: 1px solid #C4A8E0; }
 .badge-approved { background: #E8F5E8; color: #1A6B1A; border: 1px solid #90CC90; }
 .badge-deactivated { background: #F5F5F5; color: #666; border: 1px solid #CCC; }
+.badge-legacy-cc-stub {
+  background: #888;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.75em;
+  margin-left: 0.5em;
+}
+.badge-cc-import {
+  background: #e6f0ff;
+  color: #1a4ba0;
+  border: 1px solid #b8d1f5;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 0.7em;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 0.5em;
+  white-space: nowrap;
+  vertical-align: middle;
+}
 
 /* Progress Bar */
 .progress-track {

@@ -98,6 +98,8 @@ const EmailConversations = lazy(() => import('./pages/admin/EmailConversations')
 const Messages = lazy(() => import('./pages/admin/Messages'));
 const TipsAdmin = lazy(() => import('./pages/admin/TipsAdmin'));
 const LabRatBugsPage = lazy(() => import('./pages/admin/LabRatBugsPage'));
+const CcImportWrapUpPage = lazy(() => import('./pages/admin/CcImportWrapUpPage'));
+const CcImportReviewPage = lazy(() => import('./pages/admin/CcImportReviewPage'));
 const ClassWizard = lazy(() => import('./pages/website/ClassWizard'));
 
 const SuspenseFallback = (
@@ -424,6 +426,10 @@ function AppRoutes() {
         <Route path="/settings" element={<SettingsDashboard />} />
         <Route path="/blog" element={<BlogDashboard />} />
         <Route path="/labrat-bugs" element={<LabRatBugsPage />} />
+        {/* CC-Import admin pages: path retained with `/admin` prefix per plan;
+            ProtectedRoute adminOnly is inherited from the parent <Route>. */}
+        <Route path="/admin/cc-import/wrap-up" element={<CcImportWrapUpPage />} />
+        <Route path="/admin/cc-import/review" element={<CcImportReviewPage />} />
         <Route path="/email-marketing" element={<EmailMarketingDashboard />}>
           <Route index element={<EmailLeadsDashboard />} />
           <Route path="leads" element={<EmailLeadsDashboard />} />

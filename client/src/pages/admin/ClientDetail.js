@@ -11,10 +11,12 @@ import StatusChip from '../../components/adminos/StatusChip';
 import { fmt$, fmt$2dp, fmtDate, fmtDateFull } from '../../components/adminos/format';
 import BackButton from '../../components/adminos/BackButton';
 import ClickableRow from '../../components/ClickableRow';
+import CcImportBadge from '../../components/admin/CcImportBadge';
 
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
   thumbtack: { label: 'Thumbtack', kind: 'info' },
+  calcom:    { label: 'Cal.com',   kind: 'info' },
   referral:  { label: 'Referral',  kind: 'ok' },
   website:   { label: 'Website',   kind: 'accent' },
   instagram: { label: 'Instagram', kind: 'violet' },
@@ -133,6 +135,7 @@ export default function ClientDetail() {
                 {client.name}
               </h1>
               <StatusChip kind={src.kind}>{src.label}</StatusChip>
+              <CcImportBadge ccId={client.cc_id} />
             </div>
             <div className="muted" style={{ fontSize: 13 }}>
               {client.email || '—'}{client.phone ? ` · ${formatPhone(client.phone)}` : ''}

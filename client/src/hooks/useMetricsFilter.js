@@ -36,13 +36,14 @@ export default function useMetricsFilter() {
   const from = params.get('from');
   const to = params.get('to');
   const basis = params.get('basis') || 'booked';
+  const includeCc = params.get('include_cc') || 'all';
 
   // What the consuming page sends to the API.
   const effective = useMemo(() => {
-    if (range === 'all') return { from: null, to: null, basis };  // true all-time
-    if (from && to) return { from, to, basis };
-    return { ...presetRange('last-12'), basis };                   // no params → default
-  }, [range, from, to, basis]);
+    if (range === 'all') return { from: null, to: null, basis, includeCc };  // true all-time
+    if (from && to) return { from, to, basis, includeCc };
+    return { ...presetRange('last-12'), basis, includeCc };                   // no params → default
+  }, [range, from, to, basis, includeCc]);
 
   const write = useCallback((mut) => {
     const p = new URLSearchParams(params);
@@ -75,6 +76,12 @@ export default function useMetricsFilter() {
     write((p) => p.set('basis', b));
   }, [write]);
 
+  const setIncludeCc = useCallback((v) => {
+    write((p) => {
+      if (v === 'all' || !v) p.delete('include_cc'); else p.set('include_cc', v);
+    });
+  }, [write]);
+
   // Which dropdown option is active.
   const activePreset = useMemo(() => {
     if (range === 'all') return 'all';
@@ -87,5 +94,5 @@ export default function useMetricsFilter() {
     return 'custom';                                    // shared link, off-preset dates
   }, [range, from, to]);
 
-  return { ...effective, rawFrom: from, rawTo: to, activePreset, setPreset, setCustom, setBasis };
+  return { ...effective, rawFrom: from, rawTo: to, activePreset, setPreset, setCustom, setBasis, setIncludeCc };
 }

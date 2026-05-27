@@ -33,7 +33,7 @@ router.get('/users', auth, adminOnly, asyncHandler(async (req, res) => {
   const [usersResult, countResult] = await Promise.all([
     pool.query(`
       SELECT
-        u.id, u.email, u.role, u.onboarding_status, u.notifications_opt_in, u.created_at, u.updated_at,
+        u.id, u.email, u.role, u.onboarding_status, u.notifications_opt_in, u.created_at, u.updated_at, u.cc_id,
         op.account_created, op.welcome_viewed, op.field_guide_completed, op.agreement_completed,
         op.contractor_profile_completed, op.payday_protocols_completed, op.onboarding_completed,
         op.last_completed_step, op.updated_at as progress_updated_at,
@@ -65,7 +65,7 @@ router.get('/users/:id', auth, adminOnly, asyncHandler(async (req, res) => {
   const userId = req.params.id;
 
   const [userRes, progressRes, profileRes, agreementRes, paymentRes, appRes] = await Promise.all([
-    pool.query('SELECT id, email, role, onboarding_status, notifications_opt_in, can_hire, can_staff, created_at, updated_at FROM users WHERE id = $1', [userId]),
+    pool.query('SELECT id, email, role, onboarding_status, notifications_opt_in, can_hire, can_staff, created_at, updated_at, cc_id FROM users WHERE id = $1', [userId]),
     pool.query('SELECT * FROM onboarding_progress WHERE user_id = $1', [userId]),
     pool.query('SELECT * FROM contractor_profiles WHERE user_id = $1', [userId]),
     pool.query('SELECT * FROM agreements WHERE user_id = $1', [userId]),
@@ -416,10 +416,20 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
   const offset = (page - 1) * limit;
 
+  // Legacy CC stub users (cc_id LIKE 'legacy_cc:%') are seeded with
+  // onboarding_status='deactivated' so they're invisible to the default
+  // staff roster. The opt-in `?include_stubs=true` widens the filter so the
+  // StaffDashboard can render them with a visual badge. Default behavior
+  // is preserved for every other caller.
+  const includeStubs = req.query.include_stubs === 'true';
+  const statusList = includeStubs
+    ? `'approved', 'reviewed', 'submitted', 'deactivated'`
+    : `'approved', 'reviewed', 'submitted'`;
+
   const [staffResult, countResult] = await Promise.all([
     pool.query(`
       SELECT
-        u.id, u.email, u.role, u.onboarding_status, u.created_at,
+        u.id, u.email, u.role, u.onboarding_status, u.created_at, u.cc_id,
         cp.preferred_name, cp.phone, cp.city, cp.state,
         cp.travel_distance, cp.reliable_transportation,
         cp.equipment_portable_bar, cp.equipment_cooler, cp.equipment_table_with_spandex,
@@ -431,7 +441,7 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
       LEFT JOIN applications a ON a.user_id = u.id
       LEFT JOIN agreements ag ON ag.user_id = u.id
       WHERE u.role IN ('staff', 'manager')
-        AND u.onboarding_status IN ('approved', 'reviewed', 'submitted')
+        AND u.onboarding_status IN (${statusList})
         AND op.onboarding_completed = true
       ORDER BY COALESCE(cp.preferred_name, u.email) ASC
       LIMIT $1 OFFSET $2
@@ -440,17 +450,63 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
       SELECT COUNT(*) FROM users u
       JOIN onboarding_progress op ON op.user_id = u.id
       WHERE u.role IN ('staff', 'manager')
-        AND u.onboarding_status IN ('approved', 'reviewed', 'submitted')
+        AND u.onboarding_status IN (${statusList})
         AND op.onboarding_completed = true
     `)
   ]);
 
+  // Defense-in-depth: redact stub email for non-admin callers. Mirrors the
+  // same pattern in /admin/cc-import/search/users (Batch 9). The `.local`
+  // stub email is contractor-identity-derived and should not surface to
+  // managers, even though the badge is intentionally visible to them.
+  const rows = staffResult.rows;
+  if (req.user.role !== 'admin') {
+    for (const r of rows) {
+      if (typeof r.cc_id === 'string' && r.cc_id.startsWith('legacy_cc:')) {
+        r.email = '(redacted)';
+      }
+    }
+  }
+
   res.json({
-    staff: staffResult.rows,
+    staff: rows,
     total: parseInt(countResult.rows[0].count),
     page,
     pages: Math.ceil(parseInt(countResult.rows[0].count) / limit),
   });
+}));
+
+// ─── cc-import re-trigger affordances (Task 22) ──────────────────
+//
+// Returns the proposal ids on which this user is an approved participant AND
+// at least one OTHER participant is a legacy CC stub (cc_id LIKE 'legacy_cc:%').
+// The admin UI uses this to decide whether to show the "Re-accrue payouts"
+// affordance: if non-empty, the operator can re-run payroll accrual against
+// each listed proposal after the stub has been linked / removed.
+//
+// Spec reference: docs/superpowers/specs/2026-05-25-checkcherry-import-design.md §9.3.E.
+router.get('/users/:id/stub-co-participated-proposals', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) throw new ValidationError(undefined, 'id must be an integer');
+
+  const userCheck = await pool.query(`SELECT id FROM users WHERE id = $1`, [id]);
+  if (userCheck.rowCount === 0) throw new NotFoundError('user not found');
+
+  const { rows } = await pool.query(`
+    SELECT DISTINCT s.proposal_id
+      FROM shift_requests sr
+      JOIN shifts s ON s.id = sr.shift_id
+     WHERE sr.user_id = $1 AND sr.status = 'approved'
+       AND EXISTS (
+         SELECT 1
+           FROM shift_requests sr2
+           JOIN shifts s2 ON s2.id = sr2.shift_id
+           JOIN users u ON u.id = sr2.user_id
+          WHERE s2.proposal_id = s.proposal_id
+            AND u.cc_id LIKE 'legacy_cc:%'
+       )
+  `, [id]);
+  res.json({ proposal_ids: rows.map(r => r.proposal_id) });
 }));
 
 // ─── Seniority Management ────────────────────────────────────────

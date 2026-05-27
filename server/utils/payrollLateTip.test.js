@@ -140,6 +140,43 @@ test('rollForwardLateTip > a second call is idempotent', async () => {
   assert.equal(rows[0].c, 2);  // exactly two rows, not four.
 });
 
+test('rollForwardLateTip > skips and returns structured shape when target is a legacy CC stub', async () => {
+  // cc-import: tips paid to a legacy_cc:* stub bartender must NOT roll forward
+  // into modern payouts. Setup a fresh stub user + tip pointed at the stub.
+  const stub = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('late-tip-stub@example.com','x','staff','legacy_cc:test:late-tip')
+     RETURNING id`
+  );
+  const stubId = stub.rows[0].id;
+  const stubTip = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id)
+     VALUES (gen_random_uuid(), $1, 3000, 96, 'pi_stub_late_tip', '2026-05-15 23:30:00+00', $2)
+     RETURNING id`,
+    [stubId, frozenShiftId]
+  );
+  const stubTipId = stubTip.rows[0].id;
+  try {
+    const result = await rollForwardLateTip(stubTipId);
+    assert.deepStrictEqual(result, { skipped: true, reason: 'legacy_cc_stub_target' });
+    // Guard MUST fire before any DB writes: no payout_events for this stub tip,
+    // and rolled_forward_at stays NULL (idempotent retry remains possible if
+    // the user is ever de-stubbed).
+    const noPayout = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payout_events WHERE payout_id IN
+         (SELECT id FROM payouts WHERE contractor_id = $1)`,
+      [stubId]
+    );
+    assert.strictEqual(noPayout.rows[0].c, 0);
+    const tip = await pool.query('SELECT rolled_forward_at FROM tips WHERE id = $1', [stubTipId]);
+    assert.strictEqual(tip.rows[0].rolled_forward_at, null);
+  } finally {
+    await pool.query('DELETE FROM tips WHERE id = $1', [stubTipId]);
+    await pool.query('DELETE FROM users WHERE id = $1', [stubId]);
+  }
+});
+
 test('rollForwardLateTip > a second LATE tip for the same shift aggregates into the same rows', async () => {
   await rollForwardLateTip(tipId);
   // A second tip — same shift, fresh.

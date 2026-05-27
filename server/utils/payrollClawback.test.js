@@ -2,7 +2,7 @@ require('dotenv').config();
 const { test, before, beforeEach, afterEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
-const { clawbackTip } = require('./payrollClawback');
+const { clawbackTip, clawbackTipByPaymentIntent } = require('./payrollClawback');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('payrollClawback.test.js refuses to run against production');
@@ -137,4 +137,77 @@ test('clawbackTip > a webhook replay with the same cumulative amount is a no-op'
   await clawbackTip(tipId, 4000);
   const replay = await clawbackTip(tipId, 4000);
   assert.equal(replay.delta, 0);
+});
+
+test('clawbackTip > skips and returns structured shape when target is a legacy CC stub', async () => {
+  // cc-import: clawbacks on tips paid TO a stub bartender must NOT mutate
+  // modern payouts. Setup a fresh stub user + tip pointed at the stub.
+  const stub = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('claw-stub@example.com','x','staff','legacy_cc:test:clawback')
+     RETURNING id`
+  );
+  const stubId = stub.rows[0].id;
+  const stubTip = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id, refunded_amount_cents)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_claw_stub', '2026-05-15 23:30:00+00', $2, 0)
+     RETURNING id`,
+    [stubId, paidShiftId]
+  );
+  const stubTipId = stubTip.rows[0].id;
+  try {
+    const result = await clawbackTip(stubTipId, 2500);
+    assert.deepStrictEqual(result, { skipped: true, reason: 'legacy_cc_stub_target' });
+    // Guard MUST fire before any DB writes: tips.refunded_amount_cents stays
+    // at 0 (so a retry after de-stubbing is still possible), and no payout_events
+    // were created for the stub user.
+    const tipAfter = await pool.query('SELECT refunded_amount_cents FROM tips WHERE id = $1', [stubTipId]);
+    assert.strictEqual(Number(tipAfter.rows[0].refunded_amount_cents), 0);
+    const noPayout = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payout_events WHERE payout_id IN
+         (SELECT id FROM payouts WHERE contractor_id = $1)`,
+      [stubId]
+    );
+    assert.strictEqual(noPayout.rows[0].c, 0);
+  } finally {
+    await pool.query('DELETE FROM tips WHERE id = $1', [stubTipId]);
+    await pool.query('DELETE FROM users WHERE id = $1', [stubId]);
+  }
+});
+
+test('clawbackTipByPaymentIntent > inherits the legacy-stub skip from clawbackTip', async () => {
+  // The webhook entry point looks up the tip by stripe_payment_intent_id and
+  // calls clawbackTip; the same guard fires there. We don't assert the return
+  // value (the webhook helper swallows the inner return), but we DO assert no
+  // payout_events were written and refunded_amount_cents stayed at 0.
+  const stub = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('claw-stub-pi@example.com','x','staff','legacy_cc:test:claw-pi')
+     RETURNING id`
+  );
+  const stubId = stub.rows[0].id;
+  const piId = 'pi_claw_stub_pi_test';
+  const stubTip = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id, refunded_amount_cents)
+     VALUES (gen_random_uuid(), $1, 4000, 128, $2, '2026-05-15 23:30:00+00', $3, 0)
+     RETURNING id`,
+    [stubId, piId, paidShiftId]
+  );
+  const stubTipId = stubTip.rows[0].id;
+  try {
+    await clawbackTipByPaymentIntent(piId, 2500);
+    const tipAfter = await pool.query('SELECT refunded_amount_cents FROM tips WHERE id = $1', [stubTipId]);
+    assert.strictEqual(Number(tipAfter.rows[0].refunded_amount_cents), 0);
+    const noPayout = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payout_events WHERE payout_id IN
+         (SELECT id FROM payouts WHERE contractor_id = $1)`,
+      [stubId]
+    );
+    assert.strictEqual(noPayout.rows[0].c, 0);
+  } finally {
+    await pool.query('DELETE FROM tips WHERE id = $1', [stubTipId]);
+    await pool.query('DELETE FROM users WHERE id = $1', [stubId]);
+  }
 });

@@ -6,9 +6,10 @@ const PRESETS = [
   ['last-12', 'Last 12 months'], ['all', 'All time'], ['custom', 'Custom'],
 ];
 const LENSES = [['booked', 'Booked'], ['scheduled', 'Scheduled'], ['paid', 'Paid']];
+const SOURCES = [['all', 'All'], ['exclude', 'Native only'], ['only', 'CC only']];
 
 export default function MetricsFilterBar({ filter }) {
-  const { basis, rawFrom, rawTo, activePreset, setPreset, setCustom, setBasis } = filter;
+  const { basis, includeCc, rawFrom, rawTo, activePreset, setPreset, setCustom, setBasis, setIncludeCc } = filter;
   const isCustom = activePreset === 'custom';
 
   return (
@@ -30,7 +31,16 @@ export default function MetricsFilterBar({ filter }) {
         </>
       )}
 
-      <div className="metrics-seg" role="group" aria-label="Money lens" style={{ marginLeft: 'auto' }}>
+      <div className="metrics-seg" role="group" aria-label="Source filter" style={{ marginLeft: 'auto' }}>
+        {SOURCES.map(([v, l]) => (
+          <button key={v} type="button"
+            className={`metrics-seg-btn${includeCc === v ? ' is-active' : ''}`}
+            aria-pressed={includeCc === v}
+            onClick={() => setIncludeCc(v)}>{l}</button>
+        ))}
+      </div>
+
+      <div className="metrics-seg" role="group" aria-label="Money lens">
         {LENSES.map(([v, l]) => (
           <button key={v} type="button"
             className={`metrics-seg-btn${basis === v ? ' is-active' : ''}`}

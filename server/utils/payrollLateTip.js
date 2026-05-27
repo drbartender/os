@@ -15,6 +15,7 @@ const { pool } = require('../db');
 const { findOpenPeriodForDate } = require('./payrollProcessing');
 const { payPeriodForDate, computePayday } = require('./payrollPeriods');
 const { splitEvenly } = require('./payrollMath');
+const { isLegacyCcStubUser } = require('./payrollGuards');
 
 async function rollForwardLateTip(tipId) {
   const client = await pool.connect();
@@ -23,7 +24,7 @@ async function rollForwardLateTip(tipId) {
 
     // Lock the tip and check idempotency + preconditions.
     const tipRes = await client.query(
-      `SELECT id, shift_id, amount_cents, fee_cents, rolled_forward_at
+      `SELECT id, shift_id, amount_cents, fee_cents, rolled_forward_at, target_user_id
          FROM tips WHERE id = $1 FOR UPDATE`,
       [tipId]
     );
@@ -31,6 +32,20 @@ async function rollForwardLateTip(tipId) {
     if (!tip || !tip.shift_id || tip.rolled_forward_at) {
       await client.query('ROLLBACK');
       return null;
+    }
+    // cc-import: tips paid TO a legacy_cc:* stub bartender never roll forward
+    // into modern payouts (we cannot pay stubs through Stripe Connect). Fires
+    // BEFORE any DB writes — leaves rolled_forward_at NULL so a re-run after
+    // a future de-stub can pick up the tip. Reuses the same transaction client
+    // so the read happens against the locked row.
+    if (await isLegacyCcStubUser(tip.target_user_id, client)) {
+      Sentry.captureMessage('rollForwardLateTip: target is legacy_cc stub; skipping', {
+        level: 'info',
+        tags: { util: 'payrollLateTip', step: 'skip_legacy_cc_stub' },
+        extra: { tipId, targetUserId: tip.target_user_id },
+      });
+      await client.query('ROLLBACK');
+      return { skipped: true, reason: 'legacy_cc_stub_target' };
     }
 
     // Bartenders on the original shift.

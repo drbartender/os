@@ -12,7 +12,7 @@ router.use(clientAuth);
 // GET /api/client-portal/proposals — list client's proposals
 router.get('/proposals', asyncHandler(async (req, res) => {
   const result = await pool.query(`
-    SELECT p.id, p.token, p.event_type, p.event_type_custom, p.event_date, p.status, p.total_price, p.amount_paid, p.created_at, c.name AS client_name
+    SELECT p.id, p.token, p.event_type, p.event_type_custom, p.event_date, p.status, p.total_price, p.amount_paid, p.created_at, p.cc_id AS proposal_cc_id, c.name AS client_name, c.cc_id AS client_cc_id
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
     WHERE p.client_id = $1
@@ -38,9 +38,11 @@ router.get('/proposals/:token', asyncHandler(async (req, res) => {
       p.client_signed_name, p.client_signed_at, p.client_signature_method,
       p.client_signature_document_version, p.client_signature_data,
       p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
+      p.cc_id AS proposal_cc_id,
       sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
       sp.includes AS package_includes,
-      c.name AS client_name, c.email AS client_email, c.phone AS client_phone
+      c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
+      c.cc_id AS client_cc_id
     FROM proposals p
     LEFT JOIN service_packages sp ON sp.id = p.package_id
     LEFT JOIN clients c ON c.id = p.client_id

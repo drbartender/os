@@ -1,6 +1,8 @@
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { composeVenueLocation } = require('./venueAddress');
 const { effectiveSetupMinutes } = require('./setupTime');
+const { scheduleDrinkPlanNudge } = require('./drinkPlanNudge');
 
 /**
  * Convert a 24-hour time string (e.g. "17:00") and add hours to produce a new time string.
@@ -68,6 +70,20 @@ async function createDrinkPlan(proposalId, proposal, { skipEmail = false } = {})
   // orientation email (signedAndPaidClient) now carries the Potion Planner link,
   // so a separate drinkPlanLink send would duplicate it. The drink_plans row
   // itself still has to exist here — the orientation payload reads its token.
+
+  // CC-import: enroll the drink-plan nudge (T-21 email + SMS) right after the
+  // plan row is inserted. Hook fires only when this call actually inserted a row
+  // — the idempotent skip path returns null at the top of the function and
+  // never reaches here. Non-blocking: a scheduling failure must not roll back
+  // the plan. See specs/2026-05-25-checkcherry-import-design.md §9.3.D.
+  try {
+    await scheduleDrinkPlanNudge(proposalId, pool);
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { hook: 'createDrinkPlan_postinsert', proposalId },
+    });
+  }
+
   return drinkPlan;
 }
 

@@ -20,6 +20,15 @@
     "worktree:new": "node scripts/worktree-new.js",
     "worktree:rm": "node scripts/worktree-rm.js",
     "where": "node scripts/show-location.js",
+    "cc-import": "node scripts/cc-import.js",
+    "cc-import:phase0": "node scripts/cc-import.js --phase=0",
+    "cc-import:phase1": "node scripts/cc-import.js --phase=1",
+    "cc-import:phase2": "node scripts/cc-import.js --phase=2",
+    "cc-import:phase3": "node scripts/cc-import.js --phase=3",
+    "cc-import:phase4": "node scripts/cc-import.js --phase=4",
+    "cc-import:phase5": "node scripts/cc-import.js --phase=5",
+    "cc-import:phase6": "node scripts/cc-import.js --phase=6",
+    "cc-import:all": "node scripts/cc-import.js --all",
     "prepare": "husky"
   },
   "dependencies": {
@@ -29,6 +38,7 @@
     "bcryptjs": "2.4.3",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
+    "csv-parse": "^6.2.1",
     "dompurify": "3.4.0",
     "dotenv": "^16.3.1",
     "express": "4.22.1",

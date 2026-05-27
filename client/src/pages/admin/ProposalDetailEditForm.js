@@ -15,6 +15,7 @@ import { AddonQtyStepper, clampAddonQty } from '../../components/AddonControls';
 import { PACKAGE_EXCLUDED_ADDONS } from '../../data/addonCategories';
 import { isQuantityCapable } from '../../utils/proposalRules';
 import { formatSetupTime } from '../../utils/setupTime';
+import CcImportBadge from '../../components/admin/CcImportBadge';
 
 // Self-contained edit form for ProposalDetail. Owns:
 //  - editForm state, dirty tracking, leave-confirm modal, beforeunload guard
@@ -252,6 +253,7 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
     <div className="card">
       <div className="card-head">
         <h3>Edit proposal</h3>
+        <CcImportBadge ccId={proposal?.cc_id} />
         <span className="k">Internal</span>
       </div>
       <div className="card-body">

@@ -60,6 +60,19 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
   process.exit(1);
 }
 
+// Cal.com webhook secret presence check. Emits a one-shot warning so the
+// missed-config alarm fires even when no Cal.com traffic hits the endpoint.
+if (!process.env.CAL_WEBHOOK_SECRET) {
+  const msg = 'CAL_WEBHOOK_SECRET is not set; Cal.com webhook will return 503 on every request';
+  console.warn(`[startup] ${msg}`);
+  try {
+    const Sentry = require('@sentry/node');
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureMessage(msg, { level: 'warning', tags: { component: 'startup', subsystem: 'calcom' } });
+    }
+  } catch (_) { /* sentry optional in dev */ }
+}
+
 const app = express();
 app.set('trust proxy', 1); // Required for Render/Heroku reverse proxies (rate limiter, IP detection)
 const PORT = process.env.PORT || 5000;
@@ -131,6 +144,9 @@ app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 // Resend webhook needs raw body for svix signature verification — also BEFORE express.json()
 app.use('/api/email-marketing/webhook/resend', express.raw({ type: 'application/json' }));
 
+// Cal.com webhook needs raw body for HMAC-SHA256 signature verification, also BEFORE express.json()
+app.use('/api/calcom/webhook', express.raw({ type: 'application/json', limit: '256kb' }));
+
 // Blog admin can post TipTap-inlined images that approach 10MB; scope the big
 // limit to the blog route only. Everything else uses the 1MB default.
 app.use('/api/blog', express.json({ limit: '10mb' }));
@@ -183,6 +199,7 @@ app.use('/api/messages', require('./routes/messages'));
 app.use('/api/stripe', require('./routes/stripe'));
 app.use('/api/calendar', require('./routes/calendar'));
 app.use('/api/blog', require('./routes/blog'));
+app.use('/api/calcom', require('./routes/calcom'));
 app.use('/api/client-auth', require('./routes/clientAuth'));
 app.use('/api/client-portal', require('./routes/clientPortal'));
 app.use('/api/email-marketing', require('./routes/emailMarketing'));
@@ -246,11 +263,17 @@ async function start() {
     app.listen(PORT, () => {
       console.log(`✓ Server running on port ${PORT}`);
 
-      // Schedulers run by default on the single primary instance. Set RUN_SCHEDULERS=false
-      // on additional web instances to disable ALL schedulers, or use the per-scheduler
-      // env vars (RUN_<SCHEDULER>_SCHEDULER=false) to disable individual ones.
-
-      const globalScheduleDisabled = process.env.RUN_SCHEDULERS === 'false';
+      // Schedulers fire only when NODE_ENV=production. They send real emails
+      // (Resend) and SMS (Twilio) against the shared Neon DB; if a dev server
+      // also runs them, it iterates the same scheduled_messages rows as prod
+      // and burns through provider allotments. Local opt-in: RUN_SCHEDULERS=true
+      // (e.g. testing one handler against a scratch row). Multi-instance prod:
+      // RUN_SCHEDULERS=false on a secondary web instance to prevent duplicate
+      // runs (single-instance prod keeps the default).
+      const isProd = process.env.NODE_ENV === 'production';
+      const globalScheduleDisabled =
+        process.env.RUN_SCHEDULERS === 'false' ||
+        (!isProd && process.env.RUN_SCHEDULERS !== 'true');
       function enabled(envVar) {
         if (globalScheduleDisabled) return false;
         return process.env[envVar] !== 'false';
@@ -316,6 +339,19 @@ async function start() {
         clearHealthRow('labrat_purge');
       }
 
+      // Webhook events prune — drop webhook_events rows older than 30 days
+      if (enabled('RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER')) {
+        const { pruneOldWebhookEvents } = require('./utils/webhookEventsPruneScheduler');
+        const wrapped = wrapScheduler('webhook_events_prune', 3600, async () => {
+          const n = await pruneOldWebhookEvents();
+          if (n > 0) console.log(`[webhook_events_prune] deleted ${n} expired rows`);
+        });
+        setTimeout(wrapped, 30000);
+        setInterval(wrapped, 60 * 60 * 1000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('webhook_events_prune');
+      }
+
       // Pre-event reminder handlers (event_week_reminder, long_lead_t30_recap).
       // Must register before the dispatcher's first tick so it can resolve them.
       require('./utils/preEventHandlers').registerAll();
@@ -337,6 +373,11 @@ async function start() {
       // tick so it can resolve these staff message types.
       require('./utils/staffShiftHandlers').registerStaffShiftHandlers();
 
+      // cc-import: post-event wrap-up email handler (admin-triggered bulk send
+      // for imported Check Cherry events). Synchronous; must run before the
+      // dispatcher's first tick so it can resolve post_event_wrap_up_email rows.
+      require('./utils/ccWrapUpHandler').registerCcWrapUpHandler();
+
       // Scheduled-messages dispatcher — every 5 min, picks up pending rows
       if (enabled('RUN_MESSAGE_DISPATCHER_SCHEDULER')) {
         const wrapped = wrapScheduler('message_dispatcher', 300, dispatchPending);
@@ -350,8 +391,13 @@ async function start() {
       if (!globalScheduleDisabled) {
         startStaleSchedulerMonitor();
         console.log('[schedulers] started with per-scheduler controls');
-      } else {
+      } else if (process.env.RUN_SCHEDULERS === 'false') {
         console.log('[schedulers] disabled via RUN_SCHEDULERS=false');
+      } else {
+        console.log(
+          `[schedulers] disabled: NODE_ENV='${process.env.NODE_ENV || ''}' is not 'production'. ` +
+          `Set RUN_SCHEDULERS=true to fire them locally.`
+        );
       }
     });
   } catch (err) {

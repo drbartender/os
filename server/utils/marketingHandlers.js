@@ -461,7 +461,7 @@ function registerMarketingHandlers() {
     handler('six_months_out', (p) => tpl.sixMonthsOutClient({
       ...makeMarketingTemplateContext(p),
       potionPlannerUrl: `${PUBLIC_SITE_URL}/plan/${p.token}`,
-      consultUrl: null, // wired to Cal.com once the integration plan lands
+      consultUrl: process.env.CAL_BOOKING_URL || null,
     })),
     { offsetFromEventDate: -6 * MONTH_SECONDS, anchor: 'event_date', category: 'marketing', priority: 5 }
   );

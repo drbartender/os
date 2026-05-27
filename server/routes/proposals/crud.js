@@ -1,7 +1,7 @@
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
-const { auth, requireAdminOrManager } = require('../../middleware/auth');
+const { auth, requireAdminOrManager, adminOnly } = require('../../middleware/auth');
 const { calculateProposal } = require('../../utils/pricingEngine');
 const { createEventShifts, syncShiftsFromProposal } = require('../../utils/eventCreation');
 const { composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
@@ -56,8 +56,9 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
            p.num_bartenders, p.package_id, p.status, p.total_price, p.amount_paid,
            p.deposit_amount, p.balance_due_date, p.payment_type, p.autopay_enrolled,
            p.sent_at, p.accepted_at, p.client_signed_at, p.last_viewed_at,
-           p.created_at, p.updated_at,
+           p.created_at, p.updated_at, p.cc_id AS proposal_cc_id,
            c.name AS client_name, c.email AS client_email, c.phone AS client_phone,
+           c.cc_id AS client_cc_id,
            sp.name AS package_name, sp.slug AS package_slug
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
@@ -327,7 +328,7 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
         const enriched = await pool.query(
           `SELECT p.*, c.id AS client_id, c.name AS client_name, c.email AS client_email,
                   c.phone AS client_phone, c.communication_preferences,
-                  c.email_status, c.phone_status
+                  c.email_status, c.phone_status, c.cc_id AS client_cc_id
              FROM proposals p LEFT JOIN clients c ON c.id = p.client_id
             WHERE p.id = $1`, [proposal.id]);
         if (enriched.rows[0]) {
@@ -364,8 +365,9 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
 router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone, c.source AS client_source,
+           c.cc_id AS client_cc_id,
            sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category, sp.includes AS package_includes,
-           u.email AS created_by_email
+           u.email AS created_by_email, u.cc_id AS user_cc_id
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
     LEFT JOIN service_packages sp ON sp.id = p.package_id
@@ -400,6 +402,25 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     addons: addons.rows,
     activity: activity.rows,
   });
+}));
+
+/** GET /api/proposals/:id/legacy-cc-payments — admin-only fetch of
+ *  Check-Cherry-imported payment rows for this proposal (those with a
+ *  non-null `legacy_charge_id`, i.e. a Stripe charge ID like `ch_...`).
+ *  Drives the LegacyCcPaymentsPanel which warns the operator that the
+ *  built-in Refund button cannot reach these payments and a manual
+ *  Stripe-dashboard refund is required (spec §11). */
+router.get('/:id/legacy-cc-payments', auth, adminOnly, asyncHandler(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) throw new ValidationError(undefined, 'id must be an integer');
+  const { rows } = await pool.query(
+    `SELECT id, amount, payment_method, legacy_charge_id, created_at
+       FROM proposal_payments
+      WHERE proposal_id = $1 AND legacy_charge_id IS NOT NULL
+      ORDER BY created_at ASC`,
+    [id]
+  );
+  res.json({ payments: rows });
 }));
 
 /** PATCH /api/proposals/:id — update event details and recalculate */
