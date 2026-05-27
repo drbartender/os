@@ -81,9 +81,9 @@ Time-to-event drives mode. Boundaries are computed in hours, not day-rounded:
 
 ### 3.8 Calendar sync
 
-- The existing ICS feed at `GET /api/calendar/feed/:token` (`server/routes/calendar.js:286`) is the one we extend; no new feed route. The feed already serves the staffer's confirmed shifts as VEVENT entries. This spec adds all-day VEVENT reminders 3 days before any unconfirmed BEO. Past shifts roll off after 30 days. Feed refreshes every 15 minutes (existing `Cache-Control: private, max-age=900` header on the route).
+- The existing ICS feed at `GET /api/calendar/feed/:token` (`server/routes/calendar.js:287`) is the one we extend; no new feed route. The feed already serves the staffer's confirmed shifts as VEVENT entries. This spec adds all-day VEVENT reminders 3 days before any unconfirmed BEO. Feed refresh interval is the existing `Cache-Control: private, max-age=300` (5 min) header. Past-shift roll-off after 30 days is NEW behavior (the existing feed has only a forward `+ 365 days` window at `calendar.js:307,319`); this spec adds the backward 30-day cutoff at the same time.
 - Account / Calendar sync section shows three one-tap subscribe buttons (Google Calendar, Apple Calendar, Outlook) deep-linking to the calendar app with the feed URL pre-loaded, plus the raw URL with a Copy button, plus a last-sync status block (which calendar app, how long ago, event count).
-- The token is the existing `users.calendar_token UUID UNIQUE DEFAULT gen_random_uuid()` (separate from the tip-page token, which lives on `payment_profiles.tip_page_token` and is only assigned when the staffer activates tipping). Rotation via the existing `POST /api/calendar/regenerate-token` route.
+- The token is the existing `users.calendar_token UUID UNIQUE DEFAULT gen_random_uuid()` (separate from the tip-page token, which lives on `payment_profiles.tip_page_token` and is only assigned when the staffer activates tipping). Rotation via the existing `POST /api/calendar/token/regenerate` route.
 
 ## 4. Non-goals
 
@@ -121,7 +121,7 @@ What is actually in the codebase as of this branch (verified against `server/db/
 
 **Contractor profile data** lives on `contractor_profiles`: `preferred_name`, `phone`, `email`, `birth_month/day/year`, `city`, `state`, `street_address`, `zip_code`, `emergency_contact_name` + `_phone` + `_relationship`, `alcohol_certification_file_url` + `_filename`, `resume_file_url` + `_filename`, `headshot_file_url` + `_filename`, equipment booleans, `travel_distance`, `reliable_transportation`. Mailing address is a composite of four columns (`street_address`, `city`, `state`, `zip_code`); the staff-portal Profile UI renders one address field but the backend reads/writes all four.
 
-**Staff payment data** lives on `payment_profiles` (one row per user, NOT on `contractor_profiles`). Existing columns: `preferred_payment_method TEXT` (values like `'venmo'`, `'cashapp'`, `'paypal'`, `'direct_deposit'`, `'check'`), `payment_username TEXT`, `routing_number VARCHAR(255)`, `account_number VARCHAR(255)` (both store AES-256-GCM ciphertext via `server/utils/encryption.js`; the ALTER COLUMN TYPE widening from TEXT lives near schema line 1990), `w9_file_url VARCHAR(500)`, `w9_filename VARCHAR(255)`, `venmo_handle TEXT`, `cashapp_handle TEXT`, `paypal_url TEXT`, `tip_page_token UUID` (nullable), `tip_page_active BOOLEAN DEFAULT TRUE`, `stripe_payment_link_url TEXT`, `stripe_payment_link_id TEXT`. The W-9 file lives on `payment_profiles`, NOT `contractor_profiles`. This spec adds one column (`zelle_handle TEXT`) and reuses everything else, no new payment-methods table.
+**Staff payment data** lives on `payment_profiles` (one row per user, NOT on `contractor_profiles`). Existing columns: `preferred_payment_method TEXT` (values like `'venmo'`, `'cashapp'`, `'paypal'`, `'direct_deposit'`, `'check'`), `payment_username VARCHAR(255)`, `routing_number VARCHAR(255)`, `account_number VARCHAR(255)` (both store AES-256-GCM ciphertext via `server/utils/encryption.js`; columns were originally `VARCHAR(20)` / `VARCHAR(30)` and widened to `VARCHAR(255)` near schema line 1992 when encryption shipped), `w9_file_url VARCHAR(500)`, `w9_filename VARCHAR(255)`, `venmo_handle TEXT`, `cashapp_handle TEXT`, `paypal_url TEXT`, `tip_page_token UUID` (nullable), `tip_page_active BOOLEAN DEFAULT TRUE`, `stripe_payment_link_url TEXT`, `stripe_payment_link_id TEXT`. The W-9 file lives on `payment_profiles`, NOT `contractor_profiles`. This spec adds one column (`zelle_handle TEXT`) and reuses everything else, no new payment-methods table.
 
 **Legal name** lives on `applications.full_name` (NOT NULL) and on `agreements.full_name` (the signed contractor agreement). It is NOT on `contractor_profiles` or `users`. Reading requires a LEFT JOIN through `applications`.
 
@@ -141,7 +141,7 @@ What is actually in the codebase as of this branch (verified against `server/db/
 
 ### 5.6 Existing comms infrastructure
 
-`scheduled_messages` dispatcher with `checkSuppression` (cascades on `proposals.status='archived'` etc.), `registerHandler({ offsetFromEventDate, anchor, category, priority })`, the `urgent_staffing` admin-notification category (already wired to email + SMS), `sendAndLogSms`, `notifyAdminCategory`. Phase 4a staff SMS handlers (shift_reminder, staff_thank_you, shift_unassignment_notice, etc.) already exist. The new Cover-Needed broadcasts ride this infrastructure.
+`scheduled_messages` dispatcher with `checkSuppression` (cascades on `proposals.status='archived'` etc.), `registerHandler(messageType, handlerFn, options)` at `server/utils/scheduledMessageDispatcher.js:47` (note: `options.category` is the CAN-SPAM classifier `'operational' | 'marketing'`, NOT a granular topic, the new 8-topic staff routing layers ON TOP via the new `notificationChannelResolver`, not via `registerHandler`'s `category` field), the `urgent_staffing` admin-notification category (already wired to email + SMS), `sendAndLogSms`, `notifyAdminCategory`. Phase 4a staff SMS handlers (shift_reminder, staff_thank_you, shift_unassignment_notice, etc.) already exist. The new Cover-Needed broadcasts ride this infrastructure.
 
 **Patterns the cc-import + Touch 2.2 merges exposed that this spec follows:**
 
@@ -162,7 +162,7 @@ What is actually in the codebase as of this branch (verified against `server/db/
 - Menu items: Edit profile, Calendar sync, Notification preferences, Get support, Sign out (red).
 - Each item dispatches the corresponding route: profile / payments / calendar / notif / docs sub-section, or `mailto:staff@drbartender.com`, or the sign-out action.
 
-**URL space.** `App.js` exposes two staff-portal route blocks: `HiringRoutes()` (line 246, mounted when `context==='hiring'`) and `StaffSiteRoutes()` (line 296, mounted when `context==='staff'`). Both wrap their staff routes in `<RequirePortal><StaffLayout/></RequirePortal>` at lines 271 and 314. This spec updates BOTH wrappers to `<RequirePortal><StaffShell/></RequirePortal>` so the new portal renders on both subdomain contexts (the hiring subdomain hosts staff routes for new hires immediately post-onboarding). The new mount table:
+**URL space.** `App.js` exposes two staff-portal route blocks: `HiringRoutes()` (line 248, mounted when `context==='hiring'`) and `StaffSiteRoutes()` (line 298, mounted when `context==='staff'`). Both wrap their staff routes in `<RequirePortal><StaffLayout/></RequirePortal>` at lines 273 and 316. This spec updates BOTH wrappers to `<RequirePortal><StaffShell/></RequirePortal>` so the new portal renders on both subdomain contexts (the hiring subdomain hosts staff routes for new hires immediately post-onboarding). The new mount table:
 
 | URL | Component | Tab active |
 |---|---|---|
@@ -180,7 +180,18 @@ What is actually in the codebase as of this branch (verified against `server/db/
 | `/account/notifications` | AccountPage (Notifications) | Account (overlay) |
 | `/account/documents` | AccountPage (Documents) | Account (overlay) |
 
-**Redirects from old URLs** (in `client/vercel.json` or via `<Navigate>` in `App.js`): `/dashboard` → `/`, `/events` → `/shifts/mine`, `/schedule` → `/shifts/mine`, `/profile` → `/account/profile`, `/resources` → `/account/documents`, `/my-tip-page` → `/tip-card`. 30-day grace period of redirects; remove after.
+**Redirects from old URLs** (in `client/vercel.json` or via `<Navigate>` in `App.js`): `/dashboard` → `/`, `/events` → `/shifts/mine`, `/schedule` → `/shifts/mine`, `/profile` → `/account/profile`, `/resources` → `/account/documents`, `/my-tip-page` → `/tip-card`. **Keep `/my-tip-page/print` mounted** (renders the existing `<PrintTipCard/>`); the print route is shared with the public tip page and physical-card production, and a redirect would break those flows. Before merging, grep `client/src/App.js` for any other staff-portal sub-routes (e.g., legacy deep links not in this table) and add redirects for them in the same change. 30-day grace period of redirects; remove after.
+
+### 6.1.5 UI state coverage (applies to every new page in §6.2-6.14)
+
+Every new page and sub-section in this spec MUST implement the four async states. Listed once here so the per-page sections below can stay terse:
+
+- **Loading**: skeleton placeholders matching the rendered layout (not a blocking spinner). Initial mount uses skeleton cards; subsequent refetches use a subtle progress bar at the top of the section.
+- **Empty**: explicit copy for the zero-result case. New hires arrive with no shifts, no requests, no payouts, no tips, no documents. Each section that can be empty has spec-defined empty-state copy (called out per-section below where it deviates from the default). Default copy pattern: *"No [thing] yet. [What changes that.]"*.
+- **Error**: when an API call fails (network error or 5xx), render a small inline error card with the section's name + Retry button. The error card does NOT replace the page chrome (tabs, header, user-pill); only the failed section. The button reissues the same request.
+- **Disabled / pending**: every button that fires a mutation flips to disabled-with-spinner while the request is in flight. Buttons re-enable on response (success or error). Double-tap protection is the disabled flip, not a debounce.
+
+Form fields enforce client-side validation rules that mirror the server-side rules called out per-endpoint in §6.10 / §6.11 / §6.13 / §6.14. Invalid input shows an inline error message under the field; the Save button stays disabled until all rules pass. The server-side validation is the authoritative gate; the client-side mirror exists for UX feedback only.
 
 ### 6.2 HomePage
 
@@ -265,14 +276,62 @@ Tap → modal:
 
 Post-submit, the Drop / Cover card on ShiftDetail flips to a green result chip: "Shift dropped. Management notified." / "Cover request broadcast." / "Management notified by SMS." The chip stays until the page is left.
 
-**Endpoints** (new, in `server/routes/shifts.js`):
+**Endpoints** (new, in `server/routes/shifts.js`). All four are `auth`-gated. The three `/:requestId/*` endpoints additionally enforce `req.user.id === shift_requests.user_id` (own-request ownership). The `/:shiftId/claim-cover` endpoint enforces a state check, not ownership (see below).
 
-- `POST /api/shifts/requests/:requestId/drop`, auto-release for 14+ day drops. Inside one transaction: SELECT request + linked shift + proposal; verify hours-to-event >= 336; UPDATE `shift_requests SET status='denied', dropped_at=NOW(), drop_reason='clean_drop'`; UPDATE the linked `shifts.status` to `'open'` if it was open with this staffer assigned (so it's available to claim again); call existing `notifyAdminCategory({ category: 'urgent_staffing', subject, emailHtml, emailText, ...(daysOut <= 7 ? { smsBody } : {}) })`. COMMIT. Return 200. If hours-to-event < 336, return 409 with `reason='wrong_mode'` (the UI shouldn't show the Drop button below that threshold; defensive).
-- `POST /api/shifts/requests/:requestId/request-cover`, sets `shift_requests.cover_requested_at = NOW()` plus an optional `cover_reason` text. Staffer remains `status='approved'`. Notify management (urgent_staffing, email always, SMS if `daysOut <= 7`). Broadcasts via the dispatcher: a `cover_broadcast` message to every other staffer who has opted-in for the `cover_needed` category and who is qualified for the shift (positions_needed match their role in `applications.positions_interested`).
-- `POST /api/shifts/requests/:shiftId/claim-cover`, a teammate claims a cover. Inserts a new `shift_requests` row with `status='pending'`. Management gets a one-click "Approve this cover swap" email. On approval (via existing `PUT /api/shifts/requests/:requestId` with status='approved'), the original staffer's row flips to `status='denied'`, the original `cover_requested_at` is cleared, the broadcast dispatcher rows are suppressed for the rest of the team, and the new staffer's row becomes the active one. The existing assign / approve cascade fires (scheduleStaffShiftMessages, BEO nudge insertion if finalized).
-- `POST /api/shifts/requests/:requestId/emergency-drop`, body requires `{ reason: string (min 10 chars) }`. Inside one transaction: SELECT context, verify hours-to-event < 72 (defensive); UPDATE the request with `dropped_at=NOW()`, `drop_reason=reason`, `drop_emergency=true`; leave `status='approved'` (management resolves manually); notify management urgently (email + SMS regardless of days-out, since emergency); INSERT into `proposal_activity_log` with `action='emergency_drop_requested'`, `actor_type='staff'`, `actor_id=user.id`, `details={reason, hours_out}`. COMMIT. Return 200.
+**Common pre-check: pay-period status guard.** All four endpoints SELECT the shift's pay period via `payout_events.shift_id → payouts.pay_period_id → pay_periods.status`. If the pay period is `'processing'` (mid-payout), the drop/cover mutation is rejected 409 with `reason='pay_period_processing'`. Reason: a drop or cover flip can re-compose `payout_events` rows that are currently being settled. Emergency drop bypasses this guard by design (management resolves manually).
 
-All four endpoints are `auth`-gated and additionally check `req.user.id === shift_requests.user_id` (you can only drop your own shifts; admin uses a different path).
+**`POST /api/shifts/requests/:requestId/drop`**, clean drop, 14+ days out. Inside one transaction (`BEGIN`):
+1. SELECT request + linked shift + proposal (`FOR UPDATE` on the shift_requests row).
+2. Verify `req.user.id === shift_requests.user_id`. Verify pay-period not `'processing'`. Verify hours-to-event >= 336.
+3. UPDATE `shift_requests SET status='denied', dropped_at=NOW(), drop_reason='clean_drop'`.
+4. UPDATE the linked `shifts.status='open'` if no other approved staffer remains.
+5. Suppress any scheduled `cover_broadcast` rows for this shift (the broadcast may have just fired moments before the staffer dropped).
+6. Call `notifyAdminCategory({ category: 'urgent_staffing', subject, emailHtml, emailText, ...(daysOut <= 7 ? { smsBody } : {}) })`.
+7. COMMIT. Return 200.
+
+If hours-to-event < 336, return 409 with `reason='wrong_mode'` (defensive; UI should not show the Drop button below that threshold).
+
+**`POST /api/shifts/requests/:requestId/request-cover`**, cover broadcast, 72h to under 14d. Inside one transaction:
+1. SELECT request + shift (`FOR UPDATE`). Verify ownership, pay-period not `'processing'`, hours-to-event in `[72, 336)`.
+2. UPDATE `shift_requests SET cover_requested_at=NOW(), cover_reason=$reason` (reason capped at 500 chars server-side; longer payloads return 413). Staffer remains `status='approved'`.
+3. Resolve qualified-teammate list (see below).
+4. Insert one `scheduled_messages` row per teammate per opted-in channel for `message_type='cover_broadcast'`, `entity_type='shift'`, `entity_id=shift.id`, `recipient_type='staff'`, `recipient_id=teammate.id`. Insertion is idempotent via `INSERT ... ON CONFLICT DO NOTHING` keyed on the unique index added in §7 (`UNIQUE (entity_type, entity_id, recipient_id, channel, message_type)` partial WHERE `message_type='cover_broadcast'`).
+5. Notify management (urgent_staffing, email always, SMS if `daysOut <= 7`).
+6. COMMIT. Return 200 with `broadcast_count`.
+
+**Qualified-teammate filter** (replaces the spec's prior `applications.positions_interested` reference, which is unreliable because legacy active staff may have no `applications` row): the shift's `positions_needed` (JSONB array of role strings) is matched against each candidate user's role attestation via `contractor_profiles.position` IF set, else any approved staff is considered qualified for `'bartender'`. The teammate must additionally:
+- Be on `users.onboarding_status='approved'` (NOT 'suspended' / 'deactivated' / 'rejected').
+- NOT be the requesting user.
+- Have `cover_needed` channels non-empty in `staff_notification_preferences.channels.cover_needed` (any of `'push' | 'sms' | 'email'`; the default ships with `["push"]`).
+- NOT already have an `approved` shift_request on the same `event_date` (avoid double-booking the prospective replacement).
+
+**Twilio rate-limit guard.** When the broadcast resolves to N SMS rows, chunk insertion at 25 rows per batch with a 250ms `pg_sleep` between batches (small enough to be invisible to the user; bounded enough that even a 200-teammate blast spreads over 2 seconds, well below the Twilio 1-msg/sec/number default). The dispatcher's existing exponential-backoff on 429 from Twilio is unchanged. A hard cap of 500 broadcast rows per shift_id prevents runaway (unique index already enforces one-row-per-teammate-per-channel).
+
+**`POST /api/shifts/requests/:shiftId/claim-cover`**, a teammate claims an active cover request. Inside one transaction:
+1. SELECT the shift + EXISTS-check that at least one `shift_requests` row for this `shift_id` has `cover_requested_at IS NOT NULL AND status='approved'` (the cover-requesting row is still active). Verify the shift's pay period is not `'processing'`. Verify `shifts.status` is NOT `'cancelled'`. If any check fails, return 409 with the specific reason. **These checks are the IDOR / state guard**, without them, a malicious user could create a fake pending row against any shift_id.
+2. Verify the claiming user is NOT the same user who requested the cover.
+3. Verify the claiming user does not already have a pending or approved `shift_requests` row on this shift.
+4. INSERT a new `shift_requests` row with `user_id=req.user.id`, `status='pending'`, `replaced_by_request_id=<original-requester's-shift_request-id>` (the new pending row points BACK to the original; on admin approval the cascade reads this column to find which row to flip).
+5. Send a signed, expiring approve-link email to management (`/admin/shifts/cover-swaps/:swapToken` where `swapToken` is a JWT signed with `JWT_SECRET`, payload `{ original_request_id, new_request_id, exp: NOW + 7 days }`). The admin click on the link triggers the standard `PUT /api/shifts/requests/:requestId` approval with both IDs. Never use a raw `?action=approve&id=N` query string.
+6. COMMIT. Return 200.
+
+**Cover-approval cascade** (runs inside the existing `PUT /api/shifts/requests/:requestId` approval branch when the new request has `replaced_by_request_id` set). Wrapped in a single transaction:
+1. Approve the new request: `UPDATE shift_requests SET status='approved' WHERE id=$new`.
+2. Flip the original to denied + mark covered: `UPDATE shift_requests SET status='denied', dropped_at=NOW(), drop_reason='covered_by_request:<new_id>', cover_requested_at=NULL WHERE id=$original`.
+3. Suppress the remaining `cover_broadcast` rows for this shift: `UPDATE scheduled_messages SET status='suppressed' WHERE entity_id=$shift_id AND message_type='cover_broadcast' AND status='pending'`.
+4. Fire the existing `scheduleStaffShiftMessages` for the new staffer (BEO nudge, shift reminder, etc.).
+5. If the proposal's drink_plan is `finalized`, insert the BEO acknowledge-nudge for the new staffer.
+6. COMMIT. Return 200.
+
+A mid-cascade failure rolls back the whole transaction; the original staffer remains the active one and the broadcast rows stay pending so a different teammate can still claim.
+
+**`POST /api/shifts/requests/:requestId/emergency-drop`**, under 72h. Body: `{ reason: string (10..500 chars) }`. Inside one transaction:
+1. SELECT context (`FOR UPDATE`). Verify ownership, hours-to-event < 72. Pay-period processing-status guard does NOT apply (management resolves manually; an emergency drop is not blocked by an in-flight payout).
+2. UPDATE the request with `dropped_at=NOW(), drop_reason=reason (truncated to 500), drop_emergency=true`. Leave `status='approved'` (the staffer remains nominally on the roster).
+3. **Hybrid-state rule:** every downstream consumer that reads `shift_requests.status='approved'` MUST also check `dropped_at IS NULL` to determine whether the staffer is actually working. This rule applies to: `scheduleStaffShiftMessages` (no new SMS to the dropped staffer), `autoAssign` (treat the seat as vacant), `shift_reminder` dispatcher (skip), `payout_events` accrual (the drop_emergency case requires manual management resolution before any wage accrues). The §11 testing matrix verifies each of these.
+4. Notify management urgently (email + SMS regardless of days-out). SMS body slices the reason at 80 chars to keep within the SMS budget.
+5. INSERT into `proposal_activity_log` with `action='emergency_drop_requested'`, `actor_type='staff'`, `actor_id=req.user.id`, `details={reason, hours_out, shift_id, request_id}`.
+6. COMMIT. Return 200.
 
 ### 6.6 PayPage
 
@@ -292,7 +351,7 @@ Layout: back button to Pay; title (Paystub or Period preview); period range + ev
 
 Top hero "Tip Card" + sub-line. The QR card preview (existing FakeQR-style render of the print card). Row of action buttons: Open print page, Share link, Copy URL.
 
-"Tips received this week" card listing recent tips (existing data from `RECENT_TIPS_ST` shape, fed by an endpoint per the existing MyTipPage).
+"Tips received this week" card listing recent tips, fed by the existing `GET /api/me/tips` endpoint (`server/routes/me.js:190`).
 
 **"How it's shown on your card"** reorder card:
 
@@ -301,6 +360,14 @@ Top hero "Tip Card" + sub-line. The QR card preview (existing FakeQR-style rende
 - "Manage methods →" link in the card head opens AccountPage / Payments.
 
 Reorder persists immediately on drag-end or arrow-tap to `users.ui_preferences.tip_card_order` (a JSON array of method-id strings).
+
+**Public tip-page consumer extension** (load-bearing for money flow). The existing public `/tip/:token` page is served by `server/routes/publicTip.js` and renders the chooser the guest sees after scanning the QR. That route MUST be extended in the same change:
+
+1. JOIN `users u ON u.id = payment_profiles.user_id` so the route can project `u.ui_preferences->'tip_card_order'` into the response.
+2. Include the new `zelle_handle` in the chooser projection alongside Venmo / Cash App / PayPal.
+3. Order the chooser methods by the projected `tip_card_order` array; methods present on the staffer's profile but absent from the order array fall to the end in their natural order. Methods in the order array but absent from the staffer's profile are skipped.
+
+Without this consumer update, a staffer's drag-reorder + Zelle handle would silently NOT appear on the QR-scan path, guests would see a stale order from the old route logic. §11 testing must verify the public `/tip/:token` response matches the staffer's TipCardPage rendering.
 
 **No "Tips route to" pill** on this page. Preferred-for-tips does not exist as a concept (the QR opens a chooser).
 
@@ -317,7 +384,9 @@ Personal info card with:
 - Mailing address (full width, "For 1099 forms in January" sub-helper)
 - Emergency contact sub-section: Name + Phone + Relationship in one row
 
-Save button in the card header. On save, posts to `PATCH /api/me/profile` updating the relevant `contractor_profiles` columns plus the `users.email` if changed (with the existing email-change confirmation flow if it exists, or noted as a follow-up).
+Save button in the card header. On save, posts to `PATCH /api/me/profile`. Server-side validation: phone format (E.164 via existing util), email format, ZIP (5 or 5+4 digits), emergency contact fields each <= 100 chars. The PATCH writes to `contractor_profiles` columns directly.
+
+**Email change is a separate flow, not a synchronous PATCH.** A compromised account that can flip `users.email` instantly bypasses password-reset email verification. When the user edits the email field, the client opens a confirmation modal: *"Change your email? We'll send a verification link to the new address. Your current login stays active until you click the link."* On Save, the server inserts a row into a new `pending_email_changes` table (or reuses the existing pattern if one exists; verify during execution against `server/db/schema.sql`) with `(user_id, new_email, token, expires_at)`. A verification email goes to the NEW address with a link to `POST /api/me/confirm-email-change/:token`. Only on link click does `users.email` flip. If the token expires (24h default), the pending row is purged on next cleanup. The Profile UI shows a "Pending verification, check [new email]" banner until the change confirms or expires.
 
 ### 6.11 AccountPage / Payment methods
 
@@ -347,7 +416,7 @@ The seven payment methods the UI surfaces map onto `payment_profiles` columns as
 | Cash App | `cashapp_handle TEXT` | Existing column |
 | PayPal | `paypal_url TEXT` | Existing column (full URL, not just a handle) |
 | Zelle | `zelle_handle TEXT` | **New column added in section 7** |
-| Direct deposit | `routing_number TEXT` + `account_number TEXT` | Existing columns. v1.5 encrypts on edit (see section 12) |
+| Direct deposit | `routing_number VARCHAR(255)` + `account_number VARCHAR(255)` | Existing columns. **AES-256-GCM ciphertext** (already encrypted on the staff-payments side). New endpoints MUST decrypt on read and encrypt on write via `server/utils/encryption.js`. |
 | Check | (no handle data; preferred-only) | Indicated by `preferred_payment_method='check'` only |
 
 **Payroll target.** `payment_profiles.preferred_payment_method TEXT` already holds the active payroll route. Values: `'venmo' | 'cashapp' | 'paypal' | 'zelle' | 'direct_deposit' | 'check'`. The "Set as preferred" action on a row writes this column. There is no separate `is_preferred_payroll` flag (the column itself is the source of truth, and is single-valued by construction). When the user clears the handle for the currently-preferred method, the server auto-flips `preferred_payment_method` to `NULL` and surfaces a Profile warning chip on the next portal load.
@@ -358,10 +427,18 @@ The seven payment methods the UI surfaces map onto `payment_profiles` columns as
 
 **Endpoints** (all on `server/routes/me.js`, auth-gated, scoped by `req.user.id`):
 
-- `GET /api/me/payment-methods`, projects every handle column from `payment_profiles` plus `preferred_payment_method` and the conceptual Card row metadata. The Card row is server-rendered with a stable shape so the client doesn't need to know whether it's a real DB row.
-- `PATCH /api/me/payment-methods`, body is a partial map: `{ venmo_handle?, cashapp_handle?, paypal_url?, zelle_handle?, routing_number?, account_number?, payment_username? }`. Writes only the keys present; null clears. Validates Venmo / Cash App / PayPal formats server-side via `server/utils/tipHandleValidation.js` (the existing util used by the tip-page route). For routing/account, validates ABA checksum on routing and length on account.
-- `PUT /api/me/preferred-payment-method`, body is `{ method: 'venmo' | 'cashapp' | 'paypal' | 'zelle' | 'direct_deposit' | 'check' }`. Validates that the corresponding handle column is populated (rejects 400 with `{field: 'venmo_handle', error: 'Add a Venmo handle before setting it as preferred.'}` if not). Writes `payment_profiles.preferred_payment_method`.
-- `PUT /api/me/tip-card-order`, body is `{ order: ['venmo', 'card', 'cashapp', 'paypal'] }`. Writes to `users.ui_preferences.tip_card_order`. Validates that every token in the order array is one of `{'card', 'venmo', 'cashapp', 'paypal', 'zelle'}`; rejects 400 otherwise.
+- `GET /api/me/payment-methods`, projects all P2P handle columns from `payment_profiles` raw (Venmo / Cash App / PayPal / Zelle are plaintext). For direct deposit, projects `routing_number_last4` (computed as `last 4 chars of decrypt(routing_number)`) and `account_number_last4` (same pattern). **NEVER projects full `routing_number` or `account_number` to the client**, only last-4. Decryption goes through `server/utils/encryption.js`; if decrypt fails (corrupt ciphertext, missing key), the route returns the field as `null` with a Sentry-captured error rather than 500ing the whole GET. Also returns `preferred_payment_method` and the conceptual Card row metadata (server-rendered with a stable shape so the client doesn't need to know whether it's a real DB row). When the user has no `payment_profiles` row yet (new applicant pre-payment-setup), the route returns a synthetic empty shape with all handles `null` rather than 404, so the AccountPage renders as "no methods yet."
+- `PATCH /api/me/payment-methods`, body is a partial map: `{ venmo_handle?, cashapp_handle?, paypal_url?, zelle_handle?, routing_number?, account_number?, payment_username? }`. Writes only the keys present; null clears. Validates P2P handles server-side via `server/utils/tipHandleValidation.js` (the existing util used by the tip-page route). Validates Zelle handle as either E.164 phone or RFC-5322 email (Zelle accepts both); add a `zelle` branch to `tipHandleValidation` for this. For routing/account, validates ABA-checksum on routing and length on account (9-digit routing, 4-17 digit account) BEFORE encryption. **Encryption flow for routing/account** (load-bearing):
+
+  1. SELECT the existing `payment_profiles` row (`FOR UPDATE`).
+  2. If only `routing_number` is in the PATCH body, leave `account_number` ciphertext untouched (do NOT decrypt + re-encrypt the unchanged field, it adds nothing and risks corruption if the key cycles mid-request). Same for account-only PATCH.
+  3. For each changed bank field, run `encrypt(plaintext)` via `server/utils/encryption.js` and write the resulting ciphertext to the column.
+  4. COMMIT.
+
+  If the PATCH clears a routing or account field (sets it to `null`), persist `null` directly (no encryption needed). If only routing is cleared but account remains, mark `preferred_payment_method='direct_deposit'` as invalid by auto-NULLing it (same auto-NULL behavior as P2P handle clears).
+
+- `PUT /api/me/preferred-payment-method`, body is `{ method: 'venmo' | 'cashapp' | 'paypal' | 'zelle' | 'direct_deposit' | 'check' }`. Validates that the corresponding handle column is populated (rejects 400 with `{field: 'venmo_handle', error: 'Add a Venmo handle before setting it as preferred.'}` if not). For direct_deposit, the check is "BOTH `routing_number` AND `account_number` are non-null." For check, no handle is required. Writes `payment_profiles.preferred_payment_method`.
+- `PUT /api/me/tip-card-order`, body is `{ order: ['venmo', 'card', 'cashapp', 'paypal'] }`. Writes to `users.ui_preferences.tip_card_order`. Validates that every token in the order array is one of `{'card', 'venmo', 'cashapp', 'paypal', 'zelle'}`; rejects 400 otherwise. Client serializes drag-end → PUT (no parallel PUTs); if a second drag fires before the first PUT resolves, the second drag is queued and dispatched on response.
 
 **Delete semantics.** Tip-eligible handle deletion = `PATCH /api/me/payment-methods` with the relevant field set to null. If the deleted handle was the preferred-payroll target, server clears `preferred_payment_method` to NULL in the same transaction. No DELETE endpoint required.
 
@@ -379,9 +456,9 @@ Three subscribe buttons (deep links composed against the existing feed URL):
 
 Subscription URL block below the buttons: read-only URL (the existing `/api/calendar/feed/:token` URL) + a Copy button (toggles to a "Copied" checkmark for 1.8 seconds). A "Regenerate URL" affordance below the Copy button calls the existing `POST /api/calendar/token/regenerate` route, with a confirm dialog warning that previously-subscribed apps will stop syncing.
 
-Footer note: *"Refreshes every 15 minutes. Includes your confirmed shifts, plus an all-day reminder 3 days before any unconfirmed BEO. Past shifts roll off after 30 days."*
+Footer note: *"Refreshes every 5 minutes. Includes your confirmed shifts, plus an all-day reminder 3 days before any unconfirmed BEO. Past shifts roll off after 30 days."*
 
-"Last sync" sub-section: shows the last time the calendar app pulled the feed (server tracks `users.last_ics_fetch_at` per user) and which app subscribed (detected via User-Agent on each fetch, persisted to `users.ui_preferences.calendar_subscribed_app`). A Disconnect button clears the tracked state but does NOT rotate the token (use the explicit Regenerate URL action for that).
+"Last sync" sub-section: shows the last time the calendar app pulled the feed (server tracks `users.last_ics_fetch_at` per user) and which app subscribed (detected via User-Agent on each fetch, persisted to `users.ui_preferences.calendar_subscribed_app`). Empty states: when `last_ics_fetch_at IS NULL` (no subscription yet, most existing users will be here on Phase A merge), render *"Not yet synced. Tap a subscribe button above to start."* and hide the app-name + relative-time line. When `calendar_subscribed_app` is missing from the JSONB (subscription pulled before User-Agent detection landed, or unrecognized client), render *"Last synced [relative]. (App not detected)"*. A Disconnect button clears the tracked state (`last_ics_fetch_at = NULL`, `calendar_subscribed_app` key removed from JSONB) but does NOT rotate the token (use the explicit Regenerate URL action for that). The User-Agent string is trivially spoofable; surface a tooltip on the app-name chip: *"Detected from your calendar app. May be wrong if you use an uncommon client."*
 
 **Feed extensions for the staff portal.** The existing `buildICalFeed` builder in `server/routes/calendar.js` (line 211) is extended to also emit:
 
@@ -392,10 +469,10 @@ Source of "unconfirmed BEO": `drink_plans.finalized_at IS NOT NULL AND shift_req
 
 **Per-fetch side effects** (new work, NOT yet implemented in `calendar.js` despite the column existing on `users`):
 
-- `users.last_ics_fetch_at = NOW()` written on every successful `GET /api/calendar/feed/:token` response. Wrap the existing SELECT-then-respond path with an UPDATE that runs after the 304/200 decision but before the response is sent.
-- `users.ui_preferences.calendar_subscribed_app` set per the User-Agent (Google fetches identify as `Google-Calendar-Importer` or fetch from `Calendar.google.com`; Apple from `iCal/macOS` or `iOS/`; Outlook from `Microsoft Office/Outlook`). Use `jsonb_set` to merge into the existing JSONB without clobbering other keys.
+- `users.last_ics_fetch_at = NOW()` written on every successful `GET /api/calendar/feed/:token` response, **debounced** to once per 10 minutes (`UPDATE users SET last_ics_fetch_at = NOW() WHERE id = $1 AND (last_ics_fetch_at IS NULL OR last_ics_fetch_at < NOW() - INTERVAL '10 minutes')`). Without debounce, a staffer subscribed on iPhone + Mac + iPad would generate ~864 writes/day on the `users` row across all staff; the WHERE clause makes the update a no-op on hot fetches.
+- `users.ui_preferences.calendar_subscribed_app` set per the User-Agent (Google fetches identify as `Google-Calendar-Importer` or fetch from `Calendar.google.com`; Apple from `iCal/macOS` or `iOS/`; Outlook from `Microsoft Office/Outlook`). Use `jsonb_set` to merge into the existing JSONB without clobbering other keys. Same 10-min debounce condition applies, the UA detection should only re-run when the timestamp also updates.
 
-Cache header is already `Cache-Control: private, max-age=900`.
+Cache header is already `Cache-Control: private, max-age=300` (5 min).
 
 ### 6.13 AccountPage / Notifications
 
@@ -448,18 +525,21 @@ New endpoints (`server/routes/staffPortal.js`, auth-gated, no admin guard, scope
 - `POST /api/me/push-subscriptions`, body is a `PushSubscription` JSON from the browser plus the User-Agent. Appends to `staff_notification_preferences.push_subscriptions[]`. Returns 200.
 - `DELETE /api/me/push-subscriptions`, body is `{ endpoint: '...' }`. Removes the matching subscription.
 
-**Top-level kill switch.** `users.communication_preferences` is honored at the dispatcher level BEFORE category-level routing runs. If `sms_enabled=false`, every SMS row is suppressed regardless of category preferences. Same for `email_enabled`. Push has no top-level kill switch (the user owns it via their browser permission). Quiet hours, if non-null, suppress non-critical pushes during the window.
+**Top-level kill switch.** `users.communication_preferences` is honored at TWO points: (1) the UI surface, the AccountPage / Notifications panel shows the current values and explains that they override all per-category toggles; (2) the server enforcement, every PATCH path that toggles a critical-path category off, AND the existing endpoint that flips `communication_preferences.sms_enabled` / `email_enabled`, validates the combined state: if a save would leave every critical-path category (`beo_finalized`, `schedule_change`, `payday`) with no deliverable channel (no global SMS, no global email, no push permission granted), the server rejects 400 with `{field: '_form', error: 'Critical messages need at least one channel. Turn one on first.'}`. UI client mirrors this check for instant feedback but is not the only line of defense. Quiet hours, if non-null, suppress non-critical pushes during the window; critical-path pushes ignore quiet hours.
 
-**Critical-path override.** Three categories are critical: `beo_finalized`, `schedule_change`, `payday`. The dispatcher's channel-routing helper (`pickChannelsForUserAndCategory(userId, category)`) enforces: if ALL of a critical category's channels are toggled off in the user's prefs, fall back to a single deterministic channel (SMS for shift-related, email for payday). This fallback is itself gated by `communication_preferences`, if the user has turned off SMS globally, the critical-path override picks email instead, and if both are off, falls back to push (sub-bullet: a UI-side guard prevents users from disabling BOTH SMS and email globally with critical-path categories opted out of push, but the dispatcher must still degrade gracefully if it happens). Footer copy: *"Critical-path messages. BEO finalized, schedule changes, payday, can't be fully muted. We'll deliver them through whatever channel is still on."*
+**Critical-path override.** Three categories are critical: `beo_finalized`, `schedule_change`, `payday`. `pickChannelsForUserAndCategory(userId, category)` enforces: if ALL of a critical category's channels are toggled off in the user's prefs, fall back to a single deterministic channel (SMS for shift-related, email for payday). This fallback is itself gated by `communication_preferences`, if the user has turned off SMS globally, the critical-path override picks email instead. If BOTH SMS and email are globally off, the override returns the user's push subscription set IF any are present; if no push subscriptions exist either, the override returns `{ kind: 'dead_letter', reason: 'all_channels_blocked' }`. The dispatcher receiving a `dead_letter` resolution marks the row `status='dead_letter'` and fires `Sentry.captureMessage('critical_path_dead_letter', { user_id, category, message_type })` for ops visibility. The Sentry capture also fires every time a critical-path override degrades (e.g., push → SMS fallback) so ops can detect silent channel substitution before staffers complain. Footer copy: *"Critical-path messages. BEO finalized, schedule changes, payday, can't be fully muted. We'll deliver them through whatever channel is still on."*
 
-**Dispatcher integration.** The cleanest pattern is **multi-row scheduling at enqueue time**, not `channel='auto'` resolution at dispatch time. Reasoning: `scheduled_messages.channel` has a CHECK constraint (`IN ('email','sms')` today, widened to `'push'` by section 7). An 'auto' value would either break the constraint or require carrying a parallel "resolved_channel" column. Instead:
+**Dispatcher integration.** The cleanest pattern is **multi-row scheduling at enqueue time**, not `channel='auto'` resolution at dispatch time. Reasoning: `scheduled_messages.channel` has a CHECK constraint (`IN ('email','sms')` today, widened to `'push'` by section 7) AND `server/utils/messageScheduling.js:5` has a hardcoded `VALID_CHANNELS = new Set(['email','sms'])` validator that throws before any INSERT. An 'auto' value would break both. Instead:
 
-- When a category-driven message is scheduled, the helper `enqueueCategorizedMessage(userId, category, payload)` resolves the channel set via `pickChannelsForUserAndCategory` at scheduling time and inserts ONE `scheduled_messages` row per resolved channel (e.g., a `beo_finalized` event for a staffer opted-in to push + SMS produces two rows: one with `channel='push'`, one with `channel='sms'`).
-- The dispatcher re-checks `communication_preferences` at send time and skips the row if the channel kill switch has flipped to false since enqueue.
-- Suppression cascade (the existing `checkSuppression`) prevents duplicate delivery if the same logical event is already covered by another row (e.g., a manual SMS already sent).
-- For push specifically: each row's send call iterates the user's `push_subscriptions[]`. A 410 Gone or 404 response auto-prunes the dead subscription from the JSONB (`jsonb_set` with the filtered array).
+- When a category-driven message is scheduled, the helper `enqueueCategorizedMessage(userId, category, payload)` resolves the channel set via `pickChannelsForUserAndCategory` at scheduling time and inserts ONE `scheduled_messages` row per resolved channel (e.g., a `beo_finalized` event for a staffer opted-in to push + SMS produces two rows: one with `channel='push'`, one with `channel='sms'`). The helper assigns each multi-row group a shared `suppression_key` derived from `${entity_type}:${entity_id}:${message_type}:${recipient_id}` so the cascade below can collapse siblings on first send.
+- The dispatcher re-checks `communication_preferences` at send time and marks the row `status='suppressed'` (terminal) if the channel kill switch has flipped to false since enqueue. This prevents the row from being retried on every dispatcher tick.
+- **Sibling-suppression cascade.** When any row in a `suppression_key` group sends successfully, the dispatcher updates the remaining pending rows in the same group to `status='suppressed_by_sibling'` (terminal) within the same transaction. This stops the user from getting the same notification on push AND SMS AND email when one channel is enough.
+- For push specifically: each row's send call iterates the user's `push_subscriptions[]`. A 410 Gone or 404 response auto-prunes the dead subscription. To handle concurrent dispatches racing on `jsonb_set` of the same JSONB, the prune path runs inside a transaction with `SELECT ... FOR UPDATE` on the user row before the `UPDATE users SET staff_notification_preferences = jsonb_set(...)`.
+- **Future-category backfill.** Adding a new category later (e.g., `'event_reminder_24h'`) will land in users' `staff_notification_preferences.channels` JSONB as a missing key. `pickChannelsForUserAndCategory` returns a documented default array per category (mirroring §6.13 defaults table) when the key is missing, rather than empty (which would silently suppress the message). The default-array lookup table lives in `notificationChannelResolver.js` as a `DEFAULT_CHANNELS` const and is the single source of truth for both the initial schema default AND the missing-key fallback.
 
 Existing rows with `channel='sms'` or `'email'` continue to work unchanged; the new code path is additive.
+
+**Push subscription dedupe.** `POST /api/me/push-subscriptions` accepts `{ endpoint, keys, user_agent }`. Server-side, before INSERT, the route checks `staff_notification_preferences.push_subscriptions[]` for an existing entry with the same `endpoint`. If found, that entry is replaced in place (keys + user_agent + `subscribed_at` updated). This handles the same-browser-toggle-off-then-on case cleanly, and the rare case where the keys rotate without the endpoint changing.
 
 ### 6.14 AccountPage / Documents
 
@@ -488,11 +568,19 @@ Two main sections + a small "Other archives" cross-link section.
 3. Modal sub: "The new file becomes your active record. Choose a PDF or photo."
 4. File picker (accept `.pdf,.png,.jpg,.jpeg`); after selection, the chosen file's name + size shows in the modal.
 5. Buttons: Cancel / Replace (primary, disabled until a file is chosen).
-6. On Replace, POST to `POST /api/me/documents/:doc_type/replace` (multipart). `doc_type` is `'w9'` or `'alcohol_certification'`. Backend uploads the new file to R2, then writes the new URL + filename to the correct active record column:
-   - `doc_type='w9'` → `payment_profiles.w9_file_url` + `payment_profiles.w9_filename` (NOT `contractor_profiles`)
-   - `doc_type='alcohol_certification'` → `contractor_profiles.alcohol_certification_file_url` + `contractor_profiles.alcohol_certification_filename`
+6. On Replace, POST to `POST /api/me/documents/:doc_type/replace` (multipart). `doc_type` is `'w9'` or `'alcohol_certification'`. The route honors the standard upload contract: `express-fileupload` parses the multipart, then `server/utils/fileValidation.js` (`isValidUpload(file)`) magic-byte validates the file (PDF / PNG / JPEG only), reject 400 if the magic bytes don't match the claimed MIME, regardless of the file extension. Cap at 10 MB; reject 413 above. Execution order is load-bearing:
 
-   Before the active-record write, the route snapshots the previous URL + filename into a new `staff_document_history` row:
+   1. Validate the file (magic bytes + size). Fail before any side effect if the file is bad.
+   2. Upload to R2 via `uploadFile(buffer, filename)` (per `server/utils/storage.js`, note: returns no URL, the file is keyed by `filename`; subsequent reads use `getSignedUrl(filename)` for 15-min-expiry access). Compute a deterministic R2 key like `staff/${doc_type}/${user_id}/${Date.now()}_${original_filename}` so re-uploads don't collide. If R2 upload fails, return 502 and nothing in the DB changes.
+   3. Open transaction. SELECT the current `payment_profiles` row (W-9) or `contractor_profiles` row (alcohol cert) `FOR UPDATE` so a concurrent admin replace doesn't interleave.
+   4. INSERT the previous URL + filename into `staff_document_history` (`replaced_by_user_id = req.user.id`).
+   5. UPDATE the active record column with the new R2 key:
+      - `doc_type='w9'` → `payment_profiles.w9_file_url` + `payment_profiles.w9_filename` (NOT `contractor_profiles`)
+      - `doc_type='alcohol_certification'` → `contractor_profiles.alcohol_certification_file_url` + `contractor_profiles.alcohol_certification_filename`
+   6. INSERT into `proposal_activity_log`? No, replacements are user-scoped, not proposal-scoped. Instead INSERT into a new `audit_log` entry (or reuse `staff_document_history` itself as the audit trail; the history row IS the audit). The history row already carries `replaced_at`, `replaced_by_user_id`, and the prior state. Confirm during execution whether a separate admin-visible audit feed is needed.
+   7. COMMIT. On any failure between step 3 and step 6, ROLLBACK leaves the active record unchanged. The orphan R2 object from step 2 is acceptable (storage cost is negligible; a cleanup sweep can collect orphans later).
+
+   The `staff_document_history` row schema:
 
 ```sql
 CREATE TABLE IF NOT EXISTS staff_document_history (
@@ -553,10 +641,13 @@ Replaced wholesale. Delete in the same change:
 **Sending:**
 
 - New util `server/utils/pushSender.js` exports `sendPush({ subscription, title, body, url, tag, icon })`. Uses `web-push` npm.
-- On dispatch, the dispatcher calls `pushSender.sendPush` per subscription. On 410 Gone or 404, removes the subscription from the user's prefs (it's expired).
+- On dispatch, the dispatcher calls `pushSender.sendPush` per subscription. On 410 Gone or 404, removes the subscription from the user's prefs (see §6.13 dispatcher race handling for the FOR UPDATE pattern).
 - Push notification payload includes a `tag` for grouping (one tag per category, so successive shift-reminder pushes replace the previous) and a `url` (the deep link to open on tap).
+- **Fail-closed on missing VAPID keys.** If `VAPID_PRIVATE_KEY` is unset (dev environments, misconfigured prod), `sendPush` returns `{ ok: false, error: 'vapid_unset' }` immediately and fires a Sentry breadcrumb. The caller treats this the same as any other failure (mark row failed, do NOT crash the dispatcher loop). Matches the `stripeClient.js` fail-closed pattern.
 
 **Service-worker click handler** opens or focuses the staff portal at the URL in the payload. Standard pattern.
+
+**Service-worker cache-busting.** `staff-sw.js` is served from `/staff-sw.js` (root scope per Web Push requirements). Service workers cache aggressively, a deployed bug in the SW can persist for users until they manually clear or until the browser's update check runs (24h default). To cap user impact, the SW file embeds a `SW_VERSION` constant at the top (e.g., `'sw-2026-05-27-v1'`) that flips on every meaningful change; the SW's `install` handler skips waiting when the version differs from the cached version. Vercel's default `Cache-Control: no-cache` for the SW path is sufficient to let the browser see the new file on next page load.
 
 ### 6.18 Team roster on GET BEO
 
@@ -564,14 +655,17 @@ The BEO spec's `GET /api/beo/:proposalId` response includes a `shift_requests` a
 
 - For each approved shift_request on a non-cancelled shift linked to the proposal:
   - `user_id`
-  - `display_name` (composed server-side: `contractor_profiles.preferred_name` if set, else first token + last-initial of `applications.full_name` joined via `users.id = applications.user_id`; falls back to email-local-part if neither is set). The first + last-initial computation happens server-side so the client receives a presentation-ready string.
-  - `initials` (computed server-side from the same name source; two characters)
+  - `display_name` (composed server-side). Resolution chain, first match wins:
+    1. `contractor_profiles.preferred_name` if non-empty, paired with the last-initial from `applications.full_name` if available (e.g., `"Rosa M."`). If `applications.full_name` is NULL (legacy staffer without an application row, possible for the oldest hires), use `agreements.full_name` (LEFT JOIN `agreements ON agreements.user_id = users.id`). If both are NULL, render the preferred name alone (`"Rosa"`).
+    2. If `preferred_name` is NULL, use first-token + last-initial of `applications.full_name`, else `agreements.full_name`.
+    3. If all three are NULL, use the email-local-part (`users.email` before the `@`).
+  - `initials` (computed server-side from the resolved display name; two characters; uppercased)
   - `is_me` boolean (true when `user_id === req.user.id`)
   - `role` from `shift_requests.position` (defaulting to `'Bartender'` when null)
-  - `phone` from `contractor_profiles.phone` (E.164)
+  - `phone` from `contractor_profiles.phone` (E.164), **gated by the viewer's status**: only project the phone field when the requesting `req.user`'s OWN `shift_requests.status` on this proposal is `'approved'`. Pending requesters (who haven't been confirmed for the gig yet) get `phone: null` for their teammates. This prevents a curious applicant who got into a pending state from harvesting active staff phone numbers via the BEO endpoint.
   - `needs_cover` boolean (true when `shift_requests.cover_requested_at IS NOT NULL`)
 
-Phone is teammate PII visible to anyone on the same gig, fine for coworkers (already exposed via `shift_reminder` SMS) but the BEO response surface widens slightly per the BEO spec section 7.1.
+Phone is teammate PII visible to anyone on the same approved gig, fine for coworkers (already exposed via `shift_reminder` SMS) but the BEO response surface widens slightly per the BEO spec section 7.1.
 
 ## 7. Schema additions
 
@@ -604,6 +698,10 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_notification_preferences JSONB
   );
 
 -- Widen onboarding_status enum to include 'suspended' (active staff who break the rules)
+-- NOTE: widening the CHECK alone is INSUFFICIENT. server/middleware/auth.js:41-49 currently
+-- denies only 'deactivated' and 'rejected'. The same change that widens this constraint
+-- MUST add 'suspended' to the deny list in auth.js, or a suspended user keeps full portal
+-- access. Treat as one logical change: schema + middleware, single commit.
 DO $$ BEGIN
   ALTER TABLE users DROP CONSTRAINT IF EXISTS users_onboarding_status_check;
   ALTER TABLE users ADD CONSTRAINT users_onboarding_status_check
@@ -614,11 +712,41 @@ DO $$ BEGIN
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 -- Widen scheduled_messages.channel enum to include 'push'
+-- Companion change: server/utils/messageScheduling.js:5 has a hardcoded
+-- VALID_CHANNELS = new Set(['email', 'sms']) that throws BEFORE any INSERT.
+-- Add 'push' to that Set in the same commit, or push enqueue fails at the helper.
 DO $$ BEGIN
   ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_channel_check;
   ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_channel_check
     CHECK (channel IN ('email','sms','push'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- Sibling-suppression unique index (per §6.13 dispatcher cascade)
+-- One row per (entity, recipient, channel, message_type) prevents duplicate enqueues
+-- on retry and supports the broadcast-runaway cap from §6.5.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_messages_dedupe
+  ON scheduled_messages (entity_type, entity_id, recipient_type, recipient_id, channel, message_type)
+  WHERE status IN ('pending','sent');
+
+-- ALTER race backfill. The `staff_notification_preferences` default lands at column-creation,
+-- but if any concurrent INSERT happens during the ALTER's metadata catch-up, NULL can slip in.
+-- This UPDATE is idempotent and cleans up any stragglers.
+UPDATE users
+   SET staff_notification_preferences = jsonb_build_object(
+     'channels', jsonb_build_object(
+       'shift_offered',   '["push","sms","email"]'::jsonb,
+       'shift_decided',   '["push","sms"]'::jsonb,
+       'cover_needed',    '["push"]'::jsonb,
+       'beo_finalized',   '["push","sms","email"]'::jsonb,
+       'beo_reminder_t3', '["push","sms"]'::jsonb,
+       'schedule_change', '["push","sms","email"]'::jsonb,
+       'payday',          '["sms","email"]'::jsonb,
+       'tip_received',    '["push"]'::jsonb
+     ),
+     'push_subscriptions', '[]'::jsonb,
+     'quiet_hours', 'null'::jsonb
+   )
+ WHERE staff_notification_preferences IS NULL;
 
 -- Drop / cover marketplace columns on shift_requests
 ALTER TABLE shift_requests
@@ -677,13 +805,15 @@ CREATE INDEX IF NOT EXISTS idx_sdh_user ON staff_document_history(user_id);
 
 - `server/db/schema.sql`, all schema additions in section 7.
 - `server/routes/shifts.js`, new drop / cover endpoints (`POST /requests/:id/drop`, `/request-cover`, `/claim-cover`, `/emergency-drop`). The existing routes also gain projection updates for the new pages: `GET /shifts` (staff path) adds `drink_plan_finalized_at`, `my_beo_acknowledged_at`, `cover_requested_at`, `cover_for_first_initial`; `GET /shifts/user/:userId/events` adds `payout_id` per past row (computed via a join to `payout_events`).
-- `server/routes/calendar.js`, extend `buildCalendarFeed` (the existing builder powering `GET /api/calendar/feed/:token`) to call into `staffCalendarFeedExt` for the all-day "Confirm BEO" VEVENTs on unconfirmed-BEO shifts. No new route, no parallel builder.
+- `server/routes/calendar.js`, extend `buildICalFeed` (the existing builder at line 211 powering `GET /api/calendar/feed/:token`) to call into `staffCalendarFeedExt` for the all-day "Confirm BEO" VEVENTs on unconfirmed-BEO shifts. Same change adds the backward 30-day cutoff on past shifts and the per-fetch `last_ics_fetch_at` UPDATE (debounced; see §6.12). No new route, no parallel builder.
 - `server/utils/scheduledMessageDispatcher.js`, three changes: (1) before dispatching any row, re-check `users.communication_preferences` and skip rows whose channel kill switch has been turned off since enqueue; (2) for `channel='push'` rows, iterate `users.staff_notification_preferences.push_subscriptions[]` and call `pushSender.sendPush`; prune subscriptions that return `gone:true`; (3) the existing per-category suppression cascade extends to cover the multi-row push+sms+email enqueue pattern (one logical event = one suppression key).
-- `server/utils/scheduledMessages.js` (the scheduler-side helper), add `enqueueCategorizedMessage(userId, category, payload)` that resolves channels via `notificationChannelResolver` and inserts one `scheduled_messages` row per resolved channel.
+- `server/utils/messageScheduling.js` (the existing scheduler-side helper, 66 lines), add `enqueueCategorizedMessage(userId, category, payload)` that resolves channels via `notificationChannelResolver` and inserts one `scheduled_messages` row per resolved channel. Also widen the hardcoded `VALID_CHANNELS = new Set(['email', 'sms'])` at line 5 to include `'push'`, otherwise the existing `scheduleMessage` validator throws before any push INSERT lands.
 - `server/index.js`, mount `/api/me/*` (the staffPortal router) under the existing app instance. The existing `/api/calendar/*` mount stays.
 - `server/utils/staffShiftHandlers.js`, cover-broadcast scheduling helper: when a `request-cover` endpoint fires, schedule cover-broadcast `scheduled_messages` rows per opted-in qualified teammate via `enqueueCategorizedMessage(teammateId, 'cover_needed', ...)`. The Twilio rate-limit guard from the BEO spec applies (chunked sends, exponential backoff on 429).
 - `server/utils/smsTemplates.js`, new `cover_broadcast_sms` template + `staff_drop_to_management_sms` for the management-side urgent notifications on emergency drops.
-- `server/routes/me.js` (existing), `GET /api/me` extended to include `staff_notification_preferences`, `ui_preferences`, and a flattened payment-methods snapshot, so the StaffShell can render without multiple GETs. The existing `GET /api/me/tip-page` route stays unchanged (now consumed by both TipCardPage and the AccountPage / Payment methods Card-row metadata).
+- `server/routes/me.js` (existing), `GET /api/me` extended to include `staff_notification_preferences`, `ui_preferences`, and a flattened payment-methods snapshot, so the StaffShell can render without multiple GETs. **Push subscriptions are NOT projected** in the global `/api/me` payload (they bloat the response and aren't needed for page render); the AccountPage / Notifications section makes a separate `GET /api/me/staff-notifications` for the full prefs blob. The existing `GET /api/me/tip-page` route stays unchanged (now consumed by both TipCardPage and the AccountPage / Payment methods Card-row metadata).
+- `server/routes/publicTip.js`, JOIN `users` to project `ui_preferences->'tip_card_order'`; add `zelle_handle` to the chooser projection; order the chooser methods by the staffer's saved order with fallback to natural order for methods not in the array. Without this, drag-reorder and the new Zelle column silently fail to surface on the QR-scan path (§6.8).
+- `server/middleware/auth.js`, extend the existing deny-list around line 41-49 to include `'suspended'` alongside `'deactivated'` and `'rejected'`. Required companion to the `users_onboarding_status_check` widening in §7.
 
 ### 8.3 Client (new)
 
@@ -748,6 +878,7 @@ Phase A is ~3-4 weeks of focused work. Phase B is ~1 week. Both ship as separate
 - All `/api/me/*` endpoints are `auth`-gated and scope every read/write by `req.user.id`. IDOR guard is in the query (`WHERE user_id = $1`), not by trusting body params. The PATCH endpoints reject any payload key that maps to a user-scoped foreign key.
 - The four drop / cover endpoints additionally verify `req.user.id === shift_requests.user_id` (you can only drop your own; admin uses different routes).
 - The calendar feed `GET /api/calendar/feed/:token` is public-by-token (matching the existing `/tip/:token` pattern). Token is a UUID assigned to every user, can be rotated via `POST /api/calendar/token/regenerate`. Rate limiting is already enforced by the existing route.
+- **`onboarding_status='suspended'` blocks portal access.** Adding the value to the CHECK constraint (§7) is paired with a `server/middleware/auth.js` deny-list update: the existing branch that denies `'deactivated'` and `'rejected'` extends to `'suspended'`. A suspended staffer's session token is still valid until expiry, but every `/api/me/*` request returns 401 (or 403 with a "suspended, contact management" payload, pick during implementation). Without this middleware change, the new CHECK value is cosmetic and the spec ships a security tripwire.
 - Push subscription PII (`endpoint` URL, `keys`) is stored as JSON in `users.staff_notification_preferences.push_subscriptions[]`. This is the standard Web Push pattern, the keys are recipient-public (used by the server to encrypt the payload, but they don't grant access to anything beyond sending notifications to that endpoint). No encryption required.
 - **Bank routing + account numbers** on `payment_profiles` are ALREADY stored as AES-256-GCM ciphertext in `VARCHAR(255)` columns (widened from TEXT around schema line 1990 by the staff-payments work). The existing `server/utils/encryption.js` encrypts on write and decrypts on read; the module fails closed in production if `BANK_ENCRYPTION_KEY` is unset. New staff-portal routes that read these columns (`GET /api/me/payment-methods` projecting last-4 of the account number) MUST call `decrypt()` before any slice or masking. The PATCH route MUST call `encrypt()` before persisting. Never log either column raw. Never project `account_number` past the last 4 digits on any client-facing endpoint.
 
