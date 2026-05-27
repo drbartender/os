@@ -81,8 +81,11 @@ export default function CcImportWrapUpPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const items = data.items || [];
-  const counts = data.counts || { total_bucket_b: 0, needs_wrapup: 0, last_30: 0 };
+  const items = useMemo(() => data.items || [], [data.items]);
+  const counts = useMemo(
+    () => data.counts || { total_bucket_b: 0, needs_wrapup: 0, last_30: 0 },
+    [data.counts]
+  );
 
   const selectableIds = useMemo(
     () => items.filter(i => !i.wrap_up_done).map(i => i.id),
