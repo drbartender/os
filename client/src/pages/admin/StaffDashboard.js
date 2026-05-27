@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { formatPhone, stripPhone } from '../../utils/formatPhone';
 import Icon from '../../components/adminos/Icon';
@@ -9,6 +10,12 @@ import Toolbar from '../../components/adminos/Toolbar';
 import KebabMenu from '../../components/adminos/KebabMenu';
 import ClickableRow from '../../components/ClickableRow';
 import AssignToEventModal from './userDetail/components/AssignToEventModal';
+
+function isLegacyCcStub(s) {
+  return typeof s?.cc_id === 'string'
+    && s.cc_id.startsWith('legacy_cc:')
+    && s.onboarding_status === 'deactivated';
+}
 
 function initialsOf(s) {
   if (!s?.preferred_name && !s?.email) return '?';
@@ -19,14 +26,20 @@ function initialsOf(s) {
 export default function StaffDashboard() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { user: currentUser } = useAuth();
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('active');
   const [assignTarget, setAssignTarget] = useState(null);
 
+  // include_stubs=true surfaces legacy CC stub users (cc_id LIKE 'legacy_cc:%',
+  // onboarding_status='deactivated') alongside active staff so the operator can
+  // see imported placeholders that still need to be linked or removed. The
+  // server redacts their emails for managers as defense in depth; the row
+  // render below also hides the email client-side so a stale fetch can't leak.
   useEffect(() => {
-    api.get('/admin/active-staff')
+    api.get('/admin/active-staff?include_stubs=true')
       .then(r => setStaff(r.data?.staff || []))
       .catch(() => toast.error('Failed to load staff. Try refreshing.'))
       .finally(() => setLoading(false));
@@ -91,14 +104,22 @@ export default function StaffDashboard() {
                   s.equipment_cooler && 'Cooler',
                   s.equipment_table_with_spandex && 'Table',
                 ].filter(Boolean);
+                const isStub = isLegacyCcStub(s);
+                const isAdmin = currentUser?.role === 'admin';
+                // Server already redacts the email for non-admin callers; this
+                // is the second safety net so a stale fetch can't briefly leak.
+                const displayEmail = (isStub && !isAdmin) ? '(redacted)' : s.email;
                 return (
                   <ClickableRow key={s.id} to={`/staffing/users/${s.id}`}>
                     <td>
                       <div className="hstack">
                         <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{initialsOf(s)}</div>
                         <div>
-                          <strong>{s.preferred_name || s.email}</strong>
-                          {s.preferred_name && s.email && <div className="sub">{s.email}</div>}
+                          <strong>{s.preferred_name || displayEmail}</strong>
+                          {isStub && (
+                            <span className="badge badge-legacy-cc-stub">Legacy CC stub (deactivated)</span>
+                          )}
+                          {s.preferred_name && s.email && <div className="sub">{displayEmail}</div>}
                         </div>
                       </div>
                     </td>
@@ -118,8 +139,8 @@ export default function StaffDashboard() {
                         {
                           label: 'Email',
                           icon: 'mail',
-                          href: s.email ? `mailto:${s.email}` : undefined,
-                          disabled: !s.email,
+                          href: (s.email && !isStub) ? `mailto:${s.email}` : undefined,
+                          disabled: !s.email || isStub,
                         },
                         {
                           label: 'Call',

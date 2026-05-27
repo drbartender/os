@@ -416,6 +416,16 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
   const offset = (page - 1) * limit;
 
+  // Legacy CC stub users (cc_id LIKE 'legacy_cc:%') are seeded with
+  // onboarding_status='deactivated' so they're invisible to the default
+  // staff roster. The opt-in `?include_stubs=true` widens the filter so the
+  // StaffDashboard can render them with a visual badge. Default behavior
+  // is preserved for every other caller.
+  const includeStubs = req.query.include_stubs === 'true';
+  const statusList = includeStubs
+    ? `'approved', 'reviewed', 'submitted', 'deactivated'`
+    : `'approved', 'reviewed', 'submitted'`;
+
   const [staffResult, countResult] = await Promise.all([
     pool.query(`
       SELECT
@@ -431,7 +441,7 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
       LEFT JOIN applications a ON a.user_id = u.id
       LEFT JOIN agreements ag ON ag.user_id = u.id
       WHERE u.role IN ('staff', 'manager')
-        AND u.onboarding_status IN ('approved', 'reviewed', 'submitted')
+        AND u.onboarding_status IN (${statusList})
         AND op.onboarding_completed = true
       ORDER BY COALESCE(cp.preferred_name, u.email) ASC
       LIMIT $1 OFFSET $2
@@ -440,13 +450,26 @@ router.get('/active-staff', auth, asyncHandler(async (req, res) => {
       SELECT COUNT(*) FROM users u
       JOIN onboarding_progress op ON op.user_id = u.id
       WHERE u.role IN ('staff', 'manager')
-        AND u.onboarding_status IN ('approved', 'reviewed', 'submitted')
+        AND u.onboarding_status IN (${statusList})
         AND op.onboarding_completed = true
     `)
   ]);
 
+  // Defense-in-depth: redact stub email for non-admin callers. Mirrors the
+  // same pattern in /admin/cc-import/search/users (Batch 9). The `.local`
+  // stub email is contractor-identity-derived and should not surface to
+  // managers, even though the badge is intentionally visible to them.
+  const rows = staffResult.rows;
+  if (req.user.role !== 'admin') {
+    for (const r of rows) {
+      if (typeof r.cc_id === 'string' && r.cc_id.startsWith('legacy_cc:')) {
+        r.email = '(redacted)';
+      }
+    }
+  }
+
   res.json({
-    staff: staffResult.rows,
+    staff: rows,
     total: parseInt(countResult.rows[0].count),
     page,
     pages: Math.ceil(parseInt(countResult.rows[0].count) / limit),
