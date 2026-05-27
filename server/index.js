@@ -145,7 +145,7 @@ app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 app.use('/api/email-marketing/webhook/resend', express.raw({ type: 'application/json' }));
 
 // Cal.com webhook needs raw body for HMAC-SHA256 signature verification, also BEFORE express.json()
-app.use('/api/calcom/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/calcom/webhook', express.raw({ type: 'application/json', limit: '256kb' }));
 
 // Blog admin can post TipTap-inlined images that approach 10MB; scope the big
 // limit to the blog route only. Everything else uses the 1MB default.

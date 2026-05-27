@@ -6,6 +6,16 @@ const http = require('node:http');
 const express = require('express');
 const { pool } = require('../db');
 
+// Refuse to run if DATABASE_URL points at a non-test database. The before/
+// after/beforeEach hooks DELETE webhook_events rows for provider='calcom',
+// which would wipe legitimate dedupe history if run against prod.
+if (process.env.NODE_ENV !== 'test' && !process.env.ALLOW_TEST_DB_WRITES) {
+  throw new Error(
+    'calcom.test.js refuses to run without NODE_ENV=test or ALLOW_TEST_DB_WRITES=1. ' +
+    'These tests DELETE rows from webhook_events.'
+  );
+}
+
 let _server = null;
 let _baseUrl = null;
 
@@ -75,6 +85,11 @@ async function customHeaderRequest(body, secret, headerName) {
   });
 }
 
+async function postEvent(triggerEvent, payload, { secret = TEST_SECRET } = {}) {
+  const body = Buffer.from(JSON.stringify({ triggerEvent, payload }));
+  return signedRequest(body, secret);
+}
+
 const ORIGINAL_SECRET = process.env.CAL_WEBHOOK_SECRET;
 const TEST_SECRET = 'test-cal-secret';
 
@@ -83,7 +98,11 @@ before(async () => {
 });
 
 after(async () => {
-  process.env.CAL_WEBHOOK_SECRET = ORIGINAL_SECRET;
+  if (ORIGINAL_SECRET === undefined) {
+    delete process.env.CAL_WEBHOOK_SECRET;
+  } else {
+    process.env.CAL_WEBHOOK_SECRET = ORIGINAL_SECRET;
+  }
   await pool.query("DELETE FROM webhook_events WHERE provider = 'calcom'");
   if (_server) await new Promise(r => _server.close(r));
   await pool.end();

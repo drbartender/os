@@ -26,7 +26,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
   }
 
   // Pre-check 2: signature header present.
-  const provided = req.header('x-cal-signature-256') || '';
+  const provided = req.headers['x-cal-signature-256'] || '';
   if (!provided) {
     sentryWarn('Cal.com webhook missing signature header', {
       tags: { webhook: 'calcom', reason: 'missing_signature' },
@@ -55,6 +55,13 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     return res.status(400).send('Malformed body');
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    sentryWarn('Cal.com webhook non-object body', {
+      tags: { webhook: 'calcom', reason: 'malformed_body' },
+    });
+    return res.status(400).send('Malformed body');
+  }
+
   // Replay protection: dedupe by SHA-256 of the raw signed body.
   const eventUid = computeBodyHash(req.body);
   const dedupe = await pool.query(
@@ -78,7 +85,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     case 'BOOKING_NO_SHOW_UPDATED': return handleNoShow(data, res);
     default:
       console.log(`[calcom] ignored event: ${event || 'unknown'}`);
-      return res.status(200).json({ ok: true, ignored: event || 'unknown' });
+      return res.status(200).send(`ignored: ${event || 'unknown'}`);
   }
 }));
 
