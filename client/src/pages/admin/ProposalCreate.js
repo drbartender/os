@@ -22,13 +22,7 @@ import Icon from '../../components/adminos/Icon';
 import { fmt$, fmt$2dp, fmtDateFull } from '../../components/adminos/format';
 import PackageIncludesModal from '../../components/adminos/PackageIncludesModal';
 import { AddonQtyStepper, BundleBadge, clampAddonQty } from '../../components/AddonControls';
-
-const SOURCES = [
-  { value: 'direct',    label: 'Direct' },
-  { value: 'referral',  label: 'Referral' },
-  { value: 'thumbtack', label: 'Thumbtack' },
-  { value: 'website',   label: 'Website' },
-];
+import { CLIENT_SOURCES as SOURCES } from '../../utils/clientSources';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

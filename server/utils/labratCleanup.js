@@ -30,9 +30,9 @@ async function purgeLabratTestData() {
        WHERE client_id IN (
          SELECT id FROM clients
          WHERE email LIKE $1
-           AND created_at < NOW() - INTERVAL '${AGE_INTERVAL}'
+           AND created_at < NOW() - $2::INTERVAL
        )`,
-      ['%@labrat.test'],
+      ['%@labrat.test', AGE_INTERVAL],
     )).rows.map(r => r.id);
 
     if (labratProposalIds.length > 0) {
@@ -62,8 +62,8 @@ async function purgeLabratTestData() {
     const clientsDeleted = await client.query(
       `DELETE FROM clients
        WHERE email LIKE $1
-         AND created_at < NOW() - INTERVAL '${AGE_INTERVAL}'`,
-      ['%@labrat.test'],
+         AND created_at < NOW() - $2::INTERVAL`,
+      ['%@labrat.test', AGE_INTERVAL],
     );
     stats.clients = clientsDeleted.rowCount;
 
@@ -73,8 +73,8 @@ async function purgeLabratTestData() {
     const usersDeleted = await client.query(
       `DELETE FROM users
        WHERE email LIKE $1
-         AND created_at < NOW() - INTERVAL '${AGE_INTERVAL}'`,
-      ['%@labrat.test'],
+         AND created_at < NOW() - $2::INTERVAL`,
+      ['%@labrat.test', AGE_INTERVAL],
     );
     stats.users = usersDeleted.rowCount;
 

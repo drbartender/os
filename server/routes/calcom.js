@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const asyncHandler = require('../middleware/asyncHandler');
+const { calcomWebhookLimiter } = require('../middleware/rateLimiters');
 const {
   verifyCalcomSignature,
   computeBodyHash,
@@ -21,7 +22,7 @@ function sentryWarn(message, ctx = {}) {
 
 const router = express.Router();
 
-router.post('/webhook', asyncHandler(async (req, res) => {
+router.post('/webhook', calcomWebhookLimiter, asyncHandler(async (req, res) => {
   // Pre-check 1: secret configured. Fails closed.
   if (!process.env.CAL_WEBHOOK_SECRET) {
     console.error('[calcom] CAL_WEBHOOK_SECRET not set; rejecting webhook');
@@ -271,12 +272,17 @@ async function handleCancelled(payload, res) {
   const startTime = payload?.startTime || new Date().toISOString();
   const { bookerNameRaw, bookerEmailRaw } = normalizeBooker(payload);
 
+  // WHERE guards against a late cancel arriving after an admin (or another
+  // path) marked the consult `completed`. Without it, the UPSERT would flip
+  // the completed row back to `cancelled` and undo admin work. The same
+  // protection is mirrored in handleNoShow below.
   await pool.query(
     `INSERT INTO consults
        (calcom_event_id, scheduled_at, status, booker_name, booker_email)
      VALUES ($1, $2, 'cancelled', $3, $4)
      ON CONFLICT (calcom_event_id) DO UPDATE
-     SET status = 'cancelled'`,
+     SET status = 'cancelled'
+     WHERE consults.status <> 'completed'`,
     [uid, startTime, bookerNameRaw, bookerEmailRaw]
   );
 
@@ -328,14 +334,18 @@ async function handleNoShow(payload, res) {
     return res.status(200).send('Missing uid, ignored');
   }
 
+  // status <> 'completed' guards against a late no-show flip overwriting an
+  // admin's manual completion. The zero-row branch below already covers the
+  // "uid not in DB" case; with this WHERE it also fires when the row exists
+  // but is `completed`, which is the right operator signal.
   const result = await pool.query(
-    `UPDATE consults SET status = 'no_show' WHERE calcom_event_id = $1`,
+    `UPDATE consults SET status = 'no_show' WHERE calcom_event_id = $1 AND status <> 'completed'`,
     [uid]
   );
 
   if (result.rowCount === 0) {
-    console.warn(`[calcom] no_show for unknown uid: ${uid}`);
-    sentryWarn('Cal.com no-show for unknown booking', {
+    console.warn(`[calcom] no_show for unknown or completed uid: ${uid}`);
+    sentryWarn('Cal.com no-show for unknown or completed booking', {
       tags: { webhook: 'calcom', triggerEvent: 'BOOKING_NO_SHOW_UPDATED' },
       extra: { uid },
     });

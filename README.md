@@ -244,6 +244,7 @@ dr-bartender/
 │   │   ├── utils/
 │   │   │   ├── api.js          # Axios instance with JWT interceptor
 │   │   │   ├── buildTipDeepLink.js # Builds Venmo/CashApp deep links + Stripe fallback URL for tip pages
+│   │   │   ├── clientSources.js # Canonical client source list (mirrors schema CHECK + server VALID_SOURCES)
 │   │   │   ├── constants.js    # App-wide constants
 │   │   │   ├── eventTypes.js   # Event type id→label resolver (mirrors server)
 │   │   │   ├── formatPhone.js  # Phone number formatting

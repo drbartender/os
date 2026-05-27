@@ -462,6 +462,23 @@ test('BOOKING_CANCELLED: missing uid is a 200 no-op', async () => {
   assert.equal(rows.rowCount, 0);
 });
 
+test('BOOKING_CANCELLED: completed row is protected (late cancel does not flip)', async () => {
+  await cleanupTestRows();
+  await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status, booker_name, booker_email)
+     VALUES ('test-uid-cancel-completed', '2026-06-01T15:00:00Z', 'completed', 'CalcomTest Kate', 'kate@calcom-test.example')`
+  );
+  await buildApp(TEST_SECRET);
+  const res = await postCancelled({
+    uid: 'test-uid-cancel-completed',
+    startTime: '2026-06-01T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Kate', email: 'kate@calcom-test.example' }],
+  });
+  assert.equal(res.status, 200);
+  const row = await pool.query("SELECT status FROM consults WHERE calcom_event_id = 'test-uid-cancel-completed'");
+  assert.equal(row.rows[0].status, 'completed', 'completed consult must not be flipped to cancelled');
+});
+
 // ─── BOOKING_RESCHEDULED tests ────────────────────────────────────
 
 async function postRescheduled(payload) {
@@ -596,4 +613,17 @@ test('BOOKING_NO_SHOW_UPDATED: missing uid is 200 ignored', async () => {
   await buildApp(TEST_SECRET);
   const res = await postNoShow({});
   assert.equal(res.status, 200);
+});
+
+test('BOOKING_NO_SHOW_UPDATED: completed row is protected (late no-show does not flip)', async () => {
+  await cleanupTestRows();
+  await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status)
+     VALUES ('test-uid-noshow-completed', '2026-06-01T15:00:00Z', 'completed')`
+  );
+  await buildApp(TEST_SECRET);
+  const res = await postNoShow({ uid: 'test-uid-noshow-completed' });
+  assert.equal(res.status, 200);
+  const row = await pool.query("SELECT status FROM consults WHERE calcom_event_id = 'test-uid-noshow-completed'");
+  assert.equal(row.rows[0].status, 'completed', 'completed consult must not be flipped to no_show');
 });

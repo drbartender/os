@@ -140,4 +140,18 @@ const venueSearchGlobalLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter, adminWriteLimiter, adminSearchLimiter, venueSearchLimiter, venueSearchGlobalLimiter };
+// Cal.com webhook. The only legitimate caller is Cal.com itself, and even on a
+// busy event day the burst stays well under this cap. Cost-per-invalid-request
+// is an HMAC compute plus a Sentry warn, so the cap exists to bound that cost
+// under flood. Skip in test env so the test suite does not trip the limit
+// when many signed requests are dispatched in quick succession.
+const calcomWebhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 600,
+  message: { error: 'Too many webhook requests.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
+});
+
+module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter, adminWriteLimiter, adminSearchLimiter, venueSearchLimiter, venueSearchGlobalLimiter, calcomWebhookLimiter };
