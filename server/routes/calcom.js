@@ -6,6 +6,7 @@ const {
   computeBodyHash,
   parseCalcomBody,
   extractBookingFields,
+  extractRescheduleOldUid,
   normalizeBooker,
 } = require('../utils/calcomWebhookHelpers');
 
@@ -267,7 +268,42 @@ async function handleCancelled(payload, res) {
 
   return res.status(200).send('OK');
 }
-async function handleRescheduled(_payload, res) { return res.status(200).send('OK'); }
+async function handleRescheduled(payload, res) {
+  const newUid = payload?.uid;
+  const newStartTime = payload?.startTime;
+  if (!newUid || !newStartTime) {
+    return res.status(200).send('Malformed payload, ignored');
+  }
+
+  const oldUid = extractRescheduleOldUid(payload);
+  const bookerName = String(payload?.attendees?.[0]?.name || '').trim().slice(0, 255) || null;
+  const bookerEmail = String(payload?.attendees?.[0]?.email || '').trim().toLowerCase().slice(0, 255) || null;
+
+  if (oldUid) {
+    const result = await pool.query(
+      `UPDATE consults
+       SET calcom_event_id = $1, scheduled_at = $2, status = 'scheduled',
+           booker_name = COALESCE($3, booker_name),
+           booker_email = COALESCE($4, booker_email)
+       WHERE calcom_event_id = $5`,
+      [newUid, newStartTime, bookerName, bookerEmail, oldUid]
+    );
+    if (result.rowCount > 0) {
+      return res.status(200).send('Rescheduled in place');
+    }
+    // Fall through if we never saw the original create.
+  }
+
+  // No old-uid reference, or old uid not in our DB. Treat as fresh CREATED.
+  // Surface this in Sentry so operator can investigate the missing
+  // create AND optionally clean up the stale 'scheduled' row from the
+  // original booking that we never saw.
+  sentryWarn('Cal.com BOOKING_RESCHEDULED with unresolvable old uid', {
+    tags: { webhook: 'calcom', triggerEvent: 'BOOKING_RESCHEDULED' },
+    extra: { newUid, payloadShape: Object.keys(payload || {}) },
+  });
+  return handleCreated(payload, res);
+}
 async function handleNoShow(_payload, res)      { return res.status(200).send('OK'); }
 
 module.exports = router;

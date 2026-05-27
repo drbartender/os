@@ -461,3 +461,72 @@ test('BOOKING_CANCELLED: missing uid is a 200 no-op', async () => {
   const rows = await pool.query("SELECT id FROM consults WHERE booker_email = 'jack@calcom-test.example'");
   assert.equal(rows.rowCount, 0);
 });
+
+// ─── BOOKING_RESCHEDULED tests ────────────────────────────────────
+
+async function postRescheduled(payload) {
+  return postEvent('BOOKING_RESCHEDULED', payload);
+}
+
+test('BOOKING_RESCHEDULED: updates existing row in place using rescheduleUid', async () => {
+  await cleanupTestRows();
+  await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status, booker_name, booker_email)
+     VALUES ('test-uid-resched-old-1', '2026-06-01T15:00:00Z', 'scheduled', 'CalcomTest Kate', 'kate@calcom-test.example')`
+  );
+  await buildApp(TEST_SECRET);
+  const res = await postRescheduled({
+    uid: 'test-uid-resched-new-1',
+    startTime: '2026-06-08T15:00:00Z',
+    rescheduleUid: 'test-uid-resched-old-1',
+    attendees: [{ name: 'CalcomTest Kate', email: 'kate@calcom-test.example' }],
+  });
+  assert.equal(res.status, 200);
+  assert.match(res.text, /rescheduled in place/i);
+
+  const rows = await pool.query(
+    "SELECT calcom_event_id, status, scheduled_at FROM consults WHERE calcom_event_id IN ('test-uid-resched-old-1', 'test-uid-resched-new-1')"
+  );
+  assert.equal(rows.rowCount, 1);
+  assert.equal(rows.rows[0].calcom_event_id, 'test-uid-resched-new-1');
+  assert.equal(rows.rows[0].status, 'scheduled');
+});
+
+test('BOOKING_RESCHEDULED: probes alternative old-uid field names', async () => {
+  await cleanupTestRows();
+  await pool.query(
+    `INSERT INTO consults (calcom_event_id, scheduled_at, status)
+     VALUES ('test-uid-resched-old-meta', '2026-06-01T15:00:00Z', 'scheduled')`
+  );
+  await buildApp(TEST_SECRET);
+  await postRescheduled({
+    uid: 'test-uid-resched-new-meta',
+    startTime: '2026-06-08T15:00:00Z',
+    metadata: { rescheduleUid: 'test-uid-resched-old-meta' },
+  });
+  const row = await pool.query("SELECT id FROM consults WHERE calcom_event_id = 'test-uid-resched-new-meta'");
+  assert.equal(row.rowCount, 1);
+});
+
+test('BOOKING_RESCHEDULED: falls through to handleCreated when old uid unresolvable', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  await postRescheduled({
+    uid: 'test-uid-resched-fresh',
+    startTime: '2026-06-08T15:00:00Z',
+    attendees: [{ name: 'CalcomTest Liam', email: 'liam@calcom-test.example' }],
+  });
+  const consult = await pool.query("SELECT status FROM consults WHERE calcom_event_id = 'test-uid-resched-fresh'");
+  assert.equal(consult.rowCount, 1);
+  assert.equal(consult.rows[0].status, 'scheduled');
+  const client = await pool.query("SELECT id FROM clients WHERE email = 'liam@calcom-test.example'");
+  assert.equal(client.rowCount, 1, 'fall-through created a client');
+});
+
+test('BOOKING_RESCHEDULED: missing newUid or newStartTime is 200 ignored', async () => {
+  await cleanupTestRows();
+  await buildApp(TEST_SECRET);
+  const res = await postRescheduled({ rescheduleUid: 'whatever' });
+  assert.equal(res.status, 200);
+  assert.match(res.text, /malformed|ignored/i);
+});
