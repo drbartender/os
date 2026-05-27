@@ -28,6 +28,7 @@ const crypto = require('crypto');
 const { pool } = require('../lib/db');
 const { startRun, finishRun } = require('../lib/runLog');
 const { loadCsv } = require('../lib/csv');
+const { normalizeEmail, placeholderEmail } = require('../lib/email');
 
 const SOURCE_FILE = 'report (9).csv';
 const SOURCE_ENTITY = 'clients';
@@ -58,28 +59,9 @@ function getCol(row, ...candidates) {
   return undefined;
 }
 
-/**
- * Normalize a raw email per spec §7.1 step 1. Returns the canonical (lowercased,
- * trimmed) email when it's a usable value; returns null to signal "use a
- * placeholder + flag email_status = 'bad'".
- */
-function normalizeEmail(rawEmail) {
-  if (rawEmail == null) return null;
-  const trimmed = String(rawEmail).trim();
-  if (!trimmed) return null;
-  const lower = trimmed.toLowerCase();
-  if (lower === 'n/a' || lower === 'none') return null;
-  if (lower.startsWith('noemail@')) return null;
-  return lower;
-}
-
-/**
- * Build the placeholder email used for clients with missing/junk email values.
- * Spec §7.1: `cc-import-noemail-<cc_id>@drbartender.local`.
- */
-function placeholderEmail(ccId) {
-  return `cc-import-noemail-${ccId}@drbartender.local`;
-}
+// normalizeEmail + placeholderEmail moved to scripts/cc-import/lib/email.js
+// (shared with Phase 3's client_email_normalized lookup). Re-exported below
+// for back-compat with existing test imports.
 
 /**
  * Build a usable client name from the CC row. Prefer the explicit `Name`
