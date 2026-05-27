@@ -668,7 +668,9 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
 
   // If this assignment fills the shift, clear the proposal's last-minute hold
   // AND fire Touch 2.2 (client confirmation email + SMS naming the bartender).
-  await confirmStaffingIfFullyStaffed(req.params.id);
+  // Fire-and-forget: the helper has its own outer try/catch + Sentry; awaiting
+  // would block the response on Resend + Twilio round-trips.
+  confirmStaffingIfFullyStaffed(req.params.id);
 
   // Schedule the day-before reminder + post-event thank-you SMS for everyone
   // approved on this shift (idempotent). Best-effort: a scheduling failure
@@ -782,10 +784,12 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
       console.error('Shift approval email failed (non-blocking):', emailErr);
     }
 
-    // Approving this request may have fully staffed the shift — clear the
+    // Approving this request may have fully staffed the shift, so clear the
     // linked proposal's last-minute hold AND fire Touch 2.2 if so.
     // result.rows[0] is the updated shift_request, so its shift_id is in hand.
-    await confirmStaffingIfFullyStaffed(result.rows[0].shift_id);
+    // Fire-and-forget: the helper has its own outer try/catch + Sentry;
+    // awaiting would block the response on Resend + Twilio round-trips.
+    confirmStaffingIfFullyStaffed(result.rows[0].shift_id);
 
     // Schedule staff reminder + thank-you SMS (idempotent, best-effort).
     try {

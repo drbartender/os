@@ -479,6 +479,11 @@ async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
   // getBookingWindow returns { hoursUntilEvent, fullPaymentRequired,
   // lastMinuteHold } and takes an options object (NOT a row); see
   // bookingWindow.js:39.
+  // NOTE: `updated` must include `last_minute_hold` from a `SELECT *` (see
+  // proposals/crud.js:621). If a future caller narrows the SELECT to omit
+  // last_minute_hold, `updated.last_minute_hold` becomes undefined and the
+  // comparison `undefined !== lastMinuteHold` is always true, so the UPDATE
+  // would fire on every reschedule (harmless but wasteful).
   const { lastMinuteHold } = getBookingWindow({
     eventDate: updated.event_date,
     eventStartTime: updated.event_start_time,

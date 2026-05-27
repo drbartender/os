@@ -32,7 +32,9 @@ function _resolveDisplayName(row) {
  */
 function renderBartenderList(bartenders) {
   const parts = bartenders.map((b) => {
-    const name = _resolveDisplayName(b);
+    // Defensive: strip CR/LF from preferred_name so a stray newline cannot
+    // line-break the email subject or plain-text body.
+    const name = _resolveDisplayName(b).replace(/[\r\n]+/g, ' ');
     const display = formatPhoneDisplay(b.phone);
     return display ? `${name} (${display})` : name;
   });
@@ -202,8 +204,10 @@ async function notifyClientOfStaffingConfirmation(proposalId, shiftId) {
  * but notify thrown) lands a Sentry exception so the lost message is observable.
  *
  * CALLERS: shifts.js:669, shifts.js:786, autoAssign.js. All three call
- * unconditionally. Do not add an upstream `WHERE last_minute_hold` filter at
- * any call site (that would regress the auto-assign clear-hold bugfix).
+ * unconditionally AND fire-and-forget. The helper awaits Resend + Twilio
+ * internally, so awaiting it from the call site would block the response.
+ * Do not add an upstream `WHERE last_minute_hold` filter at any call site
+ * (that would regress the auto-assign clear-hold bugfix).
  *
  * `positions_needed` is `TEXT DEFAULT '[]'` (JSON-encoded string per
  * schema.sql:280), so the length check uses `JSON.parse` with a fallback,

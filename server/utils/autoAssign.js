@@ -343,21 +343,17 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
   }
 
   // 10.5. Touch 2.2: if this auto-assign just filled a held proposal, fire
-  // the client staffing-confirmation. Non-blocking; idempotency is enforced
-  // by confirmStaffingIfFullyStaffed's atomic UPDATE. The outer try/catch
-  // here is defensive belt-and-suspenders. confirmStaffingIfFullyStaffed
-  // ALSO has its own outer try/catch + Sentry capture, but matching the
-  // sibling `scheduleStaffShiftMessages` pattern below keeps the autoAssign-
-  // side Sentry tag attached so failures cluster by call site.
-  try {
-    await confirmStaffingIfFullyStaffed(shiftId);
-  } catch (confErr) {
+  // the client staffing-confirmation. Fire-and-forget: the helper has its
+  // own outer try/catch + Sentry, and awaiting would block on Resend +
+  // Twilio. The .catch wrapper keeps the autoAssign-side Sentry tag attached
+  // so failures cluster by call site.
+  confirmStaffingIfFullyStaffed(shiftId).catch((confErr) => {
     Sentry.captureException(confErr, {
       tags: { component: 'autoAssign', issue: 'staffing-confirmation' },
       extra: { shiftId },
     });
     console.error('[AutoAssign] staffing-confirmation hook failed (non-blocking):', confErr.message);
-  }
+  });
 
   // 11. Mark shift as auto-assigned
   await pool.query(
