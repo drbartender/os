@@ -149,6 +149,13 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 **Why deferred:** Scale concern, not a current problem.
 **Next step:** Add partial indexes on `email_sends(campaign_id) WHERE status = 'opened'` / `WHERE status = 'clicked'`, OR refactor to a single aggregated subquery with `COUNT(*) FILTER (WHERE status = ...)`.
 
+### CC-Import: orphan-payment link refund branch — TOCTOU race on concurrent admin clicks
+
+**Source:** 2026-05-28 Task 2 checkpoint review (database-review agent).
+**What:** `server/routes/admin/ccImport/review.js:334-346` reads `cc_event_id, promoted_*_id` outside any txn or row lock, then `:392-395` (refund branch) runs a bare `UPDATE legacy_cc_payments SET cc_event_id = $1` with no `WHERE cc_event_id IS NULL` clause. Two admin clicks racing on the same orphan row can both pass the guards, both run the UPDATE, then both call `promoteSingleLegacyRefund`. The helper's `FOR UPDATE` on `proposals` (phase4.js:585-589) serializes the row-lock contention, but the per-proposal `legacy_charge_id` idempotency index does NOT fire when `legacy_charge_id` is NULL (legitimate per the CC export), so both calls can produce duplicate `proposal_refunds` inserts. Payment branch is NOT affected — shared txn + FOR UPDATE inside `promoteSingleLegacyPayment` makes the second caller block and see `promoted_payment_id` set.
+**Why deferred:** Pre-existing race, not introduced by codex-followups Task 2. The atomicity fix in commit `6455fdb` closes the bigger "non-success status strands cc_event_id" gap; this concurrency hole is narrower and only fires under double-click. Operator UX could mitigate via button-disable-on-click; the durable fix is server-side.
+**Next step:** Tighten the refund-branch UPDATE to `... WHERE id = $1 AND cc_event_id IS NULL`, check `rowCount === 0` → throw `ConflictError('race lost')`. Alternatively, add `SELECT ... FOR UPDATE` to the guard SELECT at `review.js:334-338` to serialize concurrent reads.
+
 ### metricsQueries `include_cc` filter join lacks composite index
 
 **Source:** 2026-05-27 push pre-review (performance-review agent, finding L4).
