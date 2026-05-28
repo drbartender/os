@@ -3,7 +3,11 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const bcrypt = require('bcryptjs');
 const { pool } = require('../db');
-const { insertBeoNudgeIfMissing, BEO_MESSAGE_TYPE } = require('./beoHandlers');
+const {
+  insertBeoNudgeIfMissing,
+  scheduleBeoNudgesForProposal,
+  BEO_MESSAGE_TYPE,
+} = require('./beoHandlers');
 
 let clientId, proposalId, userId, shiftId;
 
@@ -53,11 +57,14 @@ after(async () => {
   await pool.end();
 });
 
+// ─── Task 7: insertBeoNudgeIfMissing ─────────────────────────────────────
+
 test('BEO_MESSAGE_TYPE constant', () => {
   assert.strictEqual(BEO_MESSAGE_TYPE, 'beo_unack_nudge_sms');
 });
 
 test('insertBeoNudgeIfMissing > inserts pending row', async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
   const scheduledFor = new Date(Date.now() + 60 * 1000);
   await insertBeoNudgeIfMissing(pool, { proposalId, userId, scheduledFor });
   const { rows } = await pool.query(
@@ -100,4 +107,72 @@ test('insertBeoNudgeIfMissing > re-inserts when only suppressed rows exist', asy
   );
   assert.strictEqual(rows.length, 2, 'expected one suppressed + one new pending');
   assert.deepStrictEqual(rows.map(r => r.status).sort(), ['pending', 'suppressed']);
+});
+
+// ─── Task 8: scheduleBeoNudgesForProposal ────────────────────────────────
+
+test('scheduleBeoNudgesForProposal > inserts one row per approved staffer', async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  await scheduleBeoNudgesForProposal(proposalId, pool);
+  const { rows } = await pool.query(
+    "SELECT recipient_id, scheduled_for FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1 AND message_type='beo_unack_nudge_sms'",
+    [proposalId]
+  );
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].recipient_id, userId);
+});
+
+test('scheduleBeoNudgesForProposal > skips deactivated staffers', async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  await pool.query("UPDATE users SET onboarding_status='deactivated' WHERE id=$1", [userId]);
+  await scheduleBeoNudgesForProposal(proposalId, pool);
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
+    [proposalId]
+  );
+  assert.strictEqual(Number(rows[0].count), 0);
+  await pool.query("UPDATE users SET onboarding_status='approved' WHERE id=$1", [userId]);
+});
+
+test('scheduleBeoNudgesForProposal > skips past-event proposals', async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  await pool.query("UPDATE proposals SET event_date = CURRENT_DATE - 1 WHERE id = $1", [proposalId]);
+  const result = await scheduleBeoNudgesForProposal(proposalId, pool);
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
+    [proposalId]
+  );
+  assert.strictEqual(Number(rows[0].count), 0);
+  assert.strictEqual(result.skipped, 'past_or_unparseable');
+  await pool.query("UPDATE proposals SET event_date = CURRENT_DATE + 30 WHERE id = $1", [proposalId]);
+});
+
+test('scheduleBeoNudgesForProposal > skips TBD start time', async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  await pool.query("UPDATE proposals SET event_start_time = NULL WHERE id = $1", [proposalId]);
+  const result = await scheduleBeoNudgesForProposal(proposalId, pool);
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1",
+    [proposalId]
+  );
+  assert.strictEqual(Number(rows[0].count), 0);
+  assert.strictEqual(result.skipped, 'no_start_time');
+  await pool.query("UPDATE proposals SET event_start_time = '6:00 PM' WHERE id = $1", [proposalId]);
+});
+
+test('scheduleBeoNudgesForProposal > dedupes when a staffer is on two shifts', async () => {
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  const s2 = await pool.query(
+    "INSERT INTO shifts (event_date, status, proposal_id) VALUES (CURRENT_DATE + 30, 'open', $1) RETURNING id",
+    [proposalId]
+  );
+  await pool.query("INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved')", [s2.rows[0].id, userId]);
+  await scheduleBeoNudgesForProposal(proposalId, pool);
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1 AND recipient_id=$2",
+    [proposalId, userId]
+  );
+  assert.strictEqual(Number(rows[0].count), 1, 'one row per staffer per proposal');
+  await pool.query("DELETE FROM shift_requests WHERE shift_id = $1", [s2.rows[0].id]);
+  await pool.query("DELETE FROM shifts WHERE id = $1", [s2.rows[0].id]);
 });
