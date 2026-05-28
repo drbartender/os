@@ -130,6 +130,25 @@ function lastMinuteStaffingConfirmationSms({ eventDate, bartenderList, isPlural 
   return `Hi, Dallas here. Your ${noun} for ${eventDate} ${verb} ${bartenderList}. They'll reach out the day of the event. Let me know if you have any questions.`;
 }
 
+/**
+ * BEO unack nudge SMS (spec section 6.3). The CTA drives staff to the portal
+ * where the click is itself the read-receipt signal; we do NOT reuse the
+ * existing CONFIRM keyword. Body length budgeted for 2 segments worst case;
+ * eventTypeLabel is GSM-7-normalized then truncated to 40 chars to avoid an
+ * unexpected UCS-2 segment-cap halving.
+ */
+function staffBeoNudgeSms({ eventTypeLabel, eventDateLocal, beoUrl }) {
+  const normalized = String(eventTypeLabel || 'your event')
+    // Replace curly quotes with GSM-7-safe equivalents. Pragmatic minimum;
+    // unhandled UCS-2 chars (emoji etc.) take the larger segment cost.
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'");
+  const truncated = normalized.length > 40
+    ? normalized.slice(0, 40) + '…'
+    : normalized;
+  return `BEO ready from Dr. Bartender: ${truncated} on ${eventDateLocal}. Tap to review and confirm: ${beoUrl}`;
+}
+
 module.exports = {
   initialProposalSms,
   signPayConfirmationSms,
@@ -147,4 +166,5 @@ module.exports = {
   staffScheduleChangeSms,
   staffCancellationSms,
   lastMinuteStaffingConfirmationSms,
+  staffBeoNudgeSms,
 };
