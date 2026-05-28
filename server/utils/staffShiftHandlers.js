@@ -739,4 +739,5 @@ module.exports = {
   notifyStaffOfScheduleChange,
   runRescheduleStaffHooks,
   reanchorStaffShiftMessages,
+  formatEventDateLong, // exported for beoHandlers.js (Phase 2 Task 6)
 };
