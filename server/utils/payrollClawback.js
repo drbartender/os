@@ -14,7 +14,6 @@ const { pool } = require('../db');
 const { findOpenPeriodForDate } = require('./payrollProcessing');
 const { payPeriodForDate, computePayday } = require('./payrollPeriods');
 const { splitEvenly } = require('./payrollMath');
-const { isLegacyCcStubUser } = require('./payrollGuards');
 
 async function clawbackTip(tipId, newCumulativeRefundedCents) {
   const client = await pool.connect();
@@ -28,21 +27,6 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
     );
     const tip = tipRes.rows[0];
     if (!tip) { await client.query('ROLLBACK'); return null; }
-
-    // cc-import: tips paid TO a legacy_cc:* stub bartender never had a modern
-    // payout to claw back FROM (stubs are imports-only, no Stripe Connect).
-    // Fires BEFORE any DB writes — leaves refunded_amount_cents at the prior
-    // value so a re-run after a future de-stub can replay. clawbackTipByPaymentIntent
-    // inherits this skip automatically since it calls clawbackTip internally.
-    if (await isLegacyCcStubUser(tip.target_user_id, client)) {
-      Sentry.captureMessage('clawbackTip: target is legacy_cc stub; skipping', {
-        level: 'info',
-        tags: { util: 'payrollClawback', step: 'skip_legacy_cc_stub' },
-        extra: { tipId, targetUserId: tip.target_user_id },
-      });
-      await client.query('ROLLBACK');
-      return { skipped: true, reason: 'legacy_cc_stub_target' };
-    }
 
     const original = Number(tip.amount_cents);
     const newAmt = Math.max(0, Math.min(Number(newCumulativeRefundedCents) || 0, original));
@@ -59,17 +43,34 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
     }
 
     const bartendersRes = await client.query(
-      `SELECT sr.user_id FROM shift_requests sr
+      `SELECT sr.user_id, (u.cc_id LIKE 'legacy_cc:%') AS is_stub
+         FROM shift_requests sr
+         JOIN users u ON u.id = sr.user_id
         WHERE sr.shift_id = $1 AND sr.status = 'approved'
           AND LOWER(sr.position) = 'bartender'
         ORDER BY sr.user_id`,
       [tip.shift_id]
     );
-    const bartenders = bartendersRes.rows.map(r => r.user_id);
-    if (bartenders.length === 0) {
+    const allBartenders = bartendersRes.rows;
+    const bartenders = allBartenders.filter(r => !r.is_stub).map(r => r.user_id);
+    const stubCount = allBartenders.length - bartenders.length;
+
+    if (allBartenders.length === 0) {
       await client.query('UPDATE tips SET refunded_amount_cents = $1 WHERE id = $2', [newAmt, tipId]);
       await client.query('COMMIT');
       return { delta, bartenders: 0 };
+    }
+
+    if (bartenders.length === 0) {
+      // All shift bartenders are stubs — recoverable: do NOT advance
+      // refunded_amount_cents so a future de-stub can replay.
+      Sentry.captureMessage('clawbackTip: all shift bartenders are legacy_cc stubs; skipping', {
+        level: 'info',
+        tags: { util: 'payrollClawback', step: 'skip_all_stubs' },
+        extra: { tipId, shiftId: tip.shift_id, stubCount },
+      });
+      await client.query('ROLLBACK');
+      return { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' };
     }
 
     // Proportional fee on the delta.

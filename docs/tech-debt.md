@@ -163,13 +163,6 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 **Why deferred:** Fine at current volumes — `proposals` is small. Only becomes a problem once `proposal_payments` crosses ~100k rows. The `include_cc` chip itself was just wired (commit `c4a18e1`) so usage data starts now.
 **Next step:** Revisit once the financials dashboard slows on a CC-heavy filter. Likely fix: add `CREATE INDEX idx_proposals_id_cc_id ON proposals(id, cc_id)` — covers both `IS NULL` and `IS NOT NULL` branches via index-only scan.
 
-### CC-Import: `payrollLateTip` / `clawbackTip` stub gate fires on target, but math splits across all shift bartenders
-
-**Source:** 2026-05-27 push pre-review (Codex code-review, P1).
-**What:** `server/utils/payrollLateTip.js:41-48` (and the analogous skip in `clawbackTip`) gates on `tips.target_user_id` — if that user is a legacy CC stub, the whole rollforward/clawback is skipped. But `rollForwardLateTip()` and `clawbackTip()` then split the money across every approved bartender on `tip.shift_id`. On a mixed shift (stub + real bartender after operator linked a real user via the review page), a tip whose `target_user_id` resolves to the stub now skips entirely — the real bartender on the same shift gets nothing from that tip, and a later refund won't claw their share back.
-**Why deferred:** Narrow trigger — requires (a) a cc-imported shift with a stub, (b) operator linked a real bartender into that shift, (c) a Stripe late tip arrives later targeting the stub. None of those are impossible, but the chain is rare.
-**Next step:** Replace the `isLegacyCcStubUser(target_user_id)` early-return with "skip the stub recipients from the per-bartender split". I.e., query approved bartenders, partition into stubs vs real, run the split using only the real subset (size N - stubs). If ALL bartenders on the shift are stubs, then the existing early-return is correct.
-
 ### admin.js applications filter CASE expression blocks index
 
 **Source:** 2026-04-24 push pre-review (database-review agent).
