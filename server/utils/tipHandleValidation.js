@@ -9,6 +9,13 @@ const VENMO_RE = /^[A-Za-z0-9._-]{1,30}$/;
 const CASHAPP_RE = /^[A-Za-z0-9_]{1,20}$/;
 const PAYPAL_USER_RE = /^[A-Za-z0-9-]{1,30}$/;
 
+// Zelle accepts a phone number (E.164) OR an email address (RFC 5322 light).
+// Spec §6.11 + Task 6.
+const ZELLE_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// E.164 allows +<1-15 digits>, but local US users often paste with dashes/parens
+// which we strip before matching.
+const ZELLE_PHONE_RE = /^\+?[1-9]\d{6,14}$/;
+
 function trimToNullableString(v, field) {
   if (v === undefined || v === null) return null;
   if (typeof v !== 'string') throw new ValidationError({ [field]: 'must be a string' });
@@ -72,6 +79,23 @@ function normalizePaypalUrl(input) {
   return `https://paypal.me/${username}`;
 }
 
+// Zelle handle: a phone number OR an email address. Phone is normalized by
+// stripping formatting characters; email is lowercased. Spec §6.11 / Task 6.
+function normalizeZelleHandle(input) {
+  const t = trimToNullableString(input, 'zelle_handle');
+  if (t === null) return null;
+  if (ZELLE_EMAIL_RE.test(t)) {
+    return t.toLowerCase();
+  }
+  const stripped = t.replace(/[\s\-().]/g, '');
+  if (ZELLE_PHONE_RE.test(stripped)) {
+    return stripped.startsWith('+') ? stripped : `+1${stripped}`;
+  }
+  throw new ValidationError({
+    zelle_handle: 'Zelle requires a phone number or email address.',
+  });
+}
+
 // Convenience: normalize an `updates` object in place. Mutates only the keys
 // that are present and skip-on-undefined; an explicitly-null/empty value is
 // treated as a clear (returns null).
@@ -79,11 +103,13 @@ function normalizeTipHandlesInPlace(updates) {
   if ('venmo_handle' in updates) updates.venmo_handle = normalizeVenmoHandle(updates.venmo_handle);
   if ('cashapp_handle' in updates) updates.cashapp_handle = normalizeCashappHandle(updates.cashapp_handle);
   if ('paypal_url' in updates) updates.paypal_url = normalizePaypalUrl(updates.paypal_url);
+  if ('zelle_handle' in updates) updates.zelle_handle = normalizeZelleHandle(updates.zelle_handle);
 }
 
 module.exports = {
   normalizeVenmoHandle,
   normalizeCashappHandle,
   normalizePaypalUrl,
+  normalizeZelleHandle,
   normalizeTipHandlesInPlace,
 };
