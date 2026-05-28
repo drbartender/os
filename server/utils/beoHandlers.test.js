@@ -176,3 +176,55 @@ test('scheduleBeoNudgesForProposal > dedupes when a staffer is on two shifts', a
   await pool.query("DELETE FROM shift_requests WHERE shift_id = $1", [s2.rows[0].id]);
   await pool.query("DELETE FROM shifts WHERE id = $1", [s2.rows[0].id]);
 });
+
+
+// ─── Task 9: suppress helpers ────────────────────────────────────────────
+
+test('suppressBeoNudgesForProposal > marks pending suppressed, preserves sent', async () => {
+  const { suppressBeoNudgesForProposal } = require('./beoHandlers');
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  await scheduleBeoNudgesForProposal(proposalId, pool);
+  // Insert a fake-but-distinct sent row for a different user_id (cleanup at end)
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, status, sent_at)
+     VALUES ($1, 'proposal', 'beo_unack_nudge_sms', 'staff', $2, 'sms', NOW(), 'sent', NOW())`,
+    [proposalId, userId + 99999]
+  );
+  const result = await suppressBeoNudgesForProposal(proposalId, pool, 'unfinalized: BEO unfinalized by admin');
+  assert.strictEqual(result.suppressed, 1);
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1 ORDER BY status",
+    [proposalId]
+  );
+  assert.strictEqual(rows[0].status, 'sent');
+  assert.strictEqual(rows[1].status, 'suppressed');
+  assert.match(rows[1].error_message, /unfinalized/);
+});
+
+test('suppressBeoNudgesForStaffers > only suppresses when no surviving approved shift', async () => {
+  const { suppressBeoNudgesForStaffers } = require('./beoHandlers');
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  await scheduleBeoNudgesForProposal(proposalId, pool);
+  // Staffer's shift_request is still approved -> NOT EXISTS guard preserves the row
+  await suppressBeoNudgesForStaffers(proposalId, [userId], pool);
+  const stillPending = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1 AND recipient_id=$2",
+    [proposalId, userId]
+  );
+  assert.strictEqual(stillPending.rows[0].status, 'pending');
+  // Deny the request, then re-run -> now suppressed
+  await pool.query("UPDATE shift_requests SET status='denied' WHERE shift_id=$1 AND user_id=$2", [shiftId, userId]);
+  await suppressBeoNudgesForStaffers(proposalId, [userId], pool);
+  const nowSuppressed = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1 AND recipient_id=$2",
+    [proposalId, userId]
+  );
+  assert.strictEqual(nowSuppressed.rows[0].status, 'suppressed');
+  await pool.query("UPDATE shift_requests SET status='approved' WHERE shift_id=$1 AND user_id=$2", [shiftId, userId]);
+});
+
+test('suppressBeoNudgesForStaffers > empty userIds returns 0 without query', async () => {
+  const { suppressBeoNudgesForStaffers } = require('./beoHandlers');
+  const result = await suppressBeoNudgesForStaffers(proposalId, [], pool);
+  assert.strictEqual(result.suppressed, 0);
+});

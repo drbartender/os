@@ -96,8 +96,67 @@ async function scheduleBeoNudgesForProposal(proposalId, executor) {
   return { inserted, scheduledFor };
 }
 
+/**
+ * UPDATE every pending BEO nudge row for this proposal to suppressed with
+ * the given reason. Sent rows are preserved (audit trail).
+ *
+ * @param {number} proposalId
+ * @param {{query: Function}} executor
+ * @param {string} reason
+ * @returns {Promise<{suppressed: number}>}
+ */
+async function suppressBeoNudgesForProposal(proposalId, executor, reason) {
+  const result = await executor.query(
+    `UPDATE scheduled_messages
+        SET status='suppressed', error_message=$2
+      WHERE entity_type='proposal'
+        AND entity_id=$1
+        AND message_type=$3
+        AND status='pending'`,
+    [proposalId, reason, BEO_MESSAGE_TYPE]
+  );
+  return { suppressed: result.rowCount };
+}
+
+/**
+ * UPDATE pending BEO rows for the given staffers on the given proposal to
+ * suppressed, BUT only when the staffer has no remaining approved active
+ * shift on the same proposal. Used by cancel-or-unassign, PUT request deny,
+ * DELETE shift, DELETE request, generic PUT cancel.
+ *
+ * @param {number} proposalId
+ * @param {number[]} userIds
+ * @param {{query: Function}} executor
+ * @param {string} [reason]
+ * @returns {Promise<{suppressed: number}>}
+ */
+async function suppressBeoNudgesForStaffers(proposalId, userIds, executor, reason = 'staffer_unassigned: shift mutation') {
+  if (!userIds || userIds.length === 0) return { suppressed: 0 };
+  const result = await executor.query(
+    `UPDATE scheduled_messages sm
+        SET status='suppressed', error_message=$3
+      WHERE sm.entity_type='proposal'
+        AND sm.entity_id=$1
+        AND sm.message_type=$4
+        AND sm.recipient_id = ANY($2)
+        AND sm.status='pending'
+        AND NOT EXISTS (
+          SELECT 1 FROM shift_requests sr
+            JOIN shifts s ON s.id = sr.shift_id
+           WHERE sr.user_id = sm.recipient_id
+             AND sr.status = 'approved'
+             AND s.proposal_id = $1
+             AND s.status != 'cancelled'
+        )`,
+    [proposalId, userIds, reason, BEO_MESSAGE_TYPE]
+  );
+  return { suppressed: result.rowCount };
+}
+
 module.exports = {
   BEO_MESSAGE_TYPE,
   insertBeoNudgeIfMissing,
   scheduleBeoNudgesForProposal,
+  suppressBeoNudgesForProposal,
+  suppressBeoNudgesForStaffers,
 };
