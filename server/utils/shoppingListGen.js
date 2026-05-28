@@ -131,10 +131,27 @@ async function autoGenerateShoppingList(planId, dbClient) {
   return list;
 }
 
+// Fire-and-forget wrapper. Two routes (PUT /t/:token financial branch + fast
+// path) post-commit kick off auto-gen the same way; collapsing into one helper
+// keeps drinkPlans.js under the line-count ratchet and the failure handling in
+// one place (console + optional Sentry capture).
+function triggerShoppingListAutoGen(planId, opTag = 'auto_gen_shopping_list') {
+  if (!planId) return;
+  const { pool } = require('../db');
+  const Sentry = require('@sentry/node');
+  autoGenerateShoppingList(planId, pool).catch((genErr) => {
+    console.error('Shopping list auto-gen failed:', genErr);
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(genErr, { tags: { route: 'drinkPlans/putToken', op: opTag }, extra: { planId } });
+    }
+  });
+}
+
 module.exports = {
   SYRUP_NAME_LOOKUP,
   resolveCocktailIds,
   buildPlannerGeneratorInput,
   buildConsultGeneratorInput,
   autoGenerateShoppingList,
+  triggerShoppingListAutoGen,
 };

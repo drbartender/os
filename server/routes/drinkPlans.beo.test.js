@@ -43,9 +43,10 @@ let staffUserId;
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 // ─── HTTP helper ────────────────────────────────────────────────────────────
-function request(method, path, { token } = {}) {
+function request(method, path, { token, body } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(baseUrl + path);
+    const bodyBuf = body !== undefined ? Buffer.from(JSON.stringify(body)) : null;
     const req = http.request(
       {
         hostname: u.hostname,
@@ -54,6 +55,7 @@ function request(method, path, { token } = {}) {
         method,
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(bodyBuf ? { 'Content-Type': 'application/json', 'Content-Length': bodyBuf.length } : {}),
         },
       },
       (res) => {
@@ -67,6 +69,7 @@ function request(method, path, { token } = {}) {
       }
     );
     req.on('error', reject);
+    if (bodyBuf) req.write(bodyBuf);
     req.end();
   });
 }
@@ -296,5 +299,80 @@ test('POST /:id/unfinalize > clears finalized_at, acks, suppresses pending', asy
 
 test('POST /:id/unfinalize > 409 when not finalized', async () => {
   const res = await request('POST', `/api/drink-plans/${drinkPlanId}/unfinalize`, { token: adminToken });
+  assert.strictEqual(res.status, 409);
+});
+
+// ─── Lock-when-finalized tests (Task 17) ────────────────────────────────────
+//
+// Every mutation route refuses while finalized_at is set. Helper re-stamps the
+// row before each test so a single 200 path (the finalize tests above) does
+// not pollute the lock-check state. Each test asserts only the 409 shape; the
+// existing 200-path tests cover the happy path elsewhere.
+
+async function reFinalize() {
+  await pool.query(
+    'UPDATE drink_plans SET finalized_at = NOW(), finalized_by = $2 WHERE id = $1',
+    [drinkPlanId, adminUserId]
+  );
+}
+
+test('PATCH /:id/status > 409 when finalized', async () => {
+  await reFinalize();
+  const res = await request('PATCH', `/api/drink-plans/${drinkPlanId}/status`, { token: adminToken, body: { status: 'submitted' } });
+  assert.strictEqual(res.status, 409);
+});
+
+test('PATCH /:id/notes > 409 when finalized', async () => {
+  await reFinalize();
+  const res = await request('PATCH', `/api/drink-plans/${drinkPlanId}/notes`, { token: adminToken, body: { admin_notes: 'updated' } });
+  assert.strictEqual(res.status, 409);
+});
+
+test('PUT /:id/shopping-list > 409 when finalized', async () => {
+  await reFinalize();
+  const res = await request('PUT', `/api/drink-plans/${drinkPlanId}/shopping-list`, { token: adminToken, body: { shopping_list: { items: [] } } });
+  assert.strictEqual(res.status, 409);
+});
+
+test('PATCH /:id/shopping-list/approve > 409 when finalized', async () => {
+  await reFinalize();
+  const res = await request('PATCH', `/api/drink-plans/${drinkPlanId}/shopping-list/approve`, { token: adminToken });
+  assert.strictEqual(res.status, 409);
+});
+
+test('DELETE /:id/logo > 409 when finalized', async () => {
+  await reFinalize();
+  const res = await request('DELETE', `/api/drink-plans/${drinkPlanId}/logo`, { token: adminToken });
+  assert.strictEqual(res.status, 409);
+});
+
+test('DELETE /:id > 409 when finalized', async () => {
+  await reFinalize();
+  const res = await request('DELETE', `/api/drink-plans/${drinkPlanId}`, { token: adminToken });
+  assert.strictEqual(res.status, 409);
+});
+
+// POST /:id/logo — multipart route, but the lock check fires before
+// express-fileupload runs (the route is mounted without that middleware in
+// this test harness, so the handler is reached, hits ensureNotFinalized first,
+// and returns 409 before the missing-file check ever runs). Confirms the guard
+// short-circuits before any body work.
+test('POST /:id/logo > 409 when finalized', async () => {
+  await reFinalize();
+  const res = await request('POST', `/api/drink-plans/${drinkPlanId}/logo`, { token: adminToken });
+  assert.strictEqual(res.status, 409);
+});
+
+test('PUT /t/:token > 409 when finalized', async () => {
+  await reFinalize();
+  const tok = (await pool.query('SELECT token FROM drink_plans WHERE id = $1', [drinkPlanId])).rows[0].token;
+  const res = await request('PUT', `/api/drink-plans/t/${tok}`, { body: { selections: {} } });
+  assert.strictEqual(res.status, 409);
+});
+
+test('POST /t/:token/logo > 409 when finalized', async () => {
+  await reFinalize();
+  const tok = (await pool.query('SELECT token FROM drink_plans WHERE id = $1', [drinkPlanId])).rows[0].token;
+  const res = await request('POST', `/api/drink-plans/t/${tok}/logo`);
   assert.strictEqual(res.status, 409);
 });

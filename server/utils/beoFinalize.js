@@ -145,4 +145,14 @@ function registerUnfinalizeRoute(router) {
   }));
 }
 
-module.exports = { finalizeDrinkPlan, registerFinalizeRoute, registerUnfinalizeRoute };
+// Lock guard: every BEO-protected mutation route on drinkPlans.js calls this
+// FIRST to refuse changes while finalized_at is set. Admins must Unfinalize
+// before editing; client UI surfaces "reach out if you need a change" instead.
+async function ensureNotFinalized(planId) {
+  const r = await pool.query('SELECT finalized_at FROM drink_plans WHERE id = $1', [planId]);
+  if (r.rows[0] && r.rows[0].finalized_at) {
+    throw new ConflictError('Plan is finalized. Unfinalize first to change.');
+  }
+}
+
+module.exports = { finalizeDrinkPlan, registerFinalizeRoute, registerUnfinalizeRoute, ensureNotFinalized };
