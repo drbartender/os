@@ -236,9 +236,11 @@ async function scheduleStaffShiftMessages(shiftId, executor) {
       `SELECT s.id AS shift_id, s.proposal_id,
               p.status AS proposal_status,
               p.event_date, p.event_start_time, p.event_duration_hours,
-              p.event_timezone
+              p.event_timezone,
+              dp.finalized_at
          FROM shifts s
          LEFT JOIN proposals p ON p.id = s.proposal_id
+         LEFT JOIN drink_plans dp ON dp.proposal_id = p.id
         WHERE s.id = $1`,
       [shiftId]
     );
@@ -280,6 +282,27 @@ async function scheduleStaffShiftMessages(shiftId, executor) {
           scheduledFor: thankYouAt,
         });
         inserted.thankYou += 1;
+      }
+      // BEO nudge branch: when the proposal's drink plan is finalized, enqueue
+      // a BEO acknowledgement nudge for this staffer too. Covers the
+      // late-assignment case (drink plan finalized BEFORE the staffer was
+      // approved on a shift) — Finalize itself only fans out to staffers
+      // already on the proposal at finalize-time. Skips silently when the
+      // computed event start is in the past (no point nudging after the event).
+      if (shift.finalized_at) {
+        const eventStartUtc = computeEventStartUtc(shift);
+        if (eventStartUtc && eventStartUtc.getTime() >= Date.now()) {
+          const { insertBeoNudgeIfMissing } = require('./beoHandlers');
+          const scheduledFor = new Date(Math.max(
+            eventStartUtc.getTime() - 3 * 24 * 60 * 60 * 1000,
+            Date.now() + 5 * 60 * 1000,
+          ));
+          await insertBeoNudgeIfMissing(exec, {
+            proposalId: shift.proposal_id,
+            userId: row.user_id,
+            scheduledFor,
+          });
+        }
       }
     }
   } catch (err) {

@@ -357,3 +357,46 @@ test('reanchorStaffShiftMessages > schedules a reminder that was skipped because
   assert.strictEqual(byType.shift_reminder, 'pending');
   assert.strictEqual(byType.staff_thank_you, 'pending');
 });
+
+test('scheduleStaffShiftMessages > enqueues BEO nudge when linked drink plan is finalized', async () => {
+  const bcrypt = require('bcryptjs');
+  const { randomBytes } = require('node:crypto');
+  const passwordHash = await bcrypt.hash('x', 4);
+  const uniqSuffix = `${Date.now()}-${randomBytes(3).toString('hex')}`;
+  const c = await pool.query(
+    "INSERT INTO clients (name, email) VALUES ($1, $2) RETURNING id",
+    [`SSM-BEO ${uniqSuffix}`, `ssm-beo-${uniqSuffix}@example.com`]
+  );
+  const p = await pool.query(
+    "INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours, event_timezone, status, event_type) VALUES ($1, CURRENT_DATE + 30, '18:00', 4, 'America/Chicago', 'deposit_paid', 'birthday-party') RETURNING id",
+    [c.rows[0].id]
+  );
+  const dp = await pool.query(
+    "INSERT INTO drink_plans (proposal_id, status, selections, finalized_at) VALUES ($1, 'reviewed', '{\"signatureDrinks\":[\"x\"]}'::jsonb, NOW()) RETURNING id",
+    [p.rows[0].id]
+  );
+  const s = await pool.query(
+    "INSERT INTO shifts (event_date, status, proposal_id) VALUES (CURRENT_DATE + 30, 'open', $1) RETURNING id",
+    [p.rows[0].id]
+  );
+  const u = await pool.query(
+    "INSERT INTO users (email, password_hash, role, onboarding_status) VALUES ($1, $2, 'staff', 'approved') RETURNING id",
+    [`ssm-beo-staff-${uniqSuffix}@example.com`, passwordHash]
+  );
+  await pool.query("INSERT INTO contractor_profiles (user_id, phone) VALUES ($1, '+15555550111')", [u.rows[0].id]);
+  await pool.query("INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved')", [s.rows[0].id, u.rows[0].id]);
+  await scheduleStaffShiftMessages(s.rows[0].id);
+  const { rows } = await pool.query(
+    "SELECT count(*) FROM scheduled_messages WHERE entity_type='proposal' AND entity_id=$1 AND message_type='beo_unack_nudge_sms'",
+    [p.rows[0].id]
+  );
+  assert.strictEqual(Number(rows[0].count), 1);
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_id IN ($1, $2)", [p.rows[0].id, s.rows[0].id]);
+  await pool.query("DELETE FROM shift_requests WHERE shift_id = $1", [s.rows[0].id]);
+  await pool.query("DELETE FROM shifts WHERE id = $1", [s.rows[0].id]);
+  await pool.query("DELETE FROM drink_plans WHERE id = $1", [dp.rows[0].id]);
+  await pool.query("DELETE FROM proposals WHERE id = $1", [p.rows[0].id]);
+  await pool.query("DELETE FROM contractor_profiles WHERE user_id = $1", [u.rows[0].id]);
+  await pool.query("DELETE FROM users WHERE id = $1", [u.rows[0].id]);
+  await pool.query("DELETE FROM clients WHERE id = $1", [c.rows[0].id]);
+});
