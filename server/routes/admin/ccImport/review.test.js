@@ -1418,6 +1418,56 @@ test('POST /errored-row/:id/retry returns 409 CC_RETRY_PAYMENT_NOT_SUPPORTED for
   assert.equal(JSON.parse(r.body).code, 'CC_RETRY_PAYMENT_NOT_SUPPORTED');
 });
 
+test('POST /errored-row/:row_id/retry past-dated event lands in Bucket B', async () => {
+  // Same clients-seed pattern as the skipped-event past-dated test so
+  // resolveClientId resolves cleanly.
+  const clientEmail = `fix3-err-${Date.now()}@example.com`;
+  const clientIns = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Past Errored Test', $1, '555-0196') RETURNING id`,
+    [clientEmail]
+  );
+  const seededClientId = clientIns.rows[0].id;
+
+  const payload = {
+    'Status': 'Confirmed',
+    'Event Date': '12-01-2023',  // MM-DD-YYYY per parseCcDate
+    'Package Name': 'Open Bar',  // not skip-list
+    'Client Name': 'Past Errored Test',
+    'Contact Email(s)': clientEmail,
+    'ID': 'cc-fix3-err-past-' + Date.now(),
+  };
+  const rawRes = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status, cc_id, import_notes)
+     VALUES ('review-test-fix3', 'events', $1, $2, $3::jsonb, 'errored', $4, $5::jsonb)
+     RETURNING id`,
+    [nextSrn(), nextHash('fix3-err'), JSON.stringify(payload), payload['ID'],
+     JSON.stringify({ error: 'simulated for test', phase: 'phase3' })]
+  );
+  const rowId = rawRes.rows[0].id;
+  let proposalId = null;
+
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/errored-row/${rowId}/retry`, adminToken, {});
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.ok(body.result?.proposalId);
+    proposalId = body.result.proposalId;
+
+    const propRow = await pool.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
+    assert.equal(propRow.rows[0].status, 'completed');
+  } finally {
+    if (proposalId) {
+      await pool.query("DELETE FROM shift_requests WHERE shift_id IN (SELECT id FROM shifts WHERE proposal_id = $1)", [proposalId]);
+      await pool.query("DELETE FROM shifts WHERE proposal_id = $1", [proposalId]);
+      await pool.query("DELETE FROM proposal_activity_log WHERE proposal_id = $1", [proposalId]);
+      await pool.query("DELETE FROM proposals WHERE id = $1", [proposalId]);
+    }
+    await pool.query("DELETE FROM legacy_cc_raw_imports WHERE id = $1", [rowId]);
+    await pool.query("DELETE FROM clients WHERE id = $1", [seededClientId]);
+  }
+});
+
 // ── §6 skipped-event/:id/promote ─────────────────────────────────
 
 test('POST /skipped-event/:id/promote rejects non-integer row_id', async () => {
@@ -1437,6 +1487,72 @@ test('POST /skipped-event/:id/promote 409 on non-skipped row', async () => {
     'POST', `/api/admin/cc-import/review/skipped-event/${rawNotSkippedId}/promote`, adminToken, {}
   );
   assert.equal(r.status, 409);
+});
+
+test('POST /skipped-event/:row_id/promote past-dated event lands in Bucket B (completed, no auto-comms)', async () => {
+  // phase3.promoteBucketA._promote calls resolveClientId which requires a
+  // matching clients row. Seed the client first so the date-classification
+  // code path actually runs.
+  const clientEmail = `fix3-past-${Date.now()}@example.com`;
+  const clientIns = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Past Event Test', $1, '555-0195') RETURNING id`,
+    [clientEmail]
+  );
+  const seededClientId = clientIns.rows[0].id;
+
+  // Column names match what phase3.buildRowContext reads.
+  const payload = {
+    'Status': 'Confirmed',
+    'Event Date': '01-15-2024',  // far past — MM-DD-YYYY per parseCcDate
+    'Package Name': 'Bartending Services',  // skip-list package — that's why it's 'skipped'
+    'Client Name': 'Past Event Test',
+    'Contact Email(s)': clientEmail,
+    'ID': 'cc-fix3-past-' + Date.now(),
+  };
+  // source_file unique to test to avoid colliding with real cc-import data
+  // on dev (source_row_number sequence is shared per-source_file).
+  const rawRes = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status, cc_id)
+     VALUES ('review-test-fix3', 'events', $1, $2, $3::jsonb, 'skipped', $4)
+     RETURNING id`,
+    [nextSrn(), nextHash('fix3-past'), JSON.stringify(payload), payload['ID']]
+  );
+  const rowId = rawRes.rows[0].id;
+  let proposalId = null;
+
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/skipped-event/${rowId}/promote`, adminToken, {});
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.ok(body.proposal_id, 'expected a proposal_id in the response');
+    proposalId = body.proposal_id;
+
+    const propRow = await pool.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
+    assert.equal(propRow.rows[0].status, 'completed');
+
+    const shiftRow = await pool.query('SELECT status FROM shifts WHERE proposal_id = $1', [proposalId]);
+    if (shiftRow.rowCount > 0) {
+      assert.equal(shiftRow.rows[0].status, 'completed');
+    }
+
+    const smCount = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM scheduled_messages
+         WHERE entity_type = 'proposal' AND entity_id = $1 AND status = 'pending'`,
+      [proposalId]
+    );
+    assert.equal(smCount.rows[0].c, 0, 'past-dated retry must not enroll in auto-comms');
+  } finally {
+    if (proposalId) {
+      await pool.query("DELETE FROM scheduled_messages WHERE entity_type='proposal' AND entity_id = $1", [proposalId]);
+      await pool.query("DELETE FROM shift_requests WHERE shift_id IN (SELECT id FROM shifts WHERE proposal_id = $1)", [proposalId]);
+      await pool.query("DELETE FROM shifts WHERE proposal_id = $1", [proposalId]);
+      await pool.query("DELETE FROM proposal_activity_log WHERE proposal_id = $1", [proposalId]);
+      await pool.query("DELETE FROM proposals WHERE id = $1", [proposalId]);
+    }
+    await pool.query("DELETE FROM legacy_cc_raw_imports WHERE id = $1", [rowId]);
+    await pool.query("DELETE FROM clients WHERE id = $1", [seededClientId]);
+  }
 });
 
 // ── §7 phase0-failure/:id/accept-loss ────────────────────────────

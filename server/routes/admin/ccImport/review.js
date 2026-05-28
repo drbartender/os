@@ -850,11 +850,13 @@ router.post(
     // message — the operator's only path is re-running the phase end-to-end.
     let retryStatus = 'unknown';
     let retryResult = null;
+    let retryBucket = null;
     try {
       if (sourceEntity === 'events') {
-        // Re-run phase 3 promotion. Without dedup-skip — the row's natural
-        // bucket should re-classify cleanly if the operator's fix was real.
-        const r = await phase3.promoteBucketA(workingPayload, { skipDedup: false });
+        // Reclassify by status + event_date so past-dated rows land in Bucket B.
+        const sel = phase3.classifyForRetry(workingPayload);
+        retryBucket = sel.bucket;
+        const r = await sel.promote(workingPayload, { skipDedup: false });
         retryResult = r;
         retryStatus = r.status;
         // Mark raw row promoted on success; leave 'errored' on failure with new notes.
@@ -927,6 +929,7 @@ router.post(
         source_entity: sourceEntity,
         payload_overridden: !!payloadOverride,
         result_status: retryStatus,
+        retry_bucket: retryBucket,
       },
     });
 
@@ -953,18 +956,14 @@ router.post(
       throw new ConflictError('row is not a skipped event');
     }
 
-    // Re-run via promoteBucketA. The row's natural bucket is determined by
-    // status + date inside the promote helper; for a Bucket D row that was
-    // skipped purely on package, bypassing means it now lands in A / B / C as
-    // appropriate. We call promoteBucketA which handles its own classification
-    // path through the underlying _promote.
-    // NOTE: phase3.promoteBucketA uses bucketLetter='A' explicitly — meaning
-    // the row will be inserted as Bucket A (future + Confirmed). For a more
-    // permissive re-classification, callers would need a dedicated bypass
-    // helper. For Task 19 we accept "promote as Bucket A" semantics: the
-    // operator who flips a skipped row is explicitly saying "this should be
-    // an active event."
-    const result = await phase3.promoteBucketA(guard.rows[0].payload, { skipDedup: true });
+    // Reclassify by status + event_date so a past-dated event lands in Bucket B
+    // (completed, no auto-comms enrollment) instead of being force-promoted as
+    // Bucket A and scheduling stale reminders. classifyForRetry mirrors the
+    // initial phase 3 pass via buildRowContext + classify; C/D degrade to A
+    // (archive paths aren't single-row callable) with the genuine bucket letter
+    // preserved in the audit log.
+    const { bucket, promote } = phase3.classifyForRetry(guard.rows[0].payload);
+    const result = await promote(guard.rows[0].payload, { skipDedup: true });
     if (result.status !== 'promoted' && result.status !== 'already_promoted') {
       throw new ConflictError(`Promote failed: ${result.error || result.status}`, 'CC_PROMOTE_FAILED');
     }
@@ -979,6 +978,7 @@ router.post(
         promoted_at: new Date().toISOString(),
         proposal_id: result.proposalId || null,
         skip_rule_bypassed: true,
+        retry_bucket: bucket,
       })]
     );
 
@@ -986,7 +986,7 @@ router.post(
       actorUserId: req.user.id,
       targetUserId: null,
       action: 'cc_review_skipped_event_promoted',
-      metadata: { row_id: rowId, proposal_id: result.proposalId || null },
+      metadata: { row_id: rowId, proposal_id: result.proposalId || null, retry_bucket: bucket },
     });
 
     res.json({ ok: true, proposal_id: result.proposalId || null });

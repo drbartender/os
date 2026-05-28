@@ -163,13 +163,6 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 **Why deferred:** Fine at current volumes — `proposals` is small. Only becomes a problem once `proposal_payments` crosses ~100k rows. The `include_cc` chip itself was just wired (commit `c4a18e1`) so usage data starts now.
 **Next step:** Revisit once the financials dashboard slows on a CC-heavy filter. Likely fix: add `CREATE INDEX idx_proposals_id_cc_id ON proposals(id, cc_id)` — covers both `IS NULL` and `IS NOT NULL` branches via index-only scan.
 
-### CC-Import: `promoteBucketA` hardcodes Bucket A on errored-row + skipped-event retry
-
-**Source:** 2026-05-27 push pre-review (Codex code-review, P1).
-**What:** `server/routes/admin/ccImport/review.js:924-930` (and the parallel call from `/review/errored-row/:row_id/retry`) calls `promoteBucketA()` unconditionally instead of reclassifying the row by date + status. `promoteBucketA` enforces `status='confirmed'`, opens fresh shifts, and enrolls the proposal in auto-comms. Retrying a past Bucket B event (historical, status='completed') therefore recreates it as a live confirmed event and can schedule fresh client reminders for an event that already happened.
-**Why deferred:** Operator-triggered retry only — the importer's first pass classifies correctly. Triggers only when the operator clicks "retry" on a row that was originally Bucket B and failed for some other reason.
-**Next step:** Extract a shared `classifyAndPromote(row)` that re-runs the Phase 3 bucket determination (event_date past + status='completed' → Bucket B archive, else Bucket A live event), and route both retry endpoints through it.
-
 ### CC-Import: `payrollLateTip` / `clawbackTip` stub gate fires on target, but math splits across all shift bartenders
 
 **Source:** 2026-05-27 push pre-review (Codex code-review, P1).
