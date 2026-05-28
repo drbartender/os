@@ -47,7 +47,9 @@ after(async () => {
   await pool.query("DELETE FROM scheduled_messages WHERE message_type LIKE 'disp_test_%'");
   await pool.query('DELETE FROM proposals WHERE id = $1', [testProposalId]);
   await pool.query('DELETE FROM clients WHERE id = $1', [testClientId]);
-  await pool.end();
+  // pool.end() moved to the trailing after() block at the bottom of this file
+  // (Phase 2 Task 7) so the appended push/cascade tests can still use the pool
+  // in their cleanup. node:test runs after() hooks in registration order.
 });
 
 beforeEach(async () => {
@@ -729,4 +731,207 @@ test('delivery > mid-batch suppression does not double-process a second row for 
   assert.strictEqual(branchSuppressed.length, 1, 'the both-bad branch ran exactly once');
 
   await pool.query("UPDATE clients SET email_status = 'ok', phone_status = 'ok' WHERE id = $1", [testClientId]);
+});
+
+
+// ─── Phase 2 Task 7: push + sibling cascade + re-resolve ────────────────
+const pushSender = require('./pushSender');
+const sms = require('./sms');
+const bcrypt = require('bcryptjs');
+
+let pushTestUserId;
+
+before(async () => {
+  const passwordHash = await bcrypt.hash('test', 4);
+  const { rows } = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, notifications_opt_in)
+     VALUES ($1, $2, 'staff', 'approved', true) RETURNING id`,
+    [`push-dispatcher-test-${Date.now()}@example.com`, passwordHash]
+  );
+  pushTestUserId = rows[0].id;
+});
+
+after(async () => {
+  if (pushTestUserId) {
+    await pool.query('DELETE FROM scheduled_messages WHERE recipient_id = $1 AND recipient_type = $2', [pushTestUserId, 'staff']);
+    await pool.query('DELETE FROM users WHERE id = $1', [pushTestUserId]);
+  }
+  await pool.end();
+});
+
+async function setPushSubs(subs) {
+  await pool.query(
+    `UPDATE users SET staff_notification_preferences = jsonb_set(
+       staff_notification_preferences, '{push_subscriptions}', $1::jsonb, true)
+      WHERE id = $2`,
+    [JSON.stringify(subs), pushTestUserId]
+  );
+}
+
+test('push channel > no subscriptions => row suppressed with no_push_subscriptions', async () => {
+  await setPushSubs([]);
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, payload)
+     VALUES ($1, 'shift', 'disp_test_push_nosubs', 'staff', $2, 'push', NOW() - INTERVAL '1 minute', '{}'::jsonb)`,
+    [testProposalId, pushTestUserId]
+  );
+  await dispatchPending();
+  const { rows } = await pool.query(
+    "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_push_nosubs'"
+  );
+  assert.strictEqual(rows[0].status, 'suppressed');
+  assert.strictEqual(rows[0].error_message, 'no_push_subscriptions');
+});
+
+test('push channel > sends ok, prunes 410-gone subs, retains transient failures', async () => {
+  await setPushSubs([
+    { endpoint: 'https://example.test/good', keys: { p256dh: 'a', auth: 'a' }, subscribed_at: '2026-05-01T00:00:00Z' },
+    { endpoint: 'https://example.test/gone', keys: { p256dh: 'b', auth: 'b' }, subscribed_at: '2026-05-02T00:00:00Z' },
+    { endpoint: 'https://example.test/flaky', keys: { p256dh: 'c', auth: 'c' }, subscribed_at: '2026-05-03T00:00:00Z' },
+  ]);
+  const original = pushSender.sendPush;
+  pushSender.sendPush = async ({ subscription }) => {
+    if (subscription.endpoint.endsWith('/good')) return { ok: true };
+    if (subscription.endpoint.endsWith('/gone')) return { ok: false, gone: true };
+    return { ok: false, error: 'transient' };
+  };
+  try {
+    await pool.query(
+      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, payload)
+       VALUES ($1, 'shift', 'disp_test_push_sent', 'staff', $2, 'push', NOW() - INTERVAL '1 minute',
+               '{"title":"X","body":"y","url":"/"}'::jsonb)`,
+      [testProposalId, pushTestUserId]
+    );
+    await dispatchPending();
+
+    const { rows } = await pool.query(
+      "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_push_sent'"
+    );
+    assert.strictEqual(rows[0].status, 'sent', `expected sent, got ${rows[0].status} (${rows[0].error_message})`);
+
+    const { rows: userRows } = await pool.query(
+      `SELECT staff_notification_preferences->'push_subscriptions' AS subs FROM users WHERE id = $1`,
+      [pushTestUserId]
+    );
+    const survivors = userRows[0].subs;
+    assert.strictEqual(survivors.length, 2, 'gone subscription pruned, good + flaky retained');
+    const endpoints = survivors.map(s => s.endpoint);
+    assert.ok(endpoints.includes('https://example.test/good'));
+    assert.ok(endpoints.includes('https://example.test/flaky'));
+    assert.ok(!endpoints.includes('https://example.test/gone'));
+  } finally {
+    pushSender.sendPush = original;
+  }
+});
+
+test('push channel > all subs fail => row marked failed with push_send_failed', async () => {
+  await setPushSubs([
+    { endpoint: 'https://example.test/all-bad', keys: { p256dh: 'a', auth: 'a' }, subscribed_at: '2026-05-01T00:00:00Z' },
+  ]);
+  const original = pushSender.sendPush;
+  pushSender.sendPush = async () => ({ ok: false, error: 'transient' });
+  try {
+    await pool.query(
+      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, payload)
+       VALUES ($1, 'shift', 'disp_test_push_allfail', 'staff', $2, 'push', NOW() - INTERVAL '1 minute', '{}'::jsonb)`,
+      [testProposalId, pushTestUserId]
+    );
+    await dispatchPending();
+    const { rows } = await pool.query(
+      "SELECT status, error_message FROM scheduled_messages WHERE message_type = 'disp_test_push_allfail'"
+    );
+    assert.strictEqual(rows[0].status, 'failed');
+    assert.strictEqual(rows[0].error_message, 'push_send_failed');
+  } finally {
+    pushSender.sendPush = original;
+  }
+});
+
+test('sibling cascade > push success marks pending siblings suppressed_by_sibling', async () => {
+  await setPushSubs([{ endpoint: 'https://example.test/sib-ok', keys: { p256dh: 'a', auth: 'a' }, subscribed_at: '2026-05-01T00:00:00Z' }]);
+  const original = pushSender.sendPush;
+  pushSender.sendPush = async () => ({ ok: true });
+  try {
+    await pool.query(
+      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, suppression_key, payload)
+       VALUES ($1, 'shift', 'disp_test_sibling', 'staff', $2, 'push', NOW() - INTERVAL '2 minutes', 'shift:99:disp_test_sibling:1', '{"title":"X"}'::jsonb),
+              ($1, 'shift', 'disp_test_sibling', 'staff', $2, 'sms',  NOW() - INTERVAL '1 minute',  'shift:99:disp_test_sibling:1', '{"title":"X"}'::jsonb)`,
+      [testProposalId, pushTestUserId]
+    );
+    await dispatchPending();
+    const { rows } = await pool.query(
+      "SELECT channel, status FROM scheduled_messages WHERE message_type = 'disp_test_sibling' ORDER BY channel"
+    );
+    assert.strictEqual(rows.length, 2);
+    const byChannel = Object.fromEntries(rows.map(r => [r.channel, r.status]));
+    assert.strictEqual(byChannel.push, 'sent');
+    assert.strictEqual(byChannel.sms, 'suppressed_by_sibling');
+  } finally {
+    pushSender.sendPush = original;
+  }
+});
+
+test('re-resolve > critical-path dead-letter when re_resolve_count >= 2', async () => {
+  await pool.query(
+    `UPDATE users SET
+       communication_preferences = (COALESCE(communication_preferences, '{}'::jsonb)
+                                    || '{"sms_enabled":false,"email_enabled":false}'::jsonb),
+       staff_notification_preferences = jsonb_set(
+         jsonb_set(staff_notification_preferences, '{channels,beo_finalized}', '[]'::jsonb, true),
+         '{push_subscriptions}', '[]'::jsonb, true)
+      WHERE id = $1`,
+    [pushTestUserId]
+  );
+
+  const origSms = sms.sendAndLogSms;
+  let adminSmsBody = null;
+  sms.sendAndLogSms = async (args) => { adminSmsBody = args.body; return { id: 1 }; };
+  const originalAdminPhone = process.env.ADMIN_PHONE;
+  process.env.ADMIN_PHONE = '+13125550100';
+
+  try {
+    await pool.query(
+      `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, status, suppression_key, payload)
+       VALUES ($1, 'shift', 'disp_test_dead_letter', 'staff', $2, 'sms', NOW() - INTERVAL '1 minute', 'failed', 'shift:88:disp_test_dl:1', '{"category":"beo_finalized","re_resolve_count":2}'::jsonb)`,
+      [testProposalId, pushTestUserId]
+    );
+    await dispatchPending();
+    const { rows } = await pool.query(
+      "SELECT status FROM scheduled_messages WHERE message_type = 'disp_test_dead_letter'"
+    );
+    assert.strictEqual(rows[0].status, 'dead_letter');
+    assert.ok(adminSmsBody && adminSmsBody.includes('dead-lettered'), 'ADMIN_PHONE SMS fired');
+  } finally {
+    sms.sendAndLogSms = origSms;
+    if (originalAdminPhone === undefined) delete process.env.ADMIN_PHONE;
+    else process.env.ADMIN_PHONE = originalAdminPhone;
+  }
+});
+
+test('re-resolve > increments counter and enqueues retry when channels still resolve', async () => {
+  await pool.query(
+    `UPDATE users SET
+       communication_preferences = (COALESCE(communication_preferences, '{}'::jsonb)
+                                    || '{"sms_enabled":true,"email_enabled":true}'::jsonb),
+       staff_notification_preferences = jsonb_set(
+         staff_notification_preferences, '{channels,beo_finalized}', '["sms","email"]'::jsonb, true)
+      WHERE id = $1`,
+    [pushTestUserId]
+  );
+  const suppKey = `shift:77:disp_test_retry:${pushTestUserId}`;
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, status, suppression_key, payload)
+     VALUES ($1, 'shift', 'disp_test_retry', 'staff', $2, 'push', NOW() - INTERVAL '5 minutes', 'failed', $3, '{"category":"beo_finalized","re_resolve_count":0}'::jsonb)`,
+    [testProposalId, pushTestUserId, suppKey]
+  );
+  await dispatchPending();
+  const { rows } = await pool.query(
+    "SELECT channel, status, suppression_key, payload->>'re_resolve_count' AS rc FROM scheduled_messages WHERE message_type = 'disp_test_retry' ORDER BY id"
+  );
+  assert.strictEqual(rows.length, 2, 'original + retry row');
+  assert.strictEqual(rows[0].status, 'failed');
+  const retry = rows[1];
+  assert.strictEqual(retry.suppression_key, `${suppKey}:retry1`);
+  assert.strictEqual(Number(retry.rc), 1);
+  assert.strictEqual(retry.channel, 'sms');
 });
