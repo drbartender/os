@@ -290,6 +290,20 @@ async function handleBeoUnackNudge({ entity, recipient }) {
   });
 }
 
+/**
+ * Register the BEO dispatcher handler at boot. Wired into server/index.js
+ * alongside the other registerXyzHandlers calls.
+ */
+function registerBeoHandlers() {
+  const { registerHandler } = require('./scheduledMessageDispatcher');
+  registerHandler(BEO_MESSAGE_TYPE, handleBeoUnackNudge, {
+    offsetFromEventDate: null,    // bespoke timing per spec 6.4; reanchor handled explicitly
+    anchor: 'event_date',
+    category: 'operational',      // not gated by communication_preferences.marketing_enabled
+    priority: 2,                  // action-required ladder
+  });
+}
+
 module.exports = {
   BEO_MESSAGE_TYPE,
   insertBeoNudgeIfMissing,
@@ -299,4 +313,5 @@ module.exports = {
   reanchorBeoForProposal,
   loadBeoContext,
   handleBeoUnackNudge,
+  registerBeoHandlers,
 };

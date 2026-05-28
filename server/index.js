@@ -378,6 +378,11 @@ async function start() {
       // dispatcher's first tick so it can resolve post_event_wrap_up_email rows.
       require('./utils/ccWrapUpHandler').registerCcWrapUpHandler();
 
+      // BEO unack nudge handler. Fires the staffBeoNudgeSms reminder ~3 days
+      // before each unacked event for every approved staffer. Synchronous;
+      // must run before the dispatcher's first tick.
+      require('./utils/beoHandlers').registerBeoHandlers();
+
       // Scheduled-messages dispatcher — every 5 min, picks up pending rows
       if (enabled('RUN_MESSAGE_DISPATCHER_SCHEDULER')) {
         const wrapped = wrapScheduler('message_dispatcher', 300, dispatchPending);
