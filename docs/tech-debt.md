@@ -156,13 +156,6 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 **Why deferred:** Fine at current volumes — `proposals` is small. Only becomes a problem once `proposal_payments` crosses ~100k rows. The `include_cc` chip itself was just wired (commit `c4a18e1`) so usage data starts now.
 **Next step:** Revisit once the financials dashboard slows on a CC-heavy filter. Likely fix: add `CREATE INDEX idx_proposals_id_cc_id ON proposals(id, cc_id)` — covers both `IS NULL` and `IS NOT NULL` branches via index-only scan.
 
-### CC-Import: orphan-payment link silently no-ops on non-success status
-
-**Source:** 2026-05-27 push pre-review (Codex code-review, P1).
-**What:** `server/routes/admin/ccImport/review.js:421-424` (the `/review/orphan-payment/:legacy_id/link` route) assumes `promoteSingleLegacyPayment()` / `promoteSingleLegacyRefund()` throw on failure, but those helpers return non-success statuses like `'errored'` and `'exceeds_net_paid'` instead. On those returns the route still runs the recompute/audit tail and returns 200, leaving `legacy_cc_payments.cc_event_id` set but `promoted_payment_id` / `promoted_refund_id` NULL. The orphan-queue filter on `cc_event_id IS NULL` then drops the row, so the operator loses the recovery path even though nothing was actually promoted.
-**Why deferred:** Admin-flow correctness bug, not a money or security defect. The cc-import review page is operator-only and CC-import is a one-time historical migration — exposure window is narrow.
-**Next step:** Branch on the helper's returned status. On non-success: surface the error to the operator (HTTP 4xx with the status code), DO NOT recompute amount_paid, DO NOT audit-log a success, and leave `cc_event_id` NULL so the row stays in the review queue.
-
 ### CC-Import: `promoteBucketA` hardcodes Bucket A on errored-row + skipped-event retry
 
 **Source:** 2026-05-27 push pre-review (Codex code-review, P1).

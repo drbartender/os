@@ -372,13 +372,22 @@ router.post(
     //     is best-effort but the failure window is one statement wide.
     let promoteResult;
     if (legacy.cc_type === 'Refund') {
-      // Refund path — UPDATE + explicit revert-on-throw.
+      // Refund path — UPDATE + explicit revert-on-throw. promoteSingleLegacyRefund
+      // MUST own its own connection (Approach A; cannot share a txn). Add a status
+      // check after the call so non-success non-throws still trigger the existing
+      // revert catch block via re-throw.
       await pool.query(
         `UPDATE legacy_cc_payments SET cc_event_id = $1 WHERE id = $2`,
         [targetCcId, legacyId]
       );
       try {
         promoteResult = await phase4.promoteSingleLegacyRefund(legacyId);
+        if (promoteResult.status !== 'promoted' && promoteResult.status !== 'already_promoted') {
+          throw new ConflictError(
+            `Promote failed: ${promoteResult.error || promoteResult.status}`,
+            'CC_PROMOTE_FAILED'
+          );
+        }
       } catch (err) {
         // Revert the cc_event_id assignment so the orphan stays on the worklist.
         try {
@@ -390,11 +399,17 @@ router.post(
         } catch (revertErr) {
           reportException(req, revertErr, { step: 'cc_event_id_revert', legacyId });
         }
-        reportException(req, err, { step: 'promote_single', legacyId });
+        // ConflictError is the operator-visible failure — don't Sentry-spam on it.
+        if (!(err instanceof ConflictError)) {
+          reportException(req, err, { step: 'promote_single', legacyId });
+        }
         throw err;
       }
     } else {
-      // Payment path — shared transaction.
+      // Payment path — shared transaction. The cc_event_id UPDATE and the promote
+      // MUST be atomic so a non-success promote does not strand cc_event_id set
+      // (which would drop the row off the orphan queue's `cc_event_id IS NULL`
+      // filter without actually promoting it).
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -403,10 +418,21 @@ router.post(
           [targetCcId, legacyId]
         );
         promoteResult = await phase4.promoteSingleLegacyPayment(legacyId, { client });
+        if (promoteResult.status !== 'promoted' && promoteResult.status !== 'already_promoted') {
+          // Throw so BEGIN rolls back the cc_event_id UPDATE — keeps the row in the
+          // orphan queue with a recovery path.
+          throw new ConflictError(
+            `Promote failed: ${promoteResult.error || promoteResult.status}`,
+            'CC_PROMOTE_FAILED'
+          );
+        }
         await client.query('COMMIT');
       } catch (err) {
         try { await client.query('ROLLBACK'); } catch (_) { /* swallow */ }
-        reportException(req, err, { step: 'promote_single', legacyId });
+        // ConflictError is the operator-visible failure — don't Sentry-spam on it.
+        if (!(err instanceof ConflictError)) {
+          reportException(req, err, { step: 'promote_single', legacyId });
+        }
         throw err;
       } finally {
         client.release();

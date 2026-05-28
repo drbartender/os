@@ -875,6 +875,176 @@ test('POST /orphan-payment/:id/link suppresses stale balance reminders when lega
   }
 });
 
+test('POST /orphan-payment/:id/link rolls back cc_event_id and 409s on errored promote status', async () => {
+  // promoteSingleLegacyPayment is mocked to return errored; the new code in the
+  // route throws ConflictError, and the BEGIN rolls back the cc_event_id UPDATE.
+  // We can't reproduce 'errored' from a seed alone because the helper resolves
+  // any matching proposal cleanly (see phase4.js:357-485).
+  const phase4 = require('../../../../scripts/cc-import/phases/phase4');
+  const { mock } = require('node:test');
+  const spy = mock.method(phase4, 'promoteSingleLegacyPayment',
+    async () => ({ status: 'errored', error: 'forced_for_test' }));
+
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix2-err')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+
+  const legacyRes = await pool.query(
+    `INSERT INTO legacy_cc_payments (cc_event_title, cc_type, paid_on, payment_applied_cents, raw_import_id)
+     VALUES ('Fix2 Err', 'Payment', CURRENT_DATE, 10000, $1)
+     RETURNING id`,
+    [rawImportId]
+  );
+  const legacyId = legacyRes.rows[0].id;
+
+  const cliRes = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Fix2 Err Client', $1, '555-0191') RETURNING id`,
+    [`fix2-err-${Date.now()}@example.com`]
+  );
+  const fix2ErrClientId = cliRes.rows[0].id;
+  const propRes = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
+     VALUES ($1, 'confirmed', CURRENT_DATE + INTERVAL '30 days', 500, 0,
+             'cc-fix2-err-' || gen_random_uuid()::text, gen_random_uuid(), 'birthday-party')
+     RETURNING id, cc_id`,
+    [fix2ErrClientId]
+  );
+  const proposalId = propRes.rows[0].id;
+  const proposalCcId = propRes.rows[0].cc_id;
+
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcId });
+    assert.equal(r.status, 409);
+    const body = JSON.parse(r.body);
+    assert.equal(body.code, 'CC_PROMOTE_FAILED');
+
+    // Load-bearing: cc_event_id stays NULL — proves BEGIN/ROLLBACK fired
+    // even though the promote helper was mocked.
+    const after = await pool.query('SELECT cc_event_id FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    assert.equal(after.rows[0].cc_event_id, null);
+  } finally {
+    spy.mock.restore();
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [fix2ErrClientId]);
+  }
+});
+
+test('POST /orphan-payment/:id/link still succeeds and persists cc_event_id on promoted status', async () => {
+  // Regression guard: the refactor must not break the happy path.
+  const cliRes = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Fix2 OK Client', $1, '555-0192') RETURNING id`,
+    [`fix2-ok-${Date.now()}@example.com`]
+  );
+  const fix2OkClientId = cliRes.rows[0].id;
+  const propRes = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
+     VALUES ($1, 'confirmed', CURRENT_DATE + INTERVAL '60 days', 500, 0,
+             'cc-fix2-ok-' || gen_random_uuid()::text, gen_random_uuid(), 'birthday-party')
+     RETURNING id, cc_id`,
+    [fix2OkClientId]
+  );
+  const proposalId = propRes.rows[0].id;
+  const proposalCcId = propRes.rows[0].cc_id;
+
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix2-ok')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+
+  const legacyRes = await pool.query(
+    `INSERT INTO legacy_cc_payments (cc_event_title, cc_type, paid_on, payment_applied_cents, raw_import_id)
+     VALUES ('Fix2 Happy', 'Payment', CURRENT_DATE, 10000, $1)
+     RETURNING id`,
+    [rawImportId]
+  );
+  const legacyId = legacyRes.rows[0].id;
+
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcId });
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.ok, true);
+    assert.equal(body.promote_status, 'promoted');
+
+    const after = await pool.query(
+      'SELECT cc_event_id, promoted_payment_id FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    assert.equal(after.rows[0].cc_event_id, proposalCcId);
+    assert.notEqual(after.rows[0].promoted_payment_id, null);
+  } finally {
+    await pool.query('DELETE FROM proposal_payments WHERE proposal_id = $1', [proposalId]);
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [fix2OkClientId]);
+  }
+});
+
+test('POST /orphan-payment/:id/link does NOT capture ConflictError to Sentry on non-success promote', async () => {
+  // The point of the `if (!(err instanceof ConflictError))` guard around
+  // reportException is that operator-visible failures should NOT spam Sentry.
+  const Sentry = require('@sentry/node');
+  const phase4 = require('../../../../scripts/cc-import/phases/phase4');
+  const { mock } = require('node:test');
+  const promoteSpy = mock.method(phase4, 'promoteSingleLegacyPayment',
+    async () => ({ status: 'errored', error: 'forced_for_test' }));
+  const sentrySpy = mock.method(Sentry, 'captureException', () => {});
+
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix2-sentry')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+  const legacyRes = await pool.query(
+    `INSERT INTO legacy_cc_payments (cc_event_title, cc_type, paid_on, payment_applied_cents, raw_import_id)
+     VALUES ('Fix2 Sentry', 'Payment', CURRENT_DATE, 10000, $1) RETURNING id`,
+    [rawImportId]
+  );
+  const legacyId = legacyRes.rows[0].id;
+  const cliRes = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Fix2 Sentry Client', $1, '555-0193') RETURNING id`,
+    [`fix2-sentry-${Date.now()}@example.com`]
+  );
+  const fix2SentryClientId = cliRes.rows[0].id;
+  const propRes = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
+     VALUES ($1, 'confirmed', CURRENT_DATE + INTERVAL '30 days', 500, 0,
+             'cc-fix2-sentry-' || gen_random_uuid()::text, gen_random_uuid(), 'birthday-party')
+     RETURNING id, cc_id`,
+    [fix2SentryClientId]
+  );
+  const proposalId = propRes.rows[0].id;
+  const proposalCcId = propRes.rows[0].cc_id;
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcId });
+    assert.equal(r.status, 409);
+    assert.equal(sentrySpy.mock.callCount(), 0, 'ConflictError must not be sent to Sentry');
+  } finally {
+    promoteSpy.mock.restore();
+    sentrySpy.mock.restore();
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [fix2SentryClientId]);
+  }
+});
+
 // ── §2 orphan-payment/:id/dismiss ─────────────────────────────────
 
 test('POST /orphan-payment/:id/dismiss rejects non-integer legacy_id', async () => {
