@@ -11,6 +11,12 @@ if (process.env.NODE_ENV === 'production') {
 let bartenderA, bartenderB, paidPeriodId, paidProposalId, paidShiftId, tipId;
 
 before(async () => {
+  // Pre-clean any stranded fixtures from prior failed runs (FK chain).
+  await pool.query(`DELETE FROM tips WHERE target_user_id IN (SELECT id FROM users WHERE email LIKE 'claw-%@example.com' OR email LIKE 'cb-%@example.com')`);
+  await pool.query(`DELETE FROM shift_requests WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'claw-%@example.com' OR email LIKE 'cb-%@example.com')`);
+  await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'claw-%@example.com' OR email LIKE 'cb-%@example.com')`);
+  await pool.query(`DELETE FROM users WHERE email LIKE 'claw-%@example.com' OR email LIKE 'cb-mixed-%@example.com' OR email LIKE 'cb-all-stub-%@example.com'`);
+
   const a = await pool.query(
     "INSERT INTO users (email, password_hash, role) VALUES ('claw-a@example.com','x','staff') RETURNING id"
   );
@@ -73,9 +79,16 @@ afterEach(async () => {
     [paidShiftId, bartenderA, bartenderB]
   );
   await pool.query('DELETE FROM payouts WHERE contractor_id IN ($1,$2)', [bartenderA, bartenderB]);
+  // Only delete the open period if it has no payouts referencing it (the dev
+  // DB's shared open period must be preserved). Frozen test period (2026-05-12)
+  // preserved separately.
   await pool.query(
-    `DELETE FROM pay_periods WHERE status='open' AND start_date <> '2026-05-12'`
+    `DELETE FROM pay_periods pp WHERE pp.status='open' AND pp.start_date <> '2026-05-12'
+       AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`
   );
+  // Defense in depth: any tip targeting either fixture bartender, even if
+  // created by a sub-test that didn't reach its finally.
+  await pool.query('DELETE FROM tips WHERE target_user_id IN ($1, $2)', [bartenderA, bartenderB]);
   await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
   await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [paidShiftId]);
   await pool.query('DELETE FROM shifts WHERE id = $1', [paidShiftId]);
@@ -139,75 +152,123 @@ test('clawbackTip > a webhook replay with the same cumulative amount is a no-op'
   assert.equal(replay.delta, 0);
 });
 
-test('clawbackTip > skips and returns structured shape when target is a legacy CC stub', async () => {
-  // cc-import: clawbacks on tips paid TO a stub bartender must NOT mutate
-  // modern payouts. Setup a fresh stub user + tip pointed at the stub.
+test('clawbackTip > mixed-stub shift: claws back from real bartender only, stubs filtered out', async () => {
   const stub = await pool.query(
     `INSERT INTO users (email, password_hash, role, cc_id)
-     VALUES ('claw-stub@example.com','x','staff','legacy_cc:test:clawback')
-     RETURNING id`
+     VALUES ('cb-mixed-stub@example.com','x','staff','legacy_cc:test:cb-mixed') RETURNING id`
   );
   const stubId = stub.rows[0].id;
-  const stubTip = await pool.query(
-    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
-                       stripe_payment_intent_id, tipped_at, shift_id, refunded_amount_cents)
-     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_claw_stub', '2026-05-15 23:30:00+00', $2, 0)
-     RETURNING id`,
-    [stubId, paidShiftId]
+  const real = await pool.query(
+    `INSERT INTO users (email, password_hash, role)
+     VALUES ('cb-mixed-real@example.com','x','staff') RETURNING id`
   );
-  const stubTipId = stubTip.rows[0].id;
+  const realId = real.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, hourly_rate) VALUES ($1, 20.00)
+     ON CONFLICT (user_id) DO UPDATE SET hourly_rate = 20.00`,
+    [realId]
+  );
+  const mixedShift = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','7:00 PM','open',$1) RETURNING id`,
+    [paidProposalId]
+  );
+  const mixedShiftId = mixedShift.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved'), ($1, $3, 'Bartender', 'approved')`,
+    [mixedShiftId, stubId, realId]
+  );
+
+  const tipRes = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id, rolled_forward_at, refunded_amount_cents)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_cb_mixed', NOW() - INTERVAL '1 day', $2, NOW(), 0)
+     RETURNING id`,
+    [stubId, mixedShiftId]
+  );
+  const cbTipId = tipRes.rows[0].id;
+  // Seed the real bartender's payout_event (what rollForwardLateTip on a mixed
+  // shift would have created via the new code path).
+  await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id)
+     VALUES ((SELECT id FROM pay_periods WHERE status='open' AND CURRENT_DATE BETWEEN start_date AND end_date), $1)
+     ON CONFLICT (pay_period_id, contractor_id) DO NOTHING`,
+    [realId]
+  );
+  await pool.query(
+    `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
+                                card_tip_gross_cents, card_tip_fee_cents, card_tip_net_cents, line_total_cents)
+     SELECT id, $2, 0, 0, 0, 0, 4000, 128, 3872, 3872
+       FROM payouts WHERE contractor_id = $1
+     ON CONFLICT (payout_id, shift_id) DO NOTHING`,
+    [realId, mixedShiftId]
+  );
+
   try {
-    const result = await clawbackTip(stubTipId, 2500);
-    assert.deepStrictEqual(result, { skipped: true, reason: 'legacy_cc_stub_target' });
-    // Guard MUST fire before any DB writes: tips.refunded_amount_cents stays
-    // at 0 (so a retry after de-stubbing is still possible), and no payout_events
-    // were created for the stub user.
-    const tipAfter = await pool.query('SELECT refunded_amount_cents FROM tips WHERE id = $1', [stubTipId]);
-    assert.strictEqual(Number(tipAfter.rows[0].refunded_amount_cents), 0);
-    const noPayout = await pool.query(
-      `SELECT COUNT(*)::int AS c FROM payout_events WHERE payout_id IN
-         (SELECT id FROM payouts WHERE contractor_id = $1)`,
-      [stubId]
+    const result = await clawbackTip(cbTipId, 4000);
+    assert.notEqual(result?.skipped, true);
+    assert.equal(result.bartenders, 1);
+
+    const adj = await pool.query(
+      `SELECT adjustment_cents FROM payout_events pe JOIN payouts po ON po.id = pe.payout_id
+        WHERE po.contractor_id = $1 AND pe.shift_id = $2`,
+      [realId, mixedShiftId]
     );
-    assert.strictEqual(noPayout.rows[0].c, 0);
+    assert.equal(Number(adj.rows[0].adjustment_cents), -3872);
   } finally {
-    await pool.query('DELETE FROM tips WHERE id = $1', [stubTipId]);
-    await pool.query('DELETE FROM users WHERE id = $1', [stubId]);
+    await pool.query('DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id IN ($1, $2))',
+      [stubId, realId]);
+    await pool.query('DELETE FROM payouts WHERE contractor_id IN ($1, $2)', [stubId, realId]);
+    await pool.query('DELETE FROM tips WHERE id = $1', [cbTipId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [mixedShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [mixedShiftId]);
+    await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [realId]);
+    await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [stubId, realId]);
   }
 });
 
-test('clawbackTipByPaymentIntent > inherits the legacy-stub skip from clawbackTip', async () => {
-  // The webhook entry point looks up the tip by stripe_payment_intent_id and
-  // calls clawbackTip; the same guard fires there. We don't assert the return
-  // value (the webhook helper swallows the inner return), but we DO assert no
-  // payout_events were written and refunded_amount_cents stayed at 0.
-  const stub = await pool.query(
+test('clawbackTip > skips with all_bartenders_are_legacy_cc_stubs when every shift bartender is a stub', async () => {
+  const stubA = await pool.query(
     `INSERT INTO users (email, password_hash, role, cc_id)
-     VALUES ('claw-stub-pi@example.com','x','staff','legacy_cc:test:claw-pi')
-     RETURNING id`
+     VALUES ('cb-all-stub-a@example.com','x','staff','legacy_cc:test:cb-all-a') RETURNING id`
   );
-  const stubId = stub.rows[0].id;
-  const piId = 'pi_claw_stub_pi_test';
-  const stubTip = await pool.query(
+  const stubB = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('cb-all-stub-b@example.com','x','staff','legacy_cc:test:cb-all-b') RETURNING id`
+  );
+  const stubAId = stubA.rows[0].id;
+  const stubBId = stubB.rows[0].id;
+  const allStubShift = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','8:00 PM','open',$1) RETURNING id`,
+    [paidProposalId]
+  );
+  const allStubShiftId = allStubShift.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved'), ($1, $3, 'Bartender', 'approved')`,
+    [allStubShiftId, stubAId, stubBId]
+  );
+  const tipRes = await pool.query(
     `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
                        stripe_payment_intent_id, tipped_at, shift_id, refunded_amount_cents)
-     VALUES (gen_random_uuid(), $1, 4000, 128, $2, '2026-05-15 23:30:00+00', $3, 0)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_all_stub_cb', NOW() - INTERVAL '1 day', $2, 0)
      RETURNING id`,
-    [stubId, piId, paidShiftId]
+    [stubAId, allStubShiftId]
   );
-  const stubTipId = stubTip.rows[0].id;
+  const allStubTipId = tipRes.rows[0].id;
+
   try {
-    await clawbackTipByPaymentIntent(piId, 2500);
-    const tipAfter = await pool.query('SELECT refunded_amount_cents FROM tips WHERE id = $1', [stubTipId]);
-    assert.strictEqual(Number(tipAfter.rows[0].refunded_amount_cents), 0);
-    const noPayout = await pool.query(
-      `SELECT COUNT(*)::int AS c FROM payout_events WHERE payout_id IN
-         (SELECT id FROM payouts WHERE contractor_id = $1)`,
-      [stubId]
-    );
-    assert.strictEqual(noPayout.rows[0].c, 0);
+    const result = await clawbackTip(allStubTipId, 2500);
+    assert.deepEqual(result, { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' });
+    // Recoverable: refunded_amount_cents stays at 0.
+    const tipAfter = await pool.query('SELECT refunded_amount_cents FROM tips WHERE id = $1', [allStubTipId]);
+    assert.equal(Number(tipAfter.rows[0].refunded_amount_cents), 0);
   } finally {
-    await pool.query('DELETE FROM tips WHERE id = $1', [stubTipId]);
-    await pool.query('DELETE FROM users WHERE id = $1', [stubId]);
+    await pool.query('DELETE FROM tips WHERE id = $1', [allStubTipId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [allStubShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [allStubShiftId]);
+    await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [stubAId, stubBId]);
   }
 });

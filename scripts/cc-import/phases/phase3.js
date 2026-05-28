@@ -442,6 +442,28 @@ async function promoteBucketB(payload, options = {}) {
   return _promote(payload, { ...options, bucketLetter: 'B', skipDedup: true });
 }
 
+/**
+ * Used by the cc-import Review page's retry endpoints (`/errored-row/:id/retry`,
+ * `/skipped-event/:id/promote`). Retry semantics intentionally bypass the
+ * skip-list classification (Bucket D) — the operator is asking us to promote,
+ * so skip-list rejection doesn't apply. Classify purely by status + date:
+ * past + Confirmed → promoteBucketB (completed, no auto-comms);
+ * future + Confirmed → promoteBucketA;
+ * non-Confirmed or unparseable date → C-degraded to promoteBucketA (operator's
+ * "make this active" intent wins; bucket letter preserved in audit log).
+ *
+ * Returns: { bucket: 'A'|'B'|'C', promote: function(payload, options) }
+ */
+function classifyForRetry(payload, today = new Date()) {
+  const ctx = buildRowContext(payload);
+  if (ctx.status !== 'Confirmed' || !ctx.eventDate) {
+    return { bucket: 'C', promote: promoteBucketA };
+  }
+  return ctx.eventDate >= today
+    ? { bucket: 'A', promote: promoteBucketA }
+    : { bucket: 'B', promote: promoteBucketB };
+}
+
 async function _promote(payload, options) {
   const {
     bucketLetter, skipDedup = false, sourceRunId = null,
@@ -842,6 +864,7 @@ module.exports = {
   run,
   promoteBucketA,
   promoteBucketB,
+  classifyForRetry,
   // Internals re-exported for unit tests.
   parseAddons,
   parseBookedAt,

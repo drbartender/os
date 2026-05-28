@@ -149,40 +149,19 @@ Each item is eligible to be re-opened as its own spec when priorities align. Sor
 **Why deferred:** Scale concern, not a current problem.
 **Next step:** Add partial indexes on `email_sends(campaign_id) WHERE status = 'opened'` / `WHERE status = 'clicked'`, OR refactor to a single aggregated subquery with `COUNT(*) FILTER (WHERE status = ...)`.
 
+### CC-Import: orphan-payment link refund branch — TOCTOU race on concurrent admin clicks
+
+**Source:** 2026-05-28 Task 2 checkpoint review (database-review agent).
+**What:** `server/routes/admin/ccImport/review.js:334-346` reads `cc_event_id, promoted_*_id` outside any txn or row lock, then `:392-395` (refund branch) runs a bare `UPDATE legacy_cc_payments SET cc_event_id = $1` with no `WHERE cc_event_id IS NULL` clause. Two admin clicks racing on the same orphan row can both pass the guards, both run the UPDATE, then both call `promoteSingleLegacyRefund`. The helper's `FOR UPDATE` on `proposals` (phase4.js:585-589) serializes the row-lock contention, but the per-proposal `legacy_charge_id` idempotency index does NOT fire when `legacy_charge_id` is NULL (legitimate per the CC export), so both calls can produce duplicate `proposal_refunds` inserts. Payment branch is NOT affected — shared txn + FOR UPDATE inside `promoteSingleLegacyPayment` makes the second caller block and see `promoted_payment_id` set.
+**Why deferred:** Pre-existing race, not introduced by codex-followups Task 2. The atomicity fix in commit `6455fdb` closes the bigger "non-success status strands cc_event_id" gap; this concurrency hole is narrower and only fires under double-click. Operator UX could mitigate via button-disable-on-click; the durable fix is server-side.
+**Next step:** Tighten the refund-branch UPDATE to `... WHERE id = $1 AND cc_event_id IS NULL`, check `rowCount === 0` → throw `ConflictError('race lost')`. Alternatively, add `SELECT ... FOR UPDATE` to the guard SELECT at `review.js:334-338` to serialize concurrent reads.
+
 ### metricsQueries `include_cc` filter join lacks composite index
 
 **Source:** 2026-05-27 push pre-review (performance-review agent, finding L4).
 **What:** `server/utils/metricsQueries.js:200-203, 263-272` — the `include_cc !== 'all'` paid-money branch joins `proposal_payments → proposals` on every Financials/Dashboard call and adds `p.cc_id IS NULL` / `IS NOT NULL`. The join key on `pp.proposal_id` is FK-indexed, but there's no composite `(proposal_id, cc_id)` and the existing partial unique `idx_proposals_cc_id` (schema 2805) only covers the `IS NOT NULL` selectivity path.
 **Why deferred:** Fine at current volumes — `proposals` is small. Only becomes a problem once `proposal_payments` crosses ~100k rows. The `include_cc` chip itself was just wired (commit `c4a18e1`) so usage data starts now.
 **Next step:** Revisit once the financials dashboard slows on a CC-heavy filter. Likely fix: add `CREATE INDEX idx_proposals_id_cc_id ON proposals(id, cc_id)` — covers both `IS NULL` and `IS NOT NULL` branches via index-only scan.
-
-### CC-Import: orphan-payment link silently no-ops on non-success status
-
-**Source:** 2026-05-27 push pre-review (Codex code-review, P1).
-**What:** `server/routes/admin/ccImport/review.js:421-424` (the `/review/orphan-payment/:legacy_id/link` route) assumes `promoteSingleLegacyPayment()` / `promoteSingleLegacyRefund()` throw on failure, but those helpers return non-success statuses like `'errored'` and `'exceeds_net_paid'` instead. On those returns the route still runs the recompute/audit tail and returns 200, leaving `legacy_cc_payments.cc_event_id` set but `promoted_payment_id` / `promoted_refund_id` NULL. The orphan-queue filter on `cc_event_id IS NULL` then drops the row, so the operator loses the recovery path even though nothing was actually promoted.
-**Why deferred:** Admin-flow correctness bug, not a money or security defect. The cc-import review page is operator-only and CC-import is a one-time historical migration — exposure window is narrow.
-**Next step:** Branch on the helper's returned status. On non-success: surface the error to the operator (HTTP 4xx with the status code), DO NOT recompute amount_paid, DO NOT audit-log a success, and leave `cc_event_id` NULL so the row stays in the review queue.
-
-### CC-Import: orphan-payment link skips `suppressStaleBalanceReminders`
-
-**Source:** 2026-05-27 push pre-review (Codex code-review, P2).
-**What:** `server/routes/admin/ccImport/review.js:423-424` — after a successful orphan-payment link, the route recomputes `amount_paid` + proposal status but does NOT call `suppressStaleBalanceReminders()`. If the legacy payment fully settles a future-dated imported proposal, scheduled `balance_due_*` rows in `scheduled_messages` stay `pending` and fire even though the balance is paid. The initial-import path in `scripts/cc-import/phases/phase4.js` already calls suppress; the manual link path is the gap.
-**Why deferred:** Narrow trigger (operator links a payment that fully settles a future event). Pre-empted manually until fixed: operator can clear stale rows from `scheduled_messages` after the link.
-**Next step:** Add the `suppressStaleBalanceReminders(proposalId)` call inside the same transaction after `recomputeAmountPaid`, mirroring phase4's order.
-
-### CC-Import: `promoteBucketA` hardcodes Bucket A on errored-row + skipped-event retry
-
-**Source:** 2026-05-27 push pre-review (Codex code-review, P1).
-**What:** `server/routes/admin/ccImport/review.js:924-930` (and the parallel call from `/review/errored-row/:row_id/retry`) calls `promoteBucketA()` unconditionally instead of reclassifying the row by date + status. `promoteBucketA` enforces `status='confirmed'`, opens fresh shifts, and enrolls the proposal in auto-comms. Retrying a past Bucket B event (historical, status='completed') therefore recreates it as a live confirmed event and can schedule fresh client reminders for an event that already happened.
-**Why deferred:** Operator-triggered retry only — the importer's first pass classifies correctly. Triggers only when the operator clicks "retry" on a row that was originally Bucket B and failed for some other reason.
-**Next step:** Extract a shared `classifyAndPromote(row)` that re-runs the Phase 3 bucket determination (event_date past + status='completed' → Bucket B archive, else Bucket A live event), and route both retry endpoints through it.
-
-### CC-Import: `payrollLateTip` / `clawbackTip` stub gate fires on target, but math splits across all shift bartenders
-
-**Source:** 2026-05-27 push pre-review (Codex code-review, P1).
-**What:** `server/utils/payrollLateTip.js:41-48` (and the analogous skip in `clawbackTip`) gates on `tips.target_user_id` — if that user is a legacy CC stub, the whole rollforward/clawback is skipped. But `rollForwardLateTip()` and `clawbackTip()` then split the money across every approved bartender on `tip.shift_id`. On a mixed shift (stub + real bartender after operator linked a real user via the review page), a tip whose `target_user_id` resolves to the stub now skips entirely — the real bartender on the same shift gets nothing from that tip, and a later refund won't claw their share back.
-**Why deferred:** Narrow trigger — requires (a) a cc-imported shift with a stub, (b) operator linked a real bartender into that shift, (c) a Stripe late tip arrives later targeting the stub. None of those are impossible, but the chain is rare.
-**Next step:** Replace the `isLegacyCcStubUser(target_user_id)` early-return with "skip the stub recipients from the per-bartender split". I.e., query approved bartenders, partition into stubs vs real, run the split using only the real subset (size N - stubs). If ALL bartenders on the shift are stubs, then the existing early-return is correct.
 
 ### admin.js applications filter CASE expression blocks index
 

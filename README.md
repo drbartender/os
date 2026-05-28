@@ -187,7 +187,7 @@ dr-bartender/
 │   │   ├── calcomWebhookHelpers.js # Pure Cal.com webhook helpers (HMAC signature verification, payload normalization) consumed by `server/routes/calcom.js`
 │   │   ├── ccWrapUpEmailTemplate.js # cc-import: wrap-up email subject + html + text renderer
 │   │   ├── ccWrapUpHandler.js  # cc-import: post_event_wrap_up_email dispatcher handler (registered at boot in server/index.js)
-│   │   ├── payrollGuards.js    # cc-import: isLegacyCcParticipant (per-proposal stub check) + isLegacyCcStubUser (per-user stub check) — money-path skip gates
+│   │   ├── payrollGuards.js    # cc-import: isLegacyCcParticipant (per-proposal stub check, used by payrollAccrual). isLegacyCcStubUser (per-user check) kept for parity; no production callers since the rollForwardLateTip/clawbackTip stub-filter refactor moved the check inline into the bartender SELECT
 │   │   ├── channelFallback.js  # Channel-substitution decision for single-channel operational touches (picks the live channel when the registered one's status is 'bad')
 │   │   ├── clientAutomationSuspension.js # Suspends a client's remaining automation when both email_status and phone_status are 'bad' (sets clients.automation_suspended_at, cancels pending scheduled_messages)
 │   │   ├── consultRecap.js     # Formats saved consult selections into the post-consult email recap

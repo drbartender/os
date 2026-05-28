@@ -357,28 +357,44 @@ router.post(
     }
     const targetCcId = propRes.rows[0].cc_id;
 
-    // UPDATE legacy_cc_payments.cc_event_id + promote in ONE atomic step so
-    // an exception in promote cannot leave the orphan row half-linked (cc_event_id
-    // set but promoted_*_id NULL — which would drop the row from the orphans
-    // worklist filter `cc_event_id IS NULL`, removing the operator's recovery path).
+    // Atomic UPDATE cc_event_id + promote. Neither a throw nor a non-success
+    // status return must leave the orphan row half-linked (cc_event_id set +
+    // promoted_*_id NULL drops it from the worklist filter `cc_event_id IS
+    // NULL`). Non-success status synthesizes ConflictError so it flows through
+    // the same rollback path as a throw.
     //
-    // Two execution paths because the helpers have different transaction shapes:
-    //   - Payment: promoteSingleLegacyPayment(id, { client }) cooperates with a
-    //     caller-managed transaction → wrap UPDATE + promote in a single BEGIN/COMMIT.
-    //   - Refund: promoteSingleLegacyRefund(id) MUST own its own connection (per
-    //     refundHelpers.js Approach A — proposal row-locks against autopay), so
-    //     we cannot share a transaction. Fallback: UPDATE first, and on promote
-    //     throw, revert cc_event_id back to NULL before re-raising. The revert
-    //     is best-effort but the failure window is one statement wide.
+    // Asymmetric branches due to different helper transaction shapes:
+    //   - Payment: helper takes { client } → wrap in BEGIN/COMMIT. Throw triggers
+    //     ROLLBACK; cc_event_id UPDATE is undone.
+    //   - Refund: helper owns its own connection (Approach A; FOR UPDATE on
+    //     proposals against autopay), can't share txn. UPDATE first, revert in
+    //     catch on throw, guarded by `AND promoted_*_id IS NULL` so a
+    //     manual_skipped (already set promoted_refund_id, whitelisted as success
+    //     below) cannot reach the revert.
     let promoteResult;
     if (legacy.cc_type === 'Refund') {
-      // Refund path — UPDATE + explicit revert-on-throw.
+      // Refund path — UPDATE + explicit revert-on-throw. promoteSingleLegacyRefund
+      // MUST own its own connection (Approach A; cannot share a txn). Add a status
+      // check after the call so non-success non-throws still trigger the existing
+      // revert catch block via re-throw.
+      //
+      // Refund success statuses: 'promoted' (line 711), 'already_promoted' (529),
+      // 'manual_skipped' (569 — matches a manual reconciliation row; helper already
+      // committed promoted_refund_id). The manual_skipped path linked the row, so
+      // we must NOT roll back cc_event_id.
       await pool.query(
         `UPDATE legacy_cc_payments SET cc_event_id = $1 WHERE id = $2`,
         [targetCcId, legacyId]
       );
       try {
         promoteResult = await phase4.promoteSingleLegacyRefund(legacyId);
+        const refundStatus = promoteResult.status;
+        if (refundStatus !== 'promoted' && refundStatus !== 'already_promoted' && refundStatus !== 'manual_skipped') {
+          throw new ConflictError(
+            `Promote failed: ${promoteResult.error || refundStatus}`,
+            'CC_PROMOTE_FAILED'
+          );
+        }
       } catch (err) {
         // Revert the cc_event_id assignment so the orphan stays on the worklist.
         try {
@@ -390,11 +406,17 @@ router.post(
         } catch (revertErr) {
           reportException(req, revertErr, { step: 'cc_event_id_revert', legacyId });
         }
-        reportException(req, err, { step: 'promote_single', legacyId });
+        // ConflictError is the operator-visible failure — don't Sentry-spam on it.
+        if (!(err instanceof ConflictError)) {
+          reportException(req, err, { step: 'promote_single', legacyId });
+        }
         throw err;
       }
     } else {
-      // Payment path — shared transaction.
+      // Payment path — shared transaction. The cc_event_id UPDATE and the promote
+      // MUST be atomic so a non-success promote does not strand cc_event_id set
+      // (which would drop the row off the orphan queue's `cc_event_id IS NULL`
+      // filter without actually promoting it).
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -403,10 +425,21 @@ router.post(
           [targetCcId, legacyId]
         );
         promoteResult = await phase4.promoteSingleLegacyPayment(legacyId, { client });
+        if (promoteResult.status !== 'promoted' && promoteResult.status !== 'already_promoted') {
+          // Throw so BEGIN rolls back the cc_event_id UPDATE — keeps the row in the
+          // orphan queue with a recovery path.
+          throw new ConflictError(
+            `Promote failed: ${promoteResult.error || promoteResult.status}`,
+            'CC_PROMOTE_FAILED'
+          );
+        }
         await client.query('COMMIT');
       } catch (err) {
         try { await client.query('ROLLBACK'); } catch (_) { /* swallow */ }
-        reportException(req, err, { step: 'promote_single', legacyId });
+        // ConflictError is the operator-visible failure — don't Sentry-spam on it.
+        if (!(err instanceof ConflictError)) {
+          reportException(req, err, { step: 'promote_single', legacyId });
+        }
         throw err;
       } finally {
         client.release();
@@ -422,6 +455,10 @@ router.post(
     try {
       await phase4.recomputeAmountPaid(tail);
       await phase4.rederivePaymentTypeAndStatus(tail);
+      // Mirror phase4.run() — when a manual link fully settles a future proposal,
+      // any already-scheduled balance_* rows must be suppressed so they don't
+      // fire. No BEGIN on this connection, so the UPDATE auto-commits.
+      await phase4.suppressStaleBalanceReminders(tail);
     } finally {
       tail.release();
     }
@@ -813,11 +850,13 @@ router.post(
     // message — the operator's only path is re-running the phase end-to-end.
     let retryStatus = 'unknown';
     let retryResult = null;
+    let retryBucket = null;
     try {
       if (sourceEntity === 'events') {
-        // Re-run phase 3 promotion. Without dedup-skip — the row's natural
-        // bucket should re-classify cleanly if the operator's fix was real.
-        const r = await phase3.promoteBucketA(workingPayload, { skipDedup: false });
+        // Reclassify by status + event_date so past-dated rows land in Bucket B.
+        const sel = phase3.classifyForRetry(workingPayload);
+        retryBucket = sel.bucket;
+        const r = await sel.promote(workingPayload, { skipDedup: false });
         retryResult = r;
         retryStatus = r.status;
         // Mark raw row promoted on success; leave 'errored' on failure with new notes.
@@ -890,6 +929,7 @@ router.post(
         source_entity: sourceEntity,
         payload_overridden: !!payloadOverride,
         result_status: retryStatus,
+        retry_bucket: retryBucket,
       },
     });
 
@@ -916,18 +956,14 @@ router.post(
       throw new ConflictError('row is not a skipped event');
     }
 
-    // Re-run via promoteBucketA. The row's natural bucket is determined by
-    // status + date inside the promote helper; for a Bucket D row that was
-    // skipped purely on package, bypassing means it now lands in A / B / C as
-    // appropriate. We call promoteBucketA which handles its own classification
-    // path through the underlying _promote.
-    // NOTE: phase3.promoteBucketA uses bucketLetter='A' explicitly — meaning
-    // the row will be inserted as Bucket A (future + Confirmed). For a more
-    // permissive re-classification, callers would need a dedicated bypass
-    // helper. For Task 19 we accept "promote as Bucket A" semantics: the
-    // operator who flips a skipped row is explicitly saying "this should be
-    // an active event."
-    const result = await phase3.promoteBucketA(guard.rows[0].payload, { skipDedup: true });
+    // Reclassify by status + event_date so a past-dated event lands in Bucket B
+    // (completed, no auto-comms enrollment) instead of being force-promoted as
+    // Bucket A and scheduling stale reminders. classifyForRetry mirrors the
+    // initial phase 3 pass via buildRowContext + classify; C/D degrade to A
+    // (archive paths aren't single-row callable) with the genuine bucket letter
+    // preserved in the audit log.
+    const { bucket, promote } = phase3.classifyForRetry(guard.rows[0].payload);
+    const result = await promote(guard.rows[0].payload, { skipDedup: true });
     if (result.status !== 'promoted' && result.status !== 'already_promoted') {
       throw new ConflictError(`Promote failed: ${result.error || result.status}`, 'CC_PROMOTE_FAILED');
     }
@@ -942,6 +978,7 @@ router.post(
         promoted_at: new Date().toISOString(),
         proposal_id: result.proposalId || null,
         skip_rule_bypassed: true,
+        retry_bucket: bucket,
       })]
     );
 
@@ -949,7 +986,7 @@ router.post(
       actorUserId: req.user.id,
       targetUserId: null,
       action: 'cc_review_skipped_event_promoted',
-      metadata: { row_id: rowId, proposal_id: result.proposalId || null },
+      metadata: { row_id: rowId, proposal_id: result.proposalId || null, retry_bucket: bucket },
     });
 
     res.json({ ok: true, proposal_id: result.proposalId || null });

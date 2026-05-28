@@ -11,6 +11,12 @@ if (process.env.NODE_ENV === 'production') {
 let bartenderA, bartenderB, frozenPeriodId, frozenProposalId, frozenShiftId, tipId;
 
 before(async () => {
+  // Pre-clean any stranded fixtures from prior failed runs (FK chain).
+  await pool.query(`DELETE FROM tips WHERE target_user_id IN (SELECT id FROM users WHERE email LIKE 'late-tip-%@example.com' OR email LIKE 'mixed-%@example.com' OR email LIKE 'all-stub-%@example.com')`);
+  await pool.query(`DELETE FROM shift_requests WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'late-tip-%@example.com' OR email LIKE 'mixed-%@example.com' OR email LIKE 'all-stub-%@example.com')`);
+  await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'late-tip-%@example.com' OR email LIKE 'mixed-%@example.com')`);
+  await pool.query(`DELETE FROM users WHERE email LIKE 'late-tip-%@example.com' OR email LIKE 'mixed-stub@example.com' OR email LIKE 'mixed-real@example.com' OR email LIKE 'all-stub-%@example.com'`);
+
   const a = await pool.query(
     "INSERT INTO users (email, password_hash, role) VALUES ('late-tip-a@example.com','x','staff') RETURNING id"
   );
@@ -79,11 +85,19 @@ afterEach(async () => {
     'DELETE FROM payouts WHERE contractor_id IN ($1,$2)',
     [bartenderA, bartenderB]
   );
-  // Delete any open pay_period the roll-forward might have created today.
+  // Delete any open pay_period the roll-forward might have created today,
+  // but ONLY if no payouts reference it. The dev DB has a pre-existing open
+  // pay_period (2026-05-26 to 2026-06-01) used as the shared prereq; do not
+  // touch it. The frozen test period (2026-05-12) is preserved separately.
   await pool.query(
-    `DELETE FROM pay_periods WHERE status = 'open'
-       AND start_date <> '2026-05-12'`
+    `DELETE FROM pay_periods pp WHERE pp.status = 'open'
+       AND pp.start_date <> '2026-05-12'
+       AND NOT EXISTS (SELECT 1 FROM payouts WHERE pay_period_id = pp.id)`
   );
+  // Defense in depth: any tip targeting either fixture bartender, even if
+  // created by a sub-test that didn't reach its finally. Pre-existing tests
+  // only cleaned by tipId so a failed sub-test could leak.
+  await pool.query('DELETE FROM tips WHERE target_user_id IN ($1, $2)', [bartenderA, bartenderB]);
   await pool.query('DELETE FROM tips WHERE id = $1', [tipId]);
   await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [frozenShiftId]);
   await pool.query('DELETE FROM shifts WHERE id = $1', [frozenShiftId]);
@@ -140,40 +154,128 @@ test('rollForwardLateTip > a second call is idempotent', async () => {
   assert.equal(rows[0].c, 2);  // exactly two rows, not four.
 });
 
-test('rollForwardLateTip > skips and returns structured shape when target is a legacy CC stub', async () => {
-  // cc-import: tips paid to a legacy_cc:* stub bartender must NOT roll forward
-  // into modern payouts. Setup a fresh stub user + tip pointed at the stub.
+test('rollForwardLateTip > mixed-stub shift: real bartender gets the whole tip, stubs filtered out', async () => {
+  // FRESH shift (NOT frozenShiftId) because beforeEach already populated
+  // frozenShiftId with bartenderA + bartenderB.
   const stub = await pool.query(
     `INSERT INTO users (email, password_hash, role, cc_id)
-     VALUES ('late-tip-stub@example.com','x','staff','legacy_cc:test:late-tip')
+     VALUES ('mixed-stub@example.com','x','staff','legacy_cc:test:mixed-stub')
      RETURNING id`
   );
   const stubId = stub.rows[0].id;
-  const stubTip = await pool.query(
+  const real = await pool.query(
+    `INSERT INTO users (email, password_hash, role)
+     VALUES ('mixed-real@example.com','x','staff') RETURNING id`
+  );
+  const realId = real.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, hourly_rate) VALUES ($1, 20.00)
+     ON CONFLICT (user_id) DO UPDATE SET hourly_rate = 20.00`,
+    [realId]
+  );
+  const mixedShift = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','7:00 PM','open',$1) RETURNING id`,
+    [frozenProposalId]
+  );
+  const mixedShiftId = mixedShift.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved'), ($1, $3, 'Bartender', 'approved')`,
+    [mixedShiftId, stubId, realId]
+  );
+  const tipRes = await pool.query(
     `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
                        stripe_payment_intent_id, tipped_at, shift_id)
-     VALUES (gen_random_uuid(), $1, 3000, 96, 'pi_stub_late_tip', '2026-05-15 23:30:00+00', $2)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_mixed_late_tip', '2026-05-15 23:30:00+00', $2)
      RETURNING id`,
-    [stubId, frozenShiftId]
+    [stubId, mixedShiftId]
   );
-  const stubTipId = stubTip.rows[0].id;
+  const mixedTipId = tipRes.rows[0].id;
+
   try {
-    const result = await rollForwardLateTip(stubTipId);
-    assert.deepStrictEqual(result, { skipped: true, reason: 'legacy_cc_stub_target' });
-    // Guard MUST fire before any DB writes: no payout_events for this stub tip,
-    // and rolled_forward_at stays NULL (idempotent retry remains possible if
-    // the user is ever de-stubbed).
-    const noPayout = await pool.query(
-      `SELECT COUNT(*)::int AS c FROM payout_events WHERE payout_id IN
-         (SELECT id FROM payouts WHERE contractor_id = $1)`,
+    const result = await rollForwardLateTip(mixedTipId);
+    assert.notEqual(result?.skipped, true);
+    assert.equal(result.bartenders, 1, 'only the real bartender takes the split');
+
+    const realEvent = await pool.query(
+      `SELECT pe.card_tip_gross_cents, pe.card_tip_fee_cents, pe.card_tip_net_cents
+         FROM payout_events pe JOIN payouts po ON po.id = pe.payout_id
+        WHERE po.contractor_id = $1 AND pe.shift_id = $2`,
+      [realId, mixedShiftId]
+    );
+    assert.equal(realEvent.rowCount, 1);
+    assert.equal(Number(realEvent.rows[0].card_tip_gross_cents), 4000);
+    assert.equal(Number(realEvent.rows[0].card_tip_fee_cents), 128);
+    assert.equal(Number(realEvent.rows[0].card_tip_net_cents), 3872);
+
+    const stubEvent = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payout_events pe JOIN payouts po ON po.id = pe.payout_id
+        WHERE po.contractor_id = $1`,
       [stubId]
     );
-    assert.strictEqual(noPayout.rows[0].c, 0);
-    const tip = await pool.query('SELECT rolled_forward_at FROM tips WHERE id = $1', [stubTipId]);
-    assert.strictEqual(tip.rows[0].rolled_forward_at, null);
+    assert.equal(stubEvent.rows[0].c, 0);
   } finally {
-    await pool.query('DELETE FROM tips WHERE id = $1', [stubTipId]);
-    await pool.query('DELETE FROM users WHERE id = $1', [stubId]);
+    await pool.query(
+      `DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id IN ($1, $2))`,
+      [stubId, realId]
+    );
+    await pool.query('DELETE FROM payouts WHERE contractor_id IN ($1, $2)', [stubId, realId]);
+    await pool.query('DELETE FROM tips WHERE id = $1', [mixedTipId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [mixedShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [mixedShiftId]);
+    await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [realId]);
+    await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [stubId, realId]);
+  }
+});
+
+test('rollForwardLateTip > skips with all_bartenders_are_legacy_cc_stubs when every shift bartender is a stub', async () => {
+  const stubA = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('all-stub-a@example.com','x','staff','legacy_cc:test:all-a') RETURNING id`
+  );
+  const stubB = await pool.query(
+    `INSERT INTO users (email, password_hash, role, cc_id)
+     VALUES ('all-stub-b@example.com','x','staff','legacy_cc:test:all-b') RETURNING id`
+  );
+  const stubAId = stubA.rows[0].id;
+  const stubBId = stubB.rows[0].id;
+  const allStubShift = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','8:00 PM','open',$1) RETURNING id`,
+    [frozenProposalId]
+  );
+  const allStubShiftId = allStubShift.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved'), ($1, $3, 'Bartender', 'approved')`,
+    [allStubShiftId, stubAId, stubBId]
+  );
+  const tipRes = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id)
+     VALUES (gen_random_uuid(), $1, 3000, 96, 'pi_all_stub_late', '2026-05-15 23:30:00+00', $2)
+     RETURNING id`,
+    [stubAId, allStubShiftId]
+  );
+  const allStubTipId = tipRes.rows[0].id;
+
+  try {
+    const result = await rollForwardLateTip(allStubTipId);
+    assert.deepEqual(result, { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' });
+    const noPayout = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payout_events WHERE payout_id IN
+         (SELECT id FROM payouts WHERE contractor_id IN ($1, $2))`,
+      [stubAId, stubBId]
+    );
+    assert.equal(noPayout.rows[0].c, 0);
+    const tip = await pool.query('SELECT rolled_forward_at FROM tips WHERE id = $1', [allStubTipId]);
+    assert.equal(tip.rows[0].rolled_forward_at, null, 'recoverable: stays NULL so a future de-stub can replay');
+  } finally {
+    await pool.query('DELETE FROM tips WHERE id = $1', [allStubTipId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [allStubShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [allStubShiftId]);
+    await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [stubAId, stubBId]);
   }
 });
 

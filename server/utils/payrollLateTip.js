@@ -15,7 +15,6 @@ const { pool } = require('../db');
 const { findOpenPeriodForDate } = require('./payrollProcessing');
 const { payPeriodForDate, computePayday } = require('./payrollPeriods');
 const { splitEvenly } = require('./payrollMath');
-const { isLegacyCcStubUser } = require('./payrollGuards');
 
 async function rollForwardLateTip(tipId) {
   const client = await pool.connect();
@@ -33,35 +32,39 @@ async function rollForwardLateTip(tipId) {
       await client.query('ROLLBACK');
       return null;
     }
-    // cc-import: tips paid TO a legacy_cc:* stub bartender never roll forward
-    // into modern payouts (we cannot pay stubs through Stripe Connect). Fires
-    // BEFORE any DB writes — leaves rolled_forward_at NULL so a re-run after
-    // a future de-stub can pick up the tip. Reuses the same transaction client
-    // so the read happens against the locked row.
-    if (await isLegacyCcStubUser(tip.target_user_id, client)) {
-      Sentry.captureMessage('rollForwardLateTip: target is legacy_cc stub; skipping', {
-        level: 'info',
-        tags: { util: 'payrollLateTip', step: 'skip_legacy_cc_stub' },
-        extra: { tipId, targetUserId: tip.target_user_id },
-      });
-      await client.query('ROLLBACK');
-      return { skipped: true, reason: 'legacy_cc_stub_target' };
-    }
-
-    // Bartenders on the original shift.
+    // Bartenders on the original shift. Stub users (cc_id LIKE 'legacy_cc:%')
+    // are filtered out of the per-bartender split — they can't be paid through
+    // Stripe Connect. If ALL bartenders are stubs, the entire rollforward is
+    // skipped (recoverable: rolled_forward_at stays NULL so a future de-stub
+    // can replay). If NO bartenders at all, the tip is marked rolled forward
+    // (permanent: nothing to retry).
     const bartendersRes = await client.query(
-      `SELECT sr.user_id FROM shift_requests sr
+      `SELECT sr.user_id, (u.cc_id LIKE 'legacy_cc:%') AS is_stub
+         FROM shift_requests sr
+         JOIN users u ON u.id = sr.user_id
         WHERE sr.shift_id = $1 AND sr.status = 'approved'
           AND LOWER(sr.position) = 'bartender'
         ORDER BY sr.user_id`,
       [tip.shift_id]
     );
-    const bartenders = bartendersRes.rows.map(r => r.user_id);
-    if (bartenders.length === 0) {
-      // No bartenders to pay; flag the tip so we don't retry indefinitely.
+    const allBartenders = bartendersRes.rows;
+    const bartenders = allBartenders.filter(r => !r.is_stub).map(r => r.user_id);
+    const stubCount = allBartenders.length - bartenders.length;
+
+    if (allBartenders.length === 0) {
       await client.query('UPDATE tips SET rolled_forward_at = NOW() WHERE id = $1', [tipId]);
       await client.query('COMMIT');
       return { bartenders: 0 };
+    }
+
+    if (bartenders.length === 0) {
+      Sentry.captureMessage('rollForwardLateTip: all shift bartenders are legacy_cc stubs; skipping', {
+        level: 'info',
+        tags: { util: 'payrollLateTip', step: 'skip_all_stubs' },
+        extra: { tipId, shiftId: tip.shift_id, stubCount },
+      });
+      await client.query('ROLLBACK');
+      return { skipped: true, reason: 'all_bartenders_are_legacy_cc_stubs' };
     }
 
     // Find/create the open period containing today.

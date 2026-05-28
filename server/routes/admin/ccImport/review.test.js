@@ -808,6 +808,308 @@ test('POST /orphan-payment/:id/link 409 when row already dismissed', async () =>
   assert.equal(r.status, 409);
 });
 
+test('POST /orphan-payment/:id/link suppresses stale balance reminders when legacy payment fully settles a future proposal', async () => {
+  // A cc-imported proposal with a future event_date and a pending balance_reminder.
+  // The legacy payment we link covers total_price in full, so post-link the
+  // proposal is paid AND the pending reminder must flip to 'suppressed' (otherwise
+  // it fires even though balance is 0).
+  const cliRes = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Fix1 Client', $1, '555-0190') RETURNING id`,
+    [`fix1-${Date.now()}@example.com`]
+  );
+  const fix1ClientId = cliRes.rows[0].id;
+  const propRes = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
+     VALUES ($1, 'confirmed', CURRENT_DATE + INTERVAL '30 days', 500, 0,
+             'cc-fix1-' || gen_random_uuid()::text, gen_random_uuid(), 'birthday-party')
+     RETURNING id, cc_id`,
+    [fix1ClientId]
+  );
+  const proposalId = propRes.rows[0].id;
+  const proposalCcIdLocal = propRes.rows[0].cc_id;
+
+  const smRes = await pool.query(
+    `INSERT INTO scheduled_messages
+       (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for, status)
+     VALUES ('proposal', $1, 'balance_reminder_non_autopay_t3', 'client', $2, 'email',
+             NOW() + INTERVAL '20 days', 'pending')
+     RETURNING id`,
+    [proposalId, fix1ClientId]
+  );
+  const smId = smRes.rows[0].id;
+
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix1-orphan')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+
+  const legacyRes = await pool.query(
+    `INSERT INTO legacy_cc_payments
+       (cc_event_title, cc_type, paid_on, payment_applied_cents, payment_method, raw_import_id)
+     VALUES ('Fix1 Test', 'Payment', CURRENT_DATE - INTERVAL '5 days', 50000, 'card', $1)
+     RETURNING id`,
+    [rawImportId]
+  );
+  const legacyId = legacyRes.rows[0].id;
+
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcIdLocal });
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.ok, true);
+
+    const after = await pool.query('SELECT status FROM scheduled_messages WHERE id = $1', [smId]);
+    assert.equal(after.rows[0].status, 'suppressed');
+  } finally {
+    await pool.query('DELETE FROM scheduled_messages WHERE id = $1', [smId]);
+    await pool.query('DELETE FROM proposal_payments WHERE proposal_id = $1', [proposalId]);
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [fix1ClientId]);
+  }
+});
+
+test('POST /orphan-payment/:id/link rolls back cc_event_id and 409s on errored promote status', async () => {
+  // promoteSingleLegacyPayment is mocked to return errored; the new code in the
+  // route throws ConflictError, and the BEGIN rolls back the cc_event_id UPDATE.
+  // We can't reproduce 'errored' from a seed alone because the helper resolves
+  // any matching proposal cleanly (see phase4.js:357-485).
+  //
+  // Spy is installed AFTER all seeds so a seed failure can't leak it across tests.
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix2-err')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+
+  const legacyRes = await pool.query(
+    `INSERT INTO legacy_cc_payments (cc_event_title, cc_type, paid_on, payment_applied_cents, raw_import_id)
+     VALUES ('Fix2 Err', 'Payment', CURRENT_DATE, 10000, $1)
+     RETURNING id`,
+    [rawImportId]
+  );
+  const legacyId = legacyRes.rows[0].id;
+
+  const cliRes = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Fix2 Err Client', $1, '555-0191') RETURNING id`,
+    [`fix2-err-${Date.now()}@example.com`]
+  );
+  const fix2ErrClientId = cliRes.rows[0].id;
+  const propRes = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
+     VALUES ($1, 'confirmed', CURRENT_DATE + INTERVAL '30 days', 500, 0,
+             'cc-fix2-err-' || gen_random_uuid()::text, gen_random_uuid(), 'birthday-party')
+     RETURNING id, cc_id`,
+    [fix2ErrClientId]
+  );
+  const proposalId = propRes.rows[0].id;
+  const proposalCcId = propRes.rows[0].cc_id;
+
+  const phase4 = require('../../../../scripts/cc-import/phases/phase4');
+  const { mock } = require('node:test');
+  const spy = mock.method(phase4, 'promoteSingleLegacyPayment',
+    async () => ({ status: 'errored', error: 'forced_for_test' }));
+
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcId });
+    assert.equal(r.status, 409);
+    const body = JSON.parse(r.body);
+    assert.equal(body.code, 'CC_PROMOTE_FAILED');
+
+    // Load-bearing: cc_event_id stays NULL — proves BEGIN/ROLLBACK fired
+    // even though the promote helper was mocked.
+    const after = await pool.query('SELECT cc_event_id FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    assert.equal(after.rows[0].cc_event_id, null);
+  } finally {
+    spy.mock.restore();
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [fix2ErrClientId]);
+  }
+});
+
+test('POST /orphan-payment/:id/link still succeeds and persists cc_event_id on promoted status', async () => {
+  // Regression guard: the refactor must not break the happy path.
+  const cliRes = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Fix2 OK Client', $1, '555-0192') RETURNING id`,
+    [`fix2-ok-${Date.now()}@example.com`]
+  );
+  const fix2OkClientId = cliRes.rows[0].id;
+  const propRes = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
+     VALUES ($1, 'confirmed', CURRENT_DATE + INTERVAL '60 days', 500, 0,
+             'cc-fix2-ok-' || gen_random_uuid()::text, gen_random_uuid(), 'birthday-party')
+     RETURNING id, cc_id`,
+    [fix2OkClientId]
+  );
+  const proposalId = propRes.rows[0].id;
+  const proposalCcId = propRes.rows[0].cc_id;
+
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix2-ok')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+
+  const legacyRes = await pool.query(
+    `INSERT INTO legacy_cc_payments (cc_event_title, cc_type, paid_on, payment_applied_cents, raw_import_id)
+     VALUES ('Fix2 Happy', 'Payment', CURRENT_DATE, 10000, $1)
+     RETURNING id`,
+    [rawImportId]
+  );
+  const legacyId = legacyRes.rows[0].id;
+
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcId });
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.ok, true);
+    assert.equal(body.promote_status, 'promoted');
+
+    const after = await pool.query(
+      'SELECT cc_event_id, promoted_payment_id FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    assert.equal(after.rows[0].cc_event_id, proposalCcId);
+    assert.notEqual(after.rows[0].promoted_payment_id, null);
+  } finally {
+    await pool.query('DELETE FROM proposal_payments WHERE proposal_id = $1', [proposalId]);
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [fix2OkClientId]);
+  }
+});
+
+test('POST /orphan-payment/:id/link does NOT capture ConflictError to Sentry on non-success promote', async () => {
+  // The point of the `if (!(err instanceof ConflictError))` guard around
+  // reportException is that operator-visible failures should NOT spam Sentry.
+  // Spies installed AFTER all seeds so a seed failure can't leak them.
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix2-sentry')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+  const legacyRes = await pool.query(
+    `INSERT INTO legacy_cc_payments (cc_event_title, cc_type, paid_on, payment_applied_cents, raw_import_id)
+     VALUES ('Fix2 Sentry', 'Payment', CURRENT_DATE, 10000, $1) RETURNING id`,
+    [rawImportId]
+  );
+  const legacyId = legacyRes.rows[0].id;
+  const cliRes = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Fix2 Sentry Client', $1, '555-0193') RETURNING id`,
+    [`fix2-sentry-${Date.now()}@example.com`]
+  );
+  const fix2SentryClientId = cliRes.rows[0].id;
+  const propRes = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
+     VALUES ($1, 'confirmed', CURRENT_DATE + INTERVAL '30 days', 500, 0,
+             'cc-fix2-sentry-' || gen_random_uuid()::text, gen_random_uuid(), 'birthday-party')
+     RETURNING id, cc_id`,
+    [fix2SentryClientId]
+  );
+  const proposalId = propRes.rows[0].id;
+  const proposalCcId = propRes.rows[0].cc_id;
+
+  const Sentry = require('@sentry/node');
+  const phase4 = require('../../../../scripts/cc-import/phases/phase4');
+  const { mock } = require('node:test');
+  const promoteSpy = mock.method(phase4, 'promoteSingleLegacyPayment',
+    async () => ({ status: 'errored', error: 'forced_for_test' }));
+  const sentrySpy = mock.method(Sentry, 'captureException', () => {});
+
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcId });
+    assert.equal(r.status, 409);
+    assert.equal(sentrySpy.mock.callCount(), 0, 'ConflictError must not be sent to Sentry');
+  } finally {
+    promoteSpy.mock.restore();
+    sentrySpy.mock.restore();
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [fix2SentryClientId]);
+  }
+});
+
+test('POST /orphan-payment/:id/link refund-branch manual_skipped is treated as success (cc_event_id stays set)', async () => {
+  // Regression for W1 from the Task 2 code-review checkpoint: a refund whose
+  // paid_on+amount matches an existing 'Manual Stripe reconciliation' row
+  // returns { status: 'manual_skipped' } from promoteSingleLegacyRefund. The
+  // helper has already COMMITted promoted_refund_id, so the route MUST treat
+  // this as success — return 200, keep cc_event_id set.
+  const rawIns = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status)
+     VALUES ('review-test', 'payments', $1, $2, '{}'::jsonb, 'pending')
+     RETURNING id`,
+    [nextSrn(), nextHash('fix2-refund-ms')]
+  );
+  const rawImportId = rawIns.rows[0].id;
+  const legacyRes = await pool.query(
+    `INSERT INTO legacy_cc_payments (cc_event_title, cc_type, paid_on, payment_applied_cents, raw_import_id)
+     VALUES ('Fix2 Refund MS', 'Refund', CURRENT_DATE, 5000, $1) RETURNING id`,
+    [rawImportId]
+  );
+  const legacyId = legacyRes.rows[0].id;
+  const cliRes = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Fix2 Refund MS Client', $1, '555-0194') RETURNING id`,
+    [`fix2-refund-ms-${Date.now()}@example.com`]
+  );
+  const fix2RefundClientId = cliRes.rows[0].id;
+  const propRes = await pool.query(
+    `INSERT INTO proposals (client_id, status, event_date, total_price, amount_paid, cc_id, token, event_type)
+     VALUES ($1, 'confirmed', CURRENT_DATE + INTERVAL '30 days', 500, 0,
+             'cc-fix2-refund-ms-' || gen_random_uuid()::text, gen_random_uuid(), 'birthday-party')
+     RETURNING id, cc_id`,
+    [fix2RefundClientId]
+  );
+  const proposalId = propRes.rows[0].id;
+  const proposalCcId = propRes.rows[0].cc_id;
+
+  const phase4 = require('../../../../scripts/cc-import/phases/phase4');
+  const { mock } = require('node:test');
+  const spy = mock.method(phase4, 'promoteSingleLegacyRefund',
+    async () => ({ status: 'manual_skipped', refundId: 999 }));
+
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/orphan-payment/${legacyId}/link`,
+      adminToken, { proposal_id: proposalId, cc_event_id: proposalCcId });
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.equal(body.ok, true);
+    assert.equal(body.promote_status, 'manual_skipped');
+
+    // cc_event_id IS set — the manual_skipped path linked the row and must NOT
+    // be rolled back to NULL.
+    const after = await pool.query('SELECT cc_event_id FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    assert.equal(after.rows[0].cc_event_id, proposalCcId);
+  } finally {
+    spy.mock.restore();
+    await pool.query('DELETE FROM legacy_cc_payments WHERE id = $1', [legacyId]);
+    await pool.query('DELETE FROM legacy_cc_raw_imports WHERE id = $1', [rawImportId]);
+    await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+    await pool.query('DELETE FROM clients WHERE id = $1', [fix2RefundClientId]);
+  }
+});
+
 // ── §2 orphan-payment/:id/dismiss ─────────────────────────────────
 
 test('POST /orphan-payment/:id/dismiss rejects non-integer legacy_id', async () => {
@@ -1116,6 +1418,56 @@ test('POST /errored-row/:id/retry returns 409 CC_RETRY_PAYMENT_NOT_SUPPORTED for
   assert.equal(JSON.parse(r.body).code, 'CC_RETRY_PAYMENT_NOT_SUPPORTED');
 });
 
+test('POST /errored-row/:row_id/retry past-dated event lands in Bucket B', async () => {
+  // Same clients-seed pattern as the skipped-event past-dated test so
+  // resolveClientId resolves cleanly.
+  const clientEmail = `fix3-err-${Date.now()}@example.com`;
+  const clientIns = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Past Errored Test', $1, '555-0196') RETURNING id`,
+    [clientEmail]
+  );
+  const seededClientId = clientIns.rows[0].id;
+
+  const payload = {
+    'Status': 'Confirmed',
+    'Event Date': '12-01-2023',  // MM-DD-YYYY per parseCcDate
+    'Package Name': 'Open Bar',  // not skip-list
+    'Client Name': 'Past Errored Test',
+    'Contact Email(s)': clientEmail,
+    'ID': 'cc-fix3-err-past-' + Date.now(),
+  };
+  const rawRes = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status, cc_id, import_notes)
+     VALUES ('review-test-fix3', 'events', $1, $2, $3::jsonb, 'errored', $4, $5::jsonb)
+     RETURNING id`,
+    [nextSrn(), nextHash('fix3-err'), JSON.stringify(payload), payload['ID'],
+     JSON.stringify({ error: 'simulated for test', phase: 'phase3' })]
+  );
+  const rowId = rawRes.rows[0].id;
+  let proposalId = null;
+
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/errored-row/${rowId}/retry`, adminToken, {});
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.ok(body.result?.proposalId);
+    proposalId = body.result.proposalId;
+
+    const propRow = await pool.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
+    assert.equal(propRow.rows[0].status, 'completed');
+  } finally {
+    if (proposalId) {
+      await pool.query("DELETE FROM shift_requests WHERE shift_id IN (SELECT id FROM shifts WHERE proposal_id = $1)", [proposalId]);
+      await pool.query("DELETE FROM shifts WHERE proposal_id = $1", [proposalId]);
+      await pool.query("DELETE FROM proposal_activity_log WHERE proposal_id = $1", [proposalId]);
+      await pool.query("DELETE FROM proposals WHERE id = $1", [proposalId]);
+    }
+    await pool.query("DELETE FROM legacy_cc_raw_imports WHERE id = $1", [rowId]);
+    await pool.query("DELETE FROM clients WHERE id = $1", [seededClientId]);
+  }
+});
+
 // ── §6 skipped-event/:id/promote ─────────────────────────────────
 
 test('POST /skipped-event/:id/promote rejects non-integer row_id', async () => {
@@ -1135,6 +1487,72 @@ test('POST /skipped-event/:id/promote 409 on non-skipped row', async () => {
     'POST', `/api/admin/cc-import/review/skipped-event/${rawNotSkippedId}/promote`, adminToken, {}
   );
   assert.equal(r.status, 409);
+});
+
+test('POST /skipped-event/:row_id/promote past-dated event lands in Bucket B (completed, no auto-comms)', async () => {
+  // phase3.promoteBucketA._promote calls resolveClientId which requires a
+  // matching clients row. Seed the client first so the date-classification
+  // code path actually runs.
+  const clientEmail = `fix3-past-${Date.now()}@example.com`;
+  const clientIns = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('Past Event Test', $1, '555-0195') RETURNING id`,
+    [clientEmail]
+  );
+  const seededClientId = clientIns.rows[0].id;
+
+  // Column names match what phase3.buildRowContext reads.
+  const payload = {
+    'Status': 'Confirmed',
+    'Event Date': '01-15-2024',  // far past — MM-DD-YYYY per parseCcDate
+    'Package Name': 'Bartending Services',  // skip-list package — that's why it's 'skipped'
+    'Client Name': 'Past Event Test',
+    'Contact Email(s)': clientEmail,
+    'ID': 'cc-fix3-past-' + Date.now(),
+  };
+  // source_file unique to test to avoid colliding with real cc-import data
+  // on dev (source_row_number sequence is shared per-source_file).
+  const rawRes = await pool.query(
+    `INSERT INTO legacy_cc_raw_imports
+       (source_file, source_entity, source_row_number, source_row_hash, payload, import_status, cc_id)
+     VALUES ('review-test-fix3', 'events', $1, $2, $3::jsonb, 'skipped', $4)
+     RETURNING id`,
+    [nextSrn(), nextHash('fix3-past'), JSON.stringify(payload), payload['ID']]
+  );
+  const rowId = rawRes.rows[0].id;
+  let proposalId = null;
+
+  try {
+    const r = await req('POST', `/api/admin/cc-import/review/skipped-event/${rowId}/promote`, adminToken, {});
+    assert.equal(r.status, 200);
+    const body = JSON.parse(r.body);
+    assert.ok(body.proposal_id, 'expected a proposal_id in the response');
+    proposalId = body.proposal_id;
+
+    const propRow = await pool.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
+    assert.equal(propRow.rows[0].status, 'completed');
+
+    const shiftRow = await pool.query('SELECT status FROM shifts WHERE proposal_id = $1', [proposalId]);
+    if (shiftRow.rowCount > 0) {
+      assert.equal(shiftRow.rows[0].status, 'completed');
+    }
+
+    const smCount = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM scheduled_messages
+         WHERE entity_type = 'proposal' AND entity_id = $1 AND status = 'pending'`,
+      [proposalId]
+    );
+    assert.equal(smCount.rows[0].c, 0, 'past-dated retry must not enroll in auto-comms');
+  } finally {
+    if (proposalId) {
+      await pool.query("DELETE FROM scheduled_messages WHERE entity_type='proposal' AND entity_id = $1", [proposalId]);
+      await pool.query("DELETE FROM shift_requests WHERE shift_id IN (SELECT id FROM shifts WHERE proposal_id = $1)", [proposalId]);
+      await pool.query("DELETE FROM shifts WHERE proposal_id = $1", [proposalId]);
+      await pool.query("DELETE FROM proposal_activity_log WHERE proposal_id = $1", [proposalId]);
+      await pool.query("DELETE FROM proposals WHERE id = $1", [proposalId]);
+    }
+    await pool.query("DELETE FROM legacy_cc_raw_imports WHERE id = $1", [rowId]);
+    await pool.query("DELETE FROM clients WHERE id = $1", [seededClientId]);
+  }
 });
 
 // ── §7 phase0-failure/:id/accept-loss ────────────────────────────

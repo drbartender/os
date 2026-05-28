@@ -36,9 +36,13 @@ async function isLegacyCcParticipant(proposalId, client = pool) {
 }
 
 /**
- * Per-user: returns true when the user is a legacy CC stub. Used by
- * rollForwardLateTip and clawbackTip via tips.target_user_id to skip
- * payroll work for tips paid to imported-stub bartenders.
+ * Per-user: returns true when the user is a legacy CC stub. No production
+ * callers — `rollForwardLateTip` / `clawbackTip` moved to an inline
+ * `(u.cc_id LIKE 'legacy_cc:%') AS is_stub` JOIN in their bartender SELECT
+ * (so they can filter stubs from the per-bartender split rather than skip
+ * the whole shift). Kept for parity with `isLegacyCcParticipant` and for
+ * use by future per-user callers; the test in `payrollGuards.test.js`
+ * still pins the contract.
  */
 async function isLegacyCcStubUser(userId, client = pool) {
   // See isLegacyCcParticipant — same defensive coerce for string callers.
