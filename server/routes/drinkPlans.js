@@ -711,7 +711,7 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   let query = `
     SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
            dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
-           dp.status, dp.exploration_submitted_at, dp.submitted_at, dp.created_at,
+           dp.status, dp.finalized_at, dp.exploration_submitted_at, dp.submitted_at, dp.created_at,
            dp.updated_at, dp.created_by,
            u.email AS created_by_email
     FROM drink_plans dp
@@ -802,7 +802,7 @@ router.get('/by-proposal/:proposalId', auth, requireAdminOrManager, asyncHandler
   const result = await pool.query(
     `SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
             dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
-            dp.selections, dp.status, dp.admin_notes, dp.exploration_submitted_at,
+            dp.selections, dp.status, dp.finalized_at, dp.finalized_by, dp.admin_notes, dp.exploration_submitted_at,
             dp.submitted_at, dp.created_at, dp.updated_at, dp.created_by,
             u.email AS created_by_email,
             dp.consult_selections IS NOT NULL AS has_consult_selections,
@@ -893,7 +893,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   const result = await pool.query(
     `SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
             dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
-            dp.selections, dp.status, dp.admin_notes, dp.exploration_submitted_at,
+            dp.selections, dp.status, dp.finalized_at, dp.finalized_by, dp.admin_notes, dp.exploration_submitted_at,
             dp.submitted_at, dp.created_at, dp.updated_at, dp.created_by,
             u.email AS created_by_email,
             dp.consult_selections IS NOT NULL AS has_consult_selections,
