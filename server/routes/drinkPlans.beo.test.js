@@ -28,6 +28,7 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const { AppError } = require('../utils/errors');
 const drinkPlansRouter = require('./drinkPlans');
+const drinkPlanConsultRouter = require('./drinkPlanConsult');
 
 // ─── Shared harness state ──────────────────────────────────────────────────
 let server;
@@ -162,6 +163,7 @@ before(async () => {
   const app = express();
   app.use(express.json());
   app.use('/api/drink-plans', drinkPlansRouter);
+  app.use('/api/drink-plans', drinkPlanConsultRouter);
   app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);
     if (err instanceof AppError) {
@@ -374,5 +376,24 @@ test('POST /t/:token/logo > 409 when finalized', async () => {
   await reFinalize();
   const tok = (await pool.query('SELECT token FROM drink_plans WHERE id = $1', [drinkPlanId])).rows[0].token;
   const res = await request('POST', `/api/drink-plans/t/${tok}/logo`);
+  assert.strictEqual(res.status, 409);
+});
+
+// ─── drinkPlanConsult.js routes (Task 18) ──────────────────────────────────
+//
+// Same flat lock-check shape as the drinkPlans.js routes above: refinalize,
+// hit the route, expect 409. The consult router is mounted on the same
+// /api/drink-plans base in server/index.js, so the test harness mirrors that
+// by mounting both routers on the same prefix above.
+
+test('PUT /:id/consult > 409 when finalized', async () => {
+  await reFinalize();
+  const res = await request('PUT', `/api/drink-plans/${drinkPlanId}/consult`, { token: adminToken, body: { consult: { barType: 'full_bar' } } });
+  assert.strictEqual(res.status, 409);
+});
+
+test('PATCH /:id/shopping-list-source > 409 when finalized', async () => {
+  await reFinalize();
+  const res = await request('PATCH', `/api/drink-plans/${drinkPlanId}/shopping-list-source`, { token: adminToken, body: { source: 'planner' } });
   assert.strictEqual(res.status, 409);
 });

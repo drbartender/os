@@ -13,6 +13,7 @@ const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../utils/errors');
+const { ensureNotFinalized } = require('../utils/beoFinalize');
 const { generateShoppingList } = require('../utils/shoppingList');
 const {
   buildPlannerGeneratorInput,
@@ -161,6 +162,7 @@ router.get('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
  *  and shopping_list all move together. Re-runnable — submitting again
  *  overwrites the prior consult and regenerates. */
 router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  await ensureNotFinalized(parseInt(req.params.id, 10));
   const consult = sanitizeConsult(req.body?.consult);
 
   // Function scope so the post-commit email block (after the finally) can read it.
@@ -315,6 +317,7 @@ router.put('/:id/consult', auth, requireAdminOrManager, asyncHandler(async (req,
  *  regenerates from that source, resets `shopping_list_status` to
  *  `pending_review` so admin re-approves before client sees the new numbers. */
 router.patch('/:id/shopping-list-source', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  await ensureNotFinalized(parseInt(req.params.id, 10));
   const { source } = req.body;
   if (!['planner', 'consult'].includes(source)) {
     throw new ValidationError({ source: 'Source must be "planner" or "consult".' });
