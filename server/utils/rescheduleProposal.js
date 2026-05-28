@@ -449,6 +449,20 @@ async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
 
   await reanchorPendingMessages(client, proposalId);
 
+  // BEO nudge re-anchor. The generic reanchorPendingMessages above only touches
+  // rows whose handler registers a non-null offsetFromEventDate. BEO nudges use
+  // bespoke timing (event_start - 3 days, floor NOW+5min) and register with
+  // offsetFromEventDate: null, so the generic pass skips them. We invoke the
+  // BEO-specific reanchor here, inside the same transaction, gated on an
+  // actual date OR start-time change so an unrelated reschedule field tweak
+  // (e.g. location-only) doesn't churn pending BEO rows.
+  const eventDateChanged = updated.event_date && String(updated.event_date) !== String(old.event_date);
+  const eventStartChanged = updated.event_start_time && updated.event_start_time !== old.event_start_time;
+  if (eventDateChanged || eventStartChanged) {
+    const { reanchorBeoForProposal } = require('./beoHandlers');
+    await reanchorBeoForProposal(proposalId, client);
+  }
+
   // Pre-execution Finding W4: spec section 7.8 says a reschedule that moves
   // the event INTO a 90+ day window must add the T-30 long-lead recap (and
   // any other future eligibility-gated touches). The reanchor pass only
