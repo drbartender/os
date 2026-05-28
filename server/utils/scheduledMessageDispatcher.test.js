@@ -768,6 +768,28 @@ async function setPushSubs(subs) {
   );
 }
 
+
+
+test('dispatchRow > SuppressMessageError marks row suppressed without Sentry', async () => {
+  const { SuppressMessageError } = require('./errors');
+
+  registerHandler('disp_test_sup_msg_err', async () => {
+    throw new SuppressMessageError('test_suppress_reason');
+  }, { offsetFromEventDate: 0, anchor: 'event_date', category: 'operational', priority: 4 });
+
+  const cli = await pool.query(
+    `INSERT INTO scheduled_messages (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ('proposal', $1, 'disp_test_sup_msg_err', 'client', $2, 'email', NOW() - INTERVAL '1 minute')
+     RETURNING id`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+
+  const row = await pool.query('SELECT status, error_message FROM scheduled_messages WHERE id = $1', [cli.rows[0].id]);
+  assert.strictEqual(row.rows[0].status, 'suppressed');
+  assert.strictEqual(row.rows[0].error_message, 'test_suppress_reason');
+});
 test('push channel > no subscriptions => row suppressed with no_push_subscriptions', async () => {
   await setPushSubs([]);
   await pool.query(

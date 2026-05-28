@@ -6,6 +6,7 @@ const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
 const { resolveChannelFallback } = require('./channelFallback');
 const { suspendClientAutomation } = require('./clientAutomationSuspension');
+const { SuppressMessageError } = require('./errors');
 const pushSender = require('./pushSender');
 const {
   pickChannelsForUserAndCategory,
@@ -630,6 +631,21 @@ async function dispatchRow(row) {
     // notification through multiple channels when one was enough.
     await markSiblingsSuppressed(row.suppression_key, row.id);
   } catch (err) {
+    // SuppressMessageError must be handled FIRST, before any Sentry / console call.
+    // Suppressions are expected dispatch outcomes for handler-side gates (e.g.,
+    // BEO already acknowledged, balance already paid), not failures.
+    if (err instanceof SuppressMessageError) {
+      const cappedReason = String(err.reason || '').slice(0, 500);
+      try {
+        await pool.query(
+          "UPDATE scheduled_messages SET status='suppressed', error_message=$2 WHERE id=$1",
+          [row.id, cappedReason]
+        );
+      } catch (markErr) {
+        console.error('[scheduledMessageDispatcher] failed to mark row suppressed:', markErr.message);
+      }
+      return;
+    }
     Sentry.captureException(err, {
       tags: { dispatcher: 'scheduled_messages', message_type: row.message_type },
       extra: { row_id: row.id, entity_type: row.entity_type, entity_id: row.entity_id },
