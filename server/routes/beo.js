@@ -16,7 +16,7 @@ const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const { beoReadLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
-const { NotFoundError, PermissionError, ExternalServiceError } = require('../utils/errors');
+const { NotFoundError, PermissionError, ConflictError, ExternalServiceError } = require('../utils/errors');
 const { getSignedUrl } = require('../utils/storage');
 
 const router = express.Router();
@@ -185,6 +185,60 @@ router.get('/:proposalId/logo', auth, beoReadLimiter, asyncHandler(async (req, r
   res.set('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
   res.set('Cache-Control', 'private, max-age=3600');
   res.send(Buffer.from(await upstream.arrayBuffer()));
+}));
+
+// POST /:proposalId/acknowledge — staff stamps beo_acknowledged_at on every
+// approved, non-cancelled shift_request they hold on this event. Admin/manager
+// callers get a 200 no-op (acknowledged:false) so the same UI button is safe
+// for both audiences. Requires the drink plan to be finalized — pre-finalize
+// acknowledgement would let staff confirm a BEO that admin may still revise.
+router.post('/:proposalId/acknowledge', auth, beoReadLimiter, asyncHandler(async (req, res) => {
+  const proposalId = parseInt(req.params.proposalId, 10);
+  if (!Number.isFinite(proposalId)) throw new NotFoundError('Event not found.');
+  await authorize(req, proposalId);
+
+  // Admin/manager: no-op. They view the BEO but never "acknowledge" — the
+  // ack timestamp is a per-bartender state used to drive the unack nudge.
+  if (req.user.role === 'admin' || req.user.role === 'manager') {
+    return res.json({ acknowledged: false });
+  }
+
+  // Single UPDATE…FROM. Covers staffers with multiple approved shifts on the
+  // same proposal (multi-bar events) by stamping every matching row at once.
+  // Joining drink_plans inside the UPDATE means the finalized_at gate runs
+  // atomically — no TOCTOU between read and write.
+  const result = await pool.query(
+    `UPDATE shift_requests sr
+        SET beo_acknowledged_at = NOW()
+       FROM shifts s
+       JOIN drink_plans dp ON dp.proposal_id = s.proposal_id
+      WHERE sr.shift_id = s.id
+        AND s.proposal_id = $1
+        AND sr.user_id = $2
+        AND sr.status = 'approved'
+        AND s.status != 'cancelled'
+        AND dp.finalized_at IS NOT NULL
+      RETURNING sr.id, sr.shift_id, sr.beo_acknowledged_at`,
+    [proposalId, req.user.id]
+  );
+
+  if (result.rowCount === 0) {
+    // Discriminator: authorize() already proved the staffer has an approved
+    // active shift, so the only thing the UPDATE can have rejected on is the
+    // finalized_at gate. Re-check to give a precise error.
+    const dp = await pool.query('SELECT finalized_at FROM drink_plans WHERE proposal_id = $1', [proposalId]);
+    if (!dp.rows[0] || !dp.rows[0].finalized_at) {
+      throw new ConflictError('Plan is not finalized.');
+    }
+    throw new ConflictError('No approved active shift for you on this event.');
+  }
+
+  console.log(`[beo] acknowledge proposal=${proposalId} user=${req.user.id} rows=${result.rowCount}`);
+  res.json({
+    acknowledged: true,
+    beo_acknowledged_at: result.rows[0].beo_acknowledged_at,
+    request_ids: result.rows.map((r) => r.id),
+  });
 }));
 
 module.exports = router;

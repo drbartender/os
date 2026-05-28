@@ -240,3 +240,40 @@ test('GET /api/beo/:proposalId > staff on cancelled shift 403', async () => {
   assert.strictEqual(res.status, 403);
   await pool.query("UPDATE shifts SET status='open' WHERE id=$1", [shiftId]);
 });
+
+// ─── POST /api/beo/:proposalId/acknowledge ─────────────────────────────────
+//
+// Test order is load-bearing: the 200 case sets finalized_at, the admin-noop
+// case can run with finalized_at either way, and the 409 case explicitly
+// re-NULLs finalized_at. Each test resets state it mutated so a re-run in a
+// different order would still pass.
+
+test('POST /api/beo/:proposalId/acknowledge > staff stamps beo_acknowledged_at when finalized', async () => {
+  await pool.query('UPDATE drink_plans SET finalized_at = NOW() WHERE id = $1', [drinkPlanId]);
+  const res = await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: staffToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.acknowledged, true);
+  assert.ok(res.body.beo_acknowledged_at);
+  const { rows } = await pool.query(
+    'SELECT beo_acknowledged_at FROM shift_requests WHERE shift_id = $1 AND user_id = $2',
+    [shiftId, staffUserId]
+  );
+  assert.ok(rows[0].beo_acknowledged_at);
+  // Reset for the next test so the admin no-op case starts clean.
+  await pool.query(
+    'UPDATE shift_requests SET beo_acknowledged_at = NULL WHERE shift_id = $1 AND user_id = $2',
+    [shiftId, staffUserId]
+  );
+});
+
+test('POST /api/beo/:proposalId/acknowledge > admin returns 200 with acknowledged:false', async () => {
+  const res = await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: adminToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.acknowledged, false);
+});
+
+test('POST /api/beo/:proposalId/acknowledge > 409 when not finalized', async () => {
+  await pool.query('UPDATE drink_plans SET finalized_at = NULL WHERE id = $1', [drinkPlanId]);
+  const res = await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: staffToken });
+  assert.strictEqual(res.status, 409);
+});
