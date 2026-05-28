@@ -274,10 +274,17 @@ router.post('/:id/request', auth, requireOnboarded, asyncHandler(async (req, res
   if (!shiftRes.rows[0]) {
     throw new NotFoundError('Shift not available.');
   }
+  // BEO: a staffer re-requesting after a denial counts as a fresh cycle —
+  // clear any stale ack only if prior status was 'denied'. If the existing
+  // row was already pending/approved (rare race), keep its ack flag.
   const result = await pool.query(`
     INSERT INTO shift_requests (shift_id, user_id, position, notes)
     VALUES ($1, $2, $3, $4)
-    ON CONFLICT (shift_id, user_id) DO UPDATE SET position = $3, notes = $4, status = 'pending'
+    ON CONFLICT (shift_id, user_id) DO UPDATE
+      SET position = $3,
+          notes = $4,
+          status = 'pending',
+          beo_acknowledged_at = CASE WHEN shift_requests.status = 'denied' THEN NULL ELSE shift_requests.beo_acknowledged_at END
     RETURNING *
   `, [req.params.id, req.user.id, position || null, notes || null]);
 
@@ -611,11 +618,17 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
   const shiftRes = await pool.query('SELECT * FROM shifts WHERE id = $1', [req.params.id]);
   if (!shiftRes.rows[0]) throw new NotFoundError('Shift not found.');
 
-  // Insert or update the shift request as approved
+  // Insert or update the shift request as approved.
+  // BEO: clear any stale ack unconditionally — admin re-approving means a
+  // fresh assignment cycle; the prior ack (if any) was for the previous one.
   const result = await pool.query(`
     INSERT INTO shift_requests (shift_id, user_id, position, status)
     VALUES ($1, $2, $3, 'approved')
-    ON CONFLICT (shift_id, user_id) DO UPDATE SET status = 'approved', position = $3, updated_at = NOW()
+    ON CONFLICT (shift_id, user_id) DO UPDATE
+      SET status = 'approved',
+          position = $3,
+          beo_acknowledged_at = NULL,
+          updated_at = NOW()
     RETURNING *
   `, [req.params.id, user_id, position || 'Bartender']);
 
