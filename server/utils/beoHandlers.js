@@ -153,10 +153,57 @@ async function suppressBeoNudgesForStaffers(proposalId, userIds, executor, reaso
   return { suppressed: result.rowCount };
 }
 
+/**
+ * Re-anchor pending BEO nudge rows after a proposal reschedule. Skipped when
+ * the proposal is archived. Past-event reschedule SUPPRESSES pending rows
+ * in-band (the row's existing scheduled_for may still be in the future, in
+ * which case the dispatcher would never pick it up and the row would sit
+ * pending forever).
+ *
+ * @param {number} proposalId
+ * @param {{query: Function}} executor
+ * @returns {Promise<{updated?: number, suppressed?: number}>}
+ */
+async function reanchorBeoForProposal(proposalId, executor) {
+  const propRes = await executor.query(
+    `SELECT event_date, event_start_time, event_duration_hours, event_timezone, status
+       FROM proposals WHERE id = $1`,
+    [proposalId]
+  );
+  const proposal = propRes.rows[0];
+  if (!proposal || proposal.status === 'archived') return { updated: 0 };
+  if (!proposal.event_start_time) return { updated: 0 };
+  const eventStartUtc = computeEventStartUtc(proposal);
+  if (!eventStartUtc) return { updated: 0 };
+  if (eventStartUtc.getTime() < Date.now()) {
+    const sup = await executor.query(
+      `UPDATE scheduled_messages
+          SET status='suppressed', error_message='event_in_past: rescheduled'
+        WHERE entity_type='proposal' AND entity_id=$1
+          AND message_type=$2 AND status='pending'`,
+      [proposalId, BEO_MESSAGE_TYPE]
+    );
+    return { suppressed: sup.rowCount };
+  }
+  const scheduledFor = new Date(Math.max(
+    eventStartUtc.getTime() - THREE_DAYS_MS,
+    Date.now() + FIVE_MINUTES_MS,
+  ));
+  const result = await executor.query(
+    `UPDATE scheduled_messages
+        SET scheduled_for=$2
+      WHERE entity_type='proposal' AND entity_id=$1
+        AND message_type=$3 AND status='pending'`,
+    [proposalId, scheduledFor, BEO_MESSAGE_TYPE]
+  );
+  return { updated: result.rowCount };
+}
+
 module.exports = {
   BEO_MESSAGE_TYPE,
   insertBeoNudgeIfMissing,
   scheduleBeoNudgesForProposal,
   suppressBeoNudgesForProposal,
   suppressBeoNudgesForStaffers,
+  reanchorBeoForProposal,
 };

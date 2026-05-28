@@ -228,3 +228,43 @@ test('suppressBeoNudgesForStaffers > empty userIds returns 0 without query', asy
   const result = await suppressBeoNudgesForStaffers(proposalId, [], pool);
   assert.strictEqual(result.suppressed, 0);
 });
+
+
+// ─── Task 10: reanchorBeoForProposal ─────────────────────────────────────
+
+test('reanchorBeoForProposal > updates pending scheduled_for after reschedule', async () => {
+  const { reanchorBeoForProposal } = require('./beoHandlers');
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  await scheduleBeoNudgesForProposal(proposalId, pool);
+  const before = await pool.query("SELECT scheduled_for FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  await pool.query("UPDATE proposals SET event_date = CURRENT_DATE + 40 WHERE id = $1", [proposalId]);
+  await reanchorBeoForProposal(proposalId, pool);
+  const after = await pool.query("SELECT scheduled_for FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  assert.notStrictEqual(before.rows[0].scheduled_for.getTime(), after.rows[0].scheduled_for.getTime());
+  await pool.query("UPDATE proposals SET event_date = CURRENT_DATE + 30 WHERE id = $1", [proposalId]);
+});
+
+test('reanchorBeoForProposal > past-event reschedule suppresses pending in-band', async () => {
+  const { reanchorBeoForProposal } = require('./beoHandlers');
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  await scheduleBeoNudgesForProposal(proposalId, pool);
+  await pool.query("UPDATE proposals SET event_date = CURRENT_DATE - 5 WHERE id = $1", [proposalId]);
+  await reanchorBeoForProposal(proposalId, pool);
+  const { rows } = await pool.query("SELECT status, error_message FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  assert.strictEqual(rows[0].status, 'suppressed');
+  assert.match(rows[0].error_message, /event_in_past/);
+  await pool.query("UPDATE proposals SET event_date = CURRENT_DATE + 30 WHERE id = $1", [proposalId]);
+});
+
+test('reanchorBeoForProposal > skips archived proposals', async () => {
+  const { reanchorBeoForProposal } = require('./beoHandlers');
+  await pool.query("DELETE FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  await scheduleBeoNudgesForProposal(proposalId, pool);
+  await pool.query("UPDATE proposals SET status='archived', archive_reason='client_cancelled' WHERE id = $1", [proposalId]);
+  const before = await pool.query("SELECT scheduled_for FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  await pool.query("UPDATE proposals SET event_date = CURRENT_DATE + 40 WHERE id = $1", [proposalId]);
+  await reanchorBeoForProposal(proposalId, pool);
+  const after = await pool.query("SELECT scheduled_for FROM scheduled_messages WHERE entity_id=$1", [proposalId]);
+  assert.strictEqual(before.rows[0].scheduled_for.getTime(), after.rows[0].scheduled_for.getTime(), 'archived: no UPDATE');
+  await pool.query("UPDATE proposals SET status='deposit_paid', archive_reason=NULL, event_date = CURRENT_DATE + 30 WHERE id = $1", [proposalId]);
+});
