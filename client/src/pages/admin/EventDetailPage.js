@@ -20,6 +20,7 @@ import EventEditForm from './EventEditForm';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
 import CcImportBadge from '../../components/admin/CcImportBadge';
+import { STAFF_URL } from '../../utils/constants';
 
 const MenuPNG = lazy(() => import('../../components/MenuPNG/MenuPNG'));
 
@@ -310,9 +311,25 @@ export default function EventDetailPage() {
                           </button>
                         </div>
                         {staff.length > 0 ? (
-                          <div className="tiny" style={{ marginBottom: requestCount > 0 ? 4 : 0 }}>
-                            {staff.join(', ')}
-                          </div>
+                          <ul className="tiny" style={{ margin: 0, paddingLeft: 16, marginBottom: requestCount > 0 ? 4 : 0 }}>
+                            {staff.map((member, idx) => {
+                              // Defensive: tolerate the older string-shape if the
+                              // GET endpoint hasn't redeployed yet (Task 27).
+                              if (typeof member === 'string') {
+                                return <li key={`s-${idx}`}>{member}</li>;
+                              }
+                              const label = member?.name || member?.email || 'Staff member';
+                              const ackAt = member?.beo_acknowledged_at;
+                              return (
+                                <li key={member?.user_id || `${label}-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                  <span>{label}</span>
+                                  <StatusChip kind={ackAt ? 'ok' : 'neutral'}>
+                                    {ackAt ? `Confirmed ${new Date(ackAt).toLocaleTimeString()}` : 'Not opened'}
+                                  </StatusChip>
+                                </li>
+                              );
+                            })}
+                          </ul>
                         ) : (
                           <div className="tiny muted" style={{ marginBottom: requestCount > 0 ? 4 : 0 }}>
                             No bartenders assigned yet.
@@ -418,6 +435,17 @@ export default function EventDetailPage() {
             fullControls
             guestCount={proposal.guest_count}
           />
+          {drinkPlan?.finalized_at && (
+            <a
+              href={`${STAFF_URL}/events/${proposal.id}/beo`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-secondary btn-sm"
+              style={{ justifyContent: 'center' }}
+            >
+              <Icon name="external" size={11} />View BEO
+            </a>
+          )}
           {drinkPlan && (
             <EventDetailPlanLogo
               planId={drinkPlan.id}
