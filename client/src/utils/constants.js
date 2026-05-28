@@ -16,3 +16,13 @@ const isLocalHost = typeof window !== 'undefined'
   && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 export const PUBLIC_SITE_URL = process.env.REACT_APP_PUBLIC_SITE_URL
   || (isLocalHost ? window.location.origin : 'https://drbartender.com');
+
+/**
+ * Staff portal origin used for staff-facing links generated from the admin app
+ * (e.g., the BEO view link on the EventDetailPage). Mirrors PUBLIC_SITE_URL's
+ * shape: prod uses staff.drbartender.com; local dev falls back to the current
+ * origin so links work in the in-place dev server; previews override via
+ * REACT_APP_STAFF_URL at build time.
+ */
+export const STAFF_URL = process.env.REACT_APP_STAFF_URL
+  || (isLocalHost ? window.location.origin : 'https://staff.drbartender.com');
