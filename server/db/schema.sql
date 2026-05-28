@@ -2814,3 +2814,201 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_payments_legacy_charge_unique
 CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_payments_legacy_charge_global
   ON proposal_payments(legacy_charge_id)
   WHERE legacy_charge_id IS NOT NULL;
+
+-- ─────────────────────────────────────────────────────────────────────
+-- Staff portal redesign (spec docs/superpowers/specs/2026-05-27-staff-portal-redesign-design.md)
+-- ─────────────────────────────────────────────────────────────────────
+
+-- ─── Staff portal: theme / tip-card order / calendar app detection ───
+ALTER TABLE users ADD COLUMN IF NOT EXISTS ui_preferences JSONB
+  NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_ics_fetch_at TIMESTAMPTZ;
+
+-- ─── Staff portal: per-category × per-channel notification routing ───
+-- Default uses JSON literal (not jsonb_build_object) for deterministic key order
+-- matching existing patterns elsewhere in this file.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_notification_preferences JSONB
+  NOT NULL DEFAULT '{
+    "channels": {
+      "shift_offered":   ["push","sms","email"],
+      "shift_decided":   ["push","sms"],
+      "cover_needed":    ["push"],
+      "beo_finalized":   ["push","sms","email"],
+      "beo_reminder_t3": ["push","sms"],
+      "schedule_change": ["push","sms","email"],
+      "payday":          ["sms","email"],
+      "tip_received":    ["push"]
+    },
+    "push_subscriptions": [],
+    "quiet_hours": null
+  }'::jsonb;
+
+-- ─── Constraint widenings ───
+-- users.onboarding_status adds 'suspended' (paired with auth.js deny-list update)
+DO $$ BEGIN
+  ALTER TABLE users DROP CONSTRAINT IF EXISTS users_onboarding_status_check;
+  ALTER TABLE users ADD CONSTRAINT users_onboarding_status_check
+    CHECK (onboarding_status IN (
+      'in_progress','applied','interviewing','hired','rejected',
+      'submitted','reviewed','approved','suspended','deactivated'
+    ));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- scheduled_messages.channel adds 'push' (paired with messageScheduling.js VALID_CHANNELS widening)
+DO $$ BEGIN
+  ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_channel_check;
+  ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_channel_check
+    CHECK (channel IN ('email','sms','push'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- scheduled_messages.status adds 'suppressed_by_sibling' and 'dead_letter' for the
+-- dispatcher cascade (spec §6.13). Without this widening, the cascade's first
+-- UPDATE crashes on the existing CHECK.
+DO $$ BEGIN
+  ALTER TABLE scheduled_messages DROP CONSTRAINT IF EXISTS scheduled_messages_status_check;
+  ALTER TABLE scheduled_messages ADD CONSTRAINT scheduled_messages_status_check
+    CHECK (status IN ('pending','sent','failed','suppressed','deferred','suppressed_by_sibling','dead_letter'));
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- ─── scheduled_messages: suppression_key + payload columns ───
+-- suppression_key groups multi-channel rows for the same logical event (spec §6.13).
+-- payload carries per-row data for category-driven messages (cover_broadcast, beo_*,
+-- payday, etc.). The existing handlers (registerHandler) can read from payload OR
+-- continue to derive from entity/recipient lookups when appropriate.
+ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS suppression_key TEXT;
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_suppression_key
+  ON scheduled_messages (suppression_key)
+  WHERE suppression_key IS NOT NULL AND status = 'pending';
+
+ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS payload JSONB
+  NOT NULL DEFAULT '{}'::jsonb;
+
+-- Cover-broadcast dedupe (spec §6.5 runaway cap). Scoped via partial WHERE to
+-- avoid collision with idx_scheduled_messages_pending_uniq.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_messages_cover_broadcast_dedupe
+  ON scheduled_messages (entity_type, entity_id, recipient_type, recipient_id, channel)
+  WHERE message_type = 'cover_broadcast' AND status IN ('pending','sent');
+
+-- ─── shift_requests: cover / drop marketplace columns ───
+ALTER TABLE shift_requests
+  ADD COLUMN IF NOT EXISTS cover_requested_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS cover_reason TEXT,
+  ADD COLUMN IF NOT EXISTS dropped_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS drop_reason TEXT,
+  ADD COLUMN IF NOT EXISTS drop_emergency BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS replaced_by_request_id INTEGER
+    REFERENCES shift_requests(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_shift_requests_cover_requested
+  ON shift_requests(cover_requested_at) WHERE cover_requested_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_shift_requests_dropped
+  ON shift_requests(dropped_at) WHERE dropped_at IS NOT NULL;
+
+-- Hybrid-state filter index (spec §6.5): every consumer that reads
+-- status='approved' must also check dropped_at IS NULL after the emergency-drop
+-- rule lands (payrollAccrual, autoAssign, team-roster queries).
+CREATE INDEX IF NOT EXISTS idx_shift_requests_active_approved
+  ON shift_requests(shift_id) WHERE status = 'approved' AND dropped_at IS NULL;
+
+-- ─── payment_profiles: Zelle handle ───
+ALTER TABLE payment_profiles ADD COLUMN IF NOT EXISTS zelle_handle TEXT;
+
+-- ─── contractor_profiles: alcohol cert expiry + position role attestation ───
+ALTER TABLE contractor_profiles
+  ADD COLUMN IF NOT EXISTS alcohol_certification_expires_on DATE;
+
+-- Role attestation for cover-broadcast targeting (spec §6.5).
+-- applications.positions_interested is stored as a JSON-encoded string
+-- (e.g. '["bartender","barback"]') per client/src/pages/Application.js.
+-- Backfill JSON-decodes the first element; CASE fallback handles any
+-- legacy CSV rows that may exist.
+ALTER TABLE contractor_profiles ADD COLUMN IF NOT EXISTS position TEXT;
+
+UPDATE contractor_profiles cp
+   SET position = COALESCE(
+     LOWER(TRIM((
+       SELECT CASE
+         WHEN a.positions_interested ~ '^\[' THEN (a.positions_interested::jsonb->>0)
+         ELSE SPLIT_PART(a.positions_interested, ',', 1)
+       END
+       FROM applications a WHERE a.user_id = cp.user_id
+     ))),
+     'bartender'
+   )
+ WHERE cp.position IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_contractor_profiles_position
+  ON contractor_profiles(position) WHERE position IS NOT NULL;
+
+-- ─── Pending email change verification (spec §6.10) ───
+-- Patterns after password_reset_tokens. Token is stored hashed; raw token
+-- only lives in the outgoing verification email.
+CREATE TABLE IF NOT EXISTS pending_email_changes (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  new_email VARCHAR(255) NOT NULL,
+  token_hash VARCHAR(64) NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  consumed_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_email_changes_token_hash
+  ON pending_email_changes(token_hash) WHERE consumed_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_email_changes_new_email_pending
+  ON pending_email_changes(LOWER(new_email)) WHERE consumed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pending_email_changes_user
+  ON pending_email_changes(user_id) WHERE consumed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pending_email_changes_expires
+  ON pending_email_changes(expires_at) WHERE consumed_at IS NULL;
+
+-- ─── Document replace history (spec §6.14) ───
+CREATE TABLE IF NOT EXISTS staff_document_history (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  doc_type VARCHAR(50) NOT NULL CHECK (doc_type IN ('w9', 'alcohol_certification')),
+  previous_url VARCHAR(500),
+  previous_filename VARCHAR(255),
+  replaced_at TIMESTAMPTZ DEFAULT NOW(),
+  replaced_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sdh_user ON staff_document_history(user_id);
+
+-- ─── User-scoped audit log (spec §6.10 + §6.11) ───
+-- proposal_activity_log is proposal-scoped; this table is for user-only events
+-- (phone change, email change, payment-method change, preferred-method flip).
+CREATE TABLE IF NOT EXISTS staff_audit_log (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  actor_type VARCHAR(20) NOT NULL DEFAULT 'staff' CHECK (actor_type IN ('staff','admin','system')),
+  actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action VARCHAR(50) NOT NULL,
+  details JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_staff_audit_log_user ON staff_audit_log(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_staff_audit_log_action ON staff_audit_log(action, created_at DESC);
+
+-- ─── Migration guard: strip 'sms' from channels for STOP-replied users ───
+-- Existing users may have communication_preferences.sms_enabled=false from a
+-- prior STOP keyword reply. The new staff_notification_preferences default
+-- still lists 'sms' for several categories. On their first PATCH after
+-- migration, the strict critical-path validation would 400 them with no path
+-- to fix via the new UI. Strip 'sms' from every category for those users so
+-- the post-migration state is internally consistent.
+UPDATE users
+   SET staff_notification_preferences = jsonb_set(
+     staff_notification_preferences,
+     '{channels}',
+     (
+       SELECT jsonb_object_agg(
+         cat_key,
+         COALESCE(
+           (SELECT jsonb_agg(ch) FROM jsonb_array_elements_text(cat_val) AS ch WHERE ch <> 'sms'),
+           '[]'::jsonb
+         )
+       )
+       FROM jsonb_each(staff_notification_preferences->'channels') AS chans(cat_key, cat_val)
+     ),
+     false
+   )
+ WHERE (communication_preferences->>'sms_enabled')::boolean = false;
