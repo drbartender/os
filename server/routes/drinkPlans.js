@@ -985,7 +985,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
   if (!result.rows[0]) throw new NotFoundError('Plan not found.');
   res.json(result.rows[0]);
 }));
-
+require('../utils/beoFinalize').registerFinalizeRoute(router);
 /** GET /api/drink-plans/:id/shopping-list — load saved shopping list */
 router.get('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const result = await pool.query(
