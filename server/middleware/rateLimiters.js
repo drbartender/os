@@ -154,4 +154,16 @@ const calcomWebhookLimiter = rateLimit({
   skip: () => process.env.NODE_ENV === 'test',
 });
 
-module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter, adminWriteLimiter, adminSearchLimiter, venueSearchLimiter, venueSearchGlobalLimiter, calcomWebhookLimiter };
+// User-keyed limiter for the BEO read + acknowledge endpoints. Bartenders on a
+// shared venue wifi / office NAT / CGNAT must not share a bucket, so this
+// keys per req.user.id. 60 requests / 15 minutes is generous for a staffer
+// refreshing while standing in a parking lot.
+const beoReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  keyGenerator: (req) => `beo-${req.user?.id || req.ip}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+module.exports = { publicLimiter, publicReadLimiter, signLimiter, drinkPlanWriteLimiter, logoUploadLimiter, labratSeedLimiter, labratSeedGlobalLimiter, labratFeedbackLimiter, adminWriteLimiter, adminSearchLimiter, venueSearchLimiter, venueSearchGlobalLimiter, calcomWebhookLimiter, beoReadLimiter };
