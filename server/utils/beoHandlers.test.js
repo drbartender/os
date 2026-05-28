@@ -268,3 +268,81 @@ test('reanchorBeoForProposal > skips archived proposals', async () => {
   assert.strictEqual(before.rows[0].scheduled_for.getTime(), after.rows[0].scheduled_for.getTime(), 'archived: no UPDATE');
   await pool.query("UPDATE proposals SET status='deposit_paid', archive_reason=NULL, event_date = CURRENT_DATE + 30 WHERE id = $1", [proposalId]);
 });
+
+
+// ─── Task 11: handleBeoUnackNudge ────────────────────────────────────────
+
+test('handleBeoUnackNudge > sends SMS when all gates pass', async () => {
+  const { handleBeoUnackNudge } = require('./beoHandlers');
+  // Ensure drink_plans row exists + is finalized (no UNIQUE on proposal_id,
+  // delete-then-insert keeps the fixture predictable across this suite)
+  await pool.query("DELETE FROM drink_plans WHERE proposal_id = $1", [proposalId]);
+  await pool.query(
+    "INSERT INTO drink_plans (proposal_id, finalized_at) VALUES ($1, NOW())",
+    [proposalId]
+  );
+  // Gates: not acked, has active shift, approved, has phone, future event
+  await pool.query("UPDATE shift_requests SET beo_acknowledged_at=NULL, status='approved' WHERE shift_id=$1 AND user_id=$2", [shiftId, userId]);
+  await pool.query("UPDATE proposals SET event_date = CURRENT_DATE + 30 WHERE id = $1", [proposalId]);
+  // No exception means success (sendAndLogSms is a no-op in dev without Twilio creds)
+  await handleBeoUnackNudge({
+    entity: { id: proposalId },
+    recipient: { id: userId },
+    scheduledMessage: { id: null },
+  });
+});
+
+test('handleBeoUnackNudge > throws SuppressMessageError on already_acknowledged', async () => {
+  const { handleBeoUnackNudge } = require('./beoHandlers');
+  const { SuppressMessageError } = require('./errors');
+  await pool.query("UPDATE shift_requests SET beo_acknowledged_at = NOW() WHERE shift_id = $1 AND user_id = $2", [shiftId, userId]);
+  await assert.rejects(
+    () => handleBeoUnackNudge({ entity: { id: proposalId }, recipient: { id: userId }, scheduledMessage: { id: null } }),
+    (err) => err instanceof SuppressMessageError && err.reason === 'already_acknowledged'
+  );
+  await pool.query("UPDATE shift_requests SET beo_acknowledged_at = NULL WHERE shift_id = $1 AND user_id = $2", [shiftId, userId]);
+});
+
+test('handleBeoUnackNudge > throws on no_phone', async () => {
+  const { handleBeoUnackNudge } = require('./beoHandlers');
+  const { SuppressMessageError } = require('./errors');
+  await pool.query("UPDATE contractor_profiles SET phone = NULL WHERE user_id = $1", [userId]);
+  await assert.rejects(
+    () => handleBeoUnackNudge({ entity: { id: proposalId }, recipient: { id: userId }, scheduledMessage: { id: null } }),
+    (err) => err instanceof SuppressMessageError && err.reason === 'no_phone'
+  );
+  await pool.query("UPDATE contractor_profiles SET phone = '+15555550101' WHERE user_id = $1", [userId]);
+});
+
+test('handleBeoUnackNudge > throws on beo_not_finalized', async () => {
+  const { handleBeoUnackNudge } = require('./beoHandlers');
+  const { SuppressMessageError } = require('./errors');
+  await pool.query("UPDATE drink_plans SET finalized_at = NULL WHERE proposal_id = $1", [proposalId]);
+  await assert.rejects(
+    () => handleBeoUnackNudge({ entity: { id: proposalId }, recipient: { id: userId }, scheduledMessage: { id: null } }),
+    (err) => err instanceof SuppressMessageError && err.reason === 'beo_not_finalized'
+  );
+  await pool.query("UPDATE drink_plans SET finalized_at = NOW() WHERE proposal_id = $1", [proposalId]);
+});
+
+test('handleBeoUnackNudge > throws on staffer_unassigned when no approved shift', async () => {
+  const { handleBeoUnackNudge } = require('./beoHandlers');
+  const { SuppressMessageError } = require('./errors');
+  await pool.query("UPDATE shift_requests SET status='denied' WHERE shift_id=$1 AND user_id=$2", [shiftId, userId]);
+  await assert.rejects(
+    () => handleBeoUnackNudge({ entity: { id: proposalId }, recipient: { id: userId }, scheduledMessage: { id: null } }),
+    (err) => err instanceof SuppressMessageError && err.reason === 'staffer_unassigned'
+  );
+  await pool.query("UPDATE shift_requests SET status='approved' WHERE shift_id=$1 AND user_id=$2", [shiftId, userId]);
+});
+
+test('handleBeoUnackNudge > throws on event_in_past', async () => {
+  const { handleBeoUnackNudge } = require('./beoHandlers');
+  const { SuppressMessageError } = require('./errors');
+  await pool.query("UPDATE proposals SET event_date = CURRENT_DATE - 1 WHERE id = $1", [proposalId]);
+  await assert.rejects(
+    () => handleBeoUnackNudge({ entity: { id: proposalId }, recipient: { id: userId }, scheduledMessage: { id: null } }),
+    (err) => err instanceof SuppressMessageError && err.reason === 'event_in_past'
+  );
+  await pool.query("UPDATE proposals SET event_date = CURRENT_DATE + 30 WHERE id = $1", [proposalId]);
+});

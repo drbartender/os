@@ -1,6 +1,11 @@
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { SuppressMessageError } = require('./errors');
-const { computeEventStartUtc } = require('./staffShiftHandlers');
+const { computeEventStartUtc, formatEventDateLong } = require('./staffShiftHandlers');
+const { getEventTypeLabel } = require('./eventTypes');
+const { STAFF_URL } = require('./urls');
+const { sendAndLogSms } = require('./sms');
+const smsTemplates = require('./smsTemplates');
 
 const BEO_MESSAGE_TYPE = 'beo_unack_nudge_sms';
 
@@ -199,6 +204,92 @@ async function reanchorBeoForProposal(proposalId, executor) {
   return { updated: result.rowCount };
 }
 
+/**
+ * Per-handler context loader. lookupEntity('proposal') only projects basic
+ * fields; the BEO handler needs event_start_time + drink_plans.finalized_at +
+ * the staffer's contact info too, so we do our own SELECT.
+ *
+ * @param {number} proposalId
+ * @param {number} userId
+ */
+async function loadBeoContext(proposalId, userId) {
+  const { rows } = await pool.query(
+    `SELECT p.id AS proposal_id, p.event_date, p.event_start_time,
+            p.event_duration_hours, p.event_timezone, p.status AS proposal_status,
+            p.event_type, p.event_type_custom,
+            dp.finalized_at,
+            cp.phone AS staff_phone, cp.preferred_name AS staff_name,
+            u.id AS user_id, u.onboarding_status,
+            (
+              SELECT bool_or(sr.beo_acknowledged_at IS NOT NULL)
+                FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
+               WHERE s.proposal_id = p.id AND sr.user_id = u.id AND sr.status = 'approved'
+            ) AS any_acked,
+            (
+              SELECT bool_or(true)
+                FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
+               WHERE s.proposal_id = p.id AND sr.user_id = u.id
+                 AND sr.status = 'approved' AND s.status != 'cancelled'
+            ) AS has_active_shift
+       FROM proposals p
+       LEFT JOIN drink_plans dp ON dp.proposal_id = p.id
+       LEFT JOIN users u ON u.id = $2
+       LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+      WHERE p.id = $1`,
+    [proposalId, userId]
+  );
+  return rows[0] || null;
+}
+
+/**
+ * Dispatcher handler. Throws SuppressMessageError for every expected gate so
+ * the dispatcher's discriminator can mark the row 'suppressed' without alerting
+ * Sentry. Sends SMS when all gates pass.
+ */
+async function handleBeoUnackNudge({ entity, recipient }) {
+  const proposalId = entity.id;
+  const userId = recipient.id;
+  const ctx = await loadBeoContext(proposalId, userId);
+
+  if (!ctx) throw new SuppressMessageError('user_deleted');
+  if (!ctx.finalized_at) throw new SuppressMessageError('beo_not_finalized');
+  if (ctx.any_acked) throw new SuppressMessageError('already_acknowledged');
+  if (!ctx.has_active_shift) throw new SuppressMessageError('staffer_unassigned');
+  // 'approved' is the active-staffer status per users_onboarding_status_check.
+  if (ctx.onboarding_status !== 'approved') throw new SuppressMessageError('user_inactive');
+  if (!ctx.staff_phone) {
+    console.warn(`[beoHandlers] no_phone suppression for staff ${userId} on proposal ${proposalId}`);
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.addBreadcrumb({ category: 'beo', message: 'beo_no_phone', level: 'warning', data: { proposalId, userId } });
+    }
+    throw new SuppressMessageError('no_phone');
+  }
+  if (!ctx.event_start_time) throw new SuppressMessageError('no_start_time');
+  const eventStartUtc = computeEventStartUtc({
+    event_date: ctx.event_date,
+    event_start_time: ctx.event_start_time,
+    event_duration_hours: ctx.event_duration_hours,
+    event_timezone: ctx.event_timezone,
+  });
+  if (!eventStartUtc || eventStartUtc.getTime() < Date.now()) {
+    throw new SuppressMessageError('event_in_past');
+  }
+
+  const body = smsTemplates.staffBeoNudgeSms({
+    eventTypeLabel: getEventTypeLabel({ event_type: ctx.event_type, event_type_custom: ctx.event_type_custom }),
+    eventDateLocal: formatEventDateLong({ event_date: ctx.event_date, event_timezone: ctx.event_timezone }),
+    beoUrl: `${STAFF_URL}/events/${proposalId}/beo`,
+  });
+
+  await sendAndLogSms({
+    to: ctx.staff_phone,
+    body,
+    clientId: null,
+    messageType: BEO_MESSAGE_TYPE,
+    recipientName: ctx.staff_name || null,
+  });
+}
+
 module.exports = {
   BEO_MESSAGE_TYPE,
   insertBeoNudgeIfMissing,
@@ -206,4 +297,6 @@ module.exports = {
   suppressBeoNudgesForProposal,
   suppressBeoNudgesForStaffers,
   reanchorBeoForProposal,
+  loadBeoContext,
+  handleBeoUnackNudge,
 };
