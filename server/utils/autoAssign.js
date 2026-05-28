@@ -305,7 +305,7 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
   const approved = [];
   if (selected.length) {
     await pool.query(
-      `UPDATE shift_requests SET status = 'approved' WHERE id = ANY($1)`,
+      `UPDATE shift_requests SET status = 'approved', beo_acknowledged_at = NULL WHERE id = ANY($1)`,
       [selected.map(c => c.request_id)]
     );
   }
