@@ -46,6 +46,22 @@ class PaymentError extends AppError {
   }
 }
 
+/**
+ * Dispatcher contract: handlers throw this to mark their scheduled_messages row
+ * as `status='suppressed'` with the given reason, without alerting Sentry or
+ * routing through the global error middleware. NOT an AppError subclass on
+ * purpose: this error is internal to the dispatcher and must never surface to
+ * a client. Only handlers may throw it; lookup helpers must NOT, or the
+ * dispatcher's discriminator would silently mask real failures.
+ */
+class SuppressMessageError extends Error {
+  constructor(reason) {
+    super(`message suppressed: ${reason}`);
+    this.name = 'SuppressMessageError';
+    this.reason = reason;
+  }
+}
+
 module.exports = {
   AppError,
   ValidationError,
@@ -54,4 +70,5 @@ module.exports = {
   PermissionError,
   ExternalServiceError,
   PaymentError,
+  SuppressMessageError,
 };
