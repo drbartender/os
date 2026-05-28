@@ -17,7 +17,7 @@
 
 const { pool } = require('../db');
 const { NotFoundError, ConflictError } = require('./errors');
-const { scheduleBeoNudgesForProposal } = require('./beoHandlers');
+const { scheduleBeoNudgesForProposal, suppressBeoNudgesForProposal } = require('./beoHandlers');
 const asyncHandler = require('../middleware/asyncHandler');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { drinkPlanWriteLimiter } = require('../middleware/rateLimiters');
@@ -91,4 +91,58 @@ function registerFinalizeRoute(router) {
   }));
 }
 
-module.exports = { finalizeDrinkPlan, registerFinalizeRoute };
+// Unfinalize reverses Finalize: clears finalized_at/finalized_by, clears the
+// beo_acknowledged_at stamp on EVERY linked shift_request (so the admin pill
+// is honest immediately), and suppresses any PENDING beo_unack_nudge_sms rows
+// for the proposal. Sent rows stay sent — that's the audit trail. The single
+// transaction covers all three writes plus the proposal_activity_log entry.
+function registerUnfinalizeRoute(router) {
+  router.post('/:id/unfinalize', auth, requireAdminOrManager, drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
+    const planId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(planId)) throw new NotFoundError('Plan not found.');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const upd = await client.query(
+        `UPDATE drink_plans SET finalized_at = NULL, finalized_by = NULL
+          WHERE id = $1 AND finalized_at IS NOT NULL
+          RETURNING *, proposal_id`,
+        [planId]
+      );
+      if (upd.rowCount === 0) {
+        await client.query('ROLLBACK');
+        throw new ConflictError('Plan is not finalized.');
+      }
+      const plan = upd.rows[0];
+
+      // Clear acks on EVERY linked shift_request (not just approved) so the
+      // admin pill is honest immediately after Unfinalize.
+      const clearedAcks = await client.query(
+        `UPDATE shift_requests sr
+            SET beo_acknowledged_at = NULL
+           FROM shifts s
+          WHERE sr.shift_id = s.id AND s.proposal_id = $1
+            AND sr.beo_acknowledged_at IS NOT NULL`,
+        [plan.proposal_id]
+      );
+
+      const sup = await suppressBeoNudgesForProposal(plan.proposal_id, client, 'unfinalized: BEO unfinalized by admin');
+
+      await client.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+         VALUES ($1, 'beo_unfinalized', 'admin', $2, $3)`,
+        [plan.proposal_id, req.user.id, JSON.stringify({ suppressed_count: sup.suppressed || 0, cleared_ack_count: clearedAcks.rowCount })]
+      );
+      await client.query('COMMIT');
+      console.log(`[beo] unfinalize plan=${plan.id} proposal=${plan.proposal_id} suppressed=${sup.suppressed || 0} cleared_acks=${clearedAcks.rowCount}`);
+      res.json(plan);
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch { /* swallow rollback noise */ }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }));
+}
+
+module.exports = { finalizeDrinkPlan, registerFinalizeRoute, registerUnfinalizeRoute };

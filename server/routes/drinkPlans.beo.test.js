@@ -249,3 +249,52 @@ test('POST /:id/finalize > 409 archived when proposal archived', async () => {
   assert.strictEqual(res.status, 409);
   await pool.query("UPDATE proposals SET status='deposit_paid' WHERE id = $1", [proposalId]);
 });
+
+// ─── Unfinalize tests ───────────────────────────────────────────────────────
+//
+// The first test re-finalizes (the prior block left finalized_at=NULL), then
+// seeds an ack + a sent nudge row + a fresh pending nudge row, then unfinalizes
+// and asserts: finalized_at/finalized_by cleared, ack cleared, pending flipped
+// to suppressed, sent row preserved. The second test runs against the now-
+// unfinalized plan to exercise the 409.
+
+test('POST /:id/unfinalize > clears finalized_at, acks, suppresses pending', async () => {
+  // Finalize first (success path resets state and schedules a pending nudge)
+  await request('POST', `/api/drink-plans/${drinkPlanId}/finalize`, { token: adminToken });
+  // Manually stamp an ack
+  await pool.query("UPDATE shift_requests SET beo_acknowledged_at = NOW() WHERE shift_id = $1", [shiftId]);
+  // Manually mark one row sent (for the audit-preserve assertion)
+  await pool.query(
+    "UPDATE scheduled_messages SET status='sent', sent_at=NOW() WHERE entity_id=$1 AND message_type='beo_unack_nudge_sms'",
+    [proposalId]
+  );
+  // Add a fresh pending row (different recipient_id so it doesn't collide)
+  await pool.query(
+    `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for, status)
+     VALUES ($1, 'proposal', 'beo_unack_nudge_sms', 'staff', $2, 'sms', NOW() + INTERVAL '1 hour', 'pending')`,
+    [proposalId, staffUserId + 1000]
+  );
+
+  const res = await request('POST', `/api/drink-plans/${drinkPlanId}/unfinalize`, { token: adminToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.finalized_at, null);
+
+  const dp = await pool.query("SELECT finalized_at, finalized_by FROM drink_plans WHERE id = $1", [drinkPlanId]);
+  assert.strictEqual(dp.rows[0].finalized_at, null);
+  assert.strictEqual(dp.rows[0].finalized_by, null);
+
+  const sr = await pool.query("SELECT beo_acknowledged_at FROM shift_requests WHERE shift_id = $1", [shiftId]);
+  assert.strictEqual(sr.rows[0].beo_acknowledged_at, null);
+
+  const sm = await pool.query(
+    "SELECT status FROM scheduled_messages WHERE entity_id=$1 AND message_type='beo_unack_nudge_sms' ORDER BY status",
+    [proposalId]
+  );
+  // sent stays sent; pending flipped to suppressed
+  assert.deepStrictEqual(sm.rows.map((r) => r.status).sort(), ['sent', 'suppressed']);
+});
+
+test('POST /:id/unfinalize > 409 when not finalized', async () => {
+  const res = await request('POST', `/api/drink-plans/${drinkPlanId}/unfinalize`, { token: adminToken });
+  assert.strictEqual(res.status, 409);
+});
