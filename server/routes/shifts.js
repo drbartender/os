@@ -520,8 +520,9 @@ router.post('/:id/cancel-or-unassign', auth, requireStaffing, asyncHandler(async
   try {
     await dbClient.query('BEGIN');
 
-    const shiftRes = await dbClient.query('SELECT id FROM shifts WHERE id = $1', [shiftId]);
+    const shiftRes = await dbClient.query('SELECT id, proposal_id FROM shifts WHERE id = $1', [shiftId]);
     if (!shiftRes.rows[0]) throw new NotFoundError('Shift not found.');
+    const proposalIdForBeo = shiftRes.rows[0].proposal_id;
 
     if (mode === 'cancel') {
       const approved = await dbClient.query(
@@ -557,6 +558,19 @@ router.post('/:id/cancel-or-unassign', auth, requireStaffing, asyncHandler(async
             AND message_type IN ('shift_reminder', 'staff_thank_you')
             AND status = 'pending'`,
         [shiftId, unassignUserId]
+      );
+    }
+
+    // BEO: suppress pending nudges for affected staffers on the proposal.
+    // The helper's NOT EXISTS guard keeps the nudge for staffers who still
+    // hold an approved active shift elsewhere on this multi-shift proposal.
+    if (proposalIdForBeo && affectedUserIds.length > 0) {
+      const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
+      await suppressBeoNudgesForStaffers(
+        proposalIdForBeo,
+        affectedUserIds,
+        dbClient,
+        `staffer_unassigned: cancel-or-unassign (${mode})`
       );
     }
 
