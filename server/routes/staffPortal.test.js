@@ -1,5 +1,11 @@
 require('dotenv').config();
 
+// Set NODE_ENV=test BEFORE requiring middleware so emailChangeRequestLimiter's
+// skip-on-test branch fires (matches the calcomWebhookLimiter pattern). Tests
+// otherwise burst many email-change requests as the same fixture user and the
+// 3/24h cap would 429 cases after the third.
+process.env.NODE_ENV = 'test';
+
 // Route-level tests for server/routes/staffPortal.js.
 //
 // HARNESS NOTES
@@ -946,6 +952,156 @@ test('POST /api/me/documents/:unknown/replace > rejects unknown doc_type', async
   });
   assert.strictEqual(res.status, 400);
   assert.strictEqual(uploadFileCalls.length, 0);
+});
+
+// ─── Task 17: Email-change request + cancel ───────────────────────────────
+
+// Stub sendEmail so the test never actually triggers Resend. Capture the
+// calls so we can verify both the verify email and the warn email fire.
+let sendEmailCalls = [];
+
+function installSendEmailStub() {
+  sendEmailCalls = [];
+  staffPortalRouter.__setDeps({
+    sendEmail: async (args) => {
+      sendEmailCalls.push(args);
+      return { id: 'stub-id' };
+    },
+  });
+}
+
+test('POST /api/me/request-email-change > 400 on invalid format', async () => {
+  installSendEmailStub();
+  const res = await request('POST', '/api/me/request-email-change', {
+    token: staffToken,
+    body: { new_email: 'not-an-email' },
+  });
+  assert.strictEqual(res.status, 400);
+});
+
+test('POST /api/me/request-email-change > 400 when same as current', async () => {
+  installSendEmailStub();
+  const { rows } = await pool.query('SELECT email FROM users WHERE id = $1', [staffUserId]);
+  const res = await request('POST', '/api/me/request-email-change', {
+    token: staffToken,
+    body: { new_email: rows[0].email },
+  });
+  assert.strictEqual(res.status, 400);
+});
+
+test('POST /api/me/request-email-change > 409 when email already in use', async () => {
+  installSendEmailStub();
+  // Try to change staff's email to otherStaff's email.
+  const { rows } = await pool.query('SELECT email FROM users WHERE id = $1', [otherStaffUserId]);
+  const res = await request('POST', '/api/me/request-email-change', {
+    token: staffToken,
+    body: { new_email: rows[0].email },
+  });
+  assert.strictEqual(res.status, 409);
+});
+
+test('POST /api/me/request-email-change > creates pending row + sends 2 emails + audit', async () => {
+  installSendEmailStub();
+  await pool.query('DELETE FROM pending_email_changes WHERE user_id = $1', [staffUserId]);
+  await pool.query("DELETE FROM staff_audit_log WHERE user_id = $1 AND action = 'email_change_requested'", [staffUserId]);
+
+  const newEmail = `staff-portal-test-new-${Date.now()}@example.com`;
+  const res = await request('POST', '/api/me/request-email-change', {
+    token: staffToken,
+    body: { new_email: newEmail },
+  });
+  assert.strictEqual(res.status, 200);
+
+  const { rows } = await pool.query(
+    `SELECT new_email, token_hash, expires_at, consumed_at FROM pending_email_changes
+       WHERE user_id = $1 ORDER BY id DESC LIMIT 1`,
+    [staffUserId]
+  );
+  assert.strictEqual(rows[0].new_email, newEmail.toLowerCase());
+  assert.strictEqual(rows[0].consumed_at, null);
+  assert.match(rows[0].token_hash, /^[0-9a-f]{64}$/);
+
+  // Two emails: one to NEW address (verify), one to OLD address (warn).
+  assert.strictEqual(sendEmailCalls.length, 2);
+  const recipients = sendEmailCalls.map((c) => c.to);
+  assert.ok(recipients.includes(newEmail.toLowerCase()), 'verify email to new address');
+
+  // Audit row.
+  const audit = await pool.query(
+    "SELECT details FROM staff_audit_log WHERE user_id = $1 AND action = 'email_change_requested' ORDER BY id DESC LIMIT 1",
+    [staffUserId]
+  );
+  assert.strictEqual(audit.rows[0].details.new_email, newEmail.toLowerCase());
+});
+
+test('POST /api/me/request-email-change > supersedes prior pending row', async () => {
+  installSendEmailStub();
+  await pool.query('DELETE FROM pending_email_changes WHERE user_id = $1', [staffUserId]);
+
+  // First request — creates a pending row.
+  const first = `staff-portal-test-first-${Date.now()}@example.com`;
+  await request('POST', '/api/me/request-email-change', {
+    token: staffToken,
+    body: { new_email: first },
+  });
+  // Second request — should mark first as consumed and create a new one.
+  const second = `staff-portal-test-second-${Date.now()}@example.com`;
+  await request('POST', '/api/me/request-email-change', {
+    token: staffToken,
+    body: { new_email: second },
+  });
+
+  const { rows } = await pool.query(
+    `SELECT new_email, consumed_at FROM pending_email_changes WHERE user_id = $1 ORDER BY id ASC`,
+    [staffUserId]
+  );
+  assert.strictEqual(rows.length, 2);
+  // First was superseded.
+  assert.strictEqual(rows[0].new_email, first.toLowerCase());
+  assert.ok(rows[0].consumed_at, 'first row consumed_at set');
+  // Second still pending.
+  assert.strictEqual(rows[1].new_email, second.toLowerCase());
+  assert.strictEqual(rows[1].consumed_at, null);
+});
+
+test('POST /api/me/request-email-change > race: second different-user request to same email returns 409 already_pending', async () => {
+  installSendEmailStub();
+  await pool.query('DELETE FROM pending_email_changes WHERE user_id IN ($1, $2)', [staffUserId, otherStaffUserId]);
+
+  const target = `staff-portal-test-race-${Date.now()}@example.com`;
+  // staff requests first.
+  const r1 = await request('POST', '/api/me/request-email-change', {
+    token: staffToken,
+    body: { new_email: target },
+  });
+  assert.strictEqual(r1.status, 200);
+  // otherStaff tries for the same target — ON CONFLICT triggers the
+  // already_pending path.
+  const r2 = await request('POST', '/api/me/request-email-change', {
+    token: otherStaffToken,
+    body: { new_email: target },
+  });
+  assert.strictEqual(r2.status, 409);
+  assert.strictEqual(r2.body.reason, 'already_pending');
+});
+
+test('POST /api/me/cancel-pending-email-change > marks pending consumed', async () => {
+  installSendEmailStub();
+  await pool.query('DELETE FROM pending_email_changes WHERE user_id = $1', [staffUserId]);
+  const target = `staff-portal-test-cancel-${Date.now()}@example.com`;
+  await request('POST', '/api/me/request-email-change', {
+    token: staffToken,
+    body: { new_email: target },
+  });
+  const res = await request('POST', '/api/me/cancel-pending-email-change', { token: staffToken });
+  assert.strictEqual(res.status, 200);
+  assert.ok(res.body.cancelled >= 1);
+
+  const { rows } = await pool.query(
+    `SELECT consumed_at FROM pending_email_changes WHERE user_id = $1 AND new_email = $2`,
+    [staffUserId, target.toLowerCase()]
+  );
+  assert.ok(rows[0].consumed_at, 'consumed_at populated');
 });
 
 test('GET /api/me/staff-home > cover broadcasts surface for teammates only', async () => {

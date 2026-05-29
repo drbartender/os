@@ -357,6 +357,17 @@ async function start() {
         clearHealthRow('webhook_events_prune');
       }
 
+      // Pending-email-change cleanup — daily purge of consumed + long-expired rows
+      // (spec §6.10 step 10).
+      if (enabled('RUN_PENDING_EMAIL_CLEANUP_SCHEDULER')) {
+        const { purgeExpiredPendingEmailChanges } = require('./utils/pendingEmailChangeCleanup');
+        const wrapped = wrapScheduler('pending_email_cleanup', 86400, purgeExpiredPendingEmailChanges);
+        setTimeout(wrapped, 200000);
+        setInterval(wrapped, 24 * 60 * 60 * 1000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('pending_email_cleanup');
+      }
+
       // Pre-event reminder handlers (event_week_reminder, long_lead_t30_recap).
       // Must register before the dispatcher's first tick so it can resolve them.
       require('./utils/preEventHandlers').registerAll();

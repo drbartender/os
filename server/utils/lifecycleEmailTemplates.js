@@ -338,6 +338,50 @@ function lastMinuteStaffingConfirmation({ eventDate, bartenderList, isPlural }) 
   return { subject, html, text };
 }
 
+// ─── Email change verification (spec §6.10) ────────────────────────────────
+
+function emailChangeVerification({ verifyUrl, newEmail }) {
+  const subject = 'Confirm your new Dr. Bartender email address';
+  const text = [
+    `You're changing the email on your Dr. Bartender account to ${newEmail}.`,
+    '',
+    `Confirm the change: ${verifyUrl}`,
+    '',
+    'This link expires in 24 hours. If you did not request this, you can ignore this email; your account email stays unchanged until the link is used.',
+  ].join('\n');
+  const html = wrapEmail(`
+    <h2 style="color:${BRAND.primary};margin-top:0;">Confirm your new email</h2>
+    <p>You're changing the email on your Dr. Bartender account to <strong>${esc(newEmail)}</strong>.</p>
+    <p>This link expires in 24 hours.</p>
+    <p style="text-align:center;margin:2rem 0;">
+      <a href="${esc(verifyUrl)}" style="display:inline-block;padding:14px 32px;background:${BRAND.primary};color:${BRAND.white};text-decoration:none;border-radius:6px;font-weight:bold;font-size:16px;">Confirm email change</a>
+    </p>
+    <p style="font-size:13px;color:${BRAND.secondary};">If you did not request this, you can ignore this email. Your account email stays unchanged until the link is used.</p>
+  `);
+  return { subject, html, text };
+}
+
+// Sent to the OLD email simultaneously so a takeover attempt is visible. The
+// owner can cancel the pending change via the Profile UI.
+function emailChangeWarning({ newEmail, cancelUrl }) {
+  const subject = 'Email change requested on your Dr. Bartender account';
+  const text = [
+    `Someone (probably you) just asked to change the email on your Dr. Bartender account to ${newEmail}.`,
+    '',
+    `Your account stays on the current address until that change is confirmed via a link sent to the new address.`,
+    '',
+    `If this wasn't you, sign in now and tap "Cancel pending change" in your Profile, or reach out to support@drbartender.com.`,
+    cancelUrl ? `Direct cancel link: ${cancelUrl}` : '',
+  ].filter(Boolean).join('\n');
+  const html = wrapEmail(`
+    <h2 style="color:${BRAND.primary};margin-top:0;">Email change requested</h2>
+    <p>Someone (probably you) just asked to change the email on your Dr. Bartender account to <strong>${esc(newEmail)}</strong>.</p>
+    <p>Your account stays on the current address until that change is confirmed via a link sent to the new address.</p>
+    <p>If this wasn't you, sign in now and tap <strong>Cancel pending change</strong> in your Profile, or reach out to <a href="mailto:support@drbartender.com">support@drbartender.com</a>.</p>
+  `);
+  return { subject, html, text };
+}
+
 module.exports = {
   signedAndPaidClient,
   drinkPlanLink,
@@ -345,4 +389,6 @@ module.exports = {
   shoppingListReady,
   postConsultClient,
   lastMinuteStaffingConfirmation,
+  emailChangeVerification,
+  emailChangeWarning,
 };

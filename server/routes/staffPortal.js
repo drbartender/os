@@ -17,11 +17,16 @@ const { ValidationError } = require('../utils/errors');
 const { validatePhone } = require('../utils/phone');
 const { isValidUpload } = require('../utils/fileValidation');
 const storage = require('../utils/storage');
+const { sendEmail } = require('../utils/email');
+const { emailChangeVerification, emailChangeWarning } = require('../utils/lifecycleEmailTemplates');
+const { STAFF_URL } = require('../utils/urls');
+const { emailChangeRequestLimiter } = require('../middleware/rateLimiters');
 const paymentMethods = require('./staffPortal/paymentMethods');
+const crypto = require('crypto');
 
-// Stub seam — tests swap uploadFile to avoid hitting real R2. Defaults to
-// the real impl in prod / dev.
-let _deps = { uploadFile: storage.uploadFile };
+// Stub seam — tests swap uploadFile + sendEmail to avoid hitting real R2 /
+// Resend. Defaults to the real impls in prod / dev.
+let _deps = { uploadFile: storage.uploadFile, sendEmail };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
 const router = express.Router();
@@ -720,6 +725,136 @@ router.post('/documents/:doc_type/replace', asyncHandler(async (req, res) => {
     filename: slug,
     ...(expiresOn ? { expires_on: expiresOn } : {}),
   });
+}));
+
+// ─── Task 17: Email-change request + cancel ────────────────────────────────
+// Spec §6.10.
+
+// RFC-5322-light: same shape used in clientAuth + auth flows.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+router.post('/request-email-change', emailChangeRequestLimiter, asyncHandler(async (req, res) => {
+  const newEmail = typeof req.body?.new_email === 'string'
+    ? req.body.new_email.trim().toLowerCase()
+    : '';
+  if (!newEmail || !EMAIL_RE.test(newEmail) || newEmail.length > 254) {
+    throw new ValidationError({ new_email: 'Please enter a valid email address.' });
+  }
+
+  // Pull the requester's current email for the same-as-current and warn-to-old
+  // checks below. req.user already has email per auth.js.
+  const currentEmail = (req.user.email || '').toLowerCase();
+  if (newEmail === currentEmail) {
+    throw new ValidationError(
+      { new_email: 'This is already your current email address.' },
+      'This is already your current email address.'
+    );
+  }
+
+  // Reject if another user already owns this email. Lowercased compare.
+  const existsRes = await pool.query(
+    'SELECT id FROM users WHERE LOWER(email) = $1',
+    [newEmail]
+  );
+  if (existsRes.rows.length > 0) {
+    return res.status(409).json({ error: 'That email is already in use.', code: 'EMAIL_IN_USE' });
+  }
+
+  // Supersede the requester's own prior pending row(s) so the partial UNIQUE
+  // index on LOWER(new_email) WHERE consumed_at IS NULL has room to accept
+  // the new INSERT — and the most-recent request wins.
+  await pool.query(
+    `UPDATE pending_email_changes SET consumed_at = NOW()
+      WHERE user_id = $1 AND consumed_at IS NULL`,
+    [req.user.id]
+  );
+
+  // Generate the raw token; store only its sha256 hash.
+  const rawToken = crypto.randomBytes(32).toString('base64url');
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+  // Race-safe insert. The partial unique index on LOWER(new_email) WHERE
+  // consumed_at IS NULL enforces "at most one pending change per email"
+  // across users. If a different user already holds a pending change to this
+  // email, the INSERT no-ops (returns 0 rows) and we surface 409
+  // already_pending. Per the partial-index ON CONFLICT semantics, the target
+  // is the indexed expression.
+  const insertRes = await pool.query(
+    `INSERT INTO pending_email_changes (user_id, new_email, token_hash, expires_at)
+     VALUES ($1, $2, $3, NOW() + INTERVAL '24 hours')
+     ON CONFLICT (LOWER(new_email)) WHERE consumed_at IS NULL DO NOTHING
+     RETURNING id`,
+    [req.user.id, newEmail, tokenHash]
+  );
+
+  if (insertRes.rowCount === 0) {
+    // Either someone else holds a pending change to this email (partial
+    // unique on new_email) or a token-hash collision (astronomically rare).
+    // Use the helpful "already pending" reason — race-safe per spec §6.10.
+    return res.status(409).json({ error: 'A pending change to that email already exists.', code: 'ALREADY_PENDING', reason: 'already_pending' });
+  }
+
+  // Outbound emails. Failures here do not roll back the pending row — the
+  // user can re-request via Cancel + retry.
+  const verifyUrl = `${STAFF_URL}/verify-email/${rawToken}`;
+  const newEmailContent = emailChangeVerification({ verifyUrl, newEmail });
+  const warnContent = emailChangeWarning({ newEmail });
+
+  try {
+    await _deps.sendEmail({ to: newEmail, ...newEmailContent });
+  } catch (err) {
+    try {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(err, {
+          tags: { route: 'staffPortal.request-email-change', op: 'send_verify' },
+          extra: { user_id: req.user.id },
+        });
+      }
+    } catch (_) { /* swallow */ }
+  }
+  if (currentEmail) {
+    try {
+      await _deps.sendEmail({ to: currentEmail, ...warnContent });
+    } catch (err) {
+      try {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(err, {
+            tags: { route: 'staffPortal.request-email-change', op: 'send_warn' },
+            extra: { user_id: req.user.id },
+          });
+        }
+      } catch (_) { /* swallow */ }
+    }
+  }
+
+  // Audit-log row. Failure non-fatal.
+  try {
+    await pool.query(
+      `INSERT INTO staff_audit_log (user_id, actor_type, actor_id, action, details)
+       VALUES ($1, 'staff', $1, 'email_change_requested', $2)`,
+      [req.user.id, JSON.stringify({ new_email: newEmail })]
+    );
+  } catch (err) {
+    try {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(err, {
+          tags: { route: 'staffPortal.request-email-change', op: 'audit_insert' },
+          extra: { user_id: req.user.id },
+        });
+      }
+    } catch (_) { /* swallow */ }
+  }
+
+  res.json({ ok: true, pending: true });
+}));
+
+router.post('/cancel-pending-email-change', asyncHandler(async (req, res) => {
+  const result = await pool.query(
+    `UPDATE pending_email_changes SET consumed_at = NOW()
+      WHERE user_id = $1 AND consumed_at IS NULL`,
+    [req.user.id]
+  );
+  res.json({ ok: true, cancelled: result.rowCount });
 }));
 
 module.exports = router;
