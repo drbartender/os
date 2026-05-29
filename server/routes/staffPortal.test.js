@@ -561,6 +561,174 @@ test('PATCH /api/me/ui-preferences > rejects unknown key', async () => {
   assert.strictEqual(res.status, 400);
 });
 
+// ─── Task 15: staff-notifications + push-subscriptions ───────────────────
+
+async function resetUserNotificationState(uid) {
+  await pool.query(
+    `UPDATE users
+        SET staff_notification_preferences = '{
+          "channels": {
+            "shift_offered":   ["push","sms","email"],
+            "shift_decided":   ["push","sms"],
+            "cover_needed":    ["push"],
+            "beo_finalized":   ["push","sms","email"],
+            "beo_reminder_t3": ["push","sms"],
+            "schedule_change": ["push","sms","email"],
+            "payday":          ["sms","email"],
+            "tip_received":    ["push"]
+          },
+          "push_subscriptions": [],
+          "quiet_hours": null
+        }'::jsonb
+      WHERE id = $1`,
+    [uid]
+  );
+}
+
+test('GET /api/me/staff-notifications > returns prefs + comms', async () => {
+  await resetUserNotificationState(staffUserId);
+  const res = await request('GET', '/api/me/staff-notifications', { token: staffToken });
+  assert.strictEqual(res.status, 200);
+  assert.ok(res.body.prefs);
+  assert.ok('comms' in res.body);
+  assert.ok(res.body.prefs.channels);
+  assert.ok(Array.isArray(res.body.prefs.channels.beo_finalized));
+});
+
+test('PATCH /api/me/staff-notifications > accepts partial channel merge', async () => {
+  await resetUserNotificationState(staffUserId);
+  const res = await request('PATCH', '/api/me/staff-notifications', {
+    token: staffToken,
+    body: { channels: { shift_offered: ['email'] } },
+  });
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body.prefs.channels.shift_offered, ['email']);
+  // Sibling categories unchanged.
+  assert.deepStrictEqual(res.body.prefs.channels.beo_finalized, ['push', 'sms', 'email']);
+});
+
+test('PATCH /api/me/staff-notifications > rejects empty channel array on critical category', async () => {
+  await resetUserNotificationState(staffUserId);
+  const res = await request('PATCH', '/api/me/staff-notifications', {
+    token: staffToken,
+    body: { channels: { beo_finalized: [] } },
+  });
+  assert.strictEqual(res.status, 400);
+  assert.ok(res.body.fieldErrors?._form);
+});
+
+test('PATCH /api/me/staff-notifications > per-category-not-aggregate: muting payday only is OK', async () => {
+  await resetUserNotificationState(staffUserId);
+  // Aggregate would forbid muting any critical category; per-category permits
+  // muting `payday` IF that category retains at least one channel. Here we
+  // give payday a single channel and confirm it's accepted.
+  const res = await request('PATCH', '/api/me/staff-notifications', {
+    token: staffToken,
+    body: { channels: { payday: ['email'] } },
+  });
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body.prefs.channels.payday, ['email']);
+});
+
+test('PATCH /api/me/staff-notifications > each critical category rejected independently', async () => {
+  for (const cat of ['beo_finalized', 'schedule_change', 'payday']) {
+    await resetUserNotificationState(staffUserId);
+    const res = await request('PATCH', '/api/me/staff-notifications', {
+      token: staffToken,
+      body: { channels: { [cat]: [] } },
+    });
+    assert.strictEqual(res.status, 400, `${cat} muted alone rejects`);
+  }
+});
+
+test('POST /api/me/push-subscriptions > replaces existing endpoint in place', async () => {
+  await resetUserNotificationState(staffUserId);
+  const sub = {
+    endpoint: 'https://example.com/push/abc',
+    keys: { p256dh: 'p1', auth: 'a1' },
+    user_agent: 'Mozilla iPhone',
+  };
+  let res = await request('POST', '/api/me/push-subscriptions', { token: staffToken, body: sub });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.count, 1);
+
+  // Re-POST same endpoint with new keys — count stays 1.
+  res = await request('POST', '/api/me/push-subscriptions', {
+    token: staffToken,
+    body: { ...sub, keys: { p256dh: 'p2', auth: 'a2' } },
+  });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.count, 1);
+
+  const { rows } = await pool.query(
+    "SELECT staff_notification_preferences->'push_subscriptions' AS subs FROM users WHERE id = $1",
+    [staffUserId]
+  );
+  assert.strictEqual(rows[0].subs.length, 1);
+  assert.strictEqual(rows[0].subs[0].keys.p256dh, 'p2');
+});
+
+test('POST /api/me/push-subscriptions > evicts oldest at cap=10', async () => {
+  await resetUserNotificationState(staffUserId);
+  // Pre-load 10 stale subs directly with ascending timestamps.
+  const seed = [];
+  for (let i = 0; i < 10; i += 1) {
+    seed.push({
+      endpoint: `https://example.com/push/seed-${i}`,
+      keys: { p256dh: `p${i}`, auth: `a${i}` },
+      user_agent: 'seed',
+      subscribed_at: new Date(2026, 0, 1, 0, i).toISOString(),
+    });
+  }
+  await pool.query(
+    `UPDATE users SET staff_notification_preferences = jsonb_set(
+       staff_notification_preferences, '{push_subscriptions}', $2::jsonb, true)
+      WHERE id = $1`,
+    [staffUserId, JSON.stringify(seed)]
+  );
+
+  // POST a fresh subscription. Oldest (seed-0) should evict.
+  const res = await request('POST', '/api/me/push-subscriptions', {
+    token: staffToken,
+    body: {
+      endpoint: 'https://example.com/push/fresh',
+      keys: { p256dh: 'pf', auth: 'af' },
+      user_agent: 'iPhone',
+    },
+  });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.count, 10);
+
+  const { rows } = await pool.query(
+    "SELECT staff_notification_preferences->'push_subscriptions' AS subs FROM users WHERE id = $1",
+    [staffUserId]
+  );
+  const endpoints = rows[0].subs.map((s) => s.endpoint);
+  assert.ok(!endpoints.includes('https://example.com/push/seed-0'), 'oldest evicted');
+  assert.ok(endpoints.includes('https://example.com/push/fresh'), 'fresh present');
+  assert.ok(endpoints.includes('https://example.com/push/seed-9'), 'newest seed survives');
+});
+
+test('DELETE /api/me/push-subscriptions > prunes matching endpoint', async () => {
+  await resetUserNotificationState(staffUserId);
+  await pool.query(
+    `UPDATE users SET staff_notification_preferences = jsonb_set(
+       staff_notification_preferences, '{push_subscriptions}', $2::jsonb, true)
+      WHERE id = $1`,
+    [staffUserId, JSON.stringify([
+      { endpoint: 'https://example.com/push/keep', keys: { p256dh: 'k', auth: 'k' }, user_agent: '', subscribed_at: new Date().toISOString() },
+      { endpoint: 'https://example.com/push/drop', keys: { p256dh: 'd', auth: 'd' }, user_agent: '', subscribed_at: new Date().toISOString() },
+    ])]
+  );
+  const res = await request('DELETE', '/api/me/push-subscriptions', {
+    token: staffToken,
+    body: { endpoint: 'https://example.com/push/drop' },
+  });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.removed, 1);
+  assert.strictEqual(res.body.count, 1);
+});
+
 test('GET /api/me/staff-home > cover broadcasts surface for teammates only', async () => {
   // Set staff's request to cover_requested. otherStaff should see it; staff
   // (the requester) should NOT (cover_broadcasts filters requester != viewer).
