@@ -197,6 +197,10 @@ app.use('/api/me', require('./routes/staffPortal'));
 app.use('/api/payment', require('./routes/payment'));
 app.use('/api/application', require('./routes/application'));
 app.use('/api/admin', require('./routes/admin'));
+// Admin one-click cover-swap routes (spec section 6.5). Lives at /api/admin
+// so the routing-table audit lines up with the other admin surfaces. JWT
+// swap-token + auth + admin-role guard is inside the router.
+app.use('/api/admin', require('./routes/adminCoverSwaps'));
 app.use('/api/shifts', require('./routes/shifts'));
 app.use('/api/drink-plans', require('./routes/drinkPlans'));
 app.use('/api/drink-plans', require('./routes/drinkPlanConsult'));
