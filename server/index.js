@@ -202,6 +202,16 @@ app.use('/api/admin', require('./routes/admin'));
 // swap-token + auth + admin-role guard is inside the router.
 app.use('/api/admin', require('./routes/adminCoverSwaps'));
 app.use('/api/shifts', require('./routes/shifts'));
+// Staff portal Drop / Cover marketplace endpoints (spec §6.5). Mounted AFTER
+// routes/shifts.js so the existing shifts.js routes have first-match priority
+// (Express matches by route specificity, but both routers share the
+// /api/shifts prefix and the same path segments need predictable ordering).
+// The new endpoints (/requests/:id/drop, /request-cover, /claim-cover,
+// /emergency-drop) are unique paths not already in shifts.js, so they fall
+// through to this router. Task 27's staff-facing DELETE wins by being added
+// to the existing shifts.js handler instead (role-aware: staff = pending-only
+// gate, admin = unrestricted) — no path collision here.
+app.use('/api/shifts', require('./routes/staffShiftActions'));
 app.use('/api/drink-plans', require('./routes/drinkPlans'));
 app.use('/api/drink-plans', require('./routes/drinkPlanConsult'));
 app.use('/api/beo', require('./routes/beo'));
