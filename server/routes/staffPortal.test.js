@@ -1129,3 +1129,264 @@ test('GET /api/me/staff-home > cover broadcasts surface for teammates only', asy
     [shiftId, staffUserId]
   );
 });
+
+// ─── Task 20: Auth-gate + IDOR round-out (spec section 11) ────────────────
+//
+// Auth pass: every /api/me/* endpoint requires a JWT — hit without one and
+// the auth middleware returns 401 before the handler ever runs.
+//
+// IDOR pass: every PATCH / PUT / POST / DELETE on /api/me/* targets the
+// caller's own row implicitly (no request param carries a user id). Auth as
+// user B, mutate; assert that user A's row is untouched. The endpoints
+// don't accept a target-user param, so the test reduces to "JWT decides the
+// subject, never the body" — the harness verifies this by reading A's row
+// state before + after and asserting strict equality.
+
+const AUTH_ENDPOINTS = [
+  { method: 'GET',    path: '/api/me/payment-methods' },
+  { method: 'PATCH',  path: '/api/me/payment-methods' },
+  { method: 'PUT',    path: '/api/me/preferred-payment-method' },
+  { method: 'PUT',    path: '/api/me/tip-card-order' },
+  { method: 'PATCH',  path: '/api/me/profile' },
+  { method: 'PATCH',  path: '/api/me/ui-preferences' },
+  { method: 'GET',    path: '/api/me/staff-notifications' },
+  { method: 'PATCH',  path: '/api/me/staff-notifications' },
+  { method: 'POST',   path: '/api/me/push-subscriptions' },
+  { method: 'DELETE', path: '/api/me/push-subscriptions' },
+  { method: 'POST',   path: '/api/me/documents/w9/replace' },
+  { method: 'POST',   path: '/api/me/request-email-change' },
+  { method: 'POST',   path: '/api/me/cancel-pending-email-change' },
+];
+
+for (const ep of AUTH_ENDPOINTS) {
+  test(`AUTH-GATE > ${ep.method} ${ep.path} returns 401 without JWT`, async () => {
+    const res = await request(ep.method, ep.path, { body: {} });
+    assert.strictEqual(res.status, 401, `expected 401, got ${res.status} (${res.raw?.slice(0, 80)})`);
+  });
+}
+
+test('IDOR > PATCH /api/me/profile by B does not touch A row', async () => {
+  // Snapshot A's contractor_profiles state.
+  const beforeA = await pool.query(
+    `SELECT preferred_name, street_address, city, state, zip_code,
+            emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
+            phone
+       FROM contractor_profiles WHERE user_id = $1`,
+    [staffUserId]
+  );
+  // Auth as B, mutate via PATCH. The body has no user id, so the JWT must
+  // be the only subject signal.
+  const res = await request('PATCH', '/api/me/profile', {
+    token: otherStaffToken,
+    body: { preferred_name: 'B-IDOR-Attempt', city: 'Springfield' },
+  });
+  assert.strictEqual(res.status, 200);
+
+  // A is unchanged.
+  const afterA = await pool.query(
+    `SELECT preferred_name, street_address, city, state, zip_code,
+            emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
+            phone
+       FROM contractor_profiles WHERE user_id = $1`,
+    [staffUserId]
+  );
+  assert.deepStrictEqual(afterA.rows[0], beforeA.rows[0], 'A profile untouched by B PATCH');
+
+  // B's row carries the write.
+  const afterB = await pool.query(
+    'SELECT preferred_name, city FROM contractor_profiles WHERE user_id = $1',
+    [otherStaffUserId]
+  );
+  assert.strictEqual(afterB.rows[0].preferred_name, 'B-IDOR-Attempt');
+  assert.strictEqual(afterB.rows[0].city, 'Springfield');
+});
+
+test('IDOR > PATCH /api/me/payment-methods by B does not touch A row', async () => {
+  await pool.query("DELETE FROM payment_profiles WHERE user_id = $1", [otherStaffUserId]);
+  // Seed A with a known venmo handle.
+  await pool.query(
+    `INSERT INTO payment_profiles (user_id, venmo_handle)
+     VALUES ($1, 'A-protected-handle')
+     ON CONFLICT (user_id) DO UPDATE SET venmo_handle = 'A-protected-handle'`,
+    [staffUserId]
+  );
+
+  // B authenticates and PATCHes — the write must land on B's row, not A's.
+  const res = await request('PATCH', '/api/me/payment-methods', {
+    token: otherStaffToken,
+    body: { venmo_handle: 'B-IDOR-target' },
+  });
+  assert.strictEqual(res.status, 200);
+
+  // A's handle unchanged.
+  const a = await pool.query('SELECT venmo_handle FROM payment_profiles WHERE user_id = $1', [staffUserId]);
+  assert.strictEqual(a.rows[0].venmo_handle, 'A-protected-handle');
+
+  // B's handle reflects the write.
+  const b = await pool.query('SELECT venmo_handle FROM payment_profiles WHERE user_id = $1', [otherStaffUserId]);
+  assert.strictEqual(b.rows[0].venmo_handle, 'B-IDOR-target');
+});
+
+test('IDOR > PUT /api/me/tip-card-order by B does not touch A ui_preferences', async () => {
+  // Seed A with a known order.
+  await pool.query(
+    `UPDATE users SET ui_preferences = '{"tip_card_order":["card","venmo"]}'::jsonb WHERE id = $1`,
+    [staffUserId]
+  );
+  const res = await request('PUT', '/api/me/tip-card-order', {
+    token: otherStaffToken,
+    body: { order: ['zelle', 'card'] },
+  });
+  assert.strictEqual(res.status, 200);
+
+  // A's order unchanged.
+  const a = await pool.query(
+    "SELECT ui_preferences->'tip_card_order' AS o FROM users WHERE id = $1",
+    [staffUserId]
+  );
+  assert.deepStrictEqual(a.rows[0].o, ['card', 'venmo']);
+
+  // B's order reflects the write.
+  const b = await pool.query(
+    "SELECT ui_preferences->'tip_card_order' AS o FROM users WHERE id = $1",
+    [otherStaffUserId]
+  );
+  assert.deepStrictEqual(b.rows[0].o, ['zelle', 'card']);
+});
+
+test('IDOR > PATCH /api/me/ui-preferences by B does not touch A row', async () => {
+  await pool.query(
+    `UPDATE users SET ui_preferences = '{"theme":"light"}'::jsonb WHERE id = $1`,
+    [staffUserId]
+  );
+  const res = await request('PATCH', '/api/me/ui-preferences', {
+    token: otherStaffToken,
+    body: { theme: 'dark' },
+  });
+  assert.strictEqual(res.status, 200);
+
+  const a = await pool.query(
+    "SELECT ui_preferences->'theme' AS t FROM users WHERE id = $1",
+    [staffUserId]
+  );
+  assert.strictEqual(a.rows[0].t, 'light', 'A theme unchanged');
+
+  const b = await pool.query(
+    "SELECT ui_preferences->'theme' AS t FROM users WHERE id = $1",
+    [otherStaffUserId]
+  );
+  assert.strictEqual(b.rows[0].t, 'dark', 'B theme updated');
+});
+
+test('IDOR > PATCH /api/me/staff-notifications by B does not touch A row', async () => {
+  await resetUserNotificationState(staffUserId);
+  await resetUserNotificationState(otherStaffUserId);
+  const before = await pool.query(
+    "SELECT staff_notification_preferences->'channels'->'shift_offered' AS so FROM users WHERE id = $1",
+    [staffUserId]
+  );
+
+  const res = await request('PATCH', '/api/me/staff-notifications', {
+    token: otherStaffToken,
+    body: { channels: { shift_offered: ['email'] } },
+  });
+  assert.strictEqual(res.status, 200);
+
+  const afterA = await pool.query(
+    "SELECT staff_notification_preferences->'channels'->'shift_offered' AS so FROM users WHERE id = $1",
+    [staffUserId]
+  );
+  assert.deepStrictEqual(afterA.rows[0].so, before.rows[0].so, 'A shift_offered unchanged');
+
+  const afterB = await pool.query(
+    "SELECT staff_notification_preferences->'channels'->'shift_offered' AS so FROM users WHERE id = $1",
+    [otherStaffUserId]
+  );
+  assert.deepStrictEqual(afterB.rows[0].so, ['email'], 'B shift_offered updated');
+});
+
+test('IDOR > POST /api/me/push-subscriptions by B does not touch A row', async () => {
+  await resetUserNotificationState(staffUserId);
+  await resetUserNotificationState(otherStaffUserId);
+  // A starts with no subs after reset.
+  const sub = {
+    endpoint: 'https://example.com/push/idor-b-only',
+    keys: { p256dh: 'p', auth: 'a' },
+    user_agent: 'B-device',
+  };
+  const res = await request('POST', '/api/me/push-subscriptions', {
+    token: otherStaffToken,
+    body: sub,
+  });
+  assert.strictEqual(res.status, 200);
+
+  const a = await pool.query(
+    "SELECT staff_notification_preferences->'push_subscriptions' AS subs FROM users WHERE id = $1",
+    [staffUserId]
+  );
+  assert.deepStrictEqual(a.rows[0].subs, [], 'A has no push_subscriptions');
+
+  const b = await pool.query(
+    "SELECT staff_notification_preferences->'push_subscriptions' AS subs FROM users WHERE id = $1",
+    [otherStaffUserId]
+  );
+  assert.strictEqual(b.rows[0].subs.length, 1);
+  assert.strictEqual(b.rows[0].subs[0].endpoint, 'https://example.com/push/idor-b-only');
+});
+
+test('IDOR > POST /api/me/cancel-pending-email-change by B does not consume A pending row', async () => {
+  installSendEmailStub();
+  await pool.query('DELETE FROM pending_email_changes WHERE user_id IN ($1, $2)', [staffUserId, otherStaffUserId]);
+  // A creates a pending row.
+  const aTarget = `staff-portal-test-idor-cancel-a-${Date.now()}@example.com`;
+  await request('POST', '/api/me/request-email-change', {
+    token: staffToken,
+    body: { new_email: aTarget },
+  });
+
+  // B cancels — A's pending row must remain unconsumed.
+  const res = await request('POST', '/api/me/cancel-pending-email-change', { token: otherStaffToken });
+  assert.strictEqual(res.status, 200);
+
+  const a = await pool.query(
+    "SELECT consumed_at FROM pending_email_changes WHERE user_id = $1 AND new_email = $2",
+    [staffUserId, aTarget.toLowerCase()]
+  );
+  assert.strictEqual(a.rows[0].consumed_at, null, 'A pending row NOT consumed by B cancel');
+});
+
+test('IDOR > PUT /api/me/preferred-payment-method by B does not touch A row', async () => {
+  // Seed A with venmo handle + preferred=venmo.
+  await pool.query(
+    `INSERT INTO payment_profiles (user_id, venmo_handle, preferred_payment_method)
+     VALUES ($1, 'A-vee', 'venmo')
+     ON CONFLICT (user_id) DO UPDATE SET venmo_handle = 'A-vee', preferred_payment_method = 'venmo'`,
+    [staffUserId]
+  );
+  // Seed B with their own venmo handle so the eligibility check passes.
+  await pool.query(
+    `INSERT INTO payment_profiles (user_id, venmo_handle)
+     VALUES ($1, 'B-vee')
+     ON CONFLICT (user_id) DO UPDATE SET venmo_handle = 'B-vee', preferred_payment_method = NULL`,
+    [otherStaffUserId]
+  );
+
+  // B sets their preferred to check. A's preferred MUST stay venmo.
+  const res = await request('PUT', '/api/me/preferred-payment-method', {
+    token: otherStaffToken,
+    body: { method: 'check' },
+  });
+  assert.strictEqual(res.status, 200);
+
+  const a = await pool.query(
+    "SELECT preferred_payment_method FROM payment_profiles WHERE user_id = $1",
+    [staffUserId]
+  );
+  assert.strictEqual(a.rows[0].preferred_payment_method, 'venmo', 'A preferred unchanged');
+
+  const b = await pool.query(
+    "SELECT preferred_payment_method FROM payment_profiles WHERE user_id = $1",
+    [otherStaffUserId]
+  );
+  assert.strictEqual(b.rows[0].preferred_payment_method, 'check', 'B preferred updated');
+});
