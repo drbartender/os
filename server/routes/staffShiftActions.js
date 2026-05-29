@@ -33,6 +33,7 @@ const { hoursToEvent } = require('../utils/shiftTime');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { ADMIN_URL } = require('../utils/urls');
+const { broadcastCoverRequest } = require('../utils/coverBroadcast');
 
 const router = express.Router();
 router.use(auth);
@@ -312,6 +313,159 @@ router.post('/requests/:requestId/drop', asyncHandler(async (req, res) => {
     shift_id: ctx.shift_id,
     dropped_at: droppedAt,
     drop_reason: 'clean_drop',
+  });
+}));
+
+// ──────────────────────────────────────────────────────────────────────────
+// Task 24: POST /requests/:requestId/request-cover  (in 72h-336h window)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// Two-phase: Transaction A (fast: validate + flip cover_requested_at + admin
+// notify) commits quickly. Then OUTSIDE the transaction, broadcastCoverRequest
+// fans out to qualified teammates. The split keeps the row lock window short
+// (the broadcast itself can take a couple of seconds across 25-row chunks
+// with 250ms gaps).
+
+const MAX_COVER_REASON_LEN = 500;
+
+router.post('/requests/:requestId/request-cover', asyncHandler(async (req, res) => {
+  const requestId = parseInt(req.params.requestId, 10);
+  if (!Number.isInteger(requestId) || requestId <= 0) {
+    throw new ValidationError({ requestId: 'Invalid request id.' });
+  }
+
+  const rawReason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+  if (rawReason.length > MAX_COVER_REASON_LEN) {
+    // Body too large for the cover_reason column slot — return 413 not 400 so
+    // the client can distinguish from a missing-field error.
+    return res.status(413).json({
+      error: `Reason must be ${MAX_COVER_REASON_LEN} characters or fewer.`,
+      code: 'reason_too_long',
+    });
+  }
+  // Defensive truncate (caller may also enforce client-side).
+  const coverReason = rawReason.slice(0, MAX_COVER_REASON_LEN);
+
+  let ctx;
+  let hoursOut;
+
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    ctx = await loadRequestContextForUpdate(dbClient, requestId);
+    if (!ctx) throw new NotFoundError('Request not found.');
+    if (ctx.user_id !== req.user.id) {
+      throw new PermissionError('You can only request cover for your own shifts.');
+    }
+    if (ctx.status !== 'approved') {
+      throw new ConflictError('Only approved shifts can request cover.', 'not_approved');
+    }
+    if (ctx.dropped_at) {
+      throw new ConflictError('This shift was already dropped.', 'already_dropped');
+    }
+    if (ctx.cover_requested_at) {
+      throw new ConflictError('Cover was already requested for this shift.', 'already_requested');
+    }
+    if (ctx.pay_period_status === 'processing') {
+      throw new ConflictError(
+        'This shift falls in a pay period that is being processed; contact management.',
+        'pay_period_processing'
+      );
+    }
+
+    hoursOut = hoursToEvent({ event_date: ctx.event_date, start_time: ctx.start_time });
+    if (hoursOut === null) {
+      throw new ConflictError('Could not determine shift start time.', 'unparseable_shift_time');
+    }
+    if (hoursOut < COVER_REQUEST_MIN_HOURS || hoursOut >= COVER_REQUEST_MAX_HOURS) {
+      // Outside the 72h..336h window. Caller should switch to clean drop
+      // (>=336h) or emergency drop (<72h).
+      throw new ConflictError(
+        'Request Cover is only available between 72 hours and 14 days before the event. Use Clean Drop or Emergency Drop instead.',
+        'wrong_mode'
+      );
+    }
+
+    await dbClient.query(
+      `UPDATE shift_requests
+          SET cover_requested_at = NOW(),
+              cover_reason = $1
+        WHERE id = $2`,
+      [coverReason || null, requestId]
+    );
+
+    await dbClient.query('COMMIT');
+  } catch (err) {
+    await dbClient.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    dbClient.release();
+  }
+
+  // ── Outside the transaction ──────────────────────────────────────────
+  // Notify management (best-effort, doesn't block the fan-out). SMS gate:
+  // notifyManagementOfAction passes smsBody through only when daysOut <= 7.
+  const daysOut = hoursOut / 24;
+  const eventTypeLabel = getEventTypeLabel({
+    event_type: ctx.shift_event_type,
+    event_type_custom: ctx.shift_event_type_custom,
+  });
+  const eventDateLong = formatEventDateLong(ctx.event_date);
+  const subject = `Cover requested: ${eventTypeLabel} on ${eventDateLong}`;
+  const text = [
+    `A staffer requested cover for an upcoming shift (${Math.round(hoursOut)}h out).`,
+    ``,
+    `Event: ${eventTypeLabel}${ctx.client_name ? ' for ' + ctx.client_name : ''}`,
+    `Date: ${eventDateLong}`,
+    `Time: ${ctx.start_time || 'TBD'} - ${ctx.end_time || 'TBD'}`,
+    `Location: ${ctx.location || 'TBD'}`,
+    `Position: ${ctx.position || 'staff'}`,
+    coverReason ? `\nReason: ${coverReason}` : '',
+    ``,
+    `Qualified teammates are being notified now. Review in the admin dashboard: ${ADMIN_URL}/staffing`,
+  ].filter(Boolean).join('\n');
+  const html = `<p>A staffer requested cover for an upcoming shift (${Math.round(hoursOut)}h out).</p>
+    <p><strong>Event:</strong> ${eventTypeLabel}${ctx.client_name ? ' for ' + ctx.client_name : ''}<br>
+    <strong>Date:</strong> ${eventDateLong}<br>
+    <strong>Time:</strong> ${ctx.start_time || 'TBD'} to ${ctx.end_time || 'TBD'}<br>
+    <strong>Location:</strong> ${ctx.location || 'TBD'}<br>
+    <strong>Position:</strong> ${ctx.position || 'staff'}</p>
+    ${coverReason ? `<p><strong>Reason:</strong> ${coverReason}</p>` : ''}
+    <p>Qualified teammates are being notified now.</p>
+    <p><a href="${ADMIN_URL}/staffing">Review in admin dashboard</a></p>`;
+  const smsBody = `Cover requested: ${eventTypeLabel} on ${eventDateLong}, ${Math.round(hoursOut)}h out.`;
+
+  await notifyManagementOfAction({
+    category: 'urgent_staffing',
+    subject,
+    emailHtml: html,
+    emailText: text,
+    smsBody,
+    daysOut,
+  });
+
+  // Fan out to qualified teammates. Best-effort: a broadcast failure must NOT
+  // unwind the cover_requested_at flip (already committed). Caller's UI shows
+  // broadcast_count from the response.
+  let broadcastResult = { broadcast_count: 0, broadcast_truncated: false };
+  try {
+    broadcastResult = await broadcastCoverRequest(ctx.shift_id, req.user.id);
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { feature: 'cover-broadcast', endpoint: 'request-cover' },
+      extra: { shift_id: ctx.shift_id, user_id: req.user.id },
+    });
+    console.error('[staffShiftActions] broadcastCoverRequest threw:', err.message);
+  }
+
+  res.json({
+    success: true,
+    request_id: requestId,
+    shift_id: ctx.shift_id,
+    cover_requested_at: new Date().toISOString(),
+    broadcast_count: broadcastResult.broadcast_count,
+    broadcast_truncated: broadcastResult.broadcast_truncated,
   });
 }));
 

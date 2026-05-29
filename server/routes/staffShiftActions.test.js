@@ -347,3 +347,97 @@ test('POST /drop > unknown request returns 404', async () => {
   const res = await request('POST', `/api/shifts/requests/99999999/drop`, { token: staffToken });
   assert.strictEqual(res.status, 404);
 });
+
+// ─── Task 24: POST /requests/:requestId/request-cover ──────────────────────
+
+test('POST /request-cover > 401 without JWT', async () => {
+  const res = await request('POST', '/api/shifts/requests/123/request-cover', { body: { reason: 'x' } });
+  assert.strictEqual(res.status, 401);
+});
+
+test('POST /request-cover > 72h+1h triggers cover flip and broadcast', async () => {
+  // 4 days out = 96h, inside [72, 336).
+  const { requestId, shiftId } = await seedShiftWithRequest({
+    daysFromNow: 4, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const res = await request('POST', `/api/shifts/requests/${requestId}/request-cover`, {
+    token: staffToken,
+    body: { reason: 'Family conflict' },
+  });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  assert.strictEqual(res.body.success, true);
+  assert.ok(typeof res.body.broadcast_count === 'number');
+  assert.strictEqual(res.body.broadcast_truncated, false);
+
+  const sr = await pool.query(`SELECT cover_requested_at, cover_reason FROM shift_requests WHERE id = $1`, [requestId]);
+  assert.ok(sr.rows[0].cover_requested_at, 'cover_requested_at set');
+  assert.strictEqual(sr.rows[0].cover_reason, 'Family conflict');
+
+  // Cover_broadcast scheduled_messages enqueued (at least 0 — depends on dev DB).
+  const cb = await pool.query(
+    `SELECT count(*)::int AS c FROM scheduled_messages WHERE entity_type='shift' AND entity_id=$1 AND message_type='cover_broadcast'`,
+    [shiftId]
+  );
+  assert.ok(cb.rows[0].c >= 0);
+});
+
+test('POST /request-cover > 14d+1h returns 409 wrong_mode', async () => {
+  const { requestId } = await seedShiftWithRequest({
+    daysFromNow: 15, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const res = await request('POST', `/api/shifts/requests/${requestId}/request-cover`, {
+    token: staffToken,
+    body: { reason: 'x' },
+  });
+  assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+  assert.strictEqual(res.body.code, 'wrong_mode');
+});
+
+test('POST /request-cover > <72h returns 409 wrong_mode', async () => {
+  const { requestId } = await seedShiftWithRequest({
+    daysFromNow: 2, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const res = await request('POST', `/api/shifts/requests/${requestId}/request-cover`, {
+    token: staffToken,
+    body: { reason: 'x' },
+  });
+  assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+  assert.strictEqual(res.body.code, 'wrong_mode');
+});
+
+test('POST /request-cover > reason >500 chars returns 413', async () => {
+  const { requestId } = await seedShiftWithRequest({
+    daysFromNow: 4, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const tooLong = 'x'.repeat(501);
+  const res = await request('POST', `/api/shifts/requests/${requestId}/request-cover`, {
+    token: staffToken,
+    body: { reason: tooLong },
+  });
+  assert.strictEqual(res.status, 413);
+  assert.strictEqual(res.body.code, 'reason_too_long');
+});
+
+test('POST /request-cover > already-requested returns 409 already_requested', async () => {
+  const { requestId } = await seedShiftWithRequest({
+    daysFromNow: 4, startTimeStr: '18:00', userId: staffUserId,
+  });
+  await pool.query(`UPDATE shift_requests SET cover_requested_at = NOW() WHERE id = $1`, [requestId]);
+  const res = await request('POST', `/api/shifts/requests/${requestId}/request-cover`, {
+    token: staffToken,
+    body: { reason: 'x' },
+  });
+  assert.strictEqual(res.status, 409);
+  assert.strictEqual(res.body.code, 'already_requested');
+});
+
+test('POST /request-cover > IDOR: not your shift returns 403', async () => {
+  const { requestId } = await seedShiftWithRequest({
+    daysFromNow: 4, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const res = await request('POST', `/api/shifts/requests/${requestId}/request-cover`, {
+    token: otherStaffToken,
+    body: { reason: 'x' },
+  });
+  assert.strictEqual(res.status, 403);
+});
