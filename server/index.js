@@ -184,6 +184,10 @@ app.use('/api/progress', require('./routes/progress'));
 app.use('/api/agreement', require('./routes/agreement'));
 app.use('/api/contractor', require('./routes/contractor'));
 app.use('/api/me', require('./routes/me'));
+// Staff portal redesign endpoints — mounted AFTER me.js so any future path
+// collision lets me.js win. Today's me.js owns /tip-page, /tips,
+// /notification-preferences; this router owns the rest.
+app.use('/api/me', require('./routes/staffPortal'));
 app.use('/api/payment', require('./routes/payment'));
 app.use('/api/application', require('./routes/application'));
 app.use('/api/admin', require('./routes/admin'));
