@@ -122,7 +122,7 @@ async function accruePayoutsForProposal(proposalId) {
        FROM shift_requests sr
        JOIN shifts s ON s.id = sr.shift_id
        LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-       WHERE s.proposal_id = $1 AND sr.status = 'approved'
+       WHERE s.proposal_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL
        ORDER BY sr.user_id`,
       [proposalId]
     );

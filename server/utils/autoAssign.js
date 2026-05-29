@@ -139,7 +139,7 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
 
   // Count already approved
   const approvedResult = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM shift_requests WHERE shift_id = $1 AND status = 'approved'`,
+    `SELECT COUNT(*) AS cnt FROM shift_requests WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL`,
     [shiftId]
   );
   const alreadyApproved = parseInt(approvedResult.rows[0].cnt, 10);
@@ -263,7 +263,7 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
              cp.equipment_table_with_spandex, cp.equipment_will_pickup
       FROM shift_requests sr
       JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-      WHERE sr.shift_id = $1 AND sr.status = 'approved'
+      WHERE sr.shift_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL
     `, [shiftId]);
 
     const allStaff = [...approvedEquipResult.rows, ...selected.map(s => {
