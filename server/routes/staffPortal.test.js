@@ -439,6 +439,128 @@ test('PUT /api/me/preferred-payment-method > direct_deposit requires both routin
   assert.strictEqual(rows[0].details.to, 'direct_deposit');
 });
 
+// ─── Task 14: tip-card-order, profile, ui-preferences ─────────────────────
+
+test('PUT /api/me/tip-card-order > rejects unknown tokens', async () => {
+  const res = await request('PUT', '/api/me/tip-card-order', {
+    token: staffToken,
+    body: { order: ['venmo', 'bitcoin'] },
+  });
+  assert.strictEqual(res.status, 400);
+});
+
+test('PUT /api/me/tip-card-order > writes to ui_preferences.tip_card_order', async () => {
+  const order = ['venmo', 'card', 'zelle'];
+  const res = await request('PUT', '/api/me/tip-card-order', { token: staffToken, body: { order } });
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body.tip_card_order, order);
+
+  const { rows } = await pool.query(
+    "SELECT ui_preferences->'tip_card_order' AS o FROM users WHERE id = $1",
+    [staffUserId]
+  );
+  assert.deepStrictEqual(rows[0].o, order);
+});
+
+test('PATCH /api/me/profile > rejects email key (not in allowlist)', async () => {
+  const res = await request('PATCH', '/api/me/profile', {
+    token: staffToken,
+    body: { email: 'attacker@example.com' },
+  });
+  assert.strictEqual(res.status, 400);
+});
+
+test('PATCH /api/me/profile > writes allowlisted fields to contractor_profiles', async () => {
+  const res = await request('PATCH', '/api/me/profile', {
+    token: staffToken,
+    body: {
+      preferred_name: 'Updated Name',
+      street_address: '456 New St',
+      city: 'Chicago',
+      state: 'IL',
+      zip_code: '60601-1234',
+      emergency_contact_name: 'Jane Doe',
+      emergency_contact_phone: '5555550199',
+      emergency_contact_relationship: 'sister',
+    },
+  });
+  assert.strictEqual(res.status, 200);
+
+  const { rows } = await pool.query(
+    `SELECT preferred_name, street_address, city, state, zip_code,
+            emergency_contact_name, emergency_contact_phone, emergency_contact_relationship
+       FROM contractor_profiles WHERE user_id = $1`,
+    [staffUserId]
+  );
+  assert.strictEqual(rows[0].preferred_name, 'Updated Name');
+  assert.strictEqual(rows[0].zip_code, '60601-1234');
+  assert.strictEqual(rows[0].emergency_contact_name, 'Jane Doe');
+});
+
+test('PATCH /api/me/profile > rejects invalid zip', async () => {
+  const res = await request('PATCH', '/api/me/profile', {
+    token: staffToken,
+    body: { zip_code: 'abc' },
+  });
+  assert.strictEqual(res.status, 400);
+});
+
+test('PATCH /api/me/profile > phone change writes audit row with last-4-only', async () => {
+  await pool.query('DELETE FROM staff_audit_log WHERE user_id = $1', [staffUserId]);
+  // Seed phone to a known value.
+  await pool.query(
+    "UPDATE contractor_profiles SET phone = '5555550101' WHERE user_id = $1",
+    [staffUserId]
+  );
+  const res = await request('PATCH', '/api/me/profile', {
+    token: staffToken,
+    body: { phone: '5555559876' },
+  });
+  assert.strictEqual(res.status, 200);
+
+  const { rows } = await pool.query(
+    "SELECT details FROM staff_audit_log WHERE user_id = $1 AND action = 'profile_phone_change' ORDER BY id DESC LIMIT 1",
+    [staffUserId]
+  );
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].details.old_phone_last4, '0101');
+  assert.strictEqual(rows[0].details.new_phone_last4, '9876');
+});
+
+test('PATCH /api/me/ui-preferences > theme allowlist + merge', async () => {
+  // Seed a sibling key to confirm jsonb_set merges, not clobbers.
+  await pool.query(
+    `UPDATE users SET ui_preferences = '{"tip_card_order":["card"]}'::jsonb WHERE id = $1`,
+    [staffUserId]
+  );
+
+  const res = await request('PATCH', '/api/me/ui-preferences', {
+    token: staffToken,
+    body: { theme: 'dark', calendar_subscribed_app: 'google' },
+  });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.ui_preferences.theme, 'dark');
+  assert.strictEqual(res.body.ui_preferences.calendar_subscribed_app, 'google');
+  // Sibling key NOT clobbered.
+  assert.deepStrictEqual(res.body.ui_preferences.tip_card_order, ['card']);
+});
+
+test('PATCH /api/me/ui-preferences > rejects invalid theme', async () => {
+  const res = await request('PATCH', '/api/me/ui-preferences', {
+    token: staffToken,
+    body: { theme: 'neon' },
+  });
+  assert.strictEqual(res.status, 400);
+});
+
+test('PATCH /api/me/ui-preferences > rejects unknown key', async () => {
+  const res = await request('PATCH', '/api/me/ui-preferences', {
+    token: staffToken,
+    body: { dangerous_key: 'x' },
+  });
+  assert.strictEqual(res.status, 400);
+});
+
 test('GET /api/me/staff-home > cover broadcasts surface for teammates only', async () => {
   // Set staff's request to cover_requested. otherStaff should see it; staff
   // (the requester) should NOT (cover_broadcasts filters requester != viewer).

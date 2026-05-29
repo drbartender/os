@@ -18,6 +18,7 @@ const { encrypt, decrypt } = require('../utils/encryption');
 const {
   normalizeVenmoHandle, normalizeCashappHandle, normalizePaypalUrl, normalizeZelleHandle,
 } = require('../utils/tipHandleValidation');
+const { validatePhone } = require('../utils/phone');
 
 const router = express.Router();
 router.use(auth);
@@ -467,6 +468,202 @@ router.put('/preferred-payment-method', asyncHandler(async (req, res) => {
   }
 
   res.json({ preferred_payment_method: method });
+}));
+
+// ─── Task 14: tip-card-order, profile, ui-preferences ─────────────────────
+
+// Spec §6.8: order is a JSON array of method tokens. Card is always implicit.
+const TIP_CARD_METHOD_TOKENS = new Set(['card', 'venmo', 'cashapp', 'paypal', 'zelle']);
+
+router.put('/tip-card-order', asyncHandler(async (req, res) => {
+  const order = req.body?.order;
+  if (!Array.isArray(order)) {
+    throw new ValidationError({ order: 'must be an array' }, 'order must be an array');
+  }
+  if (order.length > TIP_CARD_METHOD_TOKENS.size) {
+    throw new ValidationError({ order: 'too many tokens' });
+  }
+  const seen = new Set();
+  for (const tok of order) {
+    if (!TIP_CARD_METHOD_TOKENS.has(tok)) {
+      throw new ValidationError({ order: `Unknown method token: ${tok}` }, `Unknown method token: ${tok}`);
+    }
+    if (seen.has(tok)) {
+      throw new ValidationError({ order: `Duplicate token: ${tok}` }, `Duplicate token: ${tok}`);
+    }
+    seen.add(tok);
+  }
+
+  await pool.query(
+    `UPDATE users
+        SET ui_preferences = jsonb_set(
+              COALESCE(ui_preferences, '{}'::jsonb),
+              '{tip_card_order}',
+              $2::jsonb,
+              true
+            ),
+            updated_at = NOW()
+      WHERE id = $1`,
+    [req.user.id, JSON.stringify(order)]
+  );
+  res.json({ tip_card_order: order });
+}));
+
+// PROFILE allowlist — note: NOT email. Email goes through the separate
+// request-email-change flow (Task 17). Server-side validation per spec §6.10.
+const PROFILE_ALLOWED_KEYS = new Set([
+  'preferred_name', 'phone', 'street_address', 'city', 'state', 'zip_code',
+  'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
+]);
+
+const ZIP_RE = /^\d{5}(-\d{4})?$/;
+
+function trimOrNull(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  return t === '' ? null : t;
+}
+
+router.patch('/profile', asyncHandler(async (req, res) => {
+  const body = req.body || {};
+  const keys = Object.keys(body);
+  for (const k of keys) {
+    if (!PROFILE_ALLOWED_KEYS.has(k)) {
+      throw new ValidationError({ body: `Unknown field: ${k}` }, `Unknown field: ${k}`);
+    }
+  }
+  if (keys.length === 0) {
+    throw new ValidationError({ _form: 'No fields to update.' }, 'No fields to update.');
+  }
+
+  const updates = {};
+
+  if ('preferred_name' in body) updates.preferred_name = trimOrNull(body.preferred_name);
+  if ('street_address' in body) updates.street_address = trimOrNull(body.street_address);
+  if ('city' in body)           updates.city           = trimOrNull(body.city);
+  if ('state' in body)          updates.state          = trimOrNull(body.state);
+
+  if ('zip_code' in body) {
+    const z = trimOrNull(body.zip_code);
+    if (z !== null && !ZIP_RE.test(z)) {
+      throw new ValidationError({ zip_code: 'must be 5 digits or 5+4 (e.g. 12345 or 12345-6789)' });
+    }
+    updates.zip_code = z;
+  }
+
+  for (const f of ['emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship']) {
+    if (f in body) {
+      const v = trimOrNull(body[f]);
+      if (v !== null && v.length > 100) {
+        throw new ValidationError({ [f]: 'must be 100 chars or fewer' });
+      }
+      updates[f] = v;
+    }
+  }
+
+  // Phone validation (E.164-ish per server/utils/phone.js: stores 10-digit US).
+  if ('phone' in body) {
+    const { value, error } = validatePhone(body.phone);
+    if (error) throw new ValidationError({ phone: error });
+    updates.phone = value;
+  }
+
+  // Phone-change audit (spec §6.10): if `phone` is in body AND differs, log
+  // an audit row with last-4-only old + new (no full PII in the audit trail).
+  let phoneOld = null;
+  let phoneNew = null;
+  if ('phone' in updates) {
+    const prevRes = await pool.query(
+      'SELECT phone FROM contractor_profiles WHERE user_id = $1',
+      [req.user.id]
+    );
+    const prev = prevRes.rows[0]?.phone || null;
+    if (prev !== updates.phone) {
+      phoneOld = prev ? prev.slice(-4) : null;
+      phoneNew = updates.phone ? updates.phone.slice(-4) : null;
+    }
+  }
+
+  // Ensure a row exists, then UPDATE the allowlisted fields.
+  await pool.query(
+    'INSERT INTO contractor_profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING',
+    [req.user.id]
+  );
+  const cols = Object.keys(updates);
+  if (cols.length > 0) {
+    const setClause = cols.map((c, i) => `${c} = $${i + 2}`).join(', ');
+    await pool.query(
+      `UPDATE contractor_profiles SET ${setClause}, updated_at = NOW() WHERE user_id = $1`,
+      [req.user.id, ...cols.map((c) => updates[c])]
+    );
+  }
+
+  // Audit row OUTSIDE the implicit "transaction" (it's all auto-commit anyway,
+  // but conceptually: profile write succeeded → log; never roll back on audit
+  // insert failure).
+  if (phoneOld !== null || phoneNew !== null) {
+    try {
+      await pool.query(
+        `INSERT INTO staff_audit_log (user_id, actor_type, actor_id, action, details)
+         VALUES ($1, 'staff', $1, 'profile_phone_change', $2)`,
+        [req.user.id, JSON.stringify({ old_phone_last4: phoneOld, new_phone_last4: phoneNew })]
+      );
+    } catch (err) {
+      try {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(err, {
+            tags: { route: 'staffPortal.profile', op: 'audit_insert' },
+            extra: { user_id: req.user.id },
+          });
+        }
+      } catch (_) { /* swallow */ }
+    }
+  }
+
+  res.json({ ok: true, fields_changed: cols });
+}));
+
+// UI preferences allowlist (spec §6.16 + §6.12).
+const UI_PREF_ALLOWED_KEYS = new Set(['theme', 'calendar_subscribed_app']);
+const UI_PREF_THEMES = new Set(['light', 'dark']);
+
+router.patch('/ui-preferences', asyncHandler(async (req, res) => {
+  const body = req.body || {};
+  const keys = Object.keys(body);
+  for (const k of keys) {
+    if (!UI_PREF_ALLOWED_KEYS.has(k)) {
+      throw new ValidationError({ body: `Unknown field: ${k}` }, `Unknown field: ${k}`);
+    }
+  }
+  if (keys.length === 0) {
+    throw new ValidationError({ _form: 'No fields to update.' }, 'No fields to update.');
+  }
+
+  if ('theme' in body && body.theme !== null && !UI_PREF_THEMES.has(body.theme)) {
+    throw new ValidationError({ theme: "must be 'light' or 'dark'" });
+  }
+  if ('calendar_subscribed_app' in body && body.calendar_subscribed_app !== null) {
+    if (typeof body.calendar_subscribed_app !== 'string' || body.calendar_subscribed_app.length > 100) {
+      throw new ValidationError({ calendar_subscribed_app: 'must be a string up to 100 chars' });
+    }
+  }
+
+  // Merge each key via chained jsonb_set so a partial PATCH does not clobber
+  // sibling keys (theme, tip_card_order, calendar_subscribed_app share the
+  // JSONB).
+  let sqlExpr = "COALESCE(ui_preferences, '{}'::jsonb)";
+  const params = [req.user.id];
+  for (const k of keys) {
+    params.push(JSON.stringify(body[k]));
+    sqlExpr = `jsonb_set(${sqlExpr}, '{${k}}', $${params.length}::jsonb, true)`;
+  }
+  const { rows } = await pool.query(
+    `UPDATE users SET ui_preferences = ${sqlExpr}, updated_at = NOW()
+      WHERE id = $1 RETURNING ui_preferences`,
+    params
+  );
+  res.json({ ui_preferences: rows[0].ui_preferences });
 }));
 
 module.exports = router;
