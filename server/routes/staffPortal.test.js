@@ -44,6 +44,33 @@ let payoutId;
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
 // ─── HTTP helper ────────────────────────────────────────────────────────────
+// Build a multipart/form-data body by hand. node-fetch and form-data aren't in
+// the repo dev deps, so build the wire format directly. Returns the body
+// buffer + the Content-Type header value (including the boundary).
+function buildMultipart({ fields = {}, file = null }) {
+  const boundary = `----nodetest${crypto.randomBytes(8).toString('hex')}`;
+  const parts = [];
+  for (const [k, v] of Object.entries(fields)) {
+    parts.push(Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`
+    ));
+  }
+  if (file) {
+    parts.push(Buffer.from(
+      `--${boundary}\r\n`
+      + `Content-Disposition: form-data; name="${file.field}"; filename="${file.filename}"\r\n`
+      + `Content-Type: ${file.contentType}\r\n\r\n`
+    ));
+    parts.push(file.data);
+    parts.push(Buffer.from('\r\n'));
+  }
+  parts.push(Buffer.from(`--${boundary}--\r\n`));
+  return {
+    body: Buffer.concat(parts),
+    contentType: `multipart/form-data; boundary=${boundary}`,
+  };
+}
+
 function request(method, path, { token, body, headers } = {}) {
   return new Promise((resolve, reject) => {
     const payload = (body === null || body === undefined)
@@ -727,6 +754,198 @@ test('DELETE /api/me/push-subscriptions > prunes matching endpoint', async () =>
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.removed, 1);
   assert.strictEqual(res.body.count, 1);
+});
+
+// ─── Task 16: Documents replace endpoint ──────────────────────────────────
+//
+// Stubs uploadFile so the test never hits real R2. The stub records its
+// arguments so we can assert the R2 key shape.
+
+let uploadFileCalls = [];
+let uploadFileThrows = null;
+
+// Activated in a setup-style test below — keep it tidy so other tests are
+// unaffected.
+function installUploadStub() {
+  uploadFileCalls = [];
+  uploadFileThrows = null;
+  staffPortalRouter.__setDeps({
+    uploadFile: async (buffer, key) => {
+      uploadFileCalls.push({ buffer, key });
+      if (uploadFileThrows) throw uploadFileThrows;
+    },
+  });
+}
+
+// Minimal valid PDF (just the %PDF magic) so isValidUpload passes.
+const PDF_BYTES = Buffer.from('%PDF-1.4\n%binary\n');
+// 4-byte invalid header so magic-byte check fails.
+const NOT_A_PDF = Buffer.from('XXXX', 'utf8');
+
+test('POST /api/me/documents/w9/replace > writes to payment_profiles + history', async () => {
+  installUploadStub();
+  await pool.query('DELETE FROM staff_document_history WHERE user_id = $1', [staffUserId]);
+
+  const { body: mpBody, contentType } = buildMultipart({
+    file: { field: 'file', filename: 'my-w9.pdf', contentType: 'application/pdf', data: PDF_BYTES },
+  });
+  const res = await request('POST', '/api/me/documents/w9/replace', {
+    token: staffToken,
+    body: mpBody,
+    headers: { 'Content-Type': contentType },
+  });
+  assert.strictEqual(res.status, 200);
+  assert.ok(res.body.file_url.startsWith(`staff/w9/${staffUserId}/`));
+  assert.strictEqual(res.body.filename, 'my-w9.pdf');
+  assert.strictEqual(uploadFileCalls.length, 1);
+
+  // payment_profiles row updated.
+  const pp = await pool.query(
+    'SELECT w9_file_url, w9_filename FROM payment_profiles WHERE user_id = $1',
+    [staffUserId]
+  );
+  assert.strictEqual(pp.rows[0].w9_filename, 'my-w9.pdf');
+  assert.ok(pp.rows[0].w9_file_url.startsWith('staff/w9/'));
+
+  // history row inserted.
+  const hist = await pool.query(
+    `SELECT doc_type, replaced_by_user_id FROM staff_document_history
+       WHERE user_id = $1 ORDER BY id DESC LIMIT 1`,
+    [staffUserId]
+  );
+  assert.strictEqual(hist.rows[0].doc_type, 'w9');
+  assert.strictEqual(hist.rows[0].replaced_by_user_id, staffUserId);
+});
+
+test('POST /api/me/documents/alcohol_certification/replace > requires future expires_on', async () => {
+  installUploadStub();
+  const { body: mpBody, contentType } = buildMultipart({
+    fields: { expires_on: '2020-01-01' }, // past
+    file: { field: 'file', filename: 'cert.pdf', contentType: 'application/pdf', data: PDF_BYTES },
+  });
+  const res = await request('POST', '/api/me/documents/alcohol_certification/replace', {
+    token: staffToken,
+    body: mpBody,
+    headers: { 'Content-Type': contentType },
+  });
+  assert.strictEqual(res.status, 400);
+  // No R2 call (validation runs BEFORE upload).
+  assert.strictEqual(uploadFileCalls.length, 0);
+});
+
+test('POST /api/me/documents/alcohol_certification/replace > writes 3 fields', async () => {
+  installUploadStub();
+  await pool.query('DELETE FROM staff_document_history WHERE user_id = $1', [staffUserId]);
+  const future = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+    .toISOString().slice(0, 10);
+  const { body: mpBody, contentType } = buildMultipart({
+    fields: { expires_on: future },
+    file: { field: 'file', filename: 'basset.png', contentType: 'image/png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00]) },
+  });
+  const res = await request('POST', '/api/me/documents/alcohol_certification/replace', {
+    token: staffToken,
+    body: mpBody,
+    headers: { 'Content-Type': contentType },
+  });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.expires_on, future);
+
+  const cp = await pool.query(
+    `SELECT alcohol_certification_file_url, alcohol_certification_filename,
+            alcohol_certification_expires_on
+       FROM contractor_profiles WHERE user_id = $1`,
+    [staffUserId]
+  );
+  assert.strictEqual(cp.rows[0].alcohol_certification_filename, 'basset.png');
+  assert.ok(cp.rows[0].alcohol_certification_file_url.startsWith('staff/alcohol_certification/'));
+  // pg returns DATE as a Date object; coerce to YYYY-MM-DD for the assertion.
+  const dateOut = cp.rows[0].alcohol_certification_expires_on;
+  const dateStr = dateOut instanceof Date
+    ? `${dateOut.getFullYear()}-${String(dateOut.getMonth() + 1).padStart(2, '0')}-${String(dateOut.getDate()).padStart(2, '0')}`
+    : String(dateOut).slice(0, 10);
+  assert.strictEqual(dateStr, future);
+});
+
+test('POST /api/me/documents/w9/replace > invalid mime rejected, no DB write', async () => {
+  installUploadStub();
+  await pool.query('DELETE FROM staff_document_history WHERE user_id = $1', [staffUserId]);
+
+  const { body: mpBody, contentType } = buildMultipart({
+    file: { field: 'file', filename: 'evil.exe', contentType: 'application/pdf', data: NOT_A_PDF },
+  });
+  const res = await request('POST', '/api/me/documents/w9/replace', {
+    token: staffToken,
+    body: mpBody,
+    headers: { 'Content-Type': contentType },
+  });
+  assert.strictEqual(res.status, 400);
+  assert.strictEqual(uploadFileCalls.length, 0);
+  // No history row written.
+  const hist = await pool.query(
+    'SELECT COUNT(*)::int AS n FROM staff_document_history WHERE user_id = $1',
+    [staffUserId]
+  );
+  assert.strictEqual(hist.rows[0].n, 0);
+});
+
+test('POST /api/me/documents/w9/replace > path traversal in filename sanitized', async () => {
+  installUploadStub();
+  const evilName = '../../../etc/passwd.pdf';
+  const { body: mpBody, contentType } = buildMultipart({
+    file: { field: 'file', filename: evilName, contentType: 'application/pdf', data: PDF_BYTES },
+  });
+  const res = await request('POST', '/api/me/documents/w9/replace', {
+    token: staffToken,
+    body: mpBody,
+    headers: { 'Content-Type': contentType },
+  });
+  assert.strictEqual(res.status, 200);
+  // Slugified — no slashes, no leading dots.
+  assert.ok(!res.body.file_url.includes('..'), `R2 key safe: ${res.body.file_url}`);
+  assert.ok(!res.body.filename.includes('/'), 'no slashes in slugified filename');
+  assert.ok(!res.body.filename.startsWith('.'), 'no leading dot');
+});
+
+test('POST /api/me/documents/w9/replace > R2 failure → 502, no DB changes', async () => {
+  installUploadStub();
+  const { ExternalServiceError } = require('../utils/errors');
+  uploadFileThrows = new ExternalServiceError('r2', new Error('500 from R2'), 'R2 down');
+
+  await pool.query('DELETE FROM staff_document_history WHERE user_id = $1', [staffUserId]);
+  const histBefore = await pool.query(
+    'SELECT COUNT(*)::int AS n FROM staff_document_history WHERE user_id = $1',
+    [staffUserId]
+  );
+
+  const { body: mpBody, contentType } = buildMultipart({
+    file: { field: 'file', filename: 'doc.pdf', contentType: 'application/pdf', data: PDF_BYTES },
+  });
+  const res = await request('POST', '/api/me/documents/w9/replace', {
+    token: staffToken,
+    body: mpBody,
+    headers: { 'Content-Type': contentType },
+  });
+  assert.strictEqual(res.status, 502);
+
+  const histAfter = await pool.query(
+    'SELECT COUNT(*)::int AS n FROM staff_document_history WHERE user_id = $1',
+    [staffUserId]
+  );
+  assert.strictEqual(histAfter.rows[0].n, histBefore.rows[0].n);
+});
+
+test('POST /api/me/documents/:unknown/replace > rejects unknown doc_type', async () => {
+  installUploadStub();
+  const { body: mpBody, contentType } = buildMultipart({
+    file: { field: 'file', filename: 'x.pdf', contentType: 'application/pdf', data: PDF_BYTES },
+  });
+  const res = await request('POST', '/api/me/documents/bogus/replace', {
+    token: staffToken,
+    body: mpBody,
+    headers: { 'Content-Type': contentType },
+  });
+  assert.strictEqual(res.status, 400);
+  assert.strictEqual(uploadFileCalls.length, 0);
 });
 
 test('GET /api/me/staff-home > cover broadcasts surface for teammates only', async () => {

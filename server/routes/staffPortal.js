@@ -14,11 +14,15 @@ const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError } = require('../utils/errors');
-const { encrypt, decrypt } = require('../utils/encryption');
-const {
-  normalizeVenmoHandle, normalizeCashappHandle, normalizePaypalUrl, normalizeZelleHandle,
-} = require('../utils/tipHandleValidation');
 const { validatePhone } = require('../utils/phone');
+const { isValidUpload } = require('../utils/fileValidation');
+const storage = require('../utils/storage');
+const paymentMethods = require('./staffPortal/paymentMethods');
+
+// Stub seam — tests swap uploadFile to avoid hitting real R2. Defaults to
+// the real impl in prod / dev.
+let _deps = { uploadFile: storage.uploadFile };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
 
 const router = express.Router();
 router.use(auth);
@@ -135,340 +139,10 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
   });
 }));
 
-// ─── Task 13: Payment methods ───────────────────────────────────────────────
-//
-// Spec §6.11. Loaded with rules; lift them all into named helpers so each one
-// is the single source of truth for both the GET projection and the PATCH /
-// PUT mutation flows.
-
-// Whitelist of fields the PATCH route accepts. Hardcoded (NOT derived from
-// Object.keys) so a payload like `{user_id: 99}` smuggles nothing. Validated
-// BEFORE any DB read — see route handler.
-const PAYMENT_METHOD_ALLOWED_KEYS = new Set([
-  'venmo_handle', 'cashapp_handle', 'paypal_url', 'zelle_handle',
-  'routing_number', 'account_number', 'payment_username',
-]);
-
-const PAYMENT_METHOD_VALUES = new Set([
-  'venmo', 'cashapp', 'paypal', 'zelle', 'direct_deposit', 'check',
-]);
-
-// ABA routing-number checksum. 9 digits, weighted sum mod 10 == 0.
-function isValidRoutingNumber(s) {
-  if (typeof s !== 'string' || !/^\d{9}$/.test(s)) return false;
-  const w = [3, 7, 1, 3, 7, 1, 3, 7, 1];
-  let sum = 0;
-  for (let i = 0; i < 9; i += 1) sum += Number(s[i]) * w[i];
-  return sum % 10 === 0;
-}
-
-function isValidAccountNumber(s) {
-  return typeof s === 'string' && /^\d{4,17}$/.test(s);
-}
-
-// Safe decrypt that swallows the error and returns null, capturing the
-// failure to Sentry so admin tooling can repair the row later. Spec §6.11:
-// "if decrypt fails, return null with a Sentry breadcrumb, don't 500 the GET."
-function safeDecryptOrNull(cipher, userId, column) {
-  if (!cipher) return null;
-  try {
-    return decrypt(cipher);
-  } catch (err) {
-    try {
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(err, {
-          tags: { route: 'staffPortal.payment-methods', column },
-          extra: { user_id: userId },
-        });
-      }
-    } catch (_) { /* never let logging break a response */ }
-    return null;
-  }
-}
-
-function last4OrNull(plaintext) {
-  if (!plaintext || typeof plaintext !== 'string') return null;
-  if (plaintext.length <= 4) return plaintext;
-  return plaintext.slice(-4);
-}
-
-// Single resolver shared by PATCH (auto-NULL after a handle clear) and PUT
-// (eligibility check). Returns true if the user has the data needed to use
-// `method` as their preferred payroll target.
-function isPreferredEligible(method, row) {
-  if (!row) return false;
-  switch (method) {
-    case 'venmo':         return !!row.venmo_handle;
-    case 'cashapp':       return !!row.cashapp_handle;
-    case 'paypal':        return !!row.paypal_url;
-    case 'zelle':         return !!row.zelle_handle;
-    case 'check':         return true;
-    case 'direct_deposit': return !!row.routing_number && !!row.account_number;
-    default: return false;
-  }
-}
-
-// Project the payment_profiles row into the wire shape. Last-4-only for the
-// bank fields; handles plaintext as-stored (per spec §6.11).
-function projectPaymentMethods(row, userId) {
-  if (!row) {
-    return {
-      preferred_payment_method: null,
-      venmo_handle: null,
-      cashapp_handle: null,
-      paypal_url: null,
-      zelle_handle: null,
-      routing_number_last4: null,
-      account_number_last4: null,
-      payment_username: null,
-    };
-  }
-  const routing = safeDecryptOrNull(row.routing_number, userId, 'routing_number');
-  const account = safeDecryptOrNull(row.account_number, userId, 'account_number');
-  return {
-    preferred_payment_method: row.preferred_payment_method || null,
-    venmo_handle: row.venmo_handle || null,
-    cashapp_handle: row.cashapp_handle || null,
-    paypal_url: row.paypal_url || null,
-    zelle_handle: row.zelle_handle || null,
-    routing_number_last4: last4OrNull(routing),
-    account_number_last4: last4OrNull(account),
-    payment_username: row.payment_username || null,
-  };
-}
-
-router.get('/payment-methods', asyncHandler(async (req, res) => {
-  const { rows } = await pool.query(
-    `SELECT preferred_payment_method, payment_username,
-            routing_number, account_number,
-            venmo_handle, cashapp_handle, paypal_url, zelle_handle
-       FROM payment_profiles WHERE user_id = $1`,
-    [req.user.id]
-  );
-  res.json(projectPaymentMethods(rows[0], req.user.id));
-}));
-
-router.patch('/payment-methods', asyncHandler(async (req, res) => {
-  const body = req.body || {};
-  const keys = Object.keys(body);
-  // Allowlist check FIRST — before any DB work — so a payload like
-  // `{user_id: 99, ...}` rejects with no read.
-  for (const k of keys) {
-    if (!PAYMENT_METHOD_ALLOWED_KEYS.has(k)) {
-      throw new ValidationError({ body: `Unknown field: ${k}` }, `Unknown field: ${k}`);
-    }
-  }
-  if (keys.length === 0) {
-    throw new ValidationError({ _form: 'No fields to update.' }, 'No fields to update.');
-  }
-
-  // Validate + normalize handles (throws ValidationError on bad shape).
-  const updates = {};
-  if ('venmo_handle' in body)   updates.venmo_handle   = normalizeVenmoHandle(body.venmo_handle);
-  if ('cashapp_handle' in body) updates.cashapp_handle = normalizeCashappHandle(body.cashapp_handle);
-  if ('paypal_url' in body)     updates.paypal_url     = normalizePaypalUrl(body.paypal_url);
-  if ('zelle_handle' in body)   updates.zelle_handle   = normalizeZelleHandle(body.zelle_handle);
-
-  // payment_username — free text, 100 char cap.
-  if ('payment_username' in body) {
-    if (body.payment_username === null || body.payment_username === '') {
-      updates.payment_username = null;
-    } else if (typeof body.payment_username !== 'string' || body.payment_username.length > 100) {
-      throw new ValidationError({ payment_username: 'must be a string up to 100 chars' });
-    } else {
-      updates.payment_username = body.payment_username.trim();
-    }
-  }
-
-  // Bank fields. Null = clear (no encryption). String = validate BEFORE
-  // encryption. Anything else rejects.
-  if ('routing_number' in body) {
-    if (body.routing_number === null || body.routing_number === '') {
-      updates.routing_number = null;
-    } else if (!isValidRoutingNumber(String(body.routing_number).trim())) {
-      throw new ValidationError({ routing_number: 'must be a 9-digit ABA routing number' });
-    } else {
-      updates.routing_number = String(body.routing_number).trim();
-    }
-  }
-  if ('account_number' in body) {
-    if (body.account_number === null || body.account_number === '') {
-      updates.account_number = null;
-    } else if (!isValidAccountNumber(String(body.account_number).trim())) {
-      throw new ValidationError({ account_number: 'must be 4 to 17 digits' });
-    } else {
-      updates.account_number = String(body.account_number).trim();
-    }
-  }
-
-  const fieldsChanged = [];
-  const cleared = [];
-  let preferredCleared = false;
-
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    // Ensure a payment_profiles row exists, then re-select FOR UPDATE.
-    await client.query(
-      'INSERT INTO payment_profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING',
-      [req.user.id]
-    );
-    const existingRes = await client.query(
-      'SELECT * FROM payment_profiles WHERE user_id = $1 FOR UPDATE',
-      [req.user.id]
-    );
-    const existing = existingRes.rows[0];
-
-    // Build the SET clause incrementally — only fields that actually changed
-    // get written; bank fields go through encrypt() now that validation passed.
-    const setCols = [];
-    const setVals = [];
-    for (const k of Object.keys(updates)) {
-      const v = updates[k];
-      if (k === 'routing_number' || k === 'account_number') {
-        if (v === null) {
-          setCols.push(`${k} = NULL`);
-          cleared.push(k);
-          fieldsChanged.push(k);
-        } else {
-          // Encrypt the plaintext. Only changed bank fields get re-encrypted;
-          // the OTHER bank field's ciphertext is left untouched (no
-          // decrypt-then-encrypt churn on the unchanged side).
-          setVals.push(encrypt(v));
-          setCols.push(`${k} = $${setVals.length + 1}`);
-          fieldsChanged.push(k);
-        }
-      } else {
-        if (v === null) cleared.push(k);
-        setVals.push(v);
-        setCols.push(`${k} = $${setVals.length + 1}`);
-        fieldsChanged.push(k);
-      }
-    }
-
-    if (setCols.length > 0) {
-      await client.query(
-        `UPDATE payment_profiles SET ${setCols.join(', ')}, updated_at = NOW() WHERE user_id = $1`,
-        [req.user.id, ...setVals]
-      );
-    }
-
-    // Auto-NULL preferred_payment_method if the user just cleared the field
-    // their preferred target depends on. Examine the prospective post-update
-    // state by merging `updates` onto `existing`.
-    const merged = { ...existing, ...updates };
-    if (existing && existing.preferred_payment_method
-        && !isPreferredEligible(existing.preferred_payment_method, merged)) {
-      await client.query(
-        'UPDATE payment_profiles SET preferred_payment_method = NULL, updated_at = NOW() WHERE user_id = $1',
-        [req.user.id]
-      );
-      preferredCleared = true;
-    }
-
-    await client.query('COMMIT');
-  } catch (err) {
-    try { await client.query('ROLLBACK'); } catch (_) { /* already gone */ }
-    throw err;
-  } finally {
-    client.release();
-  }
-
-  // Audit log AFTER the commit. A failed audit insert must not roll back the
-  // user-facing change; capture to Sentry and move on.
-  if (fieldsChanged.length > 0) {
-    try {
-      await pool.query(
-        `INSERT INTO staff_audit_log (user_id, actor_type, actor_id, action, details)
-         VALUES ($1, 'staff', $1, 'payment_method_change', $2)`,
-        [req.user.id, JSON.stringify({ fields_changed: fieldsChanged, cleared })]
-      );
-    } catch (err) {
-      try {
-        if (process.env.SENTRY_DSN_SERVER) {
-          Sentry.captureException(err, {
-            tags: { route: 'staffPortal.payment-methods', op: 'audit_insert' },
-            extra: { user_id: req.user.id, fieldsChanged, cleared },
-          });
-        }
-      } catch (_) { /* swallow */ }
-    }
-  }
-
-  // Re-project to return the new state. New SELECT (not in tx) is fine —
-  // the user only sees their own row.
-  const { rows } = await pool.query(
-    `SELECT preferred_payment_method, payment_username,
-            routing_number, account_number,
-            venmo_handle, cashapp_handle, paypal_url, zelle_handle
-       FROM payment_profiles WHERE user_id = $1`,
-    [req.user.id]
-  );
-  res.json({
-    ...projectPaymentMethods(rows[0], req.user.id),
-    preferred_cleared: preferredCleared,
-  });
-}));
-
-router.put('/preferred-payment-method', asyncHandler(async (req, res) => {
-  const method = req.body?.method;
-  if (method !== null && !PAYMENT_METHOD_VALUES.has(method)) {
-    throw new ValidationError(
-      { method: `must be one of ${[...PAYMENT_METHOD_VALUES].join(', ')} or null` },
-      'Invalid payment method.'
-    );
-  }
-
-  const { rows } = await pool.query(
-    `SELECT preferred_payment_method, venmo_handle, cashapp_handle, paypal_url, zelle_handle,
-            routing_number, account_number
-       FROM payment_profiles WHERE user_id = $1`,
-    [req.user.id]
-  );
-  const row = rows[0];
-
-  if (method !== null && !isPreferredEligible(method, row)) {
-    // Construct a friendly field error per method.
-    const fieldMap = {
-      venmo: 'venmo_handle', cashapp: 'cashapp_handle', paypal: 'paypal_url',
-      zelle: 'zelle_handle', direct_deposit: 'routing_number',
-    };
-    const f = fieldMap[method] || 'method';
-    throw new ValidationError(
-      { [f]: `Add a ${method} handle before setting it as preferred.` },
-      `Add a ${method} handle before setting it as preferred.`
-    );
-  }
-
-  const from = (row && row.preferred_payment_method) || null;
-  await pool.query(
-    `INSERT INTO payment_profiles (user_id, preferred_payment_method)
-     VALUES ($1, $2)
-     ON CONFLICT (user_id) DO UPDATE SET preferred_payment_method = $2, updated_at = NOW()`,
-    [req.user.id, method]
-  );
-
-  // Audit row. Same Sentry-on-failure pattern as PATCH.
-  try {
-    await pool.query(
-      `INSERT INTO staff_audit_log (user_id, actor_type, actor_id, action, details)
-       VALUES ($1, 'staff', $1, 'preferred_payment_method_change', $2)`,
-      [req.user.id, JSON.stringify({ from, to: method })]
-    );
-  } catch (err) {
-    try {
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(err, {
-          tags: { route: 'staffPortal.preferred-payment-method', op: 'audit_insert' },
-          extra: { user_id: req.user.id, from, to: method },
-        });
-      }
-    } catch (_) { /* swallow */ }
-  }
-
-  res.json({ preferred_payment_method: method });
-}));
+// ─── Task 13: Payment methods (delegated) ──────────────────────────────────
+// Spec §6.11. Implementation lives in ./staffPortal/paymentMethods.js to keep
+// this top-level router under the file-size ratchet.
+paymentMethods.register(router);
 
 // ─── Task 14: tip-card-order, profile, ui-preferences ─────────────────────
 
@@ -887,4 +561,166 @@ router.delete('/push-subscriptions', asyncHandler(async (req, res) => {
   }
 }));
 
+// ─── Task 16: Documents replace endpoint ───────────────────────────────────
+//
+// Spec §6.14. POST /api/me/documents/:doc_type/replace
+// Multipart. Execution order is load-bearing:
+//   1. Validate doc_type, expires_on (alcohol cert only).
+//   2. Magic-byte file validation + size cap (express-fileupload abort handles
+//      file-size limit; if abortOnLimit fired, req.files is empty, the route
+//      sees no file and returns 413 indirectly via the missing-file 400 path —
+//      we surface the size limit explicitly via a 413 helper here for clarity).
+//   3. Slugify filename to a safe R2 key.
+//   4. Upload to R2 first (orphan acceptable on tx failure; admin tooling sweeps).
+//   5. Transaction: history INSERT + active record UPDATE.
+
+const DOC_TYPES = new Set(['w9', 'alcohol_certification']);
+const MAX_DOC_BYTES = 10 * 1024 * 1024;
+
+// Slugify the original filename so the R2 key has no slashes, control chars,
+// or path traversal sequences. Keeps a-z A-Z 0-9 . _ - only; everything else
+// becomes `_`. Strips leading `.` so a `.htaccess`-style upload can't masquerade.
+function slugifyFilename(name) {
+  if (!name || typeof name !== 'string') return 'upload';
+  const trimmed = name.trim().replace(/^\.+/, '');
+  const cleaned = trimmed.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120);
+  return cleaned || 'upload';
+}
+
+function isValidIsoDateFuture(s) {
+  if (!s || typeof s !== 'string') return false;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return false;
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  return d.getTime() > today.getTime();
+}
+
+router.post('/documents/:doc_type/replace', asyncHandler(async (req, res) => {
+  const docType = req.params.doc_type;
+  if (!DOC_TYPES.has(docType)) {
+    throw new ValidationError({ doc_type: `Unknown document type: ${docType}` });
+  }
+
+  // For alcohol_certification, expires_on is required and must be a future date.
+  let expiresOn = null;
+  if (docType === 'alcohol_certification') {
+    expiresOn = req.body?.expires_on;
+    if (!isValidIsoDateFuture(expiresOn)) {
+      throw new ValidationError(
+        { expires_on: 'Expiry date must be a YYYY-MM-DD in the future.' },
+        'Expiry date must be in the future.'
+      );
+    }
+  }
+
+  const file = req.files?.file;
+  if (!file) {
+    throw new ValidationError({ file: 'File upload required.' }, 'File upload required.');
+  }
+  // express-fileupload's abortOnLimit returns a 413 with text/html before we
+  // see the request, so this size check is the in-handler safety net for any
+  // path that gets past the middleware (e.g. test harness with a different
+  // limit).
+  if (file.size > MAX_DOC_BYTES) {
+    return res.status(413).json({ error: 'File too large (max 10 MB).', code: 'FILE_TOO_LARGE' });
+  }
+  if (!isValidUpload(file)) {
+    throw new ValidationError(
+      { file: 'Only PDF, PNG, or JPEG allowed.' },
+      'Only PDF, PNG, or JPEG allowed.'
+    );
+  }
+
+  const slug = slugifyFilename(file.name);
+  const r2Key = `staff/${docType}/${req.user.id}/${Date.now()}_${slug}`;
+
+  // R2 upload BEFORE the transaction. If R2 is down, return 502 and nothing
+  // in the DB changes. Orphan upload on a later transaction failure is the
+  // documented trade (spec §6.14, cleanup sweep is §13 follow-up).
+  try {
+    await _deps.uploadFile(file.data, r2Key);
+  } catch (err) {
+    // ExternalServiceError surfaces 502 via the global error handler. Anything
+    // else also rethrows; the AppError middleware decides the response shape.
+    throw err;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    if (docType === 'w9') {
+      // Active record lives on payment_profiles. Lock it FOR UPDATE.
+      await client.query(
+        'INSERT INTO payment_profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING',
+        [req.user.id]
+      );
+      const cur = await client.query(
+        'SELECT w9_file_url, w9_filename FROM payment_profiles WHERE user_id = $1 FOR UPDATE',
+        [req.user.id]
+      );
+      await client.query(
+        `INSERT INTO staff_document_history
+           (user_id, doc_type, previous_url, previous_filename, replaced_by_user_id)
+         VALUES ($1, 'w9', $2, $3, $4)`,
+        [req.user.id, cur.rows[0]?.w9_file_url || null, cur.rows[0]?.w9_filename || null, req.user.id]
+      );
+      await client.query(
+        `UPDATE payment_profiles
+            SET w9_file_url = $2, w9_filename = $3, updated_at = NOW()
+          WHERE user_id = $1`,
+        [req.user.id, r2Key, slug]
+      );
+    } else {
+      // alcohol_certification → contractor_profiles.
+      await client.query(
+        'INSERT INTO contractor_profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING',
+        [req.user.id]
+      );
+      const cur = await client.query(
+        `SELECT alcohol_certification_file_url, alcohol_certification_filename
+           FROM contractor_profiles WHERE user_id = $1 FOR UPDATE`,
+        [req.user.id]
+      );
+      await client.query(
+        `INSERT INTO staff_document_history
+           (user_id, doc_type, previous_url, previous_filename, replaced_by_user_id)
+         VALUES ($1, 'alcohol_certification', $2, $3, $4)`,
+        [
+          req.user.id,
+          cur.rows[0]?.alcohol_certification_file_url || null,
+          cur.rows[0]?.alcohol_certification_filename || null,
+          req.user.id,
+        ]
+      );
+      await client.query(
+        `UPDATE contractor_profiles
+            SET alcohol_certification_file_url = $2,
+                alcohol_certification_filename = $3,
+                alcohol_certification_expires_on = $4,
+                updated_at = NOW()
+          WHERE user_id = $1`,
+        [req.user.id, r2Key, slug, expiresOn]
+      );
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* gone */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  return res.json({
+    ok: true,
+    file_url: r2Key,
+    filename: slug,
+    ...(expiresOn ? { expires_on: expiresOn } : {}),
+  });
+}));
+
 module.exports = router;
+module.exports.__setDeps = __setDeps;
