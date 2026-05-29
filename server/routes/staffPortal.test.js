@@ -25,6 +25,7 @@ const jwt = require('jsonwebtoken');
 
 const { pool } = require('../db');
 const { AppError } = require('../utils/errors');
+const { encrypt, decrypt } = require('../utils/encryption');
 const staffPortalRouter = require('./staffPortal');
 
 // ─── Shared harness state ──────────────────────────────────────────────────
@@ -250,6 +251,192 @@ test('GET /api/me/staff-home > IDOR: other user sees empty next_shift', async ()
   assert.strictEqual(res.body.next_shift, null);
   // And no current-period payout row for them either.
   assert.ok(res.body.current_period === null || res.body.current_period.payout_id === null);
+});
+
+// ─── Task 13: Payment methods ───────────────────────────────────────────────
+
+async function clearPaymentProfile(uid) {
+  await pool.query('DELETE FROM staff_audit_log WHERE user_id = $1', [uid]);
+  await pool.query('DELETE FROM payment_profiles WHERE user_id = $1', [uid]);
+}
+
+test('GET /api/me/payment-methods > synthetic empty when no row', async () => {
+  await clearPaymentProfile(staffUserId);
+  const res = await request('GET', '/api/me/payment-methods', { token: staffToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.preferred_payment_method, null);
+  assert.strictEqual(res.body.venmo_handle, null);
+  assert.strictEqual(res.body.zelle_handle, null);
+  assert.strictEqual(res.body.routing_number_last4, null);
+  assert.strictEqual(res.body.account_number_last4, null);
+});
+
+test('GET /api/me/payment-methods > projects last-4 only, never raw', async () => {
+  // Encrypt seed values manually so we know what last-4 to expect.
+  await pool.query(
+    `INSERT INTO payment_profiles (user_id, routing_number, account_number, venmo_handle)
+     VALUES ($1, $2, $3, 'staffer-vee')
+     ON CONFLICT (user_id) DO UPDATE SET routing_number = $2, account_number = $3, venmo_handle = 'staffer-vee'`,
+    [staffUserId, encrypt('011000015'), encrypt('1234567890')]
+  );
+  const res = await request('GET', '/api/me/payment-methods', { token: staffToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.routing_number_last4, '0015');
+  assert.strictEqual(res.body.account_number_last4, '7890');
+  assert.strictEqual(res.body.venmo_handle, 'staffer-vee');
+  // No raw ciphertext or full plaintext leaks.
+  for (const key of Object.keys(res.body)) {
+    assert.ok(!String(res.body[key]).includes('enc:'), `no ciphertext leak in ${key}`);
+    assert.ok(!String(res.body[key]).includes('1234567890'), `no raw account in ${key}`);
+  }
+});
+
+test('PATCH /api/me/payment-methods > unknown key rejected 400 pre-DB', async () => {
+  await clearPaymentProfile(staffUserId);
+  const res = await request('PATCH', '/api/me/payment-methods', {
+    token: staffToken,
+    body: { user_id: 99, venmo_handle: 'evil' },
+  });
+  assert.strictEqual(res.status, 400);
+  // And no payment_profiles row should have been created — proves the
+  // allowlist check fired before any DB write.
+  const { rows } = await pool.query('SELECT id FROM payment_profiles WHERE user_id = $1', [staffUserId]);
+  assert.strictEqual(rows.length, 0);
+});
+
+test('PATCH /api/me/payment-methods > only-routing leaves account ciphertext untouched', async () => {
+  await clearPaymentProfile(staffUserId);
+  const origRouting = encrypt('011000015');
+  const origAccount = encrypt('1234567890');
+  await pool.query(
+    `INSERT INTO payment_profiles (user_id, routing_number, account_number)
+     VALUES ($1, $2, $3) ON CONFLICT (user_id) DO NOTHING`,
+    [staffUserId, origRouting, origAccount]
+  );
+  const res = await request('PATCH', '/api/me/payment-methods', {
+    token: staffToken,
+    body: { routing_number: '011000138' }, // Different valid ABA (FRB Atlanta)
+  });
+  assert.strictEqual(res.status, 200);
+
+  const { rows } = await pool.query(
+    'SELECT routing_number, account_number FROM payment_profiles WHERE user_id = $1',
+    [staffUserId]
+  );
+  // Account ciphertext untouched (still decrypts to the original plaintext).
+  assert.strictEqual(decrypt(rows[0].account_number), '1234567890');
+  // The stored ciphertext should be byte-identical to what we wrote (no
+  // re-encrypt on the unchanged side).
+  assert.strictEqual(rows[0].account_number, origAccount);
+  // Routing was changed; decrypts to the new plaintext.
+  assert.strictEqual(decrypt(rows[0].routing_number), '011000138');
+  assert.notStrictEqual(rows[0].routing_number, origRouting);
+});
+
+test('PATCH /api/me/payment-methods > clearing preferred target auto-NULLs preferred_payment_method', async () => {
+  await clearPaymentProfile(staffUserId);
+  // Seed with venmo as preferred.
+  await pool.query(
+    `INSERT INTO payment_profiles (user_id, venmo_handle, preferred_payment_method)
+     VALUES ($1, 'staffer-vee', 'venmo')`,
+    [staffUserId]
+  );
+
+  const res = await request('PATCH', '/api/me/payment-methods', {
+    token: staffToken,
+    body: { venmo_handle: null },
+  });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.preferred_cleared, true);
+  assert.strictEqual(res.body.preferred_payment_method, null);
+
+  const { rows } = await pool.query(
+    'SELECT preferred_payment_method FROM payment_profiles WHERE user_id = $1',
+    [staffUserId]
+  );
+  assert.strictEqual(rows[0].preferred_payment_method, null);
+});
+
+test('PATCH /api/me/payment-methods > audit log row written on every mutation', async () => {
+  await clearPaymentProfile(staffUserId);
+  await request('PATCH', '/api/me/payment-methods', {
+    token: staffToken,
+    body: { venmo_handle: 'logme' },
+  });
+  const { rows } = await pool.query(
+    "SELECT action, details FROM staff_audit_log WHERE user_id = $1 AND action = 'payment_method_change' ORDER BY id DESC LIMIT 1",
+    [staffUserId]
+  );
+  assert.strictEqual(rows.length, 1);
+  assert.deepStrictEqual(rows[0].details.fields_changed, ['venmo_handle']);
+  assert.deepStrictEqual(rows[0].details.cleared, []);
+});
+
+test('PATCH /api/me/payment-methods > decrypt-fail on unchanged side: GET returns null, PATCH proceeds', async () => {
+  await clearPaymentProfile(staffUserId);
+  // Stash a corrupt ciphertext on account_number, valid on routing.
+  await pool.query(
+    `INSERT INTO payment_profiles (user_id, routing_number, account_number)
+     VALUES ($1, $2, 'enc:deadbeef:cafe:01ff') ON CONFLICT (user_id) DO NOTHING`,
+    [staffUserId, encrypt('011000015')]
+  );
+
+  const getRes = await request('GET', '/api/me/payment-methods', { token: staffToken });
+  assert.strictEqual(getRes.status, 200);
+  assert.strictEqual(getRes.body.routing_number_last4, '0015');
+  // Corrupt one returns null without 500ing.
+  assert.strictEqual(getRes.body.account_number_last4, null);
+
+  // PATCH that touches venmo only — should succeed even though account
+  // ciphertext is unreadable.
+  const patchRes = await request('PATCH', '/api/me/payment-methods', {
+    token: staffToken,
+    body: { venmo_handle: 'survive' },
+  });
+  assert.strictEqual(patchRes.status, 200);
+});
+
+test('PUT /api/me/preferred-payment-method > rejects when handle missing', async () => {
+  await clearPaymentProfile(staffUserId);
+  const res = await request('PUT', '/api/me/preferred-payment-method', {
+    token: staffToken,
+    body: { method: 'venmo' },
+  });
+  assert.strictEqual(res.status, 400);
+  assert.ok(res.body.fieldErrors?.venmo_handle);
+});
+
+test('PUT /api/me/preferred-payment-method > direct_deposit requires both routing+account', async () => {
+  await clearPaymentProfile(staffUserId);
+  await pool.query(
+    `INSERT INTO payment_profiles (user_id, routing_number) VALUES ($1, $2)`,
+    [staffUserId, encrypt('011000015')]
+  );
+  // Routing only — should reject.
+  let res = await request('PUT', '/api/me/preferred-payment-method', {
+    token: staffToken,
+    body: { method: 'direct_deposit' },
+  });
+  assert.strictEqual(res.status, 400);
+
+  // Add account, retry — should succeed.
+  await pool.query(
+    `UPDATE payment_profiles SET account_number = $2 WHERE user_id = $1`,
+    [staffUserId, encrypt('1234567890')]
+  );
+  res = await request('PUT', '/api/me/preferred-payment-method', {
+    token: staffToken,
+    body: { method: 'direct_deposit' },
+  });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.preferred_payment_method, 'direct_deposit');
+
+  // Audit row should reflect the from→to.
+  const { rows } = await pool.query(
+    "SELECT details FROM staff_audit_log WHERE user_id = $1 AND action = 'preferred_payment_method_change' ORDER BY id DESC LIMIT 1",
+    [staffUserId]
+  );
+  assert.strictEqual(rows[0].details.to, 'direct_deposit');
 });
 
 test('GET /api/me/staff-home > cover broadcasts surface for teammates only', async () => {
