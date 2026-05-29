@@ -11,7 +11,7 @@ const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { subtractMinutesFromTime } = require('../utils/setupTime');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ValidationError, NotFoundError, PermissionError } = require('../utils/errors');
+const { ValidationError, NotFoundError, PermissionError, ConflictError } = require('../utils/errors');
 const { ADMIN_URL } = require('../utils/urls');
 const { scheduleStaffShiftMessages, notifyStaffOfCancellation } = require('../utils/staffShiftHandlers');
 const { confirmStaffingIfFullyStaffed } = require('../utils/lastMinuteStaffingConfirmation');
@@ -336,23 +336,27 @@ router.post('/:id/request', auth, requireOnboarded, asyncHandler(async (req, res
   res.status(201).json(result.rows[0]);
 }));
 
-/** DELETE /shifts/requests/:requestId — staff cancels their own request */
+/** DELETE /shifts/requests/:requestId — staff withdraws their own request
+ *  (pending-only); admin/manager can delete any status. */
 router.delete('/requests/:requestId', auth, asyncHandler(async (req, res) => {
   const isManager = req.user.role === 'admin' || req.user.role === 'manager';
-  // BEO: capture user_id + proposal_id before DELETE so we can suppress.
-  // Skip suppression when the shift has no proposal_id (standalone shifts).
   const pre = await pool.query(
-    `SELECT sr.user_id, s.proposal_id
-       FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
-      WHERE sr.id = $1`,
+    `SELECT sr.user_id, sr.status, s.proposal_id
+       FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id WHERE sr.id = $1`,
     [req.params.requestId]
   );
   const ctx = pre.rows[0];
+  if (!ctx) throw new NotFoundError('Request not found.');
+  if (!isManager) {
+    if (ctx.user_id !== req.user.id) throw new PermissionError('You can only withdraw your own shift requests.');
+    if (ctx.status === 'approved') throw new ConflictError('This request is already approved. Use Drop, Request Cover, or Emergency Drop instead.', 'already_approved');
+    if (ctx.status === 'denied') throw new ConflictError('This request was already denied.', 'already_denied');
+  }
   const result = isManager
     ? await pool.query('DELETE FROM shift_requests WHERE id = $1 RETURNING id', [req.params.requestId])
     : await pool.query('DELETE FROM shift_requests WHERE id = $1 AND user_id = $2 RETURNING id', [req.params.requestId, req.user.id]);
   if (!result.rows[0]) throw new NotFoundError('Request not found.');
-  if (ctx && ctx.proposal_id) {
+  if (ctx.proposal_id) {
     await suppressBeoNudgesForStaffers(ctx.proposal_id, [ctx.user_id], pool, 'staffer_unassigned: request deleted');
   }
   res.json({ success: true });
