@@ -382,6 +382,26 @@ function emailChangeWarning({ newEmail, cancelUrl }) {
   return { subject, html, text };
 }
 
+// Sent to the OLD address after a successful confirmation, so the prior owner
+// has a notification trail if the change was unauthorized (spec section 6.10).
+function emailChangeConfirmed({ oldEmail, newEmail }) {
+  const subject = 'Email changed on your Dr. Bartender account';
+  const text = [
+    `The email on your Dr. Bartender account was just changed from ${oldEmail} to ${newEmail}.`,
+    '',
+    `Future sign-ins and notifications go to the new address.`,
+    '',
+    `If you did not make this change, reach out to support@drbartender.com immediately so we can restore access.`,
+  ].join('\n');
+  const html = wrapEmail(`
+    <h2 style="color:${BRAND.primary};margin-top:0;">Email changed</h2>
+    <p>The email on your Dr. Bartender account was just changed from <strong>${esc(oldEmail)}</strong> to <strong>${esc(newEmail)}</strong>.</p>
+    <p>Future sign-ins and notifications go to the new address.</p>
+    <p>If you did not make this change, reach out to <a href="mailto:support@drbartender.com">support@drbartender.com</a> immediately so we can restore access.</p>
+  `);
+  return { subject, html, text };
+}
+
 module.exports = {
   signedAndPaidClient,
   drinkPlanLink,
@@ -391,4 +411,5 @@ module.exports = {
   lastMinuteStaffingConfirmation,
   emailChangeVerification,
   emailChangeWarning,
+  emailChangeConfirmed,
 };

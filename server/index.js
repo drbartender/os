@@ -183,6 +183,12 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/progress', require('./routes/progress'));
 app.use('/api/agreement', require('./routes/agreement'));
 app.use('/api/contractor', require('./routes/contractor'));
+// Email-change confirm — UNAUTHENTICATED by design (spec section 6.10:
+// possession of the email-link token proves intent, not the JWT). Mounted
+// BEFORE me.js so the inner `router.use(auth)` on me.js never fires for
+// `/confirm-email-change`. emailChange.js has no other routes, so any other
+// /api/me/* path falls through to me.js / staffPortal.js as usual.
+app.use('/api/me', require('./routes/emailChange'));
 app.use('/api/me', require('./routes/me'));
 // Staff portal redesign endpoints — mounted AFTER me.js so any future path
 // collision lets me.js win. Today's me.js owns /tip-page, /tips,
