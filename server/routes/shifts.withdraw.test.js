@@ -212,3 +212,97 @@ test('DELETE /requests/:id > unknown request returns 404', async () => {
   const res = await request('DELETE', `/api/shifts/requests/99999999`, { token: staffToken });
   assert.strictEqual(res.status, 404);
 });
+
+// ─── Task 28: GET /api/shifts projection ────────────────────────────────────
+
+test('GET /api/shifts > staff path projects cover_requested_at + cover_for_first_initial', async () => {
+  // Seed: a cover-requesting approved row by otherStaffUser on an OPEN shift
+  // visible to the staffUser (any open future shift qualifies). Both rows must
+  // be on the SAME shift, since the LATERAL subquery filters by shift_id.
+  const shRow = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, end_time, status, proposal_id, location, client_name, positions_needed)
+     VALUES (CURRENT_DATE + 5, '18:00', '22:00', 'open', $1, '123 Main', 'Projection Test ${NONCE}', '["bartender"]'::jsonb)
+     RETURNING id`,
+    [proposalId]
+  );
+  const projectionShiftId = shRow.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position, cover_requested_at, cover_reason)
+     VALUES ($1, $2, 'approved', 'bartender', NOW(), 'test')`,
+    [projectionShiftId, otherStaffUserId]
+  );
+
+  const res = await request('GET', '/api/shifts', { token: staffToken });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  const projected = res.body.find((row) => row.id === projectionShiftId);
+  assert.ok(projected, 'shift visible in staff /api/shifts response');
+  assert.ok(projected.cover_requested_at, 'cover_requested_at projected');
+  // otherStaffUser's preferred_name is 'Other Withdraw' — first initial is 'O'.
+  assert.strictEqual(projected.cover_for_first_initial, 'O');
+  // drink_plan_finalized_at projection (already shipped) still works alongside.
+  assert.ok('drink_plan_finalized_at' in projected);
+  assert.ok('my_beo_acknowledged_at' in projected);
+});
+
+test('GET /api/shifts/user/:userId/events > IDOR: another user returns 403', async () => {
+  // staff can only see their own user history.
+  const res = await request('GET', `/api/shifts/user/${otherStaffUserId}/events`, { token: staffToken });
+  assert.strictEqual(res.status, 403);
+});
+
+test('GET /api/shifts/user/:userId/events > admin can view anyone\'s history', async () => {
+  const res = await request('GET', `/api/shifts/user/${staffUserId}/events`, { token: adminToken });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  // Shape check — payload has upcoming + past arrays per the existing handler.
+  assert.ok(Array.isArray(res.body.upcoming));
+  assert.ok(Array.isArray(res.body.past));
+});
+
+test('GET /api/shifts/user/:userId/events > projects payout_id when payout_events exist', async () => {
+  // Seed an approved shift_request in the past for staffUser, with payout +
+  // payout_event linking it. The handler partitions by today's date so a
+  // past event lands in res.body.past.
+  const shRow = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, end_time, status, proposal_id, location, client_name, positions_needed)
+     VALUES (CURRENT_DATE - 7, '18:00', '22:00', 'staffed', $1, '123 Main', 'Past Test ${NONCE}', '["bartender"]'::jsonb)
+     RETURNING id`,
+    [proposalId]
+  );
+  const pastShiftId = shRow.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position)
+     VALUES ($1, $2, 'approved', 'bartender')`,
+    [pastShiftId, staffUserId]
+  );
+  // Pay period + payout + payout_event so payout_id is projected.
+  const pp = await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES (CURRENT_DATE - 14, CURRENT_DATE - 1, CURRENT_DATE + 1, 'open')
+     ON CONFLICT (start_date) DO UPDATE SET status = EXCLUDED.status
+     RETURNING id`
+  );
+  const po = await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id, total_cents) VALUES ($1, $2, 10000)
+     ON CONFLICT (pay_period_id, contractor_id) DO UPDATE SET total_cents = EXCLUDED.total_cents
+     RETURNING id`,
+    [pp.rows[0].id, staffUserId]
+  );
+  await pool.query(
+    `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents)
+     VALUES ($1, $2, 4, 4, 2500)
+     ON CONFLICT (payout_id, shift_id) DO NOTHING`,
+    [po.rows[0].id, pastShiftId]
+  );
+
+  try {
+    const res = await request('GET', `/api/shifts/user/${staffUserId}/events`, { token: staffToken });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const past = res.body.past.find((r) => r.id === pastShiftId);
+    assert.ok(past, 'past row visible');
+    assert.strictEqual(past.payout_id, po.rows[0].id, 'payout_id projected');
+  } finally {
+    await pool.query(`DELETE FROM payout_events WHERE shift_id = $1`, [pastShiftId]);
+    await pool.query(`DELETE FROM payouts WHERE id = $1`, [po.rows[0].id]);
+    await pool.query(`DELETE FROM pay_periods WHERE id = $1`, [pp.rows[0].id]);
+  }
+});

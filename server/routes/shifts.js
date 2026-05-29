@@ -17,6 +17,7 @@ const { scheduleStaffShiftMessages, notifyStaffOfCancellation } = require('../ut
 const { confirmStaffingIfFullyStaffed } = require('../utils/lastMinuteStaffingConfirmation');
 const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
 const { approveAndCascade } = require('../utils/coverApprovalCascade');
+const { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL } = require('./shifts.queries');
 
 const router = express.Router();
 
@@ -67,24 +68,10 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
     return res.json(result.rows);
   }
 
-  // Staff: only open upcoming shifts, with their own request status.
-  // BEO: project drink_plan finalized_at + status and the requester's own
-  // ack timestamp so the staff portal can render the BEO badge.
-  const result = await pool.query(`
-    SELECT s.*,
-      sr.id   AS my_request_id,
-      sr.status AS my_request_status,
-      sr.position AS my_request_position,
-      sr.beo_acknowledged_at AS my_beo_acknowledged_at,
-      dp.finalized_at AS drink_plan_finalized_at,
-      dp.status AS drink_plan_status
-    FROM shifts s
-    LEFT JOIN shift_requests sr ON sr.shift_id = s.id AND sr.user_id = $1
-    LEFT JOIN drink_plans dp ON dp.proposal_id = s.proposal_id
-    WHERE s.status = 'open' AND s.event_date >= CURRENT_DATE
-    ORDER BY s.event_date ASC
-    LIMIT 500
-  `, [req.user.id]);
+  // Staff path. SQL extracted to ./shifts.queries to keep this file under
+  // the 1000-line hard cap. Projection: own request status + BEO ack +
+  // drink plan finalize + cover-request flag and requester's first initial.
+  const result = await pool.query(STAFF_OPEN_SHIFTS_SQL, [req.user.id]);
   res.json(result.rows);
 }));
 
@@ -126,27 +113,9 @@ router.get('/user/:userId/events', auth, asyncHandler(async (req, res) => {
     throw new PermissionError('Access denied.');
   }
 
-  const result = await pool.query(`
-    SELECT s.id, s.event_date, s.start_time, s.end_time, s.location,
-           s.setup_minutes_before,
-           s.event_type, s.event_type_custom,
-           sr.position, sr.status AS request_status,
-           sr.beo_acknowledged_at AS my_beo_acknowledged_at,
-           p.event_type AS proposal_event_type,
-           p.event_type_custom AS proposal_event_type_custom,
-           COALESCE(c.name, s.client_name) AS client_name,
-           COALESCE(p.guest_count, s.guest_count) AS guest_count,
-           dp.finalized_at AS drink_plan_finalized_at,
-           dp.status AS drink_plan_status
-    FROM shift_requests sr
-    JOIN shifts s ON s.id = sr.shift_id
-    LEFT JOIN proposals p ON p.id = s.proposal_id
-    LEFT JOIN clients c ON c.id = p.client_id
-    LEFT JOIN drink_plans dp ON dp.proposal_id = s.proposal_id
-    WHERE sr.user_id = $1 AND sr.status = 'approved'
-    ORDER BY s.event_date DESC
-    LIMIT 500
-  `, [userId]);
+  // Task 28: SQL extracted to ./shifts.queries; projection adds payout_id
+  // for deep-linking each past row into a payout breakdown.
+  const result = await pool.query(USER_EVENTS_SQL, [userId]);
 
   const today = new Date().toISOString().slice(0, 10);
   const getDateStr = (d) => {
