@@ -441,3 +441,147 @@ test('POST /request-cover > IDOR: not your shift returns 403', async () => {
   });
   assert.strictEqual(res.status, 403);
 });
+
+// ─── Task 25: POST /requests/:shiftId/claim-cover ──────────────────────────
+
+// Helper: seed a shift with a cover-requesting staffer + a second optionally
+// position-matching user available to claim. Returns the shiftId.
+async function seedShiftAwaitingCover({ daysFromNow = 5, originalUserId, originalPosition = 'bartender' } = {}) {
+  const { shiftId, requestId } = await seedShiftWithRequest({
+    daysFromNow, userId: originalUserId, position: originalPosition,
+  });
+  await pool.query(
+    `UPDATE shift_requests SET cover_requested_at = NOW(), cover_reason = 'test' WHERE id = $1`,
+    [requestId]
+  );
+  return { shiftId, originalRequestId: requestId };
+}
+
+test('POST /claim-cover > 401 without JWT', async () => {
+  const res = await request('POST', '/api/shifts/requests/1/claim-cover');
+  assert.strictEqual(res.status, 401);
+});
+
+test('POST /claim-cover > claimer happy path, UPSERTs pending row with replaced_by_request_id', async () => {
+  const { shiftId, originalRequestId } = await seedShiftAwaitingCover({ originalUserId: staffUserId });
+  const res = await request('POST', `/api/shifts/requests/${shiftId}/claim-cover`, {
+    token: otherStaffToken,
+    body: {},
+  });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  assert.strictEqual(res.body.success, true);
+  assert.strictEqual(res.body.original_request_id, originalRequestId);
+  assert.ok(res.body.new_request_id);
+
+  const sr = await pool.query(`SELECT status, replaced_by_request_id FROM shift_requests WHERE id = $1`, [res.body.new_request_id]);
+  assert.strictEqual(sr.rows[0].status, 'pending');
+  assert.strictEqual(sr.rows[0].replaced_by_request_id, originalRequestId);
+});
+
+test('POST /claim-cover > original requester cannot claim own cover', async () => {
+  const { shiftId } = await seedShiftAwaitingCover({ originalUserId: staffUserId });
+  const res = await request('POST', `/api/shifts/requests/${shiftId}/claim-cover`, {
+    token: staffToken,
+    body: {},
+  });
+  assert.strictEqual(res.status, 409);
+  assert.strictEqual(res.body.code, 'self_claim');
+});
+
+test('POST /claim-cover > no active cover request returns 409', async () => {
+  const { shiftId } = await seedShiftWithRequest({
+    daysFromNow: 5, userId: staffUserId,
+  });
+  // No cover_requested_at on this shift's requests.
+  const res = await request('POST', `/api/shifts/requests/${shiftId}/claim-cover`, {
+    token: otherStaffToken,
+    body: {},
+  });
+  assert.strictEqual(res.status, 409);
+  assert.strictEqual(res.body.code, 'no_active_cover_request');
+});
+
+test('POST /claim-cover > prior-denied row gets UPSERTed back to pending', async () => {
+  const { shiftId } = await seedShiftAwaitingCover({ originalUserId: staffUserId });
+  // Pre-existing denied row for otherStaffUser on this shift.
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position)
+     VALUES ($1, $2, 'denied', 'bartender')
+     ON CONFLICT (shift_id, user_id) DO UPDATE SET status='denied'`,
+    [shiftId, otherStaffUserId]
+  );
+  const res = await request('POST', `/api/shifts/requests/${shiftId}/claim-cover`, {
+    token: otherStaffToken,
+    body: {},
+  });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  const sr = await pool.query(
+    `SELECT status, replaced_by_request_id FROM shift_requests WHERE shift_id = $1 AND user_id = $2`,
+    [shiftId, otherStaffUserId]
+  );
+  assert.strictEqual(sr.rows[0].status, 'pending');
+  assert.ok(sr.rows[0].replaced_by_request_id);
+});
+
+test('POST /claim-cover > existing-approved row returns 409 already_approved', async () => {
+  const { shiftId } = await seedShiftAwaitingCover({ originalUserId: staffUserId });
+  // otherStaffUser is already approved on this shift somehow (race).
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status, position)
+     VALUES ($1, $2, 'approved', 'bartender')
+     ON CONFLICT (shift_id, user_id) DO UPDATE SET status='approved'`,
+    [shiftId, otherStaffUserId]
+  );
+  const res = await request('POST', `/api/shifts/requests/${shiftId}/claim-cover`, {
+    token: otherStaffToken,
+    body: {},
+  });
+  assert.strictEqual(res.status, 409);
+  assert.strictEqual(res.body.code, 'already_approved');
+});
+
+test('POST /claim-cover > cascade flips original to denied with covered_by_request marker', async () => {
+  // End-to-end: claim, then call applyCoverCascade directly to simulate admin
+  // approval. Verify original flips correctly + new staffer's request becomes
+  // approved + cover_broadcast rows are suppressed.
+  const { applyCoverCascade } = require('../utils/coverApprovalCascade');
+  const { shiftId, originalRequestId } = await seedShiftAwaitingCover({ originalUserId: staffUserId });
+  // Seed a cover_broadcast row that should be suppressed.
+  await pool.query(
+    `INSERT INTO scheduled_messages
+       (entity_id, entity_type, message_type, recipient_type, recipient_id, channel,
+        scheduled_for, status, payload)
+     VALUES ($1, 'shift', 'cover_broadcast', 'staff', $2, 'push', NOW(), 'pending', '{}'::jsonb)`,
+    [shiftId, otherStaffUserId]
+  );
+  const claim = await request('POST', `/api/shifts/requests/${shiftId}/claim-cover`, {
+    token: otherStaffToken,
+    body: {},
+  });
+  assert.strictEqual(claim.status, 200);
+  const newRequestId = claim.body.new_request_id;
+
+  const dbc = await pool.connect();
+  try {
+    await dbc.query('BEGIN');
+    await dbc.query(`UPDATE shift_requests SET status = 'approved' WHERE id = $1`, [newRequestId]);
+    await applyCoverCascade(dbc, originalRequestId, newRequestId);
+    await dbc.query('COMMIT');
+  } finally {
+    dbc.release();
+  }
+
+  const o = await pool.query(`SELECT status, dropped_at, drop_reason, cover_requested_at FROM shift_requests WHERE id = $1`, [originalRequestId]);
+  assert.strictEqual(o.rows[0].status, 'denied');
+  assert.ok(o.rows[0].dropped_at);
+  assert.strictEqual(o.rows[0].drop_reason, `covered_by_request:${newRequestId}`);
+  assert.strictEqual(o.rows[0].cover_requested_at, null);
+
+  const sm = await pool.query(
+    `SELECT status FROM scheduled_messages WHERE entity_type = 'shift' AND entity_id = $1 AND message_type = 'cover_broadcast'`,
+    [shiftId]
+  );
+  for (const row of sm.rows) {
+    assert.strictEqual(row.status, 'suppressed');
+  }
+});

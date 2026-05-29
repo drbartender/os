@@ -19,6 +19,7 @@ const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
+const { approveAndCascade } = require('../utils/coverApprovalCascade');
 
 const router = express.Router();
 router.use(auth);
@@ -138,15 +139,15 @@ router.post('/cover-swaps/:swapToken', asyncHandler(async (req, res) => {
     return res.json({ status: 'already_resolved' });
   }
 
-  // TODO Task 25 — cover-swap cascade (Phase 5 step 2). Will call into the
-  // PUT /api/shifts/requests/:requestId approval branch with the swap
-  // context: flip the new request to approved, deny+mark-covered the
-  // original, suppress remaining cover_broadcast scheduled_messages for the
-  // shift, schedule the new staffer's shift-day messages, insert the BEO
-  // ack nudge if the drink plan is finalized, COMMIT, return 200.
-  return res.status(501).json({
-    status: 'pending_cascade_implementation',
-    reason: 'cascade_not_implemented',
+  // Cover-swap cascade (Task 25). Shared with the PUT approval branch in
+  // shifts.js via coverApprovalCascade.approveAndCascade — single source of
+  // truth for: approve the new request, deny+mark-covered the original,
+  // suppress remaining cover_broadcast rows, schedule shift-day messages,
+  // insert BEO ack nudge when the drink plan is finalized, COMMIT.
+  await approveAndCascade(pool, ctx.original.id, ctx.neu.id);
+
+  return res.json({
+    status: 'approved',
     swap: {
       original_request_id: ctx.original.id,
       new_request_id: ctx.neu.id,

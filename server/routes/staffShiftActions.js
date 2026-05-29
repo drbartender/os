@@ -19,7 +19,9 @@
  */
 
 const express = require('express');
+const crypto = require('node:crypto');
 const Sentry = require('@sentry/node');
+const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -33,6 +35,7 @@ const { hoursToEvent } = require('../utils/shiftTime');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { ADMIN_URL } = require('../utils/urls');
+const { sendEmail } = require('../utils/email');
 const { broadcastCoverRequest } = require('../utils/coverBroadcast');
 
 const router = express.Router();
@@ -466,6 +469,219 @@ router.post('/requests/:requestId/request-cover', asyncHandler(async (req, res) 
     cover_requested_at: new Date().toISOString(),
     broadcast_count: broadcastResult.broadcast_count,
     broadcast_truncated: broadcastResult.broadcast_truncated,
+  });
+}));
+
+// ──────────────────────────────────────────────────────────────────────────
+// Task 25: POST /requests/:shiftId/claim-cover
+// ──────────────────────────────────────────────────────────────────────────
+//
+// A qualified teammate (different position-eligible staffer) claims an open
+// cover request. Creates a pending shift_request row tied to the original via
+// `replaced_by_request_id`, signs a 7-day swap-token JWT, and emails admins
+// an approve-link. Admin then either approves via the email link (POST to
+// /api/admin/cover-swaps/:swapToken — wires through the shared cascade) or
+// via the normal staffing dashboard (PUT /api/shifts/requests/:requestId,
+// where the same cascade fires inside the approval branch).
+
+const SWAP_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+
+router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
+  const shiftId = parseInt(req.params.shiftId, 10);
+  if (!Number.isInteger(shiftId) || shiftId <= 0) {
+    throw new ValidationError({ shiftId: 'Invalid shift id.' });
+  }
+
+  const dbClient = await pool.connect();
+  let swapResult;
+  try {
+    await dbClient.query('BEGIN');
+
+    // 1. Look up the active cover-requesting shift_request for this shift.
+    // Lock the row so concurrent claimants serialize.
+    const { rows: origRows } = await dbClient.query(
+      `SELECT sr.id AS original_request_id, sr.user_id AS original_user_id,
+              sr.position AS original_position,
+              s.id AS shift_id, s.status AS shift_status,
+              s.positions_needed, s.event_date, s.start_time,
+              s.proposal_id, s.event_type AS shift_event_type,
+              s.event_type_custom AS shift_event_type_custom,
+              COALESCE(c.name, s.client_name) AS client_name,
+              pp.status AS pay_period_status
+         FROM shift_requests sr
+         JOIN shifts s ON s.id = sr.shift_id
+         LEFT JOIN proposals p ON p.id = s.proposal_id
+         LEFT JOIN clients c ON c.id = p.client_id
+         LEFT JOIN payout_events pe ON pe.shift_id = s.id
+         LEFT JOIN payouts po ON po.id = pe.payout_id AND po.contractor_id = sr.user_id
+         LEFT JOIN pay_periods pp ON pp.id = po.pay_period_id
+        WHERE sr.shift_id = $1
+          AND sr.cover_requested_at IS NOT NULL
+          AND sr.status = 'approved'
+          AND sr.dropped_at IS NULL
+        ORDER BY sr.cover_requested_at ASC
+        LIMIT 1
+        FOR UPDATE OF sr`,
+      [shiftId]
+    );
+    if (origRows.length === 0) {
+      throw new ConflictError('No active cover request on this shift.', 'no_active_cover_request');
+    }
+    const orig = origRows[0];
+
+    if (orig.shift_status === 'cancelled') {
+      throw new ConflictError('This shift was cancelled.', 'shift_cancelled');
+    }
+    if (orig.pay_period_status === 'processing') {
+      throw new ConflictError(
+        'This shift falls in a pay period that is being processed; contact management.',
+        'pay_period_processing'
+      );
+    }
+    if (orig.original_user_id === req.user.id) {
+      throw new ConflictError('You cannot claim your own cover.', 'self_claim');
+    }
+
+    // 2. Position eligibility: the claimer's contractor_profiles.position must
+    // be in shifts.positions_needed.
+    const { rows: profileRows } = await dbClient.query(
+      `SELECT position FROM contractor_profiles WHERE user_id = $1`,
+      [req.user.id]
+    );
+    const claimerPosition = profileRows[0]?.position || null;
+    if (!claimerPosition) {
+      throw new PermissionError('Your contractor profile is missing a position.');
+    }
+    // Parse positions_needed tolerantly (see coverBroadcast.parsePositionsNeeded).
+    let positionsNeededList = [];
+    try {
+      const raw = orig.positions_needed;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (Array.isArray(parsed)) {
+        positionsNeededList = parsed.map((p) => (typeof p === 'string' ? p : p?.position)).filter(Boolean);
+      } else if (typeof parsed === 'string') {
+        positionsNeededList = [parsed];
+      }
+    } catch {
+      positionsNeededList = ['bartender'];
+    }
+    if (positionsNeededList.length > 0 && !positionsNeededList.includes(claimerPosition)) {
+      throw new PermissionError(`Position '${claimerPosition}' is not eligible for this shift.`);
+    }
+
+    // 3. UPSERT the claimer's pending request, tying it via
+    // replaced_by_request_id to the original. The WHERE clause on ON CONFLICT
+    // refuses to clobber an already-approved row (concurrent admin assigning
+    // this user to the shift via the normal flow).
+    const { rows: upsertRows } = await dbClient.query(
+      `INSERT INTO shift_requests (shift_id, user_id, status, position, replaced_by_request_id)
+       VALUES ($1, $2, 'pending', $3, $4)
+       ON CONFLICT (shift_id, user_id) DO UPDATE
+         SET status = 'pending',
+             position = EXCLUDED.position,
+             replaced_by_request_id = EXCLUDED.replaced_by_request_id,
+             dropped_at = NULL,
+             drop_reason = NULL,
+             cover_requested_at = NULL
+         WHERE shift_requests.status <> 'approved'
+       RETURNING id`,
+      [shiftId, req.user.id, claimerPosition, orig.original_request_id]
+    );
+    if (upsertRows.length === 0) {
+      // The conflict path's WHERE filtered us out — claimer already approved.
+      throw new ConflictError('You already have an approved request for this shift.', 'already_approved');
+    }
+    const newRequestId = upsertRows[0].id;
+
+    // 4. Sign the swap-token JWT. jti adds a uniqueness anchor so a leaked
+    // token can be invalidated server-side later (out-of-scope for v1).
+    const swapToken = jwt.sign(
+      {
+        original_request_id: orig.original_request_id,
+        new_request_id: newRequestId,
+        jti: crypto.randomUUID(),
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: SWAP_TOKEN_TTL_SECONDS }
+    );
+
+    await dbClient.query('COMMIT');
+
+    swapResult = {
+      original_request_id: orig.original_request_id,
+      original_user_id: orig.original_user_id,
+      new_request_id: newRequestId,
+      shift_id: shiftId,
+      swap_token: swapToken,
+      shift_context: {
+        event_type_label: getEventTypeLabel({
+          event_type: orig.shift_event_type,
+          event_type_custom: orig.shift_event_type_custom,
+        }),
+        event_date_long: formatEventDateLong(orig.event_date),
+        start_time: orig.start_time,
+        client_name: orig.client_name,
+        position: claimerPosition,
+      },
+    };
+  } catch (err) {
+    await dbClient.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    dbClient.release();
+  }
+
+  // Post-commit: email management with one-click approve link. Failure is
+  // logged but NOT rolled back — the admin can still approve via the normal
+  // staffing dashboard.
+  const approveUrl = `${ADMIN_URL}/admin/shifts/cover-swaps/${swapResult.swap_token}`;
+  const sc = swapResult.shift_context;
+  const subject = `Cover swap proposal: ${sc.event_type_label} on ${sc.event_date_long}`;
+  const text = [
+    `A teammate claimed an open cover request. Approve the swap to confirm them on the shift.`,
+    ``,
+    `Event: ${sc.event_type_label}${sc.client_name ? ' for ' + sc.client_name : ''}`,
+    `Date: ${sc.event_date_long}`,
+    `Time: ${sc.start_time || 'TBD'}`,
+    `Position: ${sc.position}`,
+    ``,
+    `One-click approve: ${approveUrl}`,
+    `(Link expires in 7 days.)`,
+  ].join('\n');
+  const html = `<p>A teammate claimed an open cover request. Approve the swap to confirm them on the shift.</p>
+    <p><strong>Event:</strong> ${sc.event_type_label}${sc.client_name ? ' for ' + sc.client_name : ''}<br>
+    <strong>Date:</strong> ${sc.event_date_long}<br>
+    <strong>Time:</strong> ${sc.start_time || 'TBD'}<br>
+    <strong>Position:</strong> ${sc.position}</p>
+    <p style="text-align:center;margin:2rem 0;">
+      <a href="${approveUrl}" style="display:inline-block;padding:14px 32px;background:#3b2314;color:#fff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:16px;">Approve swap</a>
+    </p>
+    <p style="font-size:13px;color:#6b4226;">Link expires in 7 days.</p>`;
+
+  try {
+    // notifyAdminCategory fans across all admins subscribed to urgent_staffing;
+    // we deliberately ride that path so a new admin onboarding picks up these
+    // emails automatically.
+    await notifyAdminCategory({
+      category: 'urgent_staffing',
+      subject,
+      emailHtml: html,
+      emailText: text,
+    });
+  } catch (err) {
+    Sentry.captureException(err, {
+      tags: { feature: 'claim-cover', step: 'notify-admin' },
+      extra: { shift_id: swapResult.shift_id, new_request_id: swapResult.new_request_id },
+    });
+    console.error('[staffShiftActions] claim-cover admin notify failed:', err.message);
+  }
+
+  res.json({
+    success: true,
+    shift_id: swapResult.shift_id,
+    new_request_id: swapResult.new_request_id,
+    original_request_id: swapResult.original_request_id,
+    // We DON'T return swap_token to the staffer — it's an admin secret.
   });
 }));
 

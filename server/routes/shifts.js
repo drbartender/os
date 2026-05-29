@@ -16,6 +16,7 @@ const { ADMIN_URL } = require('../utils/urls');
 const { scheduleStaffShiftMessages, notifyStaffOfCancellation } = require('../utils/staffShiftHandlers');
 const { confirmStaffingIfFullyStaffed } = require('../utils/lastMinuteStaffingConfirmation');
 const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
+const { approveAndCascade } = require('../utils/coverApprovalCascade');
 
 const router = express.Router();
 
@@ -823,23 +824,33 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
 
   // BEO: capture prior state for branching. approved → denied suppresses BEO
   // (staffer is dropping out of the cycle). approved (re-promote) clears any
-  // stale ack from a prior cycle.
+  // stale ack from a prior cycle. Also capture replaced_by_request_id so the
+  // approval branch can run the cover-swap cascade when present (Task 25).
   const pre = await pool.query(
-    `SELECT sr.status AS prior_status, sr.user_id, s.proposal_id
+    `SELECT sr.status AS prior_status, sr.user_id, sr.replaced_by_request_id,
+            s.proposal_id
        FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
       WHERE sr.id = $1`,
     [req.params.requestId]
   );
   if (!pre.rows[0]) throw new NotFoundError('Request not found.');
-  const { prior_status, user_id: srUserId, proposal_id: srProposalId } = pre.rows[0];
+  const { prior_status, user_id: srUserId, proposal_id: srProposalId,
+          replaced_by_request_id: replacedByRequestId } = pre.rows[0];
 
   let result;
   if (status === 'approved') {
-    result = await pool.query(
-      `UPDATE shift_requests SET status = 'approved', beo_acknowledged_at = NULL
-        WHERE id = $1 RETURNING *`,
-      [req.params.requestId]
-    );
+    if (replacedByRequestId) {
+      // Cover-swap approval. Cascade extracted to coverApprovalCascade.js;
+      // runs in one transaction so deny+suppress+BEO-nudge land atomically.
+      await approveAndCascade(pool, replacedByRequestId, parseInt(req.params.requestId, 10));
+      result = await pool.query(`SELECT * FROM shift_requests WHERE id = $1`, [req.params.requestId]);
+    } else {
+      result = await pool.query(
+        `UPDATE shift_requests SET status = 'approved', beo_acknowledged_at = NULL
+          WHERE id = $1 RETURNING *`,
+        [req.params.requestId]
+      );
+    }
   } else if (status === 'denied') {
     result = await pool.query(
       `UPDATE shift_requests SET status = 'denied', beo_acknowledged_at = NULL
