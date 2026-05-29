@@ -38,13 +38,16 @@ const auth = async (req, res, next) => {
     if ((u.token_version ?? 0) !== (decoded.tokenVersion ?? 0)) {
       return res.status(401).json({ error: 'Session expired — please log in again', code: 'TOKEN_VERSION_MISMATCH' });
     }
-    // Block deactivated/rejected — but only for regular staff, not admins/managers
+    // Block deactivated/rejected/suspended — but only for regular staff, not admins/managers
     if (u.role === 'staff') {
       if (u.onboarding_status === 'deactivated') {
         return res.status(403).json({ error: 'This account has been deactivated. Contact admin.' });
       }
       if (u.onboarding_status === 'rejected') {
         return res.status(403).json({ error: 'Your application was not selected at this time.' });
+      }
+      if (u.onboarding_status === 'suspended') {
+        return res.status(403).json({ error: 'This account is temporarily suspended. Contact admin.' });
       }
     }
     // Strip token_version from req.user — route handlers don't need it.
