@@ -540,6 +540,94 @@ test('POST /claim-cover > existing-approved row returns 409 already_approved', a
   assert.strictEqual(res.body.code, 'already_approved');
 });
 
+// ─── Task 26: POST /requests/:requestId/emergency-drop ────────────────────
+
+test('POST /emergency-drop > 401 without JWT', async () => {
+  const res = await request('POST', '/api/shifts/requests/1/emergency-drop');
+  assert.strictEqual(res.status, 401);
+});
+
+test('POST /emergency-drop > reason <10 chars returns 400', async () => {
+  const { requestId } = await seedShiftWithRequest({
+    daysFromNow: 1, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const res = await request('POST', `/api/shifts/requests/${requestId}/emergency-drop`, {
+    token: staffToken,
+    body: { reason: 'short' },
+  });
+  assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+  assert.ok(res.body.fieldErrors?.reason);
+});
+
+test('POST /emergency-drop > reason >500 chars returns 413', async () => {
+  const { requestId } = await seedShiftWithRequest({
+    daysFromNow: 1, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const tooLong = 'A'.repeat(501);
+  const res = await request('POST', `/api/shifts/requests/${requestId}/emergency-drop`, {
+    token: staffToken,
+    body: { reason: tooLong },
+  });
+  assert.strictEqual(res.status, 413);
+  assert.strictEqual(res.body.code, 'reason_too_long');
+});
+
+test('POST /emergency-drop > 72h+1h returns 409 wrong_mode', async () => {
+  const { requestId } = await seedShiftWithRequest({
+    daysFromNow: 4, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const res = await request('POST', `/api/shifts/requests/${requestId}/emergency-drop`, {
+    token: staffToken,
+    body: { reason: 'Reasonable explanation here.' },
+  });
+  assert.strictEqual(res.status, 409);
+  assert.strictEqual(res.body.code, 'wrong_mode');
+});
+
+test('POST /emergency-drop > <72h succeeds, status stays approved, dropped_at + drop_emergency set', async () => {
+  // ~30h out
+  const { requestId, shiftId } = await seedShiftWithRequest({
+    daysFromNow: 1, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const res = await request('POST', `/api/shifts/requests/${requestId}/emergency-drop`, {
+    token: staffToken,
+    body: { reason: 'Car broke down on the way to the airport.' },
+  });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  assert.strictEqual(res.body.drop_emergency, true);
+  const sr = await pool.query(
+    `SELECT status, dropped_at, drop_reason, drop_emergency FROM shift_requests WHERE id = $1`,
+    [requestId]
+  );
+  assert.strictEqual(sr.rows[0].status, 'approved', 'status stays approved');
+  assert.ok(sr.rows[0].dropped_at);
+  assert.strictEqual(sr.rows[0].drop_emergency, true);
+  assert.match(sr.rows[0].drop_reason, /Car broke down/);
+
+  // Audit row landed.
+  const audit = await pool.query(
+    `SELECT action, actor_type, actor_id, details FROM proposal_activity_log
+      WHERE proposal_id = $1 AND action = 'emergency_drop_requested'
+      ORDER BY created_at DESC LIMIT 1`,
+    [proposalId]
+  );
+  assert.ok(audit.rows[0], 'proposal_activity_log row created');
+  assert.strictEqual(audit.rows[0].actor_type, 'staff');
+  assert.strictEqual(audit.rows[0].actor_id, staffUserId);
+  assert.strictEqual(audit.rows[0].details.shift_id, shiftId);
+});
+
+test('POST /emergency-drop > IDOR: not your shift returns 403', async () => {
+  const { requestId } = await seedShiftWithRequest({
+    daysFromNow: 1, startTimeStr: '18:00', userId: staffUserId,
+  });
+  const res = await request('POST', `/api/shifts/requests/${requestId}/emergency-drop`, {
+    token: otherStaffToken,
+    body: { reason: 'Reasonable explanation here.' },
+  });
+  assert.strictEqual(res.status, 403);
+});
+
 test('POST /claim-cover > cascade flips original to denied with covered_by_request marker', async () => {
   // End-to-end: claim, then call applyCoverCascade directly to simulate admin
   // approval. Verify original flips correctly + new staffer's request becomes

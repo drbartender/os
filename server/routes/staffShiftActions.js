@@ -37,6 +37,8 @@ const { getEventTypeLabel } = require('../utils/eventTypes');
 const { ADMIN_URL } = require('../utils/urls');
 const { sendEmail } = require('../utils/email');
 const { broadcastCoverRequest } = require('../utils/coverBroadcast');
+const { sendAndLogSms } = require('../utils/sms');
+const { staff_drop_to_management_sms } = require('../utils/smsTemplates');
 
 const router = express.Router();
 router.use(auth);
@@ -682,6 +684,224 @@ router.post('/requests/:shiftId/claim-cover', asyncHandler(async (req, res) => {
     new_request_id: swapResult.new_request_id,
     original_request_id: swapResult.original_request_id,
     // We DON'T return swap_token to the staffer — it's an admin secret.
+  });
+}));
+
+// ──────────────────────────────────────────────────────────────────────────
+// Task 26: POST /requests/:requestId/emergency-drop  (<72h, status stays approved)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// The emergency drop is a special case: status stays 'approved' (the staffer
+// IS responsible for finding their own cover, per spec §6.5), but
+// dropped_at + drop_emergency=true mark the row for the manager dashboard.
+// Notifications: notifyAdminCategory (admin users), an ADMIN_PHONE hotline
+// SMS (Dallas's personal phone), AND an audit row on proposal_activity_log.
+
+const MIN_EMERGENCY_REASON_LEN = 10;
+const MAX_EMERGENCY_REASON_LEN = 500;
+
+router.post('/requests/:requestId/emergency-drop', asyncHandler(async (req, res) => {
+  const requestId = parseInt(req.params.requestId, 10);
+  if (!Number.isInteger(requestId) || requestId <= 0) {
+    throw new ValidationError({ requestId: 'Invalid request id.' });
+  }
+
+  const rawReason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+  if (rawReason.length < MIN_EMERGENCY_REASON_LEN) {
+    throw new ValidationError({
+      reason: `Reason must be at least ${MIN_EMERGENCY_REASON_LEN} characters so management understands the situation.`,
+    });
+  }
+  if (rawReason.length > MAX_EMERGENCY_REASON_LEN) {
+    return res.status(413).json({
+      error: `Reason must be ${MAX_EMERGENCY_REASON_LEN} characters or fewer.`,
+      code: 'reason_too_long',
+    });
+  }
+  const reason = rawReason.slice(0, MAX_EMERGENCY_REASON_LEN);
+
+  let ctx;
+  let hoursOut;
+
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    ctx = await loadRequestContextForUpdate(dbClient, requestId);
+    if (!ctx) throw new NotFoundError('Request not found.');
+    if (ctx.user_id !== req.user.id) {
+      throw new PermissionError('You can only emergency-drop your own shift requests.');
+    }
+    if (ctx.status !== 'approved') {
+      throw new ConflictError('Only approved shifts can be emergency-dropped.', 'not_approved');
+    }
+    if (ctx.dropped_at) {
+      throw new ConflictError('This shift was already dropped.', 'already_dropped');
+    }
+    // Pay-period guard does NOT apply to emergency drops (spec §6.5): the
+    // event is by definition <72h out, so it cannot be in a processing
+    // period (those run after payday, days after event).
+
+    hoursOut = hoursToEvent({ event_date: ctx.event_date, start_time: ctx.start_time });
+    if (hoursOut === null) {
+      throw new ConflictError('Could not determine shift start time.', 'unparseable_shift_time');
+    }
+    if (hoursOut >= 72) {
+      throw new ConflictError(
+        'Emergency drops are only for events within 72 hours. Use Request Cover or Clean Drop instead.',
+        'wrong_mode'
+      );
+    }
+
+    await dbClient.query(
+      `UPDATE shift_requests
+          SET dropped_at = NOW(),
+              drop_reason = $1,
+              drop_emergency = true
+        WHERE id = $2`,
+      [reason, requestId]
+    );
+
+    await suppressPendingMessagesForUserShift(dbClient, ctx.shift_id, req.user.id);
+
+    // Audit row on proposal_activity_log when the shift has a proposal_id.
+    // shift.proposal_id is nullable (standalone shifts); skip + Sentry-warn
+    // so the gap is visible without breaking the drop.
+    if (ctx.proposal_id) {
+      await dbClient.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+         VALUES ($1, 'emergency_drop_requested', 'staff', $2, $3::jsonb)`,
+        [
+          ctx.proposal_id,
+          req.user.id,
+          JSON.stringify({
+            reason,
+            hours_out: Math.round(hoursOut * 100) / 100,
+            shift_id: ctx.shift_id,
+            request_id: requestId,
+          }),
+        ]
+      );
+    } else if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureMessage('Emergency drop on standalone shift (no proposal_id)', {
+        level: 'warning',
+        tags: { feature: 'emergency-drop' },
+        extra: { shift_id: ctx.shift_id, request_id: requestId, user_id: req.user.id },
+      });
+    }
+
+    await dbClient.query('COMMIT');
+  } catch (err) {
+    await dbClient.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    dbClient.release();
+  }
+
+  // ── Post-commit notifications ─────────────────────────────────────────
+  const eventTypeLabel = getEventTypeLabel({
+    event_type: ctx.shift_event_type,
+    event_type_custom: ctx.shift_event_type_custom,
+  });
+  const eventDateLong = formatEventDateLong(ctx.event_date);
+  const eventDateShort = (() => {
+    if (!ctx.event_date) return 'soon';
+    const ymd = ctx.event_date instanceof Date
+      ? `${ctx.event_date.getFullYear()}-${String(ctx.event_date.getMonth() + 1).padStart(2, '0')}-${String(ctx.event_date.getDate()).padStart(2, '0')}`
+      : String(ctx.event_date).slice(0, 10);
+    const d = new Date(`${ymd}T12:00:00Z`);
+    if (Number.isNaN(d.getTime())) return 'soon';
+    return d.toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' });
+  })();
+
+  // Look up the staffer's display name for the front-loaded SMS.
+  const { rows: staffRows } = await pool.query(
+    `SELECT COALESCE(cp.preferred_name, u.email) AS display_name
+       FROM users u LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+      WHERE u.id = $1`,
+    [req.user.id]
+  );
+  const staffName = staffRows[0]?.display_name || 'A staffer';
+
+  const subject = `EMERGENCY DROP: ${eventTypeLabel} on ${eventDateLong} (${Math.round(hoursOut)}h out)`;
+  const text = [
+    `${staffName} dropped their shift on emergency notice.`,
+    ``,
+    `Reason: ${reason}`,
+    ``,
+    `Event: ${eventTypeLabel}${ctx.client_name ? ' for ' + ctx.client_name : ''}`,
+    `Date: ${eventDateLong}`,
+    `Time: ${ctx.start_time || 'TBD'} - ${ctx.end_time || 'TBD'}`,
+    `Location: ${ctx.location || 'TBD'}`,
+    `Position: ${ctx.position || 'staff'}`,
+    `Hours out: ${Math.round(hoursOut * 10) / 10}`,
+    ``,
+    `Action required: assign a replacement immediately.`,
+    `Review in the admin dashboard: ${ADMIN_URL}/staffing`,
+  ].join('\n');
+  const html = `<p style="background:#fff4e5;border-left:4px solid #d9822b;padding:12px 16px;">
+      <strong>${staffName}</strong> dropped their shift on emergency notice.
+    </p>
+    <p><strong>Reason:</strong> ${reason}</p>
+    <p><strong>Event:</strong> ${eventTypeLabel}${ctx.client_name ? ' for ' + ctx.client_name : ''}<br>
+    <strong>Date:</strong> ${eventDateLong}<br>
+    <strong>Time:</strong> ${ctx.start_time || 'TBD'} to ${ctx.end_time || 'TBD'}<br>
+    <strong>Location:</strong> ${ctx.location || 'TBD'}<br>
+    <strong>Position:</strong> ${ctx.position || 'staff'}<br>
+    <strong>Hours out:</strong> ${Math.round(hoursOut * 10) / 10}</p>
+    <p><strong>Action required:</strong> assign a replacement immediately.</p>
+    <p><a href="${ADMIN_URL}/staffing">Review in admin dashboard</a></p>`;
+  const adminSmsBody = staff_drop_to_management_sms({
+    staff_name: staffName,
+    client_name: ctx.client_name,
+    event_date_short: eventDateShort,
+    hours_to_event: hoursOut,
+    reason,
+  });
+
+  // Admin-user fan-out (notifyAdminCategory uses the per-user phone). <72h is
+  // always within the daysOut <= 7 SMS gate, so SMS fires.
+  await notifyManagementOfAction({
+    category: 'urgent_staffing',
+    subject,
+    emailHtml: html,
+    emailText: text,
+    smsBody: adminSmsBody,
+    daysOut: hoursOut / 24,
+  });
+
+  // ADMIN_PHONE hotline SMS — separate fan-out target (Dallas's personal
+  // phone), distinct from the admin-user-phone broadcast above.
+  if (process.env.ADMIN_PHONE) {
+    try {
+      await sendAndLogSms({
+        to: process.env.ADMIN_PHONE,
+        body: adminSmsBody,
+        clientId: null,
+        messageType: 'admin_emergency_drop_hotline',
+      });
+    } catch (smsErr) {
+      Sentry.captureException(smsErr, {
+        tags: { feature: 'emergency-drop', channel: 'admin-phone-hotline' },
+        extra: { shift_id: ctx.shift_id, user_id: req.user.id },
+      });
+      console.error('[staffShiftActions] ADMIN_PHONE hotline SMS failed:', smsErr.message);
+    }
+  } else if (process.env.SENTRY_DSN_SERVER) {
+    Sentry.captureMessage('Emergency-drop hotline SMS skipped: ADMIN_PHONE not configured', {
+      level: 'warning',
+      tags: { feature: 'emergency-drop' },
+      extra: { shift_id: ctx.shift_id, user_id: req.user.id, hours_out: hoursOut },
+    });
+  }
+
+  res.json({
+    success: true,
+    request_id: requestId,
+    shift_id: ctx.shift_id,
+    dropped_at: new Date().toISOString(),
+    drop_emergency: true,
+    hours_out: Math.round(hoursOut * 100) / 100,
   });
 }));
 
