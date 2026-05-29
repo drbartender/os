@@ -172,3 +172,96 @@ test('staffBeoNudgeSms > strips curly quotes for GSM-7 friendliness', () => {
   });
   assert.ok(!/[“”‘’]/.test(body), 'no curly quotes');
 });
+
+// ─── Phase 5 Drop / Cover marketplace SMS ────────────────────────────────
+
+test('cover_broadcast_sms > includes initials, role, client, date, URL', () => {
+  const body = t.cover_broadcast_sms({
+    first_initial_last_initial: 'J.B.',
+    client_name: 'Smith Family',
+    event_date_short: 'Sat May 30',
+    shift_role: 'bartender',
+    shift_url: 'https://staff.drbartender.com/shifts/42',
+  });
+  assert.match(body, /Cover needed from Dr\. Bartender/);
+  assert.match(body, /J\.B\./);
+  assert.match(body, /bartender/);
+  assert.match(body, /Smith Family/);
+  assert.match(body, /Sat May 30/);
+  assert.match(body, /https:\/\/staff\.drbartender\.com\/shifts\/42/);
+  assertNoEmDash(body, 'cover_broadcast_sms');
+});
+
+test('cover_broadcast_sms > fits 2 SMS segments worst case (320 chars)', () => {
+  const body = t.cover_broadcast_sms({
+    first_initial_last_initial: 'X.Y.',
+    client_name: 'A Reasonably Long Client Name LLC',
+    event_date_short: 'Saturday, December 31',
+    shift_role: 'bartender',
+    shift_url: 'https://staff.drbartender.com/shifts/999999',
+  });
+  assert.ok(body.length <= 320, `cover_broadcast_sms exceeds 2 segments: ${body.length} chars`);
+});
+
+test('cover_broadcast_sms > falls back to defaults on missing inputs', () => {
+  const body = t.cover_broadcast_sms({});
+  assert.match(body, /Cover needed/);
+  assert.match(body, /bartender/);
+});
+
+test('cover_broadcast_sms > strips curly quotes', () => {
+  const body = t.cover_broadcast_sms({
+    first_initial_last_initial: 'J.B.',
+    client_name: '“Quoted” Client',
+    event_date_short: 'Sat May 30',
+    shift_role: 'bartender',
+    shift_url: 'https://x/y',
+  });
+  assert.ok(!/[“”‘’]/.test(body), 'no curly quotes');
+});
+
+test('staff_drop_to_management_sms > front-loads EMERGENCY DROP + name + reason', () => {
+  const body = t.staff_drop_to_management_sms({
+    staff_name: 'Alex Johnson',
+    client_name: 'Smith Family',
+    event_date_short: 'Sat May 30',
+    hours_to_event: 12.4,
+    reason: 'Car broke down on the way to the event',
+  });
+  assert.match(body, /^EMERGENCY DROP from Alex Johnson:/);
+  assert.match(body, /Car broke down/);
+  assert.match(body, /Smith Family/);
+  assert.match(body, /Sat May 30/);
+  assert.match(body, /12h/);
+  assertNoEmDash(body, 'staff_drop_to_management_sms');
+});
+
+test('staff_drop_to_management_sms > truncates long reason to 80 chars', () => {
+  const longReason = 'A'.repeat(200);
+  const body = t.staff_drop_to_management_sms({
+    staff_name: 'Alex',
+    client_name: 'Smith',
+    event_date_short: 'Sat May 30',
+    hours_to_event: 12,
+    reason: longReason,
+  });
+  // Body contains 80 A's max in the reason segment, never the full 200.
+  const aRun = body.match(/A+/);
+  assert.ok(aRun && aRun[0].length <= 80, `reason segment exceeds 80 chars: ${aRun?.[0].length}`);
+});
+
+test('staff_drop_to_management_sms > fits 2 SMS segments worst case', () => {
+  const body = t.staff_drop_to_management_sms({
+    staff_name: 'Some Person With A Long Name',
+    client_name: 'A Reasonably Long Client Name LLC',
+    event_date_short: 'Saturday, December 31',
+    hours_to_event: 71,
+    reason: 'A'.repeat(80),
+  });
+  assert.ok(body.length <= 320, `staff_drop_to_management_sms exceeds 2 segments: ${body.length} chars`);
+});
+
+test('staff_drop_to_management_sms > handles missing inputs gracefully', () => {
+  const body = t.staff_drop_to_management_sms({});
+  assert.match(body, /^EMERGENCY DROP from A staffer:/);
+});
