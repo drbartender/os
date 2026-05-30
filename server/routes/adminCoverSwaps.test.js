@@ -343,18 +343,18 @@ test('GET /api/admin/cover-swaps/:swapToken > 410 when one of the request ids is
   assert.strictEqual(res.status, 410);
 });
 
-// ─── POST: 501 stub (will flip to 200 in Task 25 — note in this test) ───
+// ─── POST: full cascade via approveAndCascade (Task 25) ───
 
-test('POST /api/admin/cover-swaps/:swapToken > 501 stub until Task 25 cascade lands', async () => {
-  // NOTE: This test asserts the 501 stub shape. Task 25 (Phase 5 step 2)
-  // wires in the cover-approval cascade; at that point this assertion flips
-  // to 200 + the cascade-result payload, and a new test takes over for
-  // already_resolved replay.
+test('POST /api/admin/cover-swaps/:swapToken > 200 approved when cover_requested_at active', async () => {
+  // Task 25 wired the cover-approval cascade through coverApprovalCascade.approveAndCascade.
+  // POST now triggers the cascade and returns the swap context.
   await resetOriginalCoverFlag();
   const swap = craftSwapToken({ originalId: originalRequestId, newId: newRequestId });
   const res = await request('POST', `/api/admin/cover-swaps/${swap}`, { token: adminToken });
-  assert.strictEqual(res.status, 501);
-  assert.strictEqual(res.body.status, 'pending_cascade_implementation');
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.status, 'approved');
+  assert.strictEqual(res.body.swap.original_request_id, originalRequestId);
+  assert.strictEqual(res.body.swap.new_request_id, newRequestId);
 });
 
 test('POST /api/admin/cover-swaps/:swapToken > 410 on expired JWT (same guard as GET)', async () => {
