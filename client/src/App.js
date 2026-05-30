@@ -73,6 +73,7 @@ const PrintTipCard = lazy(() => import('./pages/staff/PrintTipCard'));
 // until the Task 48 cutover.
 const StaffShellWithThemeWiring = lazy(() => import('./components/StaffShellWithThemeWiring'));
 const StaffPlaceholder = lazy(() => import('./components/staff/Placeholder'));
+const StaffV2HomePage = lazy(() => import('./pages/staff/HomePage'));
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
@@ -334,7 +335,7 @@ function StaffSiteRoutes() {
             cuts over. Each Placeholder route swaps to a real page one at a
             time as Tasks 32-47 land. */}
         <Route path="/staff-v2/*" element={<RequirePortal><StaffShellWithThemeWiring /></RequirePortal>}>
-          <Route index element={<StaffPlaceholder name="Home" />} />
+          <Route index element={<StaffV2HomePage />} />
           <Route path="shifts/*" element={<StaffPlaceholder name="Shifts" />} />
           <Route path="pay/*" element={<StaffPlaceholder name="Pay" />} />
           <Route path="tip-card" element={<StaffPlaceholder name="Tip Card" />} />
