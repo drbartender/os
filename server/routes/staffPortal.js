@@ -307,6 +307,18 @@ router.patch('/profile', asyncHandler(async (req, res) => {
 const UI_PREF_ALLOWED_KEYS = new Set(['theme', 'calendar_subscribed_app']);
 const UI_PREF_THEMES = new Set(['light', 'dark']);
 
+// GET sibling of the PATCH below. Used by StaffShellWithThemeWiring on mount
+// to hydrate the skin from ui_preferences.theme before the first paint (spec
+// §6.16). Returns `{ ui_preferences: {} }` rather than 404 for the new-user
+// case where no preferences have been written yet.
+router.get('/ui-preferences', asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT ui_preferences FROM users WHERE id = $1',
+    [req.user.id]
+  );
+  res.json({ ui_preferences: rows[0]?.ui_preferences || {} });
+}));
+
 router.patch('/ui-preferences', asyncHandler(async (req, res) => {
   const body = req.body || {};
   const keys = Object.keys(body);

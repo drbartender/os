@@ -67,6 +67,12 @@ const StaffResources = lazy(() => import('./pages/staff/StaffResources'));
 const StaffProfile = lazy(() => import('./pages/staff/StaffProfile'));
 const MyTipPage = lazy(() => import('./pages/staff/MyTipPage'));
 const PrintTipCard = lazy(() => import('./pages/staff/PrintTipCard'));
+// Staff portal v2 (redesign in flight — early stub mount per Task 31).
+// StaffShellWithThemeWiring fetches /api/me/ui-preferences on mount and
+// persists toggles via PATCH. The current StaffLayout mount stays in place
+// until the Task 48 cutover.
+const StaffShellWithThemeWiring = lazy(() => import('./components/StaffShellWithThemeWiring'));
+const StaffPlaceholder = lazy(() => import('./components/staff/Placeholder'));
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
@@ -322,6 +328,17 @@ function StaffSiteRoutes() {
           <Route path="/profile" element={<StaffProfile />} />
           <Route path="/my-tip-page" element={<MyTipPage />} />
           <Route path="/my-tip-page/print" element={<PrintTipCard />} />
+        </Route>
+        {/* Staff portal v2 — early stub mount for in-flight redesign (Task 31).
+            Runs in parallel with the existing StaffLayout mount until Task 48
+            cuts over. Each Placeholder route swaps to a real page one at a
+            time as Tasks 32-47 land. */}
+        <Route path="/staff-v2/*" element={<RequirePortal><StaffShellWithThemeWiring /></RequirePortal>}>
+          <Route index element={<StaffPlaceholder name="Home" />} />
+          <Route path="shifts/*" element={<StaffPlaceholder name="Shifts" />} />
+          <Route path="pay/*" element={<StaffPlaceholder name="Pay" />} />
+          <Route path="tip-card" element={<StaffPlaceholder name="Tip Card" />} />
+          <Route path="account/:section" element={<StaffPlaceholder name="Account" />} />
         </Route>
         {/* Public token routes */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
