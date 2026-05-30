@@ -111,6 +111,110 @@ router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) =
     ? false
     : shiftReqsRow.rows.some((r) => r.user_id === req.user.id && r.beo_acknowledged_at !== null);
 
+  // ── Team roster (spec §6.18). Spec defines `team_roster` as the active
+  // approved bartenders on this proposal — the same hybrid-state filter the
+  // payroll + auto-assign code uses (status='approved' AND dropped_at IS NULL,
+  // matching idx_shift_requests_active_approved). An emergency-dropped
+  // staffer keeps status='approved' for management to resolve but does NOT
+  // appear on the roster the team sees on the BEO. The roster also LEFT JOINs
+  // applications + agreements to derive a display name even for legacy
+  // staffers who never went through the modern application flow.
+  //
+  // SCHEMA ADAPTATIONS from the planning SQL:
+  //   - Plan said `s.canceled_at IS NULL`. The real `shifts` table uses a
+  //     `status` column ('open' / 'cancelled' / etc.) — no `canceled_at`
+  //     column exists. Mirrors the existing `s.status != 'cancelled'` guard
+  //     in authorize() and the shift_requests projection above.
+  const rosterRow = await pool.query(
+    `SELECT sr.user_id,
+            sr.position AS role,
+            sr.cover_requested_at,
+            cp.preferred_name,
+            cp.phone,
+            a.full_name AS applications_name,
+            ag.full_name AS agreements_name,
+            u.email
+       FROM shift_requests sr
+       JOIN shifts s ON s.id = sr.shift_id
+       LEFT JOIN users u ON u.id = sr.user_id
+       LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
+       LEFT JOIN applications a ON a.user_id = sr.user_id
+       LEFT JOIN agreements ag ON ag.user_id = sr.user_id
+      WHERE s.proposal_id = $1
+        AND sr.status = 'approved'
+        AND sr.dropped_at IS NULL
+        AND s.status != 'cancelled'
+      ORDER BY sr.id`,
+    [proposalId]
+  );
+
+  // Phone gating (spec §6.18). Teammates' phones surface only when the
+  // VIEWER themselves is approved+active on this proposal. A pending
+  // requester (who could be a brand-new staffer the admin hasn't confirmed
+  // yet) does NOT get to harvest active bartenders' numbers via the BEO
+  // endpoint. Admins/managers are not staff and therefore do not satisfy
+  // the approved-on-this-proposal predicate either — they get null phones
+  // here, which is fine: admin contact paths use the existing admin UI,
+  // not the team-roster card.
+  const viewerRow = await pool.query(
+    `SELECT 1
+       FROM shift_requests sr
+       JOIN shifts s ON s.id = sr.shift_id
+      WHERE s.proposal_id = $1
+        AND sr.user_id = $2
+        AND sr.status = 'approved'
+        AND sr.dropped_at IS NULL
+        AND s.status != 'cancelled'
+      LIMIT 1`,
+    [proposalId, req.user.id]
+  );
+  const viewerApproved = viewerRow.rowCount > 0;
+
+  // computeName: preferred_name + last-initial of legal name, falling back
+  // through applications → agreements → email-local-part. Mirrors the
+  // resolution chain in spec §6.18.
+  function computeName(row) {
+    const preferred = (row.preferred_name || '').trim();
+    if (preferred) {
+      const legal = ((row.applications_name || row.agreements_name) || '').trim();
+      const lastToken = legal ? legal.split(/\s+/).pop() : '';
+      const lastInit = lastToken && lastToken[0] ? lastToken[0].toUpperCase() : '';
+      return lastInit ? `${preferred} ${lastInit}.` : preferred;
+    }
+    const legal = ((row.applications_name || row.agreements_name) || '').trim();
+    if (legal) {
+      const parts = legal.split(/\s+/);
+      if (parts.length >= 2) {
+        return `${parts[0]} ${parts[parts.length - 1][0].toUpperCase()}.`;
+      }
+      return parts[0];
+    }
+    const email = (row.email || '').trim();
+    if (email && email.includes('@')) return email.split('@')[0];
+    return 'Staff';
+  }
+
+  function computeInitials(name) {
+    if (!name) return '??';
+    // Match a first-token+next-word-initial pair when the name has a space.
+    const m = name.match(/(\S)\S*\s+(\S)/);
+    if (m) return (m[1] + m[2]).toUpperCase();
+    return name.slice(0, 2).toUpperCase();
+  }
+
+  const team_roster = rosterRow.rows.map((r) => {
+    const display_name = computeName(r);
+    return {
+      user_id: r.user_id,
+      display_name,
+      initials: computeInitials(display_name),
+      is_me: r.user_id === req.user.id,
+      role: r.role || 'Bartender',
+      phone: viewerApproved ? (r.phone || null) : null,
+      needs_cover: r.cover_requested_at !== null,
+    };
+  });
+
   res.json({
     proposal: {
       id: p.id,
@@ -147,6 +251,7 @@ router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) =
     shopping_list_status: dp ? dp.shopping_list_status : null,
     addons: addonsRow.rows,
     shift_requests: shiftReqsRow.rows.map((r) => ({ user_id: r.user_id, beo_acknowledged_at: r.beo_acknowledged_at })),
+    team_roster,
     viewer: { is_admin: isAdmin, is_acknowledged: isAck },
   });
 }));

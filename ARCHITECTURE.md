@@ -226,7 +226,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 ### BEO — `/api/beo`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/:proposalId` | Auth (admin/manager always; staff only if approved on a non-cancelled shift) | Banquet Event Order payload — proposal/client/package, drink plan (without `token`), addons, shift_requests with `beo_acknowledged_at`, viewer flags. 404 fires before 403 so staff cannot enumerate proposal ids. Rate-limited per `req.user.id` via `beoReadLimiter` (60/15min). |
+| GET | `/:proposalId` | Auth (admin/manager always; staff only if approved on a non-cancelled shift) | Banquet Event Order payload — proposal/client/package, drink plan (without `token`), addons, shift_requests with `beo_acknowledged_at`, viewer flags, and `team_roster[]` (active approved bartenders with display_name/initials/role/needs_cover; phone gated to viewers who are themselves approved+active on the proposal per spec §6.18). 404 fires before 403 so staff cannot enumerate proposal ids. Rate-limited per `req.user.id` via `beoReadLimiter` (60/15min). |
 | GET | `/:proposalId/logo` | Same as above | Staff-authenticated logo proxy. Reads `drink_plans.selections->>'_logoFilename'` (validated to start with `drink-plan-logos/`), fetches the signed URL from R2 with an 8 s timeout, streams the bytes back with `Cache-Control: private, max-age=3600`. |
 | POST | `/:proposalId/acknowledge` | Auth | Staff: stamps `shift_requests.beo_acknowledged_at = NOW()` on every approved active shift_request the staffer holds on this proposal (gated on `drink_plans.finalized_at IS NOT NULL`; returns 409 if not finalized). Admin/manager: returns `{acknowledged:false}` (no-op). |
 

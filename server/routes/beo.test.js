@@ -42,7 +42,29 @@ let otherStaffUserId;
 let adminUserId;
 let clientId;
 
+// Roster fixtures (§6.18 team_roster tests). Each teammate exercises a
+// different branch of the display_name fallback chain in computeName().
+let rosterPreferredId;   // preferred_name + applications.full_name → "Rosa M."
+let rosterAppsOnlyId;    // applications only → "Diego R."
+let rosterAgreementsId;  // agreements only → "Noor E."
+let rosterEmailOnlyId;   // no name rows → email-local-part
+let rosterDroppedId;     // dropped_at set → excluded from roster
+let rosterPhoneFromCpId; // contractor_profiles.phone present → phone gating test
+
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+const ROSTER_PHONE = '+15555550199';
+
+// applications has several NOT NULL columns — keep this minimal row reusable.
+async function seedApplication(userId, fullName) {
+  await pool.query(
+    `INSERT INTO applications
+       (user_id, full_name, phone, city, state, travel_distance,
+        reliable_transportation, positions_interested, why_dr_bartender)
+     VALUES ($1, $2, '+15555551234', 'Chicago', 'IL', '25',
+             'yes', 'Bartender', 'Test')`,
+    [userId, fullName]
+  );
+}
 
 // ─── HTTP helper ────────────────────────────────────────────────────────────
 function request(method, path, { token } = {}) {
@@ -167,6 +189,73 @@ before(async () => {
     [shiftId, staffUserId]
   );
 
+  // ── Roster fixtures (§6.18). One user per fallback branch.
+  //
+  // rosterPreferred → has both contractor_profiles.preferred_name AND an
+  //   applications row, exercises the "preferred + last-initial" path.
+  // rosterAppsOnly  → no preferred_name, applications row only → first+last-init
+  //   from applications.full_name.
+  // rosterAgreements → no preferred_name, NO applications row, agreements row
+  //   present → falls all the way through to agreements.full_name.
+  // rosterEmailOnly → none of the above → email-local-part fallback.
+  // rosterDropped   → status='approved' BUT dropped_at IS NOT NULL → must be
+  //   excluded by the hybrid-state filter.
+  // rosterPhoneFromCp → contractor_profiles.phone set, used to assert the
+  //   §6.18 phone-gating rule (viewer must themselves be approved+active).
+  async function seedTeammate({ preferredName, phone, appsName, agreementsName, emailSuffix, dropped }) {
+    const u = await pool.query(
+      `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+       VALUES ($1, $2, 'staff', 'approved', 0) RETURNING id`,
+      [`beo-route-${emailSuffix}-${NONCE}@example.com`, passwordHash]
+    );
+    const uid = u.rows[0].id;
+    if (preferredName || phone) {
+      await pool.query(
+        `INSERT INTO contractor_profiles (user_id, preferred_name, phone)
+         VALUES ($1, $2, $3)`,
+        [uid, preferredName || null, phone || null]
+      );
+    }
+    if (appsName) await seedApplication(uid, appsName);
+    if (agreementsName) {
+      await pool.query(
+        `INSERT INTO agreements (user_id, full_name) VALUES ($1, $2)`,
+        [uid, agreementsName]
+      );
+    }
+    await pool.query(
+      `INSERT INTO shift_requests (shift_id, user_id, status, dropped_at)
+       VALUES ($1, $2, 'approved', $3)`,
+      [shiftId, uid, dropped ? new Date() : null]
+    );
+    return uid;
+  }
+
+  rosterPreferredId = await seedTeammate({
+    preferredName: 'Rosa', phone: ROSTER_PHONE,
+    appsName: 'Rosa Montoya', emailSuffix: 'roster-pref',
+  });
+  rosterAppsOnlyId = await seedTeammate({
+    appsName: 'Diego Ruiz', emailSuffix: 'roster-apps',
+  });
+  rosterAgreementsId = await seedTeammate({
+    agreementsName: 'Noor El-Amin', emailSuffix: 'roster-agree',
+  });
+  rosterEmailOnlyId = await seedTeammate({
+    emailSuffix: 'roster-email',
+  });
+  rosterDroppedId = await seedTeammate({
+    appsName: 'Dropped Person', emailSuffix: 'roster-dropped', dropped: true,
+  });
+  // Re-use the rosterPreferred row for phone-gating assertions — keeping a
+  // dedicated id around makes the test diffs read clearly.
+  rosterPhoneFromCpId = rosterPreferredId;
+
+  // Seed an application for the existing staff user too, so the harness's
+  // pre-existing "viewer is approved" path also exercises the preferred +
+  // applications resolution.
+  await seedApplication(staffUserId, 'Tina Staffer');
+
   // Minimal app: real router + AppError-aware error handler matching server/index.js.
   const app = express();
   app.use(express.json());
@@ -197,11 +286,14 @@ after(async () => {
   await pool.query("DELETE FROM drink_plans WHERE proposal_id = $1", [proposalId]);
   await pool.query("DELETE FROM proposals WHERE id = $1", [proposalId]);
   await pool.query("DELETE FROM clients WHERE id = $1", [clientId]);
-  await pool.query("DELETE FROM contractor_profiles WHERE user_id = $1", [staffUserId]);
-  await pool.query(
-    "DELETE FROM users WHERE id IN ($1, $2, $3)",
-    [adminUserId, staffUserId, otherStaffUserId]
-  );
+  // contractor_profiles / applications / agreements all FK ON DELETE CASCADE
+  // to users — cleaning the user rows below sweeps the rest.
+  const userIds = [
+    adminUserId, staffUserId, otherStaffUserId,
+    rosterPreferredId, rosterAppsOnlyId, rosterAgreementsId,
+    rosterEmailOnlyId, rosterDroppedId,
+  ].filter((id) => id !== null && id !== undefined);
+  await pool.query(`DELETE FROM users WHERE id = ANY($1::int[])`, [userIds]);
   await new Promise((resolve) => server.close(resolve));
   await pool.end();
 });
@@ -276,4 +368,97 @@ test('POST /api/beo/:proposalId/acknowledge > 409 when not finalized', async () 
   await pool.query('UPDATE drink_plans SET finalized_at = NULL WHERE id = $1', [drinkPlanId]);
   const res = await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: staffToken });
   assert.strictEqual(res.status, 409);
+});
+
+// ─── team_roster (spec §6.18) ──────────────────────────────────────────────
+
+test('GET /api/beo/:proposalId > team_roster: display_name uses preferred + last initial', async () => {
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+  assert.strictEqual(res.status, 200);
+  assert.ok(Array.isArray(res.body.team_roster), 'team_roster must be an array');
+  const row = res.body.team_roster.find((m) => m.user_id === rosterPreferredId);
+  assert.ok(row, 'expected rosterPreferred user on the team');
+  // preferred="Rosa", applications.full_name="Rosa Montoya" → "Rosa M."
+  assert.strictEqual(row.display_name, 'Rosa M.');
+  assert.strictEqual(row.initials, 'RM');
+  assert.strictEqual(row.role, 'Bartender');  // default when sr.position NULL
+  assert.strictEqual(row.is_me, false);
+  assert.strictEqual(row.needs_cover, false);
+});
+
+test('GET /api/beo/:proposalId > team_roster: fallback to applications.full_name when preferred missing', async () => {
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+  const row = res.body.team_roster.find((m) => m.user_id === rosterAppsOnlyId);
+  assert.ok(row);
+  // No preferred_name; applications.full_name="Diego Ruiz" → "Diego R."
+  assert.strictEqual(row.display_name, 'Diego R.');
+  assert.strictEqual(row.initials, 'DR');
+});
+
+test('GET /api/beo/:proposalId > team_roster: fallback to agreements.full_name when applications missing', async () => {
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+  const row = res.body.team_roster.find((m) => m.user_id === rosterAgreementsId);
+  assert.ok(row);
+  // No preferred, no applications; agreements.full_name="Noor El-Amin" → "Noor E."
+  assert.strictEqual(row.display_name, 'Noor E.');
+  assert.strictEqual(row.initials, 'NE');
+});
+
+test('GET /api/beo/:proposalId > team_roster: fallback to email-local-part when name rows missing', async () => {
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+  const row = res.body.team_roster.find((m) => m.user_id === rosterEmailOnlyId);
+  assert.ok(row);
+  // Email like beo-route-roster-email-<NONCE>@example.com → local-part as-is.
+  assert.ok(row.display_name.startsWith('beo-route-roster-email'), 'display_name should be email local-part');
+});
+
+test('GET /api/beo/:proposalId > team_roster: is_me flips on own row', async () => {
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+  const self = res.body.team_roster.find((m) => m.user_id === staffUserId);
+  const other = res.body.team_roster.find((m) => m.user_id === rosterPreferredId);
+  assert.ok(self, 'viewer must appear on own roster');
+  assert.ok(other);
+  assert.strictEqual(self.is_me, true);
+  assert.strictEqual(other.is_me, false);
+});
+
+test('GET /api/beo/:proposalId > team_roster: dropped_at IS NOT NULL is excluded', async () => {
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+  const droppedRow = res.body.team_roster.find((m) => m.user_id === rosterDroppedId);
+  assert.strictEqual(droppedRow, undefined, 'emergency-dropped staffer must not appear on roster');
+});
+
+test('GET /api/beo/:proposalId > team_roster: phone surfaces when viewer is approved', async () => {
+  // staffToken is for staffUserId, who is approved+active on the proposal.
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+  const row = res.body.team_roster.find((m) => m.user_id === rosterPhoneFromCpId);
+  assert.ok(row);
+  assert.strictEqual(row.phone, ROSTER_PHONE, 'phone must surface to an approved viewer');
+});
+
+test('GET /api/beo/:proposalId > team_roster: phone is null when viewer is admin (not approved as staff)', async () => {
+  // Admin/manager hits the BEO via the role bypass in authorize(), but does
+  // NOT satisfy the §6.18 "viewer is approved on this proposal" predicate.
+  // Phones must be null to keep the gate strict — admin contact paths use
+  // the existing admin UI, not the team-roster card.
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: adminToken });
+  const row = res.body.team_roster.find((m) => m.user_id === rosterPhoneFromCpId);
+  assert.ok(row);
+  assert.strictEqual(row.phone, null);
+});
+
+test('GET /api/beo/:proposalId > team_roster: needs_cover flips when cover_requested_at is set', async () => {
+  await pool.query(
+    'UPDATE shift_requests SET cover_requested_at = NOW() WHERE shift_id = $1 AND user_id = $2',
+    [shiftId, rosterPreferredId]
+  );
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
+  const row = res.body.team_roster.find((m) => m.user_id === rosterPreferredId);
+  assert.ok(row);
+  assert.strictEqual(row.needs_cover, true);
+  // Reset so other tests on this row stay deterministic.
+  await pool.query(
+    'UPDATE shift_requests SET cover_requested_at = NULL WHERE shift_id = $1 AND user_id = $2',
+    [shiftId, rosterPreferredId]
+  );
 });
