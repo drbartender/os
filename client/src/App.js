@@ -74,6 +74,7 @@ const PrintTipCard = lazy(() => import('./pages/staff/PrintTipCard'));
 const StaffShellWithThemeWiring = lazy(() => import('./components/StaffShellWithThemeWiring'));
 const StaffPlaceholder = lazy(() => import('./components/staff/Placeholder'));
 const StaffV2HomePage = lazy(() => import('./pages/staff/HomePage'));
+const StaffV2ShiftsPage = lazy(() => import('./pages/staff/ShiftsPage'));
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
@@ -336,7 +337,7 @@ function StaffSiteRoutes() {
             time as Tasks 32-47 land. */}
         <Route path="/staff-v2/*" element={<RequirePortal><StaffShellWithThemeWiring /></RequirePortal>}>
           <Route index element={<StaffV2HomePage />} />
-          <Route path="shifts/*" element={<StaffPlaceholder name="Shifts" />} />
+          <Route path="shifts/*" element={<StaffV2ShiftsPage />} />
           <Route path="pay/*" element={<StaffPlaceholder name="Pay" />} />
           <Route path="tip-card" element={<StaffPlaceholder name="Tip Card" />} />
           <Route path="account/:section" element={<StaffPlaceholder name="Account" />} />
