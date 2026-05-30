@@ -74,6 +74,10 @@ const PrintTipCard = lazy(() => import('./pages/staff/PrintTipCard'));
 const StaffShellWithThemeWiring = lazy(() => import('./components/StaffShellWithThemeWiring'));
 const StaffPlaceholder = lazy(() => import('./components/staff/Placeholder'));
 const StaffV2HomePage = lazy(() => import('./pages/staff/HomePage'));
+// ShiftsPage owns the `shifts/*` splat — it internally dispatches to
+// ShiftDetail when the wildcard's first segment is a numeric shift id
+// (see ShiftsPage.js head). One lazy chunk loads ShiftsPage + ShiftDetail
+// + DropCoverModal together, which matches the "Shifts" tab's usage pattern.
 const StaffV2ShiftsPage = lazy(() => import('./pages/staff/ShiftsPage'));
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));

@@ -41,7 +41,7 @@ const STAFF_OPEN_SHIFTS_SQL = `
 // user's payout_id for each past row via a LATERAL JOIN restricted to the
 // user's own payout (payouts is keyed on contractor_id).
 const USER_EVENTS_SQL = `
-  SELECT s.id, s.event_date, s.start_time, s.end_time, s.location,
+  SELECT s.id, s.proposal_id, s.event_date, s.start_time, s.end_time, s.location,
          s.setup_minutes_before,
          s.event_type, s.event_type_custom,
          sr.position, sr.status AS request_status,

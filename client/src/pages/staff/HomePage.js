@@ -127,7 +127,11 @@ export default function HomePage() {
             <button
               type="button"
               className="sp-action"
-              onClick={() => navigate(`/staff-v2/shifts/${nextShift.shift_id}`)}
+              onClick={() =>
+                navigate(`/staff-v2/shifts/${nextShift.shift_id}`, {
+                  state: { proposal_id: nextShift.proposal_id, shift: nextShift },
+                })
+              }
             >
               <div className="sp-action-icon">
                 <AlertIcon size={15} />
@@ -149,7 +153,9 @@ export default function HomePage() {
               broadcast={c}
               onOpen={() => {
                 if (c.you_are_on_team) {
-                  navigate(`/staff-v2/shifts/${c.shift_id}`);
+                  navigate(`/staff-v2/shifts/${c.shift_id}`, {
+                    state: { proposal_id: c.proposal_id || null },
+                  });
                 } else {
                   navigate('/staff-v2/shifts/available');
                 }
@@ -195,7 +201,11 @@ export default function HomePage() {
           <ShiftCard
             shift={nextShift}
             showConfirmFlag
-            onClick={() => navigate(`/staff-v2/shifts/${nextShift.shift_id}`)}
+            onClick={() =>
+              navigate(`/staff-v2/shifts/${nextShift.shift_id}`, {
+                state: { proposal_id: nextShift.proposal_id, shift: nextShift },
+              })
+            }
           />
         ) : (
           <div className="sp-empty">

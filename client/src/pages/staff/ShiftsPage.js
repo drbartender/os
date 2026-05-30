@@ -5,6 +5,7 @@ import { useToast } from '../../context/ToastContext';
 import api from '../../utils/api';
 import ShiftCard from '../../components/staff/ShiftCard';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import ShiftDetail from './ShiftDetail';
 
 const SUB_TABS = ['available', 'mine', 'past'];
 
@@ -42,15 +43,18 @@ const SUB_TABS = ['available', 'mine', 'past'];
 export default function ShiftsPage() {
   const params = useParams();
   // The mount path is `shifts/*` so the dynamic segment lives at params['*'].
+  // Numeric first segment → render ShiftDetail (the `:shiftId` route lives
+  // under the same parent block per the spec §6.1 URL table; see App.js).
+  // Sub-tab segment → render the tab body. Anything else → /available.
   const wildcard = params['*'] || '';
   const segment = wildcard.split('/')[0];
 
-  // Bare /staff-v2/shifts redirects to /available. Any unknown segment also
-  // bounces to /available so a typo deep-link doesn't render a blank page.
+  if (segment && /^\d+$/.test(segment)) {
+    return <ShiftDetail />;
+  }
   if (!segment || !SUB_TABS.includes(segment)) {
     return <Navigate to="/staff-v2/shifts/available" replace />;
   }
-
   return <ShiftsPageBody subTab={segment} />;
 }
 
@@ -237,7 +241,13 @@ function ShiftsPageBody({ subTab }) {
           onRetry={fetchAvailable}
           shifts={allOpenShifts}
           busyKey={busyKey}
-          onOpenShift={(s) => navigate(`/staff-v2/shifts/${s.id}`)}
+          onOpenShift={(s) =>
+            navigate(`/staff-v2/shifts/${s.id}`, {
+              // proposal_id rides along so ShiftDetail can skip the lookup
+              // round-trip when the user clicked through from this list.
+              state: { proposal_id: s.proposal_id || null, shift: s },
+            })
+          }
           onRequest={requestShift}
           onClaimCover={claimCover}
         />
@@ -251,7 +261,11 @@ function ShiftsPageBody({ subTab }) {
           upcoming={upcoming}
           busyKey={busyKey}
           onWithdraw={withdrawRequest}
-          onOpenShift={(s) => navigate(`/staff-v2/shifts/${s.id}`)}
+          onOpenShift={(s) =>
+            navigate(`/staff-v2/shifts/${s.id}`, {
+              state: { proposal_id: s.proposal_id || null, shift: s },
+            })
+          }
         />
       )}
       {subTab === 'past' && (
@@ -416,7 +430,7 @@ function MineTab({ loading, error, onRetry, pending, upcoming, busyKey, onWithdr
           key={row.id}
           shift={normalizeUserEvent(row)}
           showConfirmFlag
-          onClick={() => onOpenShift({ id: row.id })}
+          onClick={() => onOpenShift({ id: row.id, proposal_id: row.proposal_id })}
         />
       ))}
     </div>
@@ -555,6 +569,7 @@ function normalizeUserEvent(row) {
   return {
     id: row.id,
     shift_id: row.id,
+    proposal_id: row.proposal_id,
     event_date: row.event_date && String(row.event_date).slice(0, 10),
     start_time: row.start_time,
     end_time: row.end_time,
