@@ -13,7 +13,21 @@ const { getBookingWindow } = require('./bookingWindow');
 // `if (!newScheduledFor) continue;` branch in reanchorPendingMessages),
 // keep an explicit skip set so a future handler-meta change can't silently
 // re-anchor wrap-up rows.
-const SKIP_REANCHOR_TYPES = new Set(['post_event_wrap_up_email']);
+//
+// `cover_broadcast` (Phase 5 Task 22): a cover-needed broadcast targets a
+// SPECIFIC shift in a 12h–14d window. If the proposal's event date moves, a
+// stale broadcast referring to the old date would be misleading; the cover
+// request flow re-runs from scratch on the new date if the original requester
+// still wants out.
+//
+// `beo_unack_nudge_sms` (BEO plan): nudges anchor on a per-staffer ack window,
+// not the proposal's event date; the BEO handler re-derives the schedule from
+// the new date itself, so re-anchoring would double-schedule.
+const SKIP_REANCHOR_TYPES = new Set([
+  'post_event_wrap_up_email',
+  'cover_broadcast',
+  'beo_unack_nudge_sms',
+]);
 
 /**
  * Normalize a bare-DATE value (`event_date`, `balance_due_date`) to a
@@ -448,6 +462,20 @@ async function rescheduleProposalInTx(client, { proposalId, old, updated }) {
   }
 
   await reanchorPendingMessages(client, proposalId);
+
+  // BEO nudge re-anchor. The generic reanchorPendingMessages above only touches
+  // rows whose handler registers a non-null offsetFromEventDate. BEO nudges use
+  // bespoke timing (event_start - 3 days, floor NOW+5min) and register with
+  // offsetFromEventDate: null, so the generic pass skips them. We invoke the
+  // BEO-specific reanchor here, inside the same transaction, gated on an
+  // actual date OR start-time change so an unrelated reschedule field tweak
+  // (e.g. location-only) doesn't churn pending BEO rows.
+  const eventDateChanged = updated.event_date && String(updated.event_date) !== String(old.event_date);
+  const eventStartChanged = updated.event_start_time && updated.event_start_time !== old.event_start_time;
+  if (eventDateChanged || eventStartChanged) {
+    const { reanchorBeoForProposal } = require('./beoHandlers');
+    await reanchorBeoForProposal(proposalId, client);
+  }
 
   // Pre-execution Finding W4: spec section 7.8 says a reschedule that moves
   // the event INTO a 90+ day window must add the T-30 long-lead recap (and

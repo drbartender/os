@@ -35,6 +35,7 @@ See `.env.example` for the full list. Key ones:
 | `RUN_AUTOPAY_SCHEDULER` / `RUN_AUTOCOMPLETE_SCHEDULER` / `RUN_AUTO_ASSIGN_SCHEDULER` / `RUN_SEQUENCE_SCHEDULER` / `RUN_QUOTE_DRAFT_CLEANUP_SCHEDULER` / `RUN_LABRAT_PURGE_SCHEDULER` | Optional. Per-scheduler disable. Set to `false` to disable that specific scheduler. Honored only when `RUN_SCHEDULERS` is not `false` (global flag wins). |
 | `RUN_MESSAGE_DISPATCHER_SCHEDULER` | Optional. Set to `false` to disable the scheduled-message dispatcher (balance reminders, plus future drip / event-week handlers). Defaults on. Honored only when `RUN_SCHEDULERS` is not `false` (global flag wins). |
 | `RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER` | Optional. Set to `false` to disable the hourly `webhook_events` 30-day prune. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
+| `RUN_PENDING_EMAIL_CLEANUP_SCHEDULER` | Optional. Set to `false` to disable the daily `pending_email_changes` 7-day purge (spec §6.10). Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `CLIENT_URL` | Admin/staff frontend origin (CORS + admin dashboard links in emails). In prod: `https://admin.drbartender.com` |
 | `PUBLIC_SITE_URL` | Public marketing site origin used in client-facing token URLs (proposal, drink plan, invoice, shopping list). In prod: `https://drbartender.com` |
 | `STAFF_URL` | Staff portal origin in hire-confirmation emails. Optional — defaults to `https://staff.drbartender.com`. |

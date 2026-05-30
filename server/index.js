@@ -183,13 +183,38 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/progress', require('./routes/progress'));
 app.use('/api/agreement', require('./routes/agreement'));
 app.use('/api/contractor', require('./routes/contractor'));
+// Email-change confirm — UNAUTHENTICATED by design (spec section 6.10:
+// possession of the email-link token proves intent, not the JWT). Mounted
+// BEFORE me.js so the inner `router.use(auth)` on me.js never fires for
+// `/confirm-email-change`. emailChange.js has no other routes, so any other
+// /api/me/* path falls through to me.js / staffPortal.js as usual.
+app.use('/api/me', require('./routes/emailChange'));
 app.use('/api/me', require('./routes/me'));
+// Staff portal redesign endpoints — mounted AFTER me.js so any future path
+// collision lets me.js win. Today's me.js owns /tip-page, /tips,
+// /notification-preferences; this router owns the rest.
+app.use('/api/me', require('./routes/staffPortal'));
 app.use('/api/payment', require('./routes/payment'));
 app.use('/api/application', require('./routes/application'));
 app.use('/api/admin', require('./routes/admin'));
+// Admin one-click cover-swap routes (spec section 6.5). Lives at /api/admin
+// so the routing-table audit lines up with the other admin surfaces. JWT
+// swap-token + auth + admin-role guard is inside the router.
+app.use('/api/admin', require('./routes/adminCoverSwaps'));
 app.use('/api/shifts', require('./routes/shifts'));
+// Staff portal Drop / Cover marketplace endpoints (spec §6.5). Mounted AFTER
+// routes/shifts.js so the existing shifts.js routes have first-match priority
+// (Express matches by route specificity, but both routers share the
+// /api/shifts prefix and the same path segments need predictable ordering).
+// The new endpoints (/requests/:id/drop, /request-cover, /claim-cover,
+// /emergency-drop) are unique paths not already in shifts.js, so they fall
+// through to this router. Task 27's staff-facing DELETE wins by being added
+// to the existing shifts.js handler instead (role-aware: staff = pending-only
+// gate, admin = unrestricted) — no path collision here.
+app.use('/api/shifts', require('./routes/staffShiftActions'));
 app.use('/api/drink-plans', require('./routes/drinkPlans'));
 app.use('/api/drink-plans', require('./routes/drinkPlanConsult'));
+app.use('/api/beo', require('./routes/beo'));
 app.use('/api/cocktails', require('./routes/cocktails'));
 app.use('/api/mocktails', require('./routes/mocktails'));
 app.use('/api/proposals', require('./routes/proposals'));
@@ -352,6 +377,17 @@ async function start() {
         clearHealthRow('webhook_events_prune');
       }
 
+      // Pending-email-change cleanup — daily purge of consumed + long-expired rows
+      // (spec §6.10 step 10).
+      if (enabled('RUN_PENDING_EMAIL_CLEANUP_SCHEDULER')) {
+        const { purgeExpiredPendingEmailChanges } = require('./utils/pendingEmailChangeCleanup');
+        const wrapped = wrapScheduler('pending_email_cleanup', 86400, purgeExpiredPendingEmailChanges);
+        setTimeout(wrapped, 200000);
+        setInterval(wrapped, 24 * 60 * 60 * 1000);
+      } else if (!globalScheduleDisabled) {
+        clearHealthRow('pending_email_cleanup');
+      }
+
       // Pre-event reminder handlers (event_week_reminder, long_lead_t30_recap).
       // Must register before the dispatcher's first tick so it can resolve them.
       require('./utils/preEventHandlers').registerAll();
@@ -377,6 +413,11 @@ async function start() {
       // for imported Check Cherry events). Synchronous; must run before the
       // dispatcher's first tick so it can resolve post_event_wrap_up_email rows.
       require('./utils/ccWrapUpHandler').registerCcWrapUpHandler();
+
+      // BEO unack nudge handler. Fires the staffBeoNudgeSms reminder ~3 days
+      // before each unacked event for every approved staffer. Synchronous;
+      // must run before the dispatcher's first tick.
+      require('./utils/beoHandlers').registerBeoHandlers();
 
       // Scheduled-messages dispatcher — every 5 min, picks up pending rows
       if (enabled('RUN_MESSAGE_DISPATCHER_SCHEDULER')) {

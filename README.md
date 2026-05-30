@@ -140,6 +140,7 @@ dr-bartender/
 │   │   ├── agreement.js        # Contractor agreement + digital signature
 │   │   ├── application.js      # Contractor application form
 │   │   ├── auth.js             # POST /register, POST /login, GET /me
+│   │   ├── beo.js              # Banquet Event Order — staff-authenticated GET BEO + logo proxy + POST acknowledge
 │   │   ├── blog.js             # Blog post endpoints
 │   │   ├── calcom.js           # Cal.com webhook receiver (HMAC-SHA256 signed, public); handles booking created/cancelled/rescheduled/no-show events
 │   │   ├── calendar.js         # Calendar/scheduling endpoints
@@ -183,6 +184,8 @@ dr-bartender/
 │   │   ├── balanceReminderScheduling.js # Balance-reminder ladder scheduling (extracted from stripe.js)
 │   │   ├── balanceScheduler.js # Autopay balance charge scheduler
 │   │   ├── balanceSmsHandlers.js # Non-autopay balance reminder SMS handlers (due-today, late t1/t3)
+│   │   ├── beoFinalize.js      # BEO Finalize/Unfinalize route registrars + ensureNotFinalized guard (mounted into drinkPlans router)
+│   │   ├── beoHandlers.js      # BEO dispatcher handler (`beo_unack_nudge_sms`) + scheduling/suppression/reanchor helpers
 │   │   ├── bookingWindow.js    # Pure booking-window math (last-minute ≤14-day full-payment-required predicate)
 │   │   ├── calcomWebhookHelpers.js # Pure Cal.com webhook helpers (HMAC signature verification, payload normalization) consumed by `server/routes/calcom.js`
 │   │   ├── ccWrapUpEmailTemplate.js # cc-import: wrap-up email subject + html + text renderer
@@ -414,6 +417,13 @@ Imports legacy proposals, events, payments, refunds, payouts, leads, and invoice
 
 ### Cal.com Consult Booking Integration
 - **Cal.com consult booking integration**: webhook receiver auto-creates clients on first booking, flips consult status on form-submit, surfaces public booking URL in client comms.
+
+### BEO (Banquet Event Order)
+- Admin Finalizes a reviewed drink plan via the DrinkPlanCard, locking every mutation route on the plan (status, notes, shopping list, logo, consult, source flip, delete) until Unfinalize.
+- On Finalize, BEO nudge rows are scheduled to fire 3 days before the event for every approved staffer on every non-cancelled shift; a late assignment after Finalize back-fills its own nudge via `scheduleStaffShiftMessages`.
+- Each staffer opens the BEO from the staff portal, sees event details + drink menu + add-ons + logistics + custom-menu logo + special notes, and confirms read-receipt with one tap (`POST /api/beo/:proposalId/acknowledge` stamps `shift_requests.beo_acknowledged_at`).
+- Per-staffer "Confirmed [time]" pills surface on the admin EventDetailPage so the operator knows at a glance who has read the BEO.
+- Reschedule, cancellation, denial, and re-assignment all cascade into the nudge queue: pending rows are reanchored, suppressed, or recreated as needed, with a NOT EXISTS guard so a staffer covered on multiple shifts keeps their nudge.
 
 ### Shifts & Profile
 - View available shifts and request assignments

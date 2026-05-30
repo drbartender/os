@@ -11,10 +11,13 @@ const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const { subtractMinutesFromTime } = require('../utils/setupTime');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ValidationError, NotFoundError, PermissionError } = require('../utils/errors');
+const { ValidationError, NotFoundError, PermissionError, ConflictError } = require('../utils/errors');
 const { ADMIN_URL } = require('../utils/urls');
 const { scheduleStaffShiftMessages, notifyStaffOfCancellation } = require('../utils/staffShiftHandlers');
 const { confirmStaffingIfFullyStaffed } = require('../utils/lastMinuteStaffingConfirmation');
+const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
+const { approveAndCascade } = require('../utils/coverApprovalCascade');
+const { STAFF_OPEN_SHIFTS_SQL, USER_EVENTS_SQL } = require('./shifts.queries');
 
 const router = express.Router();
 
@@ -65,18 +68,10 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
     return res.json(result.rows);
   }
 
-  // Staff: only open upcoming shifts, with their own request status
-  const result = await pool.query(`
-    SELECT s.*,
-      sr.id   AS my_request_id,
-      sr.status AS my_request_status,
-      sr.position AS my_request_position
-    FROM shifts s
-    LEFT JOIN shift_requests sr ON sr.shift_id = s.id AND sr.user_id = $1
-    WHERE s.status = 'open' AND s.event_date >= CURRENT_DATE
-    ORDER BY s.event_date ASC
-    LIMIT 500
-  `, [req.user.id]);
+  // Staff path. SQL extracted to ./shifts.queries to keep this file under
+  // the 1000-line hard cap. Projection: own request status + BEO ack +
+  // drink plan finalize + cover-request flag and requester's first initial.
+  const result = await pool.query(STAFF_OPEN_SHIFTS_SQL, [req.user.id]);
   res.json(result.rows);
 }));
 
@@ -118,23 +113,9 @@ router.get('/user/:userId/events', auth, asyncHandler(async (req, res) => {
     throw new PermissionError('Access denied.');
   }
 
-  const result = await pool.query(`
-    SELECT s.id, s.event_date, s.start_time, s.end_time, s.location,
-           s.setup_minutes_before,
-           s.event_type, s.event_type_custom,
-           sr.position, sr.status AS request_status,
-           p.event_type AS proposal_event_type,
-           p.event_type_custom AS proposal_event_type_custom,
-           COALESCE(c.name, s.client_name) AS client_name,
-           COALESCE(p.guest_count, s.guest_count) AS guest_count
-    FROM shift_requests sr
-    JOIN shifts s ON s.id = sr.shift_id
-    LEFT JOIN proposals p ON p.id = s.proposal_id
-    LEFT JOIN clients c ON c.id = p.client_id
-    WHERE sr.user_id = $1 AND sr.status = 'approved'
-    ORDER BY s.event_date DESC
-    LIMIT 500
-  `, [userId]);
+  // Task 28: SQL extracted to ./shifts.queries; projection adds payout_id
+  // for deep-linking each past row into a payout breakdown.
+  const result = await pool.query(USER_EVENTS_SQL, [userId]);
 
   const today = new Date().toISOString().slice(0, 10);
   const getDateStr = (d) => {
@@ -216,7 +197,11 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
     SELECT s.*,
       (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
       (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count,
-      (SELECT COALESCE(array_agg(COALESCE(cp.preferred_name, u.email) ORDER BY COALESCE(cp.preferred_name, u.email)), '{}')
+      (SELECT COALESCE(json_agg(json_build_object(
+                'user_id', sr.user_id,
+                'name', COALESCE(cp.preferred_name, u.email),
+                'beo_acknowledged_at', sr.beo_acknowledged_at
+              ) ORDER BY COALESCE(cp.preferred_name, u.email)), '[]'::json)
          FROM shift_requests sr
          JOIN users u ON u.id = sr.user_id
          LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
@@ -274,10 +259,17 @@ router.post('/:id/request', auth, requireOnboarded, asyncHandler(async (req, res
   if (!shiftRes.rows[0]) {
     throw new NotFoundError('Shift not available.');
   }
+  // BEO: a staffer re-requesting after a denial counts as a fresh cycle —
+  // clear any stale ack only if prior status was 'denied'. If the existing
+  // row was already pending/approved (rare race), keep its ack flag.
   const result = await pool.query(`
     INSERT INTO shift_requests (shift_id, user_id, position, notes)
     VALUES ($1, $2, $3, $4)
-    ON CONFLICT (shift_id, user_id) DO UPDATE SET position = $3, notes = $4, status = 'pending'
+    ON CONFLICT (shift_id, user_id) DO UPDATE
+      SET position = $3,
+          notes = $4,
+          status = 'pending',
+          beo_acknowledged_at = CASE WHEN shift_requests.status = 'denied' THEN NULL ELSE shift_requests.beo_acknowledged_at END
     RETURNING *
   `, [req.params.id, req.user.id, position || null, notes || null]);
 
@@ -313,13 +305,29 @@ router.post('/:id/request', auth, requireOnboarded, asyncHandler(async (req, res
   res.status(201).json(result.rows[0]);
 }));
 
-/** DELETE /shifts/requests/:requestId — staff cancels their own request */
+/** DELETE /shifts/requests/:requestId — staff withdraws their own request
+ *  (pending-only); admin/manager can delete any status. */
 router.delete('/requests/:requestId', auth, asyncHandler(async (req, res) => {
   const isManager = req.user.role === 'admin' || req.user.role === 'manager';
+  const pre = await pool.query(
+    `SELECT sr.user_id, sr.status, s.proposal_id
+       FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id WHERE sr.id = $1`,
+    [req.params.requestId]
+  );
+  const ctx = pre.rows[0];
+  if (!ctx) throw new NotFoundError('Request not found.');
+  if (!isManager) {
+    if (ctx.user_id !== req.user.id) throw new PermissionError('You can only withdraw your own shift requests.');
+    if (ctx.status === 'approved') throw new ConflictError('This request is already approved. Use Drop, Request Cover, or Emergency Drop instead.', 'already_approved');
+    if (ctx.status === 'denied') throw new ConflictError('This request was already denied.', 'already_denied');
+  }
   const result = isManager
     ? await pool.query('DELETE FROM shift_requests WHERE id = $1 RETURNING id', [req.params.requestId])
     : await pool.query('DELETE FROM shift_requests WHERE id = $1 AND user_id = $2 RETURNING id', [req.params.requestId, req.user.id]);
   if (!result.rows[0]) throw new NotFoundError('Request not found.');
+  if (ctx.proposal_id) {
+    await suppressBeoNudgesForStaffers(ctx.proposal_id, [ctx.user_id], pool, 'staffer_unassigned: request deleted');
+  }
   res.json({ success: true });
 }));
 
@@ -426,7 +434,7 @@ router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
   // equipment_required, silently wiping staffing + gear when the admin only
   // edited a date or note. Pass null for omitted JSONB fields so COALESCE
   // keeps the prior row.
-  const result = await pool.query(`
+  const updateSql = `
     UPDATE shifts SET
       event_type = $1, event_type_custom = $2,
       event_date = COALESCE($3, event_date),
@@ -444,7 +452,8 @@ router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
       guest_count = COALESCE($19, guest_count),
       event_duration_hours = COALESCE($20, event_duration_hours)
     WHERE id = $14 RETURNING *
-  `, [
+  `;
+  const updateParams = [
     event_type || null, event_type_custom || null, event_date || null,
     start_time || null, end_time || null,
     location || null,
@@ -458,8 +467,38 @@ router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
     client_name || null, client_email || null, client_phone || null,
     guest_count ? parseInt(guest_count, 10) : null,
     event_duration_hours ? parseFloat(event_duration_hours) : null,
-  ]);
-  if (!result.rows[0]) throw new NotFoundError('Shift not found.');
+  ];
+
+  // BEO: shift-cancel path wraps UPDATE + suppression in a transaction so
+  // that a downstream suppression failure rolls back the cancel. Non-cancel
+  // edits stay on the pre-existing single-statement path.
+  let result;
+  if (status === 'cancelled') {
+    const dbClient = await pool.connect();
+    try {
+      await dbClient.query('BEGIN');
+      result = await dbClient.query(updateSql, updateParams);
+      if (!result.rows[0]) throw new NotFoundError('Shift not found.');
+      const approvedRes = await dbClient.query(
+        `SELECT user_id FROM shift_requests WHERE shift_id = $1 AND status = 'approved'`,
+        [req.params.id]
+      );
+      const userIds = approvedRes.rows.map((r) => r.user_id);
+      const proposalIdForBeo = result.rows[0].proposal_id;
+      if (proposalIdForBeo && userIds.length > 0) {
+        await suppressBeoNudgesForStaffers(proposalIdForBeo, userIds, dbClient, 'staffer_unassigned: generic PUT shift cancelled');
+      }
+      await dbClient.query('COMMIT');
+    } catch (err) {
+      try { await dbClient.query('ROLLBACK'); } catch (_e) { /* already rolled back */ }
+      throw err;
+    } finally {
+      dbClient.release();
+    }
+  } else {
+    result = await pool.query(updateSql, updateParams);
+    if (!result.rows[0]) throw new NotFoundError('Shift not found.');
+  }
 
   // Re-geocode if location changed and no explicit lat/lng
   const shift = result.rows[0];
@@ -478,8 +517,35 @@ router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
 
 /** DELETE /shifts/:id — delete a shift */
 router.delete('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
-  const result = await pool.query('DELETE FROM shifts WHERE id = $1 RETURNING id', [req.params.id]);
-  if (!result.rows[0]) throw new NotFoundError('Shift not found.');
+  // BEO: wrap in a transaction. Capture proposal_id + approved user_ids
+  // BEFORE the DELETE (cascade would drop shift_requests rows otherwise),
+  // then DELETE, then suppress BEO for staffers with no surviving approved
+  // active shift on the proposal (NOT EXISTS guard in the helper).
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+    const propRow = await dbClient.query('SELECT proposal_id FROM shifts WHERE id = $1', [req.params.id]);
+    if (!propRow.rows[0]) throw new NotFoundError('Shift not found.');
+    const proposalIdForBeo = propRow.rows[0].proposal_id;
+    let userIds = [];
+    if (proposalIdForBeo) {
+      const u = await dbClient.query(
+        `SELECT user_id FROM shift_requests WHERE shift_id = $1 AND status = $2`,
+        [req.params.id, 'approved']
+      );
+      userIds = u.rows.map((r) => r.user_id);
+    }
+    await dbClient.query('DELETE FROM shifts WHERE id = $1', [req.params.id]);
+    if (proposalIdForBeo && userIds.length > 0) {
+      await suppressBeoNudgesForStaffers(proposalIdForBeo, userIds, dbClient, 'staffer_unassigned: shift deleted');
+    }
+    await dbClient.query('COMMIT');
+  } catch (err) {
+    try { await dbClient.query('ROLLBACK'); } catch (_e) { /* already rolled back */ }
+    throw err;
+  } finally {
+    dbClient.release();
+  }
   res.json({ success: true });
 }));
 
@@ -520,8 +586,9 @@ router.post('/:id/cancel-or-unassign', auth, requireStaffing, asyncHandler(async
   try {
     await dbClient.query('BEGIN');
 
-    const shiftRes = await dbClient.query('SELECT id FROM shifts WHERE id = $1', [shiftId]);
+    const shiftRes = await dbClient.query('SELECT id, proposal_id FROM shifts WHERE id = $1', [shiftId]);
     if (!shiftRes.rows[0]) throw new NotFoundError('Shift not found.');
+    const proposalIdForBeo = shiftRes.rows[0].proposal_id;
 
     if (mode === 'cancel') {
       const approved = await dbClient.query(
@@ -558,6 +625,13 @@ router.post('/:id/cancel-or-unassign', auth, requireStaffing, asyncHandler(async
             AND status = 'pending'`,
         [shiftId, unassignUserId]
       );
+    }
+
+    // BEO: suppress pending nudges for affected staffers on the proposal.
+    // The helper's NOT EXISTS guard keeps the nudge for staffers who still
+    // hold an approved active shift elsewhere on this multi-shift proposal.
+    if (proposalIdForBeo && affectedUserIds.length > 0) {
+      await suppressBeoNudgesForStaffers(proposalIdForBeo, affectedUserIds, dbClient, `staffer_unassigned: cancel-or-unassign (${mode})`);
     }
 
     await dbClient.query('COMMIT');
@@ -597,11 +671,17 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
   const shiftRes = await pool.query('SELECT * FROM shifts WHERE id = $1', [req.params.id]);
   if (!shiftRes.rows[0]) throw new NotFoundError('Shift not found.');
 
-  // Insert or update the shift request as approved
+  // Insert or update the shift request as approved.
+  // BEO: clear any stale ack unconditionally — admin re-approving means a
+  // fresh assignment cycle; the prior ack (if any) was for the previous one.
   const result = await pool.query(`
     INSERT INTO shift_requests (shift_id, user_id, position, status)
     VALUES ($1, $2, $3, 'approved')
-    ON CONFLICT (shift_id, user_id) DO UPDATE SET status = 'approved', position = $3, updated_at = NOW()
+    ON CONFLICT (shift_id, user_id) DO UPDATE
+      SET status = 'approved',
+          position = $3,
+          beo_acknowledged_at = NULL,
+          updated_at = NOW()
     RETURNING *
   `, [req.params.id, user_id, position || 'Bartender']);
 
@@ -714,10 +794,51 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
   if (!['approved', 'denied', 'pending'].includes(status)) {
     throw new ValidationError({ status: 'Invalid status.' });
   }
-  const result = await pool.query(
-    'UPDATE shift_requests SET status = $1 WHERE id = $2 RETURNING *',
-    [status, req.params.requestId]
+
+  // BEO: capture prior state for branching. approved → denied suppresses BEO
+  // (staffer is dropping out of the cycle). approved (re-promote) clears any
+  // stale ack from a prior cycle. Also capture replaced_by_request_id so the
+  // approval branch can run the cover-swap cascade when present (Task 25).
+  const pre = await pool.query(
+    `SELECT sr.status AS prior_status, sr.user_id, sr.replaced_by_request_id,
+            s.proposal_id
+       FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
+      WHERE sr.id = $1`,
+    [req.params.requestId]
   );
+  if (!pre.rows[0]) throw new NotFoundError('Request not found.');
+  const { prior_status, user_id: srUserId, proposal_id: srProposalId,
+          replaced_by_request_id: replacedByRequestId } = pre.rows[0];
+
+  let result;
+  if (status === 'approved') {
+    if (replacedByRequestId) {
+      // Cover-swap approval. Cascade extracted to coverApprovalCascade.js;
+      // runs in one transaction so deny+suppress+BEO-nudge land atomically.
+      await approveAndCascade(pool, replacedByRequestId, parseInt(req.params.requestId, 10));
+      result = await pool.query(`SELECT * FROM shift_requests WHERE id = $1`, [req.params.requestId]);
+    } else {
+      result = await pool.query(
+        `UPDATE shift_requests SET status = 'approved', beo_acknowledged_at = NULL
+          WHERE id = $1 RETURNING *`,
+        [req.params.requestId]
+      );
+    }
+  } else if (status === 'denied') {
+    result = await pool.query(
+      `UPDATE shift_requests SET status = 'denied', beo_acknowledged_at = NULL
+        WHERE id = $1 RETURNING *`,
+      [req.params.requestId]
+    );
+    if (prior_status === 'approved' && srProposalId) {
+      await suppressBeoNudgesForStaffers(srProposalId, [srUserId], pool, 'staffer_unassigned: PUT request denied');
+    }
+  } else {
+    result = await pool.query(
+      `UPDATE shift_requests SET status = $1 WHERE id = $2 RETURNING *`,
+      [status, req.params.requestId]
+    );
+  }
   if (!result.rows[0]) throw new NotFoundError('Request not found.');
 
   // SMS the staff member when their request is approved

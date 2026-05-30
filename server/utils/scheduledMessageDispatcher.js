@@ -6,6 +6,14 @@ const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
 const { resolveChannelFallback } = require('./channelFallback');
 const { suspendClientAutomation } = require('./clientAutomationSuspension');
+const { SuppressMessageError } = require('./errors');
+const pushSender = require('./pushSender');
+const {
+  pickChannelsForUserAndCategory,
+  CRITICAL_CATEGORIES,
+} = require('./notificationChannelResolver');
+// Module-level (not destructured) so tests can monkey-patch sms.sendAndLogSms.
+const sms = require('./sms');
 
 // ─── Handler registry ──────────────────────────────────────────
 // Keyed by message_type. Handler signature:
@@ -392,6 +400,122 @@ async function lookupRecipient(recipientType, recipientId) {
 
 // ─── Dispatch one row ────────────────────────────────────────
 
+// ─── Staff portal: push channel + sibling cascade (Phase 2 Task 7) ──────
+//
+// Push rows bypass the registered-handler model (no per-message_type push handler
+// is needed; the payload travels on the row itself). dispatchPushRow iterates
+// the recipient's push_subscriptions[] via web-push (stubbed in Phase A; real
+// in Phase B Task 55). 410/404 responses prune the dead subscription inside a
+// SELECT FOR UPDATE transaction so concurrent dispatch ticks don't race on
+// jsonb_set of the same JSONB column.
+async function dispatchPushRow(row) {
+  const payload = row.payload || {};
+  // We need the recipient's push_subscriptions[]. Pull inside a FOR UPDATE
+  // transaction so we can prune dead subs atomically against concurrent dispatch.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: userRows } = await client.query(
+      `SELECT staff_notification_preferences AS prefs
+         FROM users WHERE id = $1 FOR UPDATE`,
+      [row.recipient_id]
+    );
+    if (userRows.length === 0) {
+      await client.query('ROLLBACK');
+      await pool.query(
+        "UPDATE scheduled_messages SET status = 'failed', error_message = $2 WHERE id = $1",
+        [row.id, 'recipient user not found']
+      );
+      return;
+    }
+    const prefs = userRows[0].prefs || {};
+    const subs = Array.isArray(prefs.push_subscriptions) ? prefs.push_subscriptions : [];
+    if (subs.length === 0) {
+      await client.query('ROLLBACK');
+      await pool.query(
+        "UPDATE scheduled_messages SET status = 'suppressed', error_message = $2 WHERE id = $1",
+        [row.id, 'no_push_subscriptions']
+      );
+      return;
+    }
+
+    let anyOk = false;
+    let anyDegraded = false;
+    const survivors = [];
+    for (const sub of subs) {
+      const result = await pushSender.sendPush({
+        subscription: { endpoint: sub.endpoint, keys: sub.keys },
+        title: payload.title,
+        body: payload.body,
+        url: payload.url,
+        tag: payload.tag || row.message_type,
+        icon: payload.icon,
+      });
+      if (result && result.ok) {
+        anyOk = true;
+        survivors.push(sub);
+      } else if (result && result.gone) {
+        // Prune this subscription from the array.
+        anyDegraded = true;
+      } else {
+        // Keep the sub on transient failure; only 410/404 prunes.
+        survivors.push(sub);
+      }
+    }
+
+    if (survivors.length !== subs.length) {
+      await client.query(
+        `UPDATE users
+            SET staff_notification_preferences = jsonb_set(
+              staff_notification_preferences, '{push_subscriptions}', $2::jsonb, true)
+          WHERE id = $1`,
+        [row.recipient_id, JSON.stringify(survivors)]
+      );
+    }
+    await client.query('COMMIT');
+
+    if (anyOk) {
+      await pool.query(
+        "UPDATE scheduled_messages SET status = 'sent', sent_at = NOW(), error_message = NULL WHERE id = $1",
+        [row.id]
+      );
+      if (anyDegraded) {
+        Sentry.addBreadcrumb({
+          category: 'notifications',
+          message: 'push_partial_prune',
+          data: { user_id: row.recipient_id, row_id: row.id, pruned: subs.length - survivors.length },
+        });
+      }
+    } else {
+      await pool.query(
+        "UPDATE scheduled_messages SET status = 'failed', error_message = $2 WHERE id = $1",
+        [row.id, anyDegraded ? 'all_subscriptions_gone' : 'push_send_failed']
+      );
+    }
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch {}
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Sibling-suppression cascade: when one row in a suppression_key group sends
+// successfully, mark the remaining pending siblings 'suppressed_by_sibling' so
+// the user doesn't receive the same notification on push AND SMS AND email.
+async function markSiblingsSuppressed(suppressionKey, currentRowId) {
+  if (!suppressionKey) return;
+  await pool.query(
+    `UPDATE scheduled_messages
+        SET status = 'suppressed_by_sibling',
+            error_message = $3
+      WHERE suppression_key = $1
+        AND id <> $2
+        AND status = 'pending'`,
+    [suppressionKey, currentRowId, `sibling_sent: row ${currentRowId} delivered first`]
+  );
+}
+
 async function dispatchRow(row) {
   let entity, recipient;
   try {
@@ -407,6 +531,18 @@ async function dispatchRow(row) {
       [row.id]
     );
     if (stillPending.rowCount === 0) {
+      return;
+    }
+
+    // Push channel branch (Phase 2 Task 7). Push rows bypass the registered-handler
+    // model entirely — the payload travels on the row.
+    if (row.channel === 'push') {
+      await dispatchPushRow(row);
+      // If push sent, cascade-suppress siblings in the same logical group.
+      const after = await pool.query("SELECT status FROM scheduled_messages WHERE id = $1", [row.id]);
+      if (after.rows[0] && after.rows[0].status === 'sent') {
+        await markSiblingsSuppressed(row.suppression_key, row.id);
+      }
       return;
     }
 
@@ -489,7 +625,27 @@ async function dispatchRow(row) {
       "UPDATE scheduled_messages SET status = 'sent', sent_at = NOW(), error_message = NULL WHERE id = $1",
       [row.id]
     );
+
+    // Sibling-suppression cascade (Phase 2 Task 7): collapse other rows in the
+    // same suppression_key group so the staffer doesn't get the same
+    // notification through multiple channels when one was enough.
+    await markSiblingsSuppressed(row.suppression_key, row.id);
   } catch (err) {
+    // SuppressMessageError must be handled FIRST, before any Sentry / console call.
+    // Suppressions are expected dispatch outcomes for handler-side gates (e.g.,
+    // BEO already acknowledged, balance already paid), not failures.
+    if (err instanceof SuppressMessageError) {
+      const cappedReason = String(err.reason || '').slice(0, 500);
+      try {
+        await pool.query(
+          "UPDATE scheduled_messages SET status='suppressed', error_message=$2 WHERE id=$1",
+          [row.id, cappedReason]
+        );
+      } catch (markErr) {
+        console.error('[scheduledMessageDispatcher] failed to mark row suppressed:', markErr.message);
+      }
+      return;
+    }
     Sentry.captureException(err, {
       tags: { dispatcher: 'scheduled_messages', message_type: row.message_type },
       extra: { row_id: row.id, entity_type: row.entity_type, entity_id: row.entity_id },
@@ -549,7 +705,8 @@ async function dispatchPending() {
     let passes = 0;
     do {
       const { rows } = await pool.query(
-        `SELECT id, entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for
+        `SELECT id, entity_id, entity_type, message_type, recipient_type, recipient_id, channel,
+                scheduled_for, suppression_key, payload
          FROM scheduled_messages
          WHERE status = 'pending' AND scheduled_for <= NOW()
          ORDER BY scheduled_for ASC
@@ -585,8 +742,151 @@ async function dispatchPending() {
     if (batchSize === BATCH_LIMIT) {
       console.warn(`[scheduledMessageDispatcher] hit the ${MAX_DRAIN_PASSES}-pass drain cap — remaining backlog carries to the next tick`);
     }
+
+    // Critical-path re-resolve sweep (Phase 2 Task 7). After the main drain,
+    // find suppression_key groups where every row is terminal AND the group
+    // never delivered ('sent') AND the category is in CRITICAL_CATEGORIES.
+    // Bump re_resolve_count; if >= 2, dead-letter. Else re-resolve via
+    // pickChannelsForUserAndCategory and enqueue ONE fresh row with a new key.
+    await resolveCriticalDeadLetters();
   } finally {
     _dispatchInFlight = false;
+  }
+}
+
+async function resolveCriticalDeadLetters() {
+  // One row per group, GROUP BY suppression_key. Only consider groups where:
+  //   - All rows are terminal (sent / failed / suppressed / suppressed_by_sibling / dead_letter)
+  //   - NO rows are 'sent' (delivery never landed)
+  //   - The category (from payload->>'category') is in CRITICAL_CATEGORIES
+  //   - The group's max re_resolve_count is < 2
+  // For each group, increment counter + re-resolve + enqueue OR dead-letter all rows.
+  const { rows: groups } = await pool.query(
+    `SELECT suppression_key,
+            recipient_id AS user_id,
+            entity_type, entity_id, message_type,
+            MAX(COALESCE((payload->>'category'), '')) AS category,
+            MAX(COALESCE((payload->>'re_resolve_count')::int, 0)) AS re_resolve_count,
+            MAX(scheduled_for) AS last_scheduled
+       FROM scheduled_messages
+      WHERE suppression_key IS NOT NULL
+        AND recipient_type = 'staff'
+        AND status IN ('failed','suppressed','suppressed_by_sibling','dead_letter')
+        AND NOT EXISTS (
+          SELECT 1 FROM scheduled_messages sm2
+           WHERE sm2.suppression_key = scheduled_messages.suppression_key
+             AND sm2.status IN ('sent','pending')
+        )
+      GROUP BY suppression_key, recipient_id, entity_type, entity_id, message_type
+      HAVING MAX(COALESCE((payload->>'re_resolve_count')::int, 0)) < 99`
+  );
+
+  for (const group of groups) {
+    if (!CRITICAL_CATEGORIES.has(group.category)) continue;
+
+    // If counter already hit the cap, dead-letter everything in the group.
+    if (group.re_resolve_count >= 2) {
+      await pool.query(
+        `UPDATE scheduled_messages
+            SET status = 'dead_letter',
+                error_message = $2
+          WHERE suppression_key = $1
+            AND status IN ('failed','suppressed','suppressed_by_sibling')`,
+        [group.suppression_key, 're_resolve_cap_reached']
+      );
+      Sentry.captureMessage('critical_path_dead_letter', {
+        tags: { dispatcher: 'critical_path' },
+        extra: {
+          user_id: group.user_id,
+          category: group.category,
+          message_type: group.message_type,
+          suppression_key: group.suppression_key,
+          re_resolve_count: group.re_resolve_count,
+        },
+      });
+      // Out-of-band hotline SMS (spec §6.13)
+      if (process.env.ADMIN_PHONE) {
+        try {
+          await sms.sendAndLogSms({
+            to: process.env.ADMIN_PHONE,
+            body: `DR BARTENDER: critical message dead-lettered for user ${group.user_id} category ${group.category}, check Sentry`,
+            messageType: 'critical_path_dead_letter_alert',
+          });
+        } catch (smsErr) {
+          console.error('[dispatcher] critical-path dead-letter ADMIN_PHONE SMS failed:', smsErr.message);
+        }
+      }
+      continue;
+    }
+
+    // Re-resolve with fresh state.
+    const resolved = await pickChannelsForUserAndCategory(group.user_id, group.category);
+    if (resolved.kind === 'dead_letter') {
+      await pool.query(
+        `UPDATE scheduled_messages
+            SET status = 'dead_letter',
+                error_message = $2
+          WHERE suppression_key = $1
+            AND status IN ('failed','suppressed','suppressed_by_sibling')`,
+        [group.suppression_key, 're_resolve_all_blocked']
+      );
+      Sentry.captureMessage('critical_path_dead_letter', {
+        tags: { dispatcher: 'critical_path' },
+        extra: {
+          user_id: group.user_id,
+          category: group.category,
+          message_type: group.message_type,
+          reason: 'resolver_dead_letter',
+        },
+      });
+      if (process.env.ADMIN_PHONE) {
+        try {
+          await sms.sendAndLogSms({
+            to: process.env.ADMIN_PHONE,
+            body: `DR BARTENDER: critical message dead-lettered for user ${group.user_id} category ${group.category}, check Sentry`,
+            messageType: 'critical_path_dead_letter_alert',
+          });
+        } catch (smsErr) {
+          console.error('[dispatcher] critical-path dead-letter ADMIN_PHONE SMS failed:', smsErr.message);
+        }
+      }
+      continue;
+    }
+    // Enqueue ONE new row at the first resolved channel with a fresh
+    // suppression_key + re_resolve_count + 1. Reuse the same entity context.
+    const nextChannel = resolved.channels[0];
+    const newCount = group.re_resolve_count + 1;
+    const newKey = `${group.suppression_key}:retry${newCount}`;
+    // Read the original row's payload to carry forward (modulo the counter).
+    const { rows: srcRows } = await pool.query(
+      `SELECT payload FROM scheduled_messages
+        WHERE suppression_key = $1 ORDER BY id ASC LIMIT 1`,
+      [group.suppression_key]
+    );
+    const srcPayload = srcRows[0]?.payload || {};
+    const newPayload = { ...srcPayload, re_resolve_count: newCount };
+    await pool.query(
+      `INSERT INTO scheduled_messages
+         (entity_id, entity_type, message_type, recipient_type, recipient_id,
+          channel, scheduled_for, status, suppression_key, payload)
+       VALUES ($1, $2, $3, 'staff', $4, $5, NOW(), 'pending', $6, $7::jsonb)
+       ON CONFLICT (entity_id, entity_type, message_type, recipient_id, recipient_type, channel)
+         WHERE status = 'pending'
+       DO NOTHING`,
+      [group.entity_id, group.entity_type, group.message_type, group.user_id,
+       nextChannel, newKey, JSON.stringify(newPayload)]
+    );
+    // Degradation breadcrumb: ops can see silent channel substitution.
+    Sentry.addBreadcrumb({
+      category: 'notifications',
+      message: 'critical_path_re_resolved',
+      data: {
+        user_id: group.user_id,
+        category: group.category,
+        new_channel: nextChannel,
+        re_resolve_count: newCount,
+      },
+    });
   }
 }
 

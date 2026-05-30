@@ -55,7 +55,8 @@ const { shouldSendImmediate } = require('../utils/messageSuppression');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, PermissionError, ExternalServiceError } = require('../utils/errors');
 const { ADMIN_URL, PUBLIC_SITE_URL, API_URL } = require('../utils/urls');
-const { autoGenerateShoppingList } = require('../utils/shoppingListGen');
+const { triggerShoppingListAutoGen } = require('../utils/shoppingListGen');
+const { ensureNotFinalized, registerFinalizeRoute, registerUnfinalizeRoute } = require('../utils/beoFinalize');
 const { isDrinkPlanPreBooking } = require('../utils/drinkPlanAccess');
 const { uploadFile, getSignedUrl } = require('../utils/storage');
 const { isValidImageUpload } = require('../utils/fileValidation');
@@ -147,7 +148,7 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
   // JOIN those columns are undefined and suppression is silently bypassed.
   // LEFT JOINs keep behavior identical for plans with no linked proposal/client.
   const existing = await pool.query(
-    `SELECT dp.id, dp.status, dp.proposal_id,
+    `SELECT dp.id, dp.status, dp.proposal_id, dp.finalized_at,
             dp.client_name, dp.client_email,
             dp.event_type, dp.event_type_custom,
             p.status AS proposal_status,
@@ -160,6 +161,7 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
     [req.params.token]
   );
   if (!existing.rows[0]) throw new NotFoundError('This drink plan link is no longer valid');
+  if (existing.rows[0].finalized_at) throw new ConflictError('This plan has been finalized; reach out if you need a change.');
   if (existing.rows[0].status === 'submitted' || existing.rows[0].status === 'reviewed') {
     throw new ConflictError('This plan has already been submitted.');
   }
@@ -469,17 +471,7 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
     // Auto-generate the shopping list now that the plan is submitted. Runs
     // outside the transaction (best-effort, non-fatal) — admin can still
     // generate manually from the modal if this misses.
-    if (newStatus === 'submitted' && updatedPlan?.id) {
-      autoGenerateShoppingList(updatedPlan.id, pool).catch(genErr => {
-        console.error('Shopping list auto-gen failed:', genErr);
-        if (process.env.SENTRY_DSN_SERVER) {
-          Sentry.captureException(genErr, {
-            tags: { route: 'drinkPlans/putToken', op: 'auto_gen_shopping_list' },
-            extra: { planId: updatedPlan.id },
-          });
-        }
-      });
-    }
+    if (newStatus === 'submitted') triggerShoppingListAutoGen(updatedPlan?.id);
 
     return res.json(updatedPlan);
   }
@@ -573,17 +565,7 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
   // Fast-path submit (no add-ons) also auto-generates the shopping list draft
   // for admin review. Best-effort — same fail-open contract as the financial
   // branch above.
-  if (newStatus === 'submitted' && result.rows[0]?.id) {
-    autoGenerateShoppingList(result.rows[0].id, pool).catch(genErr => {
-      console.error('Shopping list auto-gen failed:', genErr);
-      if (process.env.SENTRY_DSN_SERVER) {
-        Sentry.captureException(genErr, {
-          tags: { route: 'drinkPlans/putToken', op: 'auto_gen_shopping_list' },
-          extra: { planId: result.rows[0].id },
-        });
-      }
-    });
-  }
+  if (newStatus === 'submitted') triggerShoppingListAutoGen(result.rows[0]?.id);
 
   res.json(result.rows[0]);
 }));
@@ -597,11 +579,12 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
  */
 router.post('/t/:token/logo', logoUploadLimiter, asyncHandler(async (req, res) => {
   const planResult = await pool.query(
-    'SELECT id, status FROM drink_plans WHERE token = $1',
+    'SELECT id, status, finalized_at FROM drink_plans WHERE token = $1',
     [req.params.token]
   );
   if (!planResult.rows[0]) throw new NotFoundError('Plan not found.');
   const plan = planResult.rows[0];
+  if (plan.finalized_at) throw new ConflictError('This plan has been finalized; reach out if you need a change.');
 
   // Pre-deposit plans render as locked in the planner UI; reject uploads.
   if (plan.status === 'pending') throw new PermissionError('Plan is locked until deposit is paid.');
@@ -728,7 +711,7 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   let query = `
     SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
            dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
-           dp.status, dp.exploration_submitted_at, dp.submitted_at, dp.created_at,
+           dp.status, dp.finalized_at, dp.exploration_submitted_at, dp.submitted_at, dp.created_at,
            dp.updated_at, dp.created_by,
            u.email AS created_by_email
     FROM drink_plans dp
@@ -819,7 +802,7 @@ router.get('/by-proposal/:proposalId', auth, requireAdminOrManager, asyncHandler
   const result = await pool.query(
     `SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
             dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
-            dp.selections, dp.status, dp.admin_notes, dp.exploration_submitted_at,
+            dp.selections, dp.status, dp.finalized_at, dp.finalized_by, dp.admin_notes, dp.exploration_submitted_at,
             dp.submitted_at, dp.created_at, dp.updated_at, dp.created_by,
             u.email AS created_by_email,
             dp.consult_selections IS NOT NULL AS has_consult_selections,
@@ -910,7 +893,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   const result = await pool.query(
     `SELECT dp.id, dp.token, dp.proposal_id, dp.client_name, dp.client_email,
             dp.event_type, dp.event_type_custom, dp.event_date, dp.serving_type,
-            dp.selections, dp.status, dp.admin_notes, dp.exploration_submitted_at,
+            dp.selections, dp.status, dp.finalized_at, dp.finalized_by, dp.admin_notes, dp.exploration_submitted_at,
             dp.submitted_at, dp.created_at, dp.updated_at, dp.created_by,
             u.email AS created_by_email,
             dp.consult_selections IS NOT NULL AS has_consult_selections,
@@ -963,6 +946,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
 
 /** PATCH /api/drink-plans/:id/notes — update admin notes */
 router.patch('/:id/notes', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  await ensureNotFinalized(parseInt(req.params.id, 10));
   const { admin_notes } = req.body;
   const result = await pool.query(
     'UPDATE drink_plans SET admin_notes = $1 WHERE id = $2 RETURNING id, admin_notes',
@@ -974,6 +958,7 @@ router.patch('/:id/notes', auth, requireAdminOrManager, asyncHandler(async (req,
 
 /** PATCH /api/drink-plans/:id/status — update plan status */
 router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  await ensureNotFinalized(parseInt(req.params.id, 10));
   const { status } = req.body;
   if (!['pending', 'draft', 'submitted', 'reviewed'].includes(status)) {
     throw new ValidationError({ status: 'Invalid status.' });
@@ -985,7 +970,7 @@ router.patch('/:id/status', auth, requireAdminOrManager, asyncHandler(async (req
   if (!result.rows[0]) throw new NotFoundError('Plan not found.');
   res.json(result.rows[0]);
 }));
-
+registerFinalizeRoute(router); registerUnfinalizeRoute(router);
 /** GET /api/drink-plans/:id/shopping-list — load saved shopping list */
 router.get('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const result = await pool.query(
@@ -1005,6 +990,7 @@ router.get('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async
  *  re-edit of an already-approved list reverts it to pending so the client
  *  doesn't keep reading stale numbers. */
 router.put('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  await ensureNotFinalized(parseInt(req.params.id, 10));
   const { shopping_list } = req.body;
   if (!shopping_list || typeof shopping_list !== 'object') {
     throw new ValidationError({ shopping_list: 'Invalid shopping list data.' });
@@ -1027,6 +1013,7 @@ router.put('/:id/shopping-list', auth, requireAdminOrManager, asyncHandler(async
  *  flipping it from pending_review → approved. Public client view starts
  *  serving the list now; client gets an email with the link. */
 router.patch('/:id/shopping-list/approve', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  await ensureNotFinalized(parseInt(req.params.id, 10));
   // Atomic UPDATE: matches at most once. Concurrent admin clicks both pass
   // the auth check, but only the first transitions pending_review → approved
   // and gets the row back. Subsequent clicks fall through to the idempotent
@@ -1114,6 +1101,7 @@ router.patch('/:id/shopping-list/approve', auth, requireAdminOrManager, asyncHan
  * atomic JSONB merge as the token-gated route.
  */
 router.post('/:id/logo', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  await ensureNotFinalized(parseInt(req.params.id, 10));
   const planResult = await pool.query(
     'SELECT id, token FROM drink_plans WHERE id = $1',
     [req.params.id]
@@ -1156,6 +1144,7 @@ router.post('/:id/logo', auth, requireAdminOrManager, asyncHandler(async (req, r
  * file (storage cost is negligible; no cleanup job in v1).
  */
 router.delete('/:id/logo', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  await ensureNotFinalized(parseInt(req.params.id, 10));
   // Verify plan exists; the DELETE itself is also a no-op-on-missing pattern,
   // but we want a 404 if the ID is wrong so the admin sees a clear error.
   const planResult = await pool.query(
@@ -1180,6 +1169,7 @@ router.delete('/:id/logo', auth, requireAdminOrManager, asyncHandler(async (req,
 
 /** DELETE /api/drink-plans/:id — delete a plan */
 router.delete('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  await ensureNotFinalized(parseInt(req.params.id, 10));
   const result = await pool.query('DELETE FROM drink_plans WHERE id = $1 RETURNING id', [req.params.id]);
   if (!result.rows[0]) throw new NotFoundError('Plan not found.');
   res.json({ success: true });

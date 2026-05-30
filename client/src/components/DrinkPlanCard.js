@@ -64,6 +64,27 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
     }
   };
 
+  const finalize = async () => {
+    try {
+      const res = await api.post(`/drink-plans/${drinkPlan.id}/finalize`);
+      setDrinkPlan(res.data);
+      toast.success('BEO finalized. Staff will be nudged 3 days before the event.');
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.message || 'Finalize failed.');
+    }
+  };
+
+  const unfinalize = async () => {
+    if (!window.confirm('Unfinalize the BEO? Pending staff nudges will be suppressed and all acknowledgments cleared.')) return;
+    try {
+      const res = await api.post(`/drink-plans/${drinkPlan.id}/unfinalize`);
+      setDrinkPlan(res.data);
+      toast.success('BEO unfinalized.');
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.message || 'Unfinalize failed.');
+    }
+  };
+
   const copyLink = () => {
     const url = `${PUBLIC_SITE_URL}/plan/${drinkPlan.token}`;
     navigator.clipboard.writeText(url).then(() => {
@@ -162,6 +183,21 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
                   onClick={markReviewed}>
                   <Icon name="check" size={11} />Mark reviewed
                 </button>
+              )}
+              {drinkPlan.status === 'reviewed' && !drinkPlan.finalized_at && (
+                <button type="button" className="btn btn-primary btn-sm" style={{ justifyContent: 'center' }} onClick={finalize}>
+                  <Icon name="check" size={11} />Finalize BEO
+                </button>
+              )}
+              {drinkPlan.finalized_at && (
+                <>
+                  <div className="muted tiny" style={{ marginTop: 4 }}>
+                    Finalized {formatDateTime(drinkPlan.finalized_at)}
+                  </div>
+                  <button type="button" className="btn btn-secondary btn-sm" style={{ justifyContent: 'center' }} onClick={unfinalize}>
+                    Unfinalize
+                  </button>
+                </>
               )}
             </div>
           </>

@@ -2816,6 +2816,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_proposal_payments_legacy_charge_global
   WHERE legacy_charge_id IS NOT NULL;
 
 -- ─────────────────────────────────────────────────────────────────────
+-- BEO (Banquet Event Order) — spec docs/superpowers/specs/2026-05-25-beo-design.md
+-- ─────────────────────────────────────────────────────────────────────
+ALTER TABLE drink_plans
+  ADD COLUMN IF NOT EXISTS finalized_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS finalized_by INTEGER REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE shift_requests
+  ADD COLUMN IF NOT EXISTS beo_acknowledged_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_drink_plans_finalized_at
+  ON drink_plans(finalized_at) WHERE finalized_at IS NOT NULL;
+
+-- ─────────────────────────────────────────────────────────────────────
 -- Staff portal redesign (spec docs/superpowers/specs/2026-05-27-staff-portal-redesign-design.md)
 -- ─────────────────────────────────────────────────────────────────────
 

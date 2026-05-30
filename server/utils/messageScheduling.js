@@ -116,7 +116,10 @@ async function enqueueCategorizedMessage({
   }
 
   const suppressionKey = `${entityType}:${entityId}:${messageType}:${userId}`;
-  const payloadWithCounter = { ...(payload || {}), re_resolve_count: 0 };
+  // Stash category + re_resolve_count in the payload so the dispatcher's
+  // critical-path re-resolve loop can re-run pickChannelsForUserAndCategory
+  // without re-deriving category from message_type.
+  const payloadWithCounter = { ...(payload || {}), category, re_resolve_count: 0 };
 
   const enqueued = [];
   for (const channel of channels) {

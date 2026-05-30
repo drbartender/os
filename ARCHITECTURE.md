@@ -220,6 +220,15 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/t/:token/logo` | Public | Proxies the uploaded logo from R2 with `Content-Type` + `Cache-Control: public, max-age=86400`. Same-origin so `html2canvas` can capture it without CORS taint |
 | POST | `/:id/logo` | Admin | Admin upload/replace for a specific plan's logo. Same validation + atomic JSONB merge as the token-gated route |
 | DELETE | `/:id/logo` | Admin | Clears `selections.companyLogo` + `_logoFilename` via Postgres jsonb `-` operator. R2 file is not deleted |
+| POST | `/:id/finalize` | Admin | Finalize the BEO: stamps `finalized_at`/`finalized_by` (only when status=`reviewed`, selections non-empty, proposal not archived), schedules T-3 staff nudges for every approved staffer on every non-cancelled shift, writes `beo_finalized` activity log. Locks every mutation route on the plan until Unfinalize. Implemented in `server/utils/beoFinalize.js`, mounted into the drink-plans router. |
+| POST | `/:id/unfinalize` | Admin | Clear `finalized_at`/`finalized_by`, suppress pending nudges (preserves sent), clear every `beo_acknowledged_at` on the proposal's shift_requests, write `beo_unfinalized` activity log. |
+
+### BEO — `/api/beo`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/:proposalId` | Auth (admin/manager always; staff only if approved on a non-cancelled shift) | Banquet Event Order payload — proposal/client/package, drink plan (without `token`), addons, shift_requests with `beo_acknowledged_at`, viewer flags. 404 fires before 403 so staff cannot enumerate proposal ids. Rate-limited per `req.user.id` via `beoReadLimiter` (60/15min). |
+| GET | `/:proposalId/logo` | Same as above | Staff-authenticated logo proxy. Reads `drink_plans.selections->>'_logoFilename'` (validated to start with `drink-plan-logos/`), fetches the signed URL from R2 with an 8 s timeout, streams the bytes back with `Cache-Control: private, max-age=3600`. |
+| POST | `/:proposalId/acknowledge` | Auth | Staff: stamps `shift_requests.beo_acknowledged_at = NOW()` on every approved active shift_request the staffer holds on this proposal (gated on `drink_plans.finalized_at IS NOT NULL`; returns 409 if not finalized). Admin/manager: returns `{acknowledged:false}` (no-op). |
 
 ### Cocktails — `/api/cocktails`
 | Method | Path | Auth | Description |
@@ -616,7 +625,10 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `shopping_list_source` VARCHAR(20) CHECK (NULL | `'planner'` | `'consult'`) — flags which input source currently feeds the generator
 - `consult_filled_by_user_id` INTEGER FK → users (admin who saved the consult; SET NULL on user delete)
 - `consult_filled_at` TIMESTAMPTZ
+- `finalized_at` TIMESTAMPTZ — BEO finalize stamp. NULL until admin presses "Finalize BEO" on the DrinkPlanCard; non-NULL locks every mutation route on the plan (status, notes, shopping list, logo, consult, source flip, delete) and gates the staff-side acknowledge + the T-3 nudge. Cleared by Unfinalize.
+- `finalized_by` INTEGER FK → users (admin who finalized; SET NULL on user delete)
 - Partial index `idx_drink_plans_shopping_list_pending` covers the admin badge-count "pending review" filter
+- Partial index `idx_drink_plans_finalized_at(finalized_at) WHERE finalized_at IS NOT NULL` covers the BEO scheduler + nudge lookups
 - On submit: addOns flow into proposal_addons, pricing is recalculated, admin notified, `shopping_list` auto-generated server-side as `pending_review`
 - Auto-emails the drink plan link to client on creation
 
@@ -743,6 +755,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `shift_id` FK, `user_id` FK (unique together)
 - `position`, `status` (pending/approved/rejected), `notes`
 - `acknowledged_at` TIMESTAMPTZ — set when the assigned staff member texts CONFIRM for the shift (Comms Phase 2 two-way SMS). Lives on the per-(shift, staff) row, not on `shifts`. Index `idx_shift_requests_user_id` on `user_id` supports the inbound-SMS nearest-approved-shift lookup.
+- `beo_acknowledged_at` TIMESTAMPTZ — BEO read-receipt stamp set by `POST /api/beo/:proposalId/acknowledge`. Independent from `acknowledged_at` (shift CONFIRM); a staffer who has CONFIRMed the shift still must open the BEO to acknowledge it. Cleared on Unfinalize, on re-assign (`POST /:id/assign`), on approve-after-deny re-request, on `PUT /requests/:requestId` deny/approve, and on auto-assign promotion — so a stale ack from a prior cycle never carries forward.
 
 **app_settings** — Configurable settings (auto-assign weights, max distance, etc.)
 - `key` VARCHAR PK, `value` TEXT, `updated_at`
@@ -784,6 +797,8 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 *Scheduled-message dispatcher:* `server/utils/scheduledMessageDispatcher.js` registers the `message_dispatcher` scheduler, which runs every 5 minutes. Each tick drains due `pending` rows from `scheduled_messages`, applies the shared suppression rules (archive / comm-prefs / bad-contact), and dispatches each row to its registered per-message-type handler (currently the money-path balance reminders). Rows are wired in by `server/utils/messageScheduling.js` (`scheduleMessage`, idempotent insert). Gated by `RUN_MESSAGE_DISPATCHER_SCHEDULER` (suppressed by the global `RUN_SCHEDULERS=false`).
 
 *Marketing and retention message types:* the dispatcher handles marketing-class touches registered by `marketingHandlers.js` (`drip_touch_2`, `drip_touch_4`, `drip_touch_5_email`, `new_year_hello`, `six_months_out`, `retention_nudge`), all gated on `clients.communication_preferences.marketing_enabled`, plus `review_request` (operational, a CAN-SPAM transactional follow-up, not gated). They are scheduled by hooks on the proposal status-transition paths: drip enrollment on every path that makes a proposal `sent`, New Year and 6-months-out plus drip-suppression on every sign+pay path, review request and retention nudge on completion, and marketing cancellation on archive.
+
+*BEO message type:* `beo_unack_nudge_sms` (operational, `priority: 2`, anchor `event_date`) is registered by `server/utils/beoHandlers.js` and scheduled on Finalize (`scheduleBeoNudgesForProposal`) for every approved staffer on every non-cancelled shift, fired at `MAX(eventStartUtc - 3 days, NOW() + 5 minutes)`. The handler `handleBeoUnackNudge` throws `SuppressMessageError` for every expected gate (user_deleted, beo_not_finalized, already_acknowledged, staffer_unassigned, user_inactive, no_phone, no_start_time, event_in_past) — gate order is asserted by tests. The dispatcher's `SuppressMessageError` discriminator marks the row `status='suppressed'` with the reason and skips Sentry. Reschedule (`reanchorBeoForProposal`) and lifecycle hooks (`suppressBeoNudgesForProposal`, `suppressBeoNudgesForStaffers` with a NOT EXISTS guard for multi-shift coverage) cascade from shift cancel / DELETE / PUT cancel / request deny / request DELETE and from the Unfinalize route.
 
 Comms Phase 3 adds the client-facing SMS layer. `sms.js` gains `sendAndLogSms`,
 the single send-and-log primitive for all automated SMS. `smsTemplates.js`

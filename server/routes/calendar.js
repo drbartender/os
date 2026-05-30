@@ -5,6 +5,7 @@ const { auth } = require('../middleware/auth');
 const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { NotFoundError, PermissionError } = require('../utils/errors');
+const { buildBeoConfirmVEvents, detectCalendarApp } = require('../utils/staffCalendarFeedExt');
 
 const router = express.Router();
 
@@ -296,7 +297,10 @@ router.get('/feed/:token', calendarLimiter, asyncHandler(async (req, res) => {
 
   let shifts;
   if (isAdmin) {
-    // Admin feed: all shifts within feed window, with client details
+    // Admin feed: all shifts within feed window, with client details.
+    // 30-day backward cutoff added so subscribed calendars retain a small
+    // tail of recent events for reference but don't redownload years of
+    // history on every refresh.
     const result = await pool.query(`
       SELECT s.*,
         c.name AS client_name, c.phone AS client_phone, c.email AS client_email,
@@ -304,18 +308,33 @@ router.get('/feed/:token', calendarLimiter, asyncHandler(async (req, res) => {
       FROM shifts s
       LEFT JOIN proposals p ON p.id = s.proposal_id
       LEFT JOIN clients c ON c.id = p.client_id
-      WHERE s.event_date <= CURRENT_DATE + INTERVAL '365 days'
+      WHERE s.event_date >= CURRENT_DATE - INTERVAL '30 days'
+        AND s.event_date <= CURRENT_DATE + INTERVAL '365 days'
       ORDER BY s.event_date ASC
     `);
     shifts = result.rows;
   } else {
-    // Staff feed: only their approved shift requests
+    // Staff feed: only their approved shift requests.
+    // 30-day backward cutoff matches admin feed.
+    // Project drink_plans.finalized_at (latest, in case >1 plan per proposal —
+    // schema allows it) so buildBeoConfirmVEvents can emit reminders for
+    // BEO-finalized-but-not-yet-acked shifts. LEFT JOIN proposals + clients
+    // for the BEO summary's client_name. Subquery (not LEFT JOIN) on
+    // drink_plans avoids row-multiplication that would duplicate VEVENTs.
     const result = await pool.query(`
       SELECT s.*, sr.position,
-        sr.status AS request_status
+        sr.status AS request_status,
+        sr.beo_acknowledged_at,
+        (SELECT MAX(dp.finalized_at)
+           FROM drink_plans dp
+          WHERE dp.proposal_id = s.proposal_id) AS finalized_at,
+        COALESCE(c.name, s.client_name) AS client_name
       FROM shift_requests sr
       JOIN shifts s ON s.id = sr.shift_id
+      LEFT JOIN proposals p ON p.id = s.proposal_id
+      LEFT JOIN clients c ON c.id = p.client_id
       WHERE sr.user_id = $1 AND sr.status = 'approved'
+        AND s.event_date >= CURRENT_DATE - INTERVAL '30 days'
         AND s.event_date <= CURRENT_DATE + INTERVAL '365 days'
       ORDER BY s.event_date ASC
     `, [user.id]);
@@ -363,7 +382,19 @@ router.get('/feed/:token', calendarLimiter, asyncHandler(async (req, res) => {
   });
 
   const calName = isAdmin ? 'Dr. Bartender Events' : 'My Shifts — Dr. Bartender';
-  const ical = buildICalFeed(events, calName);
+  let ical = buildICalFeed(events, calName);
+
+  // BEO-confirm reminder VEVENTs — staff-side only. Admins don't ack BEOs,
+  // so the admin feed never gets these. Spliced in just before END:VCALENDAR
+  // so the calendar stays well-formed.
+  if (!isAdmin) {
+    const portalBaseUrl = process.env.STAFF_URL || 'https://staff.drbartender.com';
+    const beoConfirmVEvents = buildBeoConfirmVEvents(shifts, portalBaseUrl);
+    if (beoConfirmVEvents.length) {
+      const beoBlock = beoConfirmVEvents.join('\r\n') + '\r\n';
+      ical = ical.replace('END:VCALENDAR\r\n', `${beoBlock}END:VCALENDAR\r\n`);
+    }
+  }
 
   // Set headers
   res.set('Content-Type', 'text/calendar; charset=utf-8');
@@ -375,6 +406,25 @@ router.get('/feed/:token', calendarLimiter, asyncHandler(async (req, res) => {
   }
 
   res.send(ical);
+
+  // Debounced last_ics_fetch_at + calendar-app detection. Fire-and-forget
+  // AFTER res.send so a failed UPDATE never breaks feed delivery. Bounded by
+  // a 10-minute window in SQL — most subscribed clients refresh every 15min
+  // to an hour, so we end up with ~one stamp per real subscription cycle.
+  try {
+    const detectedApp = detectCalendarApp(req.get('User-Agent'));
+    // Fire-and-forget; explicit no-await + .catch keeps a slow UPDATE from
+    // blocking the response and a thrown error from becoming an unhandled
+    // rejection.
+    pool.query(
+      `UPDATE users
+          SET last_ics_fetch_at = NOW(),
+              ui_preferences = jsonb_set(ui_preferences, '{calendar_subscribed_app}', $2::jsonb, true)
+        WHERE id = $1
+          AND (last_ics_fetch_at IS NULL OR last_ics_fetch_at < NOW() - INTERVAL '10 minutes')`,
+      [user.id, JSON.stringify(detectedApp)]
+    ).catch(() => { /* best-effort; never break feed */ });
+  } catch { /* best-effort; never break feed */ }
 }));
 
 /** GET /api/calendar/event/:shiftId.ics — single event download (auth required) */

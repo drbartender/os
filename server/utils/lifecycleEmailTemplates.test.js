@@ -41,3 +41,50 @@ test('lastMinuteStaffingConfirmation > html is wrapped with the standard chrome'
   });
   assert.match(out.html, /<!DOCTYPE html>/i);
 });
+
+// ─── Email change templates (spec §6.10, shipped Task 17/18) ──────────────
+
+test('emailChangeVerification > substitutes verifyUrl + newEmail', () => {
+  const out = t.emailChangeVerification({
+    verifyUrl: 'https://api.drbartender.com/email-change/confirm/abc',
+    newEmail: 'new@example.com',
+  });
+  assert.strictEqual(out.subject, 'Confirm your new Dr. Bartender email address');
+  assert.match(out.text, /new@example\.com/);
+  assert.match(out.text, /https:\/\/api\.drbartender\.com\/email-change\/confirm\/abc/);
+  assert.match(out.html, /new@example\.com/);
+  assert.match(out.html, /Confirm email change/);
+  assertNoEmDash(out.subject, 'emailChangeVerification subject');
+  assertNoEmDash(out.text, 'emailChangeVerification text');
+});
+
+test('emailChangeWarning > names the new email and includes a cancel link when provided', () => {
+  const out = t.emailChangeWarning({
+    newEmail: 'new@example.com',
+    cancelUrl: 'https://admin.drbartender.com/profile/cancel-email-change',
+  });
+  assert.match(out.subject, /Email change requested/);
+  assert.match(out.text, /new@example\.com/);
+  assert.match(out.text, /https:\/\/admin\.drbartender\.com\/profile\/cancel-email-change/);
+  assert.match(out.html, /new@example\.com/);
+  assertNoEmDash(out.subject, 'emailChangeWarning subject');
+  assertNoEmDash(out.text, 'emailChangeWarning text');
+});
+
+test('emailChangeWarning > omits cancel-link line when cancelUrl is null', () => {
+  const out = t.emailChangeWarning({ newEmail: 'new@example.com', cancelUrl: null });
+  assert.ok(!out.text.includes('Direct cancel link'), 'cancel-link line should be omitted');
+});
+
+test('emailChangeConfirmed > shows old + new emails', () => {
+  const out = t.emailChangeConfirmed({
+    oldEmail: 'old@example.com',
+    newEmail: 'new@example.com',
+  });
+  assert.match(out.subject, /Email changed/);
+  assert.match(out.text, /from old@example\.com to new@example\.com/);
+  assert.match(out.html, /old@example\.com/);
+  assert.match(out.html, /new@example\.com/);
+  assertNoEmDash(out.subject, 'emailChangeConfirmed subject');
+  assertNoEmDash(out.text, 'emailChangeConfirmed text');
+});
