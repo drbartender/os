@@ -13901,6 +13901,10 @@ html[data-app="admin-os"] .field-block {
   flex-direction: column;
   gap: 4px;
 }
+.sp-roster-count {
+  font-size: 11px;
+  color: var(--sp-ink-3);
+}
 .sp-roster-row {
   display: flex;
   align-items: center;

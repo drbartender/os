@@ -278,6 +278,7 @@ dr-bartender/
 │   │   │                       # AddonControls (shared add-on UI controls: quantity stepper + greyed bundle badge, used by ProposalCreate + ProposalDetailEditForm),
 │   │   │                       # admin/LegacyCcPaymentsPanel (admin-only panel on ProposalDetail that surfaces CC-imported Stripe charges and warns the operator that the DRB OS Refund button cannot reach them),
 │   │   │                       # admin/CcImportBadge (small "Imported from CC" badge rendered next to titles on admin proposals/clients/events pages when cc_id is set)
+│   │   │   ├── staff/          # Staff portal redesign shared components (Placeholder; ShiftCard; TeamRosterCard)
 │   │   │   ├── adminos/        # Admin OS shell + primitives (Sidebar, Header, CommandPalette, Drawer,
 │   │   │   │                   # StatusChip, StaffPills, AreaChart, Sparkline, Toolbar, Icon, KebabMenu, AddressLink,
 │   │   │   │                   # InterviewScheduleModal, PackageIncludesModal, MetricsFilterBar,
