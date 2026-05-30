@@ -13703,3 +13703,277 @@ html[data-app="admin-os"] .field-block {
 
   color-scheme: light;
 }
+
+/* ==========================================================================
+   Staff portal component CSS (Phase 7 foundations).
+   Ported from the design source styles.css with `var(--*)` → `var(--sp-*)`
+   token rewrites, so the same tokens drive both shell and components.
+   Two surface variants: skinless default (Phase 7 baseline) + a
+   [data-skin="light"] House Lights override.
+   ========================================================================== */
+
+/* ── Chips ────────────────────────────────────────────────────────────── */
+.sp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  height: 22px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 99px;
+  letter-spacing: 0.01em;
+  background: var(--sp-bg-3);
+  color: var(--sp-ink-2);
+  border: 1px solid var(--sp-line-1);
+}
+[data-skin="light"] .sp-chip {
+  border-radius: 0;
+  border-color: currentColor;
+  background: transparent;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 10px;
+}
+.sp-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+[data-skin="light"] .sp-chip-dot { display: none; }
+.sp-chip.ok      { background: hsl(var(--sp-ok-h) var(--sp-ok-s) 50% / 0.14); color: hsl(var(--sp-ok-h) var(--sp-ok-s) 58%); border-color: hsl(var(--sp-ok-h) var(--sp-ok-s) 50% / 0.3); }
+.sp-chip.warn    { background: hsl(var(--sp-warn-h) var(--sp-warn-s) 50% / 0.16); color: hsl(var(--sp-warn-h) var(--sp-warn-s) 60%); border-color: hsl(var(--sp-warn-h) var(--sp-warn-s) 50% / 0.3); }
+.sp-chip.danger  { background: hsl(var(--sp-danger-h) var(--sp-danger-s) 55% / 0.16); color: hsl(var(--sp-danger-h) var(--sp-danger-s) 65%); border-color: hsl(var(--sp-danger-h) var(--sp-danger-s) 50% / 0.3); }
+.sp-chip.info    { background: hsl(var(--sp-info-h) var(--sp-info-s) 50% / 0.16); color: hsl(var(--sp-info-h) var(--sp-info-s) 65%); border-color: hsl(var(--sp-info-h) var(--sp-info-s) 50% / 0.3); }
+.sp-chip.neutral { color: var(--sp-ink-3); }
+[data-skin="light"] .sp-chip.ok      { color: var(--sp-ms-emerald); background: transparent; }
+[data-skin="light"] .sp-chip.warn    { color: var(--sp-ms-camel); background: transparent; }
+[data-skin="light"] .sp-chip.danger  { color: var(--sp-ms-bordeaux); background: transparent; }
+[data-skin="light"] .sp-chip.info    { color: var(--sp-ms-navy); background: transparent; }
+
+/* ── ShiftCard ─────────────────────────────────────────────────────────── */
+.sp-shift {
+  background: var(--sp-bg-1);
+  border: 1px solid var(--sp-line-1);
+  border-radius: 10px;
+  padding: 0.9rem 1rem 1rem;
+  cursor: pointer;
+  transition: border-color 0.08s;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.sp-shift:hover { border-color: var(--sp-line-3); }
+[data-skin="light"] .sp-shift {
+  border-radius: 0;
+  border: 0;
+  border-top: 1px solid var(--sp-line-1);
+  background: transparent;
+  padding: 1rem 0.2rem 1.1rem;
+}
+[data-skin="light"] .sp-shift:first-child { border-top-color: var(--sp-ink-1); }
+.sp-shift.confirmed { box-shadow: inset 3px 0 0 0 hsl(var(--sp-ok-h) var(--sp-ok-s) 55%); }
+.sp-shift.needs-action { box-shadow: inset 3px 0 0 0 hsl(var(--sp-warn-h) var(--sp-warn-s) 58%); }
+[data-skin="light"] .sp-shift.confirmed { box-shadow: inset 3px 0 0 0 var(--sp-ms-emerald); padding-left: 12px; }
+[data-skin="light"] .sp-shift.needs-action { box-shadow: inset 3px 0 0 0 var(--sp-ms-camel); padding-left: 12px; }
+.sp-shift.cover-needed { box-shadow: inset 3px 0 0 0 hsl(var(--sp-warn-h) var(--sp-warn-s) 58%); }
+[data-skin="light"] .sp-shift.cover-needed { box-shadow: inset 3px 0 0 0 var(--sp-ms-camel); padding-left: 12px; border-top-color: var(--sp-ms-camel); }
+.sp-shift-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.sp-shift-when {
+  font-size: 11px;
+  font-family: var(--sp-font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sp-ink-3);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.sp-shift-rel {
+  font-size: 11px;
+  font-family: var(--sp-font-numeric);
+  color: var(--sp-ink-2);
+  padding: 1px 7px;
+  border-radius: 3px;
+  background: var(--sp-bg-3);
+  border: 1px solid var(--sp-line-1);
+}
+[data-skin="light"] .sp-shift-rel { background: transparent; border-radius: 0; border-color: var(--sp-line-2); }
+.sp-shift-rel.today {
+  color: var(--sp-accent);
+  background: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.1);
+  border-color: var(--sp-accent);
+}
+[data-skin="light"] .sp-shift-rel.today { color: var(--sp-ms-emerald); background: transparent; border-color: var(--sp-ms-emerald); }
+.sp-shift-name {
+  font-family: var(--sp-font-display);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--sp-ink-1);
+  letter-spacing: -0.01em;
+}
+[data-skin="light"] .sp-shift-name { font-weight: 500; font-size: 19px; }
+.sp-shift-type {
+  font-size: 12.5px;
+  color: var(--sp-ink-3);
+  margin-top: -2px;
+}
+.sp-shift-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  font-size: 12.5px;
+  color: var(--sp-ink-2);
+  margin-top: 4px;
+}
+.sp-shift-meta-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.sp-shift-meta-row svg { color: var(--sp-ink-3); }
+.sp-shift-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 6px;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--sp-line-1);
+}
+.sp-shift-foot-l { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sp-shift-payout {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sp-ink-1);
+}
+[data-skin="light"] .sp-shift-payout { font-weight: 400; font-size: 16px; }
+.sp-mono { font-family: var(--sp-font-mono); }
+
+/* ── Generic icon button (TeamRosterCard contact actions) ─────────────── */
+.sp-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  background: transparent;
+  border: 1px solid var(--sp-line-2);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--sp-ink-2);
+  text-decoration: none;
+}
+[data-skin="light"] .sp-icon-btn { border-radius: 0; border-color: var(--sp-line-2); }
+.sp-icon-btn:hover:not(:disabled) { color: var(--sp-ink-1); border-color: var(--sp-line-3); }
+.sp-icon-btn:disabled { opacity: 0.35; cursor: default; }
+[data-skin="light"] .sp-icon-btn:hover:not(:disabled) { border-color: var(--sp-ink-1); color: var(--sp-ink-1); }
+
+/* ── TeamRosterCard ────────────────────────────────────────────────────── */
+.sp-card {
+  background: var(--sp-bg-1);
+  border: 1px solid var(--sp-line-1);
+  border-radius: 10px;
+  padding: 0.9rem 1rem 1rem;
+}
+[data-skin="light"] .sp-card {
+  border-radius: 0;
+  border: 0;
+  border-top: 1px solid var(--sp-line-1);
+  background: transparent;
+  padding: 1.1rem 0.2rem 1.2rem;
+}
+.sp-card.tight { padding: 0.7rem 0.85rem 0.85rem; }
+.sp-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+.sp-card-title {
+  font-family: var(--sp-font-display);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--sp-ink-1);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+[data-skin="light"] .sp-card-title { font-weight: 400; letter-spacing: 0.18em; font-size: 12px; color: var(--sp-ink-2); }
+.sp-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sp-roster-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.5rem;
+  border-bottom: 1px solid var(--sp-line-1);
+}
+.sp-roster-row:last-child { border-bottom: 0; }
+.sp-roster-row.me {
+  background: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.04);
+  border-radius: 6px;
+  border-bottom: 1px solid transparent;
+}
+[data-skin="light"] .sp-roster-row.me { background: transparent; border-radius: 0; border-bottom: 1px solid var(--sp-line-1); }
+.sp-avatar {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: var(--sp-accent);
+  color: var(--sp-bg-0);
+  font-size: 10px;
+  font-weight: 700;
+  display: grid; place-items: center;
+  font-family: var(--sp-font-display);
+}
+[data-skin="light"] .sp-avatar { background: var(--sp-ms-emerald); }
+.sp-roster-av {
+  width: 30px; height: 30px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.sp-roster-l { flex: 1; min-width: 0; }
+.sp-roster-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--sp-ink-1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+[data-skin="light"] .sp-roster-name { font-weight: 500; }
+.sp-roster-me {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.15);
+  color: var(--sp-accent);
+}
+[data-skin="light"] .sp-roster-me { background: transparent; border: 1px solid var(--sp-ms-emerald); color: var(--sp-ms-emerald); border-radius: 0; letter-spacing: 0.14em; padding: 0 5px; }
+.sp-roster-role {
+  font-size: 11px;
+  color: var(--sp-ink-3);
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+[data-skin="light"] .sp-roster-role { letter-spacing: 0.12em; font-weight: 500; }
+.sp-roster-cover {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: hsl(var(--sp-warn-h) var(--sp-warn-s) 60%);
+}
+[data-skin="light"] .sp-roster-cover { color: var(--sp-ms-camel); text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; }
+.sp-roster-acts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.sp-roster-acts .sp-icon-btn { width: 32px; height: 32px; }
