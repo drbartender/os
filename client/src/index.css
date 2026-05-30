@@ -13569,3 +13569,137 @@ html[data-app="admin-os"] .field-block {
 @media (max-width: 720px) {
   .sms-layout { grid-template-columns: 1fr; }
 }
+
+/* ==========================================================================
+   Staff Portal v2 design tokens (per spec §6.16)
+   --------------------------------------------------------------------------
+   Ported from the staff-portal redesign source (~/Downloads/Dr Bartender (6)/
+   staff/styles.css). All tokens prefixed --sp-* per the Task 29 brief
+   ("when in doubt, prefix everything new with --sp-") to avoid colliding
+   with the apothecary :root tokens (especially --font-display, --radius,
+   --radius-lg, --shadow-card) and with the admin-os scope at
+   html[data-app="admin-os"]. The two unscoped [data-skin="light"|"dark"]
+   blocks below only apply when <html> carries the data-skin attribute,
+   which the StaffShellWithThemeWiring wrapper sets on the staff portal
+   surface only — the apothecary public site never sets data-skin.
+   The downstream sp-* component CSS (Tasks 32+) references these tokens
+   via the --sp- names.
+   ========================================================================== */
+
+:root {
+  /* ── Accent (tweakable) ── */
+  --sp-accent-h: 218;
+  --sp-accent-s: 35%;
+  --sp-accent-l: 40%;
+  --sp-accent: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l));
+  --sp-accent-soft: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.12);
+  --sp-accent-line: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.32);
+  --sp-accent-ink: hsl(var(--sp-accent-h) calc(var(--sp-accent-s) * 0.6) 20%);
+
+  /* ── Semantic palette (muted, no orange) ── */
+  --sp-ok-h: 155; --sp-ok-s: 28%;
+  --sp-warn-h: 38; --sp-warn-s: 32%;     /* muted camel/ochre */
+  --sp-danger-h: 352; --sp-danger-s: 38%; /* bordeaux */
+  --sp-info-h: 218; --sp-info-s: 32%;    /* dusty navy */
+  --sp-violet-h: 275; --sp-violet-s: 22%;
+
+  /* ── Density ── */
+  --sp-row-h: 36px;
+  --sp-cell-pad-y: 0.5rem;
+  --sp-cell-pad-x: 0.75rem;
+  --sp-font-size-base: 13px;
+  --sp-gap: 0.75rem;
+  --sp-radius: 6px;
+  --sp-radius-sm: 4px;
+  --sp-radius-lg: 10px;
+
+  /* ── Fonts ── */
+  --sp-font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --sp-font-display: 'Inter', system-ui, sans-serif;
+  --sp-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --sp-font-numeric: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+
+  /* ── Layout ── */
+  --sp-sidebar-w: 220px;
+  --sp-sidebar-rail-w: 54px;
+  --sp-header-h: 44px;
+  --sp-content-max: 1440px;
+}
+
+/* ── After Hours (dark skin) ──────────────────────────────────────────── */
+[data-skin="dark"] {
+  /* Surfaces */
+  --sp-bg-0: #0b0d10;           /* page */
+  --sp-bg-1: #111418;           /* panels */
+  --sp-bg-2: #171b21;           /* cards / rows hover */
+  --sp-bg-3: #1f242b;           /* input, toolbar */
+  --sp-bg-elev: #1b2028;        /* floating (modal/palette) */
+
+  /* Lines */
+  --sp-line-1: #232932;         /* subtle divider */
+  --sp-line-2: #2c333d;         /* table border */
+  --sp-line-3: #3a424d;         /* strong */
+
+  /* Text */
+  --sp-ink-1: #eef1f4;          /* primary */
+  --sp-ink-2: #b8c0cc;          /* secondary */
+  --sp-ink-3: #7c8593;          /* tertiary / muted */
+  --sp-ink-4: #565d69;          /* placeholder, disabled */
+
+  --sp-shadow-pop: 0 18px 40px -12px rgba(0,0,0,0.6), 0 4px 12px rgba(0,0,0,0.4);
+  --sp-shadow-card: 0 1px 0 rgba(255,255,255,0.02), 0 2px 8px rgba(0,0,0,0.2);
+  --sp-glow: 0 0 0 1px var(--sp-accent-line), 0 0 20px -4px hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.3);
+
+  --sp-row-stripe: rgba(255,255,255,0.015);
+  --sp-row-hover: rgba(255,255,255,0.035);
+  --sp-row-active: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.08);
+
+  color-scheme: dark;
+}
+
+/* ── House Lights (light skin) ────────────────────────────────────────── */
+[data-skin="light"] {
+  /* Atelier — warm paper + deep green, serif display, sans body. */
+  --sp-bg-0: #f7f4ec;           /* warm paper */
+  --sp-bg-1: #fcfaf4;           /* card */
+  --sp-bg-2: #efeae0;           /* paper-alt / shaded */
+  --sp-bg-3: #e7e3d6;           /* chip track / input */
+  --sp-bg-elev: #fcfaf4;
+
+  --sp-line-1: #ece6d4;         /* hairline soft */
+  --sp-line-2: #e1dbcc;         /* rule */
+  --sp-line-3: #1a1a1a;         /* ink rule */
+
+  --sp-ink-1: #1a1a1a;          /* ink */
+  --sp-ink-2: #3d3a33;          /* ink-2 body */
+  --sp-ink-3: #7a7468;          /* muted */
+  --sp-ink-4: #b4ac9b;          /* dim */
+
+  /* House Lights jewel-tones (green primary, support amber / bordeaux / blue) */
+  --sp-ms-navy:    #3a5d7a;     /* blue */
+  --sp-ms-bordeaux:#9e3a2a;     /* red */
+  --sp-ms-emerald: #2a3a2a;     /* deep green (primary accent) */
+  --sp-ms-camel:   #b8832a;     /* amber */
+  --sp-ms-ink:     #1a1a1a;
+
+  /* Override the accent: House Lights is green-only. */
+  --sp-accent-h: 120;
+  --sp-accent-s: 16%;
+  --sp-accent-l: 20%;
+
+  --sp-shadow-pop: 0 40px 80px -32px rgba(26,26,26,0.18), 0 2px 8px rgba(26,26,26,0.04);
+  --sp-shadow-card: none;
+  --sp-glow: 0 0 0 1px var(--sp-ink-1);
+
+  --sp-row-stripe: transparent;
+  --sp-row-hover: #f1ede3;
+  --sp-row-active: #d6dfd0;
+
+  /* House Lights type: serif display (Libre Caslon), sans body (Inter), mono (JetBrains). */
+  --sp-font-ui: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+  --sp-font-display: 'Libre Caslon Text', 'Caslon', Georgia, serif;
+  --sp-font-numeric: 'Libre Caslon Text', 'Caslon', Georgia, serif;
+  --sp-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  color-scheme: light;
+}
