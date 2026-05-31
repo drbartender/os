@@ -326,7 +326,10 @@ function Hero({ user }) {
     month: 'long',
     day: 'numeric',
   });
-  const name = user?.preferred_name || (user?.email ? user.email.split('@')[0] : '');
+  // First name only for the hero greeting ("Good morning, Sam."). The full
+  // preferred_name shows in the user-pill menu; here we want the warm short form.
+  const fullName = user?.preferred_name || (user?.email ? user.email.split('@')[0] : '');
+  const name = fullName.split(/\s+/)[0] || '';
   return (
     <div className="sp-hero">
       <div>

@@ -302,7 +302,7 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
     }
   }
 
-  const result = await pool.query('SELECT id, email, role, onboarding_status, can_hire, can_staff, password_hash, token_version FROM users WHERE email = $1', [normalizedEmail]);
+  const result = await pool.query('SELECT u.id, u.email, u.role, u.onboarding_status, u.can_hire, u.can_staff, u.password_hash, u.token_version, cp.preferred_name FROM users u LEFT JOIN contractor_profiles cp ON cp.user_id = u.id WHERE u.email = $1', [normalizedEmail]);
   const user = result.rows[0];
   if (!user) {
     throw new ConflictError('Invalid email or password', 'INVALID_CREDENTIALS');
@@ -346,8 +346,16 @@ router.post('/login', authLimiter, asyncHandler(async (req, res) => {
 // Get current user (includes has_application flag for routing)
 router.get('/me', auth, asyncHandler(async (req, res) => {
   try {
-    const appResult = await pool.query('SELECT id FROM applications WHERE user_id = $1', [req.user.id]);
-    res.json({ user: { ...req.user, has_application: appResult.rows.length > 0 } });
+    // One round trip for both the routing flag and the staff display name.
+    // preferred_name lives on contractor_profiles (NULL for admins / pre-hire),
+    // and the client shell + HomePage greeting read it to avoid showing the
+    // email local-part.
+    const ctx = await pool.query(
+      `SELECT EXISTS(SELECT 1 FROM applications WHERE user_id = $1) AS has_application,
+              (SELECT preferred_name FROM contractor_profiles WHERE user_id = $1) AS preferred_name`,
+      [req.user.id]
+    );
+    res.json({ user: { ...req.user, has_application: ctx.rows[0].has_application, preferred_name: ctx.rows[0].preferred_name } });
   } catch (_err) {
     // Preserve existing fallback behavior — if the lookup fails, still return the user
     res.json({ user: req.user });
