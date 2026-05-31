@@ -13990,6 +13990,16 @@ html[data-app="admin-os"] .field-block {
   font-size: 13px;
 }
 
+/* Staff portal owns its page backdrop. The app-global `body` chalkboard
+   (background-color: var(--chalkboard)) is NOT skin-aware, so scope it to the
+   staff context and drive it from the skin-aware token instead. This covers the
+   body margins around the centered .sp-shell and any area the shell doesn't
+   paint, so light mode actually reads light. */
+html[data-app="staff"] body {
+  background-color: var(--sp-bg-0);
+  background-image: none;
+}
+
 /* ── Shell + topbar + tab nav (StaffShell / StaffShellWithThemeWiring) ── */
 .sp-shell {
   min-height: 100vh;

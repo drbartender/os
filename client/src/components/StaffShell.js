@@ -81,6 +81,16 @@ export default function StaffShell({
     }
   }, [skin]);
 
+  // Scope the staff app context on <html data-app="staff"> (mirrors the admin
+  // app's data-app="admin-os") so the page backdrop can be made skin-aware in
+  // CSS, overriding the app-global chalkboard body background. Mount/unmount
+  // only — removed on unmount so the scope never leaks into admin/public.
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    document.documentElement.dataset.app = 'staff';
+    return () => { delete document.documentElement.dataset.app; };
+  }, []);
+
   const safeTabs = Array.isArray(tabs) ? tabs : [];
 
   return (
