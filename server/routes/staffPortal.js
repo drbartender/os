@@ -43,15 +43,12 @@ router.use(auth);
 //      carries `you_are_on_team` derived from same-proposal approved requests.
 //   4. Current pay-period summary (projected payout total + event count +
 //      payday + status). Mirrors the payoutAccrual / payouts pattern.
-//
-// Open-shifts teaser is intentionally a hardcoded empty array for now —
-// spec §6.2 lists it as a section but the wire-up to /api/shifts open list
-// lands in a later task; this route projects an empty list so the client can
-// render the section with an "All →" link with no crash.
+//   5. Open-shifts teaser (spec §6.2): top 2 soonest open future shifts, plus
+//      open_shifts_count for the "All (N)" link to Shifts -> Available.
 router.get('/staff-home', asyncHandler(async (req, res) => {
   const userId = req.user.id;
 
-  const [nextShift, pendingRequests, coverBroadcasts, currentPeriod] = await Promise.all([
+  const [nextShift, pendingRequests, coverBroadcasts, currentPeriod, openShiftsTeaser, openShiftsCount] = await Promise.all([
     pool.query(`
       SELECT s.id AS shift_id, s.event_date, s.start_time, s.end_time, s.location,
              s.positions_needed,
@@ -133,6 +130,30 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
        ORDER BY pp.start_date DESC
        LIMIT 1
     `, [userId]),
+
+    // Open shifts teaser — top 2 soonest open future shifts (spec §6.2). Mirrors
+    // the Available tab's open-shift filter (status='open', future) so the cards
+    // and the "All (N)" count stay consistent. A lean projection (vs reusing
+    // STAFF_OPEN_SHIFTS_SQL, which is built for the full 500-row Available list
+    // with the cover LATERAL) is enough for the 2-row teaser.
+    pool.query(`
+      SELECT s.id AS shift_id, s.event_date, s.start_time, s.end_time, s.location,
+             p.id AS proposal_id, p.event_type, p.event_type_custom,
+             p.guest_count, c.name AS client_name
+        FROM shifts s
+        LEFT JOIN proposals p ON p.id = s.proposal_id
+        LEFT JOIN clients c ON c.id = p.client_id
+       WHERE s.status = 'open' AND s.event_date >= CURRENT_DATE
+       ORDER BY s.event_date ASC, s.start_time ASC
+       LIMIT 2
+    `),
+
+    // Total open future shifts for the "All (N)" link to Shifts → Available.
+    pool.query(`
+      SELECT COUNT(*)::int AS n
+        FROM shifts
+       WHERE status = 'open' AND event_date >= CURRENT_DATE
+    `),
   ]);
 
   res.json({
@@ -140,7 +161,8 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
     pending_requests: pendingRequests.rows,
     cover_broadcasts: coverBroadcasts.rows,
     current_period: currentPeriod.rows[0] || null,
-    open_shifts_teaser: [],
+    open_shifts_teaser: openShiftsTeaser.rows,
+    open_shifts_count: openShiftsCount.rows[0].n,
   });
 }));
 

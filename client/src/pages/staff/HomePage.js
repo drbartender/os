@@ -105,6 +105,8 @@ export default function HomePage() {
   const coverBroadcasts = Array.isArray(data?.cover_broadcasts) ? data.cover_broadcasts : [];
   const currentPeriod = data?.current_period || null;
   const openShifts = Array.isArray(data?.open_shifts_teaser) ? data.open_shifts_teaser : [];
+  // True total open count for the "All (N)" link (teaser is capped at 2 server-side).
+  const openShiftsCount = typeof data?.open_shifts_count === 'number' ? data.open_shifts_count : openShifts.length;
 
   const showNeedsYou =
     (nextShift && !nextShift.beo_confirmed && nextShift.drink_plan_finalized_at) ||
@@ -290,7 +292,7 @@ export default function HomePage() {
             className="sp-card-link"
             onClick={() => navigate('/staff-v2/shifts/available')}
           >
-            All ({openShifts.length})
+            All ({openShiftsCount})
           </button>
         </div>
         {openShifts.length > 0 ? (
@@ -438,10 +440,9 @@ function normalizeNextShift(row) {
 }
 
 /**
- * Normalize an open-shift row for the teaser. The /staff-home endpoint
- * currently returns an empty list for open_shifts_teaser (spec §6.2 ack:
- * "intentionally a hardcoded empty array for now") — this normalizer is a
- * forward-fit for when the backend wires the projection in.
+ * Normalize an open-shift row for the teaser. /staff-home returns the top 2
+ * soonest open future shifts in open_shifts_teaser (plus open_shifts_count for
+ * the "All (N)" link), per spec §6.2.
  */
 function normalizeOpenShift(row) {
   return {

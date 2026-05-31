@@ -273,7 +273,12 @@ test('GET /api/me/staff-home > composite payload shape', async () => {
   // Current pay-period projection includes the seeded payout total.
   assert.strictEqual(res.body.current_period?.total_cents, 12345);
   assert.ok(Array.isArray(res.body.open_shifts_teaser));
-  assert.strictEqual(res.body.open_shifts_teaser.length, 0);
+  // The seeded shift is open + future, so it surfaces in the teaser, capped at 2.
+  assert.ok(res.body.open_shifts_teaser.length >= 1, 'teaser is populated when open shifts exist');
+  assert.ok(res.body.open_shifts_teaser.length <= 2, 'teaser is capped at 2 (spec §6.2)');
+  // open_shifts_count carries the true total for the "All (N)" link.
+  assert.strictEqual(typeof res.body.open_shifts_count, 'number');
+  assert.ok(res.body.open_shifts_count >= 1, 'count reflects existing open shifts');
 });
 
 test('GET /api/me/staff-home > IDOR: other user sees empty next_shift', async () => {
