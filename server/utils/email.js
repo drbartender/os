@@ -1,4 +1,6 @@
 const { Resend } = require('resend');
+const { notificationsEnabled } = require('./notificationsEnabled');
+const { QuotaExceededError } = require('./errors');
 
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
@@ -6,10 +8,32 @@ const resend = process.env.RESEND_API_KEY
 
 const FROM_EMAIL = 'Dr. Bartender <no-reply@drbartender.com>';
 
-if (process.env.RESEND_API_KEY) {
-  console.log('[email] Resend initialized');
-} else {
+if (!process.env.RESEND_API_KEY) {
   console.warn('[email] RESEND_API_KEY is NOT set — emails will be logged only, not sent');
+} else if (!notificationsEnabled()) {
+  console.log('[email] Resend initialized, but notifications are gated OFF (set SEND_NOTIFICATIONS=true to send) — emails will be logged only');
+} else {
+  console.log('[email] Resend initialized');
+}
+
+/**
+ * Detect a Resend daily-quota / rate-limit rejection so callers (and the
+ * scheduled-message dispatcher) can treat it as a transient, retryable
+ * condition (defer + retry after reset) instead of a hard, terminal failure.
+ */
+function isQuotaError(error) {
+  if (!error) return false;
+  const name = String(error.name || '').toLowerCase();
+  const msg = String(error.message || '').toLowerCase();
+  const status = error.statusCode || error.status || null;
+  return (
+    status === 429 ||
+    name.includes('rate_limit') ||
+    name.includes('quota') ||
+    msg.includes('quota') ||
+    msg.includes('rate limit') ||
+    msg.includes('too many requests')
+  );
 }
 
 /**
@@ -25,8 +49,9 @@ if (process.env.RESEND_API_KEY) {
  * @returns {Promise<{id: string}>}
  */
 async function sendEmail({ to, subject, html, text, from, replyTo, attachments }) {
-  if (!resend) {
-    console.log(`[DEV] Email skipped → ${to} | Subject: ${subject}${attachments ? ` (with ${attachments.length} attachment(s))` : ''}`);
+  if (!resend || !notificationsEnabled()) {
+    const why = !resend ? 'RESEND_API_KEY not set' : 'notifications gated off';
+    console.log(`[DEV] Email skipped (${why}) → ${to} | Subject: ${subject}${attachments ? ` (with ${attachments.length} attachment(s))` : ''}`);
     return { id: 'dev-skipped' };
   }
 
@@ -43,6 +68,7 @@ async function sendEmail({ to, subject, html, text, from, replyTo, attachments }
 
   if (error) {
     console.error('[email] Resend send FAILED for', to, '—', error?.message || JSON.stringify(error));
+    if (isQuotaError(error)) throw new QuotaExceededError(error?.message || 'Resend daily sending quota reached');
     throw new Error(error?.message || 'Resend send failed');
   }
 
@@ -55,8 +81,9 @@ async function sendEmail({ to, subject, html, text, from, replyTo, attachments }
  * @returns {Promise<Array<{id: string}>>}
  */
 async function sendBatchEmails(emails) {
-  if (!resend) {
-    console.log(`[DEV] Batch email skipped — ${emails.length} emails`);
+  if (!resend || !notificationsEnabled()) {
+    const why = !resend ? 'RESEND_API_KEY not set' : 'notifications gated off';
+    console.log(`[DEV] Batch email skipped (${why}) — ${emails.length} emails`);
     return emails.map(() => ({ id: 'dev-skipped' }));
   }
 
@@ -73,6 +100,7 @@ async function sendBatchEmails(emails) {
 
   if (error) {
     console.error('Resend batch error:', error);
+    if (isQuotaError(error)) throw new QuotaExceededError(error?.message || 'Resend daily sending quota reached');
     throw new Error(`Failed to send batch: ${error.message}`);
   }
 
@@ -80,4 +108,4 @@ async function sendBatchEmails(emails) {
   return sent;
 }
 
-module.exports = { sendEmail, sendBatchEmails, FROM_EMAIL };
+module.exports = { sendEmail, sendBatchEmails, FROM_EMAIL, isQuotaError };

@@ -21,6 +21,7 @@
  */
 const { pool } = require('../db');
 const { registerHandler } = require('./scheduledMessageDispatcher');
+const { SuppressMessageError } = require('./errors');
 const { sendAndLogSms } = require('./sms');
 const smsTemplates = require('./smsTemplates');
 const { PUBLIC_SITE_URL } = require('./urls');
@@ -28,10 +29,12 @@ const { PUBLIC_SITE_URL } = require('./urls');
 const DAY_SECONDS = 86400;
 
 /**
- * Load proposal + client fields a balance SMS handler needs. Throws when the
- * proposal is gone / archived, the client has no phone / opted out of SMS, or
- * the balance is already cleared (the reminder is moot — admin or autopay
- * resolved it).
+ * Load proposal + client fields a balance SMS handler needs. A gone/archived
+ * proposal or an already-cleared balance throws a plain Error (the dispatcher
+ * marks 'failed'). The contact-deliverability skips (no phone, bad phone, SMS
+ * opted out) throw SuppressMessageError so the row is recorded 'suppressed'
+ * without alerting Sentry. Per spec 7.3 the SMS half of this multi-channel pair
+ * suppresses on a dead channel while the email half still fires.
  */
 async function loadBalanceSmsContext(proposalId) {
   const { rows } = await pool.query(
@@ -46,10 +49,10 @@ async function loadBalanceSmsContext(proposalId) {
   const ctx = rows[0];
   if (!ctx) throw new Error(`balance SMS: proposal ${proposalId} not found`);
   if (ctx.status === 'archived') throw new Error('balance SMS: proposal archived');
-  if (!ctx.client_phone) throw new Error('balance SMS: client has no phone');
-  if (ctx.phone_status === 'bad') throw new Error('balance SMS: client phone_status is bad');
+  if (!ctx.client_phone) throw new SuppressMessageError('client_no_phone');
+  if (ctx.phone_status === 'bad') throw new SuppressMessageError('phone_status_bad');
   const prefs = ctx.comm_prefs || {};
-  if (prefs.sms_enabled === false) throw new Error('balance SMS: sms_enabled is false');
+  if (prefs.sms_enabled === false) throw new SuppressMessageError('sms_opted_out');
   const balanceDue = Number(ctx.total_price) - Number(ctx.amount_paid);
   if (!(balanceDue > 0)) throw new Error('balance SMS: balance is zero or negative, reminder moot');
   return ctx;

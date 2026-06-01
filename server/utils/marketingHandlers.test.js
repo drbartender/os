@@ -46,6 +46,23 @@ after(async () => {
   await pool.end();
 });
 
+test('loadHandlerContext > suppresses (not fails) when the client has no email', async () => {
+  // Regression for DRBARTENDER-SERVER-X: a client with no email is an expected
+  // skip, not a dispatch failure — the loader throws SuppressMessageError so the
+  // dispatcher records the row 'suppressed' without alerting Sentry.
+  const { loadHandlerContext } = require('./marketingHandlers');
+  const { SuppressMessageError } = require('./errors');
+  await pool.query('UPDATE clients SET email = NULL WHERE id = $1', [clientId]);
+  try {
+    await assert.rejects(
+      () => loadHandlerContext({ entity_id: proposalId }),
+      (err) => err instanceof SuppressMessageError && err.reason === 'client_no_email'
+    );
+  } finally {
+    await pool.query("UPDATE clients SET email = 'handler-test@example.com' WHERE id = $1", [clientId]);
+  }
+});
+
 // ── handler metadata (single source of truth) ──
 // The dispatcher's marketing gate reads `getHandlerMeta(messageType).category`,
 // not a separately exported list. After registration, every marketing-class

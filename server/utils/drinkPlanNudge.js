@@ -13,11 +13,11 @@
  * channel-substitute either row — per spec 7.3 each channel's row is
  * independent (the dead channel suppresses, the other fires).
  *
- * Send-time suppression: throw 'SUPPRESS: ...' when the drink plan is already
- * filled or the proposal is archived. The dispatcher records the throw as
- * 'failed' with the reason in error_message — that is the chosen signal for
- * "no longer needed" (mirrors marketingHandlers.js retention_nudge, which also
- * throws 'SUPPRESS:' for a last-mile skip).
+ * Send-time suppression: throw SuppressMessageError when the drink plan is
+ * already filled or the proposal is archived. The dispatcher records the row
+ * 'suppressed' (no Sentry) — the correct signal for "no longer needed"
+ * (mirrors marketingHandlers.js retention_nudge, which also suppresses a
+ * last-mile skip).
  *
  * "Filled" is NOT "a drink_plans row exists". drink_plans.selections is
  * JSONB DEFAULT '{}', and createDrinkPlan (eventCreation.js) inserts a row at
@@ -29,6 +29,7 @@
  */
 const { pool } = require('../db');
 const { registerHandler } = require('./scheduledMessageDispatcher');
+const { SuppressMessageError } = require('./errors');
 const { scheduleMessage } = require('./messageScheduling');
 const { computeScheduledFor } = require('./preEventScheduling');
 const { sendEmail } = require('./email');
@@ -93,8 +94,8 @@ function drinkPlanNudgeEmail({ clientFirstName, eventTypeLabel, eventDateDisplay
 
 /**
  * Load the proposal + client + drink_plan fields the nudge handlers need.
- * Throws 'SUPPRESS: ...' for the no-longer-needed cases so the dispatcher
- * records a clear reason.
+ * Throws SuppressMessageError for the no-longer-needed cases so the dispatcher
+ * records the row 'suppressed' with a clear reason.
  */
 async function loadNudgeContext(proposalId) {
   // dp_submitted is computed in SQL: TRUE only when selections is a populated
@@ -115,15 +116,15 @@ async function loadNudgeContext(proposalId) {
   );
   const ctx = rows[0];
   if (!ctx) throw new Error(`drink_plan_nudge: proposal ${proposalId} not found`);
-  if (ctx.status === 'archived') throw new Error('SUPPRESS: proposal archived');
+  if (ctx.status === 'archived') throw new SuppressMessageError('proposal_archived');
   // Spec 3.7 suppression: the drink plan is already filled. dp_submitted is
   // the SQL-computed "populated selections" flag — a default-empty '{}' row
   // does NOT count, so the nudge still fires for a freshly-converted proposal.
   if (ctx.dp_submitted === true) {
-    throw new Error('SUPPRESS: drink plan already has selections');
+    throw new SuppressMessageError('drink_plan_already_filled');
   }
   if (ctx.dp_consult_filled_at !== null && ctx.dp_consult_filled_at !== undefined) {
-    throw new Error('SUPPRESS: drink plan consult already recorded');
+    throw new SuppressMessageError('consult_already_recorded');
   }
   return ctx;
 }
@@ -139,7 +140,7 @@ function eventLabel(ctx) {
 
 async function handleDrinkPlanNudgeEmail({ entity }) {
   const ctx = await loadNudgeContext(entity.id);
-  if (!ctx.client_email) throw new Error('drink_plan_nudge: client has no email');
+  if (!ctx.client_email) throw new SuppressMessageError('client_no_email');
   const tpl = drinkPlanNudgeEmail({
     clientFirstName: firstNameOf(ctx.client_name),
     eventTypeLabel: eventLabel(ctx),
@@ -153,7 +154,7 @@ async function handleDrinkPlanNudgeEmail({ entity }) {
 
 async function handleDrinkPlanNudgeSms({ entity }) {
   const ctx = await loadNudgeContext(entity.id);
-  if (!ctx.client_phone) throw new Error('drink_plan_nudge_sms: client has no phone');
+  if (!ctx.client_phone) throw new SuppressMessageError('client_no_phone');
   const body = smsTemplates.drinkPlanNudgeSms({
     eventDate: eventDateSms(ctx.event_date),
     plannerUrl: ctx.token ? `${PUBLIC_SITE_URL}/plan/${ctx.token}` : `${PUBLIC_SITE_URL}/plan`,

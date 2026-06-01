@@ -21,16 +21,18 @@
  */
 const { pool } = require('../db');
 const { registerHandler } = require('./scheduledMessageDispatcher');
+const { SuppressMessageError } = require('./errors');
 const { sendAndLogSms } = require('./sms');
 const smsTemplates = require('./smsTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
 
 /**
- * Load the proposal + client fields a drip SMS handler needs. Throws when the
- * proposal is gone, archived, the client has no phone, or SMS is opted out —
- * the dispatcher then marks the row 'failed' (archived is normally already
- * caught by the dispatcher's own suppression, but we re-check defensively).
+ * Load the proposal + client fields a drip SMS handler needs. A gone/archived
+ * proposal throws a plain Error (the dispatcher marks 'failed'; archived is
+ * normally pre-suppressed upstream anyway). The contact-deliverability skips
+ * (no phone, bad phone, SMS opted out) throw SuppressMessageError so the row is
+ * recorded 'suppressed' without alerting Sentry.
  */
 async function loadDripSmsContext(proposalId) {
   const { rows } = await pool.query(
@@ -45,10 +47,10 @@ async function loadDripSmsContext(proposalId) {
   const proposal = rows[0];
   if (!proposal) throw new Error(`drip SMS: proposal ${proposalId} not found`);
   if (proposal.status === 'archived') throw new Error('drip SMS: proposal archived');
-  if (!proposal.client_phone) throw new Error('drip SMS: client has no phone');
-  if (proposal.phone_status === 'bad') throw new Error('drip SMS: client phone_status is bad');
+  if (!proposal.client_phone) throw new SuppressMessageError('client_no_phone');
+  if (proposal.phone_status === 'bad') throw new SuppressMessageError('phone_status_bad');
   const prefs = proposal.comm_prefs || {};
-  if (prefs.sms_enabled === false) throw new Error('drip SMS: sms_enabled is false');
+  if (prefs.sms_enabled === false) throw new SuppressMessageError('sms_opted_out');
   return proposal;
 }
 

@@ -18,6 +18,7 @@
  */
 const { pool } = require('../db');
 const { registerHandler } = require('./scheduledMessageDispatcher');
+const { SuppressMessageError } = require('./errors');
 const { sendAndLogSms } = require('./sms');
 const smsTemplates = require('./smsTemplates');
 const { resolveEventTimezone } = require('./eventTimezone');
@@ -137,10 +138,10 @@ async function handleEventEve({ entity }) {
   const ctx = rows[0];
   if (!ctx) throw new Error(`event_eve: proposal ${proposalId} not found`);
   if (ctx.status === 'archived') throw new Error('event_eve: proposal archived');
-  if (!ctx.client_phone) throw new Error('event_eve: client has no phone');
-  if (ctx.phone_status === 'bad') throw new Error('event_eve: client phone_status is bad');
+  if (!ctx.client_phone) throw new SuppressMessageError('client_no_phone');
+  if (ctx.phone_status === 'bad') throw new SuppressMessageError('phone_status_bad');
   const prefs = ctx.comm_prefs || {};
-  if (prefs.sms_enabled === false) throw new Error('event_eve: sms_enabled is false');
+  if (prefs.sms_enabled === false) throw new SuppressMessageError('sms_opted_out');
 
   const bartender = await resolveBartender(proposalId);
   const setupMinutes = effectiveSetupMinutes(

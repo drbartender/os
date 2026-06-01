@@ -1,11 +1,13 @@
 const twilio = require('twilio');
 const { pool } = require('../db');
+const { notificationsEnabled } = require('./notificationsEnabled');
 
 const client = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
   ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
   : null;
 
 if (!client) console.warn('⚠️  Twilio credentials not set — SMS will be logged but not sent');
+else if (!notificationsEnabled()) console.log('[sms] Twilio initialized, but notifications are gated OFF (set SEND_NOTIFICATIONS=true to send) — SMS will be logged only');
 
 /**
  * Send an SMS via Twilio
@@ -16,8 +18,9 @@ if (!client) console.warn('⚠️  Twilio credentials not set — SMS will be lo
  */
 async function sendSMS({ to, body }) {
   if (!to) throw new Error('SMS recipient phone number is required');
-  if (!client) {
-    console.log(`[DEV] SMS skipped → ${to} | Body: ${body}`);
+  if (!client || !notificationsEnabled()) {
+    const why = !client ? 'Twilio creds not set' : 'notifications gated off';
+    console.log(`[DEV] SMS skipped (${why}) → ${to} | Body: ${body}`);
     return { sid: `dev-skipped-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
   }
   const message = await client.messages.create({

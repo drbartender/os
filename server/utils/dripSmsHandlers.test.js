@@ -42,6 +42,23 @@ after(async () => {
   await pool.end();
 });
 
+test('loadDripSmsContext > suppresses (not fails) when the client has no phone', async () => {
+  // Regression for DRBARTENDER-SERVER-V: a client with no phone is an expected
+  // skip, not a dispatch failure — the loader throws SuppressMessageError so the
+  // dispatcher records the row 'suppressed' without alerting Sentry.
+  const { loadDripSmsContext } = require('./dripSmsHandlers');
+  const { SuppressMessageError } = require('./errors');
+  await pool.query('UPDATE clients SET phone = NULL WHERE id = $1', [clientId]);
+  try {
+    await assert.rejects(
+      () => loadDripSmsContext(proposalId),
+      (err) => err instanceof SuppressMessageError && err.reason === 'client_no_phone'
+    );
+  } finally {
+    await pool.query("UPDATE clients SET phone = '3125550140' WHERE id = $1", [clientId]);
+  }
+});
+
 test('registerDripSmsHandlers > registers the three drip SMS types with marketing category and null offset', () => {
   _clearHandlersForTest();
   registerDripSmsHandlers();
