@@ -395,7 +395,7 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
                   <input type="number" className="input" placeholder="Amount ($)"
                     value={refundAmount} onChange={e => setRefundAmount(e.target.value)}
                     min="0.01" step="0.01" />
-                  <textarea className="input" placeholder="Reason (e.g. second bartender no-show)"
+                  <textarea className="input" placeholder="Reason"
                     value={refundReason} onChange={e => setRefundReason(e.target.value)}
                     rows={2} style={{ resize: 'vertical' }} />
                   <div className="hstack" style={{ gap: 6 }}>
