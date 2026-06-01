@@ -122,7 +122,7 @@ export default function PayoutEventRow({ event, highlight = false }) {
               <div className="sp-line-k">Card processing fee</div>
               <div className="sp-line-sub">Stripe fee on your share</div>
             </div>
-            <div className="sp-line-v neg">-{formatMoney(tipFee)}</div>
+            <div className="sp-line-v neg">{formatMoney(-Math.abs(tipFee))}</div>
           </div>
           {tipNet > 0 && (
             <div className="sp-line">

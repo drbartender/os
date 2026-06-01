@@ -45,7 +45,7 @@ function register(router) {
               pp.id   AS period_id,
               pp.start_date, pp.end_date, pp.payday,
               pp.status AS period_status,
-              (SELECT COUNT(*) FROM payout_events WHERE payout_id = po.id) AS event_count
+              (SELECT COUNT(*)::int FROM payout_events WHERE payout_id = po.id) AS event_count
          FROM payouts po
          JOIN pay_periods pp ON pp.id = po.pay_period_id
         WHERE po.contractor_id = $1

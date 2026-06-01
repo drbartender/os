@@ -244,7 +244,7 @@ export default function PayoutDetail() {
             <div className="sp-line">
               <div className="sp-line-k">Card processing fee</div>
               <div className="sp-line-v neg">
-                -{formatMoney(coerceCents(summary.card_processing_fee_cents))}
+                {formatMoney(-Math.abs(coerceCents(summary.card_processing_fee_cents)))}
               </div>
             </div>
           </>

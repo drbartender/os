@@ -162,13 +162,16 @@ export default function PayPage() {
 
   // Banner data: prefer the in-list current-period detail (canonical numbers),
   // fall back to /staff-home, fall back to "no current period" suppression.
+  // Single `today` per render so the current-period match can't drift between
+  // the two comparisons (or across a midnight re-render).
+  const today = todayYmd();
   const listCurrent = payouts.find(
     (p) =>
       p.status !== 'paid' &&
       p.period?.start_date &&
       p.period?.end_date &&
-      todayYmd() >= p.period.start_date &&
-      todayYmd() <= p.period.end_date
+      today >= p.period.start_date &&
+      today <= p.period.end_date
   );
 
   const banner = pickBanner(listCurrent, currentDetail, fallbackPeriod);
