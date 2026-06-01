@@ -21,6 +21,12 @@ test('isQuotaError > true for a rate_limit_exceeded error name', () => {
   assert.equal(isQuotaError({ name: 'rate_limit_exceeded', message: 'slow down' }), true);
 });
 
+test('isQuotaError > true for Resend canonical daily/monthly quota names', () => {
+  // Resend returns statusCode: null on these; matched via the name/message branch.
+  assert.equal(isQuotaError({ name: 'daily_quota_exceeded', statusCode: null, message: 'You have reached your daily email sending quota.' }), true);
+  assert.equal(isQuotaError({ name: 'monthly_quota_exceeded', statusCode: null }), true);
+});
+
 test('isQuotaError > false for an unrelated send error', () => {
   assert.equal(isQuotaError({ message: 'The `to` field is invalid.' }), false);
   assert.equal(isQuotaError({ name: 'validation_error', message: 'bad request' }), false);
