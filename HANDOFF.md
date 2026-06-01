@@ -1,116 +1,121 @@
-# Staff Portal + BEO — Mid-Execution Handoff
+# Staff Portal + BEO — Handoff (2026-05-31)
 
 **Worktree:** `C:\Users\dalla\DRB_OS\worktrees\beo`
 **Branch:** `beo`
-**Last commit:** `c23a294 feat(beo): register beo_unack_nudge_sms handler at boot`
-**Date:** 2026-05-28
+**Last commit:** `46594c6 plan(staff-portal): fold in 2026-05-31 design re-review findings (feasibility + Gemini)`
+**Branch position:** `beo` is **5 ahead / 2 behind `main`**. See "Re-sync before continuing" below — the 2 it's missing are load-bearing.
 
-> The cc-import HANDOFF.md that was here is now merged history (commit `783f3b8` and surrounding). This file replaces it with the current in-flight context.
+---
 
-## What's done
+## TL;DR
 
-Two plans are being executed in this branch.
+The **BEO feature is complete**, the **staff-portal backend is complete**, and the **staff-portal frontend is ~half built** (shell + the entire Shifts surface incl. the BEO viewer). A 4-issue review-fix pass just landed and a design re-review of the unbuilt phases (feasibility + Gemini 2.5 Pro) is folded into the plan. What remains is the **Pay/Tip surface, the AccountPage, the cutover, and push notifications** — plus one **BLOCKER** to resolve at cutover. After the cutover, the worktree gets merged to `main`, pushed, and removed (and the worktree workflow gets dismantled in favor of trunk-based — a decision made this session).
 
-### Staff portal redesign plan (`docs/superpowers/plans/2026-05-27-staff-portal-redesign-implementation.md`)
+---
 
-- **Phase 1 (Tasks 1-6)** — schema additions, notification channel resolver, push sender stub, enqueueCategorizedMessage helper, shiftTime helper, tipHandleValidation Zelle branch. All landed, all tests pass.
-- **Phase 2 Task 7** — dispatcher kill-switch + push channel + sibling cascade + critical-path re-resolve + dead-letter Sentry + ADMIN_PHONE alert. Landed.
-- **Phase 2 Task 8 onward** — NOT started. Task 8 (calendar feed extension) was the original blocker that triggered the BEO plan; Tasks 9-11 (auth + payroll companions) can run in any order once BEO is further along.
+## What's DONE (and verified)
 
-### BEO plan (`docs/superpowers/plans/2026-05-26-beo-implementation.md`)
+All on branch `beo`. ~63 commits this session (`git log 0fccb52..HEAD`).
 
-- **Phase 1 (Tasks 1-4)** — schema (`drink_plans.finalized_at`, `.finalized_by`, `shift_requests.beo_acknowledged_at`), SuppressMessageError class, dispatcher discriminator, beoReadLimiter. Landed.
-- **Phase 2 (Tasks 5-12)** — staffBeoNudgeSms template, formatEventDateLong export, beoHandlers.js (insertBeoNudgeIfMissing, scheduleBeoNudgesForProposal, suppressBeoNudgesForProposal, suppressBeoNudgesForStaffers, reanchorBeoForProposal, loadBeoContext, handleBeoUnackNudge), boot wiring. Landed. 21 tests in `beoHandlers.test.js`, all pass.
-- **Phase 3 onward** — NOT started.
+### BEO feature — complete
+Banquet Event Order: schema, `beoHandlers.js` (T-3 unack nudge + scheduling/suppression/reanchor), `routes/beo.js` (GET payload + logo proxy + POST acknowledge), Finalize/Unfinalize lifecycle + lock guards, all shift-integration suppression hooks, admin DrinkPlanCard buttons + EventDetailPage "Confirmed" pills, `team_roster` projection. Server suites green.
 
-## Pick up here
+### Staff-portal BACKEND (plan Phases 1–5, Tasks 1–28) — complete
+- Schema: `ui_preferences` / `staff_notification_preferences` / `token_version` / `last_ics_fetch_at` on `users`, `zelle_handle`, cover/drop columns + `replaced_by_request_id` on `shift_requests`, `staff_document_history` / `staff_audit_log` / `pending_email_changes` tables, etc.
+- Routers: `server/routes/staffPortal.js` (+ `staffPortal/paymentMethods.js`), `emailChange.js`, `adminCoverSwaps.js`. All `/api/me/*` endpoints (staff-home, payment-methods, profile, ui-preferences, staff-notifications, push-subscriptions, documents/replace, email-change request/cancel/confirm).
+- Drop/Cover marketplace: drop / request-cover / claim-cover / emergency-drop / withdraw + `coverBroadcast.js` + `coverApprovalCascade.js`. Calendar feed BEO-confirm VEVENTs. Auth `suspended` deny + `dropped_at` filters.
 
-The cleanest next task is **BEO Phase 3 Task 13: `server/routes/beo.js` GET routes + tests** (plan line 1213). That creates `server/routes/beo.js` with three GET routes (proposal-scoped BEO read, logo fetch, ack-state) and tests. Then Task 14 adds `POST /api/beo/:proposalId/acknowledge`.
+### Staff-portal FRONTEND Phases 6–7 (Tasks 29–37) — complete
+- Phase 6 (shell): `StaffShell.js`, `StaffUserPillMenu.js`, `StaffShellWithThemeWiring.js`, `staff/Placeholder.js`, design tokens ported to `index.css` (all `--sp-` prefixed), `/staff-v2/*` stub route block in `App.js`.
+- Phase 7 (shifts): `staff/ShiftCard.js`, `staff/TeamRosterCard.js`, `pages/staff/HomePage.js`, `ShiftsPage.js`, `ShiftDetail.js`, `components/staff/DropCoverModal.js`, `BeoSections.js`. `team_roster` added to `GET /api/beo/:proposalId`.
 
-After Phase 3, Phase 4 is Finalize/Unfinalize + lock guards on every drinkPlans.js / drinkPlanConsult.js mutation route. Phase 5 is the 8 shift-integration touches (suppression hooks on cancel-or-unassign, deny/approve, generic PUT cancel, DELETE, autoAssign ack-clear, scheduleStaffShiftMessages BEO branch, rescheduleProposalInTx reanchor cascade, GET shifts projection updates). Phase 6 is the admin frontend (Tasks 28 + 30 only — 29 and 31 are dropped per the staff portal plan's inheritance). Phase 7 is docs + final verification.
+### Review-fix pass (4 findings) — complete + browser-verified
+Plan: `docs/superpowers/plans/2026-05-31-staff-portal-review-fixes.md`. Commits `63aa16f`, `efaf87d`, `8a69b9a`:
+- **R2+R3** `preferred_name` surfaced in `/auth/me` + login payload (menu shows the name, greeting shows the first name).
+- **R1** skin-aware page backdrop via `data-app="staff"` (light theme now actually renders light; was the non-skin-aware global chalkboard).
+- **R4** `open_shifts_teaser` (top 2) + `open_shifts_count` wired into `/staff-home` (Home "Open shifts" now matches Available).
+Review cadence ran clean (security "ship it", database clean, code-review benign).
 
-## Plan-vs-schema adaptations (load-bearing for the next agent)
+---
 
-The BEO plan was written against a slightly older schema. These deltas applied during Phase 1-2 execution and need to carry forward:
+## What's LEFT — staff-portal plan Phases 8–11 (Tasks 38–56)
 
-1. **`onboarding_status='active'` is invalid.** The CHECK constraint allows `in_progress | applied | interviewing | hired | rejected | submitted | reviewed | approved | suspended | deactivated`. Every plan reference to `'active'` was rewritten to `'approved'` — that's the staffer-in-pool status. Look for this in Phase 5 staffer-filter queries.
-2. **`users.password` is `users.password_hash`.** Test fixtures use `password_hash` with `bcrypt.hash('x', 4)`.
-3. **`drink_plans.proposal_id` has no UNIQUE constraint.** `INSERT ... ON CONFLICT (proposal_id) DO UPDATE` won't work. Use `DELETE` then `INSERT`, or check-then-insert.
-4. **`handleBeoUnackNudge` gate order is asserted by tests.** Order shipped: `user_deleted` → `beo_not_finalized` → `already_acknowledged` → `staffer_unassigned` → `user_inactive` → `no_phone` → `no_start_time` → `event_in_past`. Don't reorder.
-5. **`scheduled_messages.suppression_key` + `payload` columns are NEW** (added in staff-portal Phase 1 Task 1). The BEO plan never uses them, but the dispatcher now SELECTs them in `dispatchPending` — schema and dispatcher are coupled.
-6. **Staff-portal Phase 1 Task 4 widened `messageScheduling.js` `VALID_CHANNELS` to include `'push'`.** Any new BEO scheduling call still goes through `scheduleMessage` (which won't fan out) or the new `enqueueCategorizedMessage` (which fans out per channel).
-7. **`scheduledMessageDispatcher.js` is 986 lines** — over the 700 soft cap, under the 1000 hard cap. Each future commit that grows this file will warn but not block until 1000. Plan a split eventually (push branch and sibling cascade are natural extracts).
+**Primary doc:** `docs/superpowers/plans/2026-05-27-staff-portal-redesign-implementation.md` — **read the new "⚠️ Review Amendments (folded in 2026-05-31)" section at the top first.**
 
-## Operational notes
+| Phase | Tasks | What | Risk |
+|---|---|---|---|
+| 8 — Pay + Tip Card | 38–41 | PayoutEventRow/PayoutDetail, PayPage, TipCardPage, publicTip extension | Low (publicTip is PII-sensitive, see W2) |
+| 9 — AccountPage | 42–47 | Account shell + Profile/EmailVerify, PaymentMethods/AddMethod, CalendarSync, Notifications, Documents | Low–medium (async states under-specced, see W1) |
+| 10 — Cutover | 48–51 | Swap `/staff-v2` → real staff site, redirects, delete old fragments, docs | **Highest — has the BLOCKER** |
+| 11 — Push (Phase B) | 52–56 | web-push, service worker, iOS coachmark, dispatcher activation | Deferred; not needed to close the tree |
 
-### Database (CRITICAL)
+### Review findings to address (folded into the plan; re-stated here)
 
-- Local dev DB is Neon. The connection string lives in `../../os/.env`, NOT in this worktree.
-- `DATABASE_URL` is NOT in the bash shell by default. Every command that needs it must prefix with:
-  ```bash
-  export $(grep -E "^DATABASE_URL=" ../../os/.env | head -1);
-  ```
-- The Neon dev branch was reset between sessions earlier this run (a routine action). After any reset, re-apply schema:
-  ```bash
-  export $(grep -E "^DATABASE_URL=" ../../os/.env | head -1); psql "$DATABASE_URL" -f server/db/schema.sql
-  ```
-  It's idempotent. The `position` backfill UPDATE runs `UPDATE 73` (or however many contractor_profiles rows exist) on first re-apply.
+- **🔴 BLOCKER — Task 49 (cutover): BEO nudge URL not reconciled.** The nudge SMS links to `/events/:proposalId/beo` (proposalId-keyed, `server/utils/beoHandlers.js`) but the new ShiftDetail/BEO viewer is `/staff-v2/shifts/:shiftId` (shiftId-keyed). After cutover, **every BEO nudge link 404s.** Triple-confirmed (manual feasibility + plan-feasibility agent + Gemini). Fix: a `/events/:proposalId/beo` redirect that resolves proposalId→shiftId (model on `ShiftDetailRedirect`, `App.js:442`), OR change the nudge URL server-side. An explicit Step 2.5 was added to Task 49.
+- **🟡 W2 — Task 41:** `publicTip.js` is unauthenticated with a hardcoded public-safe SELECT. Add `zelle_handle` to that explicit list (NOT `SELECT *`) + read-side validation mirroring `normalizePaypalUrl`. (Inlined into Task 41.)
+- **🟡 W1 — Phase 9:** Account sub-sections lack loading/empty/error/disabled state specs (§6.1.5). Define all four per section.
+- **🟡 W3 — Task 46/18:** EmailVerifyPage must handle the **logged-out** click of the confirm link (it's token-keyed, so confirm works without a session; then prompt login or show clean success).
+- **🟢 S1 — Phase 8:** shared money formatter (integer cents → `$1,234.56`); check `client/src/utils/` for an existing one first.
+- **🟢 S2 — Phase 11:** push permission-request + denial UX (not in the backend-only plan).
+
+**Feasibility confirmed sound:** `App.js` cutover structure is intact (`StaffSiteRoutes`/`HiringRoutes` both have old `StaffLayout` mount + `/staff-v2` block; 492 lines, no ratchet risk; Task 50 delete list matches disk). Phase 8–9 backend contracts all exist.
+
+---
+
+## ‼️ Re-sync before continuing
+
+`beo` is **2 behind `main`** — `main` has two fixes (landed from a parallel window) that touch code this branch also touches:
+- `187d31e fix(beo): rate-limit unauthenticated email-change confirm + extend suspended/deactivated gate to managers`
+- `e29929e fix(beo): exclude emergency-dropped staff from money/coverage/BEO reads, throw on cover-cascade mismatch, fire-and-forget cover broadcast`
+
+**Before doing more Phase 8+ work, merge `main` into `beo`** (`git merge main` from this worktree) so you build on those fixes and don't re-diverge on emergency-drop / email-change / cover-cascade. Expect a clean merge (different surfaces), but resolve `README.md`/`ARCHITECTURE.md` by union if they conflict.
+
+---
+
+## Key documents (all referenced)
+
+- **Staff-portal plan (PRIMARY):** `docs/superpowers/plans/2026-05-27-staff-portal-redesign-implementation.md` — has the folded-in Review Amendments + per-task inlines (Task 49 Step 2.5, Task 41 PII note).
+- **Review-fix plan (just executed):** `docs/superpowers/plans/2026-05-31-staff-portal-review-fixes.md`.
+- **Staff-portal spec:** `docs/superpowers/specs/2026-05-27-staff-portal-redesign-design.md` (§ anchors per task; §6.1.5 = async states; §6.8 = tip; §9 = phasing).
+- **BEO plan:** `docs/superpowers/plans/2026-05-26-beo-implementation.md`.
+- **Gemini re-review output (verbatim):** `.claude/gemini-plan-out.txt` (prompt in `.claude/gemini-plan-prompt.txt`).
+- **Design source for the frontend:** `C:\Users\dalla\Downloads\Dr Bartender (6)\staff\` — `app.jsx`, `account.jsx`, `details.jsx`, `data.jsx`, `icons.jsx`, `styles.css`. Phases 8–9 build their surfaces from this + the spec.
+
+---
+
+## Operational context (local dev / review)
+
+Viewing `/staff-v2` on localhost is non-obvious — full notes in the memory `reference_staff_portal_local_review.md`. Essentials:
+- **Run the dev server from this worktree:** `NODE_ENV=development HOST=localhost DANGEROUSLY_DISABLE_HOST_CHECK=true npm run dev`. The forced `NODE_ENV`/`HOST` are required — the shell has them set to empty strings, and dotenv won't override empties (breaks CORS + CRA's allowedHosts).
+- **`beo/.env`** (copied from `../../os/.env`) and **`client/.env`** (`REACT_APP_API_URL=http://localhost:5000`) already exist, gitignored. The `client/.env` sidesteps a CRA-proxy trailing-slash CORS bug.
+- **Host-gating:** `/staff-v2` only mounts when the host starts with `staff.`. On localhost it falls to the admin context. To review locally, force the staff context (a dev-only `localStorage 'dev-site-context'` override in `App.js getSiteContext()` — was added and reverted during the review; re-add temporarily if you need to browse, revert before commit).
+- **DB:** Neon dev branch; `DATABASE_URL` lives in `../../os/.env`, NOT the shell. Prefix DB commands: `export $(grep -E '^(DATABASE_URL|JWT_SECRET|ENCRYPTION_KEY)=' ../../os/.env | head -3);`.
+- **nodemon EADDRINUSE:** rapid server-file saves can make nodemon crash on restart (port not released). If `:5000` is down after edits, kill `:3000`+`:5000` by PID (`netstat -ano | grep :5000` → `taskkill //F //PID`) and relaunch.
 
 ### Tests
+- BEO + staff-portal suites are green in isolation (run with the DB prefix above). Full `npm test` shows ~150 PRE-EXISTING shared-DB concurrency failures — not regressions; ignore unless a file that passed in isolation starts failing in isolation.
+- `CI=true npm --prefix client run build` passes (only a pre-existing html2pdf source-map warning).
 
-Run a single file:
-```bash
-export $(grep -E "^DATABASE_URL=" ../../os/.env | head -1); node --test server/utils/beoHandlers.test.js
-```
+### Testing GAP (important for before cutover)
+Backend is well-tested. The **frontend's interactive flows are under-tested** — Phases 6–7 were build-gated + browser *spot-checked* (layout/data), but the **mutation flows were never exercised**: Confirm-BEO ack stamping, drop/cover/emergency submission, claim-cover, withdraw. The **BEO drink-menu sections never rendered** (the review seed used placeholder drink IDs). No loading/empty/error pass, no responsive beyond 390px, no a11y. **Do a real interactive browser pass with realistic seed data before the Phase 10 cutover.**
 
-Full suite (`npm test`) currently shows ~150 failures — those are **pre-existing concurrency issues** (every failing test passes in isolation; they share dev-DB state across parallel runs). NOT a regression from this session's work. Don't chase those; only worry if a file that passed in isolation starts failing in isolation.
+---
 
-Stale test-user rows accumulate when test runs are interrupted. If you see `users_email_key` violations:
-```bash
-export $(grep -E "^DATABASE_URL=" ../../os/.env | head -1); psql "$DATABASE_URL" -c "DELETE FROM users WHERE email LIKE 'disp-%' OR email LIKE 'push-dispatcher-test-%' OR email LIKE 'beo-handlers-%' OR email LIKE 'channel-resolver-test-%' OR email LIKE 'enqueue-test-%'"
-```
+## Direction / closing out this tree
 
-### Dev server
+Decision made this session: **after this work ships, dismantle the worktree workflow and return to trunk-based** (serial work made long-lived worktrees a net cost — staleness + repeated re-merges). Don't act on that yet; it happens at closeout.
 
-Per CLAUDE.md, the dev server is "Claude-managed bg process" — no auto-reload. Restart it (kill :5000 PID, relaunch) after server edits. PowerShell tool is denied for Claude, so the user runs the restart themselves.
-
-### Commits
-
-Pre-commit lint runs eslint via lint-staged. Two patterns to watch:
-- `==` vs `===` is a hard error.
-- `security/detect-unsafe-regex` flags bounded regexes too aggressively; use `// eslint-disable-next-line security/detect-unsafe-regex` when the regex is provably bounded.
-
-Docs-drift warning fires on every schema/structural change. It's a warning only; the plan's Phase 7 / Task 32 batches docs updates at the end.
-
-## Files modified this session
-
-### New files (server)
-- `server/utils/notificationChannelResolver.js` + `.test.js`
-- `server/utils/pushSender.js` + `.test.js`
-- `server/utils/shiftTime.js` + `.test.js`
-- `server/utils/tipHandleValidation.test.js` (test file is new; the impl was extended in place)
-- `server/utils/beoHandlers.js` + `.test.js`
-
-### Modified files (server)
-- `server/db/schema.sql` (staff-portal + BEO additions, all idempotent)
-- `server/utils/messageScheduling.js` (VALID_CHANNELS widened to push; enqueueCategorizedMessage added; category in payload)
-- `server/utils/scheduledMessageDispatcher.js` (push branch + sibling cascade + re-resolve + SuppressMessageError discriminator + `sms` module-level require for monkey-patching)
-- `server/utils/errors.js` (SuppressMessageError class)
-- `server/utils/staffShiftHandlers.js` (formatEventDateLong export)
-- `server/utils/smsTemplates.js` + `.test.js` (staffBeoNudgeSms)
-- `server/utils/tipHandleValidation.js` (Zelle branch)
-- `server/middleware/rateLimiters.js` (beoReadLimiter)
-- `server/index.js` (registerBeoHandlers in boot block)
-
-### Unchanged
-- Anything client-side (frontend untouched)
-- All other route files
+**Path to close the tree:**
+1. Re-sync `main` into `beo` (see above).
+2. Build Phase 8 (Pay/Tip), then Phase 9 (Account) — similar in size/approach to the Phase 6–7 work (subagent build from spec + design source, build-gated + browser checks).
+3. Interactive browser test pass (close the testing gap above).
+4. Phase 10 cutover — carefully, **resolving the BLOCKER** (BEO nudge redirect). Verify in-browser, then `/staff-v2` is the live staff site.
+5. Run the full review-before-deploy fleet, then merge `beo` → `main` → push → `npm run worktree:rm -- beo`. Phase 11 (push) is a separate later effort.
 
 ## Recommended next-window prompt
 
-> Continue executing the BEO plan at `docs/superpowers/plans/2026-05-26-beo-implementation.md` starting at Phase 3 Task 13. The prior session shipped Phase 1+2 (commits `13907c2` through `c23a294`). Read `HANDOFF.md` first for plan-vs-schema adaptations (especially `onboarding_status='approved'` not `'active'`) and the DATABASE_URL sourcing pattern.
+> Continue the staff portal at `docs/superpowers/plans/2026-05-27-staff-portal-redesign-implementation.md` starting Phase 8. **First read the "⚠️ Review Amendments" section at the top of the plan**, then `git merge main` into this `beo` worktree to pick up the 2 missing fixes (see HANDOFF.md "Re-sync"). Phases 1–7 + the review fixes are done. Watch the Task 49 BLOCKER (BEO nudge URL redirect) when you reach the cutover. Local-dev gotchas: HANDOFF.md "Operational context".
 
 ## Don't touch unless asked
-
-- `docs/superpowers/specs/*` — settled, multiple review-fleet rounds folded
-- `docs/superpowers/plans/*` — same, except to update task checkboxes if the executing-plans skill calls for it
+- `docs/superpowers/specs/*` — settled.
+- The kept `.claude/beo-gemini-*` and `.claude/spec-*-prompt.md` scratch (the user keeps these).
