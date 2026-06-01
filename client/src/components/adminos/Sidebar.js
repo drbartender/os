@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useUserPrefs } from '../../context/UserPrefsContext';
@@ -26,12 +26,23 @@ export default function Sidebar({ badges = {}, onCloseMobileNav }) {
   const { user, logout } = useAuth();
   const { prefs, setPref } = useUserPrefs();
 
+  const [tip, setTip] = useState(null); // { label, top, left } | null
+  const rail = prefs.sidebar === 'rail';
+
+  const showTip = (e, label) => {
+    if (!rail) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    setTip({ label, top: r.top + r.height / 2, left: r.right + 8 });
+  };
+  const hideTip = () => setTip(null);
+
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
 
   return (
+    <>
     <aside className="sidebar" id="primary-nav" aria-label="Primary navigation">
       <div className="sidebar-brand">
         <div className="sidebar-brand-mark">℞</div>
@@ -57,10 +68,15 @@ export default function Sidebar({ badges = {}, onCloseMobileNav }) {
                 <div
                   key={item.id}
                   className={`nav-item ${active ? 'active' : ''}`}
-                  onClick={() => navigate(item.path)}
+                  onClick={() => { hideTip(); navigate(item.path); }}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(item.path); } }}
+                  aria-label={rail ? item.label : undefined}
+                  onMouseEnter={(e) => showTip(e, item.label)}
+                  onMouseLeave={hideTip}
+                  onFocus={(e) => showTip(e, item.label)}
+                  onBlur={hideTip}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); hideTip(); navigate(item.path); } }}
                 >
                   <Icon name={item.icon} />
                   <span className="nav-label">{item.label}</span>
@@ -126,5 +142,11 @@ export default function Sidebar({ badges = {}, onCloseMobileNav }) {
         </button>
       </div>
     </aside>
+    {tip && (
+      <div className="nav-rail-tip" style={{ top: tip.top, left: tip.left }}>
+        {tip.label}
+      </div>
+    )}
+    </>
   );
 }
