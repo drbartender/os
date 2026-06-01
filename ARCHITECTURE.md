@@ -448,6 +448,8 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | GET | `/tips` | Yes | Paginated list of recent successful tips for the current bartender (amount, source, created_at). |
 | GET | `/notification-preferences` | Yes | Current user's notification category subscriptions. |
 | PATCH | `/notification-preferences` | Admin/Manager | Toggle notification categories for the current admin/manager. |
+| GET | `/payouts` | Yes | Staffer's payout history — list of `{ id, status, total_cents, paid_at, paystub_storage_key, event_count, period }`, newest pay period first. Hard-scoped to `req.user.id` (no `:userId` param). `payment_method` / `payment_handle` deliberately NOT projected (PII). Powers the staff portal Pay tab (spec §6.6). |
+| GET | `/payouts/:periodId` | Yes | One pay period's detail for the logged-in staffer: `{ period, payout, events[], summary }`. IDOR-guarded by `WHERE po.contractor_id = $1 AND po.pay_period_id = $2` — 404 if no payout row for (this user, this period). `summary` sums wages / gratuity / card-tip gross+fee / adjustments across events; `total_cents` comes from the payout row (canonical, never a JS sum). |
 
 ### Admin Tip Pages — `/api/admin/contractors/:userId/tip-page`
 | Method | Path | Auth | Description |

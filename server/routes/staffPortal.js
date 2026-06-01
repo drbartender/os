@@ -22,6 +22,7 @@ const { emailChangeVerification, emailChangeWarning } = require('../utils/lifecy
 const { STAFF_URL } = require('../utils/urls');
 const { emailChangeRequestLimiter } = require('../middleware/rateLimiters');
 const paymentMethods = require('./staffPortal/paymentMethods');
+const payouts = require('./staffPortal/payouts');
 const crypto = require('crypto');
 
 // Stub seam — tests swap uploadFile + sendEmail to avoid hitting real R2 /
@@ -170,6 +171,13 @@ router.get('/staff-home', asyncHandler(async (req, res) => {
 // Spec §6.11. Implementation lives in ./staffPortal/paymentMethods.js to keep
 // this top-level router under the file-size ratchet.
 paymentMethods.register(router);
+
+// ─── Phase 8: Staffer payout read endpoints (delegated) ───────────────────
+// Spec §6.6 (Pay tab). Implementation lives in ./staffPortal/payouts.js.
+// Exposes GET /payouts (list for req.user.id) and GET /payouts/:periodId
+// (one period's detail, scoped to req.user.id — IDOR-guarded by the JOIN
+// condition po.contractor_id = $1 AND po.pay_period_id = $2).
+payouts.register(router);
 
 // ─── Task 14: tip-card-order, profile, ui-preferences ─────────────────────
 
