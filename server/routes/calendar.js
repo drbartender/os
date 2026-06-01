@@ -179,7 +179,7 @@ async function fetchTeamsByShiftIds(shiftIds) {
     FROM shift_requests sr
     JOIN users u ON u.id = sr.user_id
     LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-    WHERE sr.shift_id = ANY($1) AND sr.status = 'approved'
+    WHERE sr.shift_id = ANY($1) AND sr.status = 'approved' AND sr.dropped_at IS NULL
     ORDER BY name ASC
   `, [shiftIds]);
 
@@ -333,7 +333,7 @@ router.get('/feed/:token', calendarLimiter, asyncHandler(async (req, res) => {
       JOIN shifts s ON s.id = sr.shift_id
       LEFT JOIN proposals p ON p.id = s.proposal_id
       LEFT JOIN clients c ON c.id = p.client_id
-      WHERE sr.user_id = $1 AND sr.status = 'approved'
+      WHERE sr.user_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL
         AND s.event_date >= CURRENT_DATE - INTERVAL '30 days'
         AND s.event_date <= CURRENT_DATE + INTERVAL '365 days'
       ORDER BY s.event_date ASC

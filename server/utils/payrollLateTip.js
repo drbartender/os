@@ -42,7 +42,7 @@ async function rollForwardLateTip(tipId) {
       `SELECT sr.user_id, (u.cc_id LIKE 'legacy_cc:%') AS is_stub
          FROM shift_requests sr
          JOIN users u ON u.id = sr.user_id
-        WHERE sr.shift_id = $1 AND sr.status = 'approved'
+        WHERE sr.shift_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL
           AND LOWER(sr.position) = 'bartender'
         ORDER BY sr.user_id`,
       [tip.shift_id]

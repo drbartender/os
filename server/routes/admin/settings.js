@@ -128,7 +128,7 @@ router.get('/badge-counts', auth, adminOnly, asyncHandler(async (req, res) => {
        WHERE event_date >= CURRENT_DATE AND status = 'open'
          AND jsonb_typeof(positions_needed::jsonb) = 'array'
          AND jsonb_array_length(positions_needed::jsonb) > 0
-         AND (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = shifts.id AND sr.status = 'approved')
+         AND (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = shifts.id AND sr.status = 'approved' AND sr.dropped_at IS NULL)
              < jsonb_array_length(positions_needed::jsonb)
       )::int AS unstaffed_events,
       (SELECT COUNT(*) FROM applications a

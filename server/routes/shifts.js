@@ -57,7 +57,7 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
         COALESCE(c.phone, s.client_phone) AS client_phone,
         COALESCE(c.email, s.client_email) AS client_email,
         (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
-        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count
+        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
       FROM shifts s
       LEFT JOIN users u ON u.id = s.created_by
       LEFT JOIN proposals p ON p.id = s.proposal_id
@@ -87,14 +87,14 @@ router.get('/unstaffed-upcoming', auth, requireStaffing, asyncHandler(async (req
            s.event_type, s.event_type_custom, s.positions_needed, s.proposal_id,
            COALESCE(c.name, s.client_name) AS client_name,
            (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
-           (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count
+           (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
     FROM shifts s
     LEFT JOIN proposals p ON p.id = s.proposal_id
     LEFT JOIN clients c ON c.id = p.client_id
     WHERE s.status = 'open'
       AND s.event_date >= CURRENT_DATE
       AND jsonb_typeof(s.positions_needed::jsonb) = 'array'
-      AND (SELECT COUNT(*) FROM shift_requests sr2 WHERE sr2.shift_id = s.id AND sr2.status = 'approved')
+      AND (SELECT COUNT(*) FROM shift_requests sr2 WHERE sr2.shift_id = s.id AND sr2.status = 'approved' AND sr2.dropped_at IS NULL)
           < jsonb_array_length(s.positions_needed::jsonb)
     ORDER BY s.event_date ASC, s.start_time ASC
     LIMIT 200
@@ -196,7 +196,7 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
   const result = await pool.query(`
     SELECT s.*,
       (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
-      (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count,
+      (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count,
       (SELECT COALESCE(json_agg(json_build_object(
                 'user_id', sr.user_id,
                 'name', COALESCE(cp.preferred_name, u.email),
@@ -205,7 +205,7 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
          FROM shift_requests sr
          JOIN users u ON u.id = sr.user_id
          LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-        WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_staff
+        WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_staff
     FROM shifts s
     WHERE s.proposal_id = $1
     ORDER BY s.event_date ASC, s.start_time ASC, s.id ASC
@@ -226,7 +226,7 @@ router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) =
         p.total_price AS proposal_total,
         p.token AS proposal_token,
         (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
-        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved') AS approved_count
+        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
       FROM shifts s
       LEFT JOIN proposals p ON p.id = s.proposal_id
       LEFT JOIN clients c ON c.id = p.client_id

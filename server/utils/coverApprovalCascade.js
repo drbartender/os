@@ -28,6 +28,7 @@
  */
 
 const Sentry = require('@sentry/node');
+const { ConflictError } = require('./errors');
 const { scheduleStaffShiftMessages, computeEventStartUtc } = require('./staffShiftHandlers');
 const { insertBeoNudgeIfMissing } = require('./beoHandlers');
 
@@ -45,7 +46,8 @@ const FIVE_MINUTES_MS = 5 * 60 * 1000;
  * @param {{query: Function}} dbClient pg client already inside a transaction
  * @param {number} originalRequestId   the cover-requesting shift_request.id
  * @param {number} newRequestId        the claiming staffer's shift_request.id
- * @returns {Promise<{originalUserId:number|null, newUserId:number|null, shiftId:number|null, beoNudgeScheduled:boolean}>}
+ * @returns {Promise<{originalUserId:number, newUserId:number, shiftId:number, beoNudgeScheduled:boolean}>}
+ * @throws {ConflictError} on a structural mismatch (missing rows / different shifts)
  */
 async function applyCoverCascade(dbClient, originalRequestId, newRequestId) {
   // Pull both rows + shift + proposal context in one round trip. Lock the
@@ -72,17 +74,18 @@ async function applyCoverCascade(dbClient, originalRequestId, newRequestId) {
       FOR UPDATE OF sr`,
     [[originalRequestId, newRequestId]]
   );
-  if (rows.length < 2) {
-    return { originalUserId: null, newUserId: null, shiftId: null, beoNudgeScheduled: false };
-  }
+  // Structural mismatches MUST throw, never return — the caller runs this
+  // inside a transaction that has already flipped the new request to
+  // 'approved'. A silent null-shape return would let that COMMIT, leaving the
+  // new staffer approved while the original stays active = double-coverage.
+  // Throwing rolls the whole cascade back.
   const original = rows.find((r) => r.request_id === originalRequestId);
   const neu = rows.find((r) => r.request_id === newRequestId);
-  if (!original || !neu) {
-    return { originalUserId: null, newUserId: null, shiftId: null, beoNudgeScheduled: false };
+  if (rows.length < 2 || !original || !neu) {
+    throw new ConflictError('Cover swap requests not found.', 'swap_requests_missing');
   }
   if (original.shift_id !== neu.shift_id) {
-    // Two unrelated requests — refuse to cascade.
-    return { originalUserId: null, newUserId: null, shiftId: null, beoNudgeScheduled: false };
+    throw new ConflictError('Cover swap requests are on different shifts.', 'swap_shift_mismatch');
   }
 
   const shiftId = original.shift_id;

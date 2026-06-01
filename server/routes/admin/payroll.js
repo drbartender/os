@@ -337,6 +337,7 @@ router.get('/payroll/unassigned-tips', auth, adminOnly, asyncHandler(async (req,
   LEFT JOIN proposals p ON p.id = s.proposal_id
       WHERE sr.user_id = ANY($1::int[])
         AND sr.status = 'approved'
+        AND sr.dropped_at IS NULL
         AND s.event_date > NOW() - INTERVAL '120 days'
       ORDER BY s.event_date DESC`,
     [userIds]

@@ -229,6 +229,85 @@ test('rollForwardLateTip > mixed-stub shift: real bartender gets the whole tip, 
   }
 });
 
+test('rollForwardLateTip > emergency-dropped bartender is excluded from the split', async () => {
+  // An emergency-dropped bartender keeps status='approved' but has dropped_at
+  // set (they bailed <72h out and never worked). They must NOT take a share of
+  // the late tip — the bartender who actually worked absorbs the whole thing.
+  // Mirrors the `dropped_at IS NULL` filter in payrollAccrual.
+  const worked = await pool.query(
+    `INSERT INTO users (email, password_hash, role)
+     VALUES ('late-tip-worked@example.com','x','staff') RETURNING id`
+  );
+  const workedId = worked.rows[0].id;
+  const dropped = await pool.query(
+    `INSERT INTO users (email, password_hash, role)
+     VALUES ('late-tip-dropped@example.com','x','staff') RETURNING id`
+  );
+  const droppedId = dropped.rows[0].id;
+  for (const id of [workedId, droppedId]) {
+    await pool.query(
+      `INSERT INTO contractor_profiles (user_id, hourly_rate) VALUES ($1, 20.00)
+       ON CONFLICT (user_id) DO UPDATE SET hourly_rate = 20.00`,
+      [id]
+    );
+  }
+  const dropShift = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','8:00 PM','open',$1) RETURNING id`,
+    [frozenProposalId]
+  );
+  const dropShiftId = dropShift.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved')`,
+    [dropShiftId, workedId]
+  );
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status, dropped_at, drop_emergency, drop_reason)
+     VALUES ($1, $2, 'Bartender', 'approved', NOW(), true, 'sick')`,
+    [dropShiftId, droppedId]
+  );
+  const tipRes = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_late_tip_dropped', '2026-05-15 23:30:00+00', $2)
+     RETURNING id`,
+    [workedId, dropShiftId]
+  );
+  const dropTipId = tipRes.rows[0].id;
+
+  try {
+    const result = await rollForwardLateTip(dropTipId);
+    assert.equal(result.bartenders, 1, 'only the bartender who actually worked takes the split');
+
+    const workedEvent = await pool.query(
+      `SELECT pe.card_tip_gross_cents FROM payout_events pe JOIN payouts po ON po.id = pe.payout_id
+        WHERE po.contractor_id = $1 AND pe.shift_id = $2`,
+      [workedId, dropShiftId]
+    );
+    assert.equal(workedEvent.rowCount, 1);
+    assert.equal(Number(workedEvent.rows[0].card_tip_gross_cents), 4000, 'working bartender gets the whole tip');
+
+    const droppedEvent = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payout_events pe JOIN payouts po ON po.id = pe.payout_id
+        WHERE po.contractor_id = $1`,
+      [droppedId]
+    );
+    assert.equal(droppedEvent.rows[0].c, 0, 'the emergency-dropped bartender gets nothing');
+  } finally {
+    await pool.query(
+      `DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id IN ($1, $2))`,
+      [workedId, droppedId]
+    );
+    await pool.query('DELETE FROM payouts WHERE contractor_id IN ($1, $2)', [workedId, droppedId]);
+    await pool.query('DELETE FROM tips WHERE id = $1', [dropTipId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [dropShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [dropShiftId]);
+    await pool.query('DELETE FROM contractor_profiles WHERE user_id IN ($1, $2)', [workedId, droppedId]);
+    await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [workedId, droppedId]);
+  }
+});
+
 test('rollForwardLateTip > skips with all_bartenders_are_legacy_cc_stubs when every shift bartender is a stub', async () => {
   const stubA = await pool.query(
     `INSERT INTO users (email, password_hash, role, cc_id)

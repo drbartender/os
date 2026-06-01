@@ -175,6 +175,7 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
     JOIN shifts s ON s.id = sr.shift_id
     WHERE sr.user_id = ANY($1)
       AND sr.status = 'approved'
+      AND sr.dropped_at IS NULL
       AND s.event_date < CURRENT_DATE
     GROUP BY sr.user_id
   `, [userIds]);

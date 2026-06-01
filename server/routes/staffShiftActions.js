@@ -450,27 +450,25 @@ router.post('/requests/:requestId/request-cover', asyncHandler(async (req, res) 
     daysOut,
   });
 
-  // Fan out to qualified teammates. Best-effort: a broadcast failure must NOT
-  // unwind the cover_requested_at flip (already committed). Caller's UI shows
-  // broadcast_count from the response.
-  let broadcastResult = { broadcast_count: 0, broadcast_truncated: false };
-  try {
-    broadcastResult = await broadcastCoverRequest(ctx.shift_id, req.user.id);
-  } catch (err) {
+  // Fan out to qualified teammates. Fire-and-forget: the chunked enqueue can
+  // take several seconds at the MAX_TARGETS cap (250ms application-level delay
+  // per 25-row batch), and the cover_requested_at flip is already committed, so
+  // we must not block the HTTP response on it. A broadcast failure is logged to
+  // Sentry but never surfaced to the staffer (the cover request still stands;
+  // the client ignores the broadcast counts). Detached promise — no await.
+  broadcastCoverRequest(ctx.shift_id, req.user.id).catch((err) => {
     Sentry.captureException(err, {
       tags: { feature: 'cover-broadcast', endpoint: 'request-cover' },
       extra: { shift_id: ctx.shift_id, user_id: req.user.id },
     });
     console.error('[staffShiftActions] broadcastCoverRequest threw:', err.message);
-  }
+  });
 
   res.json({
     success: true,
     request_id: requestId,
     shift_id: ctx.shift_id,
     cover_requested_at: new Date().toISOString(),
-    broadcast_count: broadcastResult.broadcast_count,
-    broadcast_truncated: broadcastResult.broadcast_truncated,
   });
 }));
 
