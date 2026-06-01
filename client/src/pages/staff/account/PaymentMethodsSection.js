@@ -216,6 +216,11 @@ export default function PaymentMethodsSection() {
     } catch (err) {
       if (err?.fieldErrors && typeof err.fieldErrors === 'object') {
         setEditErrors(err.fieldErrors);
+      } else if (kind === 'direct_deposit') {
+        // PII discipline: a non-validation failure (network / 5xx) must not
+        // leave the freshly-typed routing/account plaintext lingering in the
+        // editing state. Close the edit; the user re-enters on retry.
+        setEditing(null);
       }
       toast.error(err?.message || 'Could not save the change.');
     } finally {

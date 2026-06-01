@@ -260,7 +260,13 @@ router.patch('/profile', asyncHandler(async (req, res) => {
   if ('preferred_name' in body) updates.preferred_name = trimOrNull(body.preferred_name);
   if ('street_address' in body) updates.street_address = trimOrNull(body.street_address);
   if ('city' in body)           updates.city           = trimOrNull(body.city);
-  if ('state' in body)          updates.state          = trimOrNull(body.state);
+  if ('state' in body) {
+    const st = trimOrNull(body.state);
+    if (st !== null && st.length > 2) {
+      throw new ValidationError({ state: 'must be a 2-letter state code' });
+    }
+    updates.state = st;
+  }
 
   if ('zip_code' in body) {
     const z = trimOrNull(body.zip_code);

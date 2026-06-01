@@ -163,6 +163,10 @@ export default function AddMethodModal({ methods, onClose, onSuccess }) {
         if (err?.fieldErrors && typeof err.fieldErrors === 'object') {
           setFieldErrors(err.fieldErrors);
         } else {
+          // PII discipline: a non-validation failure (network / 5xx) must not
+          // leave the freshly-typed routing/account plaintext in component state.
+          setRouting('');
+          setAccount('');
           toast.error(err?.message || 'Could not save direct deposit.');
         }
       } finally {
