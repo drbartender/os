@@ -225,7 +225,7 @@ async function loadBeoContext(proposalId, userId) {
             (
               SELECT bool_or(sr.beo_acknowledged_at IS NOT NULL)
                 FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
-               WHERE s.proposal_id = p.id AND sr.user_id = u.id AND sr.status = 'approved'
+               WHERE s.proposal_id = p.id AND sr.user_id = u.id AND sr.status = 'approved' AND sr.dropped_at IS NULL
             ) AS any_acked,
             (
               SELECT bool_or(true)

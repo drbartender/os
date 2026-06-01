@@ -254,7 +254,7 @@ async function scheduleStaffShiftMessages(shiftId, executor) {
 
     const staffRes = await exec.query(
       `SELECT user_id FROM shift_requests
-        WHERE shift_id = $1 AND status = 'approved'`,
+        WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL`,
       [shiftId]
     );
 
@@ -570,7 +570,7 @@ async function notifyStaffOfScheduleChange({ proposalId, updated, sms, email }) 
               p.event_type, p.event_type_custom, p.event_date,
               p.event_start_time, p.event_timezone, p.event_location
          FROM shifts s
-         JOIN shift_requests sr ON sr.shift_id = s.id AND sr.status = 'approved'
+         JOIN shift_requests sr ON sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL
          JOIN users u ON u.id = sr.user_id
          LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
          LEFT JOIN proposals p ON p.id = s.proposal_id

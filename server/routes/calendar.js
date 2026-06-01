@@ -435,7 +435,7 @@ router.get('/event/:shiftId.ics', auth, asyncHandler(async (req, res) => {
   // Verify access
   if (!isAdmin) {
     const check = await pool.query(
-      "SELECT id FROM shift_requests WHERE shift_id = $1 AND user_id = $2 AND status = 'approved'",
+      "SELECT id FROM shift_requests WHERE shift_id = $1 AND user_id = $2 AND status = 'approved' AND dropped_at IS NULL",
       [shiftId, req.user.id]
     );
     if (!check.rows[0]) throw new PermissionError('Access denied');
@@ -450,7 +450,7 @@ router.get('/event/:shiftId.ics', auth, asyncHandler(async (req, res) => {
     FROM shifts s
     LEFT JOIN proposals p ON p.id = s.proposal_id
     LEFT JOIN clients c ON c.id = p.client_id
-    LEFT JOIN shift_requests sr ON sr.shift_id = s.id AND sr.user_id = $2 AND sr.status = 'approved'
+    LEFT JOIN shift_requests sr ON sr.shift_id = s.id AND sr.user_id = $2 AND sr.status = 'approved' AND sr.dropped_at IS NULL
     WHERE s.id = $1
   `, [shiftId, req.user.id]);
 

@@ -160,7 +160,7 @@ router.get('/my-requests', auth, asyncHandler(async (req, res) => {
       FROM shift_requests sr
       JOIN users u ON u.id = sr.user_id
       LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-      WHERE sr.shift_id = ANY($1) AND sr.status = 'approved'
+      WHERE sr.shift_id = ANY($1) AND sr.status = 'approved' AND sr.dropped_at IS NULL
       ORDER BY name ASC
     `, [approvedShiftIds]);
 
