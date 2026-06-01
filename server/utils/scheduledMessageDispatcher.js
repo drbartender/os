@@ -6,7 +6,8 @@ const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
 const { resolveChannelFallback } = require('./channelFallback');
 const { suspendClientAutomation } = require('./clientAutomationSuspension');
-const { SuppressMessageError } = require('./errors');
+const { SuppressMessageError, QuotaExceededError } = require('./errors');
+const { deferRowForQuota, maybeAlertQuotaOnce } = require('./emailQuotaDefer');
 const pushSender = require('./pushSender');
 const {
   pickChannelsForUserAndCategory,
@@ -644,6 +645,17 @@ async function dispatchRow(row) {
       } catch (markErr) {
         console.error('[scheduledMessageDispatcher] failed to mark row suppressed:', markErr.message);
       }
+      return;
+    }
+    // QuotaExceededError is transient (provider daily cap): defer for retry after
+    // reset rather than fail it ('failed' is terminal — the row would be dropped).
+    if (err instanceof QuotaExceededError) {
+      try {
+        await deferRowForQuota(row.id);
+      } catch (deferErr) {
+        console.error('[scheduledMessageDispatcher] failed to defer row for quota:', deferErr.message);
+      }
+      maybeAlertQuotaOnce({ row_id: row.id, message_type: row.message_type });
       return;
     }
     Sentry.captureException(err, {

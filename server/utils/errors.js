@@ -62,6 +62,23 @@ class SuppressMessageError extends Error {
   }
 }
 
+/**
+ * Transport-layer signal that the email provider (Resend) rejected a send
+ * because the account's daily sending quota / rate limit is exhausted. Like
+ * SuppressMessageError this is a plain Error subclass (NOT an AppError): it is a
+ * transient, retryable internal condition that must never surface to a client.
+ * The scheduled-message dispatcher catches it to DEFER the row (retry after the
+ * quota resets) instead of marking it permanently 'failed' and dropping the
+ * notification.
+ */
+class QuotaExceededError extends Error {
+  constructor(message = 'email sending quota exceeded') {
+    super(message);
+    this.name = 'QuotaExceededError';
+    this.retryable = true;
+  }
+}
+
 module.exports = {
   AppError,
   ValidationError,
@@ -71,4 +88,5 @@ module.exports = {
   ExternalServiceError,
   PaymentError,
   SuppressMessageError,
+  QuotaExceededError,
 };

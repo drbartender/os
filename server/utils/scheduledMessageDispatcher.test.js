@@ -790,6 +790,31 @@ test('dispatchRow > SuppressMessageError marks row suppressed without Sentry', a
   assert.strictEqual(row.rows[0].status, 'suppressed');
   assert.strictEqual(row.rows[0].error_message, 'test_suppress_reason');
 });
+
+test('dispatchRow > QuotaExceededError defers the row for retry (not failed)', async () => {
+  const { QuotaExceededError } = require('./errors');
+  const { _resetQuotaAlertThrottleForTest } = require('./emailQuotaDefer');
+  _resetQuotaAlertThrottleForTest();
+
+  registerHandler('disp_test_quota_err', async () => {
+    throw new QuotaExceededError('You have reached your daily email sending quota.');
+  }, { offsetFromEventDate: 0, anchor: 'event_date', category: 'operational', priority: 4 });
+
+  const cli = await pool.query(
+    `INSERT INTO scheduled_messages (entity_type, entity_id, message_type, recipient_type, recipient_id, channel, scheduled_for)
+     VALUES ('proposal', $1, 'disp_test_quota_err', 'client', $2, 'email', NOW() - INTERVAL '1 minute')
+     RETURNING id`,
+    [testProposalId, testClientId]
+  );
+
+  await dispatchPending();
+
+  const row = await pool.query('SELECT status, scheduled_for FROM scheduled_messages WHERE id = $1', [cli.rows[0].id]);
+  // Deferred (retryable), NOT failed (terminal/dropped), with scheduled_for pushed
+  // into the future so the reactivation pass re-queues it after the quota resets.
+  assert.strictEqual(row.rows[0].status, 'deferred');
+  assert.ok(new Date(row.rows[0].scheduled_for) > new Date(), 'scheduled_for is pushed into the future');
+});
 test('push channel > no subscriptions => row suppressed with no_push_subscriptions', async () => {
   await setPushSubs([]);
   await pool.query(
