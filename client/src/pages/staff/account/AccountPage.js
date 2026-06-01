@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../../context/AuthContext';
 import ProfileSection from './ProfileSection';
 import PaymentMethodsSection from './PaymentMethodsSection';
+import CalendarSyncSection from './CalendarSyncSection';
 
 /**
  * AccountPage — staff portal v2 account hub (spec §6.9).
@@ -151,7 +152,8 @@ export default function AccountPage() {
 
       {section === 'profile' && <ProfileSection />}
       {section === 'payments' && <PaymentMethodsSection />}
-      {section !== 'profile' && section !== 'payments' && (
+      {section === 'calendar' && <CalendarSyncSection />}
+      {section !== 'profile' && section !== 'payments' && section !== 'calendar' && (
         <SectionPlaceholder section={section} />
       )}
 
