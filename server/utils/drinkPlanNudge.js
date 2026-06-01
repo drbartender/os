@@ -13,11 +13,11 @@
  * channel-substitute either row — per spec 7.3 each channel's row is
  * independent (the dead channel suppresses, the other fires).
  *
- * Send-time suppression: throw 'SUPPRESS: ...' when the drink plan is already
- * filled or the proposal is archived. The dispatcher records the throw as
- * 'failed' with the reason in error_message — that is the chosen signal for
- * "no longer needed" (mirrors marketingHandlers.js retention_nudge, which also
- * throws 'SUPPRESS:' for a last-mile skip).
+ * Send-time suppression: throw SuppressMessageError when the drink plan is
+ * already filled or the proposal is archived. The dispatcher records the row
+ * 'suppressed' (no Sentry) — the correct signal for "no longer needed"
+ * (mirrors marketingHandlers.js retention_nudge, which also suppresses a
+ * last-mile skip).
  *
  * "Filled" is NOT "a drink_plans row exists". drink_plans.selections is
  * JSONB DEFAULT '{}', and createDrinkPlan (eventCreation.js) inserts a row at
@@ -94,8 +94,8 @@ function drinkPlanNudgeEmail({ clientFirstName, eventTypeLabel, eventDateDisplay
 
 /**
  * Load the proposal + client + drink_plan fields the nudge handlers need.
- * Throws 'SUPPRESS: ...' for the no-longer-needed cases so the dispatcher
- * records a clear reason.
+ * Throws SuppressMessageError for the no-longer-needed cases so the dispatcher
+ * records the row 'suppressed' with a clear reason.
  */
 async function loadNudgeContext(proposalId) {
   // dp_submitted is computed in SQL: TRUE only when selections is a populated
@@ -116,15 +116,15 @@ async function loadNudgeContext(proposalId) {
   );
   const ctx = rows[0];
   if (!ctx) throw new Error(`drink_plan_nudge: proposal ${proposalId} not found`);
-  if (ctx.status === 'archived') throw new Error('SUPPRESS: proposal archived');
+  if (ctx.status === 'archived') throw new SuppressMessageError('proposal_archived');
   // Spec 3.7 suppression: the drink plan is already filled. dp_submitted is
   // the SQL-computed "populated selections" flag — a default-empty '{}' row
   // does NOT count, so the nudge still fires for a freshly-converted proposal.
   if (ctx.dp_submitted === true) {
-    throw new Error('SUPPRESS: drink plan already has selections');
+    throw new SuppressMessageError('drink_plan_already_filled');
   }
   if (ctx.dp_consult_filled_at !== null && ctx.dp_consult_filled_at !== undefined) {
-    throw new Error('SUPPRESS: drink plan consult already recorded');
+    throw new SuppressMessageError('consult_already_recorded');
   }
   return ctx;
 }

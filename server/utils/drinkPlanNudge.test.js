@@ -123,10 +123,10 @@ test('drink_plan_nudge handler > throws SUPPRESS when the drink plan has populat
     "SELECT status, error_message FROM scheduled_messages WHERE entity_id=$1 AND message_type='drink_plan_nudge'",
     [proposalId]
   );
-  // The handler throws on suppression → the dispatcher marks the row 'failed'
-  // with the suppression reason in error_message.
-  assert.strictEqual(rows[0].status, 'failed');
-  assert.match(rows[0].error_message, /SUPPRESS/);
+  // The handler throws SuppressMessageError → the dispatcher marks the row
+  // 'suppressed' with the reason in error_message.
+  assert.strictEqual(rows[0].status, 'suppressed');
+  assert.match(rows[0].error_message, /drink_plan_already_filled/);
 });
 
 test('drink_plan_nudge handler > is NOT suppressed by a default-empty drink_plans row', async () => {
@@ -154,7 +154,7 @@ test('drink_plan_nudge handler > is NOT suppressed by a default-empty drink_plan
     "SELECT status FROM scheduled_messages WHERE entity_id=$1 AND message_type='drink_plan_nudge'",
     [proposalId]
   );
-  // sent (the email send succeeds in dev) — NOT 'failed' with a SUPPRESS reason.
+  // sent (the email send succeeds in dev) — NOT 'suppressed' as no-longer-needed.
   assert.strictEqual(rows[0].status, 'sent');
   __setSmsDeps({ sendSMS: require('./sms')._realSendSMS });
 });

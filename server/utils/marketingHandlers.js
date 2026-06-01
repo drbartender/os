@@ -474,7 +474,7 @@ function registerMarketingHandlers() {
     const { proposal } = await loadHandlerContext(scheduledMessage);
     // Last-mile suppression: client has another upcoming event → skip.
     const hasUpcoming = await clientHasUpcomingEvent(proposal.client_id, proposal.id);
-    if (hasUpcoming) throw new Error('SUPPRESS: client has upcoming event');
+    if (hasUpcoming) throw new SuppressMessageError('has_upcoming_event');
     const tplOut = tpl.retentionNudgeClient(makeMarketingTemplateContext(proposal));
     await sendEmail({
       to: proposal.client_email,
