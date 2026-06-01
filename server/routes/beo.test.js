@@ -319,6 +319,11 @@ test('GET /api/beo/:proposalId > staff with approved shift allowed', async () =>
   const res = await request('GET', `/api/beo/${proposalId}`, { token: staffToken });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.viewer.is_admin, false);
+  // The viewer's shift_request must carry request_id so the staff ShiftDetail
+  // page can resolve it for the drop / request-cover / emergency-drop actions
+  // on a deep-link (where no nav-state shiftRow is available).
+  const mine = (res.body.shift_requests || []).find((r) => r.user_id === staffUserId);
+  assert.ok(mine && Number.isInteger(mine.request_id), 'shift_requests row exposes request_id');
 });
 
 test('GET /api/beo/:proposalId > staff without shift 403', async () => {

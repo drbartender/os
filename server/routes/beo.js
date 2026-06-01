@@ -95,7 +95,7 @@ router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) =
   // staffer's status (is_acknowledged for self) is consistent with what admins
   // see for them.
   const shiftReqsRow = await pool.query(
-    `SELECT sr.user_id, COALESCE(cp.preferred_name, u.email) AS name,
+    `SELECT sr.user_id, sr.id AS request_id, COALESCE(cp.preferred_name, u.email) AS name,
             sr.beo_acknowledged_at
        FROM shift_requests sr
        JOIN shifts s ON s.id = sr.shift_id
@@ -250,7 +250,7 @@ router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) =
     } : null,
     shopping_list_status: dp ? dp.shopping_list_status : null,
     addons: addonsRow.rows,
-    shift_requests: shiftReqsRow.rows.map((r) => ({ user_id: r.user_id, beo_acknowledged_at: r.beo_acknowledged_at })),
+    shift_requests: shiftReqsRow.rows.map((r) => ({ user_id: r.user_id, request_id: r.request_id, beo_acknowledged_at: r.beo_acknowledged_at })),
     team_roster,
     viewer: { is_admin: isAdmin, is_acknowledged: isAck },
   });
