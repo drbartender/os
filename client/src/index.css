@@ -15876,3 +15876,124 @@ html[data-app="staff"] body {
 [data-skin="light"] .sp-cal-lastsync > svg { color: var(--sp-ms-emerald); }
 .sp-cal-lastsync > span { flex: 1; min-width: 0; }
 .sp-cal-lastsync strong { color: var(--sp-ink-1); font-weight: 600; }
+
+/* ── NotificationsSection (spec §6.13) ─────────────────────────────────── */
+
+/* 8×3 matrix: left-aligned category copy + three centered toggle columns.
+   Column order in the markup is Push / SMS / Email; layout is symmetric. */
+.sp-notif-head, .sp-notif-row {
+  display: grid;
+  grid-template-columns: 1fr 56px 56px 56px;
+  gap: 0.5rem;
+  align-items: center;
+}
+.sp-notif-head {
+  padding: 0.55rem 0 0.4rem;
+  border-bottom: 1px solid var(--sp-line-1);
+  margin-bottom: 0.2rem;
+}
+.sp-notif-channel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--sp-ink-3);
+  font-weight: 600;
+  text-align: center;
+}
+[data-skin="light"] .sp-notif-channel { letter-spacing: 0.16em; }
+.sp-notif-row {
+  padding: 0.6rem 0;
+  border-bottom: 1px dashed var(--sp-line-1);
+}
+.sp-notif-row:last-of-type { border-bottom: 0; }
+.sp-notif-row .sp-toggle { justify-self: center; }
+.sp-notif-l { min-width: 0; }
+.sp-notif-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sp-ink-1);
+  line-height: 1.3;
+}
+.sp-notif-sub {
+  font-size: 11px;
+  color: var(--sp-ink-3);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+/* Critical-row inline error (beo_finalized / schedule_change / payday with
+   no channels selected). Blocks Save until resolved; mirrors the server's
+   per-category _form rejection. */
+.sp-notif-row.has-error {
+  background: hsl(var(--sp-danger-h) var(--sp-danger-s) 55% / 0.06);
+}
+[data-skin="light"] .sp-notif-row.has-error {
+  background: transparent;
+  border-left: 2px solid var(--sp-ms-bordeaux);
+  padding-left: 0.55rem;
+}
+.sp-notif-row-err {
+  font-size: 11.5px;
+  color: hsl(var(--sp-danger-h) var(--sp-danger-s) 65%);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+[data-skin="light"] .sp-notif-row-err { color: var(--sp-ms-bordeaux); }
+
+/* SMS kill-switch indicator. When users.communication_preferences.sms_enabled
+   is false (set by a prior STOP keyword reply, see server/utils/smsInbound.js)
+   the server-side resolver strips 'sms' from every delivered channel set.
+   We render the SMS toggle with a strikethrough so the UI matches actual
+   delivery; the saved preference value is preserved so it restores on START. */
+.sp-toggle-overridden {
+  position: relative;
+  opacity: 0.55;
+}
+.sp-toggle-overridden::after {
+  content: "";
+  position: absolute;
+  left: 4px; right: 4px;
+  top: 50%;
+  border-top: 1.5px solid var(--sp-ink-2);
+  transform: translateY(-50%) rotate(-12deg);
+  pointer-events: none;
+}
+[data-skin="light"] .sp-toggle-overridden::after { border-color: var(--sp-ink-1); }
+
+/* Status banner reused for the SMS kill-switch surface. Ported from the
+   design's sp-push-banner family (will be reused in Phase B when Push
+   activates and adds .ios / .ok variants). */
+.sp-push-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--sp-ink-2);
+  margin-bottom: 0.8rem;
+}
+[data-skin="light"] .sp-push-banner {
+  border-radius: 0;
+  padding: 0.45rem 0 0.45rem 0.7rem;
+}
+.sp-push-banner > svg { flex-shrink: 0; margin-top: 2px; }
+.sp-push-banner > div { flex: 1; min-width: 0; }
+.sp-push-banner-t { color: var(--sp-ink-1); line-height: 1.4; }
+.sp-push-banner.denied {
+  background: hsl(var(--sp-danger-h) var(--sp-danger-s) 55% / 0.1);
+  border: 1px solid hsl(var(--sp-danger-h) var(--sp-danger-s) 55% / 0.3);
+}
+[data-skin="light"] .sp-push-banner.denied {
+  background: transparent;
+  border: 0;
+  border-left: 2px solid var(--sp-ms-bordeaux);
+}
+.sp-push-banner.denied > svg { color: hsl(var(--sp-danger-h) var(--sp-danger-s) 65%); }
+[data-skin="light"] .sp-push-banner.denied > svg { color: var(--sp-ms-bordeaux); }
+.sp-notif-banner-sub {
+  font-size: 11.5px;
+  color: var(--sp-ink-3);
+  margin-top: 3px;
+  line-height: 1.45;
+}
