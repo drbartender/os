@@ -81,6 +81,7 @@ const StaffV2HomePage = lazy(() => import('./pages/staff/HomePage'));
 const StaffV2ShiftsPage = lazy(() => import('./pages/staff/ShiftsPage'));
 const StaffV2PayoutDetail = lazy(() => import('./pages/staff/PayoutDetail'));
 const StaffV2PayPage = lazy(() => import('./pages/staff/PayPage'));
+const StaffV2TipCardPage = lazy(() => import('./pages/staff/TipCardPage'));
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
@@ -346,7 +347,7 @@ function StaffSiteRoutes() {
           <Route path="shifts/*" element={<StaffV2ShiftsPage />} />
           <Route path="pay/:periodId" element={<StaffV2PayoutDetail />} />
           <Route path="pay" element={<StaffV2PayPage />} />
-          <Route path="tip-card" element={<StaffPlaceholder name="Tip Card" />} />
+          <Route path="tip-card" element={<StaffV2TipCardPage />} />
           <Route path="account/:section" element={<StaffPlaceholder name="Account" />} />
         </Route>
         {/* Public token routes */}
