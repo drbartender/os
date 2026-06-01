@@ -14779,3 +14779,135 @@ html[data-app="staff"] body {
   gap: 6px;
   margin-top: 0.4rem;
 }
+
+/* ── PayoutDetail / PayPage shared money surfaces ────────────────────── */
+
+/* Pay-period banner — the large total + status chip + foot meta block. */
+.sp-period-banner {
+  background: var(--sp-bg-2);
+  border: 1px solid var(--sp-line-1);
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+[data-skin="light"] .sp-period-banner {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--sp-ink-1);
+  border-bottom: 1px solid var(--sp-ink-1);
+  border-radius: 0;
+  padding: 1.2rem 0;
+}
+.sp-period-banner.processing {
+  border-color: hsl(var(--sp-info-h) var(--sp-info-s) 50% / 0.4);
+  background: hsl(var(--sp-info-h) var(--sp-info-s) 50% / 0.05);
+}
+[data-skin="light"] .sp-period-banner.processing {
+  border-top-color: var(--sp-ms-navy);
+  border-bottom-color: var(--sp-ms-navy);
+  background: transparent;
+}
+.sp-period-banner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.sp-period-banner-dates {
+  font-family: var(--sp-font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--sp-ink-3);
+  font-weight: 500;
+}
+.sp-period-banner-total {
+  font-family: var(--sp-font-numeric);
+  font-size: 32px;
+  font-weight: 600;
+  color: var(--sp-ink-1);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+[data-skin="light"] .sp-period-banner-total {
+  font-weight: 400;
+  font-size: 40px;
+  font-feature-settings: "onum", "tnum";
+}
+.sp-period-banner-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 12px;
+  color: var(--sp-ink-3);
+}
+.sp-period-banner-foot strong { color: var(--sp-ink-1); font-weight: 600; }
+
+/* Paystub head/amount — the right-side line-total accent in dollar font. */
+.sp-paystub-amount {
+  font-family: var(--sp-font-numeric);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--sp-ink-1);
+  letter-spacing: -0.01em;
+}
+[data-skin="light"] .sp-paystub-amount {
+  font-weight: 400;
+  font-size: 22px;
+  font-feature-settings: "onum", "tnum";
+}
+.sp-paystub-events { font-size: 12px; color: var(--sp-ink-3); }
+
+/* Payout line rows — used inside Summary + per-event cards. */
+.sp-line {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.7rem;
+  padding: 0.55rem 0;
+  font-size: 13px;
+  align-items: baseline;
+  border-bottom: 1px dashed var(--sp-line-1);
+}
+.sp-line:last-child { border-bottom: 0; }
+.sp-line-k { color: var(--sp-ink-2); }
+.sp-line-sub { font-size: 11px; color: var(--sp-ink-3); margin-top: 2px; }
+.sp-line-v {
+  font-family: var(--sp-font-numeric);
+  color: var(--sp-ink-1);
+  font-variant-numeric: tabular-nums;
+}
+.sp-line-v.neg { color: hsl(var(--sp-danger-h) var(--sp-danger-s) 62%); }
+[data-skin="light"] .sp-line-v.neg { color: var(--sp-ms-bordeaux); }
+.sp-line.total {
+  padding-top: 0.7rem;
+  margin-top: 0.4rem;
+  border-top: 1px solid var(--sp-ink-1);
+  border-bottom: 0;
+  font-weight: 600;
+}
+.sp-line.total .sp-line-v { font-size: 16px; color: var(--sp-ink-1); }
+[data-skin="light"] .sp-line.total .sp-line-v { font-size: 18px; }
+
+/* Generic 1px divider used inside detail surfaces. */
+.sp-divider { height: 1px; background: var(--sp-line-1); margin: 0.6rem 0; }
+
+/* Highlighted card on PayoutDetail (jumps from past-shift tap). */
+.sp-highlight {
+  border-color: var(--sp-accent) !important;
+  box-shadow: 0 0 0 2px hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.12);
+  animation: sp-highlight-pulse 1.6s ease-out;
+}
+[data-skin="light"] .sp-highlight {
+  box-shadow: none;
+  background: var(--sp-row-active);
+  border: 0 !important;
+  border-top: 1px solid var(--sp-ms-emerald) !important;
+  padding-left: 8px;
+}
+@keyframes sp-highlight-pulse {
+  0%   { box-shadow: 0 0 0 2px hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.35); }
+  100% { box-shadow: 0 0 0 2px hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.12); }
+}
