@@ -1,6 +1,6 @@
 const express = require('express');
 const { pool } = require('../../db');
-const { auth, adminOnly } = require('../../middleware/auth');
+const { auth, adminOnly, requireAdminOrManager } = require('../../middleware/auth');
 const { sendEmail } = require('../../utils/email');
 const { geocodeAddress, buildAddressString, delay } = require('../../utils/geocode');
 const asyncHandler = require('../../middleware/asyncHandler');
@@ -119,8 +119,11 @@ router.post('/backfill-geocodes', auth, adminOnly, asyncHandler(async (req, res)
 
 // ─── Badge Counts ───────────────────────────────────────────────
 
-/** GET /api/admin/badge-counts — sidebar notification counts */
-router.get('/badge-counts', auth, adminOnly, asyncHandler(async (req, res) => {
+/** GET /api/admin/badge-counts — sidebar notification counts.
+ *  Managers share the admin dashboard, so they may read these counts. The one
+ *  exception is new_applications: the Hiring surface is adminOnly, so that count
+ *  is zeroed for managers below. */
+router.get('/badge-counts', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT
       (SELECT COUNT(*) FROM proposals WHERE status IN ('sent', 'viewed', 'modified'))::int AS pending_proposals,
@@ -140,7 +143,10 @@ router.get('/badge-counts', auth, adminOnly, asyncHandler(async (req, res) => {
       (SELECT COUNT(*) FROM sms_messages
          WHERE direction = 'inbound' AND read_at IS NULL AND client_id IS NOT NULL)::int AS unread_sms
   `);
-  res.json(result.rows[0]);
+  const counts = result.rows[0];
+  // Hiring is admin-only; don't surface the applicant count to managers.
+  if (req.user.role !== 'admin') counts.new_applications = 0;
+  res.json(counts);
 }));
 
 module.exports = router;
