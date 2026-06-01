@@ -15,6 +15,7 @@ const Sentry = require('@sentry/node');
 const crypto = require('crypto');
 const { pool } = require('../db');
 const asyncHandler = require('../middleware/asyncHandler');
+const { emailChangeConfirmLimiter } = require('../middleware/rateLimiters');
 const { sendEmail } = require('../utils/email');
 const { emailChangeConfirmed } = require('../utils/lifecycleEmailTemplates');
 
@@ -37,7 +38,7 @@ function constantTimeHexEqual(a, b) {
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-router.post('/confirm-email-change', asyncHandler(async (req, res) => {
+router.post('/confirm-email-change', emailChangeConfirmLimiter, asyncHandler(async (req, res) => {
   const rawToken = typeof req.body?.token === 'string' ? req.body.token : '';
   if (!rawToken || rawToken.length > 512) {
     return res.status(410).json({ ok: false, reason: 'invalid_or_expired' });

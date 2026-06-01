@@ -183,6 +183,19 @@ const emailChangeRequestLimiter = rateLimit({
   skip: () => process.env.NODE_ENV === 'test',
 });
 
+// Email-change CONFIRM limiter (UNAUTHENTICATED — POST /api/me/confirm-email-change).
+// The token is 256-bit so brute force is infeasible; this caps per-IP request
+// volume so the endpoint can't be used as a cheap resource-exhaustion or
+// enumeration surface. Keyed by IP (no authenticated user on this route).
+const emailChangeConfirmLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: () => process.env.NODE_ENV === 'test',
+  message: { error: 'Too many confirmation attempts. Please try again later.' },
+});
+
 module.exports = {
   publicLimiter,
   publicReadLimiter,
@@ -199,4 +212,5 @@ module.exports = {
   calcomWebhookLimiter,
   beoReadLimiter,
   emailChangeRequestLimiter,
+  emailChangeConfirmLimiter,
 };
