@@ -5,6 +5,7 @@ import ProfileSection from './ProfileSection';
 import PaymentMethodsSection from './PaymentMethodsSection';
 import CalendarSyncSection from './CalendarSyncSection';
 import NotificationsSection from './NotificationsSection';
+import DocumentsSection from './DocumentsSection';
 
 /**
  * AccountPage — staff portal v2 account hub (spec §6.9).
@@ -23,11 +24,9 @@ import NotificationsSection from './NotificationsSection';
  *   notifications  — SMS / email / push prefs per topic (Task 46)
  *   documents      — W-9, contractor agreement, alcohol cert (Task 47)
  *
- * Each section component is built in Tasks 43-47. Until then this file
- * renders a stable inline placeholder card per section so the surrounding
- * chrome (sub-nav, footer, signout) is browseable for design QA. Tasks 43-47
- * replace each placeholder body with the real section import — the sub-nav
- * keys do not change, so those swaps are local.
+ * Each section component is built in Tasks 43-47; all five are now wired
+ * up. The sub-nav keys remain the stable contract for any future deep-link
+ * source (user-pill menu, email CTA, push payload).
  *
  * Back-nav: matches the existing /staff-v2 detail-page pattern
  * (ShiftDetail, PayoutDetail) — a top-left Back button that calls
@@ -155,12 +154,7 @@ export default function AccountPage() {
       {section === 'payments' && <PaymentMethodsSection />}
       {section === 'calendar' && <CalendarSyncSection />}
       {section === 'notifications' && <NotificationsSection />}
-      {section !== 'profile'
-        && section !== 'payments'
-        && section !== 'calendar'
-        && section !== 'notifications' && (
-          <SectionPlaceholder section={section} />
-        )}
+      {section === 'documents' && <DocumentsSection />}
 
       <div className="sp-acc-foot">
         <button type="button" className="sp-btn sp-btn-block" onClick={handleSignOut}>
@@ -173,27 +167,6 @@ export default function AccountPage() {
         </div>
       </div>
     </>
-  );
-}
-
-// ── Section placeholders ────────────────────────────────────────────────
-// Stable inline cards rendered until Tasks 43-47 swap in the real section
-// components. Each one keeps the section key visible so design QA can
-// confirm routing is correct without a console open.
-
-function SectionPlaceholder({ section }) {
-  const meta = SECTIONS.find((s) => s.id === section);
-  const label = meta?.label || 'Section';
-  return (
-    <section className="sp-card" aria-label={label}>
-      <div className="sp-card-head">
-        <div className="sp-card-title">{label}</div>
-      </div>
-      <div className="sp-empty">
-        <div className="sp-empty-title">{label} — coming soon</div>
-        <div>This section lands in a follow-up task.</div>
-      </div>
-    </section>
   );
 }
 
