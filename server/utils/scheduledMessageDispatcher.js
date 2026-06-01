@@ -769,7 +769,7 @@ async function dispatchPending() {
 async function resolveCriticalDeadLetters() {
   // One row per group, GROUP BY suppression_key. Only consider groups where:
   //   - All rows are terminal (sent / failed / suppressed / suppressed_by_sibling / dead_letter)
-  //   - NO rows are 'sent' (delivery never landed)
+  //   - NO sibling is 'sent', 'pending', or 'deferred' (no live retry in flight)
   //   - The category (from payload->>'category') is in CRITICAL_CATEGORIES
   //   - The group's max re_resolve_count is < 2
   // For each group, increment counter + re-resolve + enqueue OR dead-letter all rows.
@@ -787,7 +787,7 @@ async function resolveCriticalDeadLetters() {
         AND NOT EXISTS (
           SELECT 1 FROM scheduled_messages sm2
            WHERE sm2.suppression_key = scheduled_messages.suppression_key
-             AND sm2.status IN ('sent','pending')
+             AND sm2.status IN ('sent','pending','deferred')
         )
       GROUP BY suppression_key, recipient_id, entity_type, entity_id, message_type
       HAVING MAX(COALESCE((payload->>'re_resolve_count')::int, 0)) < 99`
