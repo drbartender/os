@@ -23,6 +23,7 @@ const { STAFF_URL } = require('../utils/urls');
 const { emailChangeRequestLimiter } = require('../middleware/rateLimiters');
 const paymentMethods = require('./staffPortal/paymentMethods');
 const payouts = require('./staffPortal/payouts');
+const accountReads = require('./staffPortal/accountReads');
 const crypto = require('crypto');
 
 // Stub seam — tests swap uploadFile + sendEmail to avoid hitting real R2 /
@@ -178,6 +179,14 @@ paymentMethods.register(router);
 // (one period's detail, scoped to req.user.id — IDOR-guarded by the JOIN
 // condition po.contractor_id = $1 AND po.pay_period_id = $2).
 payouts.register(router);
+
+// ─── Phase 9: Account READ endpoints (delegated) ──────────────────────────
+// Spec §6.10 (Profile), §6.12 (Calendar sync), §6.14 (Documents). Implementation
+// lives in ./staffPortal/accountReads.js. Exposes GET /profile, GET /calendar-
+// settings, and GET /documents — all hard-scoped to req.user.id (no userId
+// path param). The Documents endpoint never projects raw R2 keys; the Profile
+// endpoint returns the staffer's own PII (intentional — they need to edit it).
+accountReads.register(router);
 
 // ─── Task 14: tip-card-order, profile, ui-preferences ─────────────────────
 
