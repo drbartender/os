@@ -11168,6 +11168,21 @@ html[data-app="admin-os"] .nav-item svg { width: 15px; height: 15px; flex-shrink
 html[data-app="admin-os"] .nav-item.active svg { color: var(--accent); opacity: 1; }
 html[data-app="admin-os"] .nav-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 html[data-app="admin-os"][data-sidebar="rail"] .nav-label { display: none; }
+html[data-app="admin-os"] .nav-rail-tip {
+  position: fixed;
+  transform: translateY(-50%);
+  z-index: calc(var(--z-sidebar) + 1);
+  background: var(--bg-2);
+  color: var(--ink-1);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius);
+  padding: 0.3rem 0.55rem;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: var(--shadow-soft);
+  pointer-events: none;
+}
 html[data-app="admin-os"][data-sidebar="rail"] .nav-item { justify-content: center; padding: 0.45rem; }
 html[data-app="admin-os"][data-sidebar="rail"] .nav-badge { position: absolute; }
 
