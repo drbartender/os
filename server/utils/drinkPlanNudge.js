@@ -29,6 +29,7 @@
  */
 const { pool } = require('../db');
 const { registerHandler } = require('./scheduledMessageDispatcher');
+const { SuppressMessageError } = require('./errors');
 const { scheduleMessage } = require('./messageScheduling');
 const { computeScheduledFor } = require('./preEventScheduling');
 const { sendEmail } = require('./email');
@@ -139,7 +140,7 @@ function eventLabel(ctx) {
 
 async function handleDrinkPlanNudgeEmail({ entity }) {
   const ctx = await loadNudgeContext(entity.id);
-  if (!ctx.client_email) throw new Error('drink_plan_nudge: client has no email');
+  if (!ctx.client_email) throw new SuppressMessageError('client_no_email');
   const tpl = drinkPlanNudgeEmail({
     clientFirstName: firstNameOf(ctx.client_name),
     eventTypeLabel: eventLabel(ctx),
@@ -153,7 +154,7 @@ async function handleDrinkPlanNudgeEmail({ entity }) {
 
 async function handleDrinkPlanNudgeSms({ entity }) {
   const ctx = await loadNudgeContext(entity.id);
-  if (!ctx.client_phone) throw new Error('drink_plan_nudge_sms: client has no phone');
+  if (!ctx.client_phone) throw new SuppressMessageError('client_no_phone');
   const body = smsTemplates.drinkPlanNudgeSms({
     eventDate: eventDateSms(ctx.event_date),
     plannerUrl: ctx.token ? `${PUBLIC_SITE_URL}/plan/${ctx.token}` : `${PUBLIC_SITE_URL}/plan`,

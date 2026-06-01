@@ -18,6 +18,7 @@ const {
 } = require('./retentionEligibility');
 const { scheduleMessage } = require('./messageScheduling'); // from Plan 2a
 const { registerHandler } = require('./scheduledMessageDispatcher'); // from Plan 2a
+const { SuppressMessageError } = require('./errors');
 
 // NOTE: there is intentionally NO exported MARKETING_MESSAGE_TYPES list here.
 // The single source of truth for marketing-class gating is the `category`
@@ -328,11 +329,14 @@ async function loadHandlerContext(scheduledMessage) {
   const proposal = await loadProposalForHandler(scheduledMessage.entity_id);
   if (!proposal) throw new Error(`proposal ${scheduledMessage.entity_id} not found`);
   if (proposal.status === 'archived') throw new Error('proposal archived');
-  if (!proposal.client_email) throw new Error('client has no email');
-  if (proposal.email_status === 'bad') throw new Error('client email status is bad');
+  // Contact-deliverability skips for this client → suppress (not a failure): the
+  // dispatcher records the row 'suppressed' without alerting Sentry. (Fixes the
+  // 'client has no email' Sentry noise, DRBARTENDER-SERVER-X.)
+  if (!proposal.client_email) throw new SuppressMessageError('client_no_email');
+  if (proposal.email_status === 'bad') throw new SuppressMessageError('email_status_bad');
 
   const prefs = proposal.comm_prefs || {};
-  if (prefs.email_enabled === false) throw new Error('email_enabled is false');
+  if (prefs.email_enabled === false) throw new SuppressMessageError('email_opted_out');
 
   return { proposal };
 }
@@ -550,4 +554,5 @@ module.exports = {
   recomputeNewYearHelloForProposal,
   cancelMarketingForProposal,
   onProposalSignedAndPaid,
+  loadHandlerContext, // exported for testability (parity with loadDripSmsContext / loadBalanceSmsContext)
 };
