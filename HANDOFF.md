@@ -96,8 +96,11 @@ Viewing `/staff-v2` on localhost is non-obvious — full notes in the memory `re
 - BEO + staff-portal suites are green in isolation (run with the DB prefix above). Full `npm test` shows ~150 PRE-EXISTING shared-DB concurrency failures — not regressions; ignore unless a file that passed in isolation starts failing in isolation.
 - `CI=true npm --prefix client run build` passes (only a pre-existing html2pdf source-map warning).
 
-### Testing GAP (important for before cutover)
-Backend is well-tested. The **frontend's interactive flows are under-tested** — Phases 6–7 were build-gated + browser *spot-checked* (layout/data), but the **mutation flows were never exercised**: Confirm-BEO ack stamping, drop/cover/emergency submission, claim-cover, withdraw. The **BEO drink-menu sections never rendered** (the review seed used placeholder drink IDs). No loading/empty/error pass, no responsive beyond 390px, no a11y. **Do a real interactive browser pass with realistic seed data before the Phase 10 cutover.**
+### Testing status (interactive pass done 2026-06-01)
+Backend is well-tested. The **Phase 6–7 frontend mutation flows were exercised end-to-end** via Playwright + DB verification (seeded scenario, 0 console errors):
+- ✅ BEO viewer renders with real drink data (signature cocktails resolve from real slugs + custom + custom-menu); ✅ Confirm-BEO stamps `beo_acknowledged_at` + flips the pill; ✅ clean-drop / ✅ request-cover / ✅ emergency-drop (all 3 modal modes, correct by time-window, DB-verified incl. `drop_emergency` + `proposal_activity_log`); ✅ claim-cover (creates pending + `replaced_by_request_id` swap link); ✅ withdraw (deletes the pending row); ✅ desktop (1024) renders cleanly.
+- 🐞 **Bug found + fixed during the pass** (commit `7108b01`): the BEO route did not return `request_id` in `shift_requests`, so on a **deep-linked** ShiftDetail (no nav-state, e.g. from an SMS link or a refresh) drop / request-cover / emergency-drop silently bailed (`myRequestId` was null; the error was a `toast?.error` that fired but the modal just sat there). Added `sr.id AS request_id` to the projection + a regression test. **This is exactly the seam the cutover's BEO-nudge deep-link will hit — verify it again post-cutover.**
+- Still untested by definition: Phases 8–9 surfaces (Pay/Tip/Account — not built yet). Responsive limited to a 390 + 1024 spot-check; no formal a11y pass. A loading/empty/error sweep is still worth doing per Phase 9.
 
 ---
 
