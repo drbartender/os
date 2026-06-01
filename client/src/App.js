@@ -72,7 +72,6 @@ const PrintTipCard = lazy(() => import('./pages/staff/PrintTipCard'));
 // persists toggles via PATCH. The current StaffLayout mount stays in place
 // until the Task 48 cutover.
 const StaffShellWithThemeWiring = lazy(() => import('./components/StaffShellWithThemeWiring'));
-const StaffPlaceholder = lazy(() => import('./components/staff/Placeholder'));
 const StaffV2HomePage = lazy(() => import('./pages/staff/HomePage'));
 // ShiftsPage owns the `shifts/*` splat — it internally dispatches to
 // ShiftDetail when the wildcard's first segment is a numeric shift id
@@ -82,6 +81,7 @@ const StaffV2ShiftsPage = lazy(() => import('./pages/staff/ShiftsPage'));
 const StaffV2PayoutDetail = lazy(() => import('./pages/staff/PayoutDetail'));
 const StaffV2PayPage = lazy(() => import('./pages/staff/PayPage'));
 const StaffV2TipCardPage = lazy(() => import('./pages/staff/TipCardPage'));
+const StaffV2AccountPage = lazy(() => import('./pages/staff/account/AccountPage'));
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
@@ -348,7 +348,8 @@ function StaffSiteRoutes() {
           <Route path="pay/:periodId" element={<StaffV2PayoutDetail />} />
           <Route path="pay" element={<StaffV2PayPage />} />
           <Route path="tip-card" element={<StaffV2TipCardPage />} />
-          <Route path="account/:section" element={<StaffPlaceholder name="Account" />} />
+          <Route path="account" element={<StaffV2AccountPage />} />
+          <Route path="account/:section" element={<StaffV2AccountPage />} />
         </Route>
         {/* Public token routes */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
