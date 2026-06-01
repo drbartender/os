@@ -232,7 +232,14 @@ async function loadBeoContext(proposalId, userId) {
                 FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
                WHERE s.proposal_id = p.id AND sr.user_id = u.id
                  AND sr.status = 'approved' AND sr.dropped_at IS NULL AND s.status != 'cancelled'
-            ) AS has_active_shift
+            ) AS has_active_shift,
+            (
+              SELECT s.id
+                FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
+               WHERE s.proposal_id = p.id AND sr.user_id = u.id
+                 AND sr.status = 'approved' AND sr.dropped_at IS NULL AND s.status != 'cancelled'
+               ORDER BY s.id LIMIT 1
+            ) AS active_shift_id
        FROM proposals p
        LEFT JOIN drink_plans dp ON dp.proposal_id = p.id
        LEFT JOIN users u ON u.id = $2
@@ -280,7 +287,7 @@ async function handleBeoUnackNudge({ entity, recipient }) {
   const body = smsTemplates.staffBeoNudgeSms({
     eventTypeLabel: getEventTypeLabel({ event_type: ctx.event_type, event_type_custom: ctx.event_type_custom }),
     eventDateLocal: formatEventDateLong({ event_date: ctx.event_date, event_timezone: ctx.event_timezone }),
-    beoUrl: `${STAFF_URL}/events/${proposalId}/beo`,
+    beoUrl: `${STAFF_URL}/shifts/${ctx.active_shift_id}`,
   });
 
   await sendAndLogSms({
