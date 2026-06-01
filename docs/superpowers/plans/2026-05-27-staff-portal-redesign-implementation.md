@@ -32,6 +32,30 @@
 
 ---
 
+## ⚠️ Review Amendments (folded in 2026-05-31) — READ BEFORE EXECUTING PHASES 8–11
+
+**Execution status as of 2026-05-31:**
+- **DONE + verified:** Phases 1–5 (backend, Tasks 1–28), Phases 6–7 (frontend shell + shifts surface, Tasks 29–37). Plus a review-fix pass (see `docs/superpowers/plans/2026-05-31-staff-portal-review-fixes.md`): `preferred_name` surfaced in the auth payload, skin-aware page backdrop via `data-app="staff"`, `open_shifts_teaser` wired to the real query.
+- **NOT STARTED:** Phase 8 (Pay/Tip, Tasks 38–41), Phase 9 (AccountPage, Tasks 42–47), Phase 10 (cutover, Tasks 48–51), Phase 11 (push, Tasks 52–56, deferred Phase B).
+
+**Findings from the 2026-05-31 design re-review (plan-feasibility on Phases 8–10 + Gemini 2.5 Pro on Phases 8–11). Address each at the cited task:**
+
+1. **[BLOCKER · Task 49] BEO nudge URL is not reconciled at cutover.** The BEO nudge SMS links to `/events/:proposalId/beo` (proposalId-keyed — see `server/utils/beoHandlers.js`, `beoUrl: \`${STAFF_URL}/events/${proposalId}/beo\``), but the new ShiftDetail lives at `/staff-v2/shifts/:shiftId` (shiftId-keyed). After cutover, every in-flight and future BEO notification link 404s. **Triple-confirmed** (manual feasibility check + plan-feasibility agent + Gemini). Fix in Task 49: add a staff-side redirect `/events/:proposalId/beo` → the BEO view, resolving proposalId→shiftId (the viewer's approved shift on that proposal) OR change the nudge URL server-side in `beoHandlers.js` to a shiftId/portal path. Model the redirect on the existing `ShiftDetailRedirect` at `client/src/App.js:442` (`/events/shift/:id`). Note: ShiftDetail already resolves shiftId→proposalId via a 3-layer fallback; the reverse (proposalId→shiftId) needs a lookup, so the simplest path may be to make the BEO view reachable by proposalId directly.
+
+2. **[WARNING · Task 41] publicTip extension touches a PII-sensitive endpoint.** `GET /api/public/tip/:token` in `server/routes/publicTip.js` uses a hardcoded public-safe `SELECT` column list specifically to prevent PII leakage. Task 41 must explicitly (a) modify that SELECT to add `zelle_handle`, and (b) add read-side normalization/validation for `zelle_handle` mirroring the existing `normalizePaypalUrl` pattern. Do not broaden the SELECT to `*`.
+
+3. **[WARNING · Phase 9, Tasks 42–47] AccountPage sub-sections lack async-state specs.** The Profile, PaymentMethods, Documents, CalendarSync, Notifications sections do not specify loading / empty (e.g. no payment methods on file) / error / disabled states. Each section must define all four per spec §6.1.5, matching the pattern HomePage/ShiftsPage already established.
+
+4. **[WARNING · Task 46 / Task 18] Email-verify flow when logged out.** `EmailVerifyPage` (Task 46) consumes the unauthenticated confirm endpoint (Task 18, already built). The plan does not specify the flow when the link is opened in a browser with no session. The page must handle the logged-out case gracefully (confirm succeeds regardless of session since it's token-keyed; then prompt login or show a clean success state — do NOT assume an authenticated context).
+
+5. **[SUGGESTION · Phase 8, Tasks 38–40] Money formatting.** PayPage / PayoutDetail display integer-cents values. Plan a single shared currency formatter (cents → `$1,234.56`) and use it everywhere money renders, to avoid per-component drift. Check whether one already exists in `client/src/utils/` before adding.
+
+6. **[SUGGESTION · Phase 11, Tasks 52–56] Push permission UX.** The push plan is backend-complete but omits the frontend permission-request flow and the denial/dead-end case. Spec the request prompt and the "user denied" fallback before building Phase B.
+
+**Feasibility confirmations (no action needed):** Phase 10's `App.js` structure is sound — `StaffSiteRoutes()` and `HiringRoutes()` both exist (`App.js:260,310`) with both the old `StaffLayout` mount (`:285,328`) and the `/staff-v2/*` stub block (`:342`), so the Task 48 swap has a clean before/after; `App.js` is 492 lines (no file-size-ratchet risk); Task 50's delete list matches the actual files on disk (`StaffDashboard/Events/Shifts/Schedule/Profile/Resources.js`, `MyTipPage.js/.css`, `components/StaffLayout.js` all present; `PrintTipCard.*` correctly kept). Phase 8–9 backend contracts are all built (Phases 1–5).
+
+---
+
 ## Phase 1: Foundation (schema + util skeletons)
 
 ### Task 1: Schema additions
@@ -2180,6 +2204,8 @@
   3. Order the chooser methods by the staffer's saved order. Fallback: methods present on profile but absent from order array fall to end in natural order. Methods in order array but absent from profile are skipped.
   4. Response header: `Cache-Control: private, no-cache`.
 
+  **PII safety (see Review Amendments #2):** `publicTip.js` is an UNAUTHENTICATED route that deliberately uses a hardcoded public-safe SELECT column list to avoid leaking PII. Add `zelle_handle` to that explicit list — do NOT broaden to `SELECT *`. Apply read-side normalization/validation to `zelle_handle` before projecting it, mirroring the existing `normalizePaypalUrl` pattern (a Zelle handle is an email or US phone number; sanitize/validate accordingly). Add a test asserting no unexpected columns leak.
+
 - [ ] **Step 2: Tests**
 
   - Public response carries the new Zelle handle when set
@@ -2436,13 +2462,21 @@
 
   Also grep for any other staff-portal sub-routes in the existing App.js or in CLIENT_FACING_SURFACES.md and add redirects for them.
 
+- [ ] **Step 2.5: BEO nudge URL redirect — BLOCKER (see Review Amendments #1)**
+
+  The BEO nudge SMS links to `/events/:proposalId/beo` (proposalId-keyed, from `server/utils/beoHandlers.js`), but the new ShiftDetail/BEO viewer is `/staff-v2/shifts/:shiftId` (shiftId-keyed). Without a redirect, **every in-flight and future BEO nudge link 404s after cutover.** Add handling to BOTH route blocks. Because the URL carries a proposalId but ShiftDetail keys on shiftId, pick one:
+  - (a) Add a `BeoByProposalRedirect` route for `/events/:proposalId/beo` that looks up the viewer's approved shift on that proposal and `<Navigate>`s to `/staff-v2/shifts/:shiftId` (model on the existing `ShiftDetailRedirect`, `client/src/App.js:442`); OR
+  - (b) Simpler — change the nudge URL in `beoHandlers.js` to a proposalId-keyed portal path the new router serves directly (and add that route), avoiding a reverse lookup.
+
+  Verify with a real BEO nudge link: a logged-in staffer clicking `/events/:proposalId/beo` must land on the ShiftDetail BEO viewer, not a 404.
+
 - [ ] **Step 3: Verify build**
 
 - [ ] **Step 4: Commit**
 
   ```bash
   git add client/src/App.js
-  git commit -m "feat(staff-portal): mount production routes in HiringRoutes + add redirects (cutover step 2)"
+  git commit -m "feat(staff-portal): mount production routes in HiringRoutes + add redirects + BEO nudge redirect (cutover step 2)"
   ```
 
 ---
