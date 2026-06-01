@@ -80,6 +80,7 @@ const StaffV2HomePage = lazy(() => import('./pages/staff/HomePage'));
 // + DropCoverModal together, which matches the "Shifts" tab's usage pattern.
 const StaffV2ShiftsPage = lazy(() => import('./pages/staff/ShiftsPage'));
 const StaffV2PayoutDetail = lazy(() => import('./pages/staff/PayoutDetail'));
+const StaffV2PayPage = lazy(() => import('./pages/staff/PayPage'));
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
@@ -344,7 +345,7 @@ function StaffSiteRoutes() {
           <Route index element={<StaffV2HomePage />} />
           <Route path="shifts/*" element={<StaffV2ShiftsPage />} />
           <Route path="pay/:periodId" element={<StaffV2PayoutDetail />} />
-          <Route path="pay/*" element={<StaffPlaceholder name="Pay" />} />
+          <Route path="pay" element={<StaffV2PayPage />} />
           <Route path="tip-card" element={<StaffPlaceholder name="Tip Card" />} />
           <Route path="account/:section" element={<StaffPlaceholder name="Account" />} />
         </Route>

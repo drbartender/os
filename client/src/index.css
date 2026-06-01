@@ -14911,3 +14911,92 @@ html[data-app="staff"] body {
   0%   { box-shadow: 0 0 0 2px hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.35); }
   100% { box-shadow: 0 0 0 2px hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.12); }
 }
+
+/* ── Paystub list rows (PayPage). The PayoutDetail surface uses sp-card.tight
+   per-event cards; this is the lighter list-row pattern for the closed
+   paystubs list, where each row is a button into PayoutDetail. ───────── */
+.sp-paystub {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.85rem 1rem;
+  background: var(--sp-bg-1);
+  border: 1px solid var(--sp-line-1);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.08s;
+  text-align: left;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+}
+.sp-paystub:hover { border-color: var(--sp-line-3); }
+.sp-paystub + .sp-paystub { margin-top: 0.5rem; }
+[data-skin="light"] .sp-paystub {
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--sp-line-1);
+  padding: 1rem 0.2rem;
+}
+[data-skin="light"] .sp-paystub + .sp-paystub { margin-top: 0; }
+.sp-paystub-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+.sp-paystub-when {
+  font-family: var(--sp-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sp-ink-3);
+  font-weight: 600;
+}
+.sp-paystub-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-size: 11.5px;
+  color: var(--sp-ink-3);
+}
+
+/* ── Stat tiles (YTD roll-up on PayPage). Grid collapses to 2 cols below
+   380px so a narrow phone still reads cleanly. The light skin drops the
+   bordered tile in favor of a top-rule, matching the apothecary surfaces. */
+.sp-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+@media (max-width: 380px) { .sp-stats { grid-template-columns: repeat(2, 1fr); } }
+.sp-stat {
+  background: var(--sp-bg-2);
+  border: 1px solid var(--sp-line-1);
+  border-radius: 8px;
+  padding: 0.7rem 0.8rem;
+}
+[data-skin="light"] .sp-stat {
+  border-radius: 0;
+  border: 0;
+  border-top: 1px solid var(--sp-ink-1);
+  background: transparent;
+  padding: 0.85rem 0;
+}
+.sp-stat-k {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--sp-ink-3);
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+[data-skin="light"] .sp-stat-k { letter-spacing: 0.14em; font-weight: 600; }
+.sp-stat-v {
+  font-family: var(--sp-font-numeric);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--sp-ink-1);
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+[data-skin="light"] .sp-stat-v { font-weight: 400; font-size: 28px; font-feature-settings: "onum", "tnum"; }
+.sp-stat-sub { font-size: 11px; color: var(--sp-ink-3); margin-top: 5px; }
