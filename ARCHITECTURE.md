@@ -724,7 +724,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 
 **clients** — Client records
 - `name`, `email`, `phone`
-- `source`: direct | thumbtack | referral | website | calcom
+- `source`: direct | referral | thumbtack | zola | website | calcom | instagram | other
 - `notes`
 - `communication_preferences` JSONB — `{sms_enabled, email_enabled, marketing_enabled}` (defaults true). Drives the Automated Communication system's send gating.
 - `email_status` (`ok` | `bad`), `phone_status` (`ok` | `bad`) — channel deliverability flags flipped on bounce/blocked-list signals.

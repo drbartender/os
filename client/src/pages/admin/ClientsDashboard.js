@@ -19,10 +19,12 @@ import CcImportBadge from '../../components/admin/CcImportBadge';
 const SOURCE = {
   direct:    { label: 'Direct',    kind: 'neutral' },
   thumbtack: { label: 'Thumbtack', kind: 'info' },
+  zola:      { label: 'Zola',      kind: 'info' },
   calcom:    { label: 'Cal.com',   kind: 'info' },
   referral:  { label: 'Referral',  kind: 'ok' },
   website:   { label: 'Website',   kind: 'accent' },
   instagram: { label: 'Instagram', kind: 'violet' },
+  other:     { label: 'Other',     kind: 'neutral' },
 };
 
 function initialsOf(name) {

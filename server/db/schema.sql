@@ -777,7 +777,7 @@ CREATE TABLE IF NOT EXISTS clients (
   name VARCHAR(255) NOT NULL,
   email VARCHAR(255),
   phone VARCHAR(50),
-  source VARCHAR(50) DEFAULT 'direct' CHECK (source IN ('direct', 'thumbtack', 'referral', 'website')),
+  source VARCHAR(50) DEFAULT 'direct' CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'other')),
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -2615,7 +2615,7 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 -- surfaces any out-of-enum existing rows loudly rather than swallowing.
 ALTER TABLE clients
   ADD CONSTRAINT clients_source_check
-  CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom'))
+  CHECK (source IN ('direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'other'))
   NOT VALID;
 ALTER TABLE clients VALIDATE CONSTRAINT clients_source_check;
 
