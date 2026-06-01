@@ -1,15 +1,19 @@
-# Staff Portal + BEO — Handoff (2026-05-31)
+# Staff Portal + BEO — Handoff (updated 2026-06-01, post-Phase-10 cutover)
 
 **Worktree:** `C:\Users\dalla\DRB_OS\worktrees\beo`
-**Branch:** `beo`
-**Last commit:** `46594c6 plan(staff-portal): fold in 2026-05-31 design re-review findings (feasibility + Gemini)`
-**Branch position:** `beo` is **5 ahead / 2 behind `main`**. See "Re-sync before continuing" below — the 2 it's missing are load-bearing.
+**Branch:** `beo` — **== local `main`** (fast-forwarded).
+**Status:** Phases **8, 9, and 10 are DONE, browser-verified, and merged to local `main`.** **NOT pushed** — `main` is ~35 commits ahead of `origin/main`; Dallas holds the deploy.
 
 ---
 
 ## TL;DR
 
-The **BEO feature is complete**, the **staff-portal backend is complete**, and the **staff-portal frontend is ~half built** (shell + the entire Shifts surface incl. the BEO viewer). A 4-issue review-fix pass just landed and a design re-review of the unbuilt phases (feasibility + Gemini 2.5 Pro) is folded into the plan. What remains is the **Pay/Tip surface, the AccountPage, the cutover, and push notifications** — plus one **BLOCKER** to resolve at cutover. After the cutover, the worktree gets merged to `main`, pushed, and removed (and the worktree workflow gets dismantled in favor of trunk-based — a decision made this session).
+Staff-portal v2 is **built and cut over**: Pay/Tip (Phase 8), AccountPage (Phase 9), and the **cutover** (Phase 10 — v2 mounted at ROOT, old v1 fragments deleted, old-path + BEO-nudge redirects in place). The BEO-nudge URL **BLOCKER is resolved**: future nudges link to `/shifts/:shiftId`; a `BeoByProposalRedirect` catches already-sent `/events/:proposalId/beo` links. All three phases browser-verified (0 console errors); each passed a code-review gate (the cutover review caught + we fixed an in-portal-nav ship-blocker — pages were built with `/staff-v2/...` hardcoded; all 59 repointed to root + Login.js now uses `getHomePath`).
+
+**What remains:**
+1. **The push/deploy** — Dallas's call. It's a big live-routing change: the full review-before-deploy fleet runs at push. **Pre-push review notes:** hiring.drbartender.com cutover is code/review-verified but NOT browser-tested; Login.js change touches all login flows (staff/hiring/admin).
+2. **Phase 11** — push notifications (deferred Phase B): web-push, service worker, iOS coachmark, dispatcher push activation, NotificationsSection Push-column unlock. Adds VAPID env vars.
+3. After push + Phase 11: merge/remove the worktree + the trunk-based switch.
 
 ---
 
