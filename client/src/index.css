@@ -15289,3 +15289,235 @@ html[data-app="staff"] body {
   text-underline-offset: 3px;
 }
 [data-skin="light"] .sp-link { color: var(--sp-ms-emerald); }
+
+/* ── ProfileSection (spec §6.10) — text-field grid + subsection header ── */
+
+/* Card-head subtitle (sits between the section title + the Save button). */
+.sp-acc-section-sub {
+  font-size: 11.5px;
+  color: var(--sp-ink-3);
+  margin-top: 2px;
+  line-height: 1.45;
+}
+
+/* Subsection divider inside a card (e.g. "Emergency contact"). */
+.sp-subsection {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--sp-ink-3);
+  font-weight: 600;
+  margin: 1rem 0 0.5rem;
+  padding-top: 0.7rem;
+  border-top: 1px dashed var(--sp-line-1);
+}
+[data-skin="light"] .sp-subsection { letter-spacing: 0.18em; }
+
+/* Text-field cell + label/input/sub stack. */
+.sp-tf {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.sp-tf-k {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sp-ink-3);
+  font-weight: 600;
+}
+[data-skin="light"] .sp-tf-k { letter-spacing: 0.14em; }
+.sp-tf-input {
+  height: 36px;
+  padding: 0 0.65rem;
+  background: var(--sp-bg-2);
+  border: 1px solid var(--sp-line-1);
+  border-radius: 6px;
+  font-size: 13.5px;
+  color: var(--sp-ink-1);
+  font-family: inherit;
+  outline: none;
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+[data-skin="light"] .sp-tf-input { border-radius: 0; background: var(--sp-bg-1); border-color: var(--sp-line-2); }
+.sp-tf-input:focus { border-color: var(--sp-accent); }
+[data-skin="light"] .sp-tf-input:focus { border-color: var(--sp-ink-1); }
+.sp-tf-input.has-error,
+.sp-tf-input.has-error:focus {
+  border-color: hsl(var(--sp-danger-h) var(--sp-danger-s) 55%);
+}
+[data-skin="light"] .sp-tf-input.has-error { border-color: var(--sp-ms-bordeaux); }
+.sp-tf-sub {
+  font-size: 10.5px;
+  color: var(--sp-ink-3);
+  font-style: italic;
+  line-height: 1.4;
+}
+.sp-tf-error {
+  font-size: 10.5px;
+  color: hsl(var(--sp-danger-h) var(--sp-danger-s) 60%);
+  font-weight: 500;
+  line-height: 1.4;
+}
+[data-skin="light"] .sp-tf-error { color: var(--sp-ms-bordeaux); }
+.sp-tf-placeholder {
+  color: var(--sp-ink-3);
+  font-style: italic;
+}
+
+/* Read-only field (legal name, email display). */
+.sp-tf-locked {
+  background: var(--sp-bg-1);
+  color: var(--sp-ink-2);
+  cursor: not-allowed;
+}
+[data-skin="light"] .sp-tf-locked { background: var(--sp-bg-2); color: var(--sp-ink-2); }
+
+/* Email row: locked display + Change button side-by-side. */
+.sp-tf-locked-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+  min-width: 0;
+}
+.sp-tf-locked-row > .sp-tf-input { flex: 1; min-width: 0; }
+.sp-tf-locked-row > .sp-btn { flex-shrink: 0; align-self: center; }
+
+/* Row container: wrap on small screens. */
+.sp-tf-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+.sp-tf-row > .sp-tf { flex: 1 1 200px; }
+.sp-tf-row > .sp-tf.sp-tf-wide { flex: 1 1 100%; }
+@media (max-width: 460px) {
+  .sp-tf-row { flex-direction: column; }
+  .sp-tf-row > .sp-tf { flex: 1; }
+}
+
+/* Pending email-change banner inside the Profile card. */
+.sp-pending-banner {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 0.85rem;
+  margin-bottom: 0.8rem;
+  border-radius: 8px;
+  background: hsl(var(--sp-info-h) var(--sp-info-s) 50% / 0.08);
+  border: 1px solid hsl(var(--sp-info-h) var(--sp-info-s) 50% / 0.35);
+  flex-wrap: wrap;
+}
+[data-skin="light"] .sp-pending-banner {
+  background: transparent;
+  border-radius: 0;
+  border-color: var(--sp-ms-navy);
+}
+.sp-pending-banner-l { flex: 1; min-width: 0; }
+.sp-pending-banner-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  color: var(--sp-ink-1);
+}
+[data-skin="light"] .sp-pending-banner-title { letter-spacing: 0.14em; font-weight: 600; }
+.sp-pending-banner-msg {
+  font-size: 12.5px;
+  color: var(--sp-ink-2);
+  margin-top: 2px;
+  line-height: 1.45;
+}
+
+/* ── EmailVerifyPage (spec §6.10) — full-bleed unauthenticated landing ── */
+
+.sp-verify-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  background: var(--sp-bg-0, #0f1011);
+}
+.sp-verify-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--sp-bg-1, #1a1b1d);
+  border: 1px solid var(--sp-line-1, #2a2b2e);
+  border-radius: 12px;
+  padding: 2.2rem 1.6rem 1.8rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.7rem;
+  box-shadow: 0 30px 60px -20px rgba(0,0,0,0.6);
+}
+[data-skin="light"] .sp-verify-card { border-radius: 0; border-color: var(--sp-ink-1); box-shadow: none; }
+.sp-verify-brand {
+  font-family: var(--sp-font-display, serif);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--sp-ink-3);
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+.sp-verify-icon {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.12);
+  color: var(--sp-accent);
+}
+[data-skin="light"] .sp-verify-icon { border-radius: 0; background: transparent; border: 1px solid currentColor; color: var(--sp-ms-emerald); }
+.sp-verify-icon.success {
+  background: hsl(var(--sp-success-h, 142) var(--sp-success-s, 55%) 50% / 0.15);
+  color: hsl(var(--sp-success-h, 142) var(--sp-success-s, 55%) 60%);
+}
+[data-skin="light"] .sp-verify-icon.success { background: transparent; color: var(--sp-ms-emerald); }
+.sp-verify-icon.warn {
+  background: hsl(var(--sp-warn-h) var(--sp-warn-s) 50% / 0.18);
+  color: hsl(var(--sp-warn-h) var(--sp-warn-s) 60%);
+}
+[data-skin="light"] .sp-verify-icon.warn { background: transparent; color: var(--sp-ms-camel); }
+.sp-verify-title {
+  font-family: var(--sp-font-display);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--sp-ink-1);
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  margin: 0.2rem 0 0;
+}
+[data-skin="light"] .sp-verify-title { font-weight: 400; }
+.sp-verify-sub {
+  font-size: 13.5px;
+  color: var(--sp-ink-2);
+  line-height: 1.55;
+  margin: 0;
+}
+.sp-verify-sub-small {
+  font-size: 11.5px;
+  color: var(--sp-ink-3);
+  line-height: 1.5;
+  margin: 0;
+  font-style: italic;
+}
+.sp-verify-acts {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 0.7rem;
+}
+
+@keyframes sp-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

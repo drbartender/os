@@ -82,6 +82,13 @@ const StaffV2PayoutDetail = lazy(() => import('./pages/staff/PayoutDetail'));
 const StaffV2PayPage = lazy(() => import('./pages/staff/PayPage'));
 const StaffV2TipCardPage = lazy(() => import('./pages/staff/TipCardPage'));
 const StaffV2AccountPage = lazy(() => import('./pages/staff/account/AccountPage'));
+// Email-change verification landing (spec §6.10). UNAUTHENTICATED — the user
+// who clicks the link from their inbox may be signed out or signed in as a
+// different account, so the route is mounted OUTSIDE every RequirePortal
+// block, siblingly with /tip/:token. Token-by-possession is the proof of
+// intent; the server pulls user_id from the matched pending row, never
+// from any local JWT.
+const StaffV2EmailVerifyPage = lazy(() => import('./pages/staff/EmailVerifyPage'));
 const AdminLayout = lazy(() => import('./components/AdminLayout'));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
 const AdminStaffDashboard = lazy(() => import('./pages/admin/StaffDashboard'));
@@ -244,6 +251,7 @@ function PublicWebsiteRoutes() {
         <Route path="/tip/:token" element={<TipPage />} />
         <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
         <Route path="/feedback/:token" element={<FeedbackPage />} />
+        <Route path="/verify-email/:token" element={<StaffV2EmailVerifyPage />} />
         <Route path="/labnotes" element={<Blog />} />
         <Route path="/labnotes/:slug" element={<BlogPost />} />
         <Route path="/login" element={<ClientLogin />} />
@@ -303,6 +311,7 @@ function HiringRoutes() {
         <Route path="/tip/:token" element={<TipPage />} />
         <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
         <Route path="/feedback/:token" element={<FeedbackPage />} />
+        <Route path="/verify-email/:token" element={<StaffV2EmailVerifyPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
@@ -359,6 +368,7 @@ function StaffSiteRoutes() {
         <Route path="/tip/:token" element={<TipPage />} />
         <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
         <Route path="/feedback/:token" element={<FeedbackPage />} />
+        <Route path="/verify-email/:token" element={<StaffV2EmailVerifyPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
@@ -390,6 +400,7 @@ function AppRoutes() {
       <Route path="/tip/:token" element={<TipPage />} />
       <Route path="/tip/:token/thanks" element={<TipPageThanks />} />
       <Route path="/feedback/:token" element={<FeedbackPage />} />
+      <Route path="/verify-email/:token" element={<StaffV2EmailVerifyPage />} />
       {/* Website accessible on admin domain for preview */}
       <Route path="/website" element={<HomePage />} />
       <Route path="/services" element={<ServicesPage />} />

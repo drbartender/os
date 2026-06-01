@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../../context/AuthContext';
+import ProfileSection from './ProfileSection';
 
 /**
  * AccountPage — staff portal v2 account hub (spec §6.9).
@@ -147,7 +148,9 @@ export default function AccountPage() {
         })}
       </nav>
 
-      <SectionPlaceholder section={section} />
+      {section === 'profile'
+        ? <ProfileSection />
+        : <SectionPlaceholder section={section} />}
 
       <div className="sp-acc-foot">
         <button type="button" className="sp-btn sp-btn-block" onClick={handleSignOut}>
