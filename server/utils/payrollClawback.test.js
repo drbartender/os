@@ -11,11 +11,17 @@ if (process.env.NODE_ENV === 'production') {
 let bartenderA, bartenderB, paidPeriodId, paidProposalId, paidShiftId, tipId;
 
 before(async () => {
-  // Pre-clean any stranded fixtures from prior failed runs (FK chain).
-  await pool.query(`DELETE FROM tips WHERE target_user_id IN (SELECT id FROM users WHERE email LIKE 'claw-%@example.com' OR email LIKE 'cb-%@example.com')`);
-  await pool.query(`DELETE FROM shift_requests WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'claw-%@example.com' OR email LIKE 'cb-%@example.com')`);
-  await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'claw-%@example.com' OR email LIKE 'cb-%@example.com')`);
-  await pool.query(`DELETE FROM users WHERE email LIKE 'claw-%@example.com' OR email LIKE 'cb-mixed-%@example.com' OR email LIKE 'cb-all-stub-%@example.com'`);
+  // Pre-clean any stranded fixtures from prior failed runs (full FK chain:
+  // payout_events -> payouts -> tips/shift_requests/contractor_profiles -> users).
+  // The user-delete is broadened to every 'cb-%' fixture so a sub-test that
+  // leaks (e.g. an interrupted run) self-heals on the next run.
+  const fixtureFilter = `email LIKE 'claw-%@example.com' OR email LIKE 'cb-%@example.com'`;
+  await pool.query(`DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id IN (SELECT id FROM users WHERE ${fixtureFilter}))`);
+  await pool.query(`DELETE FROM payouts WHERE contractor_id IN (SELECT id FROM users WHERE ${fixtureFilter})`);
+  await pool.query(`DELETE FROM tips WHERE target_user_id IN (SELECT id FROM users WHERE ${fixtureFilter})`);
+  await pool.query(`DELETE FROM shift_requests WHERE user_id IN (SELECT id FROM users WHERE ${fixtureFilter})`);
+  await pool.query(`DELETE FROM contractor_profiles WHERE user_id IN (SELECT id FROM users WHERE ${fixtureFilter})`);
+  await pool.query(`DELETE FROM users WHERE ${fixtureFilter}`);
 
   const a = await pool.query(
     "INSERT INTO users (email, password_hash, role) VALUES ('claw-a@example.com','x','staff') RETURNING id"
@@ -225,6 +231,96 @@ test('clawbackTip > mixed-stub shift: claws back from real bartender only, stubs
     await pool.query('DELETE FROM shifts WHERE id = $1', [mixedShiftId]);
     await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [realId]);
     await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [stubId, realId]);
+  }
+});
+
+test('clawbackTip > emergency-dropped bartender is excluded from the clawback split', async () => {
+  // An emergency-dropped bartender keeps status='approved' + dropped_at set.
+  // They never got paid (accrual/late-tip already excluded them), so the
+  // clawback must not assign them a negative adjustment either — the whole
+  // clawback lands on the bartender who actually worked + was paid.
+  const worked = await pool.query(
+    `INSERT INTO users (email, password_hash, role)
+     VALUES ('cb-worked@example.com','x','staff') RETURNING id`
+  );
+  const workedId = worked.rows[0].id;
+  const dropped = await pool.query(
+    `INSERT INTO users (email, password_hash, role)
+     VALUES ('cb-dropped@example.com','x','staff') RETURNING id`
+  );
+  const droppedId = dropped.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, hourly_rate) VALUES ($1, 20.00)
+     ON CONFLICT (user_id) DO UPDATE SET hourly_rate = 20.00`,
+    [workedId]
+  );
+  const dropShift = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status, proposal_id)
+     VALUES ('2026-05-15','9:00 PM','open',$1) RETURNING id`,
+    [paidProposalId]
+  );
+  const dropShiftId = dropShift.rows[0].id;
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status)
+     VALUES ($1, $2, 'Bartender', 'approved')`,
+    [dropShiftId, workedId]
+  );
+  await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, position, status, dropped_at, drop_emergency, drop_reason)
+     VALUES ($1, $2, 'Bartender', 'approved', NOW(), true, 'sick')`,
+    [dropShiftId, droppedId]
+  );
+  const tipRes = await pool.query(
+    `INSERT INTO tips (tip_page_token, target_user_id, amount_cents, fee_cents,
+                       stripe_payment_intent_id, tipped_at, shift_id, rolled_forward_at, refunded_amount_cents)
+     VALUES (gen_random_uuid(), $1, 4000, 128, 'pi_cb_dropped', NOW() - INTERVAL '1 day', $2, NOW(), 0)
+     RETURNING id`,
+    [workedId, dropShiftId]
+  );
+  const cbTipId = tipRes.rows[0].id;
+  // Seed the working bartender's paid-out event (full tip, since they worked solo).
+  await pool.query(
+    `INSERT INTO payouts (pay_period_id, contractor_id)
+     VALUES ((SELECT id FROM pay_periods WHERE status='open' AND CURRENT_DATE BETWEEN start_date AND end_date), $1)
+     ON CONFLICT (pay_period_id, contractor_id) DO NOTHING`,
+    [workedId]
+  );
+  await pool.query(
+    `INSERT INTO payout_events (payout_id, shift_id, contracted_hours, hours, rate_cents, wage_cents,
+                                card_tip_gross_cents, card_tip_fee_cents, card_tip_net_cents, line_total_cents)
+     SELECT id, $2, 0, 0, 0, 0, 4000, 128, 3872, 3872
+       FROM payouts WHERE contractor_id = $1
+     ON CONFLICT (payout_id, shift_id) DO NOTHING`,
+    [workedId, dropShiftId]
+  );
+
+  try {
+    const result = await clawbackTip(cbTipId, 4000);
+    assert.notEqual(result?.skipped, true);
+    assert.equal(result.bartenders, 1, 'only the bartender who actually worked is clawed back');
+
+    const adj = await pool.query(
+      `SELECT adjustment_cents FROM payout_events pe JOIN payouts po ON po.id = pe.payout_id
+        WHERE po.contractor_id = $1 AND pe.shift_id = $2`,
+      [workedId, dropShiftId]
+    );
+    assert.equal(Number(adj.rows[0].adjustment_cents), -3872, 'working bartender absorbs the full clawback');
+
+    const droppedEvent = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM payout_events pe JOIN payouts po ON po.id = pe.payout_id
+        WHERE po.contractor_id = $1`,
+      [droppedId]
+    );
+    assert.equal(droppedEvent.rows[0].c, 0, 'the emergency-dropped bartender gets no clawback row');
+  } finally {
+    await pool.query('DELETE FROM payout_events WHERE payout_id IN (SELECT id FROM payouts WHERE contractor_id IN ($1, $2))',
+      [workedId, droppedId]);
+    await pool.query('DELETE FROM payouts WHERE contractor_id IN ($1, $2)', [workedId, droppedId]);
+    await pool.query('DELETE FROM tips WHERE id = $1', [cbTipId]);
+    await pool.query('DELETE FROM shift_requests WHERE shift_id = $1', [dropShiftId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [dropShiftId]);
+    await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [workedId]);
+    await pool.query('DELETE FROM users WHERE id IN ($1, $2)', [workedId, droppedId]);
   }
 });
 

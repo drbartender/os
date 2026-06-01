@@ -391,6 +391,7 @@ async function bartenderTipHandlesForSingleBartenderEvent(proposalId) {
     LEFT JOIN payment_profiles pp ON pp.user_id = sr.user_id
     WHERE s.proposal_id = $1
       AND sr.status = 'approved'
+      AND sr.dropped_at IS NULL
   `, [proposalId]);
 
   if (rows.length !== 1) return null;

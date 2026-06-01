@@ -112,7 +112,7 @@ async function notifyClientOfStaffingConfirmation(proposalId, shiftId) {
     `SELECT cp.preferred_name, cp.phone
        FROM shift_requests sr
        LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-      WHERE sr.shift_id = $1 AND sr.status = 'approved'
+      WHERE sr.shift_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL
       ORDER BY sr.id ASC`,
     [shiftId]
   );
@@ -233,7 +233,7 @@ async function confirmStaffingIfFullyStaffed(shiftId) {
     }
     if (needed === 0) return;
     const a = await pool.query(
-      "SELECT COUNT(*)::int AS n FROM shift_requests WHERE shift_id = $1 AND status = 'approved'",
+      "SELECT COUNT(*)::int AS n FROM shift_requests WHERE shift_id = $1 AND status = 'approved' AND dropped_at IS NULL",
       [shiftId]
     );
     if (a.rows[0].n < needed) return;

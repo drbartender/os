@@ -39,7 +39,7 @@ async function authorize(req, proposalId) {
     `SELECT 1 FROM shift_requests sr
        JOIN shifts s ON s.id = sr.shift_id
       WHERE s.proposal_id = $1 AND sr.user_id = $2
-        AND sr.status = 'approved' AND s.status != 'cancelled'
+        AND sr.status = 'approved' AND sr.dropped_at IS NULL AND s.status != 'cancelled'
       LIMIT 1`,
     [proposalId, req.user.id]
   );
@@ -101,7 +101,7 @@ router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) =
        JOIN shifts s ON s.id = sr.shift_id
        LEFT JOIN users u ON u.id = sr.user_id
        LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
-      WHERE s.proposal_id = $1 AND sr.status = 'approved' AND s.status != 'cancelled'
+      WHERE s.proposal_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL AND s.status != 'cancelled'
       ORDER BY name`,
     [proposalId]
   );
@@ -321,6 +321,7 @@ router.post('/:proposalId/acknowledge', auth, beoReadLimiter, asyncHandler(async
         AND s.proposal_id = $1
         AND sr.user_id = $2
         AND sr.status = 'approved'
+        AND sr.dropped_at IS NULL
         AND s.status != 'cancelled'
         AND dp.finalized_at IS NOT NULL
       RETURNING sr.id, sr.shift_id, sr.beo_acknowledged_at`,

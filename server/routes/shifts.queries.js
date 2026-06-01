@@ -63,7 +63,7 @@ const USER_EVENTS_SQL = `
       JOIN payouts po ON po.id = pe.payout_id
      WHERE pe.shift_id = s.id AND po.contractor_id = $1 LIMIT 1
   ) pay ON true
-  WHERE sr.user_id = $1 AND sr.status = 'approved'
+  WHERE sr.user_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL
   ORDER BY s.event_date DESC LIMIT 500
 `;
 

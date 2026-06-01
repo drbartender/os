@@ -38,8 +38,11 @@ const auth = async (req, res, next) => {
     if ((u.token_version ?? 0) !== (decoded.tokenVersion ?? 0)) {
       return res.status(401).json({ error: 'Session expired — please log in again', code: 'TOKEN_VERSION_MISMATCH' });
     }
-    // Block deactivated/rejected/suspended — but only for regular staff, not admins/managers
-    if (u.role === 'staff') {
+    // Block deactivated/rejected/suspended for every role EXCEPT admin. Admin is
+    // exempt so a mis-set status can't lock the owner out of their own recovery
+    // path; managers AND staff are gated (closes the suspended-manager bypass —
+    // the check previously fired only for role 'staff').
+    if (u.role !== 'admin') {
       if (u.onboarding_status === 'deactivated') {
         return res.status(403).json({ error: 'This account has been deactivated. Contact admin.' });
       }

@@ -192,6 +192,7 @@ async function findNearestApprovedShift(staffUserId) {
      JOIN shifts s ON s.id = sr.shift_id
      WHERE sr.user_id = $1
        AND sr.status = 'approved'
+       AND sr.dropped_at IS NULL
        AND s.event_date >= CURRENT_DATE
        AND s.status NOT IN ('completed', 'cancelled')
      ORDER BY s.event_date ASC, s.start_time ASC

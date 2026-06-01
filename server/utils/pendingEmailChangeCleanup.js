@@ -1,9 +1,10 @@
 // Daily cleanup of stale pending_email_changes rows (spec §6.10 step 10).
 //
-// Consumed rows are kept for 7 days as a thin audit trail before purge —
-// staff_audit_log holds the durable record. Expired-but-never-consumed rows
-// are also purged after 7 days (they sit at most 7 days past their expiry,
-// which is itself 24h after creation).
+// Consumed rows are purged immediately — single-use is already enforced at
+// confirm time, and staff_audit_log holds the durable record of the change, so
+// the row itself carries no audit value once consumed. Expired-but-never-
+// consumed rows are purged 7 days after expiry (they sit at most 7 days past
+// their expiry, which is itself 24h after creation).
 
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');

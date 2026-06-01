@@ -110,6 +110,7 @@ async function resolveBartender(proposalId) {
        LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
       WHERE s.proposal_id = $1
         AND sr.status = 'approved'
+        AND sr.dropped_at IS NULL
       ORDER BY sr.updated_at ASC
       LIMIT 1`,
     [proposalId]

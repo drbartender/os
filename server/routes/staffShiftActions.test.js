@@ -366,19 +366,16 @@ test('POST /request-cover > 72h+1h triggers cover flip and broadcast', async () 
   });
   assert.strictEqual(res.status, 200, JSON.stringify(res.body));
   assert.strictEqual(res.body.success, true);
-  assert.ok(typeof res.body.broadcast_count === 'number');
-  assert.strictEqual(res.body.broadcast_truncated, false);
+  // The broadcast is fire-and-forget (the chunked enqueue can take seconds at
+  // the cap, so it must not block the HTTP response). The response therefore no
+  // longer carries broadcast_count / broadcast_truncated — the cover request is
+  // confirmed synchronously; teammates are notified in the background.
+  assert.strictEqual(res.body.broadcast_count, undefined);
+  assert.strictEqual(res.body.broadcast_truncated, undefined);
 
   const sr = await pool.query(`SELECT cover_requested_at, cover_reason FROM shift_requests WHERE id = $1`, [requestId]);
   assert.ok(sr.rows[0].cover_requested_at, 'cover_requested_at set');
   assert.strictEqual(sr.rows[0].cover_reason, 'Family conflict');
-
-  // Cover_broadcast scheduled_messages enqueued (at least 0 — depends on dev DB).
-  const cb = await pool.query(
-    `SELECT count(*)::int AS c FROM scheduled_messages WHERE entity_type='shift' AND entity_id=$1 AND message_type='cover_broadcast'`,
-    [shiftId]
-  );
-  assert.ok(cb.rows[0].c >= 0);
 });
 
 test('POST /request-cover > 14d+1h returns 409 wrong_mode', async () => {

@@ -88,6 +88,7 @@ async function scheduleBeoNudgesForProposal(proposalId, executor) {
        JOIN users u ON u.id = sr.user_id
       WHERE s.proposal_id = $1
         AND sr.status = 'approved'
+        AND sr.dropped_at IS NULL
         AND s.status != 'cancelled'
         AND u.onboarding_status = 'approved'`,
     [proposalId]
@@ -150,6 +151,7 @@ async function suppressBeoNudgesForStaffers(proposalId, userIds, executor, reaso
             JOIN shifts s ON s.id = sr.shift_id
            WHERE sr.user_id = sm.recipient_id
              AND sr.status = 'approved'
+             AND sr.dropped_at IS NULL
              AND s.proposal_id = $1
              AND s.status != 'cancelled'
         )`,
@@ -223,13 +225,13 @@ async function loadBeoContext(proposalId, userId) {
             (
               SELECT bool_or(sr.beo_acknowledged_at IS NOT NULL)
                 FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
-               WHERE s.proposal_id = p.id AND sr.user_id = u.id AND sr.status = 'approved'
+               WHERE s.proposal_id = p.id AND sr.user_id = u.id AND sr.status = 'approved' AND sr.dropped_at IS NULL
             ) AS any_acked,
             (
               SELECT bool_or(true)
                 FROM shift_requests sr JOIN shifts s ON s.id = sr.shift_id
                WHERE s.proposal_id = p.id AND sr.user_id = u.id
-                 AND sr.status = 'approved' AND s.status != 'cancelled'
+                 AND sr.status = 'approved' AND sr.dropped_at IS NULL AND s.status != 'cancelled'
             ) AS has_active_shift
        FROM proposals p
        LEFT JOIN drink_plans dp ON dp.proposal_id = p.id

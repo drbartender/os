@@ -524,7 +524,7 @@ router.get('/users/:id/seniority', auth, adminOnly, asyncHandler(async (req, res
       SELECT COUNT(*) AS events_worked
       FROM shift_requests sr
       JOIN shifts s ON s.id = sr.shift_id
-      WHERE sr.user_id = $1 AND sr.status = 'approved' AND s.event_date < CURRENT_DATE
+      WHERE sr.user_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL AND s.event_date < CURRENT_DATE
     `, [userId])
   ]);
 
