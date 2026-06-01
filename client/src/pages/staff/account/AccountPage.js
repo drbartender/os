@@ -1,11 +1,15 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../../context/AuthContext';
-import ProfileSection from './ProfileSection';
-import PaymentMethodsSection from './PaymentMethodsSection';
-import CalendarSyncSection from './CalendarSyncSection';
-import NotificationsSection from './NotificationsSection';
-import DocumentsSection from './DocumentsSection';
+
+// Lazy-loaded so each section ships as its own chunk — opening /account no
+// longer downloads all five section forms (~3.8k lines) up front; only the
+// active section's code loads, the rest on demand when its tab is tapped.
+const ProfileSection = lazy(() => import('./ProfileSection'));
+const PaymentMethodsSection = lazy(() => import('./PaymentMethodsSection'));
+const CalendarSyncSection = lazy(() => import('./CalendarSyncSection'));
+const NotificationsSection = lazy(() => import('./NotificationsSection'));
+const DocumentsSection = lazy(() => import('./DocumentsSection'));
 
 /**
  * AccountPage — staff portal v2 account hub (spec §6.9).
@@ -123,7 +127,7 @@ export default function AccountPage() {
       <div className="sp-acc-hero">
         <div className="sp-avatar sp-acc-avatar">{initials}</div>
         <div>
-          <div className="sp-detail-title">{displayName}</div>
+          <h1 className="sp-detail-title">{displayName}</h1>
           <div className="sp-detail-sub">
             {displayRole}
             {displayRole && displayEmail ? ' · ' : ''}
@@ -150,11 +154,19 @@ export default function AccountPage() {
         })}
       </nav>
 
-      {section === 'profile' && <ProfileSection />}
-      {section === 'payments' && <PaymentMethodsSection />}
-      {section === 'calendar' && <CalendarSyncSection />}
-      {section === 'notifications' && <NotificationsSection />}
-      {section === 'documents' && <DocumentsSection />}
+      <Suspense
+        fallback={
+          <div className="sp-tf-sub" style={{ padding: 24 }} role="status" aria-live="polite">
+            Loading…
+          </div>
+        }
+      >
+        {section === 'profile' && <ProfileSection />}
+        {section === 'payments' && <PaymentMethodsSection />}
+        {section === 'calendar' && <CalendarSyncSection />}
+        {section === 'notifications' && <NotificationsSection />}
+        {section === 'documents' && <DocumentsSection />}
+      </Suspense>
 
       <div className="sp-acc-foot">
         <button type="button" className="sp-btn sp-btn-block" onClick={handleSignOut}>

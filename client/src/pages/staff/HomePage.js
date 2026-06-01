@@ -335,10 +335,10 @@ function Hero({ user }) {
   return (
     <div className="sp-hero">
       <div>
-        <div className="sp-greeting">
+        <h1 className="sp-greeting">
           {greeting}
           {name ? `, ${name}.` : '.'}
-        </div>
+        </h1>
         <div className="sp-greeting-sub">{dateLabel.toUpperCase()}</div>
       </div>
     </div>

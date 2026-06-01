@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
 import { formatPhoneInput, stripPhone } from '../../../utils/formatPhone';
@@ -478,10 +478,13 @@ function TextField({
   label, value, onChange, type = 'text', sub, error, mono, wide,
   autoComplete, inputMode, placeholder,
 }) {
+  const fieldId = useId();
+  const descId = (error || sub) ? `${fieldId}-d` : undefined;
   return (
     <div className={'sp-tf' + (wide ? ' sp-tf-wide' : '')}>
-      <span className="sp-tf-k">{label}</span>
+      <label className="sp-tf-k" htmlFor={fieldId}>{label}</label>
       <input
+        id={fieldId}
         className={'sp-tf-input' + (mono ? ' sp-mono' : '') + (error ? ' has-error' : '')}
         type={type}
         value={value}
@@ -490,10 +493,11 @@ function TextField({
         inputMode={inputMode}
         placeholder={placeholder}
         aria-invalid={error ? 'true' : undefined}
+        aria-describedby={descId}
       />
       {error
-        ? <span className="sp-tf-error">{error}</span>
-        : sub ? <span className="sp-tf-sub">{sub}</span> : null}
+        ? <span className="sp-tf-error" id={descId}>{error}</span>
+        : sub ? <span className="sp-tf-sub" id={descId}>{sub}</span> : null}
     </div>
   );
 }
@@ -562,6 +566,7 @@ function ChangeEmailModal({
           className="sp-modal-input sp-mono"
           type="email"
           autoComplete="email"
+          aria-label="New email"
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="you@newdomain.com"

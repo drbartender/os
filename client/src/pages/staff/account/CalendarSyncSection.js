@@ -270,15 +270,8 @@ export default function CalendarSyncSection() {
         <div className="sp-cal-grid">
           {SUBSCRIBE_OPTIONS.map((opt) => {
             const href = subscribeUrlFor(opt.id, feedUrl);
-            return (
-              <a
-                key={opt.id}
-                className="sp-cal-opt"
-                href={href || undefined}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-disabled={href ? undefined : 'true'}
-              >
+            const inner = (
+              <>
                 <span
                   className="sp-cal-opt-icon"
                   style={{ background: opt.badgeBg }}
@@ -291,7 +284,30 @@ export default function CalendarSyncSection() {
                   <span className="sp-cal-opt-sub">{opt.sub}</span>
                 </span>
                 <ExternalIcon size={12} />
+              </>
+            );
+            // No feed URL → nothing to link to. Render a non-interactive,
+            // dimmed row instead of an <a> with an empty href: a
+            // target="_blank" anchor with no href opens about:blank on click.
+            return href ? (
+              <a
+                key={opt.id}
+                className="sp-cal-opt"
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {inner}
               </a>
+            ) : (
+              <span
+                key={opt.id}
+                className="sp-cal-opt"
+                aria-disabled="true"
+                style={{ opacity: 0.55, cursor: 'default' }}
+              >
+                {inner}
+              </span>
             );
           })}
         </div>

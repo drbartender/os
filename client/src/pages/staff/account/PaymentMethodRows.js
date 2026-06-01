@@ -95,6 +95,7 @@ export function TipMethodRow({
             <input
               className="sp-pm-input sp-mono"
               autoFocus
+              aria-label={`${meta.label} handle`}
               value={editing.value || ''}
               onChange={(e) => onEditChange(e.target.value)}
               placeholder={editPlaceholder}
@@ -194,6 +195,7 @@ export function DirectDepositRow({
             <input
               className="sp-pm-input sp-mono"
               autoFocus
+              aria-label="Routing number"
               value={editing.routing || ''}
               onChange={(e) => onEditChange({ routing: e.target.value })}
               placeholder="9-digit routing"
@@ -208,6 +210,7 @@ export function DirectDepositRow({
             )}
             <input
               className="sp-pm-input sp-mono"
+              aria-label="Account number"
               value={editing.account || ''}
               onChange={(e) => onEditChange({ account: e.target.value })}
               placeholder="Account number"

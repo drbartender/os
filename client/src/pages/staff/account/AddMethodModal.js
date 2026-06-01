@@ -118,10 +118,11 @@ export default function AddMethodModal({ methods, onClose, onSuccess }) {
       setSubmitting(true);
       try {
         const res = await api.put('/me/preferred-payment-method', { method: 'check' });
-        // Hand a minimal payload back that mirrors a payment-methods shape so
-        // the parent can patch state without re-fetching.
+        // Pass ONLY the changed field. applyServerState merges over the
+        // parent's CURRENT methods, so spreading the modal's `methods` prop
+        // (a snapshot from when the modal opened) could revert any key that
+        // changed since — e.g. a handle added on another device mid-session.
         onSuccess('check', {
-          ...(methods || {}),
           preferred_payment_method: res?.data?.preferred_payment_method ?? 'check',
         });
         // PII discipline: clear submitting state but skip locals (nothing
@@ -197,7 +198,7 @@ export default function AddMethodModal({ methods, onClose, onSuccess }) {
     } finally {
       setSubmitting(false);
     }
-  }, [picked, submitting, handle, routing, account, methods, onSuccess, toast]);
+  }, [picked, submitting, handle, routing, account, onSuccess, toast]);
 
   const onKeyDown = (e) => {
     if (e.key === 'Enter' && picked && picked !== 'check' && !submitting) {
@@ -294,6 +295,7 @@ export default function AddMethodModal({ methods, onClose, onSuccess }) {
             <input
               className="sp-modal-input sp-mono"
               autoFocus
+              aria-label={`${option.label} handle`}
               placeholder={option.placeholder}
               value={handle}
               onChange={(e) => setHandle(e.target.value)}
@@ -318,6 +320,7 @@ export default function AddMethodModal({ methods, onClose, onSuccess }) {
             <input
               className="sp-modal-input sp-mono"
               autoFocus
+              aria-label="Routing number"
               placeholder="9-digit routing"
               value={routing}
               onChange={(e) => setRouting(e.target.value)}
@@ -334,6 +337,7 @@ export default function AddMethodModal({ methods, onClose, onSuccess }) {
             <div className="sp-modal-label">Account number</div>
             <input
               className="sp-modal-input sp-mono"
+              aria-label="Account number"
               placeholder="Account number"
               value={account}
               onChange={(e) => setAccount(e.target.value)}

@@ -480,10 +480,9 @@ export default function PaymentMethodsSection() {
       </button>
 
       <div className="sp-form-foot sp-pm-disclaimer">
-        Card payments settle through Dr. Bartender and appear as{' '}
-        <span className="sp-mono">card_tip_net_cents</span> on your paystub.
-        It’s your responsibility to enter handles correctly. Payments sent to
-        typos are not our liability.
+        Card payments settle through Dr. Bartender and show up as card tips on
+        your paystub. It’s your responsibility to enter handles correctly.
+        Payments sent to typos are not our liability.
       </div>
 
       {addOpen && (

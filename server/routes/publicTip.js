@@ -16,6 +16,25 @@ const router = express.Router();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Short-lived in-process cache for headshot signed URLs. The QR-scan path
+// signs a fresh R2 URL on every GET (the JSON response is no-cache), so a
+// busy venue re-signs the same staffer's headshot dozens of times a minute
+// for no benefit. Cache the signed URL keyed on the R2 object basename; the
+// TTL stays safely under the 15-min signed lifetime so a cached URL is never
+// handed out already-expired. Bounded so it can't grow without limit.
+const HEADSHOT_SIGN_TTL_MS = 12 * 60 * 1000;
+const headshotUrlCache = new Map(); // basename -> { url, expiresAt }
+
+async function getCachedHeadshotUrl(basename) {
+  const now = Date.now();
+  const hit = headshotUrlCache.get(basename);
+  if (hit && hit.expiresAt > now) return hit.url;
+  const url = await getSignedUrl(basename);
+  if (headshotUrlCache.size > 1000) headshotUrlCache.clear();
+  headshotUrlCache.set(basename, { url, expiresAt: now + HEADSHOT_SIGN_TTL_MS });
+  return url;
+}
+
 // Spec §6.8 — known method tokens, in the natural fallback order used when a
 // staffer has not saved (or has partially saved) a tip_card_order. Tokens in
 // the saved order that are NOT available on the profile are skipped; available
@@ -90,7 +109,7 @@ router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
   if (row.headshot_url) {
     if (row.headshot_url.startsWith('/files/')) {
       try {
-        headshotUrl = await getSignedUrl(path.basename(row.headshot_url));
+        headshotUrl = await getCachedHeadshotUrl(path.basename(row.headshot_url));
       } catch (err) {
         // Fall through with null — TipPage shows a placeholder circle if missing.
         Sentry.captureException(err, {
