@@ -275,7 +275,7 @@ dr-bartender/
 │   │   │   ├── setupTime.js    # Back-of-house setup-time formatting (twin of server/utils/setupTime.js)
 │   │   │   ├── timeOptions.js  # Time option generator + 12h formatter + input parser
 │   │   │   └── tipCardMarks.js # Derives printable QR-card payment marks from saved handles (Stripe link + handles → mark list)
-│   │   ├── components/         # AdminLayout, StaffLayout, Layout, PublicLayout,
+│   │   ├── components/         # AdminLayout, Layout, PublicLayout,
 │   │   │                       # InvoiceDropdown, SignaturePad, FileUpload, DrinkPlanCard,
 │   │   │                       # PricingBreakdown, RichTextEditor, LeadImportModal, MenuSamplesModal,
 │   │   │                       # AudienceSelector, SequenceStepEditor, CampaignMetricsBar, SyrupPicker,
@@ -303,7 +303,7 @@ dr-bartender/
 │   │   │   ├── (staff)         # Application, ApplicationStatus, HiringLanding, PreHireOnboarding (open pre-hire URL)
 │   │   │   ├── (admin)         # AdminDashboard (AdminUserDetail moved into admin/userDetail/, AdminApplicationDetail moved into admin/applicationDetail/)
 │   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/, NotificationSettings per-user notification-subscription toggles, CcImportWrapUpPage Bucket B wrap-up email worklist, CcImportReviewPage 7-section import-reconciliation triage)
-│   │   │   ├── staff/          # Staff portal (v1: StaffDashboard, StaffShifts, StaffSchedule, StaffEvents, StaffResources, StaffProfile, MyTipPage tip-page settings, PrintTipCard printable QR card with PrintTipCard.layouts.jsx + PrintTipCard.css; v2 redesign: HomePage, ShiftsPage + ShiftDetail, PayPage + PayoutDetail, TipCardPage, EmailVerifyPage email-change confirm)
+│   │   │   ├── staff/          # Staff portal — the live v2 portal, mounted at root on staff.drbartender.com (HomePage, ShiftsPage + ShiftDetail, PayPage + PayoutDetail, TipCardPage, EmailVerifyPage email-change confirm) + PrintTipCard printable QR card (PrintTipCard.jsx + PrintTipCard.layouts.jsx + PrintTipCard.css)
 │   │   │   │   └── account/    # AccountPage shell + sub-nav with ProfileSection, PaymentMethodsSection (+ PaymentMethodRows + AddMethodModal), CalendarSyncSection, NotificationsSection (+ IOSCoachmark Phase-A stub), DocumentsSection (+ ReplaceConfirmModal)
 │   │   │   ├── plan/           # PotionPlanningLab, public post-booking event questionnaire (single flow, created only after deposit; with steps/, components/, data/; components/ScopeBanner + components/WelcomeRoadmap + components/MenuPreview + components/LogoUploadField = apothecary-reskin + Standard Menu shared UI; steps/HostedGuestPrefsStep.js = compact hosted-package guest-preferences step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test; data/menuSections.js = Standard Menu section extractor with menuSections.test.js Jest unit suite)
 │   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment
@@ -413,7 +413,7 @@ Imports legacy proposals, events, payments, refunds, payouts, leads, and invoice
 - Tip buttons deep-link to Venmo and Cash App when the bartender has those handles set, plus a Stripe Payment Link fallback that flows to the bartender's Stripe Express account
 - Stripe Payment Links are auto-provisioned (and regenerated on demand) via `server/utils/tipPaymentLinks.js`; tip flow is recorded in the `tips` table on `checkout.session.completed` (branched by `metadata.kind = 'tip'`)
 - After tipping, guests land on a thank-you page that nudges a Google review and offers an optional bartender feedback form (`tip_page_feedback` table; admin reviews in TipsAdmin)
-- Bartenders manage their tip page from the staff portal (`MyTipPage`) and can print a QR card (`PrintTipCard`) for events
+- Bartenders manage their tip page from the staff portal Tip Card tab (`TipCardPage`) and can print a QR card (`PrintTipCard`) for events
 - Admins audit tip pages, regenerate Stripe links, and review tip activity from `TipsAdmin` and the `TipPageTab` on the user detail page
 - Tip page lifecycle (activate on hire, deactivate on offboard) is centralized in `server/utils/tipPageLifecycle.js`; `server/scripts/backfillTipPages.js` ensures every active bartender has a row + Stripe link
 

@@ -121,15 +121,24 @@ The 6 onboarding steps:
 
 ## F. Staff Portal (staff.drbartender.com; mirrored on hiring host post-onboarding)
 
+The redesigned v2 portal is now the live staff portal, mounted at root on `staff.drbartender.com` (no `/staff-v2` prefix). The old v1 fragments (StaffDashboard / StaffShifts / StaffSchedule / StaffEvents / StaffResources / StaffProfile / MyTipPage) and `components/StaffLayout.js` were removed in the cutover; their old paths (`/dashboard`, `/events`, `/schedule`, `/profile`, `/resources`, `/my-tip-page`) now redirect to the new ones.
+
 | File | Purpose |
 |---|---|
-| `client/src/components/StaffLayout.js` | Sidebar shell (Dashboard / Shifts / My Schedule / My Events / divider / Resources / Profile). Admin/manager users get an extra "Admin Portal" cross-domain link at the top. Mobile sidebar overlay. |
-| `client/src/pages/staff/StaffDashboard.js` | Welcome banner with WhatsApp Group link, KPI tiles (Open Shifts / Pending Requests / Confirmed / Events Worked), "Next Event" card. |
-| `client/src/pages/staff/StaffShifts.js` | All open shifts the contractor can request, with pending/confirmed/denied pills. |
-| `client/src/pages/staff/StaffSchedule.js` | The contractor's own request history — pending/approved/denied. |
-| `client/src/pages/staff/StaffEvents.js` | Upcoming and past events the contractor is staffed on. |
-| `client/src/pages/staff/StaffProfile.js` | Read-only profile summary with "Edit Profile" link back to the onboarding ContractorProfile page. |
-| `client/src/pages/staff/StaffResources.js` | Links + the iCal subscription URL (calendar feed) with copy-to-clipboard, plus phone/WhatsApp. |
+| `client/src/components/StaffShell.js` + `client/src/components/StaffShellWithThemeWiring.js` | Layout shell for the portal — bottom tab bar (Home / Shifts / Pay / Tip Card), user pill (account menu), routed `<Outlet />`. The theme-wiring wrapper fetches `/api/me/ui-preferences` on mount and applies it. |
+| `client/src/components/StaffUserPillMenu.js` | Account-pill dropdown rendered by `StaffShell` (entry point to the Account overlay). |
+| `client/src/pages/staff/HomePage.js` | Home tab — next event card, quick actions, welcome chrome. |
+| `client/src/pages/staff/ShiftsPage.js` + `ShiftDetail.js` | Shifts tab — open + requested + assigned shifts; per-shift detail with request/approve/drop flows. |
+| `client/src/pages/staff/PayPage.js` + `PayoutDetail.js` | Pay tab — payout history list (`GET /api/me/payouts`) and per-pay-period detail (`GET /api/me/payouts/:periodId`). |
+| `client/src/pages/staff/TipCardPage.js` | Tip Card tab — bartender's tip-page settings (handles, photo, opt-ins) and the printable QR card entry point. |
+| `client/src/pages/staff/PrintTipCard.jsx` + `PrintTipCard.layouts.jsx` + `PrintTipCard.css` | Printable QR card surface (kept from v1). |
+| `client/src/pages/staff/EmailVerifyPage.js` | Email-change confirm landing page for the `request-email-change → emailed token → POST /api/me/confirm-email-change` flow. |
+| `client/src/pages/staff/account/AccountPage.js` | Account overlay shell + sub-nav. |
+| `client/src/pages/staff/account/ProfileSection.js` | Profile sub-tab — name, phone, address, emergency contact, pending-email-change banner. |
+| `client/src/pages/staff/account/PaymentMethodsSection.js` (+ `PaymentMethodRows.js`, `AddMethodModal.js`, `ReplaceConfirmModal.js`) | Payments sub-tab — preferred payment method + handles/banking (bank PII via `encryption.js`). |
+| `client/src/pages/staff/account/CalendarSyncSection.js` | Calendar sub-tab — iCal subscription URL, copy-to-clipboard, last-fetch timestamp. |
+| `client/src/pages/staff/account/NotificationsSection.js` (+ `IOSCoachmark.js`) | Notifications sub-tab — per-category notification toggles. |
+| `client/src/pages/staff/account/DocumentsSection.js` | Documents sub-tab — W-9, signed agreement, alcohol certification presence + replace flow. |
 
 ---
 
@@ -198,7 +207,7 @@ Worth knowing because the overhaul probably touches the things clients receive i
 | `client/public/testing-guide.html` | Built from `TESTING.md` by `scripts/build-testing-guide.js`. Lab Rat program references it. |
 | `client/src/data/menuSamples.js`, `addonCategories.js`, `eventTypes.js`, `packages.js`, `syrups.js` | Static catalog data. `packages.js` and `syrups.js` are shown to clients; changes here re-skin the Quote Wizard add-on cards and Potion Planning Lab. |
 
-**Setup time is back-of-house only.** `proposals.setup_minutes_before` (admin override; NULL ⇒ derive 90 hosted / 60 else), the synced `shifts.setup_minutes_before`, and the derived `setup_time_display` are crew arrival/prep timing — surfaced ONLY on admin event/proposal pages, the staff portal (StaffShifts / StaffSchedule / StaffEvents), and the staff hire-confirmation email (`shiftRequestApproved`). The public token route (`server/routes/proposals/publicToken.js`) uses an explicit column allowlist that **deliberately omits** `setup_minutes_before` and adds no derived setup key to its `res.json` — clients/leads never see it. No client-facing email or token-gated template (proposal / invoice / drink plan / shopping list) renders setup time.
+**Setup time is back-of-house only.** `proposals.setup_minutes_before` (admin override; NULL ⇒ derive 90 hosted / 60 else), the synced `shifts.setup_minutes_before`, and the derived `setup_time_display` are crew arrival/prep timing — surfaced ONLY on admin event/proposal pages, the staff portal (Shifts tab / ShiftDetail), and the staff hire-confirmation email (`shiftRequestApproved`). The public token route (`server/routes/proposals/publicToken.js`) uses an explicit column allowlist that **deliberately omits** `setup_minutes_before` and adds no derived setup key to its `res.json` — clients/leads never see it. No client-facing email or token-gated template (proposal / invoice / drink plan / shopping list) renders setup time.
 
 ---
 
@@ -424,7 +433,7 @@ These are repeated across surfaces — staff list, proposals dashboard, drink pl
 | Approved / Confirmed | `#E8F5E8` | `#90CC90` | `#1A6B1A` |
 | Denied / Rejected | `#F5F5F5` | `#CCC` | `#666` |
 
-The primary status badges in `index.css` (`badge-inprogress`, `badge-submitted`, `badge-approved`) are the canonical version. The inline pill objects in `StaffShifts.js`, `StaffSchedule.js`, etc. are duplicates that should converge with whatever the new system standardizes.
+The primary status badges in `index.css` (`badge-inprogress`, `badge-submitted`, `badge-approved`) are the canonical version. The redesigned staff portal v2 pages (Shifts, Pay, Tip Card) carry their own status pills that should converge with whatever the new system standardizes.
 
 ---
 
@@ -470,7 +479,7 @@ The primary status badges in `index.css` (`badge-inprogress`, `badge-submitted`,
 
 8. **Shopping list ships.** When the BEO/shopping list is finalized internally, the client gets a `/shopping-list/:token` URL. They view it on their phone, check items off as they shop, and the same data fuels event-day prep.
 
-9. **Event happens.** Staff side: bartenders see the event on `staff.drbartender.com` (StaffEvents / StaffSchedule), pull their iCal feed from StaffResources, message via WhatsApp.
+9. **Event happens.** Staff side: bartenders see the event on `staff.drbartender.com` (Home next-event card + Shifts tab), pull their iCal feed from the Account overlay's Calendar sub-section, message via WhatsApp.
 
 10. **Repeat clients log into `/login` on drbartender.com** (the OTP flow) and see all their past + current proposals on `/my-proposals`, with invoice access from the dropdowns.
 
