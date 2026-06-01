@@ -58,14 +58,8 @@ const Agreement = lazy(() => import('./pages/Agreement'));
 const ContractorProfile = lazy(() => import('./pages/ContractorProfile'));
 const PaydayProtocols = lazy(() => import('./pages/PaydayProtocols'));
 const Completion = lazy(() => import('./pages/Completion'));
-const StaffLayout = lazy(() => import('./components/StaffLayout'));
-const StaffDashboard = lazy(() => import('./pages/staff/StaffDashboard'));
-const StaffShifts = lazy(() => import('./pages/staff/StaffShifts'));
-const StaffSchedule = lazy(() => import('./pages/staff/StaffSchedule'));
-const StaffEvents = lazy(() => import('./pages/staff/StaffEvents'));
-const StaffResources = lazy(() => import('./pages/staff/StaffResources'));
-const StaffProfile = lazy(() => import('./pages/staff/StaffProfile'));
-const MyTipPage = lazy(() => import('./pages/staff/MyTipPage'));
+// Old StaffLayout + staff page fragments removed at cutover (Task 48/49); their
+// files are deleted in Task 50. PrintTipCard stays — the print flow lives on.
 const PrintTipCard = lazy(() => import('./pages/staff/PrintTipCard'));
 // Staff portal v2 (redesign in flight — early stub mount per Task 31).
 // StaffShellWithThemeWiring fetches /api/me/ui-preferences on mount and
@@ -160,6 +154,47 @@ function ShiftDetailRedirect() {
       .catch(() => { if (!cancelled) navigate('/events', { replace: true }); });
     return () => { cancelled = true; };
   }, [id, navigate]);
+  return (
+    <div
+      className="loading"
+      style={{ minHeight: '50vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="spinner" aria-hidden="true" />
+    </div>
+  );
+}
+
+/**
+ * /events/:proposalId/beo → /shifts/:shiftId
+ * Pre-cutover BEO nudge SMS link to the proposalId-keyed BEO path. Post-cutover
+ * the BEO viewer is ShiftDetail (shiftId-keyed), so resolve the signed-in
+ * staffer's shift on that proposal and forward. Mounted inside RequirePortal,
+ * so `user` is guaranteed. Future nudges link straight to /shifts/:shiftId
+ * (see server/utils/beoHandlers.js) — this only catches already-sent links.
+ */
+function BeoByProposalRedirect() {
+  const { proposalId } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  useEffect(() => {
+    let cancelled = false;
+    const pid = parseInt(proposalId, 10);
+    if (!user?.id || !Number.isFinite(pid)) {
+      navigate('/shifts/mine', { replace: true });
+      return undefined;
+    }
+    api.get(`/shifts/user/${user.id}/events`)
+      .then(r => {
+        if (cancelled) return;
+        const rows = [...(r.data?.upcoming || []), ...(r.data?.past || [])];
+        const match = rows.find(row => row.proposal_id === pid);
+        navigate(match ? `/shifts/${match.id}` : '/shifts/mine', { replace: true });
+      })
+      .catch(() => { if (!cancelled) navigate('/shifts/mine', { replace: true }); });
+    return () => { cancelled = true; };
+  }, [proposalId, user?.id, navigate]);
   return (
     <div
       className="loading"
@@ -292,17 +327,28 @@ function HiringRoutes() {
           <Route path="/payday-protocols" element={<PaydayProtocols />} />
           <Route path="/complete" element={<Completion />} />
         </Route>
-        {/* Staff portal — kept here so fully-onboarded users who bookmarked hiring.drb.com don't hit a blank page */}
-        <Route element={<RequirePortal><StaffLayout /></RequirePortal>}>
-          <Route path="/dashboard" element={<StaffDashboard />} />
-          <Route path="/shifts" element={<StaffShifts />} />
-          <Route path="/schedule" element={<StaffSchedule />} />
-          <Route path="/events" element={<StaffEvents />} />
-          <Route path="/resources" element={<StaffResources />} />
-          <Route path="/profile" element={<StaffProfile />} />
-          <Route path="/my-tip-page" element={<MyTipPage />} />
-          <Route path="/my-tip-page/print" element={<PrintTipCard />} />
+        {/* Staff portal v2 — production mount on hiring.drbartender.com too, so
+            fully-onboarded users who bookmarked hiring.drb.com reach the portal.
+            `/` stays the applicant HiringLanding; the portal home is /dashboard
+            (getHomePath sends portal users to /dashboard → HomePage here). */}
+        <Route element={<RequirePortal><StaffShellWithThemeWiring /></RequirePortal>}>
+          <Route path="/dashboard" element={<StaffV2HomePage />} />
+          <Route path="/shifts/*" element={<StaffV2ShiftsPage />} />
+          <Route path="/pay/:periodId" element={<StaffV2PayoutDetail />} />
+          <Route path="/pay" element={<StaffV2PayPage />} />
+          <Route path="/tip-card" element={<StaffV2TipCardPage />} />
+          <Route path="/account" element={<StaffV2AccountPage />} />
+          <Route path="/account/:section" element={<StaffV2AccountPage />} />
+          <Route path="/events/:proposalId/beo" element={<BeoByProposalRedirect />} />
         </Route>
+        {/* Print tip card — standalone (no shell chrome), shared with the public flow. */}
+        <Route path="/my-tip-page/print" element={<PrintTipCard />} />
+        {/* Old-path redirects — /dashboard is the portal home here, not redirected. */}
+        <Route path="/events" element={<Navigate to="/shifts/mine" replace />} />
+        <Route path="/schedule" element={<Navigate to="/shifts/mine" replace />} />
+        <Route path="/profile" element={<Navigate to="/account/profile" replace />} />
+        <Route path="/resources" element={<Navigate to="/account/documents" replace />} />
+        <Route path="/my-tip-page" element={<Navigate to="/tip-card" replace />} />
         {/* Public token routes still work */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
@@ -323,7 +369,8 @@ function StaffSiteRoutes() {
   return (
     <Suspense fallback={SuspenseFallback}>
       <Routes>
-        <Route path="/" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
+        {/* `/` is the staff HomePage (in the RequirePortal mount below); logged-out
+            visitors are bounced to /login by RequirePortal. */}
         <Route path="/login" element={<RedirectIfLoggedIn><Login /></RedirectIfLoggedIn>} />
         <Route path="/forgot-password" element={<RedirectIfLoggedIn><ForgotPassword /></RedirectIfLoggedIn>} />
         <Route path="/reset-password/:token" element={<RedirectIfLoggedIn><ResetPassword /></RedirectIfLoggedIn>} />
@@ -336,30 +383,29 @@ function StaffSiteRoutes() {
           <Route path="/payday-protocols" element={<PaydayProtocols />} />
           <Route path="/complete" element={<Completion />} />
         </Route>
-        {/* Staff portal — mounted at root on staff.drbartender.com */}
-        <Route element={<RequirePortal><StaffLayout /></RequirePortal>}>
-          <Route path="/dashboard" element={<StaffDashboard />} />
-          <Route path="/shifts" element={<StaffShifts />} />
-          <Route path="/schedule" element={<StaffSchedule />} />
-          <Route path="/events" element={<StaffEvents />} />
-          <Route path="/resources" element={<StaffResources />} />
-          <Route path="/profile" element={<StaffProfile />} />
-          <Route path="/my-tip-page" element={<MyTipPage />} />
-          <Route path="/my-tip-page/print" element={<PrintTipCard />} />
+        {/* Staff portal v2 — PRODUCTION mount (cutover). Mounted at root on
+            staff.drbartender.com. `/` renders HomePage; RequirePortal bounces
+            logged-out users to /login, so there is no `/`→getHomePath loop. */}
+        <Route element={<RequirePortal><StaffShellWithThemeWiring /></RequirePortal>}>
+          <Route path="/" element={<StaffV2HomePage />} />
+          <Route path="/shifts/*" element={<StaffV2ShiftsPage />} />
+          <Route path="/pay/:periodId" element={<StaffV2PayoutDetail />} />
+          <Route path="/pay" element={<StaffV2PayPage />} />
+          <Route path="/tip-card" element={<StaffV2TipCardPage />} />
+          <Route path="/account" element={<StaffV2AccountPage />} />
+          <Route path="/account/:section" element={<StaffV2AccountPage />} />
+          {/* Pre-cutover BEO nudge links (/events/:proposalId/beo) resolve here. */}
+          <Route path="/events/:proposalId/beo" element={<BeoByProposalRedirect />} />
         </Route>
-        {/* Staff portal v2 — early stub mount for in-flight redesign (Task 31).
-            Runs in parallel with the existing StaffLayout mount until Task 48
-            cuts over. Each Placeholder route swaps to a real page one at a
-            time as Tasks 32-47 land. */}
-        <Route path="/staff-v2/*" element={<RequirePortal><StaffShellWithThemeWiring /></RequirePortal>}>
-          <Route index element={<StaffV2HomePage />} />
-          <Route path="shifts/*" element={<StaffV2ShiftsPage />} />
-          <Route path="pay/:periodId" element={<StaffV2PayoutDetail />} />
-          <Route path="pay" element={<StaffV2PayPage />} />
-          <Route path="tip-card" element={<StaffV2TipCardPage />} />
-          <Route path="account" element={<StaffV2AccountPage />} />
-          <Route path="account/:section" element={<StaffV2AccountPage />} />
-        </Route>
+        {/* Print tip card — standalone (no shell chrome), shared with the public flow. */}
+        <Route path="/my-tip-page/print" element={<PrintTipCard />} />
+        {/* Old-path redirects — 30-day grace for bookmarks + in-flight links. */}
+        <Route path="/dashboard" element={<Navigate to="/" replace />} />
+        <Route path="/events" element={<Navigate to="/shifts/mine" replace />} />
+        <Route path="/schedule" element={<Navigate to="/shifts/mine" replace />} />
+        <Route path="/profile" element={<Navigate to="/account/profile" replace />} />
+        <Route path="/resources" element={<Navigate to="/account/documents" replace />} />
+        <Route path="/my-tip-page" element={<Navigate to="/tip-card" replace />} />
         {/* Public token routes */}
         <Route path="/plan/:token" element={<PotionPlanningLab />} />
         <Route path="/proposal/:token" element={<ProposalView />} />
