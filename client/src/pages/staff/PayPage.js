@@ -7,7 +7,7 @@ import { formatMoney } from '../../utils/formatMoney';
 /**
  * PayPage — staff portal v2 Pay tab landing (spec §6.6).
  *
- * URL: /staff-v2/pay
+ * URL: /pay
  *
  * Data fetches (kept lean):
  *   1. GET /api/me/payouts — always. Drives the paystubs list (status === 'paid')
@@ -206,7 +206,7 @@ export default function PayPage() {
         <button
           type="button"
           className={'sp-period-banner' + (banner.isPaid ? '' : ' processing')}
-          onClick={() => banner.periodId && navigate(`/staff-v2/pay/${banner.periodId}`)}
+          onClick={() => banner.periodId && navigate(`/pay/${banner.periodId}`)}
           style={{
             textAlign: 'left',
             cursor: banner.periodId ? 'pointer' : 'default',
@@ -252,7 +252,7 @@ export default function PayPage() {
               <button
                 type="button"
                 className="sp-card-link"
-                onClick={() => navigate(`/staff-v2/pay/${banner.periodId}`)}
+                onClick={() => navigate(`/pay/${banner.periodId}`)}
               >
                 Full breakdown
               </button>
@@ -327,7 +327,7 @@ export default function PayPage() {
               key={pp.id}
               type="button"
               className="sp-paystub"
-              onClick={() => navigate(`/staff-v2/pay/${pp.period.id}`)}
+              onClick={() => navigate(`/pay/${pp.period.id}`)}
             >
               <div className="sp-paystub-head">
                 <span className="sp-paystub-when">{fmtPeriodRange(pp.period.start_date, pp.period.end_date)}</span>

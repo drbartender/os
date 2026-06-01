@@ -24,7 +24,7 @@ import { formatMoney } from '../../utils/formatMoney';
 /**
  * TipCardPage — staff portal v2 Tip Card tab (spec §6.8).
  *
- * URL: /staff-v2/tip-card
+ * URL: /tip-card
  *
  * Data fetches (lean — three round-trips on first paint):
  *   1. GET /api/me/tip-page — public tip URL (built server-side via PUBLIC_SITE_URL
@@ -311,7 +311,7 @@ export default function TipCardPage() {
           <button
             type="button"
             className="sp-card-link"
-            onClick={() => navigate('/staff-v2/account/payments')}
+            onClick={() => navigate('/account/payments')}
           >
             Manage methods →
           </button>

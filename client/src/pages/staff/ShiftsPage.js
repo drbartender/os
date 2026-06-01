@@ -13,13 +13,13 @@ const SUB_TABS = ['available', 'mine', 'past'];
  * ShiftsPage — staff portal v2 (spec §6.3).
  *
  * URL-driven sub-tab selector. Three sub-routes share one page:
- *   /staff-v2/shifts/available — open shifts (GET /api/shifts staff path)
- *   /staff-v2/shifts/mine      — pending + upcoming approved
- *   /staff-v2/shifts/past      — completed / past approved
+ *   /shifts/available — open shifts (GET /api/shifts staff path)
+ *   /shifts/mine      — pending + upcoming approved
+ *   /shifts/past      — completed / past approved
  *
  * Mounted from App.js as `<Route path="shifts/*">`. The component reads the
  * sub-tab segment from useParams() so the active sub-tab survives reload,
- * direct link, and back/forward navigation. A bare /staff-v2/shifts URL
+ * direct link, and back/forward navigation. A bare /shifts URL
  * redirects to /available to give every load a deterministic landing tab.
  *
  * Action surface per sub-tab:
@@ -53,7 +53,7 @@ export default function ShiftsPage() {
     return <ShiftDetail />;
   }
   if (!segment || !SUB_TABS.includes(segment)) {
-    return <Navigate to="/staff-v2/shifts/available" replace />;
+    return <Navigate to="/shifts/available" replace />;
   }
   return <ShiftsPageBody subTab={segment} />;
 }
@@ -226,7 +226,7 @@ function ShiftsPageBody({ subTab }) {
             role="tab"
             aria-selected={subTab === t}
             className={subTab === t ? 'active' : ''}
-            onClick={() => navigate(`/staff-v2/shifts/${t}`)}
+            onClick={() => navigate(`/shifts/${t}`)}
           >
             {labelFor(t)}
             <span className="sp-seg-count">{counts[t]}</span>
@@ -242,7 +242,7 @@ function ShiftsPageBody({ subTab }) {
           shifts={allOpenShifts}
           busyKey={busyKey}
           onOpenShift={(s) =>
-            navigate(`/staff-v2/shifts/${s.id}`, {
+            navigate(`/shifts/${s.id}`, {
               // proposal_id rides along so ShiftDetail can skip the lookup
               // round-trip when the user clicked through from this list.
               state: { proposal_id: s.proposal_id || null, shift: s },
@@ -262,7 +262,7 @@ function ShiftsPageBody({ subTab }) {
           busyKey={busyKey}
           onWithdraw={withdrawRequest}
           onOpenShift={(s) =>
-            navigate(`/staff-v2/shifts/${s.id}`, {
+            navigate(`/shifts/${s.id}`, {
               state: { proposal_id: s.proposal_id || null, shift: s },
             })
           }
@@ -276,9 +276,9 @@ function ShiftsPageBody({ subTab }) {
           past={past}
           onOpenPayout={(s) => {
             if (s.payout_id) {
-              navigate(`/staff-v2/pay/${s.payout_id}?shift=${s.id}`);
+              navigate(`/pay/${s.payout_id}?shift=${s.id}`);
             } else {
-              navigate('/staff-v2/pay');
+              navigate('/pay');
             }
           }}
         />

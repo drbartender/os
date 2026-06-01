@@ -5,6 +5,7 @@ import api from '../utils/api';
 import BrandLogo from '../components/BrandLogo';
 import FormBanner from '../components/FormBanner';
 import useFormValidation from '../hooks/useFormValidation';
+import { getHomePath } from '../utils/userRoutes';
 
 export default function Login() {
   const { login } = useAuth();
@@ -49,7 +50,10 @@ export default function Login() {
         navigate('/apply');
         return;
       }
-      else navigate('/welcome');
+      // Portal staff (submitted/reviewed/approved) + hired onboarding fall through
+      // to the canonical decision tree. Post-cutover this sends portal users to
+      // /dashboard (→ / → HomePage on staff; → HomePage on hiring), not /welcome.
+      else navigate(getHomePath(u));
     } catch (err) {
       // Login intentionally surfaces a generic message (no field-level errors)
       // for security: never reveal whether email exists vs. password wrong.

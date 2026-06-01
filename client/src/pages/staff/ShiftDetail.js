@@ -21,7 +21,7 @@ import {
 /**
  * ShiftDetail — staff portal v2, embedded BEO viewer (spec §6.4).
  *
- * URL: /staff-v2/shifts/:shiftId
+ * URL: /shifts/:shiftId
  *
  * proposalId resolution path (deliberately layered to keep the page reachable
  * from any entry point — direct deep-link, push tap, browser back, etc.):
@@ -57,7 +57,7 @@ export default function ShiftDetail() {
   const { user } = useAuth();
   const toast = useToast();
 
-  // Route is mounted under `/staff-v2/shifts/*` so the dynamic segment
+  // Route is mounted under `/shifts/*` so the dynamic segment
   // arrives as params['*'] (the whole wildcard tail) or params.shiftId
   // when the page is mounted at a literal `:shiftId` route. Read both
   // so the page works regardless of which mount path nests it.

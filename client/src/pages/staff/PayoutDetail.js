@@ -7,7 +7,7 @@ import { formatMoney } from '../../utils/formatMoney';
 /**
  * PayoutDetail — staff portal v2 single-pay-period detail (spec §6.7).
  *
- * URL: /staff-v2/pay/:periodId
+ * URL: /pay/:periodId
  * Optional query: ?shift=:shiftId — when present, scroll-to + highlight the
  *                  matching PayoutEventRow so a deep-link from a Past-shift
  *                  tap lands on the right line.
@@ -94,7 +94,7 @@ export default function PayoutDetail() {
   }, [fetchDetail]);
 
   function goBackToPay() {
-    navigate('/staff-v2/pay');
+    navigate('/pay');
   }
 
   // ── Render: loading ───────────────────────────────────────────────────

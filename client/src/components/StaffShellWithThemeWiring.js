@@ -5,10 +5,10 @@ import { useAuth } from '../context/AuthContext';
 import StaffShell from './StaffShell';
 
 const STAFF_TABS = [
-  { id: 'home',     label: 'Home',     icon: 'home',     path: '/staff-v2' },
-  { id: 'shifts',   label: 'Shifts',   icon: 'calendar', path: '/staff-v2/shifts' },
-  { id: 'pay',      label: 'Pay',      icon: 'dollar',   path: '/staff-v2/pay' },
-  { id: 'tip-card', label: 'Tip Card', icon: 'card',     path: '/staff-v2/tip-card' },
+  { id: 'home',     label: 'Home',     icon: 'home',     path: '/' },
+  { id: 'shifts',   label: 'Shifts',   icon: 'calendar', path: '/shifts' },
+  { id: 'pay',      label: 'Pay',      icon: 'dollar',   path: '/pay' },
+  { id: 'tip-card', label: 'Tip Card', icon: 'card',     path: '/tip-card' },
 ];
 
 const SUPPORT_MAILTO = 'mailto:staff@drbartender.com';
@@ -35,14 +35,14 @@ function deriveInitials(user) {
 }
 
 /**
- * Map the current pathname under /staff-v2/* onto a tab id. Account routes
+ * Map the current pathname under /* onto a tab id. Account routes
  * keep whatever tab the user was on (treated as an overlay per spec §6.1),
  * so the active id falls through to whichever tab matched last.
  */
 function pickActiveTab(pathname) {
-  if (pathname.startsWith('/staff-v2/shifts')) return 'shifts';
-  if (pathname.startsWith('/staff-v2/pay')) return 'pay';
-  if (pathname.startsWith('/staff-v2/tip-card')) return 'tip-card';
+  if (pathname.startsWith('/shifts')) return 'shifts';
+  if (pathname.startsWith('/pay')) return 'pay';
+  if (pathname.startsWith('/tip-card')) return 'tip-card';
   return 'home';
 }
 
@@ -64,7 +64,7 @@ function detectInitialSkin() {
 /**
  * Wraps StaffShell with theme persistence wiring (spec §6.16) and the
  * route-driven plumbing (tabs from useLocation, navigation via useNavigate).
- * Used by the early /staff-v2 stub mount in App.js so subsequent tasks can
+ * Used by the early / stub mount in App.js so subsequent tasks can
  * render real pages via the <Outlet/> without re-doing the chrome.
  */
 export default function StaffShellWithThemeWiring() {
@@ -135,9 +135,9 @@ export default function StaffShellWithThemeWiring() {
   // there so the existing routes light up.
   const userMenu = useMemo(
     () => [
-      { id: 'profile', icon: 'pen',      label: 'Edit profile',           onClick: () => navigate('/staff-v2/account/profile') },
-      { id: 'calendar', icon: 'calendar', label: 'Calendar sync',          onClick: () => navigate('/staff-v2/account/calendar') },
-      { id: 'notif',   icon: 'bell',     label: 'Notification preferences', onClick: () => navigate('/staff-v2/account/notifications') },
+      { id: 'profile', icon: 'pen',      label: 'Edit profile',           onClick: () => navigate('/account/profile') },
+      { id: 'calendar', icon: 'calendar', label: 'Calendar sync',          onClick: () => navigate('/account/calendar') },
+      { id: 'notif',   icon: 'bell',     label: 'Notification preferences', onClick: () => navigate('/account/notifications') },
       { id: 'support', icon: 'mail',     label: 'Get support',            onClick: () => { window.location.href = SUPPORT_MAILTO; } },
       { id: 'signout', icon: 'logout',   label: 'Sign out', tone: 'danger', onClick: handleLogout },
     ],

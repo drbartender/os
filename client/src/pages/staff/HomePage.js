@@ -23,7 +23,7 @@ import { getEventTypeLabel } from '../../utils/eventTypes';
  *   4. This pay period tile — projected total, payday, event count.
  *      Tap → opens PayoutDetail for the current pay period.
  *   5. Open shifts teaser — top 2 entries from `open_shifts_teaser`
- *      with an "All (N) →" link to /staff-v2/shifts/available.
+ *      with an "All (N) →" link to /shifts/available.
  *
  * Async-state coverage (spec §6.1.5):
  *   - Loading: full-page skeleton on first mount (no chrome competes since
@@ -130,7 +130,7 @@ export default function HomePage() {
               type="button"
               className="sp-action"
               onClick={() =>
-                navigate(`/staff-v2/shifts/${nextShift.shift_id}`, {
+                navigate(`/shifts/${nextShift.shift_id}`, {
                   state: { proposal_id: nextShift.proposal_id, shift: nextShift },
                 })
               }
@@ -155,11 +155,11 @@ export default function HomePage() {
               broadcast={c}
               onOpen={() => {
                 if (c.you_are_on_team) {
-                  navigate(`/staff-v2/shifts/${c.shift_id}`, {
+                  navigate(`/shifts/${c.shift_id}`, {
                     state: { proposal_id: c.proposal_id || null },
                   });
                 } else {
-                  navigate('/staff-v2/shifts/available');
+                  navigate('/shifts/available');
                 }
               }}
             />
@@ -169,7 +169,7 @@ export default function HomePage() {
               key={r.request_id}
               type="button"
               className="sp-action"
-              onClick={() => navigate('/staff-v2/shifts/mine')}
+              onClick={() => navigate('/shifts/mine')}
             >
               <div className="sp-action-icon">
                 <ClockIcon size={15} />
@@ -194,7 +194,7 @@ export default function HomePage() {
           <button
             type="button"
             className="sp-card-link"
-            onClick={() => navigate('/staff-v2/shifts/mine')}
+            onClick={() => navigate('/shifts/mine')}
           >
             All shifts
           </button>
@@ -204,7 +204,7 @@ export default function HomePage() {
             shift={nextShift}
             showConfirmFlag
             onClick={() =>
-              navigate(`/staff-v2/shifts/${nextShift.shift_id}`, {
+              navigate(`/shifts/${nextShift.shift_id}`, {
                 state: { proposal_id: nextShift.proposal_id, shift: nextShift },
               })
             }
@@ -226,7 +226,7 @@ export default function HomePage() {
           <button
             type="button"
             className="sp-card-link"
-            onClick={() => navigate('/staff-v2/pay')}
+            onClick={() => navigate('/pay')}
           >
             Open Pay
           </button>
@@ -237,8 +237,8 @@ export default function HomePage() {
             onClick={() =>
               navigate(
                 currentPeriod.pay_period_id
-                  ? `/staff-v2/pay/${currentPeriod.pay_period_id}`
-                  : '/staff-v2/pay'
+                  ? `/pay/${currentPeriod.pay_period_id}`
+                  : '/pay'
               )
             }
             role="button"
@@ -248,8 +248,8 @@ export default function HomePage() {
                 e.preventDefault();
                 navigate(
                   currentPeriod.pay_period_id
-                    ? `/staff-v2/pay/${currentPeriod.pay_period_id}`
-                    : '/staff-v2/pay'
+                    ? `/pay/${currentPeriod.pay_period_id}`
+                    : '/pay'
                 );
               }
             }}
@@ -290,7 +290,7 @@ export default function HomePage() {
           <button
             type="button"
             className="sp-card-link"
-            onClick={() => navigate('/staff-v2/shifts/available')}
+            onClick={() => navigate('/shifts/available')}
           >
             All ({openShiftsCount})
           </button>
@@ -301,7 +301,7 @@ export default function HomePage() {
               key={s.id || s.shift_id}
               shift={normalizeOpenShift(s)}
               variant="open"
-              onClick={() => navigate('/staff-v2/shifts/available')}
+              onClick={() => navigate('/shifts/available')}
             />
           ))
         ) : (

@@ -11,7 +11,7 @@ import ReplaceConfirmModal from './ReplaceConfirmModal';
  *
  *   1. Reference   — Field Guide link out to the existing `/field-guide` route.
  *   2. My documents — W-9 row, IC Agreement row (NO replace), alcohol cert row.
- *   3. Other archives — Paystubs link → /staff-v2/pay.
+ *   3. Other archives — Paystubs link → /pay.
  *
  * Data source: GET /api/me/documents →
  *   {
@@ -54,7 +54,7 @@ import ReplaceConfirmModal from './ReplaceConfirmModal';
  */
 
 const FIELD_GUIDE_PATH = '/field-guide';
-const PAY_PATH = '/staff-v2/pay';
+const PAY_PATH = '/pay';
 
 // 60-day "expires soon" threshold per spec §6.14. Counted from today to
 // expires_on in calendar days, both anchored to UTC midnight so a same-day

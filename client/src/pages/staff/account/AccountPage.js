@@ -10,12 +10,12 @@ import DocumentsSection from './DocumentsSection';
 /**
  * AccountPage — staff portal v2 account hub (spec §6.9).
  *
- * A single overlay surface mounted under `/staff-v2/account/:section`. Renders
+ * A single overlay surface mounted under `/account/:section`. Renders
  * the chrome (header / sub-nav / footer) and swaps in the active sub-section
  * based on the `:section` URL param. URL-driven so the sub-nav state survives
  * a hard refresh and lights the user-pill menu items correctly when they
- * route here from elsewhere in /staff-v2 (StaffShellWithThemeWiring's
- * userMenu items deep-link to /staff-v2/account/<section>).
+ * route here from elsewhere in / (StaffShellWithThemeWiring's
+ * userMenu items deep-link to /account/<section>).
  *
  * Section keys are stable so future link sources can rely on them:
  *   profile        — personal info + emergency contact (Task 43)
@@ -28,10 +28,10 @@ import DocumentsSection from './DocumentsSection';
  * up. The sub-nav keys remain the stable contract for any future deep-link
  * source (user-pill menu, email CTA, push payload).
  *
- * Back-nav: matches the existing /staff-v2 detail-page pattern
+ * Back-nav: matches the existing / detail-page pattern
  * (ShiftDetail, PayoutDetail) — a top-left Back button that calls
  * `navigate(-1)`, returning to whichever main tab the user came from
- * (StaffShellWithThemeWiring treats /staff-v2/account/* as an overlay and
+ * (StaffShellWithThemeWiring treats /account/* as an overlay and
  * leaves the underlying tab id active, so the back jump lands on the
  * correct tab in nine cases out of ten).
  *
@@ -90,11 +90,11 @@ export default function AccountPage() {
   const { section } = useParams();
   const { user, logout } = useAuth();
 
-  // `/staff-v2/account` with no section, or `:section` outside the known
+  // `/account` with no section, or `:section` outside the known
   // set, redirects to the canonical profile entry. `replace` keeps the
   // history clean so Back doesn't ping-pong through the redirect.
   if (!section || !SECTION_IDS.includes(section)) {
-    return <Navigate to="/staff-v2/account/profile" replace />;
+    return <Navigate to="/account/profile" replace />;
   }
 
   const handleSignOut = () => {
@@ -140,7 +140,7 @@ export default function AccountPage() {
               key={s.id}
               type="button"
               className={'sp-acc-navbtn' + (isActive ? ' active' : '')}
-              onClick={() => navigate(`/staff-v2/account/${s.id}`)}
+              onClick={() => navigate(`/account/${s.id}`)}
               aria-current={isActive ? 'page' : undefined}
             >
               <NavIcon name={s.icon} size={13} />

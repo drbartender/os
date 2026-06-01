@@ -144,12 +144,12 @@ test('staffBeoNudgeSms > includes event type, date, and URL', () => {
   const body = t.staffBeoNudgeSms({
     eventTypeLabel: 'birthday party',
     eventDateLocal: 'Saturday, August 15',
-    beoUrl: 'https://staff.drbartender.com/events/42/beo',
+    beoUrl: 'https://staff.drbartender.com/shifts/42',
   });
   assert.match(body, /BEO ready from Dr\. Bartender/);
   assert.match(body, /birthday party/);
   assert.match(body, /Saturday, August 15/);
-  assert.match(body, /https:\/\/staff\.drbartender\.com\/events\/42\/beo/);
+  assert.match(body, /https:\/\/staff\.drbartender\.com\/shifts\/42/);
   assertNoEmDash(body, 'staffBeoNudgeSms');
 });
 
@@ -158,7 +158,7 @@ test('staffBeoNudgeSms > truncates long event type to 40 chars + ellipsis', () =
   const body = t.staffBeoNudgeSms({
     eventTypeLabel: longLabel,
     eventDateLocal: 'Saturday, August 15',
-    beoUrl: 'https://staff.drbartender.com/events/42/beo',
+    beoUrl: 'https://staff.drbartender.com/shifts/42',
   });
   const truncated = body.match(/BEO ready from Dr\. Bartender: (.+) on /)[1];
   assert.ok(truncated.length <= 41, `expected truncated label <= 41 chars, got ${truncated.length}: "${truncated}"`);
@@ -168,7 +168,7 @@ test('staffBeoNudgeSms > strips curly quotes for GSM-7 friendliness', () => {
   const body = t.staffBeoNudgeSms({
     eventTypeLabel: '“birthday” party',
     eventDateLocal: 'Saturday, August 15',
-    beoUrl: 'https://staff.drbartender.com/events/42/beo',
+    beoUrl: 'https://staff.drbartender.com/shifts/42',
   });
   assert.ok(!/[“”‘’]/.test(body), 'no curly quotes');
 });
