@@ -215,6 +215,7 @@
 .tip-page .pay-btn.venmo  { background: #008CFF; color: #fff; }
 .tip-page .pay-btn.cashapp{ background: #00D632; color: #00261A; }
 .tip-page .pay-btn.paypal { background: #003087; color: #fff; }
+.tip-page .pay-btn.zelle  { background: #6D1ED4; color: #fff; }
 .tip-page .pay-btn.card   {
   background: var(--ink);
   color: var(--cream-text);
@@ -228,6 +229,13 @@
   height: 32px;
 }
 .tip-page .pay-btn.card .pay-mark svg { width: 64px; height: 18px; }
+
+/* Zelle row is a <button>, not an <a> — reset native button styling so it
+   shares the .pay-btn shape with the anchor-based platform buttons. */
+.tip-page button.pay-btn {
+  text-align: left;
+  font-family: inherit;
+}
 
 /* ── Stars ────────────────────────────────────────────────── */
 .tip-page .stars-wrap {

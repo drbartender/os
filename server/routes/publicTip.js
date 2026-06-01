@@ -10,11 +10,41 @@ const { sendEmail } = require('../utils/email');
 const emailTemplates = require('../utils/emailTemplates');
 const { ADMIN_URL } = require('../utils/urls');
 const { getSignedUrl } = require('../utils/storage');
-const { normalizePaypalUrl } = require('../utils/tipHandleValidation');
+const { normalizePaypalUrl, normalizeZelleHandle } = require('../utils/tipHandleValidation');
 
 const router = express.Router();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Spec §6.8 — known method tokens, in the natural fallback order used when a
+// staffer has not saved (or has partially saved) a tip_card_order. Tokens in
+// the saved order that are NOT available on the profile are skipped; available
+// methods that are NOT in the saved order fall to the end in this order.
+const TIP_METHOD_TOKENS = ['card', 'venmo', 'cashapp', 'paypal', 'zelle'];
+
+function computeOrderedMethods(available, savedOrder) {
+  // available: Set of token strings that are actually on the profile.
+  // savedOrder: array | null | undefined — the staffer's saved tip_card_order.
+  const order = Array.isArray(savedOrder) ? savedOrder : [];
+  const result = [];
+  const used = new Set();
+  for (const tok of order) {
+    // Defensive: skip any unknown token a future migration / malformed write
+    // might have introduced, and skip methods not actually available on the
+    // profile (e.g. user removed a handle after saving the order).
+    if (!available.has(tok) || used.has(tok)) continue;
+    if (!TIP_METHOD_TOKENS.includes(tok)) continue;
+    result.push(tok);
+    used.add(tok);
+  }
+  for (const tok of TIP_METHOD_TOKENS) {
+    if (available.has(tok) && !used.has(tok)) {
+      result.push(tok);
+      used.add(tok);
+    }
+  }
+  return result;
+}
 
 // GET uses publicReadLimiter (100/15min). publicLimiter's 20/15min budget gets
 // chewed through after ~7 customers at a venue NAT'd through one IP — and the
@@ -27,6 +57,8 @@ router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
   // Public-safe column allowlist — do NOT expose payment_username, routing_number,
   // account_number, preferred_payment_method, internal IDs, stripe_payment_link_id,
   // or tip_page_token. The response shape below is the complete allowed set.
+  // ui_preferences->'tip_card_order' is projected as a single JSONB key (NOT
+  // the whole ui_preferences blob — sibling keys like theme are not public).
   const { rows } = await pool.query(`
     SELECT
       cp.preferred_name AS display_name,
@@ -34,8 +66,10 @@ router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
       pp.venmo_handle,
       pp.cashapp_handle,
       pp.paypal_url,
+      pp.zelle_handle,
       pp.stripe_payment_link_url,
-      pp.tip_page_active
+      pp.tip_page_active,
+      u.ui_preferences->'tip_card_order' AS tip_card_order
     FROM payment_profiles pp
     JOIN users u ON u.id = pp.user_id
     JOIN contractor_profiles cp ON cp.user_id = u.id
@@ -95,6 +129,41 @@ router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
     }
   }
 
+  // Same defense-in-depth for zelle_handle (spec §6.11 / Task 6). If a stored
+  // value can't be normalized to a phone or email, drop it from the response
+  // — the public page just won't render a Zelle row. Sentry-warns so admin
+  // can clean it up.
+  let zelleHandle = null;
+  if (row.zelle_handle) {
+    try {
+      zelleHandle = normalizeZelleHandle(row.zelle_handle);
+    } catch (err) {
+      Sentry.captureMessage('Stored zelle_handle failed read-side validation', {
+        level: 'warning',
+        tags: { route: 'publicTip.GET', op: 'zelle_handle_validate' },
+        extra: {
+          tokenPrefix: token.slice(0, 8),
+          reason: err && err.fieldErrors && err.fieldErrors.zelle_handle,
+        },
+      });
+    }
+  }
+
+  // Spec §6.8: server is the single source of truth for method order. The
+  // staffer's saved tip_card_order controls display; methods present on the
+  // profile but absent from the saved order fall to the natural-order end.
+  const available = new Set();
+  if (row.stripe_payment_link_url) available.add('card');
+  if (row.venmo_handle) available.add('venmo');
+  if (row.cashapp_handle) available.add('cashapp');
+  if (paypalUrl) available.add('paypal');
+  if (zelleHandle) available.add('zelle');
+  const methods = computeOrderedMethods(available, row.tip_card_order);
+
+  // The QR-scan path is the money flow. A CDN must NEVER serve a stale order
+  // (e.g. after the staffer reorders or adds Zelle). private+no-cache forces
+  // each scan to revalidate.
+  res.set('Cache-Control', 'private, no-cache');
   res.json({
     display_name: row.display_name || 'your bartender',
     headshot_url: headshotUrl,
@@ -102,6 +171,8 @@ router.get('/:token', publicReadLimiter, asyncHandler(async (req, res) => {
     cashapp_handle: row.cashapp_handle || null,
     paypal_url: paypalUrl,
     stripe_payment_link_url: row.stripe_payment_link_url || null,
+    zelle_handle: zelleHandle,
+    methods,
   });
 }));
 

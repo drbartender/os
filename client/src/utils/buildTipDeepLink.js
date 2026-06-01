@@ -23,6 +23,9 @@ export function buildTipDeepLink({ kind, handles, amount }) {
     case 'card':
       // Stripe Payment Link doesn't support amount via URL — customer types on Stripe checkout.
       return handles.stripe_payment_link_url || null;
+    case 'zelle':
+      // Zelle has no universal deep link; the page renders it as a copy-handle row.
+      return null;
     default:
       return null;
   }

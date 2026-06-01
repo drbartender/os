@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import api from '../../utils/api';
 import {
   PayButton,
+  ZellePayButton,
   StarIcon,
   HeroDecor,
 } from './TipPage.atoms';
@@ -88,12 +89,35 @@ export default function TipPage() {
     }
   }
 
-  const buttons = [
-    data.venmo_handle && { kind: 'venmo', label: 'Venmo', sub: `@${data.venmo_handle}` },
-    data.cashapp_handle && { kind: 'cashapp', label: 'Cash App', sub: `$${data.cashapp_handle}` },
-    data.stripe_payment_link_url && { kind: 'card', label: 'Credit Card', sub: 'Apple Pay, Google Pay' },
-    data.paypal_url && { kind: 'paypal', label: 'PayPal', sub: data.paypal_url.replace(/^https?:\/\//, '') },
-  ].filter(Boolean);
+  // Spec §6.8: server is the source of truth for method order. data.methods is
+  // an ordered array of tokens (e.g. ['venmo','card','zelle','cashapp','paypal']).
+  // If a stale/pre-deploy response is missing the field, fall back to the
+  // prior hardcoded derivation so the page still renders.
+  function buildButton(kind) {
+    switch (kind) {
+      case 'venmo':
+        return data.venmo_handle && { kind, label: 'Venmo', sub: `@${data.venmo_handle}` };
+      case 'cashapp':
+        return data.cashapp_handle && { kind, label: 'Cash App', sub: `$${data.cashapp_handle}` };
+      case 'card':
+        return data.stripe_payment_link_url && { kind, label: 'Credit Card', sub: 'Apple Pay, Google Pay' };
+      case 'paypal':
+        return data.paypal_url && { kind, label: 'PayPal', sub: data.paypal_url.replace(/^https?:\/\//, '') };
+      case 'zelle':
+        return data.zelle_handle && { kind, label: 'Zelle', sub: data.zelle_handle };
+      default:
+        return null;
+    }
+  }
+  const buttons = Array.isArray(data.methods)
+    ? data.methods.map(buildButton).filter(Boolean)
+    // Backward-compat fallback (matches prior hardcoded order, no zelle).
+    : [
+        buildButton('venmo'),
+        buildButton('cashapp'),
+        buildButton('card'),
+        buildButton('paypal'),
+      ].filter(Boolean);
   const noPayMethods = buttons.length === 0;
 
   return (
@@ -142,6 +166,15 @@ export default function TipPage() {
         ) : (
           <ul className="pay-list">
             {buttons.map(btn => {
+              if (btn.kind === 'zelle') {
+                // Zelle has no deep link — render a copy-handle row instead
+                // of a navigating <a>. buildTipDeepLink returns null for zelle.
+                return (
+                  <li key={btn.kind}>
+                    <ZellePayButton handle={data.zelle_handle} />
+                  </li>
+                );
+              }
               const href = buildTipDeepLink({
                 kind: btn.kind,
                 handles: data,

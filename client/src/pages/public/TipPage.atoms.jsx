@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 
 // Inline SVG marks (placeholders that read like the real platforms)
 export const VenmoMark = () => (
@@ -17,6 +17,15 @@ export const PaypalMark = () => (
   <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
     <path fill="#fff" d="M8.4 20.4H5.7c-.3 0-.5-.3-.4-.6L7.7 4.4c.1-.4.4-.7.8-.7h5.4c2.6 0 4.3 1.3 4.3 3.7 0 3.5-2.7 5.6-6.1 5.6h-2c-.3 0-.6.2-.7.6l-.6 4c-.1.4-.4.6-.7.6z"/>
     <path fill="#9CB6E0" d="M11.5 9.7h-1c-.2 0-.4.1-.4.4l-.5 3.4c0 .2.1.3.3.3h1.6c2.2 0 3.7-1.4 3.9-3.4.1-1.4-.7-2.1-2.5-2.1-.5 0-1 0-1.4.1l.3-1.4c0-.1-.1-.2-.2-.2-.7 0-1.2.5-1.3 1.1l-.6 4.1c0 .2.1.3.3.3h1c.2 0 .4-.1.4-.3l.1-.7"/>
+  </svg>
+);
+
+// Zelle brand mark — a stylized "Z" inside the brand purple, drawn in the same
+// 22x22 SVG box as the other platform marks so it sits identically in the
+// .pay-mark slot.
+export const ZelleMark = () => (
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+    <path fill="#fff" d="M16.8 6.6V4.8h-3.2V3h-3.2v1.8H7.2v3.6h5.3l-5.6 8.4v1.8h3.2v1.6h3.2v-1.6h3.5v-3.6h-5.5l5.5-8.4z"/>
   </svg>
 );
 
@@ -93,5 +102,62 @@ export const PayButton = ({ kind, label, sub, href }) => {
       </span>
       <span className="pay-chev"><Chevron /></span>
     </a>
+  );
+};
+
+// Zelle row — visually consistent with PayButton, but renders as a <button>
+// because Zelle has no universal deep link. Tapping copies the handle to the
+// clipboard and briefly flips the trailing affordance to "Copied". Helper
+// text under the label tells the customer to paste in their banking app.
+//
+// Accessibility: a real <button> with an aria-label that includes the handle
+// so screen readers announce what's being copied. The "Copied" state lives in
+// an aria-live region so the announcement reaches non-sighted users too.
+export const ZellePayButton = ({ handle }) => {
+  const [copied, setCopied] = useState(false);
+
+  const onClick = useCallback(async () => {
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(handle);
+      } else {
+        // Fallback for older mobile browsers without async clipboard API.
+        const ta = document.createElement('textarea');
+        ta.value = handle;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'absolute';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // Clipboard write failed (denied permission, insecure context). Still
+      // flip to "Copied" briefly so the affordance feels alive — the handle
+      // is visible on the row, customer can long-press to copy.
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    }
+  }, [handle]);
+
+  return (
+    <button
+      type="button"
+      className="pay-btn zelle"
+      onClick={onClick}
+      aria-label={`Copy Zelle handle ${handle} to clipboard`}
+    >
+      <span className="pay-mark"><ZelleMark /></span>
+      <span className="pay-label">
+        Zelle
+        <small>{copied ? 'Copied — paste in your banking app' : `Tap to copy ${handle}`}</small>
+      </span>
+      <span className="pay-chev" aria-live="polite">
+        {copied ? <span style={{ fontSize: '0.66rem', letterSpacing: '0.08em' }}>COPIED</span> : <Chevron />}
+      </span>
+    </button>
   );
 };
