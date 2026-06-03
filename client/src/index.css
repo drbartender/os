@@ -16006,10 +16006,140 @@ html[data-app="staff"] body {
 }
 .sp-push-banner.denied > svg { color: hsl(var(--sp-danger-h) var(--sp-danger-s) 65%); }
 [data-skin="light"] .sp-push-banner.denied > svg { color: var(--sp-ms-bordeaux); }
+
+/* Push-permission banner variants (Phase B). granted = ok, default =
+   neutral with an Enable CTA, unsupported = info, iosNeedsInstall = ios
+   (amber + Show me how CTA). All five share .sp-push-banner base. */
+.sp-push-banner.ok {
+  background: hsl(var(--sp-ok-h) var(--sp-ok-s) 50% / 0.1);
+  border: 1px solid hsl(var(--sp-ok-h) var(--sp-ok-s) 50% / 0.3);
+}
+[data-skin="light"] .sp-push-banner.ok {
+  background: transparent;
+  border: 0;
+  border-left: 2px solid var(--sp-ms-emerald);
+}
+.sp-push-banner.ok > svg { color: hsl(var(--sp-ok-h) var(--sp-ok-s) 58%); }
+[data-skin="light"] .sp-push-banner.ok > svg { color: var(--sp-ms-emerald); }
+
+.sp-push-banner.neutral {
+  background: var(--sp-bg-2);
+  border: 1px solid var(--sp-line-2);
+}
+[data-skin="light"] .sp-push-banner.neutral {
+  background: transparent;
+  border: 0;
+  border-left: 2px solid var(--sp-ink-2);
+}
+.sp-push-banner.neutral > svg { color: var(--sp-ink-2); }
+
+.sp-push-banner.info {
+  background: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.08);
+  border: 1px solid hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.28);
+}
+[data-skin="light"] .sp-push-banner.info {
+  background: transparent;
+  border: 0;
+  border-left: 2px solid var(--sp-ink-2);
+}
+.sp-push-banner.info > svg { color: var(--sp-accent); }
+[data-skin="light"] .sp-push-banner.info > svg { color: var(--sp-ink-2); }
+
+.sp-push-banner.ios {
+  background: hsl(var(--sp-warn-h) var(--sp-warn-s) 50% / 0.1);
+  border: 1px solid hsl(var(--sp-warn-h) var(--sp-warn-s) 50% / 0.3);
+}
+[data-skin="light"] .sp-push-banner.ios {
+  background: transparent;
+  border: 0;
+  border-left: 2px solid var(--sp-ms-camel);
+}
+.sp-push-banner.ios > svg { color: hsl(var(--sp-warn-h) var(--sp-warn-s) 60%); }
+[data-skin="light"] .sp-push-banner.ios > svg { color: var(--sp-ms-camel); }
+
+/* Two-column banner body for the variants with a right-aligned CTA
+   (default + iosNeedsInstall). Stacks under 480px so the CTA stays tappable
+   on small screens. */
+.sp-push-banner-body {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.sp-push-banner-body > div:first-child { flex: 1; min-width: 0; }
+@media (max-width: 480px) {
+  .sp-push-banner-body { flex-direction: column; align-items: flex-start; }
+  .sp-push-banner-body > .sp-btn { align-self: stretch; }
+}
+
 .sp-notif-banner-sub {
   font-size: 11.5px;
   color: var(--sp-ink-3);
   margin-top: 3px;
+  line-height: 1.45;
+}
+
+/* IOSCoachmark — ordered "Add to Home Screen" walkthrough. Each step is a
+   row of icon + (title + sub). Matches sp-modal spacing tokens. */
+.sp-ios-steps {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  counter-reset: ios-step;
+}
+.sp-ios-steps > li {
+  display: flex;
+  gap: 0.7rem;
+  align-items: flex-start;
+}
+.sp-ios-step-icon {
+  flex-shrink: 0;
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  display: grid; place-items: center;
+  background: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.12);
+  color: var(--sp-accent);
+  counter-increment: ios-step;
+  position: relative;
+}
+[data-skin="light"] .sp-ios-step-icon {
+  border-radius: 0;
+  background: transparent;
+  border: 1px solid var(--sp-ms-emerald);
+  color: var(--sp-ms-emerald);
+}
+.sp-ios-step-icon::before {
+  content: counter(ios-step);
+  position: absolute;
+  top: -6px; right: -6px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: var(--sp-accent);
+  color: var(--sp-bg-0);
+  font-size: 10px;
+  font-weight: 700;
+  display: grid; place-items: center;
+  line-height: 1;
+}
+[data-skin="light"] .sp-ios-step-icon::before {
+  background: var(--sp-ms-emerald);
+  border-radius: 0;
+}
+.sp-ios-step-t {
+  font-size: 13.5px;
+  color: var(--sp-ink-1);
+  font-weight: 600;
+  line-height: 1.3;
+}
+[data-skin="light"] .sp-ios-step-t { font-weight: 500; }
+.sp-ios-step-s {
+  font-size: 12px;
+  color: var(--sp-ink-3);
+  margin-top: 2px;
   line-height: 1.45;
 }
 

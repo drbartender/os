@@ -6,9 +6,10 @@
 // POST it to /me/push-subscriptions. unsubscribePush() reverses both halves.
 //
 // Public surface — consumed by Tasks 54 + 56 (Notifications UI):
-//   permissionState()  → 'unsupported' | 'granted' | 'denied' | 'default'
-//   subscribePush()    → { ok, state }
-//   unsubscribePush()  → { ok }
+//   permissionState()    → 'unsupported' | 'granted' | 'denied' | 'default'
+//   subscribePush()      → { ok, state }
+//   unsubscribePush()    → { ok }
+//   isIosNeedsInstall()  → boolean (iOS Safari, not yet installed to home screen)
 //
 // urlBase64ToUint8Array is also exported (named) for unit testing.
 
@@ -32,6 +33,25 @@ export function urlBase64ToUint8Array(base64String) {
     outputArray[i] = rawData.charCodeAt(i);
   }
   return outputArray;
+}
+
+/**
+ * iOS Safari only delivers web push to a PWA that has been installed to the
+ * home screen (the standalone-display context). Until then, PushManager is
+ * present but a `subscribe` call throws. `navigator.standalone` is the iOS
+ * Safari-specific flag that flips to true ONLY in the home-screen-launched
+ * context. Detect the un-installed iOS case so the Notifications UI can
+ * surface the "Add to Home Screen" coachmark instead of letting the user hit
+ * a confusing permission prompt that will never deliver.
+ *
+ * Returns false on Android, desktop, and on iOS post-install. The
+ * `navigator.standalone` property is undefined on every non-iOS UA, so the
+ * `!window.navigator.standalone` check correctly returns true on iOS Safari
+ * pre-install and false everywhere else.
+ */
+export function isIosNeedsInstall() {
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.navigator.standalone;
 }
 
 /**

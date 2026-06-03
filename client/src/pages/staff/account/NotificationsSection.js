@@ -1,7 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../../utils/api';
 import { useToast } from '../../../context/ToastContext';
+import {
+  permissionState,
+  subscribePush,
+  isIosNeedsInstall,
+} from '../../../utils/pushSubscribe';
 import IOSCoachmark from './IOSCoachmark';
+import PushPermissionBanner from './PushPermissionBanner';
 
 /**
  * NotificationsSection — staff portal v2 Account / Notifications (spec §6.13).
@@ -25,14 +31,20 @@ import IOSCoachmark from './IOSCoachmark';
  *   the body. The server merges via jsonb_set so omitted categories keep
  *   their stored value.
  *
- * Phase A (this implementation):
- *   - The Push column is gated OFF site-wide. Every Push toggle is rendered
- *     disabled with a "Coming in v1.5" tooltip. The saved Push preference
- *     value is still shown (so the toggle visually reflects what it WOULD
- *     be once Push activates in Phase B / Task 54), and Push values are
- *     preserved across PATCH round-trips.
- *   - IOSCoachmark is imported as a no-op stub. Phase B will swap in the
- *     real Add-to-Home-Screen walkthrough.
+ * Phase B (this implementation — Tasks 54 + 56):
+ *   - Push column is LIVE. A permission banner above the matrix mirrors the
+ *     browser state (granted / default / denied / unsupported / iosNeedsInstall)
+ *     and exposes the subscribe CTA + the iOS coachmark trigger.
+ *   - Push toggles are interactive in the granted / default states, and
+ *     disabled with a short tooltip in unsupported / denied / iosNeedsInstall.
+ *   - First push toggle ON when permission != 'granted' fires subscribePush()
+ *     transparently; on success the cell flips on AND the banner switches to
+ *     the granted variant. On failure the banner reflects the new state
+ *     (denied or default) and the cell does NOT flip.
+ *   - Turning push cells OFF never auto-unsubscribes the device; the
+ *     subscription persists until the user explicitly removes it (out of
+ *     scope for this task). The dispatcher simply won't send if no category
+ *     has push.
  *
  * Critical-path guard (§6.13). Three categories — beo_finalized,
  * schedule_change, payday — MUST individually retain at least one channel.
@@ -130,7 +142,13 @@ const DEFAULT_CHANNELS = Object.freeze({
 // + the per-category server check in PATCH /api/me/staff-notifications.
 const CRITICAL_CATEGORIES = new Set(['beo_finalized', 'schedule_change', 'payday']);
 
-const PUSH_DISABLED_TOOLTIP = 'Coming in v1.5';
+// Per-state tooltip on the push toggle for the cases where it's disabled.
+// Order of precedence in derivePushState matches the resolution below.
+const PUSH_TOOLTIPS = Object.freeze({
+  unsupported: "Your browser doesn't support push.",
+  denied: 'Push is blocked. Re-enable in your browser site settings.',
+  iosNeedsInstall: 'Install to your home screen first (see banner above).',
+});
 const SMS_KILL_SWITCH_TOOLTIP =
   'Global SMS is off (you replied STOP). Reply START to your last Dr Bartender text to re-enable.';
 const CRITICAL_FOOTER =
@@ -177,6 +195,24 @@ function diffMatrix(current, baseline) {
   return changed;
 }
 
+/**
+ * Derive the single push UI state from the raw inputs. Pure function — kept
+ * separate so the precedence is easy to read AND so a unit test can pin it
+ * without mocking navigator.
+ *
+ * Precedence:
+ *   1. 'unsupported' wins over everything (the browser literally can't do it).
+ *   2. iosNeedsInstall wins next, but only if permission is not already
+ *      granted (a granted-already PWA is reachable from a browser context
+ *      that already cleared the install check — defensive but correct).
+ *   3. Otherwise the raw permission value: 'granted' | 'denied' | 'default'.
+ */
+export function derivePushState(permission, iosNeedsInstall) {
+  if (permission === 'unsupported') return 'unsupported';
+  if (permission !== 'granted' && iosNeedsInstall) return 'iosNeedsInstall';
+  return permission;
+}
+
 // Rows that would, after the user's edits, be left with zero channels AND are
 // in CRITICAL_CATEGORIES. These block the save (server would reject too).
 function criticalEmptyRows(matrix) {
@@ -200,10 +236,26 @@ export default function NotificationsSection() {
   const [baseline, setBaseline] = useState(prefsToMatrix(null));
   const [saving, setSaving] = useState(false);
 
-  // Phase A: IOSCoachmark is a stub that never opens. Wiring is left in
-  // place so Phase B (Task 54) can flip the trigger without touching the
-  // caller. The Push column being permanently disabled means there's no
-  // user action that opens this in Phase A.
+  // Browser push permission. We seed it from permissionState() on mount and
+  // re-set it after every subscribe attempt (success or failure) so the
+  // banner + toggle gating stays in sync with what the browser actually
+  // allows. We do NOT re-poll on focus etc. — permission can only change in
+  // response to a user gesture this UI initiates, so the local state is
+  // authoritative between subscribe calls.
+  const [pushPermission, setPushPermission] = useState(() => permissionState());
+
+  // iOS install state — see isIosNeedsInstall() for the gating rules.
+  // Memoized for free since useState's initializer runs once; navigator.standalone
+  // can flip when the staffer launches from the home screen, but that re-loads
+  // the page so the mount-time read stays accurate.
+  const iosInstall = useMemo(() => isIosNeedsInstall(), []);
+  const pushState = useMemo(
+    () => derivePushState(pushPermission, iosInstall),
+    [pushPermission, iosInstall],
+  );
+
+  // IOSCoachmark opens from the "Show me how" CTA in the iosNeedsInstall
+  // banner. Closes via its own × / "Got it" / scrim handlers.
   const [coachmarkOpen, setCoachmarkOpen] = useState(false);
 
   const fetchPrefs = useCallback(async () => {
@@ -231,17 +283,56 @@ export default function NotificationsSection() {
   const criticalEmpties = useMemo(() => criticalEmptyRows(matrix), [matrix]);
   const criticalEmptySet = useMemo(() => new Set(criticalEmpties), [criticalEmpties]);
 
-  // Toggle handler. Push column is gated off in Phase A: ignore clicks at
-  // the data level too (the disabled attribute already blocks the click,
-  // but a defense-in-depth no-op here means a future styling change can't
-  // accidentally let Push flip on without the Phase B routing being live).
-  const toggleChannel = (catId, channel) => {
-    if (channel === 'push') return;
+  // Generic non-push toggle. Push has its own async handler below because the
+  // first ON in a non-granted state needs to fire subscribePush() and only
+  // flip the cell on success.
+  const flipCell = (catId, channel) => {
     setMatrix((prev) => {
       const row = prev[catId] || { push: false, sms: false, email: false };
       return { ...prev, [catId]: { ...row, [channel]: !row[channel] } };
     });
   };
+
+  const toggleChannel = (catId, channel) => {
+    if (channel === 'push') return; // push routes through togglePush()
+    flipCell(catId, channel);
+  };
+
+  // Push toggle. Three branches:
+  //   - OFF → ON when permission is not yet granted: subscribe first; only
+  //     flip the cell if the server-side POST succeeded. On failure update
+  //     the banner state and leave the cell untouched.
+  //   - OFF → ON when already granted: just flip (the device subscription
+  //     is reusable across all categories).
+  //   - ON → OFF: just flip; never auto-unsubscribe — other categories or
+  //     other devices may still need the same subscription.
+  async function togglePush(catId) {
+    const row = matrix[catId] || { push: false, sms: false, email: false };
+    const turningOn = !row.push;
+
+    if (turningOn && pushPermission !== 'granted') {
+      const result = await subscribePush();
+      if (result.ok) {
+        setPushPermission('granted');
+        flipCell(catId, 'push');
+      } else {
+        // subscribePush returns the resolved permission state so the banner
+        // (denied / default / unsupported) updates atomically with the
+        // failed attempt. The cell stays off — there's nothing to deliver
+        // until the device is subscribed.
+        setPushPermission(result.state);
+      }
+      return;
+    }
+    flipCell(catId, 'push');
+  }
+
+  // Banner CTA — same as togglePush's subscribe branch minus the per-row
+  // flip. Used by the "Enable push" button in the 'default' banner.
+  async function handleEnablePush() {
+    const r = await subscribePush();
+    setPushPermission(r.ok ? 'granted' : r.state);
+  }
 
   async function handleSave() {
     if (!hasChanges || saving) return;
@@ -323,7 +414,7 @@ export default function NotificationsSection() {
             <div className="sp-card-title">Notifications</div>
             <div className="sp-acc-section-sub">
               Pick how I hear from you. SMS goes to your mobile, email to your
-              inbox, push to the staff app on your phone (coming in v1.5).
+              inbox, push to the staff app on this device.
             </div>
           </div>
           <button
@@ -336,6 +427,12 @@ export default function NotificationsSection() {
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
+
+        <PushPermissionBanner
+          state={pushState}
+          onEnable={handleEnablePush}
+          onShowCoachmark={() => setCoachmarkOpen(true)}
+        />
 
         {smsKillSwitchOn && (
           <div className="sp-push-banner denied" role="status">
@@ -363,6 +460,11 @@ export default function NotificationsSection() {
         {CATEGORIES.map((cat) => {
           const row = matrix[cat.id] || { push: false, sms: false, email: false };
           const isCriticalEmpty = criticalEmptySet.has(cat.id);
+          // Push toggle is interactive in 'granted' and 'default'; the other
+          // three states have no way to subscribe so the toggle is locked
+          // with a state-specific tooltip pointing at the banner.
+          const pushDisabled = pushState !== 'granted' && pushState !== 'default';
+          const pushTitle = PUSH_TOOLTIPS[pushState];
           return (
             <div
               key={cat.id}
@@ -377,10 +479,10 @@ export default function NotificationsSection() {
               </div>
               <ChannelToggle
                 value={row.push}
-                onChange={() => toggleChannel(cat.id, 'push')}
-                disabled
-                title={PUSH_DISABLED_TOOLTIP}
-                ariaLabel={`Push for ${cat.label} (coming in v1.5)`}
+                onChange={() => togglePush(cat.id)}
+                disabled={pushDisabled}
+                title={pushTitle}
+                ariaLabel={`Push for ${cat.label}`}
               />
               <ChannelToggle
                 value={row.sms}
