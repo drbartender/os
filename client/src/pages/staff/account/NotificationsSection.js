@@ -152,7 +152,7 @@ const PUSH_TOOLTIPS = Object.freeze({
 const SMS_KILL_SWITCH_TOOLTIP =
   'Global SMS is off (you replied STOP). Reply START to your last Dr Bartender text to re-enable.';
 const CRITICAL_FOOTER =
-  "Critical-path messages — BEO finalized, schedule changes, payday — can’t be fully muted. " +
+  "Critical-path messages (BEO finalized, schedule changes, payday) can’t be fully muted. " +
   "We’ll deliver them through whatever channel is still on.";
 const CRITICAL_ROW_ERROR =
   'Critical messages need at least one channel. Turn one on first.';
