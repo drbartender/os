@@ -396,6 +396,27 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
   const linkPaymentType = isFullPay ? 'full' : 'deposit';
   const productName = isFullPay ? `Full Payment — ${eventLabel}` : `Event Deposit — ${eventLabel}`;
 
+  // If the booking window shifted since a prior link was generated (e.g. a
+  // deposit link created when the event was >14d out, now that we're inside the
+  // full-payment window), any pending link for a DIFFERENT amount is stale.
+  // Leaving it active in Stripe would let a client click it and underpay,
+  // re-opening the money-integrity hole the full-payment gate exists to close.
+  // Deactivate those before issuing the correct link. Best-effort: a Stripe
+  // failure here must not block the new link.
+  const staleLinks = await pool.query(
+    `SELECT stripe_payment_link_id FROM stripe_sessions
+     WHERE proposal_id = $1 AND stripe_payment_link_id IS NOT NULL
+       AND amount <> $2 AND status = 'pending'`,
+    [proposal.id, amount]
+  );
+  for (const row of staleLinks.rows) {
+    try {
+      await stripe.paymentLinks.update(row.stripe_payment_link_id, { active: false });
+    } catch (e) {
+      console.error('Failed to deactivate stale payment link', row.stripe_payment_link_id, e.message);
+    }
+  }
+
   // Idempotency: if a pending payment-link already exists for this proposal+amount, reuse it
   // instead of creating a second Stripe price+link. Avoids duplicate charges when the admin
   // clicks Generate twice.
@@ -1512,7 +1533,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             );
           } else {
             await dbClient.query(
-              "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'archived')",
+              "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount, payment_type = 'deposit' WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'archived')",
               [proposalId]
             );
           }
