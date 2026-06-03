@@ -373,13 +373,28 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
   }
 
   const result = await pool.query(
-    'SELECT id, token, event_type, event_type_custom FROM proposals WHERE id = $1',
+    'SELECT id, token, event_type, event_type_custom, event_date, event_start_time, total_price FROM proposals WHERE id = $1',
     [req.params.id]
   );
   if (!result.rows[0]) throw new NotFoundError('Proposal not found');
 
   const proposal = result.rows[0];
   const eventLabel = eventLabelFor(proposal);
+
+  // Respect the same booking-window policy the client-facing flow enforces:
+  // inside the 14-day window full payment is the only option (create-intent
+  // rejects a deposit there), so the admin link must charge the FULL total. A
+  // $100 deposit link would let a last-minute booking underpay and strand a
+  // past-due balance with no card on file — the exact money-integrity hole the
+  // full-payment gate exists to close.
+  const bookingWindow = getBookingWindow({
+    eventDate: proposal.event_date,
+    eventStartTime: proposal.event_start_time,
+  });
+  const isFullPay = bookingWindow.fullPaymentRequired;
+  const amount = isFullPay ? Math.round(Number(proposal.total_price) * 100) : DEPOSIT_AMOUNT;
+  const linkPaymentType = isFullPay ? 'full' : 'deposit';
+  const productName = isFullPay ? `Full Payment — ${eventLabel}` : `Event Deposit — ${eventLabel}`;
 
   // Idempotency: if a pending payment-link already exists for this proposal+amount, reuse it
   // instead of creating a second Stripe price+link. Avoids duplicate charges when the admin
@@ -389,7 +404,7 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
      WHERE proposal_id = $1 AND stripe_payment_link_id IS NOT NULL
        AND amount = $2 AND status = 'pending'
      ORDER BY created_at DESC LIMIT 1`,
-    [proposal.id, DEPOSIT_AMOUNT]
+    [proposal.id, amount]
   );
   if (existingLink.rows[0]) {
     try {
@@ -405,13 +420,13 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
     // Create a one-time price
     price = await stripe.prices.create({
       currency: 'usd',
-      unit_amount: DEPOSIT_AMOUNT,
-      product_data: { name: `Event Deposit — ${eventLabel}` },
+      unit_amount: amount,
+      product_data: { name: productName },
     });
 
     paymentLink = await stripe.paymentLinks.create({
       line_items: [{ price: price.id, quantity: 1 }],
-      metadata: { proposal_id: String(proposal.id) },
+      metadata: { proposal_id: String(proposal.id), payment_type: linkPaymentType },
       after_completion: { type: 'redirect', redirect: { url: `${PUBLIC_SITE_URL}/proposal/${encodeURIComponent(proposal.token)}?paid=true` } },
     });
   } catch (err) {
@@ -426,7 +441,7 @@ router.post('/payment-link/:id', auth, requireAdminOrManager, asyncHandler(async
     `INSERT INTO stripe_sessions (proposal_id, stripe_payment_link_id, amount, status)
      VALUES ($1, $2, $3, 'pending')
      ON CONFLICT (stripe_payment_link_id) WHERE stripe_payment_link_id IS NOT NULL DO NOTHING`,
-    [proposal.id, paymentLink.id, DEPOSIT_AMOUNT]
+    [proposal.id, paymentLink.id, amount]
   );
 
   res.json({ url: paymentLink.url });
@@ -1459,6 +1474,11 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     }
 
     const proposalId = session.metadata?.proposal_id;
+    // Payment-Link amount mirrors the booking window at creation time (deposit,
+    // or full inside the 14-day window). Read the tagged type back so the
+    // proposal settles to the right status/amount. Default 'deposit' keeps
+    // older links (created before payment_type was tagged) on their prior path.
+    const linkPaymentType = session.metadata?.payment_type === 'full' ? 'full' : 'deposit';
     if (proposalId) {
       const dbClient = await pool.connect();
       let isFirstDelivery = false;
@@ -1471,10 +1491,10 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         // and post-commit side effects.
         const inserted = await dbClient.query(
           `INSERT INTO proposal_payments (proposal_id, stripe_payment_intent_id, payment_type, amount, status)
-           VALUES ($1, $2, 'deposit', $3, 'succeeded')
+           VALUES ($1, $2, $3, $4, 'succeeded')
            ON CONFLICT (stripe_payment_intent_id) WHERE stripe_payment_intent_id IS NOT NULL AND status = 'succeeded' DO NOTHING
            RETURNING id`,
-          [proposalId, session.payment_intent, session.amount_total]
+          [proposalId, session.payment_intent, linkPaymentType, session.amount_total]
         );
         isFirstDelivery = inserted.rowCount === 1;
 
@@ -1482,13 +1502,23 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         await dbClient.query("UPDATE stripe_sessions SET status = 'succeeded' WHERE stripe_payment_link_id = $1 AND proposal_id = $2", [session.payment_link, proposalId]);
 
         if (isFirstDelivery) {
+          if (linkPaymentType === 'full') {
+            // Full payment via link → settle in full (mirrors the 'full' branch
+            // of payment_intent.succeeded). Guards balance_paid/confirmed/archived
+            // so a later state can't be rewound.
+            await dbClient.query(
+              "UPDATE proposals SET status = 'balance_paid', amount_paid = total_price, payment_type = 'full' WHERE id = $1 AND status NOT IN ('balance_paid', 'confirmed', 'archived')",
+              [proposalId]
+            );
+          } else {
+            await dbClient.query(
+              "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'archived')",
+              [proposalId]
+            );
+          }
           await dbClient.query(
-            "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'archived')",
-            [proposalId]
-          );
-          await dbClient.query(
-            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'deposit_paid', 'system', $2)`,
-            [proposalId, JSON.stringify({ amount: session.amount_total, payment_link: session.payment_link })]
+            `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, $2, 'system', $3)`,
+            [proposalId, linkPaymentType === 'full' ? 'paid_in_full' : 'deposit_paid', JSON.stringify({ amount: session.amount_total, payment_link: session.payment_link, payment_type: linkPaymentType })]
           );
 
           // ── Invoice integration (parity with payment_intent.succeeded) ──
@@ -1512,7 +1542,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 
         await dbClient.query('COMMIT');
         if (isFirstDelivery) {
-          console.log(`Deposit paid (payment link) for proposal ${proposalId}`);
+          console.log(`${linkPaymentType === 'full' ? 'Full payment' : 'Deposit'} paid (payment link) for proposal ${proposalId}`);
         }
       } catch (dbErr) {
         try { await dbClient.query('ROLLBACK'); } catch (rbErr) { console.error('ROLLBACK failed:', rbErr); }
@@ -1530,7 +1560,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 
       // Non-blocking post-commit work — only on first delivery.
       if (isFirstDelivery) {
-        sendPaymentNotifications(proposalId, session.amount_total || 0, 'deposit');
+        sendPaymentNotifications(proposalId, session.amount_total || 0, linkPaymentType);
         try {
           const shift = await createEventShifts(proposalId);
           if (shift) console.log(`Shift #${shift.id} created for proposal ${proposalId}`);
@@ -1544,8 +1574,9 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         }
 
         // Schedule the balance-reminder ladder + pre-event reminders, same as
-        // the payment_intent.succeeded deposit path. Payment-Link sessions are
-        // always 'deposit', so no payment-type gate is needed here.
+        // the payment_intent.succeeded path (which schedules for both deposit and
+        // full). A paid-in-full link has no balance, so the balance-reminder
+        // rungs self-skip; the pre-event reminders still apply.
         const { scheduleDepositPaidReminders } = require('../utils/depositPaidSchedulers');
         await scheduleDepositPaidReminders(Number(proposalId), { source: 'checkout.session.completed' });
 
