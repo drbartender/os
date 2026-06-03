@@ -97,6 +97,10 @@ Copy `.env.example` and fill in values. All variables:
 | `GOOGLE_PLACES_API_KEY` | For venue search | Google Places API (New) key for venue-name search. Server-only. When unset, venue search degrades to a plain text input. |
 | `SENTRY_DSN_SERVER` | For error tracking | Server-side Sentry DSN (optional in dev; required in prod) |
 | `REACT_APP_SENTRY_DSN_CLIENT` | For error tracking | Client-side Sentry DSN (optional in dev; required in prod) |
+| `VAPID_PUBLIC_KEY` | For staff push | Web Push (VAPID) public key. Generate with `npx web-push generate-vapid-keys`. |
+| `VAPID_PRIVATE_KEY` | For staff push | Web Push (VAPID) private key. Server-only. Unset → push fails closed (`vapid_unset`), server still boots. |
+| `REACT_APP_VAPID_PUBLIC_KEY` | For staff push | Client-side copy of `VAPID_PUBLIC_KEY` (same value); lets the staff portal subscribe to push. |
+| `VAPID_CONTACT_EMAIL` | For staff push | Contact email in the VAPID JWT (`mailto:`). Defaults to `contact@drbartender.com`. |
 | `ADMIN_EMAIL` | For seed | Admin account email. Used for the seed account and as the default Reply-To on client-facing emails. |
 | `ADMIN_PASSWORD` | For seed | Admin account password |
 

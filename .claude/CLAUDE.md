@@ -60,6 +60,10 @@ See `.env.example` for the full list. Key ones:
 | `REACT_APP_API_URL` | Client-side API base URL (set in client/.env.production) |
 | `SENTRY_DSN_SERVER` | Server-side Sentry DSN (optional in dev; required in prod) |
 | `REACT_APP_SENTRY_DSN_CLIENT` | Client-side Sentry DSN (optional in dev; required in prod) |
+| `VAPID_PUBLIC_KEY` | Web Push (VAPID) public key for staff-portal push notifications (spec §6.17). Generate with `npx web-push generate-vapid-keys`. The same value is exposed to the client as `REACT_APP_VAPID_PUBLIC_KEY`. |
+| `VAPID_PRIVATE_KEY` | Web Push (VAPID) private key. Server-only — never commit, never expose to the client. When unset, the push sender fails closed (`vapid_unset`) and the server still boots normally; SMS + email keep covering every notification. |
+| `REACT_APP_VAPID_PUBLIC_KEY` | Client-side copy of `VAPID_PUBLIC_KEY` (identical value), used by the staff portal to subscribe the browser to push. Set on the client side (Vercel). |
+| `VAPID_CONTACT_EMAIL` | Contact email embedded in the VAPID JWT (`mailto:`). Optional — defaults to `contact@drbartender.com`. |
 
 ## Git Workflow
 
