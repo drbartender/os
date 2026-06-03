@@ -737,3 +737,66 @@ test('Case 7: 11 rapid POSTs from one user → the 11th is 429', async () => {
   assert.ok(statuses.slice(0, 10).every((s) => s === 201),
     `the first 10 POSTs should all be 201; got ${JSON.stringify(statuses)}`);
 });
+
+// ─── Case 16 — PATCH price increase on a paid proposal demotes to deposit_paid ─
+// A balance_paid proposal whose recomputed total exceeds amount_paid is no
+// longer paid in full. The edit must demote balance_paid -> deposit_paid AND
+// clear autopay so the balance scheduler can't charge a saved card off an
+// admin price edit (the load-bearing safety requirement).
+test('Case 16: PATCH price increase on a balance_paid proposal demotes to deposit_paid and clears autopay', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'balance_paid', total_price: 500 });
+  // Fully-paid + autopay-enrolled fixture (insertDraftProposal doesn't take these).
+  await pool.query(
+    `UPDATE proposals SET amount_paid = 100, autopay_enrolled = true, autopay_status = 'in_progress' WHERE id = $1`,
+    [proposalId]
+  );
+
+  // Any edit recomputes the real hosted total (well above the $100 paid),
+  // so the demotion condition (newTotal > amount_paid) holds.
+  const res = await request('PATCH', `/api/proposals/${proposalId}`, {
+    token, body: { guest_count: 130 },
+  });
+  assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
+
+  const p = await pool.query(
+    'SELECT status, autopay_enrolled, autopay_status FROM proposals WHERE id = $1', [proposalId]
+  );
+  assert.equal(p.rows[0].status, 'deposit_paid', 'balance_paid must demote to deposit_paid on a price increase');
+  assert.equal(p.rows[0].autopay_enrolled, false, 'autopay must be cleared so the scheduler cannot auto-charge');
+  assert.equal(p.rows[0].autopay_status, null, 'autopay_status must be cleared');
+});
+
+// ─── Case 17 — PATCH whose new total stays within amount_paid keeps balance_paid ─
+test('Case 17: PATCH with the total still covered by amount_paid stays balance_paid', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'balance_paid', total_price: 500 });
+  // amount_paid set absurdly high so the recomputed total cannot exceed it.
+  await pool.query(
+    `UPDATE proposals SET amount_paid = 9999999, autopay_enrolled = false WHERE id = $1`,
+    [proposalId]
+  );
+
+  const res = await request('PATCH', `/api/proposals/${proposalId}`, {
+    token, body: { guest_count: 130 },
+  });
+  assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
+
+  const p = await pool.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
+  assert.equal(p.rows[0].status, 'balance_paid', 'no demotion when the new total does not exceed amount_paid');
+});
+
+// ─── Case 18 — PATCH on a non-balance_paid proposal is never demoted ─────────
+test('Case 18: PATCH on a sent (not balance_paid) proposal is untouched by the demotion guard', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'sent', total_price: 500 });
+  await pool.query('UPDATE proposals SET amount_paid = 0 WHERE id = $1', [proposalId]);
+
+  const res = await request('PATCH', `/api/proposals/${proposalId}`, {
+    token, body: { guest_count: 130 },
+  });
+  assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
+
+  const p = await pool.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
+  assert.equal(p.rows[0].status, 'sent', 'the demotion guard only fires for balance_paid');
+});

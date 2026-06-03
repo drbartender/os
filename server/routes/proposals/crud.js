@@ -591,6 +591,32 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       resolvedGlassware, cleanClassOptions ? JSON.stringify(cleanClassOptions) : null
     ]);
 
+    // Re-evaluate payment status when a price increase outruns what's been paid
+    // (CLAUDE.md: never leave a proposal marked paid when it isn't). A fully-paid
+    // proposal whose new total exceeds amount_paid is no longer paid in full —
+    // demote balance_paid -> deposit_paid so the UI stops showing "Paid in full"
+    // and re-enables the "Record outside payment" action. The matching $325-style
+    // "Additional Services" invoice is created post-commit by
+    // createAdditionalInvoiceIfNeeded (below) and is the client's pay surface.
+    // MANUAL ONLY: if autopay was enrolled, clear it so the balance scheduler
+    // cannot charge the saved card off an admin price edit.
+    const newTotalCents = Math.round(Number(snapshot.total) * 100);
+    const paidCents = Math.round(Number(old.amount_paid || 0) * 100);
+    if (old.status === 'balance_paid' && newTotalCents > paidCents) {
+      await dbClient.query(
+        `UPDATE proposals SET status = 'deposit_paid', autopay_enrolled = false, autopay_status = NULL WHERE id = $1`,
+        [req.params.id]
+      );
+      await dbClient.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+         VALUES ($1, 'status_changed', 'admin', $2, $3)`,
+        [req.params.id, req.user.id, JSON.stringify({
+          from: 'balance_paid', to: 'deposit_paid',
+          reason: 'price increased above amount paid', new_total: snapshot.total,
+        })]
+      );
+    }
+
     // Replace proposal add-ons — single bulk INSERT
     await dbClient.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [req.params.id]);
     if (snapshot.addons.length) {
