@@ -17,6 +17,7 @@ const { adminWriteLimiter } = require('../../middleware/rateLimiters');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
+const { findOrCreateClient } = require('../../utils/clientDedup');
 
 const router = express.Router();
 
@@ -142,23 +143,10 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
     // Create or use existing client
     let finalClientId = client_id;
     if (!finalClientId && client_name) {
-      // Find-or-create the client. Email is the natural key (partial unique
-      // index idx_clients_email_unique), so an atomic upsert reuses an existing
-      // client instead of 23505-ing (Sentry DRBARTENDER-SERVER-J). Email is
-      // lower-cased to match how the public wizard stores it; a null email
-      // can't conflict on the partial index, so it just inserts.
-      const normalizedEmail = client_email && String(client_email).trim()
-        ? String(client_email).trim().toLowerCase()
-        : null;
-      const clientResult = await dbClient.query(
-        `INSERT INTO clients (name, email, phone, source) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (email) WHERE email IS NOT NULL
-         DO UPDATE SET name = COALESCE(NULLIF(EXCLUDED.name, ''), clients.name),
-                       phone = COALESCE(NULLIF(EXCLUDED.phone, ''), clients.phone)
-         RETURNING id`,
-        [String(client_name).trim(), normalizedEmail, client_phone || null, client_source || 'direct']
-      );
-      finalClientId = clientResult.rows[0].id;
+      // Dedupes on email OR phone (backfill-only, never overwrites) — see clientDedup.js.
+      finalClientId = await findOrCreateClient(dbClient, {
+        name: client_name, email: client_email, phone: client_phone, source: client_source || 'direct',
+      });
     }
 
     // Fetch package

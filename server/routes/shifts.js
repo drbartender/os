@@ -13,6 +13,7 @@ const { subtractMinutesFromTime } = require('../utils/setupTime');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError, PermissionError, ConflictError } = require('../utils/errors');
 const { ADMIN_URL } = require('../utils/urls');
+const { findOrCreateClient } = require('../utils/clientDedup');
 const { scheduleStaffShiftMessages, notifyStaffOfCancellation } = require('../utils/staffShiftHandlers');
 const { confirmStaffingIfFullyStaffed } = require('../utils/lastMinuteStaffingConfirmation');
 const { suppressBeoNudgesForStaffers } = require('../utils/beoHandlers');
@@ -350,18 +351,9 @@ router.post('/', auth, requireStaffing, asyncHandler(async (req, res) => {
     // 1. Create or find client record
     let clientId = null;
     if (client_name) {
-      const existing = client_email
-        ? await pgClient.query('SELECT id FROM clients WHERE email = $1 LIMIT 1', [client_email])
-        : { rows: [] };
-      if (existing.rows[0]) {
-        clientId = existing.rows[0].id;
-      } else {
-        const clientRes = await pgClient.query(
-          'INSERT INTO clients (name, email, phone, source) VALUES ($1, $2, $3, $4) RETURNING id',
-          [client_name, client_email || null, client_phone || null, 'direct']
-        );
-        clientId = clientRes.rows[0].id;
-      }
+      clientId = await findOrCreateClient(pgClient, {
+        name: client_name, email: client_email, phone: client_phone, source: 'direct',
+      });
     }
 
     // 2. Create a proposal record so the full event detail page works
