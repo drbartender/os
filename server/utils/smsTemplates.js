@@ -14,7 +14,7 @@ function dt(date) { return date || 'your event'; }
 
 // ─── 1.2 Initial proposal SMS ────────────────────────────────────
 function initialProposalSms({ eventTypeLabel, eventDate, link }) {
-  return `Hi, Dallas here. Just sent your proposal for the ${ev(eventTypeLabel)} on ${dt(eventDate)}. View and book here: ${link}. Let me know if you have any questions or need any changes.`;
+  return `Hi, Dallas here. Just sent your proposal for the ${ev(eventTypeLabel)} on ${dt(eventDate)}. Review the details and check out here: ${link}. Let me know if you have any questions or need any changes.`;
 }
 
 // ─── 2.1 Sign+pay confirmation SMS ───────────────────────────────
