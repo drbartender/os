@@ -162,10 +162,15 @@ export default function ProposalPricingBreakdown({
         <h2 style={styles.sectionTitle}>Payment Terms</h2>
         <div style={styles.paymentSummary}>
           {fullPaymentRequired ? (
-            <div style={{ ...styles.paymentRow, borderBottom: 'none' }}>
-              <span style={styles.paymentLabel}>Full Payment Due</span>
-              <span style={styles.paymentValue}>{snapshot ? fmt(snapshot.total) : '—'}</span>
-            </div>
+            <>
+              <div style={{ ...styles.paymentRow, borderBottom: 'none' }}>
+                <span style={styles.paymentLabel}>Full Payment Due</span>
+                <span style={styles.paymentValue}>{snapshot ? fmt(snapshot.total) : '—'}</span>
+              </div>
+              <p style={{ margin: '0.4rem 0 0', fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                This is the complete cost for your event. No separate deposit, no balance due later.
+              </p>
+            </>
           ) : (
             <>
               <div style={styles.paymentRow}>

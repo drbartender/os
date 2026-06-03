@@ -102,7 +102,8 @@ export default function SignAndPaySection({
   // card is charged.
   const fullRequiredNotice = fullPaymentRequired ? (
     <p className="payment-policy-note">
-      Because your event is within 2 weeks, full payment is required to confirm your booking.
+      Because your event is within 2 weeks, the full event total is due now to confirm
+      your booking. This is the complete cost, there is no separate deposit and no balance later.
     </p>
   ) : null;
 
