@@ -79,8 +79,12 @@ self.addEventListener('notificationclick', (event) => {
         // targetUrl wasn't a parseable URL — fall through to substring check.
       }
 
+      // A bare default ('/') means "just focus the app" — match any open staff
+      // window. A real targetPath focuses the window already on that path.
+      const isRootDefault = targetPath === '/';
       for (const client of allClients) {
-        if (client.url.includes(targetPath) && 'focus' in client) {
+        if (!('focus' in client)) continue;
+        if (isRootDefault || client.url.includes(targetPath)) {
           return client.focus();
         }
       }

@@ -25,6 +25,10 @@ const MARKER_ATTR = 'data-staff-pwa';
 export function installStaffPwaMeta() {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
+  // This host check is the ONLY barrier stopping admin / public / hiring (which
+  // share this same built bundle and StaffShellWithThemeWiring mount) from
+  // getting the staff manifest + "Add to Home Screen" prompt. Do not loosen it
+  // without re-checking every site-context in App.js getSiteContext().
   const host = window.location && window.location.hostname;
   if (!host || !host.startsWith('staff.')) return;
 

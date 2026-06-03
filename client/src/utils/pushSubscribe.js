@@ -63,8 +63,7 @@ export function permissionState() {
  *   { endpoint, keys: { p256dh, auth }, user_agent }
  */
 export async function subscribePush() {
-  const state = permissionState();
-  if (state === 'unsupported') {
+  if (permissionState() === 'unsupported') {
     return { ok: false, state: 'unsupported' };
   }
 
@@ -128,16 +127,15 @@ export async function unsubscribePush() {
   const sub = await reg.pushManager.getSubscription();
   if (!sub) return { ok: true };
 
-  // Tell the server first so a network failure leaves the browser-side
-  // subscription intact (the user can retry). If we did it the other way
-  // around and the DELETE failed, the server would keep firing pushes to a
-  // dead endpoint until its own prune logic caught up.
+  // Best-effort server cleanup, then drop the local subscription regardless.
+  // A failed DELETE (404 already-gone, or a network blip) is non-fatal: the
+  // server prunes any dead endpoint on the next 410 from the push service, so
+  // we never block the user's unsubscribe on the round-trip.
   try {
     await api.delete('/me/push-subscriptions', { data: { endpoint: sub.endpoint } });
   } catch (e) {
-    // Swallow — the row may already be gone (404), or the network may be
-    // flaky. The unsubscribe below still runs so the browser state matches
-    // what the user just asked for.
+    // Swallow — see above. The unsubscribe below still runs so the browser
+    // state matches what the user just asked for.
   }
 
   await sub.unsubscribe();
