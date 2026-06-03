@@ -7,6 +7,7 @@ const { sendEmail } = require('../utils/email');
 const { newThumbtackLeadAdmin, newThumbtackMessageAdmin, newThumbtackReviewAdmin } = require('../utils/emailTemplates');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { ADMIN_URL } = require('../utils/urls');
+const { findOrCreateClient } = require('../utils/clientDedup');
 const asyncHandler = require('../middleware/asyncHandler');
 
 const router = express.Router();
@@ -230,38 +231,15 @@ router.post('/leads', asyncHandler(async (req, res) => {
       return res.status(200).json({ status: 'duplicate' });
     }
 
-    // Find or create client by phone
+    // Find or create the client (dedupes on email OR phone — see clientDedup.js)
     let clientId = null;
-    const phone = normalizePhone(lead.customerPhone);
-
-    if (phone && phone.length >= 10) {
-      // Match on last 10 digits of normalized phone (uses functional index)
-      const match = await dbClient.query(
-        `SELECT id FROM clients WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $1 ORDER BY created_at DESC LIMIT 1`,
-        [phone.slice(-10)]
-      );
-
-      if (match.rows.length > 0) {
-        clientId = match.rows[0].id;
-      } else {
-        // Create new client
-        const newClient = await dbClient.query(
-          `INSERT INTO clients (name, phone, source, notes) VALUES ($1, $2, 'thumbtack', $3) RETURNING id`,
-          [
-            lead.customerName || 'Thumbtack Lead',
-            lead.customerPhone,
-            `Thumbtack lead — email needed. Category: ${lead.category || 'N/A'}`,
-          ]
-        );
-        clientId = newClient.rows[0].id;
-      }
-    } else if (lead.customerName) {
-      // No phone — create client with name only
-      const newClient = await dbClient.query(
-        `INSERT INTO clients (name, source, notes) VALUES ($1, 'thumbtack', $2) RETURNING id`,
-        [lead.customerName, `Thumbtack lead — email & phone needed. Category: ${lead.category || 'N/A'}`]
-      );
-      clientId = newClient.rows[0].id;
+    if (lead.customerName || normalizePhone(lead.customerPhone)) {
+      clientId = await findOrCreateClient(dbClient, {
+        name: lead.customerName || 'Thumbtack Lead',
+        phone: lead.customerPhone,
+        source: 'thumbtack',
+        notes: `Thumbtack lead — email needed. Category: ${lead.category || 'N/A'}`,
+      });
     }
 
     // Insert the Thumbtack lead

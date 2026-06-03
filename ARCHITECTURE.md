@@ -732,6 +732,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `communication_preferences` JSONB — `{sms_enabled, email_enabled, marketing_enabled}` (defaults true). Drives the Automated Communication system's send gating.
 - `email_status` (`ok` | `bad`), `phone_status` (`ok` | `bad`) — channel deliverability flags flipped on bounce/blocked-list signals.
 - `email_harvest_status` (`not_needed` | `pending` | `harvested` | `failed`), `email_harvest_attempted_at` — track the email-harvest flow for SMS-only leads. Partial index `idx_clients_email_harvest_pending` powers the scheduler's pending sweep.
+- **Intake de-duplication:** every intake path (Thumbtack webhook, admin `POST /proposals`, public quote wizard, BEO/shifts create) resolves clients through `findOrCreateClient` (`server/utils/clientDedup.js`), which matches on email OR normalized phone (name-guarded on phone-only matches) and backfills NULL fields only — never overwriting an existing identity, so the unauthenticated wizard is safe. `mergeClients` (`server/utils/clientMerge.js`) consolidates pre-existing duplicates by repointing every `client_id` FK (discovered from the catalog; all are `ON DELETE SET NULL`) onto the surviving row, then deleting the loser.
 
 ### Menu
 

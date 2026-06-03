@@ -13,6 +13,7 @@ const { composeVenueLocation, validateVenue } = require('../../utils/venueAddres
 const { validateProposalRules, stripIncludedAddons } = require('../../utils/proposalRules');
 const { createInvoiceOnSend } = require('../../utils/invoiceHelpers');
 const { sendProposalSentEmail } = require('../../utils/sendProposalSentEmail');
+const { findOrCreateClient } = require('../../utils/clientDedup');
 
 const router = express.Router();
 
@@ -264,21 +265,17 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
   try {
     await dbClient.query('BEGIN');
 
-    // Find-or-create the client by email. The atomic upsert closes the
-    // SELECT-then-INSERT race (two near-simultaneous wizard submits colliding
-    // on idx_clients_email_unique). This endpoint is UNAUTHENTICATED, so on a
-    // conflict with an existing client it must NOT overwrite that client's
-    // name/phone — a stranger who guesses an email could otherwise rewrite a
-    // real client's identity. The no-op `SET name = clients.name` exists only
-    // so ON CONFLICT returns the existing row's id (DO NOTHING would not).
-    const clientResult = await dbClient.query(
-      `INSERT INTO clients (name, email, phone, source) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (email) WHERE email IS NOT NULL
-       DO UPDATE SET name = clients.name
-       RETURNING id, communication_preferences, email_status, phone_status`,
-      [client_name.trim(), client_email.trim().toLowerCase(), client_phone || null, 'website']
+    // Find-or-create the client (dedupes on email OR phone). This endpoint is
+    // UNAUTHENTICATED: findOrCreateClient backfills NULL fields only and never
+    // overwrites an existing client's name/email/phone, so a stranger who
+    // guesses an email cannot rewrite a real client's identity.
+    const finalClientId = await findOrCreateClient(dbClient, {
+      name: client_name, email: client_email, phone: client_phone, source: 'website',
+    });
+    const prefRow = await dbClient.query(
+      'SELECT communication_preferences, email_status, phone_status FROM clients WHERE id = $1',
+      [finalClientId]
     );
-    const finalClientId = clientResult.rows[0].id;
 
     // Fetch package
     const pkgResult = await dbClient.query('SELECT * FROM service_packages WHERE id = $1 AND is_active = true', [package_id]);
@@ -465,9 +462,9 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
             client_email: client_email.trim().toLowerCase(),
             client_id: finalClientId,
             client_phone: client_phone || null,
-            communication_preferences: clientResult.rows[0].communication_preferences,
-            email_status: clientResult.rows[0].email_status,
-            phone_status: clientResult.rows[0].phone_status,
+            communication_preferences: prefRow.rows[0].communication_preferences,
+            email_status: prefRow.rows[0].email_status,
+            phone_status: prefRow.rows[0].phone_status,
           },
           { actorType: 'client' },
         );
