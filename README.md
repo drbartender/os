@@ -14,6 +14,7 @@ A full-stack platform for Dr. Bartender's bartending service business. Handles c
 | Payments | Stripe (Elements + webhooks) |
 | Email | Resend |
 | SMS | Twilio |
+| Web Push | `web-push` (VAPID) for staff-portal notifications |
 | Booking / Scheduling | Cal.com (webhook integration; self-hosted target for V2) |
 | Rich Text Editor | TipTap (ProseMirror-based WYSIWYG, blog admin) |
 | HTML Sanitization | DOMPurify + jsdom (server-side) |
@@ -97,6 +98,10 @@ Copy `.env.example` and fill in values. All variables:
 | `GOOGLE_PLACES_API_KEY` | For venue search | Google Places API (New) key for venue-name search. Server-only. When unset, venue search degrades to a plain text input. |
 | `SENTRY_DSN_SERVER` | For error tracking | Server-side Sentry DSN (optional in dev; required in prod) |
 | `REACT_APP_SENTRY_DSN_CLIENT` | For error tracking | Client-side Sentry DSN (optional in dev; required in prod) |
+| `VAPID_PUBLIC_KEY` | For staff push | Web Push (VAPID) public key. Generate with `npx web-push generate-vapid-keys`. |
+| `VAPID_PRIVATE_KEY` | For staff push | Web Push (VAPID) private key. Server-only. Unset → push fails closed (`vapid_unset`), server still boots. |
+| `REACT_APP_VAPID_PUBLIC_KEY` | For staff push | Client-side copy of `VAPID_PUBLIC_KEY` (same value); lets the staff portal subscribe to push. |
+| `VAPID_CONTACT_EMAIL` | For staff push | Contact email in the VAPID JWT (`mailto:`). Defaults to `contact@drbartender.com`. |
 | `ADMIN_EMAIL` | For seed | Admin account email. Used for the seed account and as the default Reply-To on client-facing emails. |
 | `ADMIN_PASSWORD` | For seed | Admin account password |
 
@@ -306,7 +311,7 @@ dr-bartender/
 │   │   │   ├── (admin)         # AdminDashboard (AdminUserDetail moved into admin/userDetail/, AdminApplicationDetail moved into admin/applicationDetail/)
 │   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/, NotificationSettings per-user notification-subscription toggles, CcImportWrapUpPage Bucket B wrap-up email worklist, CcImportReviewPage 7-section import-reconciliation triage)
 │   │   │   ├── staff/          # Staff portal — the live v2 portal, mounted at root on staff.drbartender.com (HomePage, ShiftsPage + ShiftDetail, PayPage + PayoutDetail, TipCardPage, EmailVerifyPage email-change confirm) + PrintTipCard printable QR card (PrintTipCard.jsx + PrintTipCard.layouts.jsx + PrintTipCard.css)
-│   │   │   │   └── account/    # AccountPage shell + sub-nav with ProfileSection, PaymentMethodsSection (+ PaymentMethodRows + AddMethodModal), CalendarSyncSection, NotificationsSection (+ IOSCoachmark Phase-A stub), DocumentsSection (+ ReplaceConfirmModal)
+│   │   │   │   └── account/    # AccountPage shell + sub-nav with ProfileSection, PaymentMethodsSection (+ PaymentMethodRows + AddMethodModal), CalendarSyncSection, NotificationsSection (+ IOSCoachmark + PushPermissionBanner), DocumentsSection (+ ReplaceConfirmModal)
 │   │   │   ├── plan/           # PotionPlanningLab, public post-booking event questionnaire (single flow, created only after deposit; with steps/, components/, data/; components/ScopeBanner + components/WelcomeRoadmap + components/MenuPreview + components/LogoUploadField = apothecary-reskin + Standard Menu shared UI; steps/HostedGuestPrefsStep.js = compact hosted-package guest-preferences step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test; data/menuSections.js = Standard Menu section extractor with menuSections.test.js Jest unit suite)
 │   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment
 │   │   │   ├── proposal/       # ProposalView (public client-facing) — split into proposalView/ folder (parent + ProposalHeader + ProposalPricingBreakdown + SignAndPaySection + PaymentForm + helpers + styles)

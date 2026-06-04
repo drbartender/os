@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import api from '../utils/api';
 import { useAuth } from '../context/AuthContext';
+import { installStaffPwaMeta } from '../utils/installStaffPwaMeta';
 import StaffShell from './StaffShell';
 
 const STAFF_TABS = [
@@ -73,6 +74,14 @@ export default function StaffShellWithThemeWiring() {
   const { user, logout } = useAuth();
 
   const [skin, setSkin] = useState(detectInitialSkin);
+
+  // Inject the staff-scoped PWA manifest + iOS standalone meta tags. No-op on
+  // non-staff hosts (admin/public share the same built bundle) and idempotent
+  // across re-mounts. Required for iOS web push (16.4+) to even reach the
+  // permission prompt — see installStaffPwaMeta() for the why.
+  useEffect(() => {
+    installStaffPwaMeta();
+  }, []);
 
   // Hydrate skin from the server on mount. Falls back to prefers-color-scheme
   // only when ui_preferences.theme is null (new user / never toggled).
