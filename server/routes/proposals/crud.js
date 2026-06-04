@@ -603,10 +603,13 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     const newTotalCents = Math.round(Number(snapshot.total) * 100);
     const paidCents = Math.round(Number(old.amount_paid || 0) * 100);
     if (old.status === 'balance_paid' && newTotalCents > paidCents) {
-      await dbClient.query(
-        `UPDATE proposals SET status = 'deposit_paid', autopay_enrolled = false, autopay_status = NULL WHERE id = $1`,
+      const demoted = await dbClient.query(
+        `UPDATE proposals SET status = 'deposit_paid', autopay_enrolled = false, autopay_status = NULL WHERE id = $1 RETURNING *`,
         [req.params.id]
       );
+      // Keep the row we return (and hand to the reschedule hooks) in sync with the
+      // demotion, so the PATCH response doesn't report a stale 'balance_paid'.
+      updatedRow.rows[0] = demoted.rows[0];
       await dbClient.query(
         `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
          VALUES ($1, 'status_changed', 'admin', $2, $3)`,

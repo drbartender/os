@@ -758,6 +758,9 @@ test('Case 16: PATCH price increase on a balance_paid proposal demotes to deposi
     token, body: { guest_count: 130 },
   });
   assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
+  // The PATCH response body must reflect the demotion, not the stale pre-demotion row.
+  assert.equal(res.body.status, 'deposit_paid', 'response body must report the demoted status');
+  assert.equal(res.body.autopay_enrolled, false, 'response body must report autopay cleared');
 
   const p = await pool.query(
     'SELECT status, autopay_enrolled, autopay_status FROM proposals WHERE id = $1', [proposalId]
