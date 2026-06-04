@@ -298,6 +298,13 @@ export default function NotificationsSection() {
     flipCell(catId, channel);
   };
 
+  // Maps a failed subscribePush() permission state to user-facing copy.
+  function pushFailureMessage(state) {
+    if (state === 'denied') return 'Push is blocked in your browser. Turn it on in notification settings, then try again.';
+    if (state === 'unsupported') return 'This browser or device does not support push notifications.';
+    return "Couldn't turn on push. Please try again.";
+  }
+
   // Push toggle. Three branches:
   //   - OFF → ON when permission is not yet granted: subscribe first; only
   //     flip the cell if the server-side POST succeeded. On failure update
@@ -311,16 +318,26 @@ export default function NotificationsSection() {
     const turningOn = !row.push;
 
     if (turningOn && pushPermission !== 'granted') {
-      const result = await subscribePush();
+      let result;
+      try {
+        result = await subscribePush();
+      } catch {
+        // subscribePush is documented to resolve with a status object, but a
+        // thrown SW-registration / network / 5xx error must not leave the
+        // toggle silently hung. Surface it and reset the banner to neutral.
+        setPushPermission('default');
+        toast.error("Couldn't turn on push. Check your browser's notification settings and try again.");
+        return;
+      }
       if (result.ok) {
         setPushPermission('granted');
         flipCell(catId, 'push');
       } else {
         // subscribePush returns the resolved permission state so the banner
-        // (denied / default / unsupported) updates atomically with the
-        // failed attempt. The cell stays off — there's nothing to deliver
-        // until the device is subscribed.
+        // (denied / default / unsupported) updates atomically with the failed
+        // attempt. Toast it too, otherwise the cell just silently doesn't flip.
         setPushPermission(result.state);
+        toast.error(pushFailureMessage(result.state));
       }
       return;
     }
@@ -330,8 +347,16 @@ export default function NotificationsSection() {
   // Banner CTA — same as togglePush's subscribe branch minus the per-row
   // flip. Used by the "Enable push" button in the 'default' banner.
   async function handleEnablePush() {
-    const r = await subscribePush();
+    let r;
+    try {
+      r = await subscribePush();
+    } catch {
+      setPushPermission('default');
+      toast.error("Couldn't turn on push. Check your browser's notification settings and try again.");
+      return;
+    }
     setPushPermission(r.ok ? 'granted' : r.state);
+    if (!r.ok) toast.error(pushFailureMessage(r.state));
   }
 
   async function handleSave() {
