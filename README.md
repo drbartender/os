@@ -14,6 +14,7 @@ A full-stack platform for Dr. Bartender's bartending service business. Handles c
 | Payments | Stripe (Elements + webhooks) |
 | Email | Resend |
 | SMS | Twilio |
+| Web Push | `web-push` (VAPID) for staff-portal notifications |
 | Booking / Scheduling | Cal.com (webhook integration; self-hosted target for V2) |
 | Rich Text Editor | TipTap (ProseMirror-based WYSIWYG, blog admin) |
 | HTML Sanitization | DOMPurify + jsdom (server-side) |

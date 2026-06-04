@@ -12,6 +12,7 @@ CLAUDE.md is the **rules doc**. Structural reference (folder tree, route table) 
 - **Payments**: Stripe (server SDK + React Elements)
 - **Email**: Resend
 - **SMS**: Twilio
+- **Web Push**: `web-push` (VAPID) for staff-portal browser / PWA notifications
 - **Booking / scheduling**: Cal.com (webhook integration; self-hosted target for V2)
 - **Venue search**: Google Places API (New) for venue-name autocomplete
 - **Rich Text Editor**: TipTap (ProseMirror-based WYSIWYG) for blog admin
