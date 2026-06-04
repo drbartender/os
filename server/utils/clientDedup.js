@@ -7,10 +7,12 @@ const { validatePhone } = require('./phone');
  * normalized phone (last 10 digits, via idx_clients_phone_normalized) — but the
  * phone match only fires against a row whose email is still NULL AND whose name
  * matches (anti-takeover guard, mirrors calcom.js), so a shared phone can't
- * merge two different people. On a match we BACKFILL NULL fields only (e.g.
- * stamp the email onto a phone-only Thumbtack row); we NEVER overwrite an
- * existing non-null name/email/phone, which keeps this safe for the
- * UNAUTHENTICATED public wizard.
+ * merge two different people. An EMAIL match resolves the row AS-IS and stamps
+ * nothing: on the UNAUTHENTICATED public wizard a submitter proves nothing
+ * about an email, so an attacker-supplied phone must not backfill onto a
+ * victim's email-matched row (it would redirect their BEO/payment SMS). A PHONE
+ * match (already name-guarded) backfills ONLY the email onto the phone-only row
+ * (the Thumbtack "stamp email on" case). We NEVER overwrite a non-null field.
  *
  * Runs inside the caller's transaction — pass the caller's pg client.
  *
@@ -28,10 +30,15 @@ async function findOrCreateClient(db, { name, email, phone, source = 'direct', n
 
   if (cleanEmail) {
     const r = await db.query('SELECT id FROM clients WHERE LOWER(email) = $1 LIMIT 1', [cleanEmail]);
-    if (r.rows[0]) winnerId = r.rows[0].id;
+    // Email match resolves the row AS-IS. Do NOT backfill the submitted phone:
+    // this helper runs on the UNAUTHENTICATED public wizard, where a submitter
+    // proves nothing about an email. Letting an attacker-supplied phone COALESCE
+    // onto a victim's email-matched row would redirect their BEO/payment SMS.
+    // Email is trusted only to RESOLVE the row, never to mutate it.
+    if (r.rows[0]) return r.rows[0].id;
   }
 
-  if (!winnerId && phone10) {
+  if (phone10) {
     const r = await db.query(
       `SELECT id FROM clients
          WHERE RIGHT(REGEXP_REPLACE(phone, '\\D', '', 'g'), 10) = $1
@@ -41,18 +48,17 @@ async function findOrCreateClient(db, { name, email, phone, source = 'direct', n
          LIMIT 1`,
       [phone10, cleanName]
     );
-    if (r.rows[0]) winnerId = r.rows[0].id;
-  }
-
-  if (winnerId) {
-    // Backfill NULLs only — never overwrite. This is the Jim fix: a phone-only
-    // Thumbtack row gets the email stamped on, so the later proposal-create
-    // resolves to it instead of inserting a second row.
-    await db.query(
-      `UPDATE clients SET email = COALESCE(email, $2), phone = COALESCE(phone, $3) WHERE id = $1`,
-      [winnerId, cleanEmail, phone || null]
-    );
-    return winnerId;
+    if (r.rows[0]) {
+      winnerId = r.rows[0].id;
+      // Phone-only row matched by normalized phone AND name (the anti-takeover
+      // guard). Stamp the email on (the "Jim fix") so a later proposal-create
+      // resolves to it. The phone is already this row's match key; we backfill
+      // ONLY the email, never overwriting a non-null value.
+      if (cleanEmail) {
+        await db.query('UPDATE clients SET email = COALESCE(email, $2) WHERE id = $1', [winnerId, cleanEmail]);
+      }
+      return winnerId;
+    }
   }
 
   // No match -> insert with 23505 race recovery (mirrors calcom.js).

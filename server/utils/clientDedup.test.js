@@ -52,6 +52,23 @@ test('same email (case-insensitive) reuses the row and does NOT overwrite the na
   }
 });
 
+test('email match does NOT backfill a submitted phone (public-wizard takeover guard)', async () => {
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    // Existing email-only row with a NULL phone (e.g. a marketing lead).
+    const a = await findOrCreateClient(db, { name: 'Victim', email: 'victim@example.com' });
+    // An unauthenticated public submit reusing the victim's email + an attacker phone.
+    const b = await findOrCreateClient(db, { name: 'Whoever', email: 'Victim@example.com', phone: '555-010-9999' });
+    assert.strictEqual(b, a, 'email match still resolves to the same row');
+    const row = await db.query('SELECT phone FROM clients WHERE id = $1', [a]);
+    assert.strictEqual(row.rows[0].phone, null, 'attacker phone must NOT be stamped onto an email-matched row');
+  } finally {
+    await db.query('ROLLBACK');
+    db.release();
+  }
+});
+
 after(async () => {
   await pool.end();
 });
