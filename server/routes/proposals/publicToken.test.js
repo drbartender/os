@@ -166,7 +166,8 @@ test('Case C: a sign with an unknown version is rejected and records no signatur
   assert.equal(row.rows[0].client_signature_document_version, null);
 });
 
-// Case D — baseline sign still works (no regression to the sign path)
+// Case D — baseline sign still works (no regression to the sign path); the
+// version is written in the SAME atomic UPDATE as name/method/timestamp.
 test('Case D: the sign path still records name/method/ip alongside the version', async () => {
   const p = await insertSignableProposal();
   const res = await request('POST', `/api/proposals/t/${p.token}/sign`, {
@@ -174,9 +175,42 @@ test('Case D: the sign path still records name/method/ip alongside the version',
   });
   assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
   const row = await pool.query(
-    'SELECT client_signed_name, client_signature_method, client_signed_at FROM proposals WHERE id = $1', [p.id]
+    'SELECT client_signed_name, client_signature_method, client_signed_at, client_signature_document_version FROM proposals WHERE id = $1', [p.id]
   );
   assert.equal(row.rows[0].client_signed_name, 'Test Signer');
   assert.equal(row.rows[0].client_signature_method, 'type');
   assert.ok(row.rows[0].client_signed_at, 'client_signed_at must be set');
+  assert.equal(row.rows[0].client_signature_document_version, CURRENT_AGREEMENT_VERSION,
+    'the version must be written in the same UPDATE as the rest of the signature');
+});
+
+// Case E — legacy version sent EXPLICITLY → accepted via the allowlist (not via
+// the missing-field fallback). Proves the allowlist entry is what makes v2 valid.
+test('Case E: an explicit legacy v2 version is accepted and recorded', async () => {
+  const p = await insertSignableProposal();
+  const res = await request('POST', `/api/proposals/t/${p.token}/sign`, {
+    body: validSignBody({ document_version: LEGACY_AGREEMENT_VERSION }),
+  });
+  assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
+  const row = await pool.query(
+    'SELECT client_signature_document_version, status FROM proposals WHERE id = $1', [p.id]
+  );
+  assert.equal(row.rows[0].client_signature_document_version, LEGACY_AGREEMENT_VERSION);
+  assert.equal(row.rows[0].status, 'accepted');
+});
+
+// Case F — an empty-string version is anomalous (not a legitimate omission) and
+// is rejected, NOT silently recorded as v2.
+test('Case F: an empty-string document_version is rejected and records no signature', async () => {
+  const p = await insertSignableProposal();
+  const res = await request('POST', `/api/proposals/t/${p.token}/sign`, {
+    body: validSignBody({ document_version: '' }),
+  });
+  assert.equal(res.status, 400, `expected 400, got ${res.status}: ${res.raw}`);
+  assert.equal(res.body.code, 'VALIDATION_ERROR');
+  const row = await pool.query(
+    'SELECT client_signed_at, client_signature_document_version FROM proposals WHERE id = $1', [p.id]
+  );
+  assert.equal(row.rows[0].client_signed_at, null, 'a rejected empty-string sign must not record a signature');
+  assert.equal(row.rows[0].client_signature_document_version, null);
 });
