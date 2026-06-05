@@ -45,13 +45,10 @@ import { formatMoney } from '../../utils/formatMoney';
  *             below it.
  *   - 404:   dedicated NotFound branch with a back-to-Pay link.
  *
- * Pay actions: per spec, "Download PDF" + "Email a copy" are shown when the
- * payout is paid. PDF generation lives in Phase 3 of the staff-payment plan
- * (`paystub_storage_key` is populated by an admin-side worker that doesn't
- * exist yet on `main`); for v1 we render the Download button disabled with
- * a TODO note when `paystub_storage_key` is set but no client-side download
- * endpoint exists. Email a copy is rendered as a stub button — both wire
- * up cleanly when the backend lands.
+ * Pay actions: per spec, "Download PDF" is shown when the payout is paid.
+ * It calls `GET /api/me/payouts/:periodId/paystub`, which returns a short-
+ * lived signed URL to the PDF (lazy-generated on first call), and opens it
+ * in a new tab.
  */
 export default function PayoutDetail() {
   const navigate = useNavigate();
@@ -65,6 +62,8 @@ export default function PayoutDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [notFound, setNotFound] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadErr, setDownloadErr] = useState(null);
 
   const fetchDetail = useCallback(async () => {
     if (!Number.isFinite(periodId)) {
@@ -86,6 +85,25 @@ export default function PayoutDetail() {
       }
     } finally {
       setLoading(false);
+    }
+  }, [periodId]);
+
+  const handleDownload = useCallback(async () => {
+    setDownloading(true);
+    setDownloadErr(null);
+    try {
+      const res = await api.get(`/me/payouts/${periodId}/paystub`);
+      if (res.data && res.data.url) {
+        window.open(res.data.url, '_blank', 'noopener');
+      } else {
+        setDownloadErr('Could not prepare the paystub. Try again.');
+      }
+    } catch (err) {
+      // Covers the network/500 case and a 409 (unpaid) defense-in-depth,
+      // though the button only renders for paid periods.
+      setDownloadErr(err?.message || 'Could not prepare the paystub. Try again.');
+    } finally {
+      setDownloading(false);
     }
   }, [periodId]);
 
@@ -158,14 +176,6 @@ export default function PayoutDetail() {
   const isPaid = payout.status === 'paid';
   const total = Number.isFinite(payout.total_cents) ? payout.total_cents : 0;
   const eventCount = events.length;
-
-  // PDF download wiring: paystub_storage_key signals an R2 object exists.
-  // The client-facing download endpoint is NOT yet implemented (Phase 3 of
-  // the staff-payment plan generates the PDF + serves it). Render the
-  // button disabled with a TODO note when no endpoint exists, so the UX
-  // path is visible to the staffer without a misleading "click does
-  // nothing" state.
-  const hasPaystub = !!payout.paystub_storage_key;
 
   return (
     <>
@@ -292,32 +302,20 @@ export default function PayoutDetail() {
       {/* Pay actions */}
       <div className="sp-row" style={{ gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.8rem' }}>
         {isPaid && (
-          // TODO: wire to GET /api/me/payouts/:periodId/paystub.pdf when the
-          // backend lands (Phase 3 of the staff-payment plan). Until then we
-          // render the button disabled so the UX path is visible and so a
-          // staffer doesn't tap a no-op affordance.
           <button
             type="button"
             className="sp-btn"
-            disabled={!hasPaystub}
-            title={hasPaystub ? 'Paystub download coming soon' : 'Paystub not yet generated'}
+            onClick={handleDownload}
+            disabled={downloading}
           >
             <DownloadIcon size={13} />
-            Download PDF
+            {downloading ? 'Preparing…' : 'Download PDF'}
           </button>
         )}
-        {/* TODO: wire to POST /api/me/payouts/:periodId/email when the backend
-            lands. Until then this button stays disabled — see Phase 3 plan. */}
-        <button
-          type="button"
-          className="sp-btn sp-btn-ghost"
-          disabled
-          title="Email-a-copy coming soon"
-        >
-          <MailIcon size={13} />
-          Email a copy
-        </button>
       </div>
+      {downloadErr && (
+        <div className="sp-error-card-sub" style={{ marginTop: '0.4rem' }}>{downloadErr}</div>
+      )}
 
       {/* 1099 reminder per spec §6.7 — small italic footer */}
       <div
@@ -451,25 +449,6 @@ function DownloadIcon({ size = 13 }) {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <polyline points="7 10 12 15 17 10" />
       <line x1="12" y1="15" x2="12" y2="3" />
-    </svg>
-  );
-}
-
-function MailIcon({ size = 13 }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="3" y="5" width="18" height="14" rx="2" />
-      <polyline points="3 7 12 13 21 7" />
     </svg>
   );
 }
