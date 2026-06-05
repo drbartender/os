@@ -1161,6 +1161,50 @@ ALTER TABLE drink_plans DROP COLUMN IF EXISTS event_name;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS adjustments JSONB DEFAULT '[]';
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS total_price_override NUMERIC(10,2);
 
+-- ─── Checkout Gratuity (Project B, spec 2026-06-05) ───────────────
+-- Client-elected pre-paid gratuity, stored as a per-staff-per-hour RATE so it
+-- scales with crew + hours. The dollar amount is always computed by the pricing
+-- engine (rate x staffCount x hours) and appended as a "Gratuity" breakdown line
+-- folded into total_price. Layered on top of the forced "Shared Gratuity"
+-- surcharge (unchanged). Money here is DOLLARS (proposal side).
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS tip_jar BOOLEAN DEFAULT true;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS gratuity_rate NUMERIC(10,4) DEFAULT 0;
+-- Distinguishes a post-payment staffing-driven gratuity change (allowed, client
+-- notified) from a direct admin rate increase (disallowed post-payment). See §7.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS gratuity_rate_change_origin TEXT;
+
+-- Linking rule (§3): if the tip jar is skipped, gratuity must be >= $50/staff/hr.
+-- Existing rows default to (true, 0) and pass, so a plain inline CHECK validates
+-- cleanly with no NOT VALID/VALIDATE dance (the spec's optional path is only
+-- needed when existing rows might fail — they can't here). Idempotent guard
+-- mirrors the proposals_autopay_status_check pattern above.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.constraint_column_usage
+    WHERE table_name = 'proposals' AND constraint_name = 'proposals_gratuity_jar_check'
+  ) THEN
+    ALTER TABLE proposals ADD CONSTRAINT proposals_gratuity_jar_check
+      CHECK (tip_jar = true OR gratuity_rate >= 50);
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.constraint_column_usage
+    WHERE table_name = 'proposals' AND constraint_name = 'proposals_gratuity_origin_check'
+  ) THEN
+    ALTER TABLE proposals ADD CONSTRAINT proposals_gratuity_origin_check
+      CHECK (gratuity_rate_change_origin IS NULL
+             OR gratuity_rate_change_origin IN ('staffing', 'admin'));
+  END IF;
+END $$;
+-- ROLLBACK (manual, if ever needed — schema additions are forward-safe):
+--   ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_gratuity_jar_check;
+--   ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_gratuity_origin_check;
+--   ALTER TABLE proposals DROP COLUMN IF EXISTS gratuity_rate_change_origin;
+--   ALTER TABLE proposals DROP COLUMN IF EXISTS gratuity_rate;
+--   ALTER TABLE proposals DROP COLUMN IF EXISTS tip_jar;
+
 -- ─── Last-Minute Booking Hold ─────────────────────────────────────
 -- Set TRUE by the Stripe webhook (payment_intent.succeeded) when a paid
 -- booking is ≤72h out — drives the admin "verify staffing" badge, the
@@ -1524,7 +1568,7 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 DO $$ BEGIN
   ALTER TABLE stripe_sessions DROP CONSTRAINT IF EXISTS stripe_sessions_status_check;
-  ALTER TABLE stripe_sessions ADD CONSTRAINT stripe_sessions_status_check CHECK (status IN ('pending', 'succeeded', 'failed'));
+  ALTER TABLE stripe_sessions ADD CONSTRAINT stripe_sessions_status_check CHECK (status IN ('pending', 'succeeded', 'failed', 'canceled'));
 EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
 DO $$ BEGIN
