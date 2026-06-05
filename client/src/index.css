@@ -16290,3 +16290,501 @@ html[data-app="staff"] body {
 [data-skin="light"] .sp-doc-picker:hover svg { color: var(--sp-ms-emerald); }
 .sp-doc-picker strong { color: var(--sp-ink-1); font-weight: 600; }
 [data-skin="light"] .sp-doc-picker strong { font-weight: 500; }
+
+/* === CLIENT PORTAL V2 ===
+ * Apothecary styling for the new "Your Portal" surface (PortalHome,
+ * EventCommandCenter, the four tabs, EmptyStates, ArchiveList, ShareButton).
+ * Reuses the existing :root tokens (--paper, --card-bg, --brass, --amber,
+ * --deep-brown, --warm-brown, --cream-text, --text-muted, --shadow-card,
+ * --radius-lg, --font-display, --font-body) so the look matches the rest
+ * of the redesigned public surfaces.
+ *
+ * Mock source: client-portal-v3.html in the Marketing (8) drop. Rules that
+ * exist verbatim in the mock are noted; the portal-specific layout rules
+ * (cp-portal, cp-command, cp-tab-body, cp-rx-*, cp-receipts, cp-leader,
+ * cp-share, cp-potion-*, cp-multi-note) are written fresh against the same
+ * token system.
+ */
+
+/* Page-level wrapper sitting on the chalkboard background. Lifts the
+ * portal content off the dark surface with the standard public-page wrap. */
+.cp-portal {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 24px clamp(20px, 4vw, 40px) 80px;
+  color: var(--cream-text);
+}
+.cp-command { display: block; }
+
+/* Eyebrow used in EventCommandCenter (also used elsewhere in the redesign).
+ * Mirrors styles/redesign.css. */
+.drb-kicker {
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.32em;
+  color: var(--brass);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.drb-kicker::before {
+  content: "";
+  width: 28px; height: 1px;
+  background: var(--brass);
+  opacity: 0.7;
+}
+
+/* Case hero — slim variant the v3 mock settled on. */
+.cp-case-hero {
+  padding: 16px 0 28px;
+  border-bottom: 1px solid rgba(184, 146, 74, 0.22);
+}
+.cp-case-hero h1 {
+  font-size: clamp(1.5rem, 2.6vw, 2.05rem);
+  line-height: 1.05;
+  margin: 6px 0 0;
+  color: var(--cream-text);
+  font-family: var(--font-display);
+}
+.cp-multi-note {
+  margin-top: 10px;
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 0.9rem;
+  color: rgba(240, 232, 214, 0.72);
+}
+
+/* Tab bar — single-line horizontal, brass underline on the active tab. */
+.cp-tabs {
+  display: flex;
+  gap: 0;
+  margin-top: 22px;
+  border-bottom: 1px solid rgba(184, 146, 74, 0.4);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.cp-tab {
+  background: transparent;
+  border: 0;
+  color: rgba(240, 232, 214, 0.65);
+  padding: 14px 22px 12px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  cursor: pointer;
+  position: relative;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.cp-tab:hover { color: var(--cream-text); }
+.cp-tab.active {
+  color: var(--brass-bright);
+  border-bottom-color: var(--brass);
+}
+.cp-tab-body { padding: 28px 0 0; }
+
+/* Case body grid: main column + sticky summary aside (matches the mock). */
+.cp-case-body {
+  display: grid;
+  grid-template-columns: 1.55fr 1fr;
+  gap: 36px;
+  align-items: flex-start;
+  padding: 4px 0 40px;
+}
+.cp-case-main { display: flex; flex-direction: column; gap: 22px; }
+@media (max-width: 860px) {
+  .cp-case-body { grid-template-columns: 1fr; gap: 22px; }
+}
+
+/* Shared parchment-card surface for cp-countdown-card, cp-next-card,
+ * cp-locked-card, cp-summary-card. The mock relied on a common .card
+ * underneath; we apply the look directly here. */
+.cp-countdown-card,
+.cp-next-card,
+.cp-locked-card,
+.cp-summary-card {
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.4 0 0 0 0 0.36 0 0 0 0 0.28 0 0 0 0.05 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"),
+    linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%);
+  border: 2px solid var(--brass);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  color: var(--deep-brown);
+  padding: 24px 28px;
+}
+
+/* Countdown: lab-stamp number + caption. */
+.cp-countdown-card {
+  position: relative;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 28px 24px;
+}
+.cp-countdown-stamp-num {
+  font-family: var(--font-display);
+  font-size: 3.6rem;
+  line-height: 0.95;
+  color: var(--deep-brown);
+  font-variant-numeric: tabular-nums;
+}
+.cp-countdown-foot {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--warm-brown);
+}
+
+/* Next-up card — title plus one CTA. */
+.cp-next-card { padding: 22px 26px; }
+.cp-next-title {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  color: var(--deep-brown);
+  line-height: 1.2;
+  margin: 0 0 14px;
+}
+
+/* Procedure timeline — vertical step rail with a brass thread. */
+.cp-procedure {
+  list-style: none;
+  margin: 4px 0;
+  padding: 18px 24px;
+  position: relative;
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.2' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.4 0 0 0 0 0.36 0 0 0 0 0.28 0 0 0 0.05 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"),
+    linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%);
+  border: 2px solid var(--brass);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+.cp-procedure::before {
+  content: "";
+  position: absolute;
+  top: 28px;
+  bottom: 28px;
+  left: 38px;
+  width: 2px;
+  background: linear-gradient(180deg, rgba(184, 146, 74, 0.6), rgba(184, 146, 74, 0.2));
+}
+.cp-proc-step {
+  position: relative;
+  padding: 10px 0 10px 36px;
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  color: var(--text-muted);
+  list-style: none;
+}
+.cp-proc-step::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 12px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--paper);
+  border: 2px solid rgba(28, 22, 16, 0.3);
+  z-index: 1;
+}
+.cp-proc-step.done { color: var(--deep-brown); }
+.cp-proc-step.done::before {
+  background: var(--brass);
+  border-color: var(--brass);
+}
+
+/* Locked-card (day-of details preview). */
+.cp-locked-card { padding: 24px 28px; }
+.cp-locked-title {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  color: var(--deep-brown);
+  margin: 0 0 8px;
+}
+.cp-locked-card p {
+  color: rgba(28, 22, 16, 0.78);
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+/* Summary aside — total/paid/balance leader rows + a thin pay bar. */
+.cp-summary-card { padding: 22px 24px; position: sticky; top: 110px; }
+.cp-summary-leader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 8px 0;
+  border-bottom: 1px dotted rgba(28, 22, 16, 0.25);
+  font-size: 0.93rem;
+  color: var(--deep-brown);
+}
+.cp-summary-leader:last-of-type { border-bottom: 0; }
+.cp-summary-leader span:first-child {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.cp-summary-leader span:last-child { font-variant-numeric: tabular-nums; }
+.cp-case-pay-bar {
+  height: 6px;
+  background: rgba(28, 22, 16, 0.10);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(28, 22, 16, 0.16);
+  margin-top: 12px;
+}
+.cp-case-pay-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--brass) 0%, var(--amber) 100%);
+  transition: width 0.4s ease;
+}
+@media (max-width: 860px) {
+  .cp-summary-card { position: static; }
+}
+
+/* Prescription tab — package summary, includes list, totals, signature. */
+.cp-rx {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.cp-rx-pkg,
+.cp-rx-addons,
+.cp-rx-totals,
+.cp-rx-payments {
+  background: linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%);
+  border: 1px solid rgba(184, 146, 74, 0.45);
+  border-radius: var(--radius-lg);
+  padding: 22px 26px;
+  color: var(--deep-brown);
+}
+.cp-rx-pkg h3 {
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  color: var(--deep-brown);
+  margin: 0 0 12px;
+}
+.cp-rx-includes {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+.cp-rx-includes li {
+  font-size: 0.92rem;
+  color: var(--deep-brown);
+  padding-left: 20px;
+  position: relative;
+}
+.cp-rx-includes li::before {
+  content: "✓";
+  position: absolute;
+  left: 0;
+  color: var(--amber);
+  font-family: var(--font-display);
+}
+.cp-rx-addons h4,
+.cp-rx-payments h4 {
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--warm-brown);
+  margin: 0 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(184, 146, 74, 0.4);
+}
+.cp-rx-sig {
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 0.9rem;
+  color: rgba(240, 232, 214, 0.72);
+  padding: 4px 4px 0;
+}
+.cp-rx-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+/* Generic leader-dot row used inside cp-rx-* blocks. */
+.cp-leader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 8px 0;
+  border-bottom: 1px dotted rgba(28, 22, 16, 0.22);
+  font-size: 0.93rem;
+  color: var(--deep-brown);
+}
+.cp-leader:last-child { border-bottom: 0; }
+.cp-leader span:first-child {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  color: var(--deep-brown);
+}
+.cp-leader span:last-child {
+  font-variant-numeric: tabular-nums;
+  color: var(--warm-brown);
+  font-family: var(--font-display);
+}
+
+/* Potion tab — summary card + actions. */
+.cp-potion-summary {
+  background: linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%);
+  border: 1px solid rgba(184, 146, 74, 0.45);
+  border-radius: var(--radius-lg);
+  padding: 26px 28px;
+  color: var(--deep-brown);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.cp-potion-serving {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  color: var(--deep-brown);
+  line-height: 1.15;
+}
+.cp-potion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+/* Receipts tab — list of invoice rows. */
+.cp-receipts { display: flex; flex-direction: column; gap: 10px; }
+.cp-receipt-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 20px;
+  background: linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%);
+  border: 1px solid rgba(184, 146, 74, 0.45);
+  border-radius: var(--radius-lg);
+  color: var(--deep-brown);
+  font-size: 0.95rem;
+}
+.cp-receipt-row span:first-child {
+  font-family: var(--font-display);
+  color: var(--deep-brown);
+}
+.cp-receipt-row span:nth-child(2) {
+  font-variant-numeric: tabular-nums;
+  color: var(--warm-brown);
+  font-family: var(--font-display);
+}
+@media (max-width: 720px) {
+  .cp-receipt-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}
+
+/* Empty states (BrandNewEmpty / NoEvent / "menu opens after booking"). */
+.cp-empty {
+  text-align: center;
+  padding: 60px 30px;
+  background: rgba(184, 146, 74, 0.04);
+  border: 1px dashed rgba(184, 146, 74, 0.4);
+  border-radius: var(--radius-lg);
+  color: var(--cream-text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.cp-empty h3 {
+  font-family: var(--font-display);
+  color: var(--cream-text);
+  font-size: 1.5rem;
+  margin: 0;
+}
+.cp-empty p {
+  color: rgba(240, 232, 214, 0.72);
+  margin: 0;
+  font-size: 1rem;
+}
+
+/* Archive list — slim rows for past events. */
+.cp-archive-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 28px;
+}
+.cp-archive-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 22px;
+  background: linear-gradient(180deg, var(--paper) 0%, var(--card-bg) 100%);
+  border: 1px solid rgba(184, 146, 74, 0.45);
+  border-radius: var(--radius-lg);
+  text-decoration: none;
+  color: var(--deep-brown);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.cp-archive-row:hover {
+  transform: translateY(-2px);
+  border-color: var(--brass);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+}
+.cp-archive-title {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  color: var(--deep-brown);
+  line-height: 1.1;
+}
+.cp-archive-date {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.cp-archive-total {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  color: var(--warm-brown);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 600px) {
+  .cp-archive-row { grid-template-columns: 1fr auto; }
+  .cp-archive-date { grid-column: 1 / -1; font-size: 0.85rem; }
+}
+
+/* Share button row — outline button plus a one-line hint. */
+.cp-share {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.cp-share-hint {
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 0.82rem;
+  color: rgba(240, 232, 214, 0.65);
+}
+.cp-rx-actions .cp-share-hint,
+.cp-potion-actions .cp-share-hint,
+.cp-receipt-row .cp-share-hint {
+  color: var(--text-muted);
+}
+
+/* === END CLIENT PORTAL V2 === */
