@@ -1,6 +1,7 @@
 const { Resend } = require('resend');
 const { notificationsEnabled } = require('./notificationsEnabled');
 const { QuotaExceededError } = require('./errors');
+const { buildEmailLogEntry, logClientMessage } = require('./messageLog');
 
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
@@ -48,7 +49,7 @@ function isQuotaError(error) {
  * @param {Array<{filename: string, content: Buffer|string}>} [options.attachments] - Resend attachments
  * @returns {Promise<{id: string}>}
  */
-async function sendEmail({ to, subject, html, text, from, replyTo, attachments }) {
+async function sendEmail({ to, subject, html, text, from, replyTo, attachments, meta }) {
   if (!resend || !notificationsEnabled()) {
     const why = !resend ? 'RESEND_API_KEY not set' : 'notifications gated off';
     console.log(`[DEV] Email skipped (${why}) → ${to} | Subject: ${subject}${attachments ? ` (with ${attachments.length} attachment(s))` : ''}`);
@@ -68,10 +69,12 @@ async function sendEmail({ to, subject, html, text, from, replyTo, attachments }
 
   if (error) {
     console.error('[email] Resend send FAILED for', to, '—', error?.message || JSON.stringify(error));
+    logClientMessage(buildEmailLogEntry({ to, subject, meta, error })); // fire-and-forget
     if (isQuotaError(error)) throw new QuotaExceededError(error?.message || 'Resend daily sending quota reached');
     throw new Error(error?.message || 'Resend send failed');
   }
 
+  logClientMessage(buildEmailLogEntry({ to, subject, meta, result: data })); // fire-and-forget
   return data;
 }
 
