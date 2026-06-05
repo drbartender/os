@@ -7,7 +7,7 @@ export default function PotionTab({ focus }) {
   const [state, setState] = useState(focus.drink_plan_token ? 'loading' : 'none');
   useEffect(() => { if (!focus.drink_plan_token) return; let off = false; (async () => {
     try { const { data } = await api.get(`/drink-plans/t/${focus.drink_plan_token}`);
-      if (!off) { setPlan(data); setState('ready'); }
+      if (!off) { setPlan(data || {}); setState('ready'); }
     } catch (e) { if (!off) { Sentry.captureException(e, { tags: { area: 'client-portal', tab: 'potion', token: focus.token } }); setState('error'); } }
   })(); return () => { off = true; }; }, [focus.drink_plan_token]);
   if (state === 'none') return <div className="cp-empty"><p>Your menu opens after booking.</p></div>;

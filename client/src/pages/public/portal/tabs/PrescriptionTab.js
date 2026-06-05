@@ -10,7 +10,7 @@ export default function PrescriptionTab({ focus }) {
   useEffect(() => { let off = false; (async () => {
     try { const token = localStorage.getItem('db_client_token');
       const { data } = await api.get(`/client-portal/proposals/${focus.token}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (!off) { setP(data.proposal); setState('ready'); }
+      if (!off) { setP(data.proposal || {}); setState('ready'); }
     } catch (e) { if (!off) { Sentry.captureException(e, { tags: { area: 'client-portal', tab: 'prescription', token: focus.token } }); setState('error'); } }
   })(); return () => { off = true; }; }, [focus.token]);
 
