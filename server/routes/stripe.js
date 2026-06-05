@@ -11,7 +11,6 @@ const emailTemplates = require('../utils/emailTemplates');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { calculateSyrupCost } = require('../utils/pricingEngine');
 const { createBalanceInvoice, linkPaymentToInvoice, createDrinkPlanExtrasInvoice, findOpenInvoiceForBalance } = require('../utils/invoiceHelpers');
-const { getEventTypeLabel } = require('../utils/eventTypes');
 const { renderEventIcs } = require('../utils/icsCalendar');
 const { buildOrientationPayload } = require('../utils/orientationData');
 const { shouldSendImmediate } = require('../utils/messageSuppression');
@@ -25,10 +24,6 @@ const { esc } = require('../utils/htmlEscape');
 
 const router = express.Router();
 
-function eventLabelFor(row) {
-  return getEventTypeLabel({ event_type: row?.event_type, event_type_custom: row?.event_type_custom });
-}
-
 const {
   getStripe,
   getPublishableKey,
@@ -36,170 +31,17 @@ const {
   getTestClient,
 } = require('../utils/stripeClient');
 
-const DEPOSIT_AMOUNT = parseInt(process.env.STRIPE_DEPOSIT_AMOUNT, 10) || 10000; // $100.00
+// Shared helpers extracted to a sibling module (also used by the create-intent
+// sub-router) so create-intent's gratuity logic doesn't grow this over-cap file.
+const { DEPOSIT_AMOUNT, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
+
+// create-intent lives in its own module (extracted in the gratuity split).
+router.use(require('./stripeCreateIntent'));
 
 /** GET /api/stripe/publishable-key — returns the active publishable key */
 router.get('/publishable-key', publicReadLimiter, (_req, res) => {
   res.json({ key: getPublishableKey() || null });
 });
-
-// ─── Helper: get or create Stripe Customer for a proposal ────────
-
-async function getOrCreateCustomer(proposal) {
-  const stripe = getStripe();
-  // Validate the cached id against the active Stripe mode (live vs test).
-  // STRIPE_TEST_MODE_UNTIL toggles modes; a customer from one mode is not
-  // retrievable from the other. Verify before reuse.
-  if (proposal.stripe_customer_id) {
-    try {
-      const existing = await stripe.customers.retrieve(proposal.stripe_customer_id);
-      if (existing && !existing.deleted) return proposal.stripe_customer_id;
-    } catch (err) {
-      // resource_missing → safe to create new. Anything else (transient API
-      // failure) → re-throw so we don't overwrite a valid id with a fresh
-      // customer and break a future off-session autopay charge.
-      if (err && err.code === 'resource_missing') {
-        // Self-healing during STRIPE_TEST_MODE_UNTIL cutovers.
-        console.warn(`[Stripe] Cached customer ${proposal.stripe_customer_id} not retrievable in current mode for proposal ${proposal.id}; creating new`);
-      } else { throw err; }
-    }
-  }
-  const customer = await stripe.customers.create({
-    email: proposal.client_email || undefined,
-    name: proposal.client_name || undefined,
-    metadata: { proposal_id: String(proposal.id) },
-  });
-  try {
-    await pool.query(
-      'UPDATE proposals SET stripe_customer_id = $1 WHERE id = $2',
-      [customer.id, proposal.id]
-    );
-  } catch (dbErr) {
-    console.error(`Failed to save Stripe customer ${customer.id} to proposal ${proposal.id} (non-fatal):`, dbErr);
-  }
-  return customer.id;
-}
-
-// ─── Public: create a Payment Intent for a proposal ──────────────
-
-/** POST /api/stripe/create-intent/:token — public, token-gated */
-router.post('/create-intent/:token', publicLimiter, asyncHandler(async (req, res) => {
-  const stripe = getStripe();
-  if (!stripe) {
-    throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
-  }
-
-  const { payment_option = 'deposit', autopay = false } = req.body;
-
-  const result = await pool.query(`
-    SELECT p.id, p.status, p.event_type, p.event_type_custom, p.total_price,
-           p.event_date, p.event_start_time,
-           p.stripe_customer_id, p.deposit_amount,
-           c.email AS client_email, c.name AS client_name
-    FROM proposals p
-    LEFT JOIN clients c ON c.id = p.client_id
-    WHERE p.token = $1
-  `, [req.params.token]);
-
-  if (!result.rows[0]) throw new NotFoundError('This proposal is no longer available');
-
-  const proposal = result.rows[0];
-  if (['deposit_paid', 'balance_paid', 'confirmed'].includes(proposal.status)) {
-    throw new ConflictError('Payment has already been made for this proposal', 'ALREADY_PAID');
-  }
-  if (!['sent', 'viewed', 'accepted'].includes(proposal.status)) {
-    throw new ConflictError('This proposal is not available for payment', 'NOT_PAYABLE');
-  }
-
-  // Last-minute booking gate: inside 14 days, full payment is the ONLY option.
-  // Reject a deposit attempt outright — NEVER silently upgrade the charge (the
-  // client expects a $100 deposit; charging the full total without consent is a
-  // money-integrity violation). The UI already hides the deposit tablet inside
-  // this window; this is the server-side backstop against a stale client or a
-  // direct API hit. Full payment naturally drives status='balance_paid', which
-  // the autopay scheduler never claims — so this also sidesteps the past-due
-  // balance problem without touching the charge path or balance_due_date.
-  const bookingWindow = getBookingWindow({
-    eventDate: proposal.event_date,
-    eventStartTime: proposal.event_start_time,
-  });
-  if (bookingWindow.fullPaymentRequired && payment_option !== 'full') {
-    throw new ConflictError(
-      'This event is within 2 weeks — full payment is required to book.',
-      'FULL_PAYMENT_REQUIRED'
-    );
-  }
-
-  const isFullPay = payment_option === 'full';
-  const wantsAutopay = !isFullPay && autopay === true;
-  const amount = isFullPay
-    ? Math.round(Number(proposal.total_price) * 100)
-    : DEPOSIT_AMOUNT;
-
-  // Reuse existing pending intent if amount matches
-  const existing = await pool.query(
-    "SELECT stripe_payment_intent_id, amount FROM stripe_sessions WHERE proposal_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
-    [proposal.id]
-  );
-  if (existing.rows[0] && existing.rows[0].amount === amount) {
-    try {
-      const intent = await stripe.paymentIntents.retrieve(existing.rows[0].stripe_payment_intent_id);
-      if (intent.status === 'requires_payment_method' || intent.status === 'requires_confirmation') {
-        return res.json({ clientSecret: intent.client_secret });
-      }
-    } catch (e) {
-      // Intent no longer valid, create a new one
-    }
-  }
-
-  // Create or retrieve Stripe Customer (needed for autopay card saving)
-  const customerId = await getOrCreateCustomer(proposal);
-
-  const intentParams = {
-    amount,
-    currency: 'usd',
-    customer: customerId,
-    description: isFullPay
-      ? `Full Payment — ${eventLabelFor(proposal)}`
-      : `Event Deposit — ${eventLabelFor(proposal)}`,
-    receipt_email: proposal.client_email || undefined,
-    metadata: {
-      proposal_id: String(proposal.id),
-      payment_type: isFullPay ? 'full' : 'deposit',
-    },
-  };
-
-  // Save payment method for future off-session charges (autopay)
-  if (wantsAutopay) {
-    intentParams.setup_future_usage = 'off_session';
-  }
-
-  let paymentIntent;
-  try {
-    paymentIntent = await stripe.paymentIntents.create(intentParams);
-  } catch (err) {
-    console.error('Stripe create-intent error:', err);
-    throw new ExternalServiceError('Stripe', err, 'Payment temporarily unavailable. Please try again.');
-  }
-
-  await pool.query(
-    `INSERT INTO stripe_sessions (proposal_id, stripe_payment_intent_id, amount, status)
-     VALUES ($1, $2, $3, 'pending')
-     ON CONFLICT (stripe_payment_intent_id) DO NOTHING`,
-    [proposal.id, paymentIntent.id, amount]
-  );
-
-  // Update proposal with payment preferences and default balance_due_date
-  await pool.query(`
-    UPDATE proposals
-    SET payment_type = $1,
-        autopay_enrolled = $2,
-        balance_due_date = COALESCE(balance_due_date, event_date - INTERVAL '14 days')
-    WHERE id = $3
-  `, [isFullPay ? 'full' : 'deposit', wantsAutopay, proposal.id]);
-
-  res.json({ clientSecret: paymentIntent.client_secret });
-}));
 
 // ─── Public: create a Payment Intent for drink plan extras ──────
 
