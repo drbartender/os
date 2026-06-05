@@ -966,7 +966,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
               await sendEmail({
                 to: pi.client_email,
                 ...tpl,
-                ...(attachments.length ? { attachments } : {}),
+                ...(attachments.length ? { attachments } : {}), meta: { proposalId, messageType: 'signed_and_paid' },
               });
             }
           } catch (orientationErr) {
@@ -980,7 +980,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             const tpl = emailTemplates.signedAndPaidClient({
               clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute,
             });
-            await sendEmail({ to: pi.client_email, ...tpl });
+            await sendEmail({ to: pi.client_email, ...tpl, meta: { proposalId, messageType: 'signed_and_paid' } });
           }
 
           // Phase 3 (spec 2.1): sign+pay confirmation SMS, sent alongside the
@@ -1025,7 +1025,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           const tpl = emailTemplates.paymentReceivedClient({
             clientName: pi.client_name, eventTypeLabel: eventLabel, amount: amountFormatted, paymentType: payLabel, lastMinute, autopay: isAutopaySuccess,
           });
-          await sendEmail({ to: pi.client_email, ...tpl });
+          await sendEmail({ to: pi.client_email, ...tpl, meta: { proposalId, messageType: 'payment_received' } });
         }
       }
       // Admin notification consolidation: the standalone clientSignedAdmin fires

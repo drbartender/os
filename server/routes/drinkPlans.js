@@ -463,7 +463,7 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
             balanceDue,
             balanceDueDate: pn.balance_due_date,
           });
-          sendEmail({ to: clientEmail, ...tpl }).catch(emailErr => console.error('Client drink-plan confirmation email failed:', emailErr));
+          sendEmail({ to: clientEmail, ...tpl, meta: { proposalId: pn.id, messageType: 'drink_plan_ready' } }).catch(emailErr => console.error('Client drink-plan confirmation email failed:', emailErr));
         }
       }
     }
@@ -554,7 +554,7 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
             balanceDue: 0,
             balanceDueDate: row.balance_due_date,
           });
-          sendEmail({ to: row.client_email, ...tpl }).catch(e => console.error('Drink-plan submit fast-path email failed:', e));
+          sendEmail({ to: row.client_email, ...tpl, meta: { proposalId: row.id, messageType: 'drink_plan_ready' } }).catch(e => console.error('Drink-plan submit fast-path email failed:', e));
         }
       }
     } catch (e) {
@@ -1026,7 +1026,7 @@ router.patch('/:id/shopping-list/approve', auth, requireAdminOrManager, asyncHan
      WHERE id = $1
        AND shopping_list IS NOT NULL
        AND shopping_list_status IS DISTINCT FROM 'approved'
-     RETURNING id, token, client_name, client_email, event_type, event_type_custom, event_date`,
+     RETURNING id, token, client_name, client_email, event_type, event_type_custom, event_date, proposal_id`,
     [req.params.id]
   );
 
@@ -1081,7 +1081,7 @@ router.patch('/:id/shopping-list/approve', auth, requireAdminOrManager, asyncHan
         })
       : null;
     if (tpl) {
-      sendEmail({ to: plan.client_email, ...tpl }).catch(emailErr => {
+      sendEmail({ to: plan.client_email, ...tpl, meta: { proposalId: plan.proposal_id, messageType: 'shopping_list_ready' } }).catch(emailErr => {
         console.error('Shopping-list-ready email failed:', emailErr);
         if (process.env.SENTRY_DSN_SERVER) {
           Sentry.captureException(emailErr, {
