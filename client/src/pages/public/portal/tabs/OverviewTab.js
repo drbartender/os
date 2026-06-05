@@ -1,6 +1,6 @@
 import React from 'react';
 import { Countdown, SummaryAside, NextUpCard, ProcedureTimeline } from '../OverviewWidgets';
-const isPast = (focus) => focus.event_date && new Date(focus.event_date + 'T12:00:00') < new Date();
+const isPast = (focus) => focus.event_date && new Date(String(focus.event_date).slice(0, 10) + 'T12:00:00') < new Date();
 export default function OverviewTab({ focus }) {
   const past = isPast(focus);
   return (<div className="cp-case-body"><div className="cp-case-main">

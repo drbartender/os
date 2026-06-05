@@ -1,7 +1,7 @@
 import React from 'react';
 import { formatDollars } from './money';
 import { deriveNextUp } from './nextUp';
-const daysUntil = (d) => d ? Math.ceil((new Date(d + 'T12:00:00') - new Date()) / 86400000) : null;
+const daysUntil = (d) => d ? Math.ceil((new Date(String(d).slice(0, 10) + 'T12:00:00') - new Date()) / 86400000) : null;
 const ORDER = ['draft','sent','viewed','modified','accepted','deposit_paid','balance_paid','confirmed','completed'];
 const at = (s) => ORDER.indexOf(s);
 
