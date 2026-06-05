@@ -874,6 +874,19 @@ ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_ip VARCHAR(45);
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_user_agent TEXT;
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS client_signature_document_version VARCHAR(50);
 
+-- ─── Proposal origin (intake source) ───────────────────────────────
+-- NULL means manual / direct (the contract, permanently — never "unknown").
+-- Thumbtack auto-drafts set 'thumbtack'. Widen the CHECK as new sources land.
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS source VARCHAR(30);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'proposals_source_check'
+  ) THEN
+    ALTER TABLE proposals ADD CONSTRAINT proposals_source_check
+      CHECK (source IS NULL OR source IN ('thumbtack'));
+  END IF;
+END $$;
+
 -- ─── Stripe Payment Sessions ───────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS stripe_sessions (
@@ -1684,6 +1697,10 @@ CREATE INDEX IF NOT EXISTS idx_clients_phone_normalized
 DROP TRIGGER IF EXISTS update_thumbtack_leads_updated_at ON thumbtack_leads;
 CREATE TRIGGER update_thumbtack_leads_updated_at BEFORE UPDATE ON thumbtack_leads
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Link a lead to the draft proposal auto-created from it (idempotency + tracing).
+ALTER TABLE thumbtack_leads
+  ADD COLUMN IF NOT EXISTS proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS thumbtack_messages (
   id SERIAL PRIMARY KEY,

@@ -604,7 +604,7 @@ function wrapMarketingEmail(innerHtml, unsubscribeUrl) {
 
 // ─── Thumbtack Admin Notifications ──────────────────────────────
 
-function newThumbtackLeadAdmin({ customerName, customerPhone, category, description, location, eventDate, details, adminUrl }) {
+function newThumbtackLeadAdmin({ customerName, customerPhone, category, description, location, eventDate, details, adminUrl, proposalUrl }) {
   const name = esc(customerName || 'Unknown');
   const detailRows = (details || [])
     .map(d => `<tr><td style="padding:6px 12px;font-weight:bold;color:${BRAND.secondary};vertical-align:top;width:140px;">${esc(d.question)}</td><td style="padding:6px 12px;">${esc(d.answer)}</td></tr>`)
@@ -619,7 +619,9 @@ function newThumbtackLeadAdmin({ customerName, customerPhone, category, descript
     html: wrapEmail(`
       <h2 style="color:${BRAND.primary};margin-top:0;">New Thumbtack Lead</h2>
       <p style="background:#fff3cd;border:1px solid #ffc107;padding:12px;border-radius:6px;font-weight:bold;">
-        Action needed: Grab the customer's email from Thumbtack (lead &rarr; three dots &rarr; create estimate/invoice).
+        ${proposalUrl
+          ? "A Core Reaction draft proposal was created. Add the customer's email from Thumbtack (lead, three dots, create estimate/invoice), then review and Send."
+          : "Action needed: Grab the customer's email from Thumbtack (lead, three dots, create estimate/invoice)."}
       </p>
       <table style="width:100%;border-collapse:collapse;margin:1.5rem 0;">
         <tr><td style="padding:8px 12px;font-weight:bold;color:${BRAND.secondary};width:120px;">Name</td><td style="padding:8px 12px;">${name}</td></tr>
@@ -630,9 +632,11 @@ function newThumbtackLeadAdmin({ customerName, customerPhone, category, descript
       </table>
       ${description ? `<p><strong>Description:</strong> ${esc(description)}</p>` : ''}
       ${detailsTable}
-      ${adminUrl ? ctaButton(adminUrl, 'View Client') : ''}
+      ${proposalUrl
+        ? ctaButton(proposalUrl, 'Review & Send Proposal')
+        : (adminUrl ? ctaButton(adminUrl, 'View Client') : '')}
     `),
-    text: `New Thumbtack lead: ${customerName || 'Unknown'} — ${customerPhone || 'no phone'}. Category: ${category || 'N/A'}. Location: ${location || 'N/A'}. Date: ${dateStr}. ACTION: Grab email from Thumbtack.${adminUrl ? ` View: ${adminUrl}` : ''}`,
+    text: `New Thumbtack lead: ${customerName || 'Unknown'} — ${customerPhone || 'no phone'}. Category: ${category || 'N/A'}. Location: ${location || 'N/A'}. Date: ${dateStr}. ${proposalUrl ? `Draft created — review & send: ${proposalUrl}` : 'ACTION: Grab email from Thumbtack.'}${!proposalUrl && adminUrl ? ` View: ${adminUrl}` : ''}`,
   };
 }
 

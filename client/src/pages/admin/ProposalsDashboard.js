@@ -10,6 +10,7 @@ import Toolbar from '../../components/adminos/Toolbar';
 import { fmt$, fmtDate, relDay } from '../../components/adminos/format';
 import ClickableRow from '../../components/ClickableRow';
 import CcImportBadge from '../../components/admin/CcImportBadge';
+import SourceBadge from '../../components/admin/SourceBadge';
 
 // Mirrors `proposals_status_check` in server/db/schema.sql. Keep in sync —
 // the constraint allows draft/sent/viewed/modified/accepted/deposit_paid/
@@ -39,6 +40,7 @@ export default function ProposalsDashboard() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [tab, setTab] = useState('active');
+  const [sourceFilter, setSourceFilter] = useState('');  // '' | 'thumbtack' | 'manual'
   const [copyMessage, setCopyMessage] = useState('');
 
   // Map UI tab → server query string. Each tab fetches a server-side bucket so
@@ -53,13 +55,13 @@ export default function ProposalsDashboard() {
     all:     '?view=all',
   }), []);
 
-  // Tab counts come from /dashboard-stats. Fetched once on mount because the
-  // pipeline aggregates don't change between tab switches — only mutations
-  // (create/sign/pay) move proposals between buckets, and those force a page
-  // reload anyway. Failing the stats request leaves counts at zero (graceful
-  // degradation — tabs still work, just without the count badge).
+  // Tab counts come from /dashboard-stats, re-fetched when the source filter
+  // changes so the counts stay consistent with the filtered list. Failing the
+  // stats request leaves counts at zero (graceful degradation — tabs still
+  // work, just without the count badge).
   useEffect(() => {
-    api.get('/proposals/dashboard-stats')
+    const qs = sourceFilter ? `?source=${sourceFilter}` : '';
+    api.get(`/proposals/dashboard-stats${qs}`)
       .then(r => {
         const pipeByKey = Object.fromEntries((r.data?.pipeline || []).map(p => [p.key, p.count]));
         setCounts({
@@ -71,13 +73,14 @@ export default function ProposalsDashboard() {
         });
       })
       .catch(() => { /* leave counts at zero — graceful degradation */ });
-  }, []);
+  }, [sourceFilter]);
 
   const fetchProposals = useCallback(async (currentTab) => {
     setLoading(true);
     try {
       const qs = tabToQuery[currentTab] || tabToQuery.active;
-      const list = await api.get(`/proposals${qs}`);
+      const sourceQs = sourceFilter ? `&source=${sourceFilter}` : '';
+      const list = await api.get(`/proposals${qs}${sourceQs}`);
       setProposals(list.data || []);
     } catch (err) {
       console.error('Failed to fetch proposals:', err);
@@ -85,7 +88,7 @@ export default function ProposalsDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [toast, tabToQuery]);
+  }, [toast, tabToQuery, sourceFilter]);
 
   useEffect(() => { fetchProposals(tab); }, [fetchProposals, tab]);
 
@@ -139,6 +142,21 @@ export default function ProposalsDashboard() {
 
       <Toolbar search={search} setSearch={setSearch} tabs={tabs} tab={tab} setTab={setTab} />
 
+      <div className="hstack" style={{ gap: 8, marginBottom: 12 }}>
+        <label className="tiny muted" htmlFor="source-filter">Source</label>
+        <select
+          id="source-filter"
+          className="input"
+          style={{ maxWidth: 200 }}
+          value={sourceFilter}
+          onChange={(e) => setSourceFilter(e.target.value)}
+        >
+          <option value="">All sources</option>
+          <option value="thumbtack">Thumbtack</option>
+          <option value="manual">Manual / Direct</option>
+        </select>
+      </div>
+
       <div className="card" style={{ overflow: 'hidden' }}>
         <div className="tbl-wrap">
           <table className="tbl">
@@ -168,6 +186,7 @@ export default function ProposalsDashboard() {
                     <td>
                       <strong>{p.client_name || '—'}</strong>
                       <CcImportBadge ccId={p.proposal_cc_id} />
+                      <SourceBadge source={p.source} />
                       {p.client_email && <div className="sub">{p.client_email}</div>}
                     </td>
                     <td>{getEventTypeLabel({ event_type: p.event_type, event_type_custom: p.event_type_custom })}</td>
