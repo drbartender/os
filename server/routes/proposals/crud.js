@@ -427,7 +427,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   try {
     await dbClient.query('BEGIN');
 
-    const existing = await dbClient.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
+    // FOR UPDATE: the demotion below decides off old.status / old.amount_paid;
+    // lock the row so a Stripe webhook promoting to balance_paid can't land
+    // between this read and our UPDATE and get silently overwritten (spec 6.3).
+    const existing = await dbClient.query('SELECT * FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!existing.rows[0]) {
       throw new NotFoundError('Proposal not found');
     }
@@ -602,7 +605,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // cannot charge the saved card off an admin price edit.
     const newTotalCents = Math.round(Number(snapshot.total) * 100);
     const paidCents = Math.round(Number(old.amount_paid || 0) * 100);
-    if (old.status === 'balance_paid' && newTotalCents > paidCents) {
+    if ((old.status === 'balance_paid' || old.status === 'confirmed') && newTotalCents > paidCents) {
       const demoted = await dbClient.query(
         `UPDATE proposals SET status = 'deposit_paid', autopay_enrolled = false, autopay_status = NULL WHERE id = $1 RETURNING *`,
         [req.params.id]
@@ -614,7 +617,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
          VALUES ($1, 'status_changed', 'admin', $2, $3)`,
         [req.params.id, req.user.id, JSON.stringify({
-          from: 'balance_paid', to: 'deposit_paid',
+          from: old.status, to: 'deposit_paid',
           reason: 'price increased above amount paid', new_total: snapshot.total,
         })]
       );
