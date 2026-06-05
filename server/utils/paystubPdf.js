@@ -1,5 +1,6 @@
 // server/utils/paystubPdf.js
 const PDFDocument = require('pdfkit');
+const { getEventTypeLabel } = require('./eventTypes');
 
 // Helvetica (pdfkit default) lacks some Unicode glyphs; fold to ASCII for the
 // PDF only. Source data is unchanged. \u escapes (not literal glyphs) for
@@ -23,14 +24,25 @@ function formatUsdCents(cents) {
   return `${neg ? '-' : ''}$${dollars}.${rem}`;
 }
 
+// NUMERIC(5,2) hours arrive from pg as strings ("6.00"); render "6h" / "5.5h",
+// never "6.00h". Number() drops trailing zeros; guards null/garbage to ''.
+function formatHours(h) {
+  const n = Number(h);
+  return Number.isFinite(n) ? String(n) : '';
+}
+
+// Canonical event-type label (CLAUDE.md event-identity rule) — never the raw
+// slug. getEventTypeLabel maps ids/custom text to a human label ('event'
+// fallback) so a real booking reads "Smith Family / Birthday Party", not
+// "Smith Family / birthday-party".
 function eventLabel(ev) {
-  const t = ev.event_type_custom || ev.event_type || 'event';
+  const t = getEventTypeLabel(ev);
   return ev.client_name ? `${ev.client_name} / ${t}` : t;
 }
 
 /**
  * @param {object} data { contractorName, period:{start_date,end_date,payday},
- *   paid:{at,method,handle}, events:[...], thisPeriod:{..._cents}, ytd:{..._cents} }
+ *   paid:{at,method}, events:[...], thisPeriod:{..._cents}, ytd:{..._cents} }
  * @returns {Promise<Buffer>}
  */
 function renderPaystubPdf(data) {
@@ -69,7 +81,7 @@ function renderPaystubPdf(data) {
       (data.events || []).forEach((ev) => {
         const y = doc.y;
         doc.text(`${ev.event_date || ''}  ${normalizeForPdf(eventLabel(ev))}`, M, y, { width: 250 });
-        doc.text(`${ev.hours}h`, 300, y, { width: 40, align: 'right' });
+        doc.text(`${formatHours(ev.hours)}h`, 300, y, { width: 40, align: 'right' });
         doc.text(formatUsdCents(ev.line_total_cents), 460, y, { width: 80, align: 'right' });
         if (Number(ev.adjustment_cents) !== 0) {
           doc.fillColor('#555').fontSize(8).text(
@@ -116,4 +128,4 @@ function renderPaystubPdf(data) {
   });
 }
 
-module.exports = { renderPaystubPdf, formatUsdCents };
+module.exports = { renderPaystubPdf, formatUsdCents, eventLabel };

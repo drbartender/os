@@ -91,16 +91,24 @@ export default function PayoutDetail() {
   const handleDownload = useCallback(async () => {
     setDownloading(true);
     setDownloadErr(null);
+    // Open the tab synchronously, inside the click gesture, so mobile Safari /
+    // strict popup blockers don't swallow it after the await. Sever opener
+    // (about:blank is same-origin) before navigating it to the signed URL.
+    const tab = window.open('', '_blank');
+    if (tab) tab.opener = null;
     try {
       const res = await api.get(`/me/payouts/${periodId}/paystub`);
       if (res.data && res.data.url) {
-        window.open(res.data.url, '_blank', 'noopener');
+        if (tab) tab.location = res.data.url;
+        else window.location.href = res.data.url; // popup blocked — same-tab fallback
       } else {
+        if (tab) tab.close();
         setDownloadErr('Could not prepare the paystub. Try again.');
       }
     } catch (err) {
       // Covers the network/500 case and a 409 (unpaid) defense-in-depth,
       // though the button only renders for paid periods.
+      if (tab) tab.close();
       setDownloadErr(err?.message || 'Could not prepare the paystub. Try again.');
     } finally {
       setDownloading(false);

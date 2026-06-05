@@ -261,7 +261,9 @@ function register(router) {
       [data.storageKey, payout.id]
     );
     // Deterministic key, so a lost race just reuses the stored value — both
-    // racers uploaded to the same object so the bytes are identical.
+    // racers uploaded to the same object (R2 PutObject is last-write-wins; the
+    // PDFs are semantically identical even if pdfkit's embedded CreationDate
+    // makes the bytes differ).
     let key = upd.rows[0] && upd.rows[0].paystub_storage_key;
     if (!key) {
       const re = await pool.query(

@@ -35,7 +35,7 @@ async function assemblePaystubData(contractorId, periodId) {
   //    accountReads.js; precedence is deliberately legal-name-first here.)
   const head = await pool.query(
     `SELECT po.id AS payout_id, po.status, po.total_cents,
-            po.paid_at, po.payment_method, po.payment_handle,
+            po.paid_at, po.payment_method,
             pp.start_date, pp.end_date, pp.payday,
             COALESCE(ag.full_name, ap.full_name, cp.preferred_name, u.email) AS contractor_name
        FROM payouts po
@@ -50,21 +50,43 @@ async function assemblePaystubData(contractorId, periodId) {
   if (!head.rows[0]) return null;
   const h = head.rows[0];
 
-  // 2. This period's events (mirror the SELECT in staffPortal/payouts.js detail).
-  const ev = await pool.query(
-    `SELECT pe.shift_id, pe.hours, pe.wage_cents, pe.gratuity_share_cents,
-            pe.card_tip_net_cents, pe.adjustment_cents, pe.adjustment_note,
-            pe.line_total_cents,
-            pr.event_date, pr.event_type, pr.event_type_custom,
-            c.name AS client_name
-       FROM payout_events pe
-       JOIN shifts s ON s.id = pe.shift_id
-  LEFT JOIN proposals pr ON pr.id = s.proposal_id
-  LEFT JOIN clients c ON c.id = pr.client_id
-      WHERE pe.payout_id = $1
-      ORDER BY pr.event_date ASC, pe.id ASC`,
-    [h.payout_id]
-  );
+  // 2 + 3. This period's events (mirror the SELECT in staffPortal/payouts.js
+  //   detail) and the two YTD aggregates (net + category breakdown). All three
+  //   depend only on the head row, not on each other, so fan them out in one
+  //   Promise.all instead of three serial Neon round-trips.
+  const [ev, ytdNet, ytdCat] = await Promise.all([
+    pool.query(
+      `SELECT pe.shift_id, pe.hours, pe.wage_cents, pe.gratuity_share_cents,
+              pe.card_tip_net_cents, pe.adjustment_cents, pe.adjustment_note,
+              pe.line_total_cents,
+              pr.event_date, pr.event_type, pr.event_type_custom,
+              c.name AS client_name
+         FROM payout_events pe
+         JOIN shifts s ON s.id = pe.shift_id
+    LEFT JOIN proposals pr ON pr.id = s.proposal_id
+    LEFT JOIN clients c ON c.id = pr.client_id
+        WHERE pe.payout_id = $1
+        ORDER BY pr.event_date ASC, pe.id ASC`,
+      [h.payout_id]
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(po.total_cents), 0) AS net
+         FROM payouts po JOIN pay_periods pp ON pp.id = po.pay_period_id
+        WHERE ${YTD_WHERE}`,
+      [contractorId, h.payday]
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(pe.wage_cents),0) AS wages,
+              COALESCE(SUM(pe.gratuity_share_cents),0) AS gratuity,
+              COALESCE(SUM(pe.card_tip_net_cents),0) AS card_tips,
+              COALESCE(SUM(pe.adjustment_cents),0) AS adjustments
+         FROM payout_events pe
+         JOIN payouts po ON po.id = pe.payout_id
+         JOIN pay_periods pp ON pp.id = po.pay_period_id
+        WHERE ${YTD_WHERE}`,
+      [contractorId, h.payday]
+    ),
+  ]);
   const sum = (k) => ev.rows.reduce((a, r) => a + Number(r[k] || 0), 0);
   const thisPeriod = {
     wages_cents: sum('wage_cents'),
@@ -73,25 +95,6 @@ async function assemblePaystubData(contractorId, periodId) {
     adjustments_cents: sum('adjustment_cents'),
     net_cents: Number(h.total_cents), // canonical payout total, not a re-sum
   };
-
-  // 3. YTD net (canonical) + category breakdown.
-  const ytdNet = await pool.query(
-    `SELECT COALESCE(SUM(po.total_cents), 0) AS net
-       FROM payouts po JOIN pay_periods pp ON pp.id = po.pay_period_id
-      WHERE ${YTD_WHERE}`,
-    [contractorId, h.payday]
-  );
-  const ytdCat = await pool.query(
-    `SELECT COALESCE(SUM(pe.wage_cents),0) AS wages,
-            COALESCE(SUM(pe.gratuity_share_cents),0) AS gratuity,
-            COALESCE(SUM(pe.card_tip_net_cents),0) AS card_tips,
-            COALESCE(SUM(pe.adjustment_cents),0) AS adjustments
-       FROM payout_events pe
-       JOIN payouts po ON po.id = pe.payout_id
-       JOIN pay_periods pp ON pp.id = po.pay_period_id
-      WHERE ${YTD_WHERE}`,
-    [contractorId, h.payday]
-  );
 
   return {
     status: h.status,
