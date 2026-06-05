@@ -121,6 +121,14 @@ const styles = {
     lineHeight: 1.6,
     marginBottom: '0.3rem',
   },
+  agreementHeading: {
+    fontFamily: 'var(--font-display)',
+    fontSize: '1.02rem',
+    fontWeight: 600,
+    color: 'var(--deep-brown)',
+    letterSpacing: '0.01em',
+    margin: '1.1rem 0 0.5rem',
+  },
   paymentSummary: {
     background: 'rgba(184,146,74,0.08)',
     border: '1px solid rgba(184,146,74,0.4)',
