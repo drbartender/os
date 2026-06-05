@@ -51,6 +51,17 @@ const logoUploadLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Client-portal writes (change-request calculate / create / cancel) are keyed by
+// the authenticated client id so one client cannot exhaust another's budget.
+const clientPortalWriteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => (req.user && req.user.id ? `cp-${req.user.id}` : req.ip),
+  message: { error: 'Too many requests. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Lab Rat seed endpoint mints real users + clients on every call AND returns
 // a working credential (for the pre-hire-invitation recipe). Tight per-IP cap
 // resists single-IP flooding; secondary global cap caps damage from a
@@ -202,6 +213,7 @@ module.exports = {
   signLimiter,
   drinkPlanWriteLimiter,
   logoUploadLimiter,
+  clientPortalWriteLimiter,
   labratSeedLimiter,
   labratSeedGlobalLimiter,
   labratFeedbackLimiter,
