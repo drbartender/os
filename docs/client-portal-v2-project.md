@@ -8,7 +8,7 @@ v2 effort: what is done, what is in design, and what still needs building.
 > worktree/branch when it goes to build. Update the Status column here as pieces
 > move. Decisions already locked live in the Decisions Log so we do not relitigate.
 >
-> **Last updated:** 2026-06-03 · **Stage:** brainstorming (foundation sub-project next)
+> **Last updated:** 2026-06-05 · **Stage:** read-only foundation (2 + 3) built + merged to `main` (unpushed); editing (#5) is the next deep brainstorm
 
 ---
 
@@ -238,8 +238,12 @@ Out of v1 unless promoted.
 - **Crew / setup timing is never client-facing.** `setup_minutes_before` and any
   derived display stay back-of-house (documented in `proposals/publicToken.js`).
   The day-of brief shows a generic arrival range, not the real value.
-- **Money is integer cents.** All pricing runs through `server/utils/pricingEngine.js`.
-  Respect the hosted-bartender ratio (1:100) on every re-price.
+- **Money units split by table, never crossed.** `proposals.total_price` /
+  `amount_paid` / `total_price_override` and `proposal_addons` are NUMERIC
+  **dollars**; `invoices.*`, `proposal_payments.amount`, and `stripe_sessions.amount`
+  are integer **cents** (authoritative map: `schema.sql:538-547`). Pricing math runs
+  through `server/utils/pricingEngine.js`; respect the hosted-bartender ratio (1:100)
+  on every re-price.
 - **Additive-only protects the payment path.** Self-serve edits never trigger a
   refund; removals route to admin.
 - **The public token is a bearer credential.** Possession equals access, no expiry,
