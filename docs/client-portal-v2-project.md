@@ -35,8 +35,8 @@ v2 effort: what is done, what is in design, and what still needs building.
 | # | Sub-project | Status | Depends on | Spec |
 |---|---|---|---|---|
 | 1 | Money-flow reskin (Login · ProposalView · Invoice) | Mostly done on `main`, verify + reconcile | none | money-flow handoff (design bundle) |
-| 2 | Portal shell + Overview (event command center) | Plan ready | none (backbone) | [spec](superpowers/specs/2026-06-04-client-portal-v2-foundation-design.md) · [plan](superpowers/plans/2026-06-04-client-portal-v2-foundation.md) |
-| 3 | Read-only tabs (Prescription · Potion Plan · Receipts) + Share link | Plan ready | 2 | [spec](superpowers/specs/2026-06-04-client-portal-v2-foundation-design.md) · [plan](superpowers/plans/2026-06-04-client-portal-v2-foundation.md) |
+| 2 | Portal shell + Overview (event command center) | **Done — merged to `main` `0ff6057` (2026-06-05), not yet pushed** | none (backbone) | [spec](superpowers/specs/2026-06-04-client-portal-v2-foundation-design.md) · [plan](superpowers/plans/2026-06-04-client-portal-v2-foundation.md) |
+| 3 | Read-only tabs (Prescription · Potion Plan · Receipts) + Share link | **Done — merged to `main` `0ff6057` (2026-06-05), not yet pushed** | 2 | [spec](superpowers/specs/2026-06-04-client-portal-v2-foundation-design.md) · [plan](superpowers/plans/2026-06-04-client-portal-v2-foundation.md) |
 | 4 | Day-of brief / "Big Experiment" tab | Decisions captured, build pending | 2, 3 | TBD |
 | 5 | Editing model (additive-only + change requests) | In design (high-level decided), full spec pending | 3 | TBD |
 | 6 | Messages tab (client ↔ office) | Parked (out of v1) | 2 | none |
