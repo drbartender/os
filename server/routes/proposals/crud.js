@@ -420,7 +420,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     venue_name, venue_street, venue_city, venue_state, venue_zip,
     adjustments, total_price_override, setup_minutes_before,
     class_options, client_provides_glassware,
-    notify_assigned_staff, notify_staff_sms, notify_staff_email
+    notify_assigned_staff, notify_staff_sms, notify_staff_email,
+    change_request_id
   } = req.body;
 
   const dbClient = await pool.connect();
@@ -666,6 +667,47 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       throw rescheduleErr;
     }
 
+    // Change-request approve linkage (spec 5.2). Validate the request belongs to
+    // this proposal and is pending; stamp approved atomically with the edit. A
+    // bad id is logged and skipped, never failing the edit.
+    if (change_request_id) {
+      const crUpd = await dbClient.query(
+        `UPDATE proposal_change_requests
+            SET status = 'approved', decided_by = $1, decided_at = NOW(), updated_at = NOW()
+          WHERE id = $2 AND proposal_id = $3 AND status = 'pending' RETURNING id`,
+        [req.user.id, change_request_id, req.params.id]
+      );
+      if (crUpd.rows[0]) {
+        await dbClient.query(
+          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+           VALUES ($1, 'change_approved', 'admin', $2, $3)`,
+          [req.params.id, req.user.id, JSON.stringify({ change_request_id })]
+        );
+      } else {
+        console.warn(`PATCH change_request_id ${change_request_id} not pending/owned by proposal ${req.params.id}; skipping stamp`);
+      }
+    }
+
+    // Non-linked reconciliation (spec 5.2 / 5.4): a direct admin edit (no
+    // change_request_id) supersedes any pending request, so auto-cancel it. Inline
+    // (not the shared reaper) so the audit decision_note reads distinctly.
+    if (!change_request_id) {
+      const sup = await dbClient.query(
+        `UPDATE proposal_change_requests
+            SET status = 'cancelled', cancelled_by = 'system',
+                decision_note = 'superseded by direct admin edit', updated_at = NOW()
+          WHERE proposal_id = $1 AND status = 'pending' RETURNING id`,
+        [req.params.id]
+      );
+      for (const row of sup.rows) {
+        await dbClient.query(
+          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+           VALUES ($1, 'change_cancelled', 'admin', $2, $3)`,
+          [req.params.id, req.user.id, JSON.stringify({ change_request_id: row.id, reason: 'superseded_by_direct_edit' })]
+        );
+      }
+    }
+
     await dbClient.query('COMMIT');
 
     // Refresh unlocked invoices with new pricing (own transaction for isolation)
@@ -691,7 +733,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // the outer catch (which would 500 the PATCH response even though the DB
     // committed successfully). A Resend failure happens after the DB is
     // already consistent; admin can manually re-send.
-    if (shouldSendRescheduleEmail) {
+    if (shouldSendRescheduleEmail && !change_request_id) {
       try {
         await sendRescheduleEmail({
           proposalId: parseInt(req.params.id, 10),
