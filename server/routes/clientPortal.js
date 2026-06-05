@@ -92,12 +92,16 @@ router.get('/proposals/:token', asyncHandler(async (req, res) => {
       p.client_signed_name, p.client_signed_at, p.client_signature_method,
       p.client_signature_document_version, p.client_signature_data,
       p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
+      p.venue_name, p.venue_city, p.venue_state, p.total_price_override,
+      dp.token AS drink_plan_token, dp.submitted_at AS drink_plan_submitted_at,
       sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
       sp.includes AS package_includes,
       c.name AS client_name, c.email AS client_email, c.phone AS client_phone
     FROM proposals p
     LEFT JOIN service_packages sp ON sp.id = p.package_id
     LEFT JOIN clients c ON c.id = p.client_id
+    LEFT JOIN drink_plans dp
+      ON dp.proposal_id = p.id AND dp.proposal_id IN (SELECT id FROM proposals WHERE client_id = $2)
     WHERE p.token = $1 AND p.client_id = $2
   `, [req.params.token, req.user.id]);
 

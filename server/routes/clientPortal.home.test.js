@@ -130,3 +130,20 @@ test('completed past -> archive, not focus', async () => {
   assert.equal(res.body.focus, null); assert.equal(res.body.archive.length, 1);
   assert.equal(res.body.archive[0].status, 'completed');
 });
+
+test('detail endpoint exposes drink_plan_token + venue trio (parity)', async () => {
+  const c = await mkClient('detail');
+  const p = await mkProposal(c.id, { status: 'deposit_paid', date: '2099-12-01' });
+  await pool.query('UPDATE proposals SET venue_city = $2, venue_state = $3 WHERE id = $1', [p.id, 'Chicago', 'IL']);
+  await pool.query('INSERT INTO drink_plans (proposal_id, submitted_at) VALUES ($1, NULL)', [p.id]);
+  const res = await request(`/api/client-portal/proposals/${p.token}`, c.token);
+  assert.equal(res.status, 200);
+  assert.ok('drink_plan_token' in res.body.proposal);
+  assert.equal(res.body.proposal.venue_city, 'Chicago');
+});
+test('detail endpoint: unowned token -> 404 (JSON, not HTML)', async () => {
+  const a = await mkClient('own'); const b = await mkClient('other');
+  const p = await mkProposal(a.id, { status: 'sent', date: '2099-01-01' });
+  const res = await request(`/api/client-portal/proposals/${p.token}`, b.token);
+  assert.equal(res.status, 404);
+});
