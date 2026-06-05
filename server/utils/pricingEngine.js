@@ -275,6 +275,7 @@ function recomputeSnapshotGratuity(snapshot, { gratuityRate, tipJar, staffNoun, 
   snap.staff_noun = staffNoun || snap.staff_noun || 'bartender';
   snap.display_labels = snap.display_labels || currentDisplayLabels();
   snap.gratuity = {
+    ...snap.gratuity, // preserve any future fields; overwrite only what this helper owns
     rate: Number(gratuityRate) || 0,
     tip_jar: tipJar !== false,
     staff_count: staffCount,

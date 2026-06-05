@@ -1204,6 +1204,9 @@ END $$;
 --   ALTER TABLE proposals DROP COLUMN IF EXISTS gratuity_rate_change_origin;
 --   ALTER TABLE proposals DROP COLUMN IF EXISTS gratuity_rate;
 --   ALTER TABLE proposals DROP COLUMN IF EXISTS tip_jar;
+--   (stripe_sessions_status_check 'canceled' widening below is NOT auto-reverted:
+--    re-tighten only by re-running the original 3-value CHECK from main, and only
+--    if no row has status='canceled'.)
 
 -- ─── Last-Minute Booking Hold ─────────────────────────────────────
 -- Set TRUE by the Stripe webhook (payment_intent.succeeded) when a paid

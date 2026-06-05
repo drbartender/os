@@ -9,7 +9,10 @@ export const GRATUITY_DISPLAY = 'Gratuity';
 
 export function resolveGratuityDisplayLabel(label, snapshot) {
   const frozen = snapshot && snapshot.display_labels;
-  if (frozen && frozen[label]) return frozen[label];
+  if (frozen) {
+    const frozenVal = frozen[label];
+    if (frozenVal) return frozenVal;
+  }
   if (label === SHARED_GRATUITY_LABEL) return SHARED_GRATUITY_DISPLAY;
   if (label === GRATUITY_LABEL) return GRATUITY_DISPLAY;
   return label;
