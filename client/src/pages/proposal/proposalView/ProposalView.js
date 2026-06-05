@@ -38,6 +38,10 @@ export default function ProposalView() {
   // Payment option state
   const [paymentOption, setPaymentOption] = useState('deposit');
   const [autopayChecked, setAutopayChecked] = useState(false);
+  // Gratuity chooser (§4). Client speaks dollar totals; server owns the rate.
+  const [tipJar, setTipJar] = useState(true);
+  const [gratuityTotal, setGratuityTotal] = useState(0);
+  const [gratuityDirty, setGratuityDirty] = useState(false);
 
   // Intent state — track separate secrets for deposit vs full
   const [depositSecret, setDepositSecret] = useState('');
@@ -90,6 +94,18 @@ export default function ProposalView() {
     }
   }, [proposal]);
 
+  // Seed the gratuity chooser from the loaded snapshot (once, unless the user
+  // has started editing). The displayed "New total" tracks totalPrice (server
+  // truth); gratuityTotal is just the input value, so we don't re-seed it dirty.
+  useEffect(() => {
+    const g = proposal?.pricing_snapshot?.gratuity;
+    if (g && !gratuityDirty) {
+      setTipJar(g.tip_jar !== false);
+      setGratuityTotal(Number(g.total) || 0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proposal]);
+
   const venueComplete = !!proposal?.venue_complete
     || !!(venue.venue_street?.trim() && venue.venue_city?.trim() && venue.venue_state?.trim());
 
@@ -137,8 +153,22 @@ export default function ProposalView() {
         const res = await axios.post(`${BASE_URL}/stripe/create-intent/${token}`, {
           payment_option: option,
           autopay,
+          ...(gratuityDirty ? { tip_jar: tipJar, gratuity_total: gratuityTotal } : {}),
         });
         if (cancelled) return;
+        // Server is the authority on the total (DD #5): adopt the recomputed
+        // total + gratuity so "New total" only updates after server confirmation.
+        if (typeof res.data.total_price === 'number') {
+          setProposal(p => (p ? {
+            ...p,
+            total_price: res.data.total_price,
+            pricing_snapshot: {
+              ...(p.pricing_snapshot || {}),
+              total: res.data.total_price,
+              gratuity: res.data.gratuity,
+            },
+          } : p));
+        }
         if (option === 'full') {
           setFullSecret(res.data.clientSecret);
         } else {
@@ -156,7 +186,19 @@ export default function ProposalView() {
     })();
 
     return () => { cancelled = true; };
-  }, [isPayableStatus, paymentOption, autopayChecked, token, depositSecret, fullSecret]);
+  }, [isPayableStatus, paymentOption, autopayChecked, token, depositSecret, fullSecret, tipJar, gratuityTotal, gratuityDirty]);
+
+  // A gratuity change invalidates both cached secrets (the full amount changes;
+  // the deposit must re-persist the new rate), forcing a fresh intent + total.
+  useEffect(() => {
+    if (!gratuityDirty) return;
+    // Show the loading state immediately so the payment form doesn't flash its
+    // "unable to load" message in the gap before the intent effect refetches.
+    setLoadingIntent(true);
+    setDepositSecret('');
+    setFullSecret('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tipJar, gratuityTotal, gratuityDirty]);
 
   // When the server's payment_policy says full payment is required (event ≤14
   // days out), lock paymentOption to 'full' and clear autopay so the intent
@@ -272,6 +314,17 @@ export default function ProposalView() {
   const totalPrice = snapshot ? Number(snapshot.total) : 0;
   const balanceAmount = totalPrice - DEPOSIT_DOLLARS;
 
+  // Gratuity chooser basis (§4): suggested = 25 x staff x hours, no-jar floor =
+  // 50 x staff x hours. Disabled when staff x hours <= 0. Read from the frozen
+  // snapshot gratuity block (staff_count/hours/staff_noun).
+  const gratuityBasis = snapshot?.gratuity || null;
+  const gratuityStaffCount = gratuityBasis?.staff_count ?? 0;
+  const gratuityHours = gratuityBasis?.hours ?? 0;
+  const gratuityStaffNoun = gratuityBasis?.staff_noun || 'bartender';
+  const gratuityEnabled = gratuityStaffCount * gratuityHours > 0;
+  const gratuitySuggested = Math.round(25 * gratuityStaffCount * gratuityHours);
+  const gratuityFloor = Math.round(50 * gratuityStaffCount * gratuityHours);
+
   // Calculate balance due date (from DB or default 14 days before event)
   let balanceDueDate = proposal.balance_due_date;
   if (!balanceDueDate && proposal.event_date) {
@@ -310,6 +363,9 @@ export default function ProposalView() {
         amount: adj.type === 'discount' ? -amt : amt,
       });
     });
+    if (snapshot.gratuity && snapshot.gratuity.total > 0) {
+      lineItems.push({ label: 'Gratuity', amount: snapshot.gratuity.total });
+    }
   }
 
   // Server-computed booking-window policy (never re-derived client-side).
@@ -389,6 +445,15 @@ export default function ProposalView() {
                 setPaymentOption={setPaymentOption}
                 autopayChecked={autopayChecked}
                 setAutopayChecked={setAutopayChecked}
+                tipJar={tipJar}
+                setTipJar={setTipJar}
+                gratuityTotal={gratuityTotal}
+                setGratuityTotal={setGratuityTotal}
+                setGratuityDirty={setGratuityDirty}
+                gratuityEnabled={gratuityEnabled}
+                gratuitySuggested={gratuitySuggested}
+                gratuityFloor={gratuityFloor}
+                gratuityStaffNoun={gratuityStaffNoun}
                 fullPaymentRequired={fullPaymentRequired}
                 lastMinuteHold={lastMinuteHold}
                 totalPrice={totalPrice}

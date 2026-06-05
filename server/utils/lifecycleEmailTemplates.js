@@ -402,6 +402,29 @@ function emailChangeConfirmed({ oldEmail, newEmail }) {
   return { subject, html, text };
 }
 
+/**
+ * Staffing-driven gratuity change (spec §7). Sent when a PAID proposal's crew
+ * grew, so the gratuity TOTAL rose at the SAME per-staff rate the client already
+ * agreed to. Leads with "your rate hasn't changed" to minimize friction. Email
+ * (not SMS) per the notification-cost preference.
+ */
+function gratuityStaffingChange({ name, newTotal, gratuity }) {
+  const who = name || 'there';
+  const noun = (gratuity && gratuity.staff_noun) || 'bartender';
+  const gratTotal = gratuity ? Number(gratuity.total) : 0;
+  const subject = 'An update to your event staffing and gratuity';
+  const html = wrapEmail(`
+    <h2 style="color:${BRAND.primary};margin-top:0;">Your gratuity rate hasn't changed</h2>
+    <p>Hi ${esc(who)},</p>
+    <p>Your event grew, so we've added more crew to take great care of your guests. Your pre-paid gratuity scales with the team at the same per-${esc(noun)} rate you chose, so it is now <strong>$${gratTotal.toFixed(2)}</strong> for your ${esc(noun)}s.</p>
+    <p>Your new event total is <strong>$${Number(newTotal).toFixed(2)}</strong>.</p>
+    <p style="font-size:14px;color:${BRAND.secondary};">Questions? Just reply to this email.</p>
+    <p>Cheers,<br/>The Dr. Bartender Team</p>
+  `);
+  const text = `Hi ${who}, your event grew so we added more crew. Your gratuity rate is unchanged; it scales with the team at the same per-${noun} rate you chose, now $${gratTotal.toFixed(2)} for your ${noun}s. New event total: $${Number(newTotal).toFixed(2)}. Cheers, The Dr. Bartender Team`;
+  return { subject, html, text };
+}
+
 module.exports = {
   signedAndPaidClient,
   drinkPlanLink,
@@ -412,4 +435,5 @@ module.exports = {
   emailChangeVerification,
   emailChangeWarning,
   emailChangeConfirmed,
+  gratuityStaffingChange,
 };

@@ -2,7 +2,8 @@ const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager, adminOnly } = require('../../middleware/auth');
-const { calculateProposal } = require('../../utils/pricingEngine');
+const { calculateProposal, deriveGratuityRate, computeGratuityBasis } = require('../../utils/pricingEngine');
+const { reconcileProposalPaymentStatus } = require('../../utils/proposalStatus');
 const { createEventShifts, syncShiftsFromProposal } = require('../../utils/eventCreation');
 const { composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
 const { sendEmail } = require('../../utils/email');
@@ -241,6 +242,7 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
           numBartenders: num_bartenders,
           addons: selectedAddons,
           syrupSelections: syrup_selections || [],
+          gratuityRate: 0, tipJar: true,
         });
     const snapshotJson = snapshot ? JSON.stringify(snapshot) : '{}';
     const totalPrice = snapshot ? snapshot.total : 0;
@@ -420,6 +422,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     venue_name, venue_street, venue_city, venue_state, venue_zip,
     adjustments, total_price_override, setup_minutes_before,
     class_options, client_provides_glassware,
+    tip_jar, gratuity_total,
     notify_assigned_staff, notify_staff_sms, notify_staff_email
   } = req.body;
 
@@ -427,7 +430,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   try {
     await dbClient.query('BEGIN');
 
-    const existing = await dbClient.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
+    // FOR UPDATE: lock the row for the duration of the edit tx so two concurrent
+    // PATCHes (or a webhook) can't lose-update gratuity_rate/tip_jar/status and so
+    // the reconcile + overpayment checks below read a consistent amount_paid.
+    const existing = await dbClient.query('SELECT * FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!existing.rows[0]) {
       throw new NotFoundError('Proposal not found');
     }
@@ -436,6 +442,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // Hoisted so the post-COMMIT reschedule-email block (outside this inner
     // try) can read whether the in-tx re-anchor decided an email is warranted.
     let shouldSendRescheduleEmail = false;
+    // Hoisted for the post-COMMIT gratuity staffing-change email (§7).
+    let notifyStaffingGratuity = false;
 
     const venueProvided = [venue_name, venue_street, venue_city, venue_state, venue_zip]
       .some(v => v !== undefined);
@@ -551,11 +559,57 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         }
       : null;
 
+    // Gratuity (§3/§4/§7): admin may pass tip_jar + a dollar gratuity_total; else
+    // keep the stored rate/jar. staffCount+hours are independent of gratuity, so
+    // compute the basis first, derive the rate, then snapshot with that rate.
+    const resolvedTipJar = tip_jar !== undefined ? (tip_jar !== false) : (old.tip_jar !== false);
+    let persistTipJar = resolvedTipJar;
+    let resolvedGratuityRate = Number(old.gratuity_rate) || 0;
+    let gratuityOrigin = old.gratuity_rate_change_origin || null;
+    if (tip_jar !== undefined || gratuity_total !== undefined) {
+      const { staffCount, hours } = computeGratuityBasis({
+        pkg, guestCount: gc, durationHours: dh, numBartenders: num_bartenders, addons,
+      });
+      // Can't skip the jar with no crew/hours — force it on so the DB CHECK passes.
+      persistTipJar = (staffCount * hours) <= 0 ? true : resolvedTipJar;
+      const enteredTotal = gratuity_total !== undefined
+        ? gratuity_total
+        : resolvedGratuityRate * staffCount * hours; // re-derive total from the stored rate
+      const g = deriveGratuityRate({ enteredTotal, staffCount, hours, tipJar: persistTipJar });
+      if (!g.ok) throw new ValidationError({ gratuity: g.message });
+      if (g.rate !== resolvedGratuityRate) gratuityOrigin = 'admin'; // direct rate change
+      resolvedGratuityRate = g.rate;
+    }
+
+    // Post-payment gratuity guard (§7). Once money is collected (amount_paid > 0)
+    // a DIRECT admin RATE increase is a new charge → rejected (a separate
+    // client-consented flow is out of scope). A staffing-driven increase at the
+    // SAME rate is allowed and triggers a client notice.
+    const isPaidForGratuity = Number(old.amount_paid || 0) > 0;
+    const priorGratuityRate = Number(old.gratuity_rate) || 0;
+    if (isPaidForGratuity && gratuityOrigin === 'admin' && resolvedGratuityRate > priorGratuityRate) {
+      throw new ValidationError({
+        gratuity: 'Gratuity rate cannot be increased after payment. Adjust staffing, or arrange a separate client-consented charge.',
+      });
+    }
+
     const snapshot = calculateProposal({
       pkg, guestCount: gc, durationHours: dh, numBars: nb,
       numBartenders: num_bartenders, addons, syrupSelections: syrups,
       adjustments: adj, totalPriceOverride: tpo,
+      gratuityRate: resolvedGratuityRate, tipJar: persistTipJar,
     });
+
+    // Flag a staffing-driven post-payment gratuity rise for a client notice (§7).
+    const oldGratuityTotal = Number(old.pricing_snapshot?.gratuity?.total) || 0;
+    const newGratuityTotal = Number(snapshot.gratuity?.total) || 0;
+    // A staffing change moves the gratuity amount at the SAME rate. Stamp origin
+    // 'staffing' only when the amount actually changed (not on an unrelated edit),
+    // and notify the client only on an increase (§7).
+    if (isPaidForGratuity && gratuityOrigin !== 'admin' && newGratuityTotal !== oldGratuityTotal) {
+      gratuityOrigin = 'staffing';
+      if (newGratuityTotal > oldGratuityTotal) notifyStaffingGratuity = true;
+    }
 
     const updatedRow = await dbClient.query(`
       UPDATE proposals SET
@@ -575,7 +629,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         venue_zip   = COALESCE($22, venue_zip),
         setup_minutes_before = $23,
         client_provides_glassware = $24,
-        class_options = $25
+        class_options = $25,
+        tip_jar = $26,
+        gratuity_rate = $27,
+        gratuity_rate_change_origin = $28
       WHERE id = $11
       RETURNING *
     `, [
@@ -588,7 +645,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       venue_name ?? null, venue_street ?? null, venue_city ?? null,
       venue_state ?? null, venue_zip ?? null,
       setupMinutes ?? null,
-      resolvedGlassware, cleanClassOptions ? JSON.stringify(cleanClassOptions) : null
+      resolvedGlassware, cleanClassOptions ? JSON.stringify(cleanClassOptions) : null,
+      persistTipJar, resolvedGratuityRate, gratuityOrigin
     ]);
 
     // Re-evaluate payment status when a price increase outruns what's been paid
@@ -600,22 +658,36 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // createAdditionalInvoiceIfNeeded (below) and is the client's pay surface.
     // MANUAL ONLY: if autopay was enrolled, clear it so the balance scheduler
     // cannot charge the saved card off an admin price edit.
-    const newTotalCents = Math.round(Number(snapshot.total) * 100);
-    const paidCents = Math.round(Number(old.amount_paid || 0) * 100);
-    if (old.status === 'balance_paid' && newTotalCents > paidCents) {
+    // Keep payment status honest after a price move in EITHER direction (§6),
+    // and surface a durable overpayment signal for the admin refund flow.
+    const rec = reconcileProposalPaymentStatus({
+      status: old.status, amountPaid: old.amount_paid, totalPrice: snapshot.total,
+    });
+    if (rec.changed) {
       const demoted = await dbClient.query(
-        `UPDATE proposals SET status = 'deposit_paid', autopay_enrolled = false, autopay_status = NULL WHERE id = $1 RETURNING *`,
-        [req.params.id]
+        rec.autopayDisarmed
+          ? `UPDATE proposals SET status = $1, autopay_enrolled = false, autopay_status = NULL WHERE id = $2 RETURNING *`
+          : `UPDATE proposals SET status = $1 WHERE id = $2 RETURNING *`,
+        [rec.status, req.params.id]
       );
       // Keep the row we return (and hand to the reschedule hooks) in sync with the
-      // demotion, so the PATCH response doesn't report a stale 'balance_paid'.
+      // demotion, so the PATCH response doesn't report a stale status.
       updatedRow.rows[0] = demoted.rows[0];
       await dbClient.query(
         `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
          VALUES ($1, 'status_changed', 'admin', $2, $3)`,
         [req.params.id, req.user.id, JSON.stringify({
-          from: 'balance_paid', to: 'deposit_paid',
-          reason: 'price increased above amount paid', new_total: snapshot.total,
+          from: old.status, to: rec.status,
+          reason: 'price change reconciled', new_total: snapshot.total,
+        })]
+      );
+    }
+    if (rec.overpaid) {
+      await dbClient.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+         VALUES ($1, 'overpayment_detected', 'admin', $2, $3)`,
+        [req.params.id, req.user.id, JSON.stringify({
+          amount_paid: Number(old.amount_paid), total_price: snapshot.total, overpaid_cents: rec.overpaidCents,
         })]
       );
     }
@@ -703,6 +775,35 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
           });
         }
         console.error('Reschedule email failed (non-blocking, DB already committed):', emailErr);
+      }
+    }
+
+    // Staffing-driven gratuity change (§7): the crew grew, so the gratuity total
+    // rose at the SAME rate the client agreed to. Notify by email (not SMS),
+    // best-effort, post-commit — a failure must NEVER 500 the committed PATCH.
+    if (notifyStaffingGratuity) {
+      try {
+        const full = await pool.query(
+          `SELECT p.total_price, p.pricing_snapshot, c.email AS client_email, c.name AS client_name
+             FROM proposals p LEFT JOIN clients c ON c.id = p.client_id WHERE p.id = $1`,
+          [req.params.id]
+        );
+        const row = full.rows[0];
+        if (row && row.client_email) {
+          await sendEmail({
+            to: row.client_email,
+            ...emailTemplates.gratuityStaffingChange({
+              name: row.client_name,
+              newTotal: Number(row.total_price),
+              gratuity: (row.pricing_snapshot && row.pricing_snapshot.gratuity) || null,
+            }),
+          });
+        }
+      } catch (mailErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(mailErr, { tags: { route: 'proposals/update', issue: 'gratuity-staffing-email' } });
+        }
+        console.error('Gratuity staffing-change email failed (non-blocking):', mailErr);
       }
     }
 

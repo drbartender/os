@@ -12,6 +12,7 @@ import {
   MocktailsCard,
   AddonsCard,
   LogisticsCard,
+  GratuityTipsCard,
   CustomMenuCard,
   NotesCard,
   ConsultCard,
@@ -486,6 +487,13 @@ export default function ShiftDetail() {
 
       {/* Logistics */}
       <LogisticsCard logistics={logistics} />
+
+      {/* Gratuity & tip jar (spec §9) */}
+      <GratuityTipsCard
+        tipJar={proposal?.tip_jar}
+        gratuityPrepaid={proposal?.gratuity_prepaid}
+        staffNoun={proposal?.staff_noun}
+      />
 
       {/* Custom menu (only when selections.menuStyle is custom or house) */}
       <CustomMenuCard

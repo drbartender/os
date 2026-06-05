@@ -154,6 +154,23 @@ async function generateLineItemsFromProposal(proposalId, dbClient) {
     });
   }
 
+  // Gratuity (§10 B1). Built from snapshot SHAPE (snap.gratuity), since this
+  // function never reads breakdown labels. total_price already includes it, so
+  // this only makes the client-paid gratuity visible on the invoice. (The forced
+  // "Shared Gratuity" surcharge stays bundled into the Additional Bartender line
+  // via snap.staffing.total — intentional, unchanged.)
+  if (snap.gratuity && snap.gratuity.total > 0) {
+    const lineTotal = toCents(snap.gratuity.total);
+    items.push({
+      description: 'Gratuity',
+      quantity: 1,
+      unit_price: lineTotal,
+      line_total: lineTotal,
+      source_type: 'fee',
+      source_id: null,
+    });
+  }
+
   // Adjustments (discounts, surcharges, etc.)
   if (Array.isArray(snap.adjustments)) {
     for (const adj of snap.adjustments) {

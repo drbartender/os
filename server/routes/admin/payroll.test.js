@@ -48,8 +48,8 @@ before(async () => {
   );
   periodId = p.rows[0].id;
   const pr = await pool.query(
-    `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time, event_duration_hours, total_price, pricing_snapshot)
-     VALUES (NULL, '2026-05-29', 'completed', 'birthday-party', '6:00 PM', 4, 1000,
+    `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time, event_duration_hours, total_price, amount_paid, pricing_snapshot)
+     VALUES (NULL, '2026-05-29', 'completed', 'birthday-party', '6:00 PM', 4, 1000, 1000,
              '{"breakdown":[{"label":"Shared Gratuity","amount":100}]}')
      RETURNING id`
   );

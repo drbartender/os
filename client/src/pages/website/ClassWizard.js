@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import PublicLayout from '../../components/PublicLayout';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
+import { resolveGratuityDisplayLabel } from '../../utils/gratuityLabels';
 import { useToast } from '../../context/ToastContext';
 import useWizardHistory from '../../hooks/useWizardHistory';
 import TimePicker from '../../components/TimePicker';
@@ -508,7 +509,7 @@ export default function ClassWizard() {
                   <div className="wz-price-breakdown">
                     {preview.breakdown.map((item, i) => (
                       <div key={i} className="wz-price-line">
-                        <span>{item.label.replace(/bartender/gi, 'instructor')}</span>
+                        <span>{resolveGratuityDisplayLabel(item.label, preview).replace(/bartender/gi, preview?.staff_noun === 'instructor' ? 'instructor' : 'bartender')}</span>
                         <span>{formatCurrency(item.amount)}</span>
                       </div>
                     ))}

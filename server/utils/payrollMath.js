@@ -3,6 +3,8 @@
  * All money is integer cents. Mirrors the pricingEngine.js style.
  */
 
+const { GRATUITY_PAYROLL_LABELS } = require('./gratuityLabels');
+
 const SETUP_HOURS = 1;
 const BREAKDOWN_HOURS = 0.5;
 
@@ -35,14 +37,16 @@ function splitEvenly(totalCents, n) {
 
 /**
  * Total gratuity in cents from a proposal pricing snapshot. `breakdown` is an
- * array of { label, amount } with amount in dollars; there can be zero, one,
- * or several 'Shared Gratuity' lines, so sum them all.
+ * array of { label, amount } with amount in dollars. Pools BOTH the forced
+ * "Shared Gratuity" surcharge and the client-elected "Gratuity" line
+ * (GRATUITY_PAYROLL_LABELS); there can be zero, one, or several of each, so sum
+ * them all. Back-compatible: old single-"Shared Gratuity" snapshots still work.
  */
 function extractGratuityCents(pricingSnapshot) {
   const breakdown = (pricingSnapshot && pricingSnapshot.breakdown) || [];
   let dollars = 0;
   for (const line of breakdown) {
-    if (line && line.label === 'Shared Gratuity') {
+    if (line && GRATUITY_PAYROLL_LABELS.includes(line.label)) {
       dollars += Number(line.amount) || 0;
     }
   }

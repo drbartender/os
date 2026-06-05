@@ -329,7 +329,7 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
             numBars: proposal.num_bars ?? 0,
             numBartenders: proposal.num_bartenders,
             addons: allAddonsRes.rows,
-            syrupSelections: syrupSels,
+            syrupSelections: syrupSels, gratuityRate: proposal.gratuity_rate, tipJar: proposal.tip_jar, // §5 preserve stored gratuity
           });
 
           await client.query(

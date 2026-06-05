@@ -375,6 +375,7 @@ dr-bartender/
 - Client-facing proposal view via UUID token URL
 - Combined contract signing + payment on a single screen
 - Payment options: pay $100 deposit or pay in full
+- Checkout gratuity: clients choose a tip jar and optional pre-paid gratuity at sign-and-pay (admins can preset it on a proposal); it scales with crew and hours and flows to staff through payroll
 - Autopay enrollment: clients can opt to have their remaining balance auto-charged on the due date (default: 14 days before event)
 - Admin-overridable balance due dates
 - Hourly autopay scheduler charges saved payment methods when balance is due
