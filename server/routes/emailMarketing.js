@@ -496,6 +496,7 @@ async function sendBlastEmails(campaign, leads, unsubscribeBase) {
           text: campaign.text_body || undefined,
           from: campaign.from_email || undefined,
           replyTo: campaign.reply_to || undefined,
+          meta: { skipLog: true }, // lead campaign blast — never enters the client message log
         });
 
         await pool.query(
@@ -787,6 +788,7 @@ router.post('/conversations/:leadId/reply', auth, requireAdminOrManager, asyncHa
       subject: subject || `Re: Dr. Bartender`,
       html: wrapMarketingEmail(body_html || `<p>${body_text}</p>`),
       text: body_text || undefined,
+      meta: { skipLog: true }, // lead-conversation reply — lead funnel, not a client-about-event touch
     });
   } catch (err) {
     throw new ExternalServiceError('Resend', err, 'Email sending temporarily unavailable. Please try again.');

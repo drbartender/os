@@ -142,7 +142,7 @@ router.post('/conversations/:clientId/reply', auth, requireAdminOrManager, async
   let status = 'sent';
   let errorMessage = null;
   try {
-    const sent = await sendSMS({ to, body });
+    const sent = await sendSMS({ to, body, meta: { clientId } });
     twilioSid = sent && sent.sid ? sent.sid : null;
   } catch (err) {
     status = 'failed';

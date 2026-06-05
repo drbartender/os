@@ -3127,3 +3127,25 @@ CREATE INDEX IF NOT EXISTS idx_pcr_proposal ON proposal_change_requests(proposal
 DROP TRIGGER IF EXISTS update_pcr_updated_at ON proposal_change_requests;
 CREATE TRIGGER update_pcr_updated_at BEFORE UPDATE ON proposal_change_requests
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- message_log: append-only ledger of client-facing outbound messages (email + SMS).
+-- Written at the send choke points (sendEmail / sendSMS). Keyed by proposal_id,
+-- which survives proposal -> event conversion. Read by the event detail Messages
+-- card. provider_id (Resend id / Twilio SID) is stored for future delivery tracking.
+CREATE TABLE IF NOT EXISTS message_log (
+  id            SERIAL PRIMARY KEY,
+  proposal_id   INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+  client_id     INTEGER NOT NULL REFERENCES clients(id),
+  channel       TEXT NOT NULL CHECK (channel IN ('email','sms')),
+  message_type  TEXT NOT NULL DEFAULT 'other',
+  recipient     TEXT NOT NULL,
+  subject       TEXT,
+  status        TEXT NOT NULL CHECK (status IN ('sent','failed')),
+  error_message TEXT,
+  provider_id   TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- created_at + id DESC: id is the deterministic tiebreaker when two rows share
+-- the same created_at (back-to-back sends on one connection), so newest-first is stable.
+CREATE INDEX IF NOT EXISTS idx_message_log_proposal
+  ON message_log (proposal_id, created_at DESC, id DESC);

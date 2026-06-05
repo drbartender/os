@@ -27,7 +27,7 @@ function formatDateTime(d) {
 // shopping-list button gated the same way as the full drink-plan page). It's
 // the canonical event-side surface; the proposal-side card stays a lean
 // preview and leaves these off.
-function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullControls = false, guestCount }) {
+function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullControls = false, guestCount, reload }) {
   const navigate = useNavigate();
   const toast = useToast();
   const [copied, setCopied] = useState(false);
@@ -39,6 +39,7 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
     try {
       const res = await api.post(`/drink-plans/for-proposal/${proposalId}`);
       setDrinkPlan(res.data);
+      if (reload) await reload(); // refresh the Messages card if a client email fired
       toast.success('Drink plan link generated.');
     } catch (err) {
       toast.error(err.message || 'Failed to generate drink plan.');
@@ -58,6 +59,7 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
     try {
       const res = await api.patch(`/drink-plans/${drinkPlan.id}/status`, { status: 'reviewed' });
       setDrinkPlan(prev => ({ ...prev, status: res.data.status }));
+      if (reload) await reload(); // refresh the Messages card if a client email fired
       toast.success('Drink plan marked as reviewed.');
     } catch (err) {
       toast.error(err.message || 'Failed to update status.');
@@ -68,6 +70,7 @@ function DrinkPlanCard({ proposalId, drinkPlan, setDrinkPlan, loading, fullContr
     try {
       const res = await api.post(`/drink-plans/${drinkPlan.id}/finalize`);
       setDrinkPlan(res.data);
+      if (reload) await reload(); // refresh the Messages card if a client email fired
       toast.success('BEO finalized. Staff will be nudged 3 days before the event.');
     } catch (err) {
       toast.error(err.response?.data?.error || err.message || 'Finalize failed.');

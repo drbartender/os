@@ -9,6 +9,7 @@ import { getPackageItems } from '../../data/packages';
 import { SYRUPS } from '../../data/syrups';
 import PricingBreakdown from '../../components/PricingBreakdown';
 import DrinkPlanCard from '../../components/DrinkPlanCard';
+import MessageLogCard from './eventDetail/MessageLogCard';
 import EventDetailPlanLogo from './EventDetailPlanLogo';
 import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
@@ -425,6 +426,8 @@ export default function EventDetailPage() {
         </div>
 
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
+          <MessageLogCard messages={proposal.messageLog} />
+
           <ProposalDetailPaymentPanel proposal={proposal} onUpdate={loadProposal} />
 
           <DrinkPlanCard
@@ -434,6 +437,7 @@ export default function EventDetailPage() {
             loading={drinkPlanLoading}
             fullControls
             guestCount={proposal.guest_count}
+            reload={loadProposal}
           />
           {drinkPlan?.finalized_at && (
             <a

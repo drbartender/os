@@ -19,6 +19,7 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
 const { findOrCreateClient } = require('../../utils/clientDedup');
+const { getMessageLogForProposal } = require('../../utils/messageLog');
 
 const router = express.Router();
 
@@ -370,7 +371,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   // Fetch addons + activity log in parallel — both depend only on proposal id.
   // Cap activity log fetch at 100 entries (most recent) — an old proposal can
   // accumulate hundreds of view/update entries otherwise.
-  const [addons, activity] = await Promise.all([
+  const [addons, activity, messageLog] = await Promise.all([
     pool.query(
       'SELECT * FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [req.params.id]
@@ -379,6 +380,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       'SELECT * FROM proposal_activity_log WHERE proposal_id = $1 ORDER BY created_at DESC LIMIT 100',
       [req.params.id]
     ),
+    getMessageLogForProposal(req.params.id),
   ]);
 
   // setup_time_display: server-derived clock time (service start − effective
@@ -391,6 +393,7 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     setup_time_display: setupTimeDisplay(row),
     addons: addons.rows,
     activity: activity.rows,
+    messageLog,
   });
 }));
 

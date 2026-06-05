@@ -881,3 +881,28 @@ test('Case 23: post-payment direct admin gratuity rate decrease is allowed and l
   );
   assert.equal(log.rows.length, 1, 'a gratuity_rate_decreased_post_payment entry was written');
 });
+
+// ─── message log — GET /:id returns the message log ─────────────────────────────
+test('GET /:id includes the messageLog array', async () => {
+  const c = await pool.query(
+    "INSERT INTO clients (name, email, phone) VALUES ('MsgLog Route', 'msglog-route@example.com', '3125550177') RETURNING id"
+  );
+  createdClientIds.add(c.rows[0].id);
+  const p = await pool.query(
+    `INSERT INTO proposals (client_id, event_date, status, event_type, total_price, amount_paid, balance_due_date, autopay_enrolled)
+     VALUES ($1, CURRENT_DATE + INTERVAL '30 days', 'deposit_paid', 'birthday-party', 100000, 10000, CURRENT_DATE + INTERVAL '14 days', false)
+     RETURNING id`,
+    [c.rows[0].id]
+  );
+  createdProposalIds.add(p.rows[0].id);
+  await pool.query(
+    `INSERT INTO message_log (proposal_id, client_id, channel, message_type, recipient, status)
+     VALUES ($1, $2, 'email', 'proposal_sent', 'msglog-route@example.com', 'sent')`,
+    [p.rows[0].id, c.rows[0].id]
+  );
+
+  const res = await request('GET', `/api/proposals/${p.rows[0].id}`, { token: primaryToken });
+  assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
+  assert.ok(Array.isArray(res.body.messageLog));
+  assert.ok(res.body.messageLog.some((m) => m.message_type === 'proposal_sent'));
+});

@@ -49,7 +49,7 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin' } = {}) {
         proposalUrl,
         planUrl: null,
       });
-      await _deps.sendEmail({ to: proposal.client_email, ...tpl });
+      await _deps.sendEmail({ to: proposal.client_email, ...tpl, meta: { proposalId: proposal.id, messageType: 'proposal_sent' } });
     }
   } catch (emailErr) {
     if (process.env.SENTRY_DSN_SERVER) {
@@ -96,6 +96,7 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin' } = {}) {
       to: proposal.client_phone,
       body,
       clientId: proposal.client_id || null,
+      proposalId: proposal.id,
       messageType: 'initial_proposal',
       recipientName: proposal.client_name || null,
     });
