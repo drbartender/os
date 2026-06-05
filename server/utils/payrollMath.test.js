@@ -47,6 +47,19 @@ test('extractGratuityCents > sums every Shared Gratuity breakdown line', () => {
   assert.equal(extractGratuityCents(snapshot), 20000); // (150 + 50) dollars
 });
 
+test('extractGratuityCents > pools both Shared Gratuity and client Gratuity lines', () => {
+  const snapshot = { breakdown: [
+    { label: 'Shared Gratuity', amount: 50 },
+    { label: 'Gratuity', amount: 200 },
+    { label: 'Bar Rental', amount: 50 },
+  ] };
+  assert.equal(extractGratuityCents(snapshot), 25000); // (50 + 200) dollars
+});
+
+test('extractGratuityCents > still extracts an old single-label snapshot', () => {
+  assert.equal(extractGratuityCents({ breakdown: [{ label: 'Shared Gratuity', amount: 100 }] }), 10000);
+});
+
 test('extractGratuityCents > returns 0 when there is no gratuity line', () => {
   assert.equal(extractGratuityCents({ breakdown: [{ label: 'Package', amount: 800 }] }), 0);
 });

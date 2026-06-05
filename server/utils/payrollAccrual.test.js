@@ -25,8 +25,8 @@ before(async () => {
 beforeEach(async () => {
   const p = await pool.query(
     `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time,
-                            event_duration_hours, total_price, pricing_snapshot)
-     VALUES (NULL, CURRENT_DATE, 'completed', 'birthday-party', '6:00 PM', 4, 1000,
+                            event_duration_hours, total_price, amount_paid, pricing_snapshot)
+     VALUES (NULL, CURRENT_DATE, 'completed', 'birthday-party', '6:00 PM', 4, 1000, 1000,
              '{"breakdown":[{"label":"Shared Gratuity","amount":100}]}')
      RETURNING id`
   );
@@ -197,4 +197,28 @@ test('accruePayoutsForProposal > skips and returns structured shape when proposa
     await pool.query('DELETE FROM shift_requests WHERE shift_id = $1 AND user_id = $2', [shiftId, stubId]);
     await pool.query('DELETE FROM users WHERE id = $1', [stubId]);
   }
+});
+
+test('accruePayoutsForProposal > underpaid event accrues wages but $0 gratuity (funded gate)', async () => {
+  // Drop the seeded funded amount below total so the gratuity gate trips.
+  await pool.query('UPDATE proposals SET amount_paid = 100 WHERE id = $1', [proposalId]);
+  await accruePayoutsForProposal(proposalId);
+  const { rows } = await pool.query(
+    `SELECT pe.gratuity_share_cents, pe.wage_cents FROM payout_events pe
+       JOIN payouts po ON po.id = pe.payout_id WHERE po.contractor_id = $1`,
+    [userId]
+  );
+  assert.equal(rows[0].gratuity_share_cents, 0, 'gratuity gated off when underpaid');
+  assert.ok(rows[0].wage_cents > 0, 'wages still accrue when underpaid');
+});
+
+test('accruePayoutsForProposal > fully-paid event accrues the pooled gratuity (funded gate)', async () => {
+  // beforeEach seeds amount_paid = total_price (funded), so gratuity accrues.
+  await accruePayoutsForProposal(proposalId);
+  const { rows } = await pool.query(
+    `SELECT pe.gratuity_share_cents FROM payout_events pe
+       JOIN payouts po ON po.id = pe.payout_id WHERE po.contractor_id = $1`,
+    [userId]
+  );
+  assert.equal(rows[0].gratuity_share_cents, 10000, 'pooled gratuity accrues when funded');
 });

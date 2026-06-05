@@ -55,7 +55,7 @@ async function ensurePayPeriod(client, eventDate) {
  */
 async function accruePayoutsForProposal(proposalId) {
   const propRes = await pool.query(
-    `SELECT id, event_date, status, event_duration_hours, total_price, pricing_snapshot
+    `SELECT id, event_date, status, event_duration_hours, total_price, amount_paid, pricing_snapshot
        FROM proposals WHERE id = $1`,
     [proposalId]
   );
@@ -140,8 +140,14 @@ async function accruePayoutsForProposal(proposalId) {
     // Gratuity pool, net of the card fee. Per spec section 4.2 the fee
     // denominator is the proposal's full contracted price (proposals.total_price),
     // of which the gratuity is always a part — so the ratio cannot exceed 1.
-    const grossGratuity = extractGratuityCents(proposal.pricing_snapshot);
+    // Funded-gratuity-accrual gate (§8): the gratuity pool only accrues when the
+    // proposal is paid in full. Wages are NEVER gated (staff worked → staff paid).
+    // Covers BOTH the auto-complete and manual (lifecycle.js) completion paths —
+    // both funnel through this function.
     const proposalTotalCents = Math.round(Number(proposal.total_price || 0) * 100);
+    const proposalPaidCents = Math.round(Number(proposal.amount_paid || 0) * 100);
+    const gratuityFunded = proposalPaidCents >= proposalTotalCents;
+    const grossGratuity = gratuityFunded ? extractGratuityCents(proposal.pricing_snapshot) : 0;
     const feeRes = await client.query(
       `SELECT COALESCE(SUM(fee_cents), 0) AS fee
        FROM proposal_payments WHERE proposal_id = $1 AND status = 'succeeded'`,
