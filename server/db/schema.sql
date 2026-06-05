@@ -3034,3 +3034,38 @@ UPDATE users
      false
    )
  WHERE (communication_preferences->>'sms_enabled')::boolean = false;
+
+-- ─── Client Portal Change Requests (editing model, spec §3) ───
+-- A client-requested booking change. requested_changes is an apply-ready sparse
+-- diff (admin-PATCH-shaped). Money is DOLLARS to match proposals.*. One open
+-- (pending) request per proposal via the partial-unique index.
+CREATE TABLE IF NOT EXISTS proposal_change_requests (
+  id                 SERIAL PRIMARY KEY,
+  proposal_id        INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+  client_id          INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+  status             VARCHAR(20) NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending','approved','declined','cancelled')),
+  edit_window        VARCHAR(20) NOT NULL
+                       CHECK (edit_window IN ('pre_booking','before_t14','inside_t14')),
+  requested_changes  JSONB NOT NULL DEFAULT '{}',
+  baseline           JSONB NOT NULL DEFAULT '{}',
+  note               TEXT,
+  price_preview      JSONB NOT NULL DEFAULT '{}',
+  acknowledged_total NUMERIC(10,2),
+  request_ip         VARCHAR(45),
+  request_user_agent TEXT,
+  decided_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  decided_at         TIMESTAMPTZ,
+  decision_note      TEXT,
+  cancelled_by       VARCHAR(10) CHECK (cancelled_by IN ('client','admin','system')),
+  created_at         TIMESTAMPTZ DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pcr_one_open
+  ON proposal_change_requests(proposal_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_pcr_status   ON proposal_change_requests(status);
+CREATE INDEX IF NOT EXISTS idx_pcr_proposal ON proposal_change_requests(proposal_id);
+
+DROP TRIGGER IF EXISTS update_pcr_updated_at ON proposal_change_requests;
+CREATE TRIGGER update_pcr_updated_at BEFORE UPDATE ON proposal_change_requests
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
