@@ -51,12 +51,12 @@ const TOTAL_PRICE_OVERRIDE_MAX = 1_000_000;
  *  pricing_snapshot / admin_notes / questionnaire_data / signature_data / stripe_*
  *  to list responses (blobs, PII, can each be 10-50 KB × 50 rows = 2.5 MB). */
 router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { status, view = 'active', search, page = 1, limit = 50 } = req.query;
+  const { status, view = 'active', search, source, page = 1, limit = 50 } = req.query;
   let query = `
     SELECT p.id, p.token, p.client_id, p.event_type, p.event_type_custom,
            p.event_type_category, p.event_date, p.event_start_time,
            p.event_duration_hours, p.event_location, p.guest_count, p.num_bars,
-           p.num_bartenders, p.package_id, p.status, p.total_price, p.amount_paid,
+           p.num_bartenders, p.package_id, p.status, p.source, p.total_price, p.amount_paid,
            p.deposit_amount, p.balance_due_date, p.payment_type, p.autopay_enrolled,
            p.sent_at, p.accepted_at, p.client_signed_at, p.last_viewed_at,
            p.created_at, p.updated_at, p.cc_id AS proposal_cc_id,
@@ -90,6 +90,13 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   if (search) {
     params.push(`%${search}%`);
     query += ` AND (c.name ILIKE $${params.length} OR c.email ILIKE $${params.length})`;
+  }
+
+  // Origin filter. Fixed literals only (no user value into SQL) — safe.
+  if (source === 'thumbtack') {
+    query += " AND p.source = 'thumbtack'";
+  } else if (source === 'manual') {
+    query += ' AND p.source IS NULL';
   }
 
   query += ' ORDER BY p.created_at DESC';

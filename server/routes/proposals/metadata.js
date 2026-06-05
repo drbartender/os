@@ -189,8 +189,31 @@ router.get('/financials', auth, requireAdminOrManager, asyncHandler(async (req, 
 }));
 
 /** GET /api/proposals/dashboard-stats — aggregates that the admin home dashboard renders.
- *  Server-side so totals stay accurate past the 50-row default LIMIT on /api/proposals. */
+ *  Server-side so totals stay accurate past the 50-row default LIMIT on /api/proposals.
+ *  A `source` query param (thumbtack|manual) returns ONLY { pipeline, paidCount,
+ *  archivedCount } (the tab-count subset) — the full-KPI cards never pass `source`. */
 router.get('/dashboard-stats', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Source-scoped counts for the Proposals list filter. Returns ONLY the tab
+  // count fields the dashboard reads (pipeline / paidCount / archivedCount);
+  // KPI cards never pass `source`, so they keep the full metrics path below.
+  const srcParam = req.query.source === 'thumbtack' ? 'thumbtack'
+    : req.query.source === 'manual' ? 'manual' : null;
+  if (srcParam) {
+    const clause = srcParam === 'thumbtack' ? "source = 'thumbtack'" : 'source IS NULL';
+    const [pipeR, paidR, archR] = await Promise.all([
+      pool.query(`SELECT status, COUNT(*)::int AS count, COALESCE(SUM(total_price),0)::float8 AS value
+                  FROM proposals WHERE status IN ('draft','sent','viewed','modified','accepted') AND ${clause} GROUP BY status`),
+      pool.query(`SELECT COUNT(*)::int AS count FROM proposals WHERE status IN ('deposit_paid','balance_paid','confirmed','completed') AND ${clause}`),
+      pool.query(`SELECT COUNT(*)::int AS count FROM proposals WHERE status = 'archived' AND ${clause}`),
+    ]);
+    const byStatus = Object.fromEntries(pipeR.rows.map(r => [r.status, { count: r.count, value: r.value }]));
+    const pipeline = [
+      { key: 'draft', label: 'Draft' }, { key: 'sent', label: 'Sent' },
+      { key: 'viewed', label: 'Viewed' }, { key: 'modified', label: 'Modified' },
+      { key: 'accepted', label: 'Accepted' },
+    ].map(b => ({ key: b.key, label: b.label, count: byStatus[b.key]?.count || 0, value: byStatus[b.key]?.value || 0 }));
+    return res.json({ pipeline, paidCount: paidR.rows[0].count, archivedCount: archR.rows[0].count });
+  }
   const f = metrics.resolveFilters(req.query);
   const prior = metrics.priorPeriod(f.from, f.to);
 
