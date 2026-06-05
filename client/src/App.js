@@ -100,6 +100,7 @@ const DrinkPlanDetail = lazy(() => import('./pages/admin/DrinkPlanDetail'));
 const ProposalsDashboard = lazy(() => import('./pages/admin/ProposalsDashboard'));
 const ProposalCreate = lazy(() => import('./pages/admin/ProposalCreate'));
 const ProposalDetail = lazy(() => import('./pages/admin/ProposalDetail'));
+const ChangeRequestsDashboard = lazy(() => import('./pages/admin/ChangeRequestsDashboard'));
 const ClientDetail = lazy(() => import('./pages/admin/ClientDetail'));
 const Dashboard = lazy(() => import('./pages/admin/Dashboard'));
 const BlogDashboard = lazy(() => import('./pages/admin/BlogDashboard'));
@@ -503,6 +504,7 @@ function AppRoutes() {
         <Route path="/proposals" element={<ProposalsDashboard />} />
         <Route path="/proposals/new" element={<ProposalCreate />} />
         <Route path="/proposals/:id" element={<ProposalDetail />} />
+        <Route path="/change-requests" element={<ChangeRequestsDashboard />} />
         <Route path="/events" element={<EventsDashboard />} />
         <Route path="/events/:id" element={<EventDetailPage />} />
         <Route path="/events/shift/:id" element={<ShiftDetailRedirect />} />

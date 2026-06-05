@@ -24,7 +24,7 @@ import CcImportBadge from '../../components/admin/CcImportBadge';
 //
 // Parent passes the current proposal and callbacks. After a successful save
 // onSaved() is fired so the parent can reload and exit edit mode.
-export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) {
+export default function ProposalDetailEditForm({ proposal, changeRequest, onSaved, onCancel }) {
   const toast = useToast();
   const [packages, setPackages] = useState([]);
   const [addons, setAddons] = useState([]);
@@ -72,6 +72,26 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
       setError('Failed to load packages/addons. Please try again.');
     });
   }, []); // eslint-disable-line
+
+  // One-shot overlay of a change request's requested_changes onto the form when an
+  // admin opens the editor via "Apply in editor". Re-baselines initialRef (a JSON
+  // STRING, matching the dirty guard at the export) so the pre-fill itself does not
+  // read as unsaved changes. crAppliedRef keeps it idempotent under StrictMode.
+  const crAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!changeRequest || crAppliedRef.current) return;
+    crAppliedRef.current = true;
+    const rc = changeRequest.requested_changes || {};
+    setEditForm(prev => {
+      const next = { ...prev };
+      for (const k of Object.keys(rc)) {
+        if (k === 'event_date' && rc[k]) next.event_date = String(rc[k]).slice(0, 10);
+        else next[k] = rc[k];
+      }
+      initialRef.current = JSON.stringify(next);
+      return next;
+    });
+  }, [changeRequest]);
 
   // Debounced live pricing preview
   useEffect(() => {
@@ -244,6 +264,7 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
         setup_minutes_before: editForm.setup_minutes_before === '' || editForm.setup_minutes_before == null
           ? null
           : Number(editForm.setup_minutes_before),
+        change_request_id: changeRequest?.id,
       });
       toast.success('Proposal updated.');
       onSaved?.(res.data);

@@ -423,16 +423,18 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     adjustments, total_price_override, setup_minutes_before,
     class_options, client_provides_glassware,
     tip_jar, gratuity_total,
-    notify_assigned_staff, notify_staff_sms, notify_staff_email
+    notify_assigned_staff, notify_staff_sms, notify_staff_email,
+    change_request_id
   } = req.body;
 
   const dbClient = await pool.connect();
   try {
     await dbClient.query('BEGIN');
 
-    // FOR UPDATE: lock the row for the duration of the edit tx so two concurrent
-    // PATCHes (or a webhook) can't lose-update gratuity_rate/tip_jar/status and so
-    // the reconcile + overpayment checks below read a consistent amount_paid.
+    // FOR UPDATE: lock the row for the whole edit tx so two concurrent PATCHes (or
+    // a Stripe webhook promoting to balance_paid) can't lose-update
+    // gratuity_rate/tip_jar/status, and so the reconcile + overpayment checks below
+    // read a consistent old.status / old.amount_paid (spec 6.3).
     const existing = await dbClient.query('SELECT * FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!existing.rows[0]) {
       throw new NotFoundError('Proposal not found');
@@ -666,6 +668,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // cannot charge the saved card off an admin price edit.
     // Keep payment status honest after a price move in EITHER direction (§6),
     // and surface a durable overpayment signal for the admin refund flow.
+    // NOTE (merge w/ client-portal-editing, decision A): the change-request branch
+    // also demoted 'confirmed' here; we keep the shared reconcile helper's rule —
+    // confirmed/completed are lifecycle states, left untouched — and collect any
+    // price delta via createAdditionalInvoiceIfNeeded (post-commit) instead.
     const rec = reconcileProposalPaymentStatus({
       status: old.status, amountPaid: old.amount_paid, totalPrice: snapshot.total,
     });
@@ -751,6 +757,49 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       throw rescheduleErr;
     }
 
+    // Change-request approve linkage (spec 5.2). Validate the request belongs to
+    // this proposal and is pending; stamp approved atomically with the edit. A
+    // bad id is logged and skipped, never failing the edit.
+    if (change_request_id) {
+      const crUpd = await dbClient.query(
+        `UPDATE proposal_change_requests
+            SET status = 'approved', decided_by = $1, decided_at = NOW(), updated_at = NOW()
+          WHERE id = $2 AND proposal_id = $3 AND status = 'pending' RETURNING id`,
+        [req.user.id, change_request_id, req.params.id]
+      );
+      if (crUpd.rows[0]) {
+        await dbClient.query(
+          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+           VALUES ($1, 'change_approved', 'admin', $2, $3)`,
+          [req.params.id, req.user.id, JSON.stringify({ change_request_id })]
+        );
+      } else {
+        console.warn(`PATCH change_request_id ${change_request_id} not pending/owned by proposal ${req.params.id}; skipping stamp`);
+      }
+    }
+
+    // Supersede sweep (spec 5.2 / 5.4): cancel any request still PENDING after the
+    // optional approve above. After a successful linked approve the request is no
+    // longer pending (and the partial-unique allows only one open at a time), so
+    // this is a no-op in the normal flow. In a direct edit (no change_request_id)
+    // OR when change_request_id was stale/invalid (approve matched nothing), it
+    // cancels the leftover pending request so it cannot linger with a stale
+    // baseline. Inline (not the shared reaper) so the audit decision_note differs.
+    const sup = await dbClient.query(
+      `UPDATE proposal_change_requests
+          SET status = 'cancelled', cancelled_by = 'system',
+              decision_note = 'superseded by direct admin edit', updated_at = NOW()
+        WHERE proposal_id = $1 AND status = 'pending' RETURNING id`,
+      [req.params.id]
+    );
+    for (const row of sup.rows) {
+      await dbClient.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+         VALUES ($1, 'change_cancelled', 'admin', $2, $3)`,
+        [req.params.id, req.user.id, JSON.stringify({ change_request_id: row.id, reason: 'superseded_by_direct_edit' })]
+      );
+    }
+
     await dbClient.query('COMMIT');
 
     // Refresh unlocked invoices with new pricing (own transaction for isolation)
@@ -776,7 +825,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // the outer catch (which would 500 the PATCH response even though the DB
     // committed successfully). A Resend failure happens after the DB is
     // already consistent; admin can manually re-send.
-    if (shouldSendRescheduleEmail) {
+    if (shouldSendRescheduleEmail && !change_request_id) {
       try {
         await sendRescheduleEmail({
           proposalId: parseInt(req.params.id, 10),
@@ -866,6 +915,29 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
           });
         }
         console.error('Staff reschedule hooks failed (non-blocking):', staffHookErr);
+      }
+    }
+
+    // Change-request approved client email (spec 5). The PATCH stamped the request
+    // approved in-transaction (E2); the single client touch fires here post-commit,
+    // best-effort. Re-read the proposal fresh so the email's total and balance
+    // reflect the post-commit invoice/demotion cascade above.
+    if (change_request_id) {
+      try {
+        const { notifyClientOfDecision } = require('../../utils/changeRequestNotifications');
+        const crRow = await pool.query('SELECT * FROM proposal_change_requests WHERE id = $1', [change_request_id]);
+        if (crRow.rows[0] && crRow.rows[0].status === 'approved') {
+          const freshP = await pool.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
+          await notifyClientOfDecision(crRow.rows[0], freshP.rows[0], 'approved');
+        }
+      } catch (notifyErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(notifyErr, {
+            tags: { route: 'proposals/update', issue: 'change-request-approved-email' },
+            extra: { proposalId: req.params.id },
+          });
+        }
+        console.error('change-request approved email failed (non-blocking):', notifyErr.message);
       }
     }
 

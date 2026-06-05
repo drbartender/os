@@ -128,4 +128,8 @@ router.get('/proposals/:token', asyncHandler(async (req, res) => {
   });
 }));
 
+// Change-request endpoints (calculate / create / list / cancel). Inherits the
+// router-level clientAuth applied above.
+router.use('/', require('./clientPortal/changeRequests'));
+
 module.exports = router;

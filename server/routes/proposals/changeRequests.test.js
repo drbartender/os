@@ -1,0 +1,118 @@
+require('dotenv').config();
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const crypto = require('node:crypto');
+const express = require('express');
+const jwt = require('jsonwebtoken');
+const { pool } = require('../../db');
+const { AppError } = require('../../utils/errors');
+const adminRouter = require('./changeRequests');
+
+const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+const EMAIL_LIKE = `adm-cr-%-${NONCE}@example.com`;
+let server, baseUrl, adminToken, crId, proposalId;
+
+function rq(method, path, tok, body) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(baseUrl + path);
+    const data = body ? JSON.stringify(body) : null;
+    const r = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + (u.search || ''), method,
+      headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}), ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}) } },
+      (res) => { let d = ''; res.on('data', c => d += c); res.on('end', () => { let j = null; try { j = d ? JSON.parse(d) : null; } catch {} resolve({ status: res.statusCode, body: j }); }); });
+    r.on('error', reject); if (data) r.write(data); r.end();
+  });
+}
+
+before(async () => {
+  const u = await pool.query("SELECT id FROM users WHERE role IN ('admin','manager') LIMIT 1");
+  assert.ok(u.rows[0], 'need an admin/manager user seeded');
+  adminToken = jwt.sign({ userId: u.rows[0].id, tokenVersion: 0 }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  const c = await pool.query('INSERT INTO clients (name,email) VALUES ($1,$2) RETURNING id', ['Adm CR', `adm-cr-a-${NONCE}@example.com`]);
+  const p = await pool.query("INSERT INTO proposals (client_id, status, event_date) VALUES ($1,'deposit_paid','2099-09-09') RETURNING id", [c.rows[0].id]);
+  proposalId = p.rows[0].id;
+  const cr = await pool.query("INSERT INTO proposal_change_requests (proposal_id, client_id, status, edit_window, price_preview) VALUES ($1,$2,'pending','before_t14','{\"estimated_total\":5000}') RETURNING id", [proposalId, c.rows[0].id]);
+  crId = cr.rows[0].id;
+  const app = express(); app.use(express.json());
+  app.use('/api/proposals', adminRouter);
+  const crudRouter = require('./crud');
+  app.use('/api/proposals', crudRouter);
+  app.use((err, a, rs, n) => { if (err instanceof AppError) return rs.status(err.statusCode).json({ error: err.message, code: err.code }); console.error(err); return rs.status(500).json({ error: 'x' }); });
+  await new Promise(r => { server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; r(); }); });
+});
+after(async () => {
+  await pool.query('DELETE FROM proposal_change_requests WHERE proposal_id = $1', [proposalId]);
+  await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = $1', [proposalId]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [proposalId]);
+  await pool.query('DELETE FROM clients WHERE email LIKE $1', [EMAIL_LIKE]);
+  await new Promise(r => server.close(r));
+});
+
+test('queue lists the pending request', async () => {
+  const res = await rq('GET', '/api/proposals/change-requests?status=pending', adminToken);
+  assert.equal(res.status, 200);
+  assert.ok(res.body.requests.some(r => r.id === crId));
+});
+test('decline flips to declined with a reason', async () => {
+  const res = await rq('POST', `/api/proposals/change-requests/${crId}/decline`, adminToken, { decision_note: 'No availability that date.' });
+  assert.equal(res.status, 200);
+  const row = await pool.query('SELECT status, decision_note FROM proposal_change_requests WHERE id = $1', [crId]);
+  assert.equal(row.rows[0].status, 'declined');
+  assert.equal(row.rows[0].decision_note, 'No availability that date.');
+});
+
+test('PATCH with change_request_id stamps the request approved', async () => {
+  const c = await pool.query('INSERT INTO clients (name,email) VALUES ($1,$2) RETURNING id', ['Adm CR2', `adm-cr-b-${NONCE}@example.com`]);
+  const pkg = (await pool.query('SELECT id FROM service_packages WHERE is_active=true ORDER BY id LIMIT 1')).rows[0].id;
+  const p = await pool.query("INSERT INTO proposals (client_id, status, package_id, guest_count, event_duration_hours, num_bars, total_price, amount_paid, event_date, pricing_snapshot) VALUES ($1,'deposit_paid',$2,100,4,1,4800,1000,'2099-09-09','{}') RETURNING id", [c.rows[0].id, pkg]);
+  const cr = await pool.query("INSERT INTO proposal_change_requests (proposal_id, client_id, status, edit_window) VALUES ($1,$2,'pending','before_t14') RETURNING id", [p.rows[0].id, c.rows[0].id]);
+  const res = await rq('PATCH', `/api/proposals/${p.rows[0].id}`, adminToken, { guest_count: 120, change_request_id: cr.rows[0].id });
+  assert.equal(res.status, 200);
+  const row = await pool.query('SELECT status, decided_by FROM proposal_change_requests WHERE id = $1', [cr.rows[0].id]);
+  assert.equal(row.rows[0].status, 'approved');
+  await pool.query('DELETE FROM proposal_change_requests WHERE proposal_id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [c.rows[0].id]);
+});
+
+test('direct PATCH (no change_request_id) supersedes a pending request', async () => {
+  const c = await pool.query('INSERT INTO clients (name,email) VALUES ($1,$2) RETURNING id', ['Adm CR3', `adm-cr-c-${NONCE}@example.com`]);
+  const pkg = (await pool.query('SELECT id FROM service_packages WHERE is_active=true ORDER BY id LIMIT 1')).rows[0].id;
+  const p = await pool.query("INSERT INTO proposals (client_id, status, package_id, guest_count, event_duration_hours, num_bars, total_price, amount_paid, event_date, pricing_snapshot) VALUES ($1,'deposit_paid',$2,100,4,1,4800,1000,'2099-09-09','{}') RETURNING id", [c.rows[0].id, pkg]);
+  const cr = await pool.query("INSERT INTO proposal_change_requests (proposal_id, client_id, status, edit_window) VALUES ($1,$2,'pending','before_t14') RETURNING id", [p.rows[0].id, c.rows[0].id]);
+  const res = await rq('PATCH', `/api/proposals/${p.rows[0].id}`, adminToken, { guest_count: 130 });
+  assert.equal(res.status, 200);
+  const row = await pool.query('SELECT status, cancelled_by, decision_note FROM proposal_change_requests WHERE id = $1', [cr.rows[0].id]);
+  assert.equal(row.rows[0].status, 'cancelled');
+  assert.equal(row.rows[0].cancelled_by, 'system');
+  assert.match(row.rows[0].decision_note, /superseded/i);
+  await pool.query('DELETE FROM proposal_change_requests WHERE proposal_id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [c.rows[0].id]);
+});
+
+test('PATCH with a stale change_request_id still supersedes the actual pending request', async () => {
+  const c = await pool.query('INSERT INTO clients (name,email) VALUES ($1,$2) RETURNING id', ['Adm CR4', `adm-cr-d-${NONCE}@example.com`]);
+  const pkg = (await pool.query('SELECT id FROM service_packages WHERE is_active=true ORDER BY id LIMIT 1')).rows[0].id;
+  const p = await pool.query("INSERT INTO proposals (client_id, status, package_id, guest_count, event_duration_hours, num_bars, total_price, amount_paid, event_date, pricing_snapshot) VALUES ($1,'deposit_paid',$2,100,4,1,4800,1000,'2099-09-09','{}') RETURNING id", [c.rows[0].id, pkg]);
+  // A real-but-already-decided request (the "stale" id the admin tab points at):
+  const stale = await pool.query("INSERT INTO proposal_change_requests (proposal_id, client_id, status, edit_window, decision_note) VALUES ($1,$2,'declined','before_t14','old') RETURNING id", [p.rows[0].id, c.rows[0].id]);
+  // The genuinely pending request:
+  const pending = await pool.query("INSERT INTO proposal_change_requests (proposal_id, client_id, status, edit_window) VALUES ($1,$2,'pending','before_t14') RETURNING id", [p.rows[0].id, c.rows[0].id]);
+  const res = await rq('PATCH', `/api/proposals/${p.rows[0].id}`, adminToken, { guest_count: 140, change_request_id: stale.rows[0].id });
+  assert.equal(res.status, 200);
+  const pendRow = await pool.query('SELECT status, cancelled_by FROM proposal_change_requests WHERE id = $1', [pending.rows[0].id]);
+  assert.equal(pendRow.rows[0].status, 'cancelled');
+  assert.equal(pendRow.rows[0].cancelled_by, 'system');
+  const staleRow = await pool.query('SELECT status FROM proposal_change_requests WHERE id = $1', [stale.rows[0].id]);
+  assert.equal(staleRow.rows[0].status, 'declined'); // untouched
+  await pool.query('DELETE FROM proposal_change_requests WHERE proposal_id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [c.rows[0].id]);
+});
