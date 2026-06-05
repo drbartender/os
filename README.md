@@ -302,7 +302,7 @@ dr-bartender/
 │   │   │   │                   # format, nav, shifts; drawers/{ClientDrawer,InvoicesDrawer,ShiftDrawer})
 │   │   │   ├── ShoppingList/   # Shopping list generator (PDF export, ConsultationForm admin-input modal)
 │   │   │   └── MenuPNG/        # Standard Menu PNG export (html2canvas-driven, lazy-loaded; renders hidden MenuPreview at print scale 768x960 and downloads as 2304x2880 PNG)
-│   │   ├── data/               # Shared data (addonCategories, eventTypes, menuSamples, packages, syrups)
+│   │   ├── data/               # Shared data (addonCategories, eventServicesAgreement, eventTypes, menuSamples, packages, syrups)
 │   │   ├── hooks/              # Custom hooks (useDebounce, useDrawerParam, useFormValidation, useWizardHistory, useMetricsFilter)
 │   │   ├── pages/
 │   │   │   ├── (auth)          # Login, Register, ForgotPassword, ResetPassword
