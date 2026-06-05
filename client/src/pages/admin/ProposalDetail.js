@@ -179,6 +179,10 @@ export default function ProposalDetail() {
   };
 
   const updateStatus = async (status) => {
+    if (status === 'sent' && !proposal.client_email) {
+      const proceed = window.confirm('No email on file. Send via SMS only?');
+      if (!proceed) return;
+    }
     try {
       const res = await api.patch(`/proposals/${id}/status`, { status });
       setProposal(prev => ({ ...prev, status: res.data.status }));
