@@ -8,9 +8,10 @@ const express = require('express');
 const { pool } = require('../db');
 const { publicLimiter } = require('../middleware/rateLimiters');
 const asyncHandler = require('../middleware/asyncHandler');
-const { AppError, NotFoundError, ConflictError, ExternalServiceError } = require('../utils/errors');
+const { AppError, NotFoundError, ConflictError, ExternalServiceError, ValidationError } = require('../utils/errors');
 const { getStripe } = require('../utils/stripeClient');
 const { getBookingWindow } = require('../utils/bookingWindow');
+const { deriveGratuityRate, gratuityBasisFromSnapshot, recomputeSnapshotGratuity } = require('../utils/pricingEngine');
 const { DEPOSIT_AMOUNT, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
 
 const router = express.Router();
@@ -24,12 +25,14 @@ router.post('/create-intent/:token', publicLimiter, asyncHandler(async (req, res
     throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
   }
 
-  const { payment_option = 'deposit', autopay = false } = req.body;
+  const { payment_option = 'deposit', autopay = false, tip_jar, gratuity_total } = req.body;
+  const gratuityProvided = tip_jar !== undefined || gratuity_total !== undefined;
 
   const result = await pool.query(`
     SELECT p.id, p.status, p.event_type, p.event_type_custom, p.total_price,
-           p.event_date, p.event_start_time,
+           p.event_date, p.event_start_time, p.event_duration_hours,
            p.stripe_customer_id, p.deposit_amount,
+           p.pricing_snapshot, p.gratuity_rate, p.tip_jar,
            c.email AS client_email, c.name AS client_name
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
@@ -65,26 +68,88 @@ router.post('/create-intent/:token', publicLimiter, asyncHandler(async (req, res
     );
   }
 
+  // §6: persist the client's gratuity choice + recompute total_price in one
+  // transaction so the PaymentIntent amount is built from the JUST-WRITTEN total
+  // (removes the old TOCTOU). Skipped on the initial intent fetch (no gratuity in
+  // body) — that path charges the already-stored total.
+  //
+  // No reconcileProposalPaymentStatus call here BY DESIGN: this route is gated to
+  // status sent/viewed/accepted (the guards above), all of which have
+  // amount_paid = 0, so a gratuity change can never make amount_paid > total_price.
+  if (gratuityProvided) {
+    const dbClient = await pool.connect();
+    try {
+      await dbClient.query('BEGIN');
+      const lockRes = await dbClient.query(
+        `SELECT pricing_snapshot, event_duration_hours, gratuity_rate, tip_jar, total_price
+           FROM proposals WHERE id = $1 FOR UPDATE`,
+        [proposal.id]
+      );
+      const row = lockRes.rows[0];
+      const snap = row.pricing_snapshot || {};
+      const { staffCount, hours } = gratuityBasisFromSnapshot(snap, row.event_duration_hours);
+      // Can't skip the jar with no crew/hours — force it on so the DB CHECK passes.
+      const effTipJar = (staffCount * hours) <= 0 ? true : (tip_jar !== false);
+      const g = deriveGratuityRate({
+        enteredTotal: gratuity_total !== undefined ? gratuity_total : 0,
+        staffCount, hours, tipJar: effTipJar,
+      });
+      if (!g.ok) { await dbClient.query('ROLLBACK'); throw new ValidationError({ gratuity: g.message }); }
+      const newSnap = recomputeSnapshotGratuity(snap, {
+        gratuityRate: g.rate, tipJar: effTipJar,
+        staffNoun: snap.staff_noun, durationHours: row.event_duration_hours,
+      });
+      await dbClient.query(
+        `UPDATE proposals SET tip_jar = $1, gratuity_rate = $2,
+                pricing_snapshot = $3, total_price = $4, updated_at = NOW()
+           WHERE id = $5`,
+        [effTipJar, g.rate, JSON.stringify(newSnap), newSnap.total, proposal.id]
+      );
+      await dbClient.query('COMMIT');
+      proposal.total_price = newSnap.total;     // use the just-written total below
+      proposal.pricing_snapshot = newSnap;
+    } catch (e) {
+      try { await dbClient.query('ROLLBACK'); } catch (_) { /* already rolled back */ }
+      throw e;
+    } finally {
+      dbClient.release();
+    }
+  }
+
   const isFullPay = payment_option === 'full';
   const wantsAutopay = !isFullPay && autopay === true;
   const amount = isFullPay
     ? Math.round(Number(proposal.total_price) * 100)
     : DEPOSIT_AMOUNT;
 
-  // Reuse existing pending intent if amount matches
+  // Reuse an existing pending intent only when the amount matches AND the client
+  // did not just change the gratuity this request.
   const existing = await pool.query(
     "SELECT stripe_payment_intent_id, amount FROM stripe_sessions WHERE proposal_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
     [proposal.id]
   );
-  if (existing.rows[0] && existing.rows[0].amount === amount) {
+  if (existing.rows[0] && existing.rows[0].amount === amount && !gratuityProvided) {
     try {
       const intent = await stripe.paymentIntents.retrieve(existing.rows[0].stripe_payment_intent_id);
       if (intent.status === 'requires_payment_method' || intent.status === 'requires_confirmation') {
-        return res.json({ clientSecret: intent.client_secret });
+        return res.json({
+          clientSecret: intent.client_secret,
+          total_price: Number(proposal.total_price),
+          gratuity: (proposal.pricing_snapshot && proposal.pricing_snapshot.gratuity) || null,
+        });
       }
     } catch (e) {
       // Intent no longer valid, create a new one
     }
+  }
+  // Stale-intent safety (§6): a prior pending intent whose amount no longer
+  // matches must be cancelled so a stale browser tab can't confirm the old total.
+  if (existing.rows[0] && existing.rows[0].amount !== amount) {
+    try { await stripe.paymentIntents.cancel(existing.rows[0].stripe_payment_intent_id); } catch (e) { /* already gone/uncancelable */ }
+    await pool.query(
+      "UPDATE stripe_sessions SET status = 'canceled' WHERE stripe_payment_intent_id = $1",
+      [existing.rows[0].stripe_payment_intent_id]
+    );
   }
 
   // Create or retrieve Stripe Customer (needed for autopay card saving)
@@ -133,7 +198,11 @@ router.post('/create-intent/:token', publicLimiter, asyncHandler(async (req, res
     WHERE id = $3
   `, [isFullPay ? 'full' : 'deposit', wantsAutopay, proposal.id]);
 
-  res.json({ clientSecret: paymentIntent.client_secret });
+  res.json({
+    clientSecret: paymentIntent.client_secret,
+    total_price: Number(proposal.total_price),
+    gratuity: (proposal.pricing_snapshot && proposal.pricing_snapshot.gratuity) || null,
+  });
 }));
 
 module.exports = router;
