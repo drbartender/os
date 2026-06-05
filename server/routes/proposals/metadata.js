@@ -43,7 +43,7 @@ router.get('/addons', auth, requireAdminOrManager, asyncHandler(async (req, res)
  *  (bundle-covered add-ons dropped) and carry a bounded quantity, so the
  *  preview total matches what the proposal would actually be saved at. */
 router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, addon_variants, addon_quantities, syrup_selections, adjustments, total_price_override, tip_jar, gratuity_total } = req.body;
+  const { package_id, guest_count, duration_hours, num_bars, num_bartenders, addon_ids, addon_variants, addon_quantities, syrup_selections, adjustments, total_price_override, tip_jar, gratuity_total, gratuity_rate } = req.body;
   if (!package_id) {
     throw new ValidationError({ package_id: 'Package is required' });
   }
@@ -83,6 +83,11 @@ router.post('/calculate', auth, requireAdminOrManager, asyncHandler(async (req, 
     const g = deriveGratuityRate({ enteredTotal: gratuity_total, staffCount, hours, tipJar: previewTipJar });
     if (!g.ok) throw new ValidationError({ gratuity: g.message });
     previewRate = g.rate;
+  } else if (gratuity_rate !== undefined) {
+    // Not an explicit gratuity edit — preview at the stored rate so the gratuity
+    // line scales with staff/hours (mirrors the persist path when gratuity_total
+    // is omitted). No re-derivation, so an unrelated edit can't shift the rate.
+    previewRate = Number(gratuity_rate) || 0;
   }
 
   const snapshot = calculateProposal({

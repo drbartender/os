@@ -36,6 +36,15 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   const initialRef = useRef(JSON.stringify(initialFormFromProposal(proposal)));
 
+  // Whether the admin actually touched the gratuity controls this session. When
+  // untouched, the edit/preview must NOT send tip_jar/gratuity_total — otherwise
+  // the server re-derives the rate from a stale dollar total and silently shifts
+  // it on any unrelated edit (e.g. a guest-count change that grows the crew).
+  // Mirrors the public checkout's gratuityDirty guard.
+  const [gratuityDirty, setGratuityDirty] = useState(false);
+  const storedGratuityRate = Number(proposal?.pricing_snapshot?.gratuity?.rate) || 0;
+  const storedTipJar = proposal?.pricing_snapshot?.gratuity?.tip_jar !== false;
+
   // Load packages + addons
   useEffect(() => {
     Promise.all([
@@ -82,8 +91,12 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
         syrup_selections: editForm.syrup_selections || [],
         adjustments: editForm.adjustments || [],
         total_price_override: editForm.total_price_override,
-        tip_jar: editForm.tip_jar !== false,
-        gratuity_total: editForm.gratuity_total,
+        // Only send the gratuity dollar when the admin actually edited it; else
+        // preview at the STORED rate so the line scales with staff/hours and
+        // matches what will save (no silent rate re-derivation). See gratuityDirty.
+        ...(gratuityDirty
+          ? { tip_jar: editForm.tip_jar !== false, gratuity_total: editForm.gratuity_total }
+          : { tip_jar: storedTipJar, gratuity_rate: storedGratuityRate }),
       })
         .then(res => { setEditPreview(res.data); setError(''); })
         .catch(err => {
@@ -105,6 +118,9 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
     editForm.total_price_override,
     editForm.tip_jar,
     editForm.gratuity_total,
+    gratuityDirty,
+    storedTipJar,
+    storedGratuityRate,
   ]);
 
   const isDirty = useMemo(
@@ -125,6 +141,11 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
   }, [isDirty]);
 
   const update = (field, value) => setEditForm(f => ({ ...f, [field]: value }));
+
+  // Gratuity edits flip gratuityDirty so the request includes tip_jar/gratuity_total
+  // (an explicit, admin-intended rate change). Left untouched, those fields are
+  // omitted and the server keeps the stored rate, rescaling the dollar by staffing.
+  const updateGratuity = (field, value) => { setGratuityDirty(true); update(field, value); };
 
   const clearFieldError = (name) => {
     if (fieldErrors[name]) {
@@ -209,8 +230,11 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
         syrup_selections: editForm.syrup_selections || [],
         adjustments: editForm.adjustments || [],
         total_price_override: editForm.total_price_override,
-        tip_jar: editForm.tip_jar !== false,
-        gratuity_total: editForm.gratuity_total,
+        // Persist the gratuity dollar ONLY when the admin edited it; otherwise omit
+        // both so the server preserves the stored rate and rescales the dollar by
+        // the new staffing (crud.js gratuity branch). Prevents an unrelated edit
+        // from silently shifting the client-elected rate. See gratuityDirty.
+        ...(gratuityDirty ? { tip_jar: editForm.tip_jar !== false, gratuity_total: editForm.gratuity_total } : {}),
         client_provides_glassware: !!editForm.client_provides_glassware,
         // Top Shelf is class-only — only send class_options for a class package
         // so switching to a non-class package can't trip the server-side guard.
@@ -597,13 +621,13 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
               <>
                 <label className="hstack" style={{ gap: 6 }}>
                   <input type="checkbox" checked={editForm.tip_jar !== false}
-                    onChange={e => update('tip_jar', e.target.checked)} /> Tip jar at the bar
+                    onChange={e => updateGratuity('tip_jar', e.target.checked)} /> Tip jar at the bar
                 </label>
                 <div className="hstack" style={{ gap: 6, marginTop: 6, alignItems: 'center' }}>
                   <span>Pre-paid gratuity for {gNoun}s $</span>
                   <input className="input" type="number" min={editForm.tip_jar !== false ? 0 : gFloor} step="1"
-                    value={editForm.gratuity_total}
-                    onChange={e => update('gratuity_total', e.target.value)} style={{ width: 120 }} />
+                    value={gratuityDirty ? editForm.gratuity_total : (gB?.total ?? editForm.gratuity_total)}
+                    onChange={e => updateGratuity('gratuity_total', e.target.value)} style={{ width: 120 }} />
                 </div>
                 {editForm.tip_jar === false && Number(editForm.gratuity_total) < gFloor && (
                   <p className="chip danger" style={{ marginTop: 6 }}>Without a tip jar, minimum is ${gFloor}.</p>
