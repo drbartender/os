@@ -179,7 +179,7 @@ dr-bartender/
 │   │   ├── staffPortal.js      # Staff portal v2 /api/me/* composite + account-mgmt endpoints (staff-home, tip-card-order, profile, ui-preferences, staff-notifications, push-subscriptions, documents/:doc_type/replace, request-email-change, cancel-pending-email-change); mounts the per-concern subrouters below
 │   │   ├── staffPortal/        # Per-concern subrouters mounted by staffPortal.js
 │   │   │   ├── paymentMethods.js   # GET/PATCH /payment-methods + PUT /preferred-payment-method (bank PII via encryption.js)
-│   │   │   ├── payouts.js          # GET /payouts (history) + GET /payouts/:periodId (one pay period detail)
+│   │   │   ├── payouts.js          # GET /payouts (history) + /payouts/:periodId (detail) + /payouts/:periodId/paystub (lazy-gen PDF download)
 │   │   │   └── accountReads.js     # GET /profile, /calendar-settings, /documents — AccountPage hydration reads
 │   │   ├── publicReviews.js    # Public cached endpoint for Thumbtack reviews on homepage
 │   │   ├── publicTip.js        # Public tip-page lookup + post-tip feedback (token-gated)
@@ -191,6 +191,8 @@ dr-bartender/
 │   │   ├── adminAuditLog.js    # logAdminAction(...) — durable record of admin actions (rotate-token, regenerate-stripe). Best-effort; failures go to Sentry, never block the underlying op
 │   │   ├── adminNotifications.js # notifyAdminCategory(...) — multi-admin notification fan-out by category (joins users.notification_preferences + contractor_profiles for SMS)
 │   │   ├── agreementPdf.js     # PDFKit renderer for signed contractor agreements
+│   │   ├── paystubData.js      # Assembles paystub render data (payout + events + YTD) per (contractor, period)
+│   │   ├── paystubPdf.js       # PDFKit renderer for staff paystubs (mirrors agreementPdf.js)
 │   │   ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)
 │   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
 │   │   ├── balanceReminderScheduling.js # Balance-reminder ladder scheduling (extracted from stripe.js)
