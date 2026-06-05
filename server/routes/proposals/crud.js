@@ -430,7 +430,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
   try {
     await dbClient.query('BEGIN');
 
-    const existing = await dbClient.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
+    // FOR UPDATE: lock the row for the duration of the edit tx so two concurrent
+    // PATCHes (or a webhook) can't lose-update gratuity_rate/tip_jar/status and so
+    // the reconcile + overpayment checks below read a consistent amount_paid.
+    const existing = await dbClient.query('SELECT * FROM proposals WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!existing.rows[0]) {
       throw new NotFoundError('Proposal not found');
     }
@@ -584,13 +587,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // SAME rate is allowed and triggers a client notice.
     const isPaidForGratuity = Number(old.amount_paid || 0) > 0;
     const priorGratuityRate = Number(old.gratuity_rate) || 0;
-    if (isPaidForGratuity) {
-      if (gratuityOrigin === 'admin' && resolvedGratuityRate > priorGratuityRate) {
-        throw new ValidationError({
-          gratuity: 'Gratuity rate cannot be increased after payment. Adjust staffing, or arrange a separate client-consented charge.',
-        });
-      }
-      if (resolvedGratuityRate === priorGratuityRate && priorGratuityRate > 0) gratuityOrigin = 'staffing';
+    if (isPaidForGratuity && gratuityOrigin === 'admin' && resolvedGratuityRate > priorGratuityRate) {
+      throw new ValidationError({
+        gratuity: 'Gratuity rate cannot be increased after payment. Adjust staffing, or arrange a separate client-consented charge.',
+      });
     }
 
     const snapshot = calculateProposal({
@@ -603,8 +603,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // Flag a staffing-driven post-payment gratuity rise for a client notice (§7).
     const oldGratuityTotal = Number(old.pricing_snapshot?.gratuity?.total) || 0;
     const newGratuityTotal = Number(snapshot.gratuity?.total) || 0;
-    if (isPaidForGratuity && gratuityOrigin === 'staffing' && newGratuityTotal > oldGratuityTotal) {
-      notifyStaffingGratuity = true;
+    // A staffing change moves the gratuity amount at the SAME rate. Stamp origin
+    // 'staffing' only when the amount actually changed (not on an unrelated edit),
+    // and notify the client only on an increase (§7).
+    if (isPaidForGratuity && gratuityOrigin !== 'admin' && newGratuityTotal !== oldGratuityTotal) {
+      gratuityOrigin = 'staffing';
+      if (newGratuityTotal > oldGratuityTotal) notifyStaffingGratuity = true;
     }
 
     const updatedRow = await dbClient.query(`
