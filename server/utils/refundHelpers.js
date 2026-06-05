@@ -10,6 +10,8 @@
  * for the proposals columns.
  */
 
+const { reconcileProposalPaymentStatus } = require('./proposalStatus');
+
 function fmtUSD(cents) {
   return '$' + (cents / 100).toFixed(2);
 }
@@ -261,21 +263,19 @@ async function applyRefundReconciliation(
   // status, so legitimate future autopay on a still-owed contract balance is
   // left armed — the disarm is scoped to the was-fully-paid transition only.
   const mr = moneyRes.rows[0];
-  if (mr && ['balance_paid', 'deposit_paid'].includes(statusBefore)) {
-    const apAfter = Number(mr.amount_paid);
-    const tpAfter = Number(mr.total_price);
-    let demoted = null;
-    if (apAfter <= 0) demoted = 'accepted';
-    else if (apAfter < tpAfter) demoted = 'deposit_paid';
-    if (demoted && demoted !== statusBefore) {
-      autopayDisarmed = statusBefore === 'balance_paid' && demoted === 'deposit_paid';
+  if (mr) {
+    const rec = reconcileProposalPaymentStatus({
+      status: statusBefore, amountPaid: mr.amount_paid, totalPrice: mr.total_price,
+    });
+    if (rec.changed) {
+      autopayDisarmed = rec.autopayDisarmed;
       await dbClient.query(
         autopayDisarmed
           ? 'UPDATE proposals SET status = $1, autopay_enrolled = false WHERE id = $2'
           : 'UPDATE proposals SET status = $1 WHERE id = $2',
-        [demoted, proposalId]
+        [rec.status, proposalId]
       );
-      statusAfter = demoted;
+      statusAfter = rec.status;
     }
   }
 
