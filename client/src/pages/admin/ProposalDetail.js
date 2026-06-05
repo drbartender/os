@@ -13,6 +13,7 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import { fmtDateFull } from '../../components/adminos/format';
 import ProposalDetailEditForm from './ProposalDetailEditForm';
+import ProposalChangeRequestCard from './ProposalChangeRequestCard';
 import ProposalDetailPaymentPanel from './ProposalDetailPaymentPanel';
 import BackButton from '../../components/adminos/BackButton';
 import AddressLink from '../../components/adminos/AddressLink';
@@ -72,6 +73,15 @@ export default function ProposalDetail() {
   // Activity modal
   const [showActivityPopup, setShowActivityPopup] = useState(false);
 
+  // Change-request review state. openCr = any pending request (drives the
+  // direct-edit warning). pendingCr = the request being applied via the deep-link.
+  // appliedCrId is captured ONCE at mount: the cleanup effect below strips
+  // change_request_id from the URL, so re-deriving pendingCr from the live param
+  // would clear it out from under the editor's Save. Capturing at mount keeps it stable.
+  const [openCr, setOpenCr] = useState(null);
+  const [pendingCr, setPendingCr] = useState(null);
+  const [appliedCrId] = useState(() => searchParams.get('change_request_id'));
+
   const loadProposal = useCallback(() => {
     return api.get(`/proposals/${id}`).then(res => {
       setProposal(res.data);
@@ -88,12 +98,23 @@ export default function ProposalDetail() {
 
   useEffect(() => { loadProposal(); }, [loadProposal]);
 
+  useEffect(() => {
+    api.get(`/proposals/${id}/change-requests`)
+      .then(r => {
+        const rows = r.data.requests || [];
+        setOpenCr(rows.find(x => x.status === 'pending') || null);
+        setPendingCr(appliedCrId ? (rows.find(x => String(x.id) === String(appliedCrId)) || null) : null);
+      })
+      .catch(() => {});
+  }, [id, appliedCrId]);
+
   // After honoring ?edit=1, strip the query param so the URL stays clean
   // (and a future reload doesn't auto-reopen edit if the user has navigated away).
   useEffect(() => {
     if (searchParams.get('edit') === '1') {
       const next = new URLSearchParams(searchParams);
       next.delete('edit');
+      next.delete('change_request_id');
       setSearchParams(next, { replace: true });
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -295,17 +316,30 @@ export default function ProposalDetail() {
         {/* Left column */}
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
           {editing ? (
-            <ProposalDetailEditForm
-              proposal={proposal}
-              onSaved={() => {
-                setEditing(false);
-                setLoading(true);
-                loadProposal();
-              }}
-              onCancel={() => setEditing(false)}
-            />
+            <>
+              {openCr && !pendingCr && (
+                <div className="client-alert client-alert-warning" role="status">
+                  Heads up: this proposal has a pending change request from the client. Saving a
+                  direct edit will supersede it (the request is auto-cancelled on save). To apply
+                  the client's request instead, cancel out and use "Apply in editor" on the
+                  change-request card.
+                </div>
+              )}
+              <ProposalDetailEditForm
+                proposal={proposal}
+                changeRequest={pendingCr}
+                onSaved={() => {
+                  setEditing(false);
+                  setPendingCr(null);
+                  setLoading(true);
+                  loadProposal();
+                }}
+                onCancel={() => setEditing(false)}
+              />
+            </>
           ) : (
             <>
+              <ProposalChangeRequestCard proposalId={id} onChanged={loadProposal} />
               {/* Client */}
               <div className="card">
                 <div className="card-head">
