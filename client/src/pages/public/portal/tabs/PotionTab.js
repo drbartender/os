@@ -9,7 +9,7 @@ export default function PotionTab({ focus }) {
     try { const { data } = await api.get(`/drink-plans/t/${focus.drink_plan_token}`);
       if (!off) { setPlan(data || {}); setState('ready'); }
     } catch (e) { if (!off) { Sentry.captureException(e, { tags: { area: 'client-portal', tab: 'potion', token: focus.token } }); setState('error'); } }
-  })(); return () => { off = true; }; }, [focus.drink_plan_token]);
+  })(); return () => { off = true; }; }, [focus.drink_plan_token, focus.token]);
   if (state === 'none') return <div className="cp-empty"><p>Your menu opens after booking.</p></div>;
   if (state === 'loading') return <div className="loading" role="status"><div className="spinner" />Loading...</div>;
   if (state === 'error') return <div className="client-alert client-alert-error">Could not load your menu.</div>;

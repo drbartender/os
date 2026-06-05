@@ -36,7 +36,7 @@ const Application = lazy(() => import('./pages/Application'));
 const ApplicationStatus = lazy(() => import('./pages/ApplicationStatus'));
 const PotionPlanningLab = lazy(() => import('./pages/plan/PotionPlanningLab'));
 const ClientShoppingList = lazy(() => import('./pages/public/ClientShoppingList'));
-const ClientDashboard = lazy(() => import('./pages/public/ClientDashboard'));
+const PortalHome = lazy(() => import('./pages/public/portal/PortalHome'));
 
 // Lazy-loaded: Lab Rat tester program (kept out of main bundle for non-tester visitors)
 const LabRatLanding = lazy(() => import('./pages/labrat/LabRatLanding'));
@@ -290,7 +290,9 @@ function PublicWebsiteRoutes() {
         <Route path="/labnotes" element={<Blog />} />
         <Route path="/labnotes/:slug" element={<BlogPost />} />
         <Route path="/login" element={<ClientLogin />} />
-        <Route path="/my-proposals" element={<ClientDashboard />} />
+        <Route path="/my-proposals" element={<PortalHome />} />
+        <Route path="/my-proposals/archive" element={<PortalHome />} />
+        <Route path="/my-proposals/:token/:tab" element={<PortalHome />} />
         {/* Lab Rat tester program */}
         <Route path="/labrat" element={<LabRatLanding />} />
         <Route path="/labrat/quiz" element={<LabRatQuiz />} />
@@ -459,7 +461,9 @@ function AppRoutes() {
       <Route path="/labnotes/:slug" element={<BlogPost />} />
       {/* Client portal */}
       <Route path="/client-login" element={<ClientLogin />} />
-      <Route path="/my-proposals" element={<ClientDashboard />} />
+      <Route path="/my-proposals" element={<PortalHome />} />
+      <Route path="/my-proposals/archive" element={<PortalHome />} />
+      <Route path="/my-proposals/:token/:tab" element={<PortalHome />} />
 
       <Route path="/register" element={<RedirectIfLoggedIn><Register /></RedirectIfLoggedIn>} />
       {/* /onboarding intentionally has NO RedirectIfLoggedIn — the page handles
