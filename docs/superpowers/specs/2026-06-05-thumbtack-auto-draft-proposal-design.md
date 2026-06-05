@@ -158,8 +158,12 @@ atomically (no window where a proposal exists but the lead is unlinked):
    'the-core-reaction'`. If missing, throw (caught upstream as best-effort).
 3. **Map lead -> fields** (see Field Mapping), build `admin_notes` (see Admin
    Notes).
-4. **Price.** `calculateProposal({ pkg, guestCount, durationHours: 4, numBars: 1,
-   numBartenders: undefined, addons: [], syrupSelections: [] })`.
+4. **Price.** `calculateProposal({ pkg, guestCount, durationHours: 4, numBars,
+   numBartenders: undefined, addons: [], syrupSelections: [] })` where `numBars`
+   is 0 for a `service_only` package (The Core Reaction) and 1 otherwise. A
+   `service_only` package rents no physical bar, and any `numBars >= 1` makes the
+   engine add `first_bar_fee` (`Number(pkg.first_bar_fee || 50)`, i.e. $50 even
+   when the column is 0).
 5. **Insert** via the shared `insertProposalRecord(dbClient, fields)` with
    `status 'draft'`, `source 'thumbtack'`, `created_by NULL`.
 6. **Activity log.** `INSERT INTO proposal_activity_log (proposal_id, action,
@@ -186,7 +190,7 @@ This unit never creates an invoice, never sends email/SMS, never sets `sent`.
 | `venue_name` | (none) | null |
 | `event_type` | category + Q&A | keyword map (below); null when no match |
 | `event_type_category` | matched `EVENT_TYPES` entry | set to that entry's `category` when `event_type` matched; else null |
-| `num_bars` | constant | 1 |
+| `num_bars` | by `bar_type` | 0 for `service_only` (The Core Reaction), else 1; `service_only` rents no bar and `numBars >= 1` adds `first_bar_fee` |
 | `num_bartenders` | (none) | undefined; engine derives from package + guests |
 | `source` | constant | `thumbtack` |
 | `created_by` | constant | null (system; attribution in activity log) |
@@ -194,10 +198,10 @@ This unit never creates an invoice, never sends email/SMS, never sets `sent`.
 **Pricing note:** the draft is priced by the real engine, not a hard-coded
 number. For The Core Reaction at <=100 guests with no extra bartenders it lands
 at roughly $350; it correctly scales up for longer durations or guest counts that
-cross the 1:100 bartender ratio. The spec does not assume a literal flat $350. A
-unit test pins the total at a controlled guest count, and the plan confirms the
-`first_bar_fee` default does not add an unexpected bar-rental charge for
-`service_only`.
+cross the 1:100 bartender ratio. The spec does not assume a literal flat $350.
+Because `num_bars` is 0 for the `service_only` Core Reaction, no bar-rental fee
+applies (the engine would otherwise add `first_bar_fee || 50` for any
+`num_bars >= 1`). A unit test pins the total at a controlled guest count.
 
 **Timezone:** the lead's `event_date` is `TIMESTAMPTZ` (UTC); a late-evening ET
 event can fall on the next UTC day, so convert to `America/New_York` before
@@ -271,7 +275,10 @@ proposal with no client email, not only Thumbtack ones.
   list **server-side** (so Thumbtack drafts beyond page 1 are never missed).
 - **Counts:** apply the same `source` filter to the tab-count / stats query the
   dashboard loads, so the counts stay consistent with the filtered list (avoids
-  the once-on-mount desync).
+  the once-on-mount desync). The source-scoped path returns ONLY the tab-count
+  fields (`pipeline` / `paidCount` / `archivedCount`); the full-KPI cards never
+  pass `source`, so this thinned shape is the documented contract for a
+  source-filtered stats request.
 - **UI:** in `client/src/pages/admin/ProposalsDashboard.js`, render a "Thumbtack"
   badge on rows where `source === 'thumbtack'`, and add a source filter
   (All / Thumbtack / Manual) that drives the `source` query param. "Manual"

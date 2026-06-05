@@ -19,6 +19,7 @@
 - **Create** `server/utils/proposalInsert.js`: `insertProposalRecord(dbClient, fields)` composes the venue location, inserts the `proposals` row (full column set incl `source`/`admin_notes`), bulk-inserts `proposal_addons` from the snapshot. One responsibility: build a proposal row. Shared by the manual route and the Thumbtack util.
 - **Create** `server/utils/thumbtackProposalDraft.js`: pure mappers (`mapEventType`, `toEtDateAndTime`, `buildAdminNotes`) plus `createDraftProposalFromLead(...)` (owns its transaction, calls `insertProposalRecord`).
 - **Create** `server/utils/thumbtackProposalDraft.test.js`: unit tests for the pure mappers plus a DB test for `createDraftProposalFromLead`.
+- **Create** `server/routes/thumbtack.test.js`: webhook best-effort (a draft failure still 200s with the lead persisted) plus an admin_notes PII regression against the real `/t/:token` route (Task 6b).
 - **Create** `client/src/components/admin/SourceBadge.js`: tiny "Thumbtack" badge, null-safe.
 - **Modify** `server/db/schema.sql`: two idempotent ALTERs plus the `source` CHECK.
 - **Modify** `server/routes/proposals/crud.js`: adopt `insertProposalRecord` in `POST /`; add `source` to `GET /` SELECT and filter.
@@ -29,14 +30,16 @@
 - **Modify** `client/src/pages/admin/ProposalDetail.js`: no-email Send confirm.
 - **Modify** `ARCHITECTURE.md`, `README.md`: docs.
 
-Task order respects dependencies: schema (1) → shared builder (2) → pure mappers (3) → draft builder (4) → notification template (5) → webhook wiring (6) → server filter (7) → client filter/badge (8) → Send guard (9) → docs (10).
+Task order respects dependencies: schema (1) → shared builder (2) → pure mappers (3) → draft builder (4) → notification template (5) → webhook wiring (6) → webhook tests (6b) → server filter (7) → client filter/badge (8) → Send guard (9) → docs (10).
 
 ---
 
 ## Task 1: Schema migrations
 
 **Files:**
-- Modify: `server/db/schema.sql` (proposals ALTER near the proposals signature-column block ~line 875; thumbtack_leads ALTER right after the `thumbtack_leads` trigger ~line 1633)
+- Modify: `server/db/schema.sql` (proposals ALTER near the proposals signature-column block ~line 875; thumbtack_leads ALTER right after the `thumbtack_leads` trigger ~line 1685)
+
+**Note:** both ALTERs are additive and idempotent, so this task is safe to keep on any revert. Tasks 7 and 8 read `proposals.source`, so Task 1 must land before them; do not revert Task 1 alone while later tasks are present.
 
 - [ ] **Step 1: Add the `proposals.source` column + CHECK**
 
@@ -69,8 +72,13 @@ ALTER TABLE thumbtack_leads
 
 - [ ] **Step 3: Apply the schema to the dev DB**
 
-Run: `node server/db/migrate.js` (or the project's schema-apply script; if unsure, run `npm run db:migrate` — check `package.json` scripts first).
-Expected: completes with no error; re-running is a no-op (idempotent).
+There is no migrate script. The repo applies `schema.sql` idempotently through `initDb()` (`server/db/index.js`), which the server also runs on boot. Apply it directly:
+
+Run:
+```bash
+node -e "require('dotenv').config(); require('./server/db').initDb().then(()=>{console.log('schema applied');process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})"
+```
+Expected: prints `schema applied` with no error; re-running is a no-op (idempotent).
 
 - [ ] **Step 4: Verify the columns exist**
 
@@ -473,7 +481,7 @@ after(async () => {
 });
 ```
 
-Note: the `event_location` assert documents the expectation; if `composeVenueLocation` formats differently (e.g. includes the street), update the expected string to match its real output (run the test once and read the actual value) rather than changing the code.
+Note: the `event_location` assert uses `includes('Tampa')`/`includes('FL')`, so it is robust to how `composeVenueLocation` orders or spaces the composed parts.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -547,7 +555,7 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
       guestCount,
       packageId: pkg.id,
       numBars,
-      numBartenders: snapshot.staffing.actual,
+      numBartenders: snapshot.staffing.actual ?? null,
       pricingSnapshot: snapshot,
       totalPrice: snapshot.total,
       createdBy: null,
@@ -661,12 +669,24 @@ git commit -m "feat(thumbtack): proposal deep-link CTA in lead notification"
 **Files:**
 - Modify: `server/routes/thumbtack.js` (require the builder; call it best-effort after COMMIT; pass `proposalUrl`)
 
-- [ ] **Step 1: Require the draft builder**
+- [ ] **Step 1: Require the draft builder behind a test seam**
 
-In `server/routes/thumbtack.js`, after `const { findOrCreateClient } = require('../utils/clientDedup');` (line 10), add:
+In `server/routes/thumbtack.js`, after `const { findOrCreateClient } = require('../utils/clientDedup');` (line 10), add the require plus a dependency seam (mirrors the `__setDeps` pattern in `crud.js`) so a test can stub the draft builder to throw:
 
 ```js
 const { createDraftProposalFromLead } = require('../utils/thumbtackProposalDraft');
+
+// Test seam: lets thumbtack.test.js stub the draft builder to throw and prove
+// the webhook still 200s with the lead persisted.
+let _deps = { createDraftProposalFromLead };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
+```
+
+At the very bottom of the file, change `module.exports = router;` to also expose the seam:
+
+```js
+module.exports = router;
+module.exports.__setDeps = __setDeps;
 ```
 
 - [ ] **Step 2: Create the draft best-effort, before the notification**
@@ -679,7 +699,7 @@ In `server/routes/thumbtack.js`, inside `POST /leads`, the code currently does `
     let proposalId = null;
     if (clientId) {
       try {
-        const draft = await createDraftProposalFromLead({ lead, clientId, negotiationId: lead.negotiationId });
+        const draft = await _deps.createDraftProposalFromLead({ lead, clientId, negotiationId: lead.negotiationId });
         proposalId = draft ? draft.proposalId : null;
       } catch (draftErr) {
         if (process.env.SENTRY_DSN_SERVER) {
@@ -738,6 +758,138 @@ git commit -m "feat(thumbtack): auto-create draft proposal on lead webhook"
 
 ---
 
+## Task 6b: Webhook failure-path and PII regression tests
+
+Depends on the `__setDeps` seam added in Task 6 Step 1.
+
+**Files:**
+- Create: `server/routes/thumbtack.test.js`
+
+- [ ] **Step 1: Write the tests**
+
+Create `server/routes/thumbtack.test.js`:
+
+```js
+// Route-level tests for POST /api/thumbtack/leads. Proves (1) the auto-draft step
+// is best-effort: a draft-builder failure still 200s with the lead persisted, and
+// (2) a Thumbtack-sourced draft never leaks admin_notes on the public token route.
+// Mounts the real routers on a throwaway express app (mirrors crud.test.js), runs
+// against the dev DB, and cleans every row it creates. Run ALONE (shared dev DB).
+require('dotenv').config();
+process.env.SEND_NOTIFICATIONS = 'false'; // never fire real email/SMS from this suite
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const http = require('node:http');
+const express = require('express');
+
+const { pool } = require('../db');
+const { AppError } = require('../utils/errors');
+const thumbtackRouter = require('./thumbtack');
+const publicTokenRouter = require('./proposals/publicToken');
+const { createDraftProposalFromLead } = require('../utils/thumbtackProposalDraft');
+
+let server, baseUrl;
+const secret = process.env.THUMBTACK_WEBHOOK_SECRET || null;
+const negA = `test-fail-${Date.now()}`;
+const negB = `test-pii-${Date.now()}`;
+const created = { negotiationIds: [negA, negB], proposalIds: [], clientIds: [] };
+
+function httpReq(method, path, headers, body) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(baseUrl + path, { method, headers }, (res) => {
+      let data = '';
+      res.on('data', c => (data += c));
+      res.on('end', () => resolve({ status: res.statusCode, body: data ? JSON.parse(data) : null }));
+    });
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+function postLead(negotiationId) {
+  const body = JSON.stringify({
+    leadID: negotiationId,
+    customer: { name: 'Harness Lead', phone: `+1555${String(Date.now()).slice(-7)}` },
+    request: {
+      category: 'Wedding Bartending', description: 'need bartender',
+      location: { city: 'Tampa', state: 'FL', zipCode: '33602' },
+      details: [{ question: 'Guests?', answer: '80' }],
+    },
+  });
+  const headers = { 'Content-Type': 'application/json' };
+  if (secret) headers['x-thumbtack-secret'] = secret;
+  return httpReq('POST', '/api/thumbtack/leads', headers, body);
+}
+
+before(async () => {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/thumbtack', thumbtackRouter);
+  app.use('/api/proposals', publicTokenRouter);
+  app.use((err, req, res, _next) => {
+    const status = err instanceof AppError ? err.statusCode : 500;
+    res.status(status).json({ error: err.message });
+  });
+  await new Promise(r => { server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; r(); }); });
+});
+
+test('best-effort: a draft-builder failure still 200s with the lead persisted', async () => {
+  thumbtackRouter.__setDeps({ createDraftProposalFromLead: async () => { throw new Error('boom'); } });
+  const res = await postLead(negA);
+  assert.equal(res.status, 200);
+  const lead = await pool.query('SELECT client_id, proposal_id FROM thumbtack_leads WHERE negotiation_id = $1', [negA]);
+  assert.equal(lead.rows.length, 1, 'lead must be captured even though the draft threw');
+  assert.equal(lead.rows[0].proposal_id, null, 'no proposal linked when the draft failed');
+  if (lead.rows[0].client_id) created.clientIds.push(lead.rows[0].client_id);
+});
+
+test('a Thumbtack-sourced draft never exposes admin_notes on the public token route', async () => {
+  thumbtackRouter.__setDeps({ createDraftProposalFromLead }); // restore the real builder
+  const res = await postLead(negB);
+  assert.equal(res.status, 200);
+  const row = await pool.query(
+    'SELECT p.id, p.token, p.source FROM proposals p JOIN thumbtack_leads t ON t.proposal_id = p.id WHERE t.negotiation_id = $1',
+    [negB]
+  );
+  assert.equal(row.rows.length, 1, 'a draft should have been auto-created');
+  assert.equal(row.rows[0].source, 'thumbtack');
+  created.proposalIds.push(row.rows[0].id);
+  const lead = await pool.query('SELECT client_id FROM thumbtack_leads WHERE negotiation_id = $1', [negB]);
+  if (lead.rows[0] && lead.rows[0].client_id) created.clientIds.push(lead.rows[0].client_id);
+
+  const pub = await httpReq('GET', `/api/proposals/t/${row.rows[0].token}`, {}, null);
+  assert.equal(pub.status, 200);
+  assert.equal('admin_notes' in pub.body, false, 'public token route must NOT expose admin_notes');
+});
+
+after(async () => {
+  for (const id of created.proposalIds) {
+    await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [id]);
+    await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = $1', [id]);
+  }
+  for (const neg of created.negotiationIds) await pool.query('DELETE FROM thumbtack_leads WHERE negotiation_id = $1', [neg]);
+  for (const id of created.proposalIds) await pool.query('DELETE FROM proposals WHERE id = $1', [id]);
+  for (const id of created.clientIds) await pool.query('DELETE FROM clients WHERE id = $1', [id]);
+  await new Promise(r => server.close(r));
+  await pool.end();
+});
+```
+
+- [ ] **Step 2: Run the tests**
+
+Run: `node --test server/routes/thumbtack.test.js`
+Expected: PASS (2 tests). Run alone (shared dev DB). If `THUMBTACK_WEBHOOK_SECRET` is set in `.env`, the harness forwards it; if unset, the webhook's dev-mode allow path covers it.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add server/routes/thumbtack.test.js
+git commit -m "test(thumbtack): webhook best-effort + admin_notes PII regression"
+```
+
+---
+
 ## Task 7: Server-side `source` filter (list + counts)
 
 **Files:**
@@ -791,7 +943,7 @@ In `server/routes/proposals/metadata.js` `GET /dashboard-stats`, at the very top
   }
 ```
 
-(`pool` is already required in `metadata.js`; confirm with `grep -n "require('../../db')" server/routes/proposals/metadata.js`. If it is imported as `{ pool }` use that; if the file uses a different db handle, match it.)
+(`pool` is already required in `metadata.js` at line 2 as `{ pool }`. The source-scoped branch deliberately returns ONLY `pipeline`/`paidCount`/`archivedCount`; that thinned shape is the documented contract for a `source`-filtered stats request (full-KPI callers never pass `source`). Add a one-line note to the route's JSDoc above the handler stating this.)
 
 - [ ] **Step 3: Write a quick integration check**
 
@@ -951,7 +1103,7 @@ In `client/src/pages/admin/ProposalDetail.js`, change `updateStatus` so a `sent`
 ```js
   const updateStatus = async (status) => {
     if (status === 'sent' && !proposal.client_email) {
-      const proceed = window.confirm('No email on file for this client. Send via SMS only?');
+      const proceed = window.confirm('No email on file. Send via SMS only?');
       if (!proceed) return;
     }
     try {
@@ -971,9 +1123,9 @@ In `client/src/pages/admin/ProposalDetail.js`, change `updateStatus` so a `sent`
 Run: `cd client && CI=true npx react-scripts build`
 Expected: "Compiled successfully".
 
-- [ ] **Step 3: Manual smoke (optional but recommended)**
+- [ ] **Step 3: Manual smoke (required)**
 
-With the dev client running, open a draft proposal whose client has no email, click "Send to client", and confirm the browser prompt "No email on file for this client. Send via SMS only?" appears; Cancel aborts (status stays draft), OK proceeds.
+With the dev client running, open a draft proposal whose client has no email, click "Send to client", and confirm the browser prompt "No email on file. Send via SMS only?" appears; Cancel aborts (status stays draft), OK proceeds.
 
 - [ ] **Step 4: Commit**
 
@@ -989,6 +1141,8 @@ git commit -m "feat(proposals): confirm before sending a proposal with no client
 **Files:**
 - Modify: `ARCHITECTURE.md` (Thumbtack integration section + the two new utils)
 - Modify: `README.md` (folder-structure tree: new utils + SourceBadge)
+
+**Note:** CLAUDE.md prefers docs to land in the same commit as the structural change. For this tightly sequenced feature the doc updates are batched here deliberately (they are behavior-inert), so the pre-commit doc-reminder warning on Tasks 2-8 is expected. If you prefer, fold each doc edit into its originating task's commit instead.
 
 - [ ] **Step 1: Update ARCHITECTURE.md**
 
@@ -1007,11 +1161,24 @@ git commit -m "docs(thumbtack): document auto-draft + source column"
 
 ---
 
+## Execution review cadence
+
+Run the project's specialized review agents at these checkpoints (matched to what each batch changes), in addition to the standard pre-push fleet:
+
+- After **Task 1** (schema): `database-review`.
+- After **Task 2** (money-path refactor of the proposals INSERT): `code-review` + `consistency-check`.
+- After **Task 4** (DB builder touching the pricing engine + a transaction): `code-review` + `database-review`.
+- After **Tasks 6 / 6b** (webhook wiring, Sentry, best-effort gating, the test seam): `security-review` + `code-review`.
+- After **Task 7** (server-side SQL filter): `security-review`. Note the `clause` in dashboard-stats is built by string concatenation; it is safe because the values are fixed literals chosen by an allow-map (never user input), but it breaks the codebase's `$1`/`$2` norm, so call it out for the reviewer.
+
+---
+
 ## Final verification (before merge)
 
-- [ ] Run the two server suites individually (shared dev DB, never in parallel):
+- [ ] Run the three server suites individually (shared dev DB, never in parallel):
   - `node --test server/utils/thumbtackProposalDraft.test.js` → PASS
   - `node --test server/routes/proposals/crud.test.js` → PASS (refactor regression)
+  - `node --test server/routes/thumbtack.test.js` → PASS (webhook best-effort + PII)
 - [ ] `cd client && CI=true npx react-scripts build` → Compiled successfully
 - [ ] `npm run check:filesize` → no new RED (crud.js should shrink after the extraction)
 - [ ] Manual end-to-end: POST a fake lead (Task 6 Step 4), confirm the draft appears in the Proposals dashboard with a Thumbtack badge, the source filter narrows to it, opening it shows the Q&A in admin notes, and the notification email (if `SEND_NOTIFICATIONS=true`) deep-links to it. Clean up the row.
@@ -1030,5 +1197,7 @@ git commit -m "docs(thumbtack): document auto-draft + source column"
 - Notification deep-link via notifyAdminCategory → Tasks 5, 6
 - `proposals.source` + CHECK, server-side filter + consistent counts, badge → Tasks 1, 7, 8
 - No-email Send confirm; SMS kept → Task 9
-- PII (admin_notes excluded from public routes) → verified in spec; covered by existing allowlists (no code change needed)
+- PII (admin_notes excluded from public routes) → existing allowlists (no code change); regression-tested against the real `/t/:token` route in Task 6b
+- Webhook failure-path (draft failure → lead saved, 200, Sentry) → Task 6b
 - Docs → Task 10
+- Execution review cadence → its own section above
