@@ -339,7 +339,7 @@ export default function SignAndPaySection({
             <Elements
               key={activeSecret}
               stripe={stripePromise}
-              options={{ clientSecret: activeSecret, appearance: { theme: 'stripe' } }}
+              options={elementsOptions}
             >
               <PaymentForm
                 onSubmit={async () => {}}
