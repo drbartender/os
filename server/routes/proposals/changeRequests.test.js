@@ -94,3 +94,25 @@ test('direct PATCH (no change_request_id) supersedes a pending request', async (
   await pool.query('DELETE FROM proposals WHERE id = $1', [p.rows[0].id]);
   await pool.query('DELETE FROM clients WHERE id = $1', [c.rows[0].id]);
 });
+
+test('PATCH with a stale change_request_id still supersedes the actual pending request', async () => {
+  const c = await pool.query('INSERT INTO clients (name,email) VALUES ($1,$2) RETURNING id', ['Adm CR4', `adm-cr-d-${NONCE}@example.com`]);
+  const pkg = (await pool.query('SELECT id FROM service_packages WHERE is_active=true ORDER BY id LIMIT 1')).rows[0].id;
+  const p = await pool.query("INSERT INTO proposals (client_id, status, package_id, guest_count, event_duration_hours, num_bars, total_price, amount_paid, event_date, pricing_snapshot) VALUES ($1,'deposit_paid',$2,100,4,1,4800,1000,'2099-09-09','{}') RETURNING id", [c.rows[0].id, pkg]);
+  // A real-but-already-decided request (the "stale" id the admin tab points at):
+  const stale = await pool.query("INSERT INTO proposal_change_requests (proposal_id, client_id, status, edit_window, decision_note) VALUES ($1,$2,'declined','before_t14','old') RETURNING id", [p.rows[0].id, c.rows[0].id]);
+  // The genuinely pending request:
+  const pending = await pool.query("INSERT INTO proposal_change_requests (proposal_id, client_id, status, edit_window) VALUES ($1,$2,'pending','before_t14') RETURNING id", [p.rows[0].id, c.rows[0].id]);
+  const res = await rq('PATCH', `/api/proposals/${p.rows[0].id}`, adminToken, { guest_count: 140, change_request_id: stale.rows[0].id });
+  assert.equal(res.status, 200);
+  const pendRow = await pool.query('SELECT status, cancelled_by FROM proposal_change_requests WHERE id = $1', [pending.rows[0].id]);
+  assert.equal(pendRow.rows[0].status, 'cancelled');
+  assert.equal(pendRow.rows[0].cancelled_by, 'system');
+  const staleRow = await pool.query('SELECT status FROM proposal_change_requests WHERE id = $1', [stale.rows[0].id]);
+  assert.equal(staleRow.rows[0].status, 'declined'); // untouched
+  await pool.query('DELETE FROM proposal_change_requests WHERE proposal_id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM proposal_activity_log WHERE proposal_id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM proposals WHERE id = $1', [p.rows[0].id]);
+  await pool.query('DELETE FROM clients WHERE id = $1', [c.rows[0].id]);
+});

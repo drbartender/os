@@ -126,6 +126,12 @@ async function buildDiff(proposal, proposed, db = pool) {
       baseline[f] = proposal[f] ?? null;
     }
   }
+  // v1 note: the add-on diff is captured only when addon_ids is present. The v1
+  // client form does not expose add-on editing, so this branch is not reached
+  // through the UI. When add-on editing is added, gate variants/quantities
+  // independently of addon_ids and normalize the maps (sort keys, drop nulls)
+  // before comparing, so a variant-only change is recorded and key-order does
+  // not produce a spurious diff.
   if (proposed.addon_ids !== undefined) {
     const cur = (await db.query(
       'SELECT addon_id, variant, quantity FROM proposal_addons WHERE proposal_id = $1 ORDER BY addon_id', [proposal.id]

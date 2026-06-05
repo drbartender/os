@@ -14,6 +14,14 @@ const router = express.Router();
 // pricing path. Real catalogs are dozens of add-ons, so 50 is generous.
 const MAX_ADDON_KEYS = 50;
 function assertAddonPayloadBounded(body) {
+  if (body.addon_ids !== undefined && !Array.isArray(body.addon_ids)) {
+    throw new ValidationError({ addon_ids: 'Add-ons must be a list.' }, 'Invalid add-on selection.');
+  }
+  for (const f of ['addon_variants', 'addon_quantities']) {
+    if (body[f] !== undefined && (body[f] === null || typeof body[f] !== 'object' || Array.isArray(body[f]))) {
+      throw new ValidationError({ [f]: 'Invalid add-on data.' }, 'Invalid add-on selection.');
+    }
+  }
   const over = (v) => Array.isArray(v) ? v.length > MAX_ADDON_KEYS
     : (v && typeof v === 'object') ? Object.keys(v).length > MAX_ADDON_KEYS : false;
   if (over(body.addon_ids) || over(body.addon_variants) || over(body.addon_quantities)) {
@@ -101,7 +109,7 @@ router.post('/proposals/:token/change-requests', clientPortalWriteLimiter, async
             price_preview, acknowledged_total, request_ip, request_user_agent)
          VALUES ($1,$2,'pending',$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
         [proposal.id, req.user.id, editWindow, JSON.stringify(requested), JSON.stringify(baseline),
-         (req.body.note || '').trim() || null, JSON.stringify(price_preview),
+         (req.body.note || '').trim().slice(0, 2000) || null, JSON.stringify(price_preview),
          price_preview.estimated_total, ip, ua]
       );
     } catch (e) {
@@ -149,17 +157,27 @@ router.get('/proposals/:token/change-requests', asyncHandler(async (req, res) =>
 // POST /change-requests/:id/cancel, client withdraws a pending request.
 router.post('/proposals/:token/change-requests/:id/cancel', clientPortalWriteLimiter, asyncHandler(async (req, res) => {
   const proposal = await loadOwnedProposal(req.params.token, req.user.id);
-  const r = await pool.query(
-    `UPDATE proposal_change_requests SET status = 'cancelled', cancelled_by = 'client', updated_at = NOW()
-      WHERE id = $1 AND proposal_id = $2 AND status = 'pending' RETURNING id`,
-    [req.params.id, proposal.id]
-  );
-  if (!r.rows[0]) throw new NotFoundError('No pending request to cancel.');
-  await pool.query(
-    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
-     VALUES ($1, 'change_cancelled', 'client', $2, $3)`,
-    [proposal.id, req.user.id, JSON.stringify({ change_request_id: Number(req.params.id) })]
-  );
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+    const r = await dbClient.query(
+      `UPDATE proposal_change_requests SET status = 'cancelled', cancelled_by = 'client', updated_at = NOW()
+        WHERE id = $1 AND proposal_id = $2 AND status = 'pending' RETURNING id`,
+      [req.params.id, proposal.id]
+    );
+    if (!r.rows[0]) throw new NotFoundError('No pending request to cancel.');
+    await dbClient.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+       VALUES ($1, 'change_cancelled', 'client', $2, $3)`,
+      [proposal.id, req.user.id, JSON.stringify({ change_request_id: Number(req.params.id) })]
+    );
+    await dbClient.query('COMMIT');
+  } catch (err) {
+    try { await dbClient.query('ROLLBACK'); } catch {}
+    throw err;
+  } finally {
+    dbClient.release();
+  }
   res.json({ ok: true });
 }));
 

@@ -688,24 +688,26 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       }
     }
 
-    // Non-linked reconciliation (spec 5.2 / 5.4): a direct admin edit (no
-    // change_request_id) supersedes any pending request, so auto-cancel it. Inline
-    // (not the shared reaper) so the audit decision_note reads distinctly.
-    if (!change_request_id) {
-      const sup = await dbClient.query(
-        `UPDATE proposal_change_requests
-            SET status = 'cancelled', cancelled_by = 'system',
-                decision_note = 'superseded by direct admin edit', updated_at = NOW()
-          WHERE proposal_id = $1 AND status = 'pending' RETURNING id`,
-        [req.params.id]
+    // Supersede sweep (spec 5.2 / 5.4): cancel any request still PENDING after the
+    // optional approve above. After a successful linked approve the request is no
+    // longer pending (and the partial-unique allows only one open at a time), so
+    // this is a no-op in the normal flow. In a direct edit (no change_request_id)
+    // OR when change_request_id was stale/invalid (approve matched nothing), it
+    // cancels the leftover pending request so it cannot linger with a stale
+    // baseline. Inline (not the shared reaper) so the audit decision_note differs.
+    const sup = await dbClient.query(
+      `UPDATE proposal_change_requests
+          SET status = 'cancelled', cancelled_by = 'system',
+              decision_note = 'superseded by direct admin edit', updated_at = NOW()
+        WHERE proposal_id = $1 AND status = 'pending' RETURNING id`,
+      [req.params.id]
+    );
+    for (const row of sup.rows) {
+      await dbClient.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+         VALUES ($1, 'change_cancelled', 'admin', $2, $3)`,
+        [req.params.id, req.user.id, JSON.stringify({ change_request_id: row.id, reason: 'superseded_by_direct_edit' })]
       );
-      for (const row of sup.rows) {
-        await dbClient.query(
-          `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
-           VALUES ($1, 'change_cancelled', 'admin', $2, $3)`,
-          [req.params.id, req.user.id, JSON.stringify({ change_request_id: row.id, reason: 'superseded_by_direct_edit' })]
-        );
-      }
     }
 
     await dbClient.query('COMMIT');

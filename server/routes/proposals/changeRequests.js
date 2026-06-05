@@ -34,21 +34,32 @@ router.get('/:id/change-requests', auth, requireAdminOrManager, asyncHandler(asy
 
 // POST /api/proposals/change-requests/:id/decline, decline with a required reason.
 router.post('/change-requests/:id/decline', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const note = (req.body.decision_note || '').trim();
+  const note = (req.body.decision_note || '').trim().slice(0, 1000);
   if (!note) throw new ValidationError({ decision_note: 'A reason is required to decline.' });
-  const r = await pool.query(
-    `UPDATE proposal_change_requests
-        SET status = 'declined', decided_by = $1, decided_at = NOW(), decision_note = $2, updated_at = NOW()
-      WHERE id = $3 AND status = 'pending' RETURNING *`,
-    [req.user.id, note, req.params.id]
-  );
-  if (!r.rows[0]) throw new NotFoundError('No pending request to decline.');
-  const cr = r.rows[0];
-  await pool.query(
-    `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
-     VALUES ($1, 'change_declined', 'admin', $2, $3)`,
-    [cr.proposal_id, req.user.id, JSON.stringify({ change_request_id: cr.id })]
-  );
+  const dbClient = await pool.connect();
+  let cr;
+  try {
+    await dbClient.query('BEGIN');
+    const r = await dbClient.query(
+      `UPDATE proposal_change_requests
+          SET status = 'declined', decided_by = $1, decided_at = NOW(), decision_note = $2, updated_at = NOW()
+        WHERE id = $3 AND status = 'pending' RETURNING *`,
+      [req.user.id, note, req.params.id]
+    );
+    if (!r.rows[0]) throw new NotFoundError('No pending request to decline.');
+    cr = r.rows[0];
+    await dbClient.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+       VALUES ($1, 'change_declined', 'admin', $2, $3)`,
+      [cr.proposal_id, req.user.id, JSON.stringify({ change_request_id: cr.id })]
+    );
+    await dbClient.query('COMMIT');
+  } catch (err) {
+    try { await dbClient.query('ROLLBACK'); } catch {}
+    throw err;
+  } finally {
+    dbClient.release();
+  }
   try {
     const { notifyClientOfDecision } = require('../../utils/changeRequestNotifications');
     const p = await pool.query('SELECT * FROM proposals WHERE id = $1', [cr.proposal_id]);
