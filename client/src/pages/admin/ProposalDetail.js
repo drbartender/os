@@ -358,6 +358,22 @@ export default function ProposalDetail() {
                 </div>
               </div>
 
+              {/* Signature / acceptance */}
+              {proposal.client_signed_at && (
+                <div className="card">
+                  <div className="card-head"><h3>Signature</h3></div>
+                  <div className="card-body">
+                    <dl className="dl">
+                      <dt>Signed by</dt><dd>{proposal.client_signed_name || '—'}</dd>
+                      <dt>Signed on</dt>
+                      <dd>{fmtDateFull(String(proposal.client_signed_at).slice(0, 10))}</dd>
+                      <dt>Agreement version</dt>
+                      <dd className="muted">{proposal.client_signature_document_version || '—'}</dd>
+                    </dl>
+                  </div>
+                </div>
+              )}
+
               {/* Class options (whiskey/tequila tasting wizard) */}
               {proposal.class_options && (proposal.class_options.spirit_category || proposal.class_options.top_shelf_requested) && (
                 <div className="card">
