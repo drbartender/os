@@ -841,3 +841,23 @@ test('Case 20: PATCH dropping total below amount_paid keeps paid status + logs o
     "SELECT 1 FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'overpayment_detected'", [proposalId]);
   assert.ok(log.rowCount >= 1, 'overpayment_detected logged');
 });
+
+// ─── Case 21 — post-payment DIRECT admin gratuity rate increase is rejected ──
+test('Case 21: post-payment direct admin gratuity rate increase is rejected (§7)', async () => {
+  const token = await makeFreshAdmin();
+  const id = await insertDraftProposal({ status: 'draft', total_price: 2000 });
+  await pool.query("UPDATE proposals SET status='deposit_paid', amount_paid=100, gratuity_rate=25, tip_jar=true WHERE id=$1", [id]);
+  // gratuity_total 400 over 120 guests (2 bartenders x 4h = 8) => rate 50, up from 25.
+  const r = await request('PATCH', `/api/proposals/${id}`, { token, body: { gratuity_total: 400 } });
+  assert.equal(r.status, 400, `expected 400, got ${r.status}: ${r.raw}`);
+});
+
+// ─── Case 22 — post-payment staffing-driven gratuity increase is allowed ─────
+test('Case 22: post-payment staffing-driven gratuity increase is allowed (rate unchanged, §7)', async () => {
+  const token = await makeFreshAdmin();
+  const id = await insertDraftProposal({ status: 'draft', total_price: 2000 });
+  await pool.query("UPDATE proposals SET status='deposit_paid', amount_paid=100, gratuity_rate=25, tip_jar=true WHERE id=$1", [id]);
+  // 120 -> 250 guests grows the crew; the SAME rate produces more gratuity.
+  const r = await request('PATCH', `/api/proposals/${id}`, { token, body: { guest_count: 250 } });
+  assert.equal(r.status, 200, `expected 200, got ${r.status}: ${r.raw}`);
+});

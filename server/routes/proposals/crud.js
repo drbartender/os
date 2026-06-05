@@ -439,6 +439,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // Hoisted so the post-COMMIT reschedule-email block (outside this inner
     // try) can read whether the in-tx re-anchor decided an email is warranted.
     let shouldSendRescheduleEmail = false;
+    // Hoisted for the post-COMMIT gratuity staffing-change email (§7).
+    let notifyStaffingGratuity = false;
 
     const venueProvided = [venue_name, venue_street, venue_city, venue_state, venue_zip]
       .some(v => v !== undefined);
@@ -576,12 +578,34 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       resolvedGratuityRate = g.rate;
     }
 
+    // Post-payment gratuity guard (§7). Once money is collected (amount_paid > 0)
+    // a DIRECT admin RATE increase is a new charge → rejected (a separate
+    // client-consented flow is out of scope). A staffing-driven increase at the
+    // SAME rate is allowed and triggers a client notice.
+    const isPaidForGratuity = Number(old.amount_paid || 0) > 0;
+    const priorGratuityRate = Number(old.gratuity_rate) || 0;
+    if (isPaidForGratuity) {
+      if (gratuityOrigin === 'admin' && resolvedGratuityRate > priorGratuityRate) {
+        throw new ValidationError({
+          gratuity: 'Gratuity rate cannot be increased after payment. Adjust staffing, or arrange a separate client-consented charge.',
+        });
+      }
+      if (resolvedGratuityRate === priorGratuityRate && priorGratuityRate > 0) gratuityOrigin = 'staffing';
+    }
+
     const snapshot = calculateProposal({
       pkg, guestCount: gc, durationHours: dh, numBars: nb,
       numBartenders: num_bartenders, addons, syrupSelections: syrups,
       adjustments: adj, totalPriceOverride: tpo,
       gratuityRate: resolvedGratuityRate, tipJar: persistTipJar,
     });
+
+    // Flag a staffing-driven post-payment gratuity rise for a client notice (§7).
+    const oldGratuityTotal = Number(old.pricing_snapshot?.gratuity?.total) || 0;
+    const newGratuityTotal = Number(snapshot.gratuity?.total) || 0;
+    if (isPaidForGratuity && gratuityOrigin === 'staffing' && newGratuityTotal > oldGratuityTotal) {
+      notifyStaffingGratuity = true;
+    }
 
     const updatedRow = await dbClient.query(`
       UPDATE proposals SET
@@ -747,6 +771,35 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
           });
         }
         console.error('Reschedule email failed (non-blocking, DB already committed):', emailErr);
+      }
+    }
+
+    // Staffing-driven gratuity change (§7): the crew grew, so the gratuity total
+    // rose at the SAME rate the client agreed to. Notify by email (not SMS),
+    // best-effort, post-commit — a failure must NEVER 500 the committed PATCH.
+    if (notifyStaffingGratuity) {
+      try {
+        const full = await pool.query(
+          `SELECT p.total_price, p.pricing_snapshot, c.email AS client_email, c.name AS client_name
+             FROM proposals p LEFT JOIN clients c ON c.id = p.client_id WHERE p.id = $1`,
+          [req.params.id]
+        );
+        const row = full.rows[0];
+        if (row && row.client_email) {
+          await sendEmail({
+            to: row.client_email,
+            ...emailTemplates.gratuityStaffingChange({
+              name: row.client_name,
+              newTotal: Number(row.total_price),
+              gratuity: (row.pricing_snapshot && row.pricing_snapshot.gratuity) || null,
+            }),
+          });
+        }
+      } catch (mailErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(mailErr, { tags: { route: 'proposals/update', issue: 'gratuity-staffing-email' } });
+        }
+        console.error('Gratuity staffing-change email failed (non-blocking):', mailErr);
       }
     }
 

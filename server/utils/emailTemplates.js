@@ -968,6 +968,7 @@ module.exports = {
   shoppingListReady: lifecycle.shoppingListReady,
   postConsultClient: lifecycle.postConsultClient,
   lastMinuteStaffingConfirmation: lifecycle.lastMinuteStaffingConfirmation,
+  gratuityStaffingChange: lifecycle.gratuityStaffingChange,
   // Pre-event reminder emails (Plan 2c)
   eventWeekReminderClient,
   rescheduleNotificationClient,
