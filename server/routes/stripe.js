@@ -920,24 +920,24 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         if (isFirstDelivery) {
           // Determine new status and amount_paid based on payment type
           if (paymentType === 'full') {
+            // Additive + DERIVED status, never a flat "= total_price": credit what was actually charged so a mid-flight total change (admin edit / second-tab gratuity) can't mark paid-in-full at an amount the client never paid (DrB would eat the gap). Mirrors the invoice/drink-plan branches.
             await dbClient.query(`
               UPDATE proposals
-              SET status = 'balance_paid',
-                  amount_paid = total_price,
-                  payment_type = 'full'
+              SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'full',
+                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
               WHERE id = $1 AND status NOT IN ('balance_paid', 'confirmed', 'archived')
-            `, [proposalId]);
+            `, [proposalId, intent.amount / 100]);
           } else if (paymentType === 'balance') {
             // Guard archived too — an admin can archive a proposal between the
             // client opening Stripe and the webhook landing. Reviving it would
             // break the documented archived → only-draft state machine.
+            // Additive + derived status (same rationale as 'full'): credit what was charged, never "= total_price".
             await dbClient.query(`
               UPDATE proposals
-              SET status = 'balance_paid',
-                  amount_paid = total_price,
-                  autopay_status = NULL
+              SET amount_paid = COALESCE(amount_paid, 0) + $2, autopay_status = NULL,
+                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
               WHERE id = $1 AND status = 'deposit_paid'
-            `, [proposalId]);
+            `, [proposalId, intent.amount / 100]);
           } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
             // Drink plan extras payment — increment amount_paid
             const paidDollars = intent.amount / 100;
