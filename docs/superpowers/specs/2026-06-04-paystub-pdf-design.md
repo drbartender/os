@@ -88,10 +88,10 @@ Lives beside the existing `/payouts/:periodId` in `server/routes/staffPortal/pay
 - persist race-guarded: `UPDATE payouts SET paystub_storage_key = $key WHERE id = $id AND paystub_storage_key IS NULL RETURNING paystub_storage_key`; if another request won the race, re-read and use the stored key,
 - presign and return `{ url }`.
 
-Returns **`{ url }` JSON** (not a 302), because the frontend calls it through the axios `api` util; the client opens the URL. The presigned GET sets `ResponseContentDisposition: attachment; filename="drbartender-paystub-YYYY-MM.pdf"` so the browser downloads with a sensible name (a small extension to `storage.getSignedUrl`, or the command is built inline).
+Returns **`{ url }` JSON** (not a 302), because the frontend calls it through the axios `api` util; the client opens the URL. The signed URL is served as-is via the existing `storage.getSignedUrl` (the object's `Content-Type` is `application/pdf`, so the browser opens it inline and the staffer saves it). A forced-download filename via `ResponseContentDisposition` is intentionally left out of v1 so we do not touch the shared storage util; it is a trivial future addition.
 
 ### 5.4 Frontend (`PayoutDetail.js`)
-Enable the "Paystub download" button when `payout.status === 'paid'` (drop the `disabled` + "coming soon" title). On click: `GET` the endpoint via `api`, then `window.open(res.data.url)` (new tab / download). Keep a disabled "Period preview" affordance for unpaid periods. Loading + error states on the button (spinner while generating, toast on failure). API calls go through `client/src/utils/api.js`.
+Enable the "Paystub download" button when `payout.status === 'paid'` (drop the `disabled` + "coming soon" title). On click: `GET` the endpoint via `api`, then `window.open(res.data.url)` (new tab / download). The Download button only renders for `paid` periods (the existing `isPaid &&` wrapper stays); unpaid periods keep their "Period preview" framing. Loading + error states on the button: a spinner while generating, and an **inline error under the button** on failure (`PayoutDetail` uses inline error cards, not toasts). API calls go through `client/src/utils/api.js`.
 
 ## 6. Data model
 

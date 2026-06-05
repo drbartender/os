@@ -4,7 +4,7 @@
 
 **Goal:** Let a staffer download a PDF paystub for any paid pay period from the staff Pay page.
 
-**Architecture:** The paystub is generated lazily on first download (never at `mark-paid`, to protect the money path), uploaded to R2 under a deterministic per-contractor key, the key is cached on `payouts.paystub_storage_key`, and the staffer is served a short-lived presigned URL. Already-paid payouts backfill for free on their first download.
+**Architecture:** The paystub is generated lazily on first download (never at `mark-paid`, to protect the money path), uploaded to R2 under a deterministic per-contractor key, the key is cached on `payouts.paystub_storage_key`, and the staffer is served a short-lived presigned URL (opened inline, `Content-Type: application/pdf`). Already-paid payouts backfill for free on their first download.
 
 **Tech Stack:** Node/Express, raw SQL via `pg`, `pdfkit` (already a dep, see `server/utils/agreementPdf.js`), Cloudflare R2 via `server/utils/storage.js` (`uploadFile`/`getSignedUrl`), React (CRA) for the Pay page button. Spec: `docs/superpowers/specs/2026-06-04-paystub-pdf-design.md`.
 
@@ -22,9 +22,14 @@
 | `server/routes/staffPortal/payouts.paystub.test.js` (create) | DB-backed test for assembly (incl. YTD math) + the endpoint (mock storage). |
 | `README.md`, `ARCHITECTURE.md` (modify) | Folder tree + route table + payroll-section mention. |
 
-No schema change (`paystub_storage_key TEXT` already exists). No new env vars. No new npm packages.
+No schema change (`paystub_storage_key TEXT` already exists). No new env vars. No new npm packages. **Money is integer cents** throughout; format only at render.
 
-**Money is integer cents** throughout (`payouts`/`payout_events` use `_cents` columns). Format only at render.
+## Review cadence (per the user's execution-review preference)
+
+- After **Task 1** (pure renderer): `code-review`.
+- After **Task 2** (backend: SQL, IDOR scope, lazy-write race, R2 upload): `database-review` + `security-review` + `code-review`.
+- After **Task 3** (small client wiring): `code-review`.
+- Task 4 (docs): none. No `consistency-check` (no schema change, no cross-cutting field rename).
 
 ---
 
@@ -87,10 +92,15 @@ Expected: FAIL ("Cannot find module './paystubPdf'").
 const PDFDocument = require('pdfkit');
 
 // Helvetica (pdfkit default) lacks some Unicode glyphs; fold to ASCII for the
-// PDF only. Source data is unchanged. Mirrors agreementPdf.js.
+// PDF only. Source data is unchanged. \u escapes (not literal glyphs) for
+// encoding-safety, matching agreementPdf.js's style.
 function normalizeForPdf(s) {
   if (typeof s !== 'string') return s;
-  return s.replace(/[•–]/g, '-').replace(/—/g, '--').replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
+  return s
+    .replace(/[\u2022\u2013]/g, '-')   // bullet, en dash
+    .replace(/\u2014/g, '--')          // em dash
+    .replace(/[\u2018\u2019]/g, "'")   // curly single quotes
+    .replace(/[\u201C\u201D]/g, '"');  // curly double quotes
 }
 
 // Integer cents -> "$1,234.56" ("-$19.36" for negatives). Mirrors client formatMoney.
@@ -199,14 +209,21 @@ function renderPaystubPdf(data) {
 module.exports = { renderPaystubPdf, formatUsdCents };
 ```
 
-> Column x-positions are a starting point; do a visual check on a real generated PDF during execution and nudge `COL_A`/`COL_B`/widths if anything wraps. The test only asserts a valid `%PDF` buffer; the layout is verified by eye.
-
 - [ ] **Step 4: Run the tests, verify they pass**
 
 Run: `node --test server/utils/paystubPdf.test.js`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Visual spot-check (the layout has no automated assertion)**
+
+Run a throwaway script that writes the fixture buffer to a temp file and open it:
+```bash
+node -e "const {renderPaystubPdf}=require('./server/utils/paystubPdf'); const fs=require('fs'); const d=require('./server/utils/paystubPdf.test.js'); /* or inline the FIXTURE */" 2>/dev/null
+# Simpler: in a node REPL, render the Task-1 FIXTURE and fs.writeFileSync('/tmp/paystub.pdf', buf), then open /tmp/paystub.pdf.
+```
+Eyeball: columns line up, the two-column "This period / Year to date" totals are aligned, NET PAID is bold, the adjustment footnote sits under its row, nothing wraps. Nudge `COL_A`/`COL_B`/widths in Step 3 if needed.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add server/utils/paystubPdf.js server/utils/paystubPdf.test.js
@@ -215,13 +232,14 @@ git commit -m "feat(paystub): pdfkit paystub renderer + cents formatter"
 
 ---
 
-### Task 2: Paystub data assembly (+ YTD)
+### Task 2: Paystub backend (assembly + endpoint + DB test)
+
+Assembly (`paystubData.js`) and the endpoint ship in **one commit**: `paystubData.js` has no unit test of its own, so it is verified by this task's DB test (which exercises assembly + the endpoint together) and never lands unverified.
 
 **Files:**
 - Create: `server/utils/paystubData.js`
-- Test: covered by Task 3's DB test (assembly + endpoint share one seed). This task ships the module; Task 3 asserts it end to end.
-
-**Context:** `assemblePaystubData(contractorId, periodId)` returns the exact object shape `renderPaystubPdf` expects, or `null` if there is no payout for that (contractor, period). YTD = this contractor's `paid` payouts whose period `payday` is in the same calendar year and on or before this payday; net from `payouts.total_cents` (canonical), category breakdown summed from `payout_events`.
+- Modify: `server/routes/staffPortal/payouts.js`
+- Test: `server/routes/staffPortal/payouts.paystub.test.js`
 
 - [ ] **Step 1: Implement `server/utils/paystubData.js`**
 
@@ -243,8 +261,9 @@ const YTD_WHERE = `
   AND pp.payday <= $2::date`;
 
 async function assemblePaystubData(contractorId, periodId) {
-  // 1. Payout head + period + contractor display name (legal name preferred
-  //    for a pay document; mirrors accountReads.js name resolution).
+  // 1. Payout head + period + contractor display name. Legal name preferred for
+  //    a pay document; then preferred_name, then email. (Same join sources as
+  //    accountReads.js; precedence is deliberately legal-name-first here.)
   const head = await pool.query(
     `SELECT po.id AS payout_id, po.status, po.total_cents,
             po.paid_at, po.payment_method, po.payment_handle,
@@ -338,62 +357,11 @@ async function assemblePaystubData(contractorId, periodId) {
 module.exports = { assemblePaystubData };
 ```
 
-- [ ] **Step 2: Commit**
+> **Edge (expected):** a paid period with zero `payout_events` (e.g. the `staffPortal.test.js` seed at ~line 198) renders NET PAID from the canonical `total_cents` with zeroed category lines. The renderer handles `events: []` (Task 1 covers it). No special-casing needed.
 
-```bash
-git add server/utils/paystubData.js
-git commit -m "feat(paystub): assemble paystub render data incl. YTD"
-```
+- [ ] **Step 2: Add imports + the route to `server/routes/staffPortal/payouts.js`**
 
----
-
-### Task 3: Download endpoint + DB test
-
-**Files:**
-- Modify: `server/routes/staffPortal/payouts.js` (add the route + imports)
-- Test: `server/routes/staffPortal/payouts.paystub.test.js`
-
-- [ ] **Step 1: Write the failing test**
-
-Mirror the seed pattern in `server/routes/staffPortal.test.js` / `server/utils/payrollProcessing.test.js` (they already insert `users` → `pay_periods` → `payouts` → `shifts` → `payout_events`). Seed **two** paid periods for one contractor in the same year (an April period and a May period) so YTD has something to sum, plus one **unpaid** period, plus a second contractor's paid period (for the IDOR case). **Mock the storage layer** so no real R2 call happens:
-
-```javascript
-// server/routes/staffPortal/payouts.paystub.test.js
-const { test, before, after, mock } = require('node:test');
-const assert = require('node:assert/strict');
-const storage = require('../../utils/storage');
-
-// Mock R2 before requiring anything that calls it.
-mock.method(storage, 'uploadFile', async () => {});
-mock.method(storage, 'getSignedUrl', async (key) => `https://signed.example/${key}`);
-
-const { pool } = require('../../db');
-const { assemblePaystubData } = require('../../utils/paystubData');
-// ... build an Express app mounting server/routes/staffPortal.js with a stub
-// auth that sets req.user.id = <seeded contractor>, OR call the route handler
-// directly. Follow the harness used by staffPortal.test.js.
-
-// SEED in before(), CLEAN UP in after() (delete child rows first to respect FKs).
-// Assert:
-//  1. assemblePaystubData(contractorId, mayPeriodId): thisPeriod.net_cents ===
-//     the May payout total; ytd.net_cents === April total + May total;
-//     ytd.wages_cents === sum of both periods' event wage_cents.
-//  2. GET /api/me/payouts/:mayPeriodId/paystub (paid, key null):
-//     200 { url }, uploadFile called exactly once, payouts.paystub_storage_key
-//     now === 'paystubs/<contractor>/<mayPeriodId>.pdf'.
-//  3. GET same again: 200 { url }, uploadFile NOT called a second time (cached).
-//  4. GET an UNPAID period's paystub: 409.
-//  5. GET the other contractor's period as this contractor: 404.
-```
-
-- [ ] **Step 2: Run it, verify it fails**
-
-Run: `node --test server/routes/staffPortal/payouts.paystub.test.js`
-Expected: FAIL (route returns 404 — `/paystub` not defined yet).
-
-- [ ] **Step 3: Add imports + the route to `server/routes/staffPortal/payouts.js`**
-
-At the top of the file, alongside the existing imports (`pool`, `asyncHandler`, `ValidationError`, `NotFoundError`, `ymd`), add:
+At the top, alongside the existing imports (`pool`, `asyncHandler`, `ValidationError`, `NotFoundError`, `ymd`), add (`ConflictError` is exported from `server/utils/errors.js` and is not yet imported in this file):
 
 ```javascript
 const { ConflictError } = require('../../utils/errors');
@@ -453,23 +421,54 @@ Inside `register(router)`, after the existing `router.get('/payouts/:periodId', 
   }));
 ```
 
-> Confirm the exact `errors.js` class name is `ConflictError` (it is, per CLAUDE.md's AppError hierarchy) and that `payouts.js` does not already import it.
+- [ ] **Step 3: Write the failing DB test**
 
-- [ ] **Step 4: Run the tests, verify they pass**
+`server/routes/staffPortal/payouts.paystub.test.js`. Mirror the seed in `server/routes/staffPortal.test.js` / `server/utils/payrollProcessing.test.js` (they insert `users` → `pay_periods` → `payouts` → `shifts` → `payout_events`). Seed, for ONE contractor: an **April** paid period and a **May** paid period in the same calendar year (so YTD sums two), each with `payout_events`; plus one **unpaid** period; plus a **second contractor's** paid period (for IDOR). Mock the storage layer so no real R2 call happens:
+
+```javascript
+const { test, before, after, mock } = require('node:test');
+const assert = require('node:assert/strict');
+const storage = require('../../utils/storage');
+mock.method(storage, 'uploadFile', async () => {});
+mock.method(storage, 'getSignedUrl', async (key) => `https://signed.example/${key}`);
+
+const { pool } = require('../../db');
+const { assemblePaystubData } = require('../../utils/paystubData');
+// Mount staffPortal.js on an Express app with a stub auth setting
+// req.user.id = <seeded contractor>, OR call the route handler directly —
+// follow the harness staffPortal.test.js already uses.
+```
+
+Assertions:
+1. `assemblePaystubData(contractor, mayPeriodId)`: `thisPeriod.net_cents === mayPayout.total_cents`; `ytd.net_cents === aprilTotal + mayTotal`; `ytd.wages_cents === sum of both periods' event wage_cents`.
+2. `GET /api/me/payouts/:mayPeriodId/paystub` (paid, key null): 200 `{ url }`; `uploadFile` called exactly once; `payouts.paystub_storage_key` now `=== 'paystubs/<contractor>/<mayPeriodId>.pdf'`.
+3. Same GET again: 200 `{ url }`; `uploadFile` NOT called a second time (cached).
+4. GET the unpaid period's paystub: 409.
+5. GET the second contractor's period as this contractor: 404.
+
+In `after()`, delete in FK order (children first): `payout_events` → `shifts` → `payouts` → `pay_periods` → `proposals` → `clients` → `users`.
+
+- [ ] **Step 4: Run it, verify it fails**
 
 Run: `node --test server/routes/staffPortal/payouts.paystub.test.js`
-Expected: PASS (assembly + 5 endpoint assertions). Run this suite **in isolation** (shared dev DB; see `reference_server_test_db_shared`).
+Expected: FAIL (route 404 — `/paystub` not added until Step 2 is saved; if you wrote Step 2 first, the test fails on the assertions instead). Run **in isolation** (shared dev DB; see `reference_server_test_db_shared`).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Make it pass**
+
+With Steps 1-2 implemented, run again:
+Run: `node --test server/routes/staffPortal/payouts.paystub.test.js`
+Expected: PASS (assembly + 5 endpoint assertions).
+
+- [ ] **Step 6: Commit (assembly + endpoint + test together)**
 
 ```bash
-git add server/routes/staffPortal/payouts.js server/routes/staffPortal/payouts.paystub.test.js
-git commit -m "feat(paystub): lazy-generate + serve paystub download endpoint"
+git add server/utils/paystubData.js server/routes/staffPortal/payouts.js server/routes/staffPortal/payouts.paystub.test.js
+git commit -m "feat(paystub): assembly + lazy-generate download endpoint"
 ```
 
 ---
 
-### Task 4: Wire the Pay page Download button
+### Task 3: Wire the Pay page Download button
 
 **Files:**
 - Modify: `client/src/pages/staff/PayoutDetail.js`
@@ -483,7 +482,7 @@ Near the other `useState` hooks (around line 64), add:
   const [downloadErr, setDownloadErr] = useState(null);
 ```
 
-Near `fetchDetail` (around line 90), add:
+Near `fetchDetail` (around line 90), add (`useCallback` is already imported):
 
 ```javascript
   const handleDownload = useCallback(async () => {
@@ -497,6 +496,8 @@ Near `fetchDetail` (around line 90), add:
         setDownloadErr('Could not prepare the paystub. Try again.');
       }
     } catch (err) {
+      // Covers both the network/500 case and a 409 (unpaid) defense-in-depth,
+      // though the button only renders for paid periods.
       setDownloadErr(err?.message || 'Could not prepare the paystub. Try again.');
     } finally {
       setDownloading(false);
@@ -504,9 +505,9 @@ Near `fetchDetail` (around line 90), add:
   }, [periodId]);
 ```
 
-- [ ] **Step 2: Enable the Download button + remove the dead Email stub**
+- [ ] **Step 2: Enable the Download button + remove the dead Email stub + drop `hasPaystub`**
 
-Replace the existing Download button block (currently `disabled={!hasPaystub}` with the "coming soon" title, ~lines 299-307) with:
+The Download button sits inside the existing `{isPaid && ( ... )}` wrapper (~line 294) — **keep that wrapper**. Replace only the inner button (currently `disabled={!hasPaystub}` with the "coming soon" title, ~lines 299-307) with:
 
 ```jsx
           <button
@@ -520,7 +521,7 @@ Replace the existing Download button block (currently `disabled={!hasPaystub}` w
           </button>
 ```
 
-Delete the entire "Email a copy" button block (the `<button ... title="Email-a-copy coming soon">` and its leading TODO comment, ~lines 309-318). Email is out of scope; a staffer emails their own downloaded file.
+Delete the entire "Email a copy" button block (the `<button ... title="Email-a-copy coming soon">` plus its leading TODO comment, ~lines 309-318). Email is out of scope.
 
 Immediately after the actions `<div>` that holds the button, add the inline error:
 
@@ -530,14 +531,18 @@ Immediately after the actions `<div>` that holds the button, add the inline erro
         )}
 ```
 
-The now-unused `hasPaystub` const (line 168) can stay or be removed; if eslint flags it as unused under `CI=true`, remove it.
+**Remove** the now-unused `const hasPaystub = !!payout.paystub_storage_key;` (line 168) and its leading comment — it has no consumer once the button no longer reads it, and `CI=true` flags unused vars.
 
 - [ ] **Step 3: Verify the client build (authoritative gate)**
 
 Run: `CI=true npm --prefix client run build`
-Expected: "Compiled" / "The build folder is ready to be deployed." with only the pre-existing html2pdf source-map warning. (Local eslint skips `client/`, so this build is the real check.)
+Expected: "The build folder is ready to be deployed." with only the pre-existing html2pdf source-map warning. No `no-unused-vars` error for `hasPaystub`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Manual verification (dev)**
+
+With the dev server running (see `reference_staff_portal_local_review` for the staff-host setup) and a paid period seeded for the logged-in staffer: open `/pay`, tap the period, click **Download PDF** → expect a new tab showing the PDF. Confirm the button shows "Preparing…" briefly. Force a failure (e.g. stop the server mid-click) → expect the inline error under the button. Unpaid periods: the button is not rendered (gated by `isPaid`).
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add client/src/pages/staff/PayoutDetail.js
@@ -546,7 +551,7 @@ git commit -m "feat(paystub): enable Pay page download, drop email-a-copy stub"
 
 ---
 
-### Task 5: Documentation
+### Task 4: Documentation
 
 **Files:**
 - Modify: `README.md` (folder tree), `ARCHITECTURE.md` (route table + payroll mention)
@@ -568,11 +573,11 @@ git commit -m "docs(paystub): document the paystub PDF route + utils"
 
 ## Self-Review
 
-**Spec coverage:** §2 lazy-on-download → Task 3. §3 layout + §4 YTD → Tasks 1 (render) + 2 (YTD queries). §5.1 renderer → Task 1. §5.2 assembly → Task 2. §5.3 endpoint → Task 3. §5.4 frontend → Task 4. §7 errors (unpaid 409, IDOR 404, race guard, generation failure via `ExternalServiceError` from `storage.js`) → Task 3. §8 security (user-scope, signed URLs, key never returned) → Task 3. §9 testing → Tasks 1 + 3. §10 out-of-scope (email removed, admin flagged) → Task 4 (email removed); admin remains a documented follow-up, no task. §11 docs → Task 5. No gaps.
+**Spec coverage:** §2 lazy-on-download → Task 2. §3 layout + §4 YTD → Task 1 (render) + Task 2 (YTD queries). §5.1 renderer → Task 1. §5.2 assembly + §5.3 endpoint → Task 2 (one commit). §5.4 frontend (inline error, `isPaid` gate) → Task 3. §7 errors (unpaid 409, IDOR 404, race guard, generation failure via `ExternalServiceError` from `storage.js`) → Task 2. §8 security → Task 2. §9 testing → Tasks 1 + 2. §10 (email removed; admin a documented follow-up; pre-gen rejected) → Task 3 removes email; no admin task. §11 docs → Task 4. The spec's `ResponseContentDisposition` line was reconciled to inline-open (no plan step needed). No gaps.
 
-**Placeholder scan:** Task 3's test is specified by intent + assertions + a concrete seed-source to mirror (rather than a guessed 100-line FK seed), because the seed must match `payout_events`/`shifts` NOT-NULL columns exactly; the implementer mirrors `staffPortal.test.js`. All implementation code is complete.
+**Placeholder scan:** Task 2 Step 3's test is specified by intent + assertions + a concrete seed-source to mirror (the FK seed must match `payout_events`/`shifts` NOT-NULL columns exactly; the implementer mirrors `staffPortal.test.js`). All implementation + the pure unit test are complete code.
 
-**Type consistency:** `renderPaystubPdf(data)` consumes exactly the object `assemblePaystubData` returns (`contractorName`, `period.{start_date,end_date,payday}`, `paid.{at,method,handle}`, `events[]`, `thisPeriod.{wages_cents,gratuity_cents,card_tips_net_cents,adjustments_cents,net_cents}`, `ytd.{same}`). `storageKey` is produced in `paystubData` and consumed in the endpoint. `formatUsdCents` exported from `paystubPdf` and used only there. Endpoint returns `{ url }`; the client reads `res.data.url`. Consistent.
+**Type consistency:** `renderPaystubPdf(data)` consumes exactly what `assemblePaystubData` returns (`contractorName`, `period.{start_date,end_date,payday}`, `paid.{at,method,handle}`, `events[]`, `thisPeriod.{wages_cents,gratuity_cents,card_tips_net_cents,adjustments_cents,net_cents}`, `ytd.{same}`). `storageKey` produced in `paystubData`, consumed in the endpoint. `formatUsdCents` exported from `paystubPdf`, used only there. Endpoint returns `{ url }`; client reads `res.data.url`. Consistent.
 
 ---
 
