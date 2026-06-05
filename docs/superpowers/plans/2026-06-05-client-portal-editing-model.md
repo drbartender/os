@@ -519,12 +519,17 @@ async function buildPreview(proposal, proposed, db = pool) {
 }
 
 // Sparse diff (requested) + the from-values (baseline) for the audit row.
+const NUMERIC_FIELDS = new Set(['event_duration_hours', 'guest_count', 'package_id', 'num_bars', 'num_bartenders']);
 async function buildDiff(proposal, proposed, db = pool) {
   const requested = {};
   const baseline = {};
   for (const f of SIMPLE_FIELDS) {
     if (proposed[f] === undefined) continue;
-    if (String(proposed[f] ?? '') !== String(proposal[f] ?? '')) {
+    // Type-aware compare so 4 vs 4.0 (or '4' vs 4) does not log a spurious diff.
+    const same = NUMERIC_FIELDS.has(f)
+      ? Number(proposed[f]) === Number(proposal[f])
+      : String(proposed[f] ?? '') === String(proposal[f] ?? '');
+    if (!same) {
       requested[f] = proposed[f];
       baseline[f] = proposal[f] ?? null;
     }
@@ -818,8 +823,12 @@ function assertEditable(proposal) {
   if (proposal.status === 'archived' || proposal.status === 'completed') {
     throw new ConflictError('This event can no longer be changed online.', 'NOT_EDITABLE');
   }
+  // Priced baseline = pricing_snapshot non-empty (spec 3.3 exactly). NOT
+  // `total_price > 0 OR snapshot`: priceProposedState later reads
+  // pricing_snapshot.syrups / .staffing, so an empty snapshot must be excluded
+  // even when total_price happens to be set.
   const snap = proposal.pricing_snapshot;
-  const priced = Number(proposal.total_price ?? 0) > 0 || (snap && Object.keys(snap).length > 0);
+  const priced = snap && typeof snap === 'object' && Object.keys(snap).length > 0;
   if (!priced) throw new ConflictError('This quote is not finalized yet. Please contact us.', 'UNPRICED');
 }
 
@@ -844,6 +853,17 @@ router.post('/proposals/:token/change-requests', clientPortalWriteLimiter, async
 
     const proposed = filterToAllowlist(req.body);
     if (Object.keys(proposed).length === 0) throw new ValidationError({ _: 'No changes requested.' }, 'Pick at least one change.');
+
+    // Lenient venue revalidation (spec 3.3), matching the admin PATCH
+    // (requireStreet:false, requireCityState:false), so a client can correct one
+    // venue field without re-entering the whole address. Only runs when a venue
+    // field is actually being changed.
+    const venueTouched = ['venue_name', 'venue_street', 'venue_city', 'venue_state', 'venue_zip'].some(k => proposed[k] !== undefined);
+    if (venueTouched) {
+      const { validateVenue } = require('../../utils/venueAddress');
+      const venueErrors = validateVenue(proposed, { requireStreet: false, requireCityState: false });
+      if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
+    }
 
     const { snapshot, price_preview } = await buildPreview(proposal, proposed, dbClient);
 
@@ -1387,7 +1407,12 @@ The PATCH stamps the request approved (Task E2) but the client email should fire
         const { notifyClientOfDecision } = require('../../utils/changeRequestNotifications');
         const crRow = await pool.query('SELECT * FROM proposal_change_requests WHERE id = $1', [change_request_id]);
         if (crRow.rows[0] && crRow.rows[0].status === 'approved') {
-          await notifyClientOfDecision(crRow.rows[0], updatedRow.rows[0], 'approved');
+          // Re-read the proposal fresh (not updatedRow) so the email's total and
+          // balance reflect any post-commit cascade above (the demotion, the
+          // additional-services invoice). This is the single client touch for the
+          // change, so the new balance has to be right.
+          const freshP = await pool.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
+          await notifyClientOfDecision(crRow.rows[0], freshP.rows[0], 'approved');
         }
       } catch (notifyErr) {
         console.error('change-request approved email failed (non-blocking):', notifyErr.message);
@@ -1669,6 +1694,11 @@ export default function ProposalChangeRequestCard({ proposalId, onChanged }) {
           <dt>Client acknowledged</dt><dd>{fmt(open.acknowledged_total)}</dd></div>
         <pre className="cr-diff">{JSON.stringify(open.requested_changes, null, 2)}</pre>
         {open.note && <p><strong>Note:</strong> {open.note}</p>}
+        {Number(pv.delta) < 0 && (
+          <div className="client-alert client-alert-warning">
+            This is a reduction (change {fmt(pv.delta)}). Handle any refund or credit through the existing tools, then record what you did in the decision note below before you apply or decline. Nothing auto-refunds.
+          </div>
+        )}
         <div className="cr-actions">
           <Link className="btn btn-primary" to={`/proposals/${proposalId}?edit=1&change_request_id=${open.id}`}>Apply in editor</Link>
         </div>
@@ -1699,15 +1729,31 @@ In `client/src/pages/admin/ProposalDetail.js`, import the card and render it in 
 Near the `editing` state, add:
 
 ```js
-const [pendingCr, setPendingCr] = useState(null);
+const [pendingCr, setPendingCr] = useState(null); // the request being applied (from ?change_request_id)
+const [openCr, setOpenCr] = useState(null);       // any pending request, for the direct-edit warning (W1)
 const crId = searchParams.get('change_request_id');
 useEffect(() => {
-  if (!crId) return;
   api.get(`/proposals/${id}/change-requests`)
-    .then(r => setPendingCr((r.data.requests || []).find(x => String(x.id) === String(crId)) || null))
+    .then(r => {
+      const rows = r.data.requests || [];
+      setOpenCr(rows.find(x => x.status === 'pending') || null);
+      setPendingCr(crId ? (rows.find(x => String(x.id) === String(crId)) || null) : null);
+    })
     .catch(() => {});
 }, [crId, id]);
 ```
+
+Render a warning banner in the `editing` branch when admin opens the editor on a proposal that has a pending request but is NOT applying it (spec §5.2), just before `<ProposalDetailEditForm .../>`:
+
+```jsx
+  {openCr && !crId && (
+    <div className="client-alert client-alert-warning" role="status">
+      Heads up: this proposal has a pending change request from the client. Saving a
+      direct edit will supersede it (the request is auto-cancelled on save). To apply
+      the client's request instead, cancel out and use "Apply in editor" on the
+      change-request card.
+    </div>
+  )}
 
 In the existing cleanup effect that deletes `edit` from the query string, also delete `change_request_id` so a reload does not re-inject it:
 
@@ -1747,7 +1793,13 @@ useEffect(() => {
       if (k === 'event_date' && rc[k]) next.event_date = String(rc[k]).slice(0, 10);
       else next[k] = rc[k];
     }
-    initialRef.current = next; // re-baseline so the dirty guard sees the pre-fill as the starting point
+    // Re-baseline the dirty guard. initialRef holds a JSON STRING
+    // (`useRef(JSON.stringify(initialFormFromProposal(proposal)))` at ~line 37), and
+    // the guard compares `JSON.stringify(editForm) !== initialRef.current`, so the
+    // baseline MUST be stringified or every later keystroke reads as dirty. The
+    // assignment is idempotent (same `next` -> same string), so StrictMode's
+    // double-invoke of the updater is harmless.
+    initialRef.current = JSON.stringify(next);
     return next;
   });
 }, [changeRequest]);
@@ -1855,6 +1907,33 @@ git commit -m "docs: client portal editing model (routes, schema, tracker)"
 ```
 
 ---
+
+## Execution-review checkpoints
+
+Run the specialized review agents at these group boundaries (foreground), matched to what each batch changed. Clean results proceed; any flag follows the root-cause fix discipline in CLAUDE.md.
+
+- After **Group A** (money/concurrency fixes to `crud.js` + `eventCreation.js`): `code-review` + `database-review`.
+- After **Group B** (schema): `database-review`.
+- After **Group E** (admin PATCH linkage, the most sensitive money/auth surface): `security-review` + `code-review` + `consistency-check`.
+- After **Group F** (notification copy + money units): `code-review`.
+- After **Group G** (admin card / editor / PATCH consistency): `consistency-check`.
+
+## Carried review notes (apply while you touch each file, not as separate tasks)
+
+Small design-review findings folded in here rather than as standalone tasks:
+
+- **(W3)** When adding the `!change_request_id` reschedule-email suppression (E2 Step 5), confirm it gates only client-facing emails (the reschedule email, and any invoice/balance-due client notice in the cascade) and never the staff hooks.
+- **(W4)** Confirm `app.set('trust proxy', ...)` is set so `request_ip` is captured from `x-forwarded-for` consistently with the signature path; otherwise the consent IP will not match the signature's.
+- **(W5)** `crud.js` is already ~797 lines (over the 700 soft cap); this plan adds ~48. It stays under the 1000 hard cap so the ratchet allows it, but open a follow-up to split the PATCH handler.
+- **(W6)** Add a one-line smoke check after D1 that `require('../middleware/rateLimiters').clientPortalWriteLimiter` is a function before committing.
+- **(W7)** Tighten the D2 create test: assert `r1.status === 409` and `ok.status === 201` explicitly instead of the weak OR.
+- **(W8)** In the create handler, bound the `addon_quantities` map (reject if it carries more keys than the active add-on set) so a hostile client cannot send a giant map.
+- **(W9)** Drop the orphaned `dbAfter` import in the C2 test (no `dbAfter` block is used).
+- **(S2)** Optional: split G2 into read-only review (card + dashboard + route) vs apply-in-editor overlay, so the read path can land independently.
+- **(S3 / §5.1)** Conscious deferral: the review card shows the request-time `price_preview`; the fresh recompute happens when admin opens the editor. Acceptable for v1.
+- **(S7)** Add the shrink-cap test (A2), a suppression-fires test (E2), a template snapshot test (F1), a `pkgId` assert (A1), and a partial-unique-index existence check (B1) as you write each.
+- **(S8)** Anchor F1 Step 3's notify block precisely: after the staff-hooks try/catch (`crud.js:~753`), before `res.json(updatedRow.rows[0])`.
+- **(Declined, S4)** Gemini suggested clearing autopay only when `from === 'balance_paid'`. Declined: clearing it unconditionally on the demotion is the money-safer choice (it stops the balance scheduler from auto-charging a now-stale amount) and matches spec §6.2. Keep it unconditional.
 
 ## Final verification
 
