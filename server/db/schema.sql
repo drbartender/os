@@ -892,6 +892,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_stripe_sessions_payment_link
   ON stripe_sessions(stripe_payment_link_id)
   WHERE stripe_payment_link_id IS NOT NULL;
 
+-- Backs the create-intent reuse lookup (proposal_id + status='pending', newest
+-- first) that runs on every checkout. Partial index keeps it tiny.
+CREATE INDEX IF NOT EXISTS idx_stripe_sessions_proposal_pending
+  ON stripe_sessions(proposal_id, created_at DESC)
+  WHERE status = 'pending';
+
 -- ─── Proposal Payment Options & Autopay ──────────────────────────
 
 ALTER TABLE proposals ADD COLUMN IF NOT EXISTS payment_type VARCHAR(20) DEFAULT 'deposit';

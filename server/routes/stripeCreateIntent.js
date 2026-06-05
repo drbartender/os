@@ -81,11 +81,18 @@ router.post('/create-intent/:token', publicLimiter, asyncHandler(async (req, res
     try {
       await dbClient.query('BEGIN');
       const lockRes = await dbClient.query(
-        `SELECT pricing_snapshot, event_duration_hours, gratuity_rate, tip_jar, total_price
+        `SELECT status, pricing_snapshot, event_duration_hours, gratuity_rate, tip_jar, total_price
            FROM proposals WHERE id = $1 FOR UPDATE`,
         [proposal.id]
       );
       const row = lockRes.rows[0];
+      // Re-check status UNDER the row lock: a webhook could have flipped the
+      // proposal to paid between the unlocked status check above and this lock.
+      // Never rewrite total_price on an already-paid proposal.
+      if (!row || ['deposit_paid', 'balance_paid', 'confirmed'].includes(row.status)) {
+        await dbClient.query('ROLLBACK');
+        throw new ConflictError('Payment has already been made for this proposal', 'ALREADY_PAID');
+      }
       const snap = row.pricing_snapshot || {};
       const { staffCount, hours } = gratuityBasisFromSnapshot(snap, row.event_duration_hours);
       // Can't skip the jar with no crew/hours — force it on so the DB CHECK passes.
@@ -145,11 +152,21 @@ router.post('/create-intent/:token', publicLimiter, asyncHandler(async (req, res
   // Stale-intent safety (§6): a prior pending intent whose amount no longer
   // matches must be cancelled so a stale browser tab can't confirm the old total.
   if (existing.rows[0] && existing.rows[0].amount !== amount) {
-    try { await stripe.paymentIntents.cancel(existing.rows[0].stripe_payment_intent_id); } catch (e) { /* already gone/uncancelable */ }
-    await pool.query(
-      "UPDATE stripe_sessions SET status = 'canceled' WHERE stripe_payment_intent_id = $1",
-      [existing.rows[0].stripe_payment_intent_id]
-    );
+    const oldIntentId = existing.rows[0].stripe_payment_intent_id;
+    try {
+      const oldIntent = await stripe.paymentIntents.retrieve(oldIntentId);
+      // Only cancel + mark canceled when the old intent is still cancelable. If
+      // the client already confirmed it in another tab (succeeded/processing),
+      // leave it for the webhook to reconcile — the additive amount_paid credit
+      // records what was actually charged, so a stale confirm can't desync.
+      if (!['succeeded', 'processing', 'canceled'].includes(oldIntent.status)) {
+        await stripe.paymentIntents.cancel(oldIntentId);
+        await pool.query(
+          "UPDATE stripe_sessions SET status = 'canceled' WHERE stripe_payment_intent_id = $1",
+          [oldIntentId]
+        );
+      }
+    } catch (e) { /* intent gone/unretrievable — nothing to cancel */ }
   }
 
   // Create or retrieve Stripe Customer (needed for autopay card saving)
