@@ -4,15 +4,22 @@ import api from '../../../../utils/api';
 import { formatDollars, formatCents } from '../money';
 import ShareButton from '../ShareButton';
 
-export default function PrescriptionTab({ focus }) {
-  const [p, setP] = useState(null);
-  const [state, setState] = useState('loading');
-  useEffect(() => { let off = false; (async () => {
-    try { const token = localStorage.getItem('db_client_token');
-      const { data } = await api.get(`/client-portal/proposals/${focus.token}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (!off) { setP(data.proposal || {}); setState('ready'); }
-    } catch (e) { if (!off) { Sentry.captureException(e, { tags: { area: 'client-portal', tab: 'prescription', token: focus.token } }); setState('error'); } }
-  })(); return () => { off = true; }; }, [focus.token]);
+export default function PrescriptionTab({ focus, proposalDetail }) {
+  // Reuse a parent-fetched detail ONLY when it is THIS event's detail. After an
+  // archive fallback PortalHome can still be holding a previously-viewed event's
+  // detail; reusing it by truthiness alone would render the wrong proposal's
+  // add-ons / payments / signature under this event's totals.
+  const reusable = proposalDetail && proposalDetail.token === focus.token ? proposalDetail : null;
+  const [p, setP] = useState(reusable);
+  const [state, setState] = useState(reusable ? 'ready' : 'loading');
+  useEffect(() => {
+    if (proposalDetail && proposalDetail.token === focus.token) { setP(proposalDetail); setState('ready'); return; }
+    let off = false; setState('loading'); (async () => {
+      try { const token = localStorage.getItem('db_client_token');
+        const { data } = await api.get(`/client-portal/proposals/${focus.token}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (!off) { setP(data.proposal || {}); setState('ready'); }
+      } catch (e) { if (!off) { Sentry.captureException(e, { tags: { area: 'client-portal', tab: 'prescription', token: focus.token } }); setState('error'); } }
+    })(); return () => { off = true; }; }, [focus.token, proposalDetail]);
 
   if (state === 'loading') return <div className="loading" role="status"><div className="spinner" />Loading...</div>;
   if (state === 'error') return <div className="client-alert client-alert-error">Could not load this proposal. <button onClick={() => window.location.reload()}>Retry</button></div>;

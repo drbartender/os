@@ -6,7 +6,7 @@ import PotionTab from './tabs/PotionTab';
 import ReceiptsTab from './tabs/ReceiptsTab';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 const TABS = [['overview','Overview'],['prescription','The Prescription'],['potion','The Potion Plan'],['receipts','Receipts']];
-export default function EventCommandCenter({ focus, upcomingCount }) {
+export default function EventCommandCenter({ focus, upcomingCount, proposalDetail }) {
   const { tab = 'overview' } = useParams();
   const base = `/my-proposals/${focus.token}`;
   return (<div className="cp-command">
@@ -18,7 +18,7 @@ export default function EventCommandCenter({ focus, upcomingCount }) {
       <Link key={k} role="tab" aria-selected={tab === k} className={`cp-tab${tab === k ? ' active' : ''}`} to={`${base}/${k}`}>{label}</Link>))}</nav>
     <section className="cp-tab-body">
       {tab === 'overview' && <OverviewTab focus={focus} />}
-      {tab === 'prescription' && <PrescriptionTab focus={focus} />}
+      {tab === 'prescription' && <PrescriptionTab focus={focus} proposalDetail={proposalDetail} />}
       {tab === 'potion' && <PotionTab focus={focus} />}
       {tab === 'receipts' && <ReceiptsTab focus={focus} />}
     </section>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import * as Sentry from '@sentry/react';
 import { useNavigate, useParams } from 'react-router-dom';
 import PublicLayout, { clientLoginPath } from '../../../components/PublicLayout';
 import { useClientAuth } from '../../../context/ClientAuthContext';
@@ -15,6 +16,7 @@ export default function PortalHome() {
   const [home, setHome] = useState(null); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
   const { token: routeToken } = useParams();
   const [specific, setSpecific] = useState(null);
+  const [specificDetail, setSpecificDetail] = useState(null);
   const [stale, setStale] = useState(false);
   const [notFound, setNotFound] = useState(false);
   useEffect(() => { if (!clientLoading && !isClientAuthenticated) navigate(clientLoginPath(), { replace: true }); }, [clientLoading, isClientAuthenticated, navigate]);
@@ -24,22 +26,25 @@ export default function PortalHome() {
       try { const token = localStorage.getItem('db_client_token');
         const { data } = await api.get('/client-portal/home', { headers: token ? { Authorization: `Bearer ${token}` } : {} });
         if (!off) setHome(data);
-      } catch { if (!off) { setError('Could not load your portal. Please try again.'); toast.error('Failed to load your portal.'); } }
+      } catch (e) { if (!off) { Sentry.captureException(e, { tags: { area: 'client-portal', surface: 'home' } }); setError('Could not load your portal. Please try again.'); toast.error('Failed to load your portal.'); } }
       finally { if (!off) setLoading(false); }
     })(); return () => { off = true; };
   }, [clientLoading, isClientAuthenticated, toast]);
   useEffect(() => {
     if (!home || !routeToken || routeToken === 'archive' || routeToken === home.focus?.token) {
-      setSpecific(null); setNotFound(false); setStale(false); return;
+      setSpecific(null); setSpecificDetail(null); setNotFound(false); setStale(false); return;
     }
     let off = false;
     (async () => {
       try {
         const token = localStorage.getItem('db_client_token');
         const { data } = await api.get(`/client-portal/proposals/${routeToken}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-        if (!off) setSpecific(mapDetailToFocus(data.proposal));
+        if (!off) { setSpecific(mapDetailToFocus(data.proposal)); setSpecificDetail(data.proposal); }
       } catch (e) {
         if (off) return;
+        // Never carry a previously-viewed event's detail into a fallback/error
+        // render — PrescriptionTab also token-guards, this is belt-and-suspenders.
+        setSpecificDetail(null);
         if (e.status === 404) { setNotFound(true); return; }
         const row = home.archive.find(r => r.token === routeToken);
         if (row) { setSpecific(mapArchiveRow(row)); setStale(true); } else setNotFound(true);
@@ -55,7 +60,7 @@ export default function PortalHome() {
     <a className="btn client-btn-primary" href="/my-proposals">Back to your portal</a></div></section></PublicLayout>;
   if (specific) return <PublicLayout><section className="cp-portal">
     {stale && <div className="client-alert">Some details are unavailable right now.</div>}
-    <EventCommandCenter focus={specific} upcomingCount={0} /></section></PublicLayout>;
+    <EventCommandCenter focus={specific} proposalDetail={specificDetail} upcomingCount={0} /></section></PublicLayout>;
   const firstName = (clientUser?.name || '').split(' ')[0];
   let body;
   if (home.focus) body = <EventCommandCenter focus={home.focus} upcomingCount={home.upcoming_count} />;
