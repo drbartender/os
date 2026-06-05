@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import FormBanner from '../../../components/FormBanner';
+import { resolveGratuityDisplayLabel } from '../../../utils/gratuityLabels';
 import { useToast } from '../../../context/ToastContext';
 import { ADDON_CATEGORIES } from '../../../data/addonCategories';
 import useFormValidation from '../../../hooks/useFormValidation';
@@ -739,7 +740,7 @@ export default function QuoteWizard() {
                 <div className="wz-price-breakdown">
                   {preview.breakdown.map((item, i) => (
                     <div key={i} className="wz-price-line">
-                      <span>{item.label}</span>
+                      <span>{resolveGratuityDisplayLabel(item.label, preview)}</span>
                       <span>{formatCurrency(item.amount)}</span>
                     </div>
                   ))}

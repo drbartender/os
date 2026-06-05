@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { resolveGratuityDisplayLabel } from '../../../utils/gratuityLabels';
 import { getPackageBySlug } from '../../../data/packages';
 import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
 import styles from './styles';
@@ -60,7 +61,7 @@ export default function ProposalPricingBreakdown({
             {lineItems.map((item, i) => (
               <tr key={i} style={{ borderBottom: '1px dotted rgba(28,22,16,0.22)' }}>
                 <td style={{ padding: '0.6rem 0', color: 'var(--deep-brown)', fontSize: '0.95rem' }}>
-                  {item.label}
+                  {resolveGratuityDisplayLabel(item.label, snapshot)}
                 </td>
                 <td style={{ padding: '0.6rem 0', textAlign: 'right', color: Number(item.amount) < 0 ? 'var(--sage)' : 'var(--deep-brown)', fontSize: '0.95rem', fontWeight: 500, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
                   {Number(item.amount) < 0 ? `−${fmt(Math.abs(item.amount))}` : fmt(item.amount)}

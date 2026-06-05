@@ -1,4 +1,5 @@
 import React from 'react';
+import { resolveGratuityDisplayLabel } from '../utils/gratuityLabels';
 
 export default function PricingBreakdown({ snapshot, compact = false }) {
   if (!snapshot || !snapshot.breakdown) return null;
@@ -17,7 +18,7 @@ export default function PricingBreakdown({ snapshot, compact = false }) {
           {snapshot.breakdown.map((item, i) => (
             <tr key={i} style={{ borderBottom: '1px solid var(--line-1)' }}>
               <td style={{ padding: compact ? '0.4rem 0' : '0.6rem 0', color: 'var(--ink-1)' }}>
-                {item.label}
+                {resolveGratuityDisplayLabel(item.label, snapshot)}
               </td>
               <td style={{
                 padding: compact ? '0.4rem 0' : '0.6rem 0',

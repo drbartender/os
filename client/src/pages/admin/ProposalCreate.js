@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../utils/api';
+import { resolveGratuityDisplayLabel } from '../../utils/gratuityLabels';
 import { formatPhoneInput, stripPhone } from '../../utils/formatPhone';
 import VenueAddressFields from '../../components/VenueAddressFields';
 import useFormValidation from '../../hooks/useFormValidation';
@@ -1243,9 +1244,7 @@ function PricingDock({ form, preview, packages, submitting, submitLabel, submitB
         )}
         {preview && !isCustomPricing && (
           <div>
-            {breakdown.map((item, i) => (
-              <Row key={i} label={item.label} value={item.amount} />
-            ))}
+            {breakdown.map((item, i) => <Row key={i} label={resolveGratuityDisplayLabel(item.label, preview)} value={item.amount} />)}
             <div style={{ margin: '10px 0', borderTop: '1px solid var(--line-1)' }} />
             {subtotal !== total && (
               <Row label="Subtotal" value={subtotal} />
