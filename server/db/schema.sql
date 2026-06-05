@@ -2604,6 +2604,15 @@ CREATE INDEX IF NOT EXISTS idx_tips_unassigned_recent
 CREATE INDEX IF NOT EXISTS idx_payouts_contractor_id
   ON payouts(contractor_id);
 
+-- Supports the paystub YTD aggregate scan (paystubData.js): this contractor's
+-- PAID payouts in a payday window. The partial index keeps it tight (status
+-- 'paid' dominates by year 2); the pay_periods.payday index makes the join-side
+-- payday range sargable.
+CREATE INDEX IF NOT EXISTS idx_payouts_contractor_status_paid
+  ON payouts(contractor_id, pay_period_id) WHERE status = 'paid';
+CREATE INDEX IF NOT EXISTS idx_pay_periods_payday
+  ON pay_periods(payday);
+
 -- ─── Cal.com integration (2026-05-27) ──────────────────────────
 
 -- 1a. Drop old clients.source check constraint (idempotent).
