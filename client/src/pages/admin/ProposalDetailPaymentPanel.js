@@ -207,7 +207,11 @@ export default function ProposalDetailPaymentPanel({ proposal, onUpdate }) {
     <div className="card">
       <div className="card-head">
         <h3>Payment</h3>
-        {isFullyPaid ? (
+        {amountPaid > totalPrice ? (
+          // Durable overpayment signal (§6): derived from amount_paid > total_price
+          // (e.g. a price-down on a paid proposal). Admin issues the refund.
+          <StatusChip kind="warn">Overpaid {fmt$2dp(amountPaid - totalPrice)}, issue a refund</StatusChip>
+        ) : isFullyPaid ? (
           <StatusChip kind="ok">Paid in full</StatusChip>
         ) : balanceDue > 0 && amountPaid > 0 ? (
           <StatusChip kind="info">Deposit paid</StatusChip>
