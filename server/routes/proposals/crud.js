@@ -812,6 +812,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
           await notifyClientOfDecision(crRow.rows[0], freshP.rows[0], 'approved');
         }
       } catch (notifyErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(notifyErr, {
+            tags: { route: 'proposals/update', issue: 'change-request-approved-email' },
+            extra: { proposalId: req.params.id },
+          });
+        }
         console.error('change-request approved email failed (non-blocking):', notifyErr.message);
       }
     }
