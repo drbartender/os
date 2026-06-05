@@ -3,6 +3,10 @@
  * Takes package/addon data as arguments, returns a pricing snapshot.
  */
 
+const {
+  SHARED_GRATUITY_LABEL, GRATUITY_LABEL, currentDisplayLabels,
+} = require('./gratuityLabels');
+
 /**
  * HOSTED PACKAGE RULE — do not lose this.
  * ─────────────────────────────────────────────────────────────
@@ -177,7 +181,111 @@ function calculateSyrupCost(syrupSelections, guestCount) {
   return { count, bottlesPerFlavor, totalBottles, packs, singles, total };
 }
 
-function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartenders, addons, syrupSelections, adjustments, totalPriceOverride }) {
+// ─── Client-elected gratuity (spec §3, §8.3) ─────────────────────────────────
+// A per-staff-per-hour RATE (dollars), stored as proposals.gratuity_rate
+// NUMERIC(10,4). The dollar line scales: rate x staffCount x hours. It is STAFF
+// pass-through money — added on top of the service total, never reduced by a
+// discount/surcharge or total_price_override (DD #2). Layered on top of the
+// forced "Shared Gratuity" surcharge, which is unchanged.
+const GRATUITY_FLOOR_RATE = 50;        // no-jar minimum, $/staff/hr (linking rule §3)
+const GRATUITY_SANITY_MAX_RATE = 1000; // reject absurd rates; honest typos fixed via refund (§6)
+
+/** 'instructor' for class packages, else 'bartender'. Frozen into the snapshot
+ *  (snapshot.staff_noun) so a later re-categorization can't swap the noun on a
+ *  signed proposal (spec §3). */
+function getStaffNoun(pkg) {
+  return pkg && pkg.bar_type === 'class' ? 'instructor' : 'bartender';
+}
+
+/** Staff that share the client gratuity: bartenders (staffing.actual already
+ *  folds the numBartenders override) + additional-bartender addon qty. EXCLUDES
+ *  barbacks/servers — a SEPARATE count from the engine's totalStaff (spec §3). */
+function computeGratuityBasis({ pkg, guestCount, durationHours, numBartenders, addons }) {
+  const staffing = calculateStaffing(pkg, guestCount, durationHours, numBartenders);
+  const additionalBartenderQty = (addons || [])
+    .filter(a => a.slug === 'additional-bartender')
+    .reduce((sum, a) => sum + (a.quantity || 1), 0);
+  return { staffCount: staffing.actual + additionalBartenderQty, hours: Number(durationHours) || 0 };
+}
+
+/** Derive the same basis from a computed snapshot (used by the surgical
+ *  create-intent recompute). Prefers the frozen gratuity.staff_count; falls back
+ *  to staffing.actual + the addon count recovered from snapshot.addons. */
+function gratuityBasisFromSnapshot(snapshot, durationHours) {
+  const g = snapshot && snapshot.gratuity;
+  const dh = Number(durationHours) || 0;
+  if (g && Number.isFinite(g.staff_count)) {
+    return { staffCount: g.staff_count, hours: Number.isFinite(g.hours) ? g.hours : dh };
+  }
+  const staffActual = (snapshot && snapshot.staffing && snapshot.staffing.actual) || 0;
+  const addonQty = ((snapshot && snapshot.addons) || [])
+    .filter(a => a.slug === 'additional-bartender')
+    // snapshot.addons[].quantity for a bartender is durationHours x rawQty; recover rawQty.
+    .reduce((s, a) => s + (dh > 0 && a.quantity ? Math.round(a.quantity / dh) : (a.quantity || 0)), 0);
+  return { staffCount: staffActual + addonQty, hours: dh };
+}
+
+/** The gratuity dollar line, rounded to cents. ONE source of the math (DD #4). */
+function gratuityLineAmount(rate, staffCount, hours) {
+  const r = Number(rate) || 0;
+  const sc = Number(staffCount) || 0;
+  const h = Number(hours) || 0;
+  if (r <= 0 || sc <= 0 || h <= 0) return 0;
+  return Math.round(r * sc * h * 100) / 100;
+}
+
+/** Derive + validate a stored rate from a client/admin-entered TOTAL (dollars).
+ *  PURE: the route turns {ok:false} into a clean ValidationError BEFORE the DB
+ *  CHECK fires; the DB CHECK is the final backstop (spec §3, §4, §6). */
+function deriveGratuityRate({ enteredTotal, staffCount, hours, tipJar }) {
+  const basis = (Number(staffCount) || 0) * (Number(hours) || 0);
+  // Degenerate crew/hours: no gratuity is possible — coerce to 0 (the UI step is
+  // disabled here; the caller also forces tip_jar=true so the DB CHECK passes).
+  if (basis <= 0) return { ok: true, rate: 0 };
+  const total = Number(enteredTotal);
+  if (!Number.isFinite(total) || total < 0) {
+    return { ok: false, code: 'INVALID_GRATUITY', message: 'Enter a gratuity amount of $0 or more.' };
+  }
+  if (tipJar === false) {
+    const floorTotal = GRATUITY_FLOOR_RATE * basis;
+    if (total < floorTotal - 0.005) {
+      return {
+        ok: false, code: 'GRATUITY_BELOW_FLOOR',
+        message: `Without a tip jar, gratuity must be at least $${floorTotal.toFixed(2)}.`,
+      };
+    }
+  }
+  const rate = Math.round((total / basis) * 10000) / 10000; // NUMERIC(10,4)
+  if (rate > GRATUITY_SANITY_MAX_RATE) {
+    return { ok: false, code: 'GRATUITY_TOO_LARGE', message: 'That gratuity is unusually large — please re-enter it.' };
+  }
+  return { ok: true, rate };
+}
+
+/** Return a NEW snapshot with the client Gratuity line recomputed for a new
+ *  rate, leaving every other line byte-identical (drift-free, DD #3). */
+function recomputeSnapshotGratuity(snapshot, { gratuityRate, tipJar, staffNoun, durationHours }) {
+  const snap = JSON.parse(JSON.stringify(snapshot)); // never mutate the caller's object
+  const { staffCount, hours } = gratuityBasisFromSnapshot(snap, durationHours);
+  const priorAmount = Number(snap.gratuity && snap.gratuity.total) || 0;
+  const newAmount = gratuityLineAmount(gratuityRate, staffCount, hours);
+  snap.breakdown = (snap.breakdown || []).filter(l => l.label !== GRATUITY_LABEL);
+  if (newAmount > 0) snap.breakdown.push({ label: GRATUITY_LABEL, amount: newAmount });
+  snap.total = Math.round((Number(snap.total || 0) - priorAmount + newAmount) * 100) / 100;
+  snap.staff_noun = staffNoun || snap.staff_noun || 'bartender';
+  snap.display_labels = snap.display_labels || currentDisplayLabels();
+  snap.gratuity = {
+    rate: Number(gratuityRate) || 0,
+    tip_jar: tipJar !== false,
+    staff_count: staffCount,
+    hours,
+    staff_noun: snap.staff_noun,
+    total: newAmount,
+  };
+  return snap;
+}
+
+function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartenders, addons, syrupSelections, adjustments, totalPriceOverride, gratuityRate = 0, tipJar = true }) {
   const isHosted = isHostedPackage(pkg); // HOSTED PACKAGE RULE — see helper comment.
   const isClassPackage = isHosted && pkg.bar_type === 'class';
   const baseCost = calculateBaseCost(pkg, guestCount, durationHours);
@@ -251,7 +359,17 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
     return sum + (adj.type === 'discount' ? -amt : amt);
   }, 0);
   const calculatedTotal = Math.max(0, Math.round((subtotal + adjustmentNet) * 100) / 100);
-  const total = totalPriceOverride !== null && totalPriceOverride !== undefined ? Math.round(Number(totalPriceOverride) * 100) / 100 : calculatedTotal;
+
+  // Client-elected gratuity (DD #2/#4): staff pass-through, added on top of the
+  // service total. staffing.actual already folds the numBartenders override.
+  const gratuityStaffCount = staffing.actual + additionalBartenderQty;
+  const staffNoun = getStaffNoun(pkg);
+  const clientGratuityAmount = gratuityLineAmount(gratuityRate, gratuityStaffCount, durationHours);
+
+  const serviceTotal = totalPriceOverride !== null && totalPriceOverride !== undefined
+    ? Math.round(Number(totalPriceOverride) * 100) / 100
+    : calculatedTotal;
+  const total = Math.round((serviceTotal + clientGratuityAmount) * 100) / 100;
 
   // Build human-readable breakdown
   const breakdown = [];
@@ -284,7 +402,7 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
       if (staffing.gratuityPerHour > 0) {
         const gratuityAmount = staffing.extra * durationHours * staffing.gratuityPerHour;
         breakdown.push({
-          label: 'Shared Gratuity',
+          label: SHARED_GRATUITY_LABEL,
           amount: Math.round(gratuityAmount * 100) / 100
         });
       }
@@ -310,7 +428,7 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
         });
         if (addon.gratuity_per_hour > 0) {
           const gratuityAmount = qty * durationHours * addon.gratuity_per_hour;
-          breakdown.push({ label: 'Shared Gratuity', amount: Math.round(gratuityAmount * 100) / 100 });
+          breakdown.push({ label: SHARED_GRATUITY_LABEL, amount: Math.round(gratuityAmount * 100) / 100 });
         }
       }
       continue;
@@ -340,6 +458,9 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
       label: adj.label || (adj.type === 'discount' ? 'Discount' : 'Surcharge'),
       amount: adj.type === 'discount' ? -amt : amt
     });
+  }
+  if (clientGratuityAmount > 0) {
+    breakdown.push({ label: GRATUITY_LABEL, amount: clientGratuityAmount });
   }
 
   return {
@@ -378,6 +499,16 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
       total: syrupCost.total,
     },
     breakdown,
+    staff_noun: staffNoun,
+    display_labels: currentDisplayLabels(),
+    gratuity: {
+      rate: Number(gratuityRate) || 0,
+      tip_jar: tipJar !== false,
+      staff_count: gratuityStaffCount,
+      hours: Number(durationHours) || 0,
+      staff_noun: staffNoun,
+      total: clientGratuityAmount,
+    },
     floor_applied: !!floorApplied,
     adjustments: safeAdjustments,
     total_price_override: totalPriceOverride ?? null,
@@ -386,4 +517,11 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
   };
 }
 
-module.exports = { calculateProposal, calculateBaseCost, calculateBarRental, calculateStaffing, calculateAddonCost, calculateSyrupCost, getBottlesPerSyrup, isHostedPackage, computeCocktailGap, packageSuppressedAddons, isCocktailFullyCovered };
+module.exports = {
+  calculateProposal, calculateBaseCost, calculateBarRental, calculateStaffing,
+  calculateAddonCost, calculateSyrupCost, getBottlesPerSyrup, isHostedPackage,
+  computeCocktailGap, packageSuppressedAddons, isCocktailFullyCovered,
+  getStaffNoun, computeGratuityBasis, gratuityBasisFromSnapshot, gratuityLineAmount,
+  deriveGratuityRate, recomputeSnapshotGratuity,
+  GRATUITY_FLOOR_RATE, GRATUITY_SANITY_MAX_RATE,
+};
