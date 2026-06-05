@@ -799,6 +799,23 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       }
     }
 
+    // Change-request approved client email (spec 5). The PATCH stamped the request
+    // approved in-transaction (E2); the single client touch fires here post-commit,
+    // best-effort. Re-read the proposal fresh so the email's total and balance
+    // reflect the post-commit invoice/demotion cascade above.
+    if (change_request_id) {
+      try {
+        const { notifyClientOfDecision } = require('../../utils/changeRequestNotifications');
+        const crRow = await pool.query('SELECT * FROM proposal_change_requests WHERE id = $1', [change_request_id]);
+        if (crRow.rows[0] && crRow.rows[0].status === 'approved') {
+          const freshP = await pool.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
+          await notifyClientOfDecision(crRow.rows[0], freshP.rows[0], 'approved');
+        }
+      } catch (notifyErr) {
+        console.error('change-request approved email failed (non-blocking):', notifyErr.message);
+      }
+    }
+
     // Return updated proposal (from the UPDATE ... RETURNING * above)
     res.json(updatedRow.rows[0]);
   } catch (err) {

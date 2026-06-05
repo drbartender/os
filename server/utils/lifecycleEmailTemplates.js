@@ -361,6 +361,54 @@ function emailChangeVerification({ verifyUrl, newEmail }) {
   return { subject, html, text };
 }
 
+// ─── Change-request notifications (client portal editing model) ─────────────
+
+function changeRequestAdminAlert({ clientName, eventLabel, editWindow, estimatedTotal, currentTotal, note, adminUrl }) {
+  const urgent = editWindow === 'inside_t14';
+  return {
+    subject: `${urgent ? '[Soon] ' : ''}Change request from ${clientName} (${eventLabel})`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">New change request</h2>
+      <p><strong>${esc(clientName)}</strong> requested a change to their <strong>${esc(eventLabel)}</strong>.</p>
+      <p>Current total: $${Number(currentTotal).toFixed(2)}<br/>Estimated new total: $${Number(estimatedTotal).toFixed(2)}</p>
+      ${note ? `<p>Note: ${esc(note)}</p>` : ''}
+      ${urgent ? `<p style="color:${BRAND.primary};"><strong>This event is within 2 weeks. Verify staffing before approving.</strong></p>` : ''}
+      ${ctaButton(adminUrl, 'Review request')}
+    `),
+    text: `${clientName} requested a change to their ${eventLabel}. Current $${Number(currentTotal).toFixed(2)}, estimated $${Number(estimatedTotal).toFixed(2)}. ${note ? 'Note: ' + note + '. ' : ''}Review: ${adminUrl}`,
+  };
+}
+
+function changeRequestApproved({ clientName, eventLabel, newTotal, balanceDue, portalUrl }) {
+  return {
+    subject: `Your changes are confirmed (${eventLabel})`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">Your changes are confirmed</h2>
+      <p>Hi ${esc(clientName || 'there')},</p>
+      <p>We have updated your <strong>${esc(eventLabel)}</strong>. Your new total is <strong>$${Number(newTotal).toFixed(2)}</strong>.</p>
+      ${Number(balanceDue) > 0 ? `<p>Balance remaining: <strong>$${Number(balanceDue).toFixed(2)}</strong>. You can pay it from your portal.</p>` : ''}
+      ${ctaButton(portalUrl, 'View your event')}
+      <p>Cheers,<br/>The Dr. Bartender Team</p>
+    `),
+    text: `Hi ${clientName || 'there'}, your ${eventLabel} changes are confirmed. New total $${Number(newTotal).toFixed(2)}.${Number(balanceDue) > 0 ? ` Balance remaining $${Number(balanceDue).toFixed(2)}.` : ''} View: ${portalUrl}`,
+  };
+}
+
+function changeRequestDeclined({ clientName, eventLabel, reason, portalUrl }) {
+  return {
+    subject: `About your requested change (${eventLabel})`,
+    html: wrapEmail(`
+      <h2 style="color:${BRAND.primary};margin-top:0;">About your requested change</h2>
+      <p>Hi ${esc(clientName || 'there')},</p>
+      <p>We were not able to make the change you requested to your <strong>${esc(eventLabel)}</strong>.</p>
+      <p>${esc(reason)}</p>
+      <p>Reply to this email and we will help find the right option.</p>
+      ${ctaButton(portalUrl, 'View your event')}
+    `),
+    text: `Hi ${clientName || 'there'}, we could not make your requested change to your ${eventLabel}. ${reason} Reply to this email and we will help. ${portalUrl}`,
+  };
+}
+
 // Sent to the OLD email simultaneously so a takeover attempt is visible. The
 // owner can cancel the pending change via the Profile UI.
 function emailChangeWarning({ newEmail, cancelUrl }) {
@@ -412,4 +460,7 @@ module.exports = {
   emailChangeVerification,
   emailChangeWarning,
   emailChangeConfirmed,
+  changeRequestAdminAlert,
+  changeRequestApproved,
+  changeRequestDeclined,
 };
