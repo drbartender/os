@@ -3039,6 +3039,11 @@ UPDATE users
 -- A client-requested booking change. requested_changes is an apply-ready sparse
 -- diff (admin-PATCH-shaped). Money is DOLLARS to match proposals.*. One open
 -- (pending) request per proposal via the partial-unique index.
+-- proposal_id ON DELETE CASCADE (not RESTRICT): a change request moves no money
+-- (it is consent plus a price preview), so it is not an invoice/refund-class record.
+-- Each request's lifecycle is also written to proposal_activity_log (which itself
+-- CASCADEs), and the admin hard-delete (routes/proposals/crud.js) relies on cascade
+-- for all proposal children, so CASCADE here matches proposal_payments and activity_log.
 CREATE TABLE IF NOT EXISTS proposal_change_requests (
   id                 SERIAL PRIMARY KEY,
   proposal_id        INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
