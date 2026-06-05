@@ -82,6 +82,8 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
         syrup_selections: editForm.syrup_selections || [],
         adjustments: editForm.adjustments || [],
         total_price_override: editForm.total_price_override,
+        tip_jar: editForm.tip_jar !== false,
+        gratuity_total: editForm.gratuity_total,
       })
         .then(res => { setEditPreview(res.data); setError(''); })
         .catch(err => {
@@ -101,6 +103,8 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
     editForm.syrup_selections,
     editForm.adjustments,
     editForm.total_price_override,
+    editForm.tip_jar,
+    editForm.gratuity_total,
   ]);
 
   const isDirty = useMemo(
@@ -205,6 +209,8 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
         syrup_selections: editForm.syrup_selections || [],
         adjustments: editForm.adjustments || [],
         total_price_override: editForm.total_price_override,
+        tip_jar: editForm.tip_jar !== false,
+        gratuity_total: editForm.gratuity_total,
         client_provides_glassware: !!editForm.client_provides_glassware,
         // Top Shelf is class-only — only send class_options for a class package
         // so switching to a non-class package can't trip the server-side guard.
@@ -576,6 +582,37 @@ export default function ProposalDetailEditForm({ proposal, onSaved, onCancel }) 
           </div>
         </div>
 
+        {/* Gratuity (§8.3) — admin preset/adjust; client can change at checkout */}
+        <div className="meta-k" style={{ marginBottom: 8 }}>Gratuity</div>
+        <div style={{ marginBottom: 12 }}>
+          {(() => {
+            const gB = editPreview?.gratuity || null;
+            const gStaff = (gB?.staff_count ?? 0) * (gB?.hours ?? 0);
+            const gFloor = Math.round(50 * (gB?.staff_count ?? 0) * (gB?.hours ?? 0));
+            const gNoun = gB?.staff_noun || 'bartender';
+            if (gStaff <= 0) {
+              return <p className="tiny" style={{ color: 'var(--ink-3)' }}>Gratuity unavailable until staffing and duration are set.</p>;
+            }
+            return (
+              <>
+                <label className="hstack" style={{ gap: 6 }}>
+                  <input type="checkbox" checked={editForm.tip_jar !== false}
+                    onChange={e => update('tip_jar', e.target.checked)} /> Tip jar at the bar
+                </label>
+                <div className="hstack" style={{ gap: 6, marginTop: 6, alignItems: 'center' }}>
+                  <span>Pre-paid gratuity for {gNoun}s $</span>
+                  <input className="input" type="number" min={editForm.tip_jar !== false ? 0 : gFloor} step="1"
+                    value={editForm.gratuity_total}
+                    onChange={e => update('gratuity_total', e.target.value)} style={{ width: 120 }} />
+                </div>
+                {editForm.tip_jar === false && Number(editForm.gratuity_total) < gFloor && (
+                  <p className="chip danger" style={{ marginTop: 6 }}>Without a tip jar, minimum is ${gFloor}.</p>
+                )}
+              </>
+            );
+          })()}
+        </div>
+
         {/* Total override */}
         <div style={{ paddingTop: 12, borderTop: '1px solid var(--line-1)', marginBottom: 12 }}>
           <label className="hstack" style={{ gap: 8, fontSize: 12.5, cursor: 'pointer' }}>
@@ -664,6 +701,8 @@ export function initialFormFromProposal(p) {
     syrup_selections: snapshot.syrups?.selections || [],
     adjustments: p.adjustments || [],
     total_price_override: p.total_price_override ?? null,
+    tip_jar: snapshot.gratuity?.tip_jar !== false,
+    gratuity_total: Number(snapshot.gratuity?.total) || 0,
     // '' = "use the package-derived default" (server resolves null → 90 hosted /
     // 60 else). A number is an explicit override. Inherited by EventEditForm.
     setup_minutes_before: p.setup_minutes_before ?? '',
