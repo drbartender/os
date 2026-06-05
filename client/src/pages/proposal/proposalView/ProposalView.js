@@ -195,8 +195,17 @@ export default function ProposalView() {
     // Show the loading state immediately so the payment form doesn't flash its
     // "unable to load" message in the gap before the intent effect refetches.
     setLoadingIntent(true);
-    setDepositSecret('');
-    setFullSecret('');
+    // Debounce the secret-clear (mirrors the admin edit form's 400ms preview
+    // debounce). Rapid keystrokes in the gratuity field keep resetting this timer,
+    // so the expensive create-intent refetch (row lock + Stripe retrieve/cancel/
+    // create + total_price rewrite) fires once the client pauses typing, not on
+    // every keystroke. While the secrets are still cached the intent effect
+    // early-returns, so no network or Stripe traffic happens mid-type.
+    const timer = setTimeout(() => {
+      setDepositSecret('');
+      setFullSecret('');
+    }, 400);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tipJar, gratuityTotal, gratuityDirty]);
 
