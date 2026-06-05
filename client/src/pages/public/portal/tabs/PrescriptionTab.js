@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import * as Sentry from '@sentry/react';
 import api from '../../../../utils/api';
 import { formatDollars, formatCents } from '../money';
 import ShareButton from '../ShareButton';
+import ChangeRequestForm from '../ChangeRequestForm';
+import ChangeRequestBanner from './ChangeRequestBanner';
 
 export default function PrescriptionTab({ focus, proposalDetail }) {
   // Reuse a parent-fetched detail ONLY when it is THIS event's detail. After an
@@ -21,10 +23,33 @@ export default function PrescriptionTab({ focus, proposalDetail }) {
       } catch (e) { if (!off) { Sentry.captureException(e, { tags: { area: 'client-portal', tab: 'prescription', token: focus.token } }); setState('error'); } }
     })(); return () => { off = true; }; }, [focus.token, proposalDetail]);
 
+  const [requests, setRequests] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const loadRequests = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('db_client_token');
+      const { data } = await api.get(`/client-portal/proposals/${focus.token}/change-requests`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      setRequests(data.requests || []);
+    } catch { /* non-fatal */ }
+  }, [focus.token]);
+  useEffect(() => { loadRequests(); }, [loadRequests]);
+  const openRequest = requests.find(r => r.status === 'pending');
+  const lastDecided = requests.find(r => r.status === 'approved' || r.status === 'declined');
+  const editable = focus.status !== 'archived' && focus.status !== 'completed';
+  const withdraw = async () => {
+    if (!openRequest) return;
+    try {
+      const token = localStorage.getItem('db_client_token');
+      await api.post(`/client-portal/proposals/${focus.token}/change-requests/${openRequest.id}/cancel`, {}, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      loadRequests();
+    } catch { /* non-fatal */ }
+  };
+
   if (state === 'loading') return <div className="loading" role="status"><div className="spinner" />Loading...</div>;
   if (state === 'error') return <div className="client-alert client-alert-error">Could not load this proposal. <button onClick={() => window.location.reload()}>Retry</button></div>;
   const includes = Array.isArray(p.package_includes) ? p.package_includes : [];
   return (<div className="cp-rx">
+    <ChangeRequestBanner request={openRequest || lastDecided} onWithdraw={withdraw} />
     <div className="cp-rx-pkg"><h3>{p.package_name || 'Your package'}</h3>
       <ul className="cp-rx-includes">{includes.map((it, i) => <li key={i}>{it}</li>)}</ul></div>
     {p.addons?.length > 0 && (<div className="cp-rx-addons"><h4>Add-ons</h4>
@@ -43,6 +68,14 @@ export default function PrescriptionTab({ focus, proposalDetail }) {
       {!focus.booked && <a className="btn client-btn-primary" href={`/proposal/${focus.token}`}>Review & book</a>}
       {focus.balance_due > 0 && <a className="btn client-btn-primary" href={`/proposal/${focus.token}`}>Pay balance</a>}
       <ShareButton url={`/proposal/${focus.token}`} label="Share this proposal" />
+      {editable && !openRequest && !showForm && (
+        <button type="button" className="btn client-btn-secondary" onClick={() => setShowForm(true)}>Request a change</button>
+      )}
     </div>
+    {showForm && (
+      <ChangeRequestForm proposal={p} token={focus.token}
+        onSubmitted={() => { setShowForm(false); loadRequests(); }}
+        onCancel={() => setShowForm(false)} />
+    )}
   </div>);
 }
