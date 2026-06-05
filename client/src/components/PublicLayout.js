@@ -77,7 +77,7 @@ export default function PublicLayout({ children }) {
               className="ws-utility-link"
               onClick={closeNav}
             >
-              {isAuthed ? 'My Proposals' : 'Sign in'}
+              {isAuthed ? 'My Portal' : 'Sign in'}
             </Link>
           </span>
         </div>
@@ -129,7 +129,7 @@ export default function PublicLayout({ children }) {
             to={isAuthed ? '/my-proposals' : loginPath}
             onClick={closeNav}
           >
-            {isAuthed ? 'My Proposals' : 'Sign in'}
+            {isAuthed ? 'My Portal' : 'Sign in'}
           </Link>
           <Link to="/quote" className="ws-nav-cta" onClick={closeNav}>Get an Instant Quote</Link>
         </div>
@@ -170,7 +170,7 @@ export default function PublicLayout({ children }) {
               <div className="ws-footer-col-head">Clients</div>
               <ul>
                 <li><Link to="/quote">Get a Quote</Link></li>
-                <li><Link to={isAuthed ? '/my-proposals' : loginPath}>My Proposals</Link></li>
+                <li><Link to={isAuthed ? '/my-proposals' : loginPath}>My Portal</Link></li>
                 <li><Link to="/classes">Cocktail Classes</Link></li>
               </ul>
             </div>
