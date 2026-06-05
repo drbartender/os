@@ -400,7 +400,7 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 ### Thumbtack Integration — `/api/thumbtack`
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/leads` | Webhook secret | Receive new lead from Thumbtack, create/match client, notify admin |
+| POST | `/leads` | Webhook secret | Receive new lead from Thumbtack, create/match client, auto-create a Core Reaction draft proposal (best-effort), notify admin |
 | POST | `/messages` | Webhook secret | Receive customer message from Thumbtack thread |
 | POST | `/reviews` | Webhook secret | Receive new Thumbtack review |
 
@@ -661,6 +661,7 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 
 **proposals** — Generated service proposals
 - `token` UUID (public access), `client_id` FK → clients
+- `source` (VARCHAR(30), nullable) — intake origin: `'thumbtack'` for Thumbtack auto-drafts, NULL = manual/direct (the permanent contract, never "unknown"). CHECK-constrained to `NULL | 'thumbtack'` (widen as new sources land). Drives the Proposals dashboard source filter and badge.
 - Event details: type, date, start time, duration, location, guest count
 - Structured venue address: `venue_name` (optional), `venue_street`, `venue_city`, `venue_state`, `venue_zip` (ZIP optional). Venue name is captured optionally in the quote wizard; street is **required and persisted server-side at the `/sign` route** (the client also disables Pay until it's filled; `PaymentForm` calls `/sign` before `stripe.confirmPayment`, so a card cannot be charged without a persisted venue). `event_location` is a **derived display string** composed from these via `server/utils/venueAddress.js` (city/state-only output stays byte-identical to the legacy `"City, State"` format); `shifts.location` is composed the same way in `createEventShifts` and `syncShiftsFromProposal`.
 - `package_id` FK → service_packages, `num_bars`, `num_bartenders`
@@ -1033,6 +1034,7 @@ Admin entry points: "Shopping List" button on Drink Plan Detail (visible wheneve
 **thumbtack_leads** — Leads received from Thumbtack webhooks
 - `id` SERIAL PK, `negotiation_id` VARCHAR UNIQUE (Thumbtack's lead ID)
 - `client_id` FK → clients (auto-created on lead receipt)
+- `proposal_id` FK → proposals (`ON DELETE SET NULL`) — the auto-created Core Reaction draft for this lead (idempotency guard and tracing)
 - `customer_id`, `customer_name`, `customer_phone`
 - `category`, `description` — what service they're requesting
 - `location_address`, `location_city`, `location_state`, `location_zip`
@@ -1259,7 +1261,8 @@ The Check Cherry import landed several skip gates and best-effort hooks across t
 - **Integration type**: Custom endpoint webhooks (V4 format with legacy fallback)
 - **Endpoints**: `server/routes/thumbtack.js` — receives lead, message, and review webhooks
 - **Auth**: Shared secret via Basic Auth header or `X-Thumbtack-Secret` custom header (`THUMBTACK_WEBHOOK_SECRET`)
-- **Lead flow**: Thumbtack sends lead → webhook creates/matches client (by phone) with `source='thumbtack'` → stores in `thumbtack_leads` → emails admin notification
+- **Lead flow**: Thumbtack sends lead → webhook creates/matches client (by phone) with `source='thumbtack'` → stores in `thumbtack_leads` → auto-creates an inert draft proposal → emails admin notification
+- **Auto-draft**: after lead capture commits, the webhook best-effort calls `createDraftProposalFromLead` (`server/utils/thumbtackProposalDraft.js`), which prices a Core Reaction (BYOB) draft via the shared `server/utils/proposalInsert.js` row builder and links it from `thumbtack_leads.proposal_id`. The draft is inert (`status='draft'`, no invoice, no send), so the admin opens it, adds the email, and clicks Send. A draft failure never rolls back lead capture or 500s the webhook (it is logged, plus Sentry when configured). The admin notification deep-links straight to the draft. `proposals.source` (`'thumbtack'` vs NULL = manual/direct) drives the Proposals dashboard source filter and badge.
 - **Important**: Thumbtack does NOT include customer email in webhooks. Admin must grab email manually from Thumbtack (lead → three-dot menu → create estimate/invoice) and add it to the client record.
 - **Messages**: Customer messages stored in `thumbtack_messages`, admin notified via email
 - **Reviews**: Stored in `thumbtack_reviews`, admin notified via email
