@@ -14,12 +14,16 @@ const INGREDIENT_MAP = {
   "blue curacao":       { item: "Blue Curacao",         size: "750mL",   section: "liquorBeerWine" },
   "vodka":              { item: "Tito's Vodka",         size: "750mL",   section: "liquorBeerWine" },
   "rum":                { item: "Bacardi Rum",          size: "750mL",   section: "liquorBeerWine" },
+  // Ginger keys MUST precede "gin": matching is ingredient.includes(key) and
+  // "ginger beer"/"ginger ale" both contain "gin" — "gin" first would win.
+  "ginger beer":        { item: "Ginger Beer",          size: "4 pack",  section: "everythingElse" },
+  "ginger ale":         { item: "Ginger Ale",           size: "12 pack", section: "everythingElse" },
   "gin":                { item: "Tanqueray Gin",        size: "750mL",   section: "liquorBeerWine" },
   "bourbon":            { item: "Bulleit Bourbon",      size: "750mL",   section: "liquorBeerWine" },
   "tequila":            { item: "1800 Blanco Tequila",  size: "750mL",   section: "liquorBeerWine" },
   "lemonade":           { item: "Lemonade (REAL)",      size: "1G",      section: "everythingElse" },
   "sprite":             { item: "Sprite",               size: "12 pack", section: "everythingElse" },
-  "orange juice":       { item: "Orange Juice",         size: "1G",      section: "everythingElse" },
+  "orange juice":       { item: "Orange Juice",         size: "64oz",    section: "everythingElse" },
   "pineapple juice":    { item: "Pineapple Juice",      size: "64oz",    section: "everythingElse" },
   "sour":               { item: "Sour Mix",             size: "64oz",    section: "everythingElse" },
   "cranberry":          { item: "Cranberry Juice",      size: "64oz",    section: "everythingElse" },

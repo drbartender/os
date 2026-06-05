@@ -34,8 +34,8 @@ test('bottled-water-only strips Water', () => {
 
 test('full-mixers-only strips all BASIC_MIXERS including Bitters and Simple Syrup', () => {
   const r = computeStripSet({ activeAddonSlugs: ['full-mixers-only'] });
-  // After Task 1 cleanup, BASIC_MIXERS contains 14 items.
-  assert.equal(r.size, 14);
+  // BASIC_MIXERS contains 12 items (Ginger Ale + Ginger Beer dropped to recipe-only).
+  assert.equal(r.size, 12);
   assert.ok(r.has('Coca Cola'));
   assert.ok(r.has('Simple Syrup'));
   assert.ok(r.has('Angostura Bitters'));
@@ -55,8 +55,8 @@ test('the-foundation strips Foundation items (Water, Cups, Straws, Napkins, Ice)
 
 test('the-full-compound strips Foundation + all BASIC_MIXERS + all GARNISHES', () => {
   const r = computeStripSet({ activeAddonSlugs: ['the-full-compound'] });
-  // 5 Foundation + 14 BASIC_MIXERS + 4 GARNISHES = 23
-  assert.equal(r.size, 23);
+  // 5 Foundation + 12 BASIC_MIXERS + 4 GARNISHES = 21
+  assert.equal(r.size, 21);
   assert.ok(r.has('Ice'));
   assert.ok(r.has('Angostura Bitters'));
   assert.ok(r.has('Premium Cherries'));
@@ -84,10 +84,10 @@ test('multiple add-ons union their coverage', () => {
   assert.deepEqual([...r].sort(), ['Ice', 'Water']);
 });
 
-test('Foundation + Full Mixers stripped together: union covers 5 + 14 items', () => {
+test('Foundation + Full Mixers stripped together: union covers 5 + 12 items', () => {
   const r = computeStripSet({ activeAddonSlugs: ['the-foundation', 'full-mixers-only'] });
-  // 5 Foundation + 14 BASIC_MIXERS, no overlap.
-  assert.equal(r.size, 19);
+  // 5 Foundation + 12 BASIC_MIXERS, no overlap.
+  assert.equal(r.size, 17);
   assert.ok(r.has('Ice'));
   assert.ok(r.has('Angostura Bitters'));
 });
