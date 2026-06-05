@@ -1,13 +1,67 @@
 const express = require('express');
+const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { clientAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { NotFoundError } = require('../utils/errors');
+const { PROPOSAL_SUMMARY_COLUMNS, shapeFocus } = require('./clientPortal/summary');
 
 const router = express.Router();
 
 // All routes require client auth
 router.use(clientAuth);
+
+// GET /api/client-portal/home — landing read.
+// Buckets the client's proposals into:
+//   • focus      — soonest upcoming non-archived/non-completed proposal
+//                  (dated >= today; null-date draft only if no dated upcoming)
+//   • archive    — past events that happened (completed, event_completed
+//                  archives, or booked-but-past)
+//   • upcoming_count — total non-archived/non-completed with event_date >= today
+//   • has_quote_draft — outstanding /quote draft tied to this client's email
+// Scoped strictly by client_id = req.user.id (no IDOR). Money stays in DOLLARS
+// (proposals.total_price / amount_paid are NUMERIC).
+router.get('/home', asyncHandler(async (req, res) => {
+  const clientId = req.user.id;
+  const email = req.user.email;
+  try {
+    const focusSelect = `
+      SELECT ${PROPOSAL_SUMMARY_COLUMNS},
+             dp.token AS drink_plan_token, dp.submitted_at AS drink_plan_submitted_at
+      FROM proposals p
+      LEFT JOIN LATERAL (
+        SELECT token, submitted_at FROM drink_plans
+        WHERE proposal_id = p.id AND proposal_id IN (SELECT id FROM proposals WHERE client_id = $1)
+        ORDER BY id LIMIT 1
+      ) dp ON true
+      WHERE p.client_id = $1 AND p.status <> 'archived' AND p.status <> 'completed'`;
+    const [dated, nullDraft, countRes, archiveRes, draftRes] = await Promise.all([
+      pool.query(`${focusSelect} AND p.event_date >= CURRENT_DATE
+                  ORDER BY p.event_date ASC, p.event_start_time ASC NULLS LAST, p.created_at DESC LIMIT 1`, [clientId]),
+      pool.query(`${focusSelect} AND p.event_date IS NULL ORDER BY p.created_at DESC LIMIT 1`, [clientId]),
+      pool.query(`SELECT COUNT(*)::int AS n FROM proposals
+                  WHERE client_id = $1 AND status NOT IN ('archived','completed') AND event_date >= CURRENT_DATE`, [clientId]),
+      pool.query(`SELECT p.token, p.event_type, p.event_type_custom, p.event_date,
+                         COALESCE(p.total_price_override, p.total_price) AS total_price, p.status
+                  FROM proposals p WHERE p.client_id = $1 AND (
+                    p.status = 'completed'
+                    OR (p.status = 'archived' AND p.archive_reason = 'event_completed')
+                    OR (p.status IN ('deposit_paid','balance_paid','confirmed') AND p.event_date < CURRENT_DATE))
+                  ORDER BY p.event_date DESC NULLS LAST`, [clientId]),
+      pool.query(`SELECT EXISTS(SELECT 1 FROM quote_drafts WHERE LOWER(email) = LOWER($1) AND status = 'draft') AS has`, [email]),
+    ]);
+    const focusRow = dated.rows[0] || nullDraft.rows[0] || null;
+    res.json({
+      focus: focusRow ? shapeFocus(focusRow) : null,
+      upcoming_count: countRes.rows[0].n,
+      archive: archiveRes.rows.map(r => ({ ...r, total_price: Number(r.total_price) })),
+      has_quote_draft: draftRes.rows[0].has,
+    });
+  } catch (err) {
+    if (process.env.SENTRY_DSN_SERVER) Sentry.captureException(err, { tags: { route: 'client-portal/home', client_id: clientId } });
+    throw err;
+  }
+}));
 
 // GET /api/client-portal/proposals — list client's proposals
 router.get('/proposals', asyncHandler(async (req, res) => {
@@ -41,12 +95,19 @@ router.get('/proposals/:token', asyncHandler(async (req, res) => {
       p.client_signed_name, p.client_signed_at, p.client_signature_method,
       p.client_signature_document_version, p.client_signature_data,
       p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
+      p.venue_name, p.venue_city, p.venue_state, p.total_price_override,
+      dp.token AS drink_plan_token, dp.submitted_at AS drink_plan_submitted_at,
       sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
       sp.includes AS package_includes,
       c.name AS client_name, c.email AS client_email, c.phone AS client_phone
     FROM proposals p
     LEFT JOIN service_packages sp ON sp.id = p.package_id
     LEFT JOIN clients c ON c.id = p.client_id
+    LEFT JOIN LATERAL (
+      SELECT token, submitted_at FROM drink_plans
+      WHERE proposal_id = p.id AND proposal_id IN (SELECT id FROM proposals WHERE client_id = $2)
+      ORDER BY id LIMIT 1
+    ) dp ON true
     WHERE p.token = $1 AND p.client_id = $2
   `, [req.params.token, req.user.id]);
 

@@ -393,8 +393,9 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 ### Client Portal — `/api/client-portal`
 | Method | Path | Auth | Description |
 |---|---|---|---|
+| GET | `/home` | Client | Portal landing read — focus event (soonest upcoming), archive list, upcoming_count, has_quote_draft flag. Scoped by `client_id` (no IDOR) |
 | GET | `/proposals` | Client | List client's proposals |
-| GET | `/proposals/:token` | Client | Get single proposal by token |
+| GET | `/proposals/:token` | Client | Get single proposal by token (includes venue_name/city/state + drink_plan_token/submitted_at) |
 
 ### Thumbtack Integration — `/api/thumbtack`
 | Method | Path | Auth | Description |
