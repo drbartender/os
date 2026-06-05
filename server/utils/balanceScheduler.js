@@ -230,6 +230,12 @@ async function processEventCompletions() {
           console.error(`[BalanceScheduler] payout accrual failed for proposal ${proposal.id}:`, err.message);
           Sentry.captureException(err, { tags: { scheduler: 'autocomplete', step: 'payout_accrual' } });
         }
+        try {
+          const { cancelPendingChangeRequestsForProposal } = require('./changeRequests');
+          await cancelPendingChangeRequestsForProposal(proposal.id);
+        } catch (crErr) {
+          console.error(`[BalanceScheduler] change-request reap failed for #${proposal.id}:`, crErr.message);
+        }
       }
     }
   } catch (err) {

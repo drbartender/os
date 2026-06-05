@@ -164,6 +164,12 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
       }
       console.error('Marketing cancel on archive failed (non-blocking):', cancelErr);
     }
+    try {
+      const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
+      await cancelPendingChangeRequestsForProposal(Number(req.params.id));
+    } catch (crErr) {
+      console.error('Change-request reap on archive failed (non-blocking):', crErr);
+    }
   }
   if (status === 'completed') {
     try {
@@ -180,6 +186,12 @@ router.patch('/:id/status', auth, requireAdminOrManager, adminWriteLimiter, asyn
       await accruePayoutsForProposal(Number(req.params.id));
     } catch (err) {
       Sentry.captureException(err, { tags: { route: 'proposal_status', step: 'payout_accrual' } });
+    }
+    try {
+      const { cancelPendingChangeRequestsForProposal } = require('../../utils/changeRequests');
+      await cancelPendingChangeRequestsForProposal(Number(req.params.id));
+    } catch (crErr) {
+      console.error('Change-request reap on complete failed (non-blocking):', crErr);
     }
   }
 
