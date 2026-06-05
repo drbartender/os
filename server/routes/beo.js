@@ -59,6 +59,7 @@ router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) =
             p.event_duration_hours, p.event_timezone, p.event_location, p.guest_count,
             p.num_bars, p.num_bartenders, p.setup_minutes_before, p.status,
             p.balance_due_date, p.client_id,
+            p.tip_jar, p.gratuity_rate, (p.pricing_snapshot->>'staff_noun') AS staff_noun,
             c.name AS client_name, c.phone AS client_phone,
             sp.id AS package_id, sp.name AS package_name, sp.pricing_type AS package_pricing_type,
             sp.guests_per_bartender, sp.extra_bartender_hourly
@@ -229,6 +230,11 @@ router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) =
       num_bars: p.num_bars,
       num_bartenders: p.num_bartenders,
       setup_minutes_before: p.setup_minutes_before,
+      // Gratuity / tip jar (§9) — crew-facing, NOT gated on funding. Defaults
+      // backfill old rows (tip_jar true, gratuity_rate 0), so the fallback is safe.
+      tip_jar: p.tip_jar !== false,
+      gratuity_prepaid: Number(p.gratuity_rate) > 0,
+      staff_noun: p.staff_noun || 'bartender',
     },
     client: { name: p.client_name, phone: p.client_phone },
     package: p.package_id ? {

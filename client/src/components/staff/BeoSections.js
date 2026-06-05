@@ -58,6 +58,27 @@ export function MocktailsCard({ mocktails }) {
   );
 }
 
+// Gratuity & tip-jar status for the crew (spec §9). Always rendered (not gated)
+// so the team knows whether to set out a jar and whether gratuity is pre-paid.
+export function GratuityTipsCard({ tipJar, gratuityPrepaid, staffNoun }) {
+  const row = { display: 'flex', justifyContent: 'space-between', gap: 12, padding: '0.35rem 0' };
+  return (
+    <div className="sp-card tight">
+      <div className="sp-card-head">
+        <div className="sp-card-title">Gratuity &amp; tips</div>
+      </div>
+      <div style={row}>
+        <span style={{ opacity: 0.7 }}>Tip jar</span>
+        <span>{tipJar ? 'Yes, set out a tip jar' : 'No tip jar requested'}</span>
+      </div>
+      <div style={row}>
+        <span style={{ opacity: 0.7 }}>Pre-paid gratuity</span>
+        <span>{gratuityPrepaid ? `Yes, pre-paid for the ${staffNoun}s` : 'None'}</span>
+      </div>
+    </div>
+  );
+}
+
 export function AddonsCard({ addons }) {
   if (!addons.length) return null;
   return (
