@@ -16806,7 +16806,7 @@ html[data-app="staff"] body {
 
 /* Message log card (event detail) */
 .message-log-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.message-log-row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 8px; font-size: 12.5px; }
+.message-log-row { display: grid; grid-template-columns: auto 1fr auto auto auto; align-items: center; gap: 8px; font-size: 12.5px; }
 .message-log-channel { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; background: var(--surface-2, #eee); color: var(--text-muted, #666); }
 .message-log-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-log-recipient { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
