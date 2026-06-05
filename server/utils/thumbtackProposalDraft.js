@@ -1,4 +1,9 @@
 const { EVENT_TYPES } = require('./eventTypes');
+const { pool } = require('../db');
+const { calculateProposal } = require('./pricingEngine');
+const { insertProposalRecord } = require('./proposalInsert');
+
+const CORE_REACTION_SLUG = 'the-core-reaction';
 
 const ET_TZ = 'America/New_York';
 
@@ -88,4 +93,90 @@ function buildAdminNotes(lead) {
   return lines.join('\n');
 }
 
-module.exports = { mapEventType, toEtDateAndTime, buildAdminNotes };
+/**
+ * Create an inert DRAFT proposal (The Core Reaction) from a parsed Thumbtack
+ * lead. Owns its own transaction. NEVER creates an invoice, sends mail/SMS, or
+ * sets 'sent'. Idempotent on the lead's existing proposal_id.
+ */
+async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    const guard = await dbClient.query(
+      'SELECT proposal_id FROM thumbtack_leads WHERE negotiation_id = $1 FOR UPDATE',
+      [negotiationId]
+    );
+    if (guard.rows[0] && guard.rows[0].proposal_id) {
+      await dbClient.query('COMMIT');
+      return { proposalId: guard.rows[0].proposal_id };
+    }
+
+    const pkgRes = await dbClient.query('SELECT * FROM service_packages WHERE slug = $1', [CORE_REACTION_SLUG]);
+    const pkg = pkgRes.rows[0];
+    if (!pkg) throw new Error(`Package ${CORE_REACTION_SLUG} not found`);
+
+    // service_only packages rent no physical bar; num_bars MUST be 0 or the
+    // engine adds first_bar_fee (Number(pkg.first_bar_fee || 50) => $50 even
+    // when the column is 0). See pricingEngine.calculateBarRental.
+    const numBars = pkg.bar_type === 'service_only' ? 0 : 1;
+    const guestCount = lead.guestCount || 50;
+    const durationHours = 4;
+
+    const snapshot = calculateProposal({
+      pkg, guestCount, durationHours, numBars,
+      numBartenders: undefined, addons: [], syrupSelections: [],
+    });
+
+    const { eventType, eventTypeCategory } = mapEventType(lead);
+    const { eventDate, eventStartTime } = toEtDateAndTime(lead.eventDate);
+
+    const proposal = await insertProposalRecord(dbClient, {
+      clientId,
+      eventDate, eventStartTime, durationHours,
+      venue: {
+        name: null,
+        street: lead.locationAddress || null,
+        city: lead.locationCity || null,
+        state: lead.locationState || null,
+        zip: lead.locationZip || null,
+      },
+      eventLocationFallback: null,
+      guestCount,
+      packageId: pkg.id,
+      numBars,
+      numBartenders: snapshot.staffing.actual ?? null,
+      pricingSnapshot: snapshot,
+      totalPrice: snapshot.total,
+      createdBy: null,
+      status: 'draft',
+      sentAt: null,
+      classOptions: null,
+      clientProvidesGlassware: false,
+      eventType, eventTypeCategory, eventTypeCustom: null,
+      source: 'thumbtack',
+      adminNotes: buildAdminNotes({ ...lead, negotiationId }),
+    });
+
+    await dbClient.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
+       VALUES ($1, 'created', 'system', $2)`,
+      [proposal.id, JSON.stringify({ source: 'thumbtack', negotiation_id: negotiationId })]
+    );
+    await dbClient.query(
+      'UPDATE thumbtack_leads SET proposal_id = $1 WHERE negotiation_id = $2',
+      [proposal.id, negotiationId]
+    );
+
+    await dbClient.query('COMMIT');
+    console.log(`[thumbtack-draft] created proposal ${proposal.id} for negotiation ${negotiationId}`);
+    return { proposalId: proposal.id };
+  } catch (err) {
+    try { await dbClient.query('ROLLBACK'); } catch (e) { console.error('[thumbtack-draft] ROLLBACK failed:', e.message); }
+    throw err;
+  } finally {
+    dbClient.release();
+  }
+}
+
+module.exports = { mapEventType, toEtDateAndTime, buildAdminNotes, createDraftProposalFromLead };
