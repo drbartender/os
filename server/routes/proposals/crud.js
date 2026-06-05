@@ -2,7 +2,8 @@ const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../db');
 const { auth, requireAdminOrManager, adminOnly } = require('../../middleware/auth');
-const { calculateProposal } = require('../../utils/pricingEngine');
+const { calculateProposal, deriveGratuityRate, computeGratuityBasis } = require('../../utils/pricingEngine');
+const { reconcileProposalPaymentStatus } = require('../../utils/proposalStatus');
 const { createEventShifts, syncShiftsFromProposal } = require('../../utils/eventCreation');
 const { composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
 const { sendEmail } = require('../../utils/email');
@@ -241,6 +242,7 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
           numBartenders: num_bartenders,
           addons: selectedAddons,
           syrupSelections: syrup_selections || [],
+          gratuityRate: 0, tipJar: true,
         });
     const snapshotJson = snapshot ? JSON.stringify(snapshot) : '{}';
     const totalPrice = snapshot ? snapshot.total : 0;
@@ -420,6 +422,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     venue_name, venue_street, venue_city, venue_state, venue_zip,
     adjustments, total_price_override, setup_minutes_before,
     class_options, client_provides_glassware,
+    tip_jar, gratuity_total,
     notify_assigned_staff, notify_staff_sms, notify_staff_email
   } = req.body;
 
@@ -551,10 +554,33 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         }
       : null;
 
+    // Gratuity (§3/§4/§7): admin may pass tip_jar + a dollar gratuity_total; else
+    // keep the stored rate/jar. staffCount+hours are independent of gratuity, so
+    // compute the basis first, derive the rate, then snapshot with that rate.
+    const resolvedTipJar = tip_jar !== undefined ? (tip_jar !== false) : (old.tip_jar !== false);
+    let persistTipJar = resolvedTipJar;
+    let resolvedGratuityRate = Number(old.gratuity_rate) || 0;
+    let gratuityOrigin = old.gratuity_rate_change_origin || null;
+    if (tip_jar !== undefined || gratuity_total !== undefined) {
+      const { staffCount, hours } = computeGratuityBasis({
+        pkg, guestCount: gc, durationHours: dh, numBartenders: num_bartenders, addons,
+      });
+      // Can't skip the jar with no crew/hours — force it on so the DB CHECK passes.
+      persistTipJar = (staffCount * hours) <= 0 ? true : resolvedTipJar;
+      const enteredTotal = gratuity_total !== undefined
+        ? gratuity_total
+        : resolvedGratuityRate * staffCount * hours; // re-derive total from the stored rate
+      const g = deriveGratuityRate({ enteredTotal, staffCount, hours, tipJar: persistTipJar });
+      if (!g.ok) throw new ValidationError({ gratuity: g.message });
+      if (g.rate !== resolvedGratuityRate) gratuityOrigin = 'admin'; // direct rate change
+      resolvedGratuityRate = g.rate;
+    }
+
     const snapshot = calculateProposal({
       pkg, guestCount: gc, durationHours: dh, numBars: nb,
       numBartenders: num_bartenders, addons, syrupSelections: syrups,
       adjustments: adj, totalPriceOverride: tpo,
+      gratuityRate: resolvedGratuityRate, tipJar: persistTipJar,
     });
 
     const updatedRow = await dbClient.query(`
@@ -575,7 +601,10 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         venue_zip   = COALESCE($22, venue_zip),
         setup_minutes_before = $23,
         client_provides_glassware = $24,
-        class_options = $25
+        class_options = $25,
+        tip_jar = $26,
+        gratuity_rate = $27,
+        gratuity_rate_change_origin = $28
       WHERE id = $11
       RETURNING *
     `, [
@@ -588,7 +617,8 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
       venue_name ?? null, venue_street ?? null, venue_city ?? null,
       venue_state ?? null, venue_zip ?? null,
       setupMinutes ?? null,
-      resolvedGlassware, cleanClassOptions ? JSON.stringify(cleanClassOptions) : null
+      resolvedGlassware, cleanClassOptions ? JSON.stringify(cleanClassOptions) : null,
+      persistTipJar, resolvedGratuityRate, gratuityOrigin
     ]);
 
     // Re-evaluate payment status when a price increase outruns what's been paid
@@ -600,22 +630,36 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
     // createAdditionalInvoiceIfNeeded (below) and is the client's pay surface.
     // MANUAL ONLY: if autopay was enrolled, clear it so the balance scheduler
     // cannot charge the saved card off an admin price edit.
-    const newTotalCents = Math.round(Number(snapshot.total) * 100);
-    const paidCents = Math.round(Number(old.amount_paid || 0) * 100);
-    if (old.status === 'balance_paid' && newTotalCents > paidCents) {
+    // Keep payment status honest after a price move in EITHER direction (§6),
+    // and surface a durable overpayment signal for the admin refund flow.
+    const rec = reconcileProposalPaymentStatus({
+      status: old.status, amountPaid: old.amount_paid, totalPrice: snapshot.total,
+    });
+    if (rec.changed) {
       const demoted = await dbClient.query(
-        `UPDATE proposals SET status = 'deposit_paid', autopay_enrolled = false, autopay_status = NULL WHERE id = $1 RETURNING *`,
-        [req.params.id]
+        rec.autopayDisarmed
+          ? `UPDATE proposals SET status = $1, autopay_enrolled = false, autopay_status = NULL WHERE id = $2 RETURNING *`
+          : `UPDATE proposals SET status = $1 WHERE id = $2 RETURNING *`,
+        [rec.status, req.params.id]
       );
       // Keep the row we return (and hand to the reschedule hooks) in sync with the
-      // demotion, so the PATCH response doesn't report a stale 'balance_paid'.
+      // demotion, so the PATCH response doesn't report a stale status.
       updatedRow.rows[0] = demoted.rows[0];
       await dbClient.query(
         `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
          VALUES ($1, 'status_changed', 'admin', $2, $3)`,
         [req.params.id, req.user.id, JSON.stringify({
-          from: 'balance_paid', to: 'deposit_paid',
-          reason: 'price increased above amount paid', new_total: snapshot.total,
+          from: old.status, to: rec.status,
+          reason: 'price change reconciled', new_total: snapshot.total,
+        })]
+      );
+    }
+    if (rec.overpaid) {
+      await dbClient.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+         VALUES ($1, 'overpayment_detected', 'admin', $2, $3)`,
+        [req.params.id, req.user.id, JSON.stringify({
+          amount_paid: Number(old.amount_paid), total_price: snapshot.total, overpaid_cents: rec.overpaidCents,
         })]
       );
     }

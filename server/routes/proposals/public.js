@@ -93,6 +93,7 @@ router.post('/public/calculate', publicLimiter, asyncHandler(async (req, res) =>
     numBars: num_bars ?? 0,
     addons,
     syrupSelections: syrup_selections || [],
+    gratuityRate: 0, tipJar: true, // chosen later at sign-and-pay
   });
 
   res.json(snapshot);
@@ -345,6 +346,7 @@ router.post('/public/submit', publicLimiter, asyncHandler(async (req, res) => {
           numBars: nb,
           addons,
           syrupSelections: syrup_selections || [],
+          gratuityRate: 0, tipJar: true, // chosen later at sign-and-pay
         });
 
     const proposalStatus = isTopShelfClass ? 'draft' : 'sent';

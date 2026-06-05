@@ -803,3 +803,41 @@ test('Case 18: PATCH on a sent (not balance_paid) proposal is untouched by the d
   const p = await pool.query('SELECT status FROM proposals WHERE id = $1', [proposalId]);
   assert.equal(p.rows[0].status, 'sent', 'the demotion guard only fires for balance_paid');
 });
+
+// ─── Case 19 — PATCH preserves the client Gratuity line across an unrelated edit ─
+test('Case 19: PATCH preserves the Gratuity line across an unrelated edit', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'draft' }); // hosted pkg, 120 guests, 4h
+  // Seed a gratuity rate directly, then PATCH to force a recompute.
+  await pool.query('UPDATE proposals SET gratuity_rate = 25, tip_jar = true WHERE id = $1', [proposalId]);
+  const r1 = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { guest_count: 120 } });
+  assert.equal(r1.status, 200, `expected 200, got ${r1.status}: ${r1.raw}`);
+  let snap = (await pool.query('SELECT pricing_snapshot FROM proposals WHERE id = $1', [proposalId])).rows[0].pricing_snapshot;
+  assert.ok(snap.breakdown.some(l => l.label === 'Gratuity'), 'gratuity present after first recompute');
+  // An unrelated edit must not drop the gratuity line.
+  const r2 = await request('PATCH', `/api/proposals/${proposalId}`, { token, body: { event_location: 'New Venue' } });
+  assert.equal(r2.status, 200, `expected 200, got ${r2.status}: ${r2.raw}`);
+  snap = (await pool.query('SELECT pricing_snapshot FROM proposals WHERE id = $1', [proposalId])).rows[0].pricing_snapshot;
+  assert.ok(snap.breakdown.some(l => l.label === 'Gratuity'), 'gratuity preserved on unrelated edit');
+});
+
+// ─── Case 20 — PATCH dropping total below amount_paid flags overpayment ──────
+// A price-DOWN that leaves amount_paid > total_price is an OVERPAYMENT: status
+// stays balance_paid (still fully paid at the corrected total), and a durable
+// overpayment_detected activity-log entry is written for the admin refund flow.
+test('Case 20: PATCH dropping total below amount_paid keeps paid status + logs overpayment', async () => {
+  const token = await makeFreshAdmin();
+  const proposalId = await insertDraftProposal({ status: 'draft', total_price: 2000 });
+  await pool.query("UPDATE proposals SET status = 'balance_paid', amount_paid = 2000 WHERE id = $1", [proposalId]);
+  // A large discount drives the recomputed total far below the $2000 already paid.
+  const res = await request('PATCH', `/api/proposals/${proposalId}`, {
+    token, body: { adjustments: [{ type: 'discount', label: 'Goodwill', amount: 100000, visible: true }] },
+  });
+  assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
+  const row = (await pool.query('SELECT status, total_price, amount_paid FROM proposals WHERE id = $1', [proposalId])).rows[0];
+  assert.equal(row.status, 'balance_paid', 'overpaid proposal stays fully paid, not demoted');
+  assert.ok(Number(row.amount_paid) > Number(row.total_price), 'amount_paid exceeds the corrected total');
+  const log = await pool.query(
+    "SELECT 1 FROM proposal_activity_log WHERE proposal_id = $1 AND action = 'overpayment_detected'", [proposalId]);
+  assert.ok(log.rowCount >= 1, 'overpayment_detected logged');
+});
