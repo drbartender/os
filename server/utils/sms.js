@@ -1,6 +1,7 @@
 const twilio = require('twilio');
 const { pool } = require('../db');
 const { notificationsEnabled } = require('./notificationsEnabled');
+const { buildSmsLogEntry, logClientMessage } = require('./messageLog');
 
 const client = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
   ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
@@ -16,19 +17,22 @@ else if (!notificationsEnabled()) console.log('[sms] Twilio initialized, but not
  * @param {string} options.body - Message text
  * @returns {Promise}
  */
-async function sendSMS({ to, body }) {
+async function sendSMS({ to, body, meta }) {
   if (!to) throw new Error('SMS recipient phone number is required');
   if (!client || !notificationsEnabled()) {
     const why = !client ? 'Twilio creds not set' : 'notifications gated off';
     console.log(`[DEV] SMS skipped (${why}) → ${to} | Body: ${body}`);
     return { sid: `dev-skipped-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` };
   }
-  const message = await client.messages.create({
-    from: process.env.TWILIO_PHONE_NUMBER,
-    to,
-    body,
-  });
+  let message;
+  try {
+    message = await client.messages.create({ from: process.env.TWILIO_PHONE_NUMBER, to, body });
+  } catch (err) {
+    logClientMessage(buildSmsLogEntry({ to, body, meta, error: err })); // fire-and-forget
+    throw err;
+  }
   console.log(`SMS sent: ${message.sid} → ${to}`);
+  logClientMessage(buildSmsLogEntry({ to, body, meta, result: message })); // fire-and-forget
   return message;
 }
 
@@ -76,7 +80,7 @@ function __setSmsDeps(d) { _deps = { ..._deps, ...d }; }
  * @param {string|null} [args.recipientName=null] - display name
  * @returns {Promise<{sid: string|null, status: 'sent'|'skipped'}>}
  */
-async function sendAndLogSms({ to, body, clientId = null, messageType, recipientName = null }) {
+async function sendAndLogSms({ to, body, clientId = null, proposalId = null, messageType, recipientName = null }) {
   if (!messageType || typeof messageType !== 'string') {
     throw new Error('sendAndLogSms: messageType is required');
   }
@@ -88,7 +92,7 @@ async function sendAndLogSms({ to, body, clientId = null, messageType, recipient
 
   let sid = null;
   try {
-    const msg = await _deps.sendSMS({ to: normalized, body });
+    const msg = await _deps.sendSMS({ to: normalized, body, meta: { proposalId, clientId, messageType } });
     sid = msg && msg.sid ? msg.sid : null;
   } catch (sendErr) {
     await pool.query(
