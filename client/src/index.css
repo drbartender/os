@@ -9400,7 +9400,7 @@ html[data-app="admin-os"] .location-suggest-item.active {
   pointer-events: none;
   background: linear-gradient(180deg, rgba(237,230,214,0) 0%, rgba(237,230,214,0.55) 40%, var(--card-bg) 100%);
 }
-.proposal-terms-scroll.is-expanded { max-height: 6000px; }
+.proposal-terms-scroll.is-expanded { max-height: 24000px; }
 .proposal-terms-toggle {
   display: inline-block;
   background: none;
@@ -9428,6 +9428,12 @@ html[data-app="admin-os"] .location-suggest-item.active {
   gap: 18px;
 }
 @media (min-width: 1024px) { .sign-pay-card { padding: 22px; } }
+.sign-pay-accept-note {
+  margin: 10px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--brass);
+}
 .sign-pay-eyebrow {
   display: block;
   font-family: var(--font-display);
