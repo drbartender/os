@@ -9428,6 +9428,12 @@ html[data-app="admin-os"] .location-suggest-item.active {
   gap: 18px;
 }
 @media (min-width: 1024px) { .sign-pay-card { padding: 22px; } }
+.sign-pay-accept-note {
+  margin: 10px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--brass);
+}
 .sign-pay-eyebrow {
   display: block;
   font-family: var(--font-display);

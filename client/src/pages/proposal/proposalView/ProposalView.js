@@ -428,6 +428,7 @@ export default function ProposalView() {
                 activeSecret={activeSecret}
                 stripePromise={stripePromise}
                 payOnlyLabel={payOnlyLabel}
+                clientSignedAt={proposal.client_signed_at}
               />
             )}
 

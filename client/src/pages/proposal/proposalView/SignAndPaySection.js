@@ -90,6 +90,8 @@ export default function SignAndPaySection({
   venueComplete,
   venuePrefilled,
   proposalVenue,
+  // payOnly: when the client signed (ISO timestamp) — for the reference line.
+  clientSignedAt,
 }) {
   const depositSelected = paymentOption === 'deposit';
   const fullSelected = paymentOption === 'full';
@@ -157,6 +159,9 @@ export default function SignAndPaySection({
             />
           </div>
           <p className="sign-pay-sig-caption">x · sign above</p>
+          <p className="sign-pay-accept-note">
+            By signing, you agree to the Service Agreement above and confirm your event details are accurate.
+          </p>
         </div>
 
         {/* Venue address */}
@@ -288,6 +293,12 @@ export default function SignAndPaySection({
         <span className="sign-pay-eyebrow">Final Step · Complete Payment</span>
         <h2 className="sign-pay-title">Lock the date.</h2>
       </div>
+
+      {clientSignedAt && (
+        <p className="sign-pay-accept-note">
+          You accepted the Service Agreement when you signed on {formatDateShort(clientSignedAt)}.
+        </p>
+      )}
 
       <div>
         <label className="sign-pay-eyebrow">How would you like to pay?</label>
