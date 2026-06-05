@@ -800,6 +800,20 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
   - `metadata` JSONB NOT NULL DEFAULT `'{}'` — raw Twilio From/To/MessageSid plus the STOP/START opt-out audit record
   - Index `idx_sms_messages_client_id` on `client_id`; partial index `idx_sms_messages_unread` on `client_id WHERE direction = 'inbound' AND read_at IS NULL` for the unread count; `idx_sms_messages_twilio_sid` on `twilio_sid` for inbound-webhook idempotency (dedupe a repeated Twilio delivery by MessageSid)
 
+**message_log** — Append-only ledger of client-facing outbound messages (email + SMS), one row per send attempt. Written fire-and-forget at the `sendEmail` / `sendSMS` choke points via `server/utils/messageLog.js` (so coverage is structural, not a per-callsite checklist), and read newest-first into the admin `GET /proposals/:id` response for the event-detail Messages card (`client/src/pages/admin/eventDetail/MessageLogCard.js`). Keyed by `proposal_id` so a row logged at proposal stage shows on the event page after conversion. Lead-marketing sends pass `meta: { skipLog: true }` and are excluded; recipients that resolve to no client row are skipped.
+- `id` SERIAL PK
+- `proposal_id` INTEGER NOT NULL FK → proposals (ON DELETE CASCADE)
+- `client_id` INTEGER NOT NULL FK → clients
+- `channel` TEXT NOT NULL CHECK (`email`, `sms`)
+- `message_type` TEXT NOT NULL DEFAULT `'other'` — machine label (e.g. `proposal_sent`, `drink_plan_ready`, `shopping_list_ready`, `signed_and_paid`, `payment_received`); friendly display labels live in `client/src/utils/messageTypes.js`
+- `recipient` TEXT NOT NULL — email address or E.164 phone
+- `subject` TEXT — email subject / SMS body preview; the UI label fallback for `'other'` rows
+- `status` TEXT NOT NULL CHECK (`sent`, `failed`) — `sent` means accepted by Resend/Twilio; `failed` means the send threw on our end (quota, bad config, malformed)
+- `error_message` TEXT — truncated provider/error text on a failed send
+- `provider_id` TEXT — Resend id / Twilio SID, stored for future delivery tracking (intentionally not returned by the read)
+- `created_at` TIMESTAMPTZ NOT NULL DEFAULT NOW()
+- Index `idx_message_log_proposal (proposal_id, created_at DESC, id DESC)` serves the newest-first per-proposal read; the `id DESC` tiebreaker keeps ordering deterministic for rows sharing a `created_at`.
+
 **scheduled_messages** — Unified per-recipient/per-channel scheduled-message tracking for the Automated Communication Foundation. One row per (recipient, channel) for each scheduled touch so multi-recipient touches (e.g. day-before reminder to two bartenders) and partial failures (email sent, SMS failed) are tracked independently.
 - `id` SERIAL PK
 - `entity_id` INTEGER NOT NULL — id of the underlying record (proposal/shift/client/consult)

@@ -231,6 +231,7 @@ dr-bartender/
 │   │   ├── lastMinuteAlert.js  # Last-minute (<72h) booking SMS alert dispatch (admin + broad staff blast, idempotent)
 │   │   ├── lastMinuteStaffingConfirmation.js  # Touch 2.2: bartender-list renderer + notify fn + atomic-flip trigger
 │   │   ├── lifecycleEmailTemplates.js # Lifecycle email templates split out of emailTemplates.js
+│   │   ├── messageLog.js      # Append-only client-message ledger: pure builders + logClientMessage (fire-and-forget, never throws) + getMessageLogForProposal; written at the sendEmail/sendSMS choke points, read on GET /proposals/:id
 │   │   ├── messageScheduling.js # scheduleMessage(...): idempotent insert of a future touch into the scheduled_messages table
 │   │   ├── messageSuppression.js # shouldSendImmediate(...): shared archive / comm-prefs / bad-contact gate for immediate-send paths
 │   │   ├── refundHelpers.js    # Partial-refund planner (planRefund) + idempotent reconciliation (applyRefundReconciliation, incl. status⟷money + autopay-disarm)
@@ -281,6 +282,7 @@ dr-bartender/
 │   │   │   ├── formatMoney.js  # Integer-cents → human dollar string (e.g. `1234` → `$12.34`, `123456` → `$1,234.56`); canonical client-side money formatter for staff portal Pay surfaces
 │   │   │   ├── formatPhone.js  # Phone number formatting
 │   │   │   ├── leadSources.js  # Lead source enum (mirrors schema CHECK + server validator)
+│   │   │   ├── messageTypes.js # Display-only message_log label map (messageTypeLabel) for the event-detail Messages card; falls back to the stored subject for untagged sends
 │   │   │   ├── proposalRules.js # Shared client proposal business rules (bundle/addon/guardrail logic); CJS twin at server/utils/proposalRules.js
 │   │   │   ├── setupTime.js    # Back-of-house setup-time formatting (twin of server/utils/setupTime.js)
 │   │   │   ├── timeOptions.js  # Time option generator + 12h formatter + input parser
@@ -312,7 +314,7 @@ dr-bartender/
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
 │   │   │   ├── (staff)         # Application, ApplicationStatus, HiringLanding, PreHireOnboarding (open pre-hire URL)
 │   │   │   ├── (admin)         # AdminDashboard (AdminUserDetail moved into admin/userDetail/, AdminApplicationDetail moved into admin/applicationDetail/)
-│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/, NotificationSettings per-user notification-subscription toggles, CcImportWrapUpPage Bucket B wrap-up email worklist, CcImportReviewPage 7-section import-reconciliation triage)
+│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/, NotificationSettings per-user notification-subscription toggles, CcImportWrapUpPage Bucket B wrap-up email worklist, CcImportReviewPage 7-section import-reconciliation triage, eventDetail/MessageLogCard newest-first client message log (email + SMS, sent/failed) on EventDetailPage)
 │   │   │   ├── staff/          # Staff portal — the live v2 portal, mounted at root on staff.drbartender.com (HomePage, ShiftsPage + ShiftDetail, PayPage + PayoutDetail, TipCardPage, EmailVerifyPage email-change confirm) + PrintTipCard printable QR card (PrintTipCard.jsx + PrintTipCard.layouts.jsx + PrintTipCard.css)
 │   │   │   │   └── account/    # AccountPage shell + sub-nav with ProfileSection, PaymentMethodsSection (+ PaymentMethodRows + AddMethodModal), CalendarSyncSection, NotificationsSection (+ IOSCoachmark + PushPermissionBanner), DocumentsSection (+ ReplaceConfirmModal)
 │   │   │   ├── plan/           # PotionPlanningLab, public post-booking event questionnaire (single flow, created only after deposit; with steps/, components/, data/; components/ScopeBanner + components/WelcomeRoadmap + components/MenuPreview + components/LogoUploadField = apothecary-reskin + Standard Menu shared UI; steps/HostedGuestPrefsStep.js = compact hosted-package guest-preferences step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test; data/menuSections.js = Standard Menu section extractor with menuSections.test.js Jest unit suite)
@@ -417,6 +419,7 @@ Imports legacy proposals, events, payments, refunds, payouts, leads, and invoice
 - **Drink Plans**: Auto-created when proposals become events; accessed from event detail page; client receives email with questionnaire link
 - **Drink Menu**: Manage 25 cocktails + 16 mocktails across categories
 - **Events**: Paid proposals become events; list view shows scannable cards, detail view is a full dashboard with staffing management, equipment config, auto-assign, payment, and drink plan
+- **Messages log**: Every client-facing email and SMS is recorded at the `sendEmail`/`sendSMS` choke points and shown newest-first on the event detail page, with sent/failed status so a silent send failure is visible
 - **Financials / Settings**: Placeholder tabs ready for expansion
 
 ### Tip QR Pages
