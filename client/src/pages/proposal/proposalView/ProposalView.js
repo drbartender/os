@@ -189,6 +189,9 @@ export default function ProposalView() {
   // the deposit must re-persist the new rate), forcing a fresh intent + total.
   useEffect(() => {
     if (!gratuityDirty) return;
+    // Show the loading state immediately so the payment form doesn't flash its
+    // "unable to load" message in the gap before the intent effect refetches.
+    setLoadingIntent(true);
     setDepositSecret('');
     setFullSecret('');
     // eslint-disable-next-line react-hooks/exhaustive-deps

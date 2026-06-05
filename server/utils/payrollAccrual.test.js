@@ -222,3 +222,18 @@ test('accruePayoutsForProposal > fully-paid event accrues the pooled gratuity (f
   );
   assert.equal(rows[0].gratuity_share_cents, 10000, 'pooled gratuity accrues when funded');
 });
+
+test('accruePayoutsForProposal > a refund dropping amount_paid below total re-gates gratuity off', async () => {
+  // Funded → accrue (gratuity lands). A refund then drops amount_paid below
+  // total; a re-accrual must NOT keep paying gratuity the client no longer funded.
+  await accruePayoutsForProposal(proposalId);
+  await pool.query('UPDATE proposals SET amount_paid = 100 WHERE id = $1', [proposalId]); // post-refund state
+  await accruePayoutsForProposal(proposalId);
+  const { rows } = await pool.query(
+    `SELECT pe.gratuity_share_cents, pe.wage_cents FROM payout_events pe
+       JOIN payouts po ON po.id = pe.payout_id WHERE po.contractor_id = $1`,
+    [userId]
+  );
+  assert.equal(rows[0].gratuity_share_cents, 0, 'gratuity re-gated off after refund drops below total');
+  assert.ok(rows[0].wage_cents > 0, 'wages remain regardless');
+});
