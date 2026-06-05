@@ -2088,6 +2088,19 @@ git commit -m "docs(gratuity): architecture, readme, cross-cutting rule"
 
 ---
 
+## Manual staging verification — Stripe webhook (before production)
+
+The `payment_intent.succeeded` change (commit a22e022: additive `amount_paid` + derived status, never `= total_price`) is verified by DB simulation but has **no automated test** (no local `STRIPE_WEBHOOK_SECRET_TEST`; the live payment handler was deliberately not refactored at merge time per "protect working money paths"). The tracked follow-up is to extract the webhook handler into a testable module (it also pays down `stripe.js`, still RED over the 1000-line cap). Until then, confirm these on staging with a real Stripe test event for each:
+
+- [ ] **Full payment** → `proposals.amount_paid` equals the amount actually charged; status `balance_paid`.
+- [ ] **Deposit** → status `deposit_paid`; a Balance invoice is created.
+- [ ] **Balance payment** → status `balance_paid`.
+- [ ] **Idempotent retry** (Stripe re-delivers the same event) → `amount_paid` is NOT double-credited (the `proposal_payments` ON CONFLICT gate).
+- [ ] **Race / overpay** (edit the total UP between charge and webhook) → records the charged amount, status resolves to `deposit_paid` with the shortfall owed (NOT a false "paid in full"); admin overpaid chip shows if `amount_paid > total_price`.
+- [ ] **Refund below total** then complete the event → payroll accrues wages but **$0 gratuity** (funded gate; also unit-tested).
+
+---
+
 ## Self-review against the spec
 
 - **§3 model** → Task 2 (engine), Task 3 (columns). ✅
