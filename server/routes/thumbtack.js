@@ -8,6 +8,12 @@ const { newThumbtackLeadAdmin, newThumbtackMessageAdmin, newThumbtackReviewAdmin
 const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { ADMIN_URL } = require('../utils/urls');
 const { findOrCreateClient } = require('../utils/clientDedup');
+const { createDraftProposalFromLead } = require('../utils/thumbtackProposalDraft');
+
+// Test seam: lets thumbtack.test.js stub the draft builder to throw and prove
+// the webhook still 200s with the lead persisted.
+let _deps = { createDraftProposalFromLead };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
 const asyncHandler = require('../middleware/asyncHandler');
 
 const router = express.Router();
@@ -263,9 +269,25 @@ router.post('/leads', asyncHandler(async (req, res) => {
     await dbClient.query('COMMIT');
     console.log(`Thumbtack lead ${lead.negotiationId} saved — client ${clientId}`);
 
+    // Auto-create a Core Reaction draft proposal (best-effort, post-commit).
+    // A failure here must NOT roll back lead capture or 500 the webhook.
+    let proposalId = null;
+    if (clientId) {
+      try {
+        const draft = await _deps.createDraftProposalFromLead({ lead, clientId, negotiationId: lead.negotiationId });
+        proposalId = draft ? draft.proposalId : null;
+      } catch (draftErr) {
+        if (process.env.SENTRY_DSN_SERVER) {
+          Sentry.captureException(draftErr, { tags: { webhook: 'thumbtack', step: 'draft' } });
+        }
+        console.error('Thumbtack auto-draft failed (non-blocking):', draftErr);
+      }
+    }
+
     // Admin notification (non-blocking)
     try {
       const adminUrl = clientId ? `${ADMIN_URL}/clients/${clientId}` : null;
+      const proposalUrl = proposalId ? `${ADMIN_URL}/proposals/${proposalId}` : null;
       const tpl = newThumbtackLeadAdmin({
         customerName: lead.customerName,
         customerPhone: lead.customerPhone,
@@ -275,6 +297,7 @@ router.post('/leads', asyncHandler(async (req, res) => {
         eventDate: lead.eventDate,
         details: lead.details,
         adminUrl,
+        proposalUrl,
       });
       await notifyAdminCategory({
         category: 'routine_thumbtack',
@@ -447,3 +470,4 @@ router.post('/reviews', asyncHandler(async (req, res) => {
 }));
 
 module.exports = router;
+module.exports.__setDeps = __setDeps;
