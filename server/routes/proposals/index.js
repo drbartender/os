@@ -14,6 +14,7 @@ router.use('/', require('./public'));
 router.use('/', require('./metadata'));
 router.use('/', require('./lifecycle'));
 router.use('/', require('./actions'));
+router.use('/', require('./changeRequests'));
 router.use('/', require('./crud'));
 
 module.exports = router;
