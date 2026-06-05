@@ -98,7 +98,10 @@ async function assemblePaystubData(contractorId, periodId) {
     storageKey: `paystubs/${contractorId}/${periodId}.pdf`,
     contractorName: h.contractor_name,
     period: { start_date: ymd(h.start_date), end_date: ymd(h.end_date), payday: ymd(h.payday) },
-    paid: { at: ymd(h.paid_at), method: h.payment_method, handle: h.payment_handle },
+    // payment_handle is intentionally omitted — it is PII (can hold bank hints
+    // for direct_deposit) and the list/detail endpoints omit it too. Showing the
+    // method on the paystub is enough; the staffer knows their own handle.
+    paid: { at: ymd(h.paid_at), method: h.payment_method },
     events: ev.rows.map((r) => ({
       event_date: ymd(r.event_date),
       client_name: r.client_name || null,

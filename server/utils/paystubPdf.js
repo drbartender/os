@@ -56,8 +56,8 @@ function renderPaystubPdf(data) {
       doc.text(`Pay period: ${data.period.start_date} to ${data.period.end_date}`);
       doc.text(`Payday: ${data.period.payday}`);
       if (data.paid && data.paid.at) {
-        const via = data.paid.method
-          ? ` via ${data.paid.method}${data.paid.handle ? ` (${data.paid.handle})` : ''}` : '';
+        // Method only — no payment_handle on the document (PII).
+        const via = data.paid.method ? ` via ${data.paid.method}` : '';
         doc.text(`Paid: ${data.paid.at}${via}`);
       }
       doc.fillColor('black').moveDown(1);

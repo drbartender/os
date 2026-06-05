@@ -216,6 +216,12 @@ function register(router) {
   //      means both requests upload to the same object so the data is identical.
   //   6. Respond { url }.
   //
+  // NOTE: the cached key locks the PDF at first download — a later recompute of
+  // a paid period's events does NOT regenerate the stored paystub (the key is
+  // reused). If the post-upload UPDATE ever fails, the next request re-renders
+  // identical bytes to the same deterministic key and retries; the payout row
+  // stays clean on any generation failure (the point of lazy generation).
+  //
   // The storage util is required as the module object (not destructured) so
   // tests can mock.method(storage, 'uploadFile', ...) and intercept the call.
   router.get('/payouts/:periodId/paystub', asyncHandler(async (req, res) => {

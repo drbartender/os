@@ -393,6 +393,10 @@ test('assemblePaystubData > thisPeriod.net mirrors total_cents; YTD sums both pa
   // thisPeriod categories sum from May's single event.
   assert.equal(data.thisPeriod.wages_cents, MAY_WAGE);
 
+  // paid metadata flows through; payment_handle is intentionally NOT present (PII).
+  assert.equal(data.paid.method, 'check');
+  assert.equal(data.paid.handle, undefined);
+
   // YTD net = April + May (both paid, both inside [Jan 1, May payday]).
   assert.equal(data.ytd.net_cents, APRIL_TOTAL + MAY_TOTAL);
   // YTD wage_cents = April wage + May wage. This is the load-bearing breakdown
@@ -465,9 +469,38 @@ test('GET /api/me/payouts/:unpaidPeriodId/paystub > 409 because period is unpaid
 test('GET /api/me/payouts/:bPeriodId/paystub as A > 404 (IDOR guard)', async () => {
   storage.uploadFile.mock.resetCalls();
 
+  // Sanity: B's period exists and is PAID — so A's 404 is the IDOR guard
+  // (contractor_id mismatch), not merely "no payout in that period".
+  const bSanity = await pool.query(
+    'SELECT status FROM payouts WHERE pay_period_id = $1 AND contractor_id = $2',
+    [bPeriodId, contractorBId]
+  );
+  assert.equal(bSanity.rows[0] && bSanity.rows[0].status, 'paid', 'B has a paid payout here');
+
   const res = await request('GET', `/api/me/payouts/${bPeriodId}/paystub`, {
     token: contractorAToken,
   });
   assert.equal(res.status, 404);
   assert.equal(storage.uploadFile.mock.callCount(), 0, 'no upload on a 404');
+});
+
+// ─── Assertion 6: a generation failure leaves the payout row clean ─────────
+test('GET /api/me/payouts/:mayPeriodId/paystub > upload failure keeps the key NULL (retry-safe)', async () => {
+  // Force the lazy path, then make the R2 upload throw on this one call.
+  await pool.query('UPDATE payouts SET paystub_storage_key = NULL WHERE id = $1', [mayPayoutId]);
+  storage.uploadFile.mock.resetCalls();
+  storage.uploadFile.mock.mockImplementationOnce(async () => { throw new Error('r2 unavailable'); });
+
+  const res = await request('GET', `/api/me/payouts/${mayPeriodId}/paystub`, {
+    token: contractorAToken,
+  });
+  assert.ok(res.status >= 500, `expected 5xx on upload failure, got ${res.status}`);
+
+  // The point of lazy generation: a failed render/upload never dirties the
+  // money row, so the next click retries cleanly.
+  const { rows } = await pool.query(
+    'SELECT paystub_storage_key FROM payouts WHERE id = $1',
+    [mayPayoutId]
+  );
+  assert.equal(rows[0].paystub_storage_key, null, 'key stays NULL after a failed generation');
 });
