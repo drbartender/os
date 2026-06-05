@@ -29,8 +29,11 @@ router.get('/home', asyncHandler(async (req, res) => {
       SELECT ${PROPOSAL_SUMMARY_COLUMNS},
              dp.token AS drink_plan_token, dp.submitted_at AS drink_plan_submitted_at
       FROM proposals p
-      LEFT JOIN drink_plans dp
-        ON dp.proposal_id = p.id AND dp.proposal_id IN (SELECT id FROM proposals WHERE client_id = $1)
+      LEFT JOIN LATERAL (
+        SELECT token, submitted_at FROM drink_plans
+        WHERE proposal_id = p.id AND proposal_id IN (SELECT id FROM proposals WHERE client_id = $1)
+        ORDER BY id LIMIT 1
+      ) dp ON true
       WHERE p.client_id = $1 AND p.status <> 'archived' AND p.status <> 'completed'`;
     const [dated, nullDraft, countRes, archiveRes, draftRes] = await Promise.all([
       pool.query(`${focusSelect} AND p.event_date >= CURRENT_DATE
@@ -100,8 +103,11 @@ router.get('/proposals/:token', asyncHandler(async (req, res) => {
     FROM proposals p
     LEFT JOIN service_packages sp ON sp.id = p.package_id
     LEFT JOIN clients c ON c.id = p.client_id
-    LEFT JOIN drink_plans dp
-      ON dp.proposal_id = p.id AND dp.proposal_id IN (SELECT id FROM proposals WHERE client_id = $2)
+    LEFT JOIN LATERAL (
+      SELECT token, submitted_at FROM drink_plans
+      WHERE proposal_id = p.id AND proposal_id IN (SELECT id FROM proposals WHERE client_id = $2)
+      ORDER BY id LIMIT 1
+    ) dp ON true
     WHERE p.token = $1 AND p.client_id = $2
   `, [req.params.token, req.user.id]);
 
