@@ -97,6 +97,7 @@ async function processSequenceSteps() {
           text: textBody || undefined,
           from: enrollment.from_email || undefined,
           replyTo: enrollment.reply_to || undefined,
+          meta: { skipLog: true }, // drip sequence step — never enters the client message log
         });
 
         // Record the send
