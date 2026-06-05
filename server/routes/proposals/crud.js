@@ -19,6 +19,7 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError, ExternalServiceError } = require('../../utils/errors');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('../../utils/urls');
 const { findOrCreateClient } = require('../../utils/clientDedup');
+const { insertProposalRecord } = require('../../utils/proposalInsert');
 
 const router = express.Router();
 
@@ -131,11 +132,6 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
     { requireStreet: false, requireCityState: false }
   );
   if (Object.keys(venueErrors).length > 0) throw new ValidationError(venueErrors);
-  // Compose event_location from the structured fields (source of truth). Fall back
-  // to the legacy single-string event_location for callers that still send it.
-  const composedLocation = composeVenueLocation({
-    venue_name, venue_street, venue_city, venue_state, venue_zip,
-  }) || event_location || null;
 
   const dbClient = await pool.connect();
   try {
@@ -244,47 +240,36 @@ router.post('/', auth, requireAdminOrManager, adminWriteLimiter, asyncHandler(as
           syrupSelections: syrup_selections || [],
           gratuityRate: 0, tipJar: true,
         });
-    const snapshotJson = snapshot ? JSON.stringify(snapshot) : '{}';
     const totalPrice = snapshot ? snapshot.total : 0;
     const numBartenders = snapshot ? snapshot.staffing.actual : 1;
     const sentAt = proposalStatus === 'sent' ? new Date() : null;
 
-    // Insert proposal
-    const proposalResult = await dbClient.query(`
-      INSERT INTO proposals (client_id, event_date, event_start_time, event_duration_hours,
-        event_location, guest_count, package_id, num_bars, num_bartenders, pricing_snapshot, total_price, created_by,
-        status, sent_at, class_options, client_provides_glassware,
-        event_type, event_type_category, event_type_custom,
-        venue_name, venue_street, venue_city, venue_state, venue_zip)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
-      RETURNING *
-    `, [
-      finalClientId, event_date || null, event_start_time || null, dh,
-      composedLocation, gc, package_id, nb,
-      numBartenders, snapshotJson, totalPrice, req.user.id,
-      proposalStatus, sentAt, cleanClassOptions ? JSON.stringify(cleanClassOptions) : null,
-      !!client_provides_glassware,
-      event_type || null, event_type_category || null, event_type_custom || null,
-      venue_name || null, venue_street || null, venue_city || null,
-      venue_state || null, venue_zip || null,
-    ]);
-
-    const proposal = proposalResult.rows[0];
-
-    // Insert proposal add-ons — single bulk INSERT
-    if (snapshot && snapshot.addons.length) {
-      const placeholders = snapshot.addons.map((_, i) => {
-        const b = i * 8;
-        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`;
-      }).join(',');
-      const values = snapshot.addons.flatMap(a =>
-        [proposal.id, a.id, a.name, a.billing_type, a.rate, a.quantity, a.line_total, a.variant || null]
-      );
-      await dbClient.query(
-        `INSERT INTO proposal_addons (proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant) VALUES ${placeholders}`,
-        values
-      );
-    }
+    // Insert proposal + addons via the shared builder (single source of the
+    // proposals INSERT shape — see proposalInsert.js).
+    const proposal = await insertProposalRecord(dbClient, {
+      clientId: finalClientId,
+      eventDate: event_date,
+      eventStartTime: event_start_time,
+      durationHours: dh,
+      venue: { name: venue_name, street: venue_street, city: venue_city, state: venue_state, zip: venue_zip },
+      eventLocationFallback: event_location,
+      guestCount: gc,
+      packageId: package_id,
+      numBars: nb,
+      numBartenders,
+      pricingSnapshot: snapshot,
+      totalPrice,
+      createdBy: req.user.id,
+      status: proposalStatus,
+      sentAt,
+      classOptions: cleanClassOptions,
+      clientProvidesGlassware: client_provides_glassware,
+      eventType: event_type,
+      eventTypeCategory: event_type_category,
+      eventTypeCustom: event_type_custom,
+      source: null,
+      adminNotes: null,
+    });
 
     // Log creation
     const logDetails = snapshot
