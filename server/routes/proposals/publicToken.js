@@ -11,6 +11,7 @@ const { getBookingWindow } = require('../../utils/bookingWindow');
 const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
 const { isVenueComplete, composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
+const { KNOWN_AGREEMENT_VERSIONS, LEGACY_AGREEMENT_VERSION } = require('../../utils/agreementVersions');
 
 const router = express.Router();
 
@@ -111,8 +112,6 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
   });
 }));
 
-const PROPOSAL_DOCUMENT_VERSION = 'event-services-agreement-v2';
-
 /** POST /api/proposals/t/:token/sign — client signs and accepts proposal */
 router.post('/t/:token/sign', signLimiter, asyncHandler(async (req, res) => {
   const { client_signed_name, client_signature_data, client_signature_method,
@@ -125,6 +124,29 @@ router.post('/t/:token/sign', signLimiter, asyncHandler(async (req, res) => {
   }
   if (client_signature_method !== 'draw' && client_signature_method !== 'type') {
     throw new ValidationError({ signature: 'Invalid signature method' });
+  }
+
+  // Version recording (spec section 4.4). The client sends the version it
+  // actually rendered; we validate against the allowlist and record exactly that
+  // value so the column provably matches what was shown.
+  const sentVersion = req.body.document_version;
+  let documentVersion;
+  if (sentVersion === undefined || sentVersion === null || sentVersion === '') {
+    // Pre-feature cached client: omits the field AND renders the abridged v2
+    // text — so v2 is the truthful record. Surface a warning so a FUTURE
+    // regression (a current client that stops sending it) is visible, not silent.
+    documentVersion = LEGACY_AGREEMENT_VERSION;
+    console.warn('[proposals/sign] document_version missing; recorded legacy v2', {
+      token: req.params.token,
+    });
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureMessage('proposal sign POST missing document_version', 'warning');
+    }
+  } else if (typeof sentVersion === 'string' && KNOWN_AGREEMENT_VERSIONS.includes(sentVersion)) {
+    documentVersion = sentVersion;
+  } else {
+    // Tampering or an unknown value — never record a version we can't account for.
+    throw new ValidationError({ document_version: 'Please refresh the page and try again.' });
   }
 
   const lookup = await pool.query(
@@ -180,7 +202,7 @@ router.post('/t/:token/sign', signLimiter, asyncHandler(async (req, res) => {
     RETURNING id
   `, [
     client_signed_name, client_signature_data, client_signature_method, ip, userAgent,
-    PROPOSAL_DOCUMENT_VERSION, lookup.rows[0].id,
+    documentVersion, lookup.rows[0].id,
     venueToPersist ? (vStr(venue_name) || null) : null,
     venueToPersist ? vStr(venue_street) : null,
     venueToPersist ? vStr(venue_city) : null,

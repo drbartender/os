@@ -191,6 +191,7 @@ dr-bartender/
 │   │   ├── adminAuditLog.js    # logAdminAction(...) — durable record of admin actions (rotate-token, regenerate-stripe). Best-effort; failures go to Sentry, never block the underlying op
 │   │   ├── adminNotifications.js # notifyAdminCategory(...) — multi-admin notification fan-out by category (joins users.notification_preferences + contractor_profiles for SMS)
 │   │   ├── agreementPdf.js     # PDFKit renderer for signed contractor agreements
+│   │   ├── agreementVersions.js # Allowlist + current/legacy version constants for the proposal Service Agreement
 │   │   ├── autoAssign.js       # Auto-assign algorithm (seniority + geo + equipment scoring)
 │   │   ├── autoAssignScheduler.js # Scheduled auto-assign runner (hourly)
 │   │   ├── balanceReminderScheduling.js # Balance-reminder ladder scheduling (extracted from stripe.js)

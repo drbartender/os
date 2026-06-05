@@ -670,6 +670,20 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `archive_reason` (TEXT, nullable) — only set when `status = 'archived'`. CHECK-constrained to `no_hire | client_cancelled | we_cancelled | event_completed | other`. The legacy `cancelled` status was migrated to `archived` with `archive_reason = 'client_cancelled'` in Task 2 of the automated-communication rollout; the enum no longer accepts `cancelled`.
 - `event_timezone` (TEXT, NOT NULL, default `'America/Chicago'`) — IANA zone used for scheduling reminder communications and any future local-time renders.
 - Client signature: `client_signed_name`, `client_signature_data`, `client_signed_at`
+
+**Proposal Service Agreement.** The client-facing master agreement lives as a
+versioned, bundled module at `client/src/data/eventServicesAgreement.js` and is
+rendered in full by `client/src/pages/proposal/proposalView/AgreementText.js` (a
+dependency-free markdown-lite renderer). At signing, the client sends the
+`document_version` it rendered; `POST /api/proposals/t/:token/sign` validates it
+against the allowlist in `server/utils/agreementVersions.js` and records it as
+`proposals.client_signature_document_version`. Missing version → recorded as the
+legacy `event-services-agreement-v2` (the pre-feature abridged block, kept in the
+allowlist permanently); unknown version → rejected. No backfill of existing rows.
+Because client and server deploy independently (Vercel vs Render), the server
+must ship before the client so it knows a new version before the client sends it;
+a rollback reverts the client before the server, for the same reason.
+
 - Payment: `payment_type` (deposit | full), `autopay_enrolled`, `deposit_amount`, `amount_paid`, `balance_due_date`
 - Stripe: `stripe_customer_id`, `stripe_payment_method_id` (for autopay off-session charges)
 - Autopay claim: `autopay_status` (NULL | 'in_progress' | 'failed') and `autopay_attempted_at` — atomic row-claim used by both the scheduler and the admin manual charge so concurrent runs can't double-charge. Cleared to NULL when `payment_intent.succeeded` flips status to `balance_paid`. Stuck `'in_progress'` claims expire after 24h.

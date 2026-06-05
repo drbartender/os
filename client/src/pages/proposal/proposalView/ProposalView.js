@@ -7,6 +7,7 @@ import { API_BASE_URL as BASE_URL } from '../../../utils/api';
 import { COMPANY_PHONE } from '../../../utils/constants';
 import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
 import styles from './styles';
+import { EVENT_SERVICES_AGREEMENT } from '../../../data/eventServicesAgreement';
 import ProposalHeader from './ProposalHeader';
 import ProposalPricingBreakdown from './ProposalPricingBreakdown';
 import SignAndPaySection from './SignAndPaySection';
@@ -203,6 +204,7 @@ export default function ProposalView() {
         client_signed_name: sigName.trim(),
         client_signature_data: sigData,
         client_signature_method: sigMethod,
+        document_version: EVENT_SERVICES_AGREEMENT.version,
         venue_name: venue.venue_name?.trim() || null,
         venue_street: venue.venue_street?.trim() || null,
         venue_city: venue.venue_city?.trim() || null,
