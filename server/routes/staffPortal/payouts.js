@@ -20,7 +20,10 @@
 
 const { pool } = require('../../db');
 const asyncHandler = require('../../middleware/asyncHandler');
-const { NotFoundError, ValidationError } = require('../../utils/errors');
+const { ConflictError, NotFoundError, ValidationError } = require('../../utils/errors');
+const storage = require('../../utils/storage');
+const { assemblePaystubData } = require('../../utils/paystubData');
+const { renderPaystubPdf } = require('../../utils/paystubPdf');
 
 // pg returns DATE columns as JS Date objects; String(Date) yields a long
 // "Fri May 29 2026 …" string. Normalize to YYYY-MM-DD so the client gets
@@ -193,6 +196,75 @@ function register(router) {
         total_cents: p.total_cents,
       },
     });
+  }));
+
+  // ─── GET /api/me/payouts/:periodId/paystub ───────────────────────────────
+  // Lazy-generate the paystub PDF on first download, then serve a short-lived
+  // signed URL. Never touches mark-paid (protect the money path). IDOR-scoped
+  // to req.user.id via the same JOIN guard the detail route uses.
+  //
+  // Resolution order:
+  //   1. Validate periodId.
+  //   2. Look up the payout (contractor_id, pay_period_id) — 404 if none.
+  //   3. 409 if not paid yet — paystubs are payday docs.
+  //   4. If paystub_storage_key is already set, serve a signed URL for it.
+  //   5. Otherwise: assemble -> render -> uploadFile to R2 (storage.js sets
+  //      Content-Type: application/pdf on .pdf keys) -> persist the key with
+  //      a race-guarded UPDATE (WHERE paystub_storage_key IS NULL). If the
+  //      UPDATE no-ops (another request stored its key first), re-read and
+  //      use the stored value; the deterministic key shape (paystubs/<u>/<p>.pdf)
+  //      means both requests upload to the same object so the data is identical.
+  //   6. Respond { url }.
+  //
+  // The storage util is required as the module object (not destructured) so
+  // tests can mock.method(storage, 'uploadFile', ...) and intercept the call.
+  router.get('/payouts/:periodId/paystub', asyncHandler(async (req, res) => {
+    const periodId = Number(req.params.periodId);
+    if (!Number.isInteger(periodId) || periodId <= 0) {
+      throw new ValidationError({ periodId: 'must be a positive integer' }, 'Invalid period id');
+    }
+
+    const lookup = await pool.query(
+      `SELECT id, status, paystub_storage_key
+         FROM payouts
+        WHERE contractor_id = $1 AND pay_period_id = $2`,
+      [req.user.id, periodId]
+    );
+    if (!lookup.rows[0]) throw new NotFoundError('Payout not found');
+    const payout = lookup.rows[0];
+
+    if (payout.status !== 'paid') {
+      throw new ConflictError('Your paystub is available once the period is paid.');
+    }
+
+    // Already generated -> serve a fresh signed URL.
+    if (payout.paystub_storage_key) {
+      return res.json({ url: await storage.getSignedUrl(payout.paystub_storage_key) });
+    }
+
+    // Lazy generation. Assemble -> render -> upload -> persist (race-guarded).
+    const data = await assemblePaystubData(req.user.id, periodId);
+    if (!data) throw new NotFoundError('Payout not found');
+    const buffer = await renderPaystubPdf(data);
+    await storage.uploadFile(buffer, data.storageKey);
+
+    const upd = await pool.query(
+      `UPDATE payouts SET paystub_storage_key = $1
+        WHERE id = $2 AND paystub_storage_key IS NULL
+        RETURNING paystub_storage_key`,
+      [data.storageKey, payout.id]
+    );
+    // Deterministic key, so a lost race just reuses the stored value — both
+    // racers uploaded to the same object so the bytes are identical.
+    let key = upd.rows[0] && upd.rows[0].paystub_storage_key;
+    if (!key) {
+      const re = await pool.query(
+        'SELECT paystub_storage_key FROM payouts WHERE id = $1',
+        [payout.id]
+      );
+      key = (re.rows[0] && re.rows[0].paystub_storage_key) || data.storageKey;
+    }
+    return res.json({ url: await storage.getSignedUrl(key) });
   }));
 }
 
