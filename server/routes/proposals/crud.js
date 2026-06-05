@@ -592,6 +592,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         gratuity: 'Gratuity rate cannot be increased after payment. Adjust staffing, or arrange a separate client-consented charge.',
       });
     }
+    // A DELIBERATE admin rate DECREASE on a paid proposal is allowed — it moves
+    // toward a refund, not a new charge — but recorded for the audit trail below.
+    // The existing overpayment chip + manual refund flow handle the money; no
+    // client email (§7).
+    const gratuityDecreasedPostPayment =
+      isPaidForGratuity && gratuityOrigin === 'admin' && resolvedGratuityRate < priorGratuityRate;
 
     const snapshot = calculateProposal({
       pkg, guestCount: gc, durationHours: dh, numBars: nb,
@@ -688,6 +694,16 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
          VALUES ($1, 'overpayment_detected', 'admin', $2, $3)`,
         [req.params.id, req.user.id, JSON.stringify({
           amount_paid: Number(old.amount_paid), total_price: snapshot.total, overpaid_cents: rec.overpaidCents,
+        })]
+      );
+    }
+    if (gratuityDecreasedPostPayment) {
+      await dbClient.query(
+        `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details)
+         VALUES ($1, 'gratuity_rate_decreased_post_payment', 'admin', $2, $3)`,
+        [req.params.id, req.user.id, JSON.stringify({
+          from_rate: priorGratuityRate, to_rate: resolvedGratuityRate,
+          gratuity_total: Number(snapshot.gratuity?.total) || 0,
         })]
       );
     }
