@@ -17,6 +17,16 @@ const router = express.Router();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// Reject malformed tokens before ANY downstream work — placed ahead of
+// signLimiter on /sign so a junk token can't consume the per-IP signing bucket
+// (and never reaches the DB). Synchronous: routes errors via next().
+function requireUuidToken(req, res, next) {
+  if (!UUID_RE.test(req.params.token)) {
+    return next(new NotFoundError('This proposal is no longer available'));
+  }
+  next();
+}
+
 // ─── Public routes (token-based) ─────────────────────────────────
 
 /** GET /api/proposals/t/:token — fetch proposal by token (public) */
@@ -113,7 +123,7 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
 }));
 
 /** POST /api/proposals/t/:token/sign — client signs and accepts proposal */
-router.post('/t/:token/sign', signLimiter, asyncHandler(async (req, res) => {
+router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async (req, res) => {
   const { client_signed_name, client_signature_data, client_signature_method,
     venue_name, venue_street, venue_city, venue_state, venue_zip } = req.body;
   const fieldErrors = {};

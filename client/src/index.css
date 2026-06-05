@@ -9434,6 +9434,15 @@ html[data-app="admin-os"] .location-suggest-item.active {
   line-height: 1.45;
   color: var(--brass);
 }
+.sign-pay-needs {
+  border: 1px solid #c8a24a;
+  background: #fbf3dd;
+  color: #5a4413;
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
 .sign-pay-eyebrow {
   display: block;
   font-family: var(--font-display);

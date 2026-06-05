@@ -129,6 +129,9 @@ export default function ProposalView() {
     // effect mid-fetch. The <Elements key={activeSecret}> prop handles remount
     // once the new clientSecret arrives.
     setLoadingIntent(true);
+    // Clear any stale "unable to load payment form" banner from a prior failed
+    // fetch so a fresh option/autopay toggle doesn't show an error mid-load.
+    setFormError('');
     (async () => {
       try {
         const res = await axios.post(`${BASE_URL}/stripe/create-intent/${token}`, {

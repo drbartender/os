@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Elements } from '@stripe/react-stripe-js';
 import SignaturePad from '../../../components/SignaturePad';
 import FormBanner from '../../../components/FormBanner';
@@ -97,6 +97,13 @@ export default function SignAndPaySection({
   const fullSelected = paymentOption === 'full';
   const autopayLabel = `Automatically pay remaining ${fmt(balanceAmount)} on ${formatDateShort(balanceDueDate)}`;
 
+  // Memoize so Stripe Elements isn't handed a brand-new options object every
+  // render — it only needs to re-init when the clientSecret changes.
+  const elementsOptions = useMemo(
+    () => ({ clientSecret: activeSecret, appearance: { theme: 'stripe' } }),
+    [activeSecret]
+  );
+
   // Booking-window policy notices (shared by both modes). fullPaymentRequired
   // (event ≤14d) hides the deposit tablet + autopay and shows the explainer;
   // lastMinuteHold (event ≤72h) additionally shows the cancellation-consent
@@ -119,14 +126,17 @@ export default function SignAndPaySection({
 
   // Live "what's still needed to pay" list (signAndPay only). Names the exact
   // missing items so the disabled Pay button is never a mystery.
-  const payNeeds = [];
-  if (!venuePrefilled) {
-    if (!venue?.venue_street?.trim()) payNeeds.push('the venue street address');
-    if (!venue?.venue_city?.trim()) payNeeds.push('city');
-    if (!venue?.venue_state?.trim()) payNeeds.push('state');
-  }
-  if (!sigName?.trim()) payNeeds.push('your full name');
-  if (!sigData) payNeeds.push('your signature');
+  const payNeeds = useMemo(() => {
+    const needs = [];
+    if (!venuePrefilled) {
+      if (!venue?.venue_street?.trim()) needs.push('the venue street address');
+      if (!venue?.venue_city?.trim()) needs.push('city');
+      if (!venue?.venue_state?.trim()) needs.push('state');
+    }
+    if (!sigName?.trim()) needs.push('your full name');
+    if (!sigData) needs.push('your signature');
+    return needs;
+  }, [venuePrefilled, venue?.venue_street, venue?.venue_city, venue?.venue_state, sigName, sigData]);
 
   if (mode === 'signAndPay') {
     return (
@@ -224,20 +234,7 @@ export default function SignAndPaySection({
         </div>
 
         {payNeeds.length > 0 && (
-          <div
-            className="sign-pay-needs"
-            role="status"
-            aria-live="polite"
-            style={{
-              border: '1px solid #c8a24a',
-              background: '#fbf3dd',
-              color: '#5a4413',
-              borderRadius: 8,
-              padding: '0.7rem 0.9rem',
-              fontSize: '0.875rem',
-              lineHeight: 1.4,
-            }}
-          >
+          <div className="sign-pay-needs" role="status" aria-live="polite">
             Before you can pay, please add: {payNeeds.join(' · ')}.
           </div>
         )}
@@ -257,7 +254,7 @@ export default function SignAndPaySection({
               <Elements
                 key={activeSecret}
                 stripe={stripePromise}
-                options={{ clientSecret: activeSecret, appearance: { theme: 'stripe' } }}
+                options={elementsOptions}
               >
                 <PaymentForm
                   onSubmit={handleSign}

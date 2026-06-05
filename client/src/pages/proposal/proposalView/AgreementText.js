@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import styles from './styles';
 
 // Markdown-lite renderer for the Event Services Agreement. Parses a FIXED subset
@@ -32,58 +32,68 @@ function renderInline(text, keyPrefix) {
     .filter(Boolean);
 }
 
-export default function AgreementText({ markdown }) {
-  const lines = String(markdown ?? '').replace(/\r\n/g, '\n').split('\n');
-  const blocks = [];
-  let i = 0;
-  let key = 0;
+// markdown is a stable bundled constant, so memoize the parse — without this the
+// full ~200-line tokenizer + element build re-runs on every parent re-render
+// (e.g. each keystroke in the signature field). React.memo short-circuits the
+// whole render when the (stable) markdown prop is unchanged.
+function AgreementText({ markdown }) {
+  const blocks = useMemo(() => {
+    const lines = String(markdown ?? '').replace(/\r\n/g, '\n').split('\n');
+    const acc = [];
+    let i = 0;
+    let key = 0;
 
-  while (i < lines.length) {
-    const line = lines[i];
+    while (i < lines.length) {
+      const line = lines[i];
 
-    // Blank line — skip.
-    if (line.trim() === '') { i += 1; continue; }
+      // Blank line — skip.
+      if (line.trim() === '') { i += 1; continue; }
 
-    // Section heading.
-    if (isHeading(line)) {
-      const text = line.replace(/^##\s+/, '').trim();
-      blocks.push(
-        <h3 key={`h-${key}`} style={styles.agreementHeading}>{renderInline(text, `h-${key}`)}</h3>
-      );
-      key += 1;
-      i += 1;
-      continue;
-    }
-
-    // Bullet list: a run of consecutive top-of-line "- " lines.
-    if (isBullet(line)) {
-      const items = [];
-      while (i < lines.length && isBullet(lines[i])) {
-        const itemText = lines[i].replace(/^-\s+/, '').trim();
-        items.push(
-          <li key={`li-${key}`} style={styles.contractListItem}>{renderInline(itemText, `li-${key}`)}</li>
+      // Section heading.
+      if (isHeading(line)) {
+        const text = line.replace(/^##\s+/, '').trim();
+        acc.push(
+          <h3 key={`h-${key}`} style={styles.agreementHeading}>{renderInline(text, `h-${key}`)}</h3>
         );
         key += 1;
         i += 1;
+        continue;
       }
-      blocks.push(<ul key={`ul-${key}`} style={styles.contractList}>{items}</ul>);
+
+      // Bullet list: a run of consecutive top-of-line "- " lines.
+      if (isBullet(line)) {
+        const items = [];
+        while (i < lines.length && isBullet(lines[i])) {
+          const itemText = lines[i].replace(/^-\s+/, '').trim();
+          items.push(
+            <li key={`li-${key}`} style={styles.contractListItem}>{renderInline(itemText, `li-${key}`)}</li>
+          );
+          key += 1;
+          i += 1;
+        }
+        acc.push(<ul key={`ul-${key}`} style={styles.contractList}>{items}</ul>);
+        key += 1;
+        continue;
+      }
+
+      // Otherwise a paragraph: this line plus following non-blank, non-heading,
+      // non-bullet lines, joined by a space.
+      const paraLines = [line.trim()];
+      i += 1;
+      while (i < lines.length && lines[i].trim() !== '' && !isHeading(lines[i]) && !isBullet(lines[i])) {
+        paraLines.push(lines[i].trim());
+        i += 1;
+      }
+      acc.push(
+        <p key={`p-${key}`} style={styles.contractText}>{renderInline(paraLines.join(' '), `p-${key}`)}</p>
+      );
       key += 1;
-      continue;
     }
 
-    // Otherwise a paragraph: this line plus following non-blank, non-heading,
-    // non-bullet lines, joined by a space.
-    const paraLines = [line.trim()];
-    i += 1;
-    while (i < lines.length && lines[i].trim() !== '' && !isHeading(lines[i]) && !isBullet(lines[i])) {
-      paraLines.push(lines[i].trim());
-      i += 1;
-    }
-    blocks.push(
-      <p key={`p-${key}`} style={styles.contractText}>{renderInline(paraLines.join(' '), `p-${key}`)}</p>
-    );
-    key += 1;
-  }
+    return acc;
+  }, [markdown]);
 
   return <>{blocks}</>;
 }
+
+export default React.memo(AgreementText);

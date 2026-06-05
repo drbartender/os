@@ -95,15 +95,6 @@ const styles = {
     marginBottom: '6px',
     lineHeight: 1.55,
   },
-  contractScroll: {
-    maxHeight: '180px',
-    overflowY: 'hidden',
-    background: 'transparent',
-    border: 'none',
-    borderRadius: 0,
-    padding: 0,
-    position: 'relative',
-  },
   contractText: {
     fontSize: '0.875rem',
     color: 'var(--deep-brown)',
