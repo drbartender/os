@@ -834,14 +834,23 @@ before(async () => {
   await new Promise(r => { server = app.listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; r(); }); });
 });
 
-test('best-effort: a draft-builder failure still 200s with the lead persisted', async () => {
+test('best-effort: a draft-builder failure still 200s, persists the lead, and logs', async () => {
   thumbtackRouter.__setDeps({ createDraftProposalFromLead: async () => { throw new Error('boom'); } });
-  const res = await postLead(negA);
-  assert.equal(res.status, 200);
+  const errs = [];
+  const origErr = console.error;
+  console.error = (...a) => errs.push(a.map(String).join(' '));
+  try {
+    const res = await postLead(negA);
+    assert.equal(res.status, 200);
+  } finally {
+    console.error = origErr;
+  }
   const lead = await pool.query('SELECT client_id, proposal_id FROM thumbtack_leads WHERE negotiation_id = $1', [negA]);
   assert.equal(lead.rows.length, 1, 'lead must be captured even though the draft threw');
   assert.equal(lead.rows[0].proposal_id, null, 'no proposal linked when the draft failed');
   if (lead.rows[0].client_id) created.clientIds.push(lead.rows[0].client_id);
+  // The "best-effort + captured" guarantee is load-bearing: assert the failure was logged.
+  assert.ok(errs.some(e => e.includes('auto-draft failed')), 'the draft failure must be logged');
 });
 
 test('a Thumbtack-sourced draft never exposes admin_notes on the public token route', async () => {

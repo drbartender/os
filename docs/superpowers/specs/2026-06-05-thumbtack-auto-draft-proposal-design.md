@@ -376,15 +376,19 @@ one at a time.
   guard returns the existing id on a second call.
 - **Field mapping:** event-type + category map (specific-before-generic); ET
   date/time split; missing date -> null; duration always 4.
-- **Pricing:** pin `snapshot.total` and `staffing.cost` for the controlled-guest
-  Core Reaction draft; confirm no unexpected bar-rental fee for `service_only`.
+- **Pricing:** pin `snapshot.total` and `snapshot.staffing.total` for the
+  controlled-guest Core Reaction draft; confirm no unexpected bar-rental fee for
+  `service_only` (`num_bars` is 0 for it).
 - **Webhook integration:** new lead -> lead saved AND draft created AND
   notification carries `proposalUrl`; simulated draft failure -> lead still saved,
-  200 returned, Sentry captured; anonymous lead -> lead saved, no draft.
+  200 returned, and the failure logged (`console.error`; Sentry too when
+  `SENTRY_DSN_SERVER` is set); anonymous lead -> lead saved, no draft.
 - **Source filter:** `GET /proposals?source=thumbtack` returns only Thumbtack
   rows across pages; counts reflect the filter; dashboard badges Thumbtack rows.
-- **PII:** `admin_notes` is not returned by the public-token or client-portal
-  proposal routes for a Thumbtack-sourced proposal.
+- **PII:** `admin_notes` is not returned by the public-token route (`/t/:token`)
+  for a Thumbtack-sourced proposal (automated regression). The client-portal
+  proposal surface excludes it via the same allowlist (see Current State); it is
+  not separately re-tested.
 - **Send guard:** Send on a no-email proposal prompts the confirm; confirming
   proceeds, cancelling aborts.
 
