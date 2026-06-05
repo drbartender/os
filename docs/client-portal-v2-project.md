@@ -8,7 +8,7 @@ v2 effort: what is done, what is in design, and what still needs building.
 > worktree/branch when it goes to build. Update the Status column here as pieces
 > move. Decisions already locked live in the Decisions Log so we do not relitigate.
 >
-> **Last updated:** 2026-06-05 · **Stage:** read-only foundation (2 + 3) built + merged to `main` (unpushed); editing (#5) spec written, plan pending
+> **Last updated:** 2026-06-05 · **Stage:** read-only foundation (2 + 3) built + merged to `main` (unpushed); editing (#5) spec + implementation plan written, build pending
 
 ---
 
@@ -38,7 +38,7 @@ v2 effort: what is done, what is in design, and what still needs building.
 | 2 | Portal shell + Overview (event command center) | **Done — merged to `main` `0ff6057` (2026-06-05), not yet pushed** | none (backbone) | [spec](superpowers/specs/2026-06-04-client-portal-v2-foundation-design.md) · [plan](superpowers/plans/2026-06-04-client-portal-v2-foundation.md) |
 | 3 | Read-only tabs (Prescription · Potion Plan · Receipts) + Share link | **Done — merged to `main` `0ff6057` (2026-06-05), not yet pushed** | 2 | [spec](superpowers/specs/2026-06-04-client-portal-v2-foundation-design.md) · [plan](superpowers/plans/2026-06-04-client-portal-v2-foundation.md) |
 | 4 | Day-of brief / "Big Experiment" tab | Decisions captured, build pending | 2, 3 | TBD |
-| 5 | Editing model (additive-only + change requests) | **Design done — spec written 2026-06-05** | 3 | [spec](superpowers/specs/2026-06-05-client-portal-editing-model-design.md) |
+| 5 | Editing model (additive-only + change requests) | **Design done + plan written 2026-06-05, build pending** | 3 | [spec](superpowers/specs/2026-06-05-client-portal-editing-model-design.md) · [plan](superpowers/plans/2026-06-05-client-portal-editing-model.md) |
 | 6 | Messages tab (client ↔ office) | Parked (out of v1) | 2 | none |
 | 7 | Multi-event switcher | Deferred (clients are one-at-a-time) | 2 | none |
 | 8 | Quote-resume card (finish a draft) | Deferred (rare in practice) | 2 | none |
@@ -122,7 +122,7 @@ What the client sees about the day itself, gated to unlock near the event (T-14)
 ### 5 · Editing model (additive-only + change requests)
 The money subsystem. Lets clients adjust their booking within guardrails. Its
 own full spec because it touches pricing, payments, the signed agreement, and
-staffing. **Spec written 2026-06-05** ([editing-model design](superpowers/specs/2026-06-05-client-portal-editing-model-design.md)); plan pending. v1 is the request-to-admin model; see the spec §2 for the locked decisions.
+staffing. **Spec + implementation plan written 2026-06-05** ([design](superpowers/specs/2026-06-05-client-portal-editing-model-design.md) · [plan](superpowers/plans/2026-06-05-client-portal-editing-model.md)); build pending. v1 is the request-to-admin model; see the spec §2 for the locked decisions.
 
 - Three windows:
   - **Pre-booking:** free edit (no signature, no money yet). Runs through the quote/pricing engine.
