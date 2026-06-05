@@ -921,11 +921,15 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           // Determine new status and amount_paid based on payment type
           if (paymentType === 'full') {
             // Additive + DERIVED status, never a flat "= total_price": credit what was actually charged so a mid-flight total change (admin edit / second-tab gratuity) can't mark paid-in-full at an amount the client never paid (DrB would eat the gap). Mirrors the invoice/drink-plan branches.
+            // Guard = LIFECYCLE states only (confirmed/completed/archived — a payment
+            // must not rewind those). The CASE keeps status monotonic, so excluding a
+            // PAYMENT state would only drop a legitimate second distinct-intent credit
+            // in a two-tab double-confirm race.
             await dbClient.query(`
               UPDATE proposals
               SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'full',
                   status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
-              WHERE id = $1 AND status NOT IN ('balance_paid', 'confirmed', 'archived')
+              WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')
             `, [proposalId, intent.amount / 100]);
           } else if (paymentType === 'balance') {
             // Guard archived too — an admin can archive a proposal between the
@@ -981,14 +985,19 @@ router.post('/webhook', asyncHandler(async (req, res) => {
               );
             }
           } else {
-            // deposit
+            // deposit — additive + DERIVED status (mirror the full branch): credit what
+            // Stripe actually charged, never a flat "= deposit_amount", so a prior
+            // amount_paid credit is preserved. Guard = LIFECYCLE states only: excluding
+            // deposit_paid here would DROP the second credit when a client double-confirms
+            // two same-amount deposit intents (fixed deposit amount → both survive the
+            // stale-cancel), silently under-crediting a real charge. Idempotent via the
+            // proposal_payments ON CONFLICT gate above.
             await dbClient.query(`
               UPDATE proposals
-              SET status = 'deposit_paid',
-                  amount_paid = deposit_amount,
-                  payment_type = 'deposit'
-              WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'archived')
-            `, [proposalId]);
+              SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'deposit',
+                  status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
+              WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')
+            `, [proposalId, intent.amount / 100]);
           }
 
           // Last-minute staffing hold — only for INITIAL-booking branches (full;
@@ -1366,17 +1375,31 @@ router.post('/webhook', asyncHandler(async (req, res) => {
 
         if (isFirstDelivery) {
           if (linkPaymentType === 'full') {
-            // Full payment via link → settle in full (mirrors the 'full' branch
-            // of payment_intent.succeeded). Guards balance_paid/confirmed/archived
-            // so a later state can't be rewound.
+            // Full payment via link → additive + DERIVED status (mirrors the 'full'
+            // branch of payment_intent.succeeded). Credit session.amount_total (what
+            // Stripe actually captured), never a flat "= total_price": a stale link
+            // baked at an old, lower total must not mark paid-in-full at the current
+            // higher total (DrB would eat the gap). Guard = LIFECYCLE states only
+            // (confirmed/completed/archived); the monotonic CASE makes a payment-state
+            // exclusion redundant and would only drop a legitimate second credit.
             await dbClient.query(
-              "UPDATE proposals SET status = 'balance_paid', amount_paid = total_price, payment_type = 'full' WHERE id = $1 AND status NOT IN ('balance_paid', 'confirmed', 'archived')",
-              [proposalId]
+              `UPDATE proposals
+               SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'full',
+                   status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
+               WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')`,
+              [proposalId, session.amount_total / 100]
             );
           } else {
+            // Deposit via link → additive + derived status (same rationale): credit what
+            // was charged, preserve any prior credit. Guard = LIFECYCLE states only
+            // (confirmed/completed/archived); the monotonic CASE means no payment-state
+            // exclusion is needed (it would only drop a legitimate second credit).
             await dbClient.query(
-              "UPDATE proposals SET status = 'deposit_paid', amount_paid = deposit_amount, payment_type = 'deposit' WHERE id = $1 AND status NOT IN ('deposit_paid', 'balance_paid', 'confirmed', 'archived')",
-              [proposalId]
+              `UPDATE proposals
+               SET amount_paid = COALESCE(amount_paid, 0) + $2, payment_type = 'deposit',
+                   status = CASE WHEN COALESCE(amount_paid,0) + $2 >= total_price THEN 'balance_paid' ELSE 'deposit_paid' END
+               WHERE id = $1 AND status NOT IN ('confirmed', 'completed', 'archived')`,
+              [proposalId, session.amount_total / 100]
             );
           }
           await dbClient.query(
