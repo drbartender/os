@@ -8,7 +8,7 @@ v2 effort: what is done, what is in design, and what still needs building.
 > worktree/branch when it goes to build. Update the Status column here as pieces
 > move. Decisions already locked live in the Decisions Log so we do not relitigate.
 >
-> **Last updated:** 2026-06-05 · **Stage:** read-only foundation (2 + 3) built + merged to `main` (unpushed); editing (#5) spec + implementation plan written, build pending
+> **Last updated:** 2026-06-05 · **Stage:** read-only foundation (2 + 3) built + merged to `main` (unpushed); editing (#5) built on branch `client-portal-editing`, awaiting merge
 
 ---
 
@@ -38,7 +38,7 @@ v2 effort: what is done, what is in design, and what still needs building.
 | 2 | Portal shell + Overview (event command center) | **Done — merged to `main` `0ff6057` (2026-06-05), not yet pushed** | none (backbone) | [spec](superpowers/specs/2026-06-04-client-portal-v2-foundation-design.md) · [plan](superpowers/plans/2026-06-04-client-portal-v2-foundation.md) |
 | 3 | Read-only tabs (Prescription · Potion Plan · Receipts) + Share link | **Done — merged to `main` `0ff6057` (2026-06-05), not yet pushed** | 2 | [spec](superpowers/specs/2026-06-04-client-portal-v2-foundation-design.md) · [plan](superpowers/plans/2026-06-04-client-portal-v2-foundation.md) |
 | 4 | Day-of brief / "Big Experiment" tab | Decisions captured, build pending | 2, 3 | TBD |
-| 5 | Editing model (additive-only + change requests) | **Design done + plan written 2026-06-05, build pending** | 3 | [spec](superpowers/specs/2026-06-05-client-portal-editing-model-design.md) · [plan](superpowers/plans/2026-06-05-client-portal-editing-model.md) |
+| 5 | Editing model (additive-only + change requests) | **Built on branch `client-portal-editing` 2026-06-05, awaiting merge** | 3 | [spec](superpowers/specs/2026-06-05-client-portal-editing-model-design.md) · [plan](superpowers/plans/2026-06-05-client-portal-editing-model.md) |
 | 6 | Messages tab (client ↔ office) | Parked (out of v1) | 2 | none |
 | 7 | Multi-event switcher | Deferred (clients are one-at-a-time) | 2 | none |
 | 8 | Quote-resume card (finish a draft) | Deferred (rare in practice) | 2 | none |
@@ -122,19 +122,19 @@ What the client sees about the day itself, gated to unlock near the event (T-14)
 ### 5 · Editing model (additive-only + change requests)
 The money subsystem. Lets clients adjust their booking within guardrails. Its
 own full spec because it touches pricing, payments, the signed agreement, and
-staffing. **Spec + implementation plan written 2026-06-05** ([design](superpowers/specs/2026-06-05-client-portal-editing-model-design.md) · [plan](superpowers/plans/2026-06-05-client-portal-editing-model.md)); build pending. v1 is the request-to-admin model; see the spec §2 for the locked decisions.
+staffing. **Spec + implementation plan written 2026-06-05** ([design](superpowers/specs/2026-06-05-client-portal-editing-model-design.md) · [plan](superpowers/plans/2026-06-05-client-portal-editing-model.md)); **built on branch `client-portal-editing` 2026-06-05, awaiting merge.** v1 is the request-to-admin model; see the spec §2 for the locked decisions.
 
 - Three windows:
   - **Pre-booking:** free edit (no signature, no money yet). Runs through the quote/pricing engine.
   - **Booked, before T-14:** free **additive** edit (add a bar, bump guests, add an add-on; balance rises, no refund).
   - **Booked, inside T-14:** change **request** → admin approves (verifies staff availability) → cascade runs.
 - **Removals / downgrades always route to admin**, in every window, because they touch refunds. Self-serve never triggers a refund.
-- [ ] Define what is client-editable vs admin-locked (guest count / add-ons / package = yes; manual discounts / custom line items = no).
-- [ ] Re-price through `pricingEngine`, honoring the hosted-bartender ratio. Re-snapshot pricing.
-- [ ] Re-evaluate payment status on every change (never leave a stale "paid in full").
-- [ ] Signature re-acknowledgment on a material change (new total, re-confirm, store new signed version).
-- [ ] Propagate event-detail changes to linked shifts.
-- [ ] New `change_request` entity (pending / approved / declined) + admin review screen + notifications.
+- [x] Define what is client-editable vs admin-locked (guest count / add-ons / package = yes; manual discounts / custom line items = no). Allowlist enforced server-side in `server/utils/changeRequests.js`.
+- [x] Re-price through `pricingEngine`, honoring the hosted-bartender ratio. Re-snapshot pricing. (Price preview persisted on the `proposal_change_requests` row at create time; admin edit re-runs the same path.)
+- [x] Re-evaluate payment status on every change (never leave a stale "paid in full"). `PATCH /api/proposals/:id` runs the existing money + status reconciliation; over-paid edits demote `confirmed`, `FOR UPDATE` apply read guards the reconciliation.
+- [x] Signature re-acknowledgment on a material change (new total, re-confirm, store new signed version). v1 dissolves this into the authenticated change-request as the consent record (`acknowledged_total`, `request_ip`, `request_user_agent` persisted on the row); the standalone re-sign flow stays designed-for-but-not-built per the locked spec decision.
+- [x] Propagate event-detail changes to linked shifts. `syncShiftsFromProposal` now also reconciles `positions_needed`.
+- [x] New `change_request` entity (pending / approved / declined / cancelled) + admin review screen + notifications. Table `proposal_change_requests` with one-pending-per-proposal partial unique index; admin dashboard at `/change-requests` and a `ProposalChangeRequestCard` on Proposal Detail; admin-alert and client-decision email + SMS via `server/utils/changeRequestNotifications.js`. `PATCH /api/proposals/:id` accepts `change_request_id` to stamp the row `approved` atomically with the edit and suppress the duplicate edit email. The archive/complete reaper auto-cancels open requests.
 - **Open decision (the one we need before speccing):** confirmed direction is
   additive-only self-serve with removals to admin. If we ever allow self-serve
   removals before T-14, we must pick refund vs account credit. Parked as

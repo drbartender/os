@@ -152,6 +152,8 @@ dr-bartender/
 │   │   ├── calendar.js         # Calendar/scheduling endpoints
 │   │   ├── clientAuth.js       # Client authentication (separate from staff auth)
 │   │   ├── clientPortal.js     # Client portal endpoints
+│   │   ├── clientPortal/       # Per-concern subrouters mounted under /api/client-portal
+│   │   │   └── changeRequests.js # Client change-request endpoints (calculate, create, list, cancel)
 │   │   ├── clients.js          # Client CRUD
 │   │   ├── cocktails.js        # Cocktail menu CRUD
 │   │   ├── contractor.js       # Contractor profile + file uploads
@@ -161,13 +163,14 @@ dr-bartender/
 │   │   ├── mocktails.js        # Mocktail menu CRUD
 │   │   ├── payment.js          # Payment method + W-9 upload
 │   │   ├── progress.js         # Onboarding step tracking
-│   │   ├── proposals/          # Service proposals (publicToken/public/metadata/lifecycle/crud sub-routers)
+│   │   ├── proposals/          # Service proposals (publicToken/public/metadata/lifecycle/crud/changeRequests sub-routers)
 │   │   │   ├── index.js        # Composition router
 │   │   │   ├── publicToken.js  # /t/:token view + sign
 │   │   │   ├── public.js       # /public/* — packages, addons, calculate, capture-lead, quote-draft, submit
 │   │   │   ├── metadata.js     # /packages, /addons, /calculate, /financials, /dashboard-stats
 │   │   │   ├── lifecycle.js    # Proposal status state machine (PATCH /:id/status)
-│   │   │   └── crud.js         # admin CRUD + notes/create-shift/balance-due-date/send-reminder/record-payment
+│   │   │   ├── crud.js         # admin CRUD + notes/create-shift/balance-due-date/send-reminder/record-payment
+│   │   │   └── changeRequests.js # Admin change-request endpoints (queue, per-proposal list, decline)
 │   │   ├── shifts.js           # Shift scheduling
 │   │   ├── sms.js              # Twilio inbound-SMS webhook + admin thread API
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
@@ -206,6 +209,8 @@ dr-bartender/
 │   │   ├── ccWrapUpEmailTemplate.js # cc-import: wrap-up email subject + html + text renderer
 │   │   ├── ccWrapUpHandler.js  # cc-import: post_event_wrap_up_email dispatcher handler (registered at boot in server/index.js)
 │   │   ├── payrollGuards.js    # cc-import: isLegacyCcParticipant (per-proposal stub check, used by payrollAccrual). isLegacyCcStubUser (per-user check) kept for parity; no production callers since the rollForwardLateTip/clawbackTip stub-filter refactor moved the check inline into the bartender SELECT
+│   │   ├── changeRequests.js   # Client-portal change-request helpers: edit-window classifier, field allowlist, proposed-state preview + diff + price preview, and the reaper that auto-cancels pending requests on archive/complete
+│   │   ├── changeRequestNotifications.js # Admin alert (new request) + client decision (approved/declined) email + SMS sends
 │   │   ├── channelFallback.js  # Channel-substitution decision for single-channel operational touches (picks the live channel when the registered one's status is 'bad')
 │   │   ├── clientAutomationSuspension.js # Suspends a client's remaining automation when both email_status and phone_status are 'bad' (sets clients.automation_suspended_at, cancels pending scheduled_messages)
 │   │   ├── clientDedup.js      # Find-or-create a client de-duped on email OR phone (name-guarded, backfill-only); the single intake find-or-create
@@ -312,14 +317,14 @@ dr-bartender/
 │   │   │   ├── (onboarding)    # Welcome, FieldGuide, Agreement, ContractorProfile, PaydayProtocols, Completion
 │   │   │   ├── (staff)         # Application, ApplicationStatus, HiringLanding, PreHireOnboarding (open pre-hire URL)
 │   │   │   ├── (admin)         # AdminDashboard (AdminUserDetail moved into admin/userDetail/, AdminApplicationDetail moved into admin/applicationDetail/)
-│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/, NotificationSettings per-user notification-subscription toggles, CcImportWrapUpPage Bucket B wrap-up email worklist, CcImportReviewPage 7-section import-reconciliation triage)
+│   │   │   ├── admin/          # Dashboard sub-pages (proposals, clients, events, EventDetailPage, shifts, staff, menus, hiring, blog, email marketing, Messages admin SMS conversation/thread page, TipsAdmin tip overview, LabRatBugsPage tester-bug triage, userDetail/tabs/TipPageTab admin tip-page controls, applicationDetail/, NotificationSettings per-user notification-subscription toggles, CcImportWrapUpPage Bucket B wrap-up email worklist, CcImportReviewPage 7-section import-reconciliation triage, ProposalChangeRequestCard client-portal change-request review card on Proposal Detail (diff, preview, apply-in-editor, decline), ChangeRequestsDashboard admin pending-requests queue at /change-requests)
 │   │   │   ├── staff/          # Staff portal — the live v2 portal, mounted at root on staff.drbartender.com (HomePage, ShiftsPage + ShiftDetail, PayPage + PayoutDetail, TipCardPage, EmailVerifyPage email-change confirm) + PrintTipCard printable QR card (PrintTipCard.jsx + PrintTipCard.layouts.jsx + PrintTipCard.css)
 │   │   │   │   └── account/    # AccountPage shell + sub-nav with ProfileSection, PaymentMethodsSection (+ PaymentMethodRows + AddMethodModal), CalendarSyncSection, NotificationsSection (+ IOSCoachmark + PushPermissionBanner), DocumentsSection (+ ReplaceConfirmModal)
 │   │   │   ├── plan/           # PotionPlanningLab, public post-booking event questionnaire (single flow, created only after deposit; with steps/, components/, data/; components/ScopeBanner + components/WelcomeRoadmap + components/MenuPreview + components/LogoUploadField = apothecary-reskin + Standard Menu shared UI; steps/HostedGuestPrefsStep.js = compact hosted-package guest-preferences step; data/packageGaps.js = hosted-package gap helpers, packageGaps.test.js = Jest test; data/menuSections.js = Standard Menu section extractor with menuSections.test.js Jest unit suite)
 │   │   │   ├── invoice/        # InvoicePage — public token-gated invoice view + payment
 │   │   │   ├── proposal/       # ProposalView (public client-facing) — split into proposalView/ folder (parent + ProposalHeader + ProposalPricingBreakdown + SignAndPaySection + PaymentForm + AgreementText markdown-lite renderer + helpers + styles)
 │   │   │   ├── public/         # Client portal (ClientLogin, ClientShoppingList, Blog, BlogPost) + tip flow (TipPage with TipPage.atoms.jsx + TipPage.css, TipPageThanks post-tip feedback)
-│   │   │   │   └── portal/     # Client Portal v2 — PortalHome (landing), EventCommandCenter (focus shell), OverviewWidgets, ArchiveList, ShareButton, EmptyStates, money/nextUp/constants helpers + tabs/ (OverviewTab, PrescriptionTab, PotionTab, ReceiptsTab)
+│   │   │   │   └── portal/     # Client Portal v2 — PortalHome (landing), EventCommandCenter (focus shell), OverviewWidgets, ArchiveList, ShareButton, EmptyStates, ChangeRequestForm (request-a-change form with live price preview), money/nextUp/constants helpers + tabs/ (OverviewTab, PrescriptionTab, PotionTab, ReceiptsTab, ChangeRequestBanner pending/decided status banner on the Prescription tab)
 │   │   │   └── website/        # Public website (HomePage, ServicesPage, MethodPage, AboutPage, FaqPage, QuotePage, ClassWizard, quoteWizard/ — split QuoteWizard with steps/extras/ (AddonTile + BundlePicker + AddonAccordion) for the Extras step redesign)
 │   │   ├── images/             # Brand assets
 │   │   └── index.css           # Global styles
@@ -418,6 +423,16 @@ Imports legacy proposals, events, payments, refunds, payouts, leads, and invoice
 - **Drink Menu**: Manage 25 cocktails + 16 mocktails across categories
 - **Events**: Paid proposals become events; list view shows scannable cards, detail view is a full dashboard with staffing management, equipment config, auto-assign, payment, and drink plan
 - **Financials / Settings**: Placeholder tabs ready for expansion
+
+### Client Portal Editing Model
+- Clients request booking changes from the portal (guest count, hours, package, add-ons, event date, venue) via a form with a live price preview powered by `POST /api/client-portal/proposals/:token/calculate`.
+- Submitting a request writes a pending row to `proposal_change_requests` (the consent contract: snapshot of requested changes, baseline, computed edit window, acknowledged total, IP + user agent); admin is notified by email + SMS via `notifyAdminCategory`.
+- A pending/decided banner on the Prescription tab tracks the request; clients can withdraw a pending request from the portal.
+- Admin reviews pending requests in a queue at `/change-requests` and on a card on Proposal Detail (`ProposalChangeRequestCard`) showing the diff, price preview, and an "Apply in editor" affordance that round-trips through the existing proposal editor.
+- Applying is atomic: `PATCH /api/proposals/:id` accepts an optional `change_request_id` that stamps the linked request `approved` in the same transaction as the edit, suppresses the standard admin edit email (the decision email covers the client), and runs the existing money + status reconciliation.
+- Admin can decline with a required reason; the client gets an emailed decision (approved or declined) with the note.
+- Archive or complete on a proposal auto-cancels any open pending request via the reaper in `server/utils/changeRequests.js`.
+- Self-serve never moves money: the client action is a request, not an edit; admin keeps the only path to the editor and to refunds.
 
 ### Tip QR Pages
 - Each onboarded bartender gets a public token-gated tip page (`/tip/:token`) with their photo, name, and tip buttons

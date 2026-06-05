@@ -253,7 +253,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/packages` | Admin | List service packages |
 | GET | `/addons` | Admin | List add-ons |
 | GET | `/:id` | Admin | Get single proposal with addons + activity log |
-| PATCH | `/:id` | Admin | Update event details, recalculate pricing, and re-sync the linked event shift (date/time/location/client) when the proposal has been converted. A draft→sent transition creates the proposal's invoice in the same DB transaction. |
+| PATCH | `/:id` | Admin | Update event details, recalculate pricing, and re-sync the linked event shift (date/time/location/client) when the proposal has been converted. A draft→sent transition creates the proposal's invoice in the same DB transaction. Accepts an optional `change_request_id` in the body that links the edit to a pending `proposal_change_requests` row: the request is stamped `approved` in the same transaction as the edit, the standard admin edit email is suppressed (the client gets the change-request decision email instead), and the regular money + status reconciliation runs. |
 | PATCH | `/:id/status` | Admin | Update proposal status. On a →sent transition, creates the invoice in-transaction (idempotent on `proposal_id`) and emails the client via `sendProposalSentEmail`. Rate-limited per admin via `adminWriteLimiter` (10/min). |
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | DELETE | `/:id` | Admin | Delete a proposal |
@@ -263,6 +263,13 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | POST | `/:id/send-reminder` | Admin | Email the client a balance-due reminder (logged to proposal_activity_log) |
 | POST | `/:id/record-payment` | Admin | Record an outside payment (cash, Venmo, etc.) — triggers shift creation |
 | POST | `/:id/create-shift` | Admin | Manually create event shift from a paid proposal |
+
+### Client-Portal Change Requests (admin) — `/api/proposals`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/change-requests?status=pending` | Admin/Manager | Admin queue of client change requests (default filter: pending). Powers `/change-requests` dashboard. Joins proposal + client for the card display. |
+| GET | `/:id/change-requests` | Admin/Manager | Per-proposal change-request history (pending, approved, declined, cancelled) — drives the `ProposalChangeRequestCard` on Proposal Detail. |
+| POST | `/change-requests/:id/decline` | Admin/Manager | Decline a pending request with a required `decision_note`. Stamps `status='declined'`, `decided_by`, `decided_at`, `decision_note`. Fires the client decision email + SMS via `notifyDecision`. |
 
 ### Stripe — `/api/stripe`
 | Method | Path | Auth | Description |
@@ -396,6 +403,10 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | GET | `/home` | Client | Portal landing read — focus event (soonest upcoming), archive list, upcoming_count, has_quote_draft flag. Scoped by `client_id` (no IDOR) |
 | GET | `/proposals` | Client | List client's proposals |
 | GET | `/proposals/:token` | Client | Get single proposal by token (includes venue_name/city/state + drink_plan_token/submitted_at) |
+| POST | `/proposals/:token/calculate` | Client (`clientPortalWriteLimiter`) | Price an in-progress edit against an allowlisted field set (no write). Returns the same price-preview block the create endpoint persists, so the portal form can show a live diff before submitting. |
+| POST | `/proposals/:token/change-requests` | Client (`clientPortalWriteLimiter`) | Create a pending change request: snapshots the requested fields, the baseline, the computed `edit_window` (`pre_booking` / `before_t14` / `inside_t14`), the price preview, the client's acknowledged total, request IP and user agent. Enforced one-pending-per-proposal via the partial-unique index; fires the admin alert email + SMS via `notifyAdminCategory`. |
+| GET | `/proposals/:token/change-requests` | Client | List the client's change requests for this proposal (history of pending, approved, declined, cancelled). |
+| POST | `/proposals/:token/change-requests/:id/cancel` | Client (`clientPortalWriteLimiter`) | Client withdraws a pending request (sets `status='cancelled'`, `cancelled_by='client'`). No-op on already-decided rows. |
 
 ### Thumbtack Integration — `/api/thumbtack`
 | Method | Path | Auth | Description |
@@ -718,6 +729,22 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `issued_by` FK→users (nullable — NULL = dashboard refund); `status`: pending | succeeded | failed; `created_at`
 - Approach A reconciliation: a refund drops `proposals.amount_paid` by the full refund amount and adjusts `total_price` only for contract-scope invoices (classified by linked invoice `label`: Deposit / Balance / Full Payment); extra-scope invoices leave `total_price` intact
 - Partial unique index on `stripe_refund_id` (WHERE NOT NULL) — idempotency anchor shared by the synchronous route and the `charge.refunded` webhook backstop
+
+**proposal_change_requests** — Client-portal change requests (the consent contract behind every booked-event change a client requests through the portal). One row per request, kept for history. Authoritative source for the admin pending-queue and per-proposal review card; created by the client-portal router, decided by the admin router or by `PATCH /api/proposals/:id` with `change_request_id`.
+- `id` SERIAL PK; `proposal_id` FK → proposals (ON DELETE CASCADE — matches proposal_payments / activity_log so admin hard-delete cascades cleanly); `client_id` FK → clients (ON DELETE SET NULL)
+- `status` VARCHAR(20) NOT NULL DEFAULT `'pending'` CHECK (`pending`, `approved`, `declined`, `cancelled`)
+- `edit_window` VARCHAR(20) NOT NULL CHECK (`pre_booking`, `before_t14`, `inside_t14`) — computed at create time from the booking-window helper; freezes the policy that applied when the request was made even if T-14 crosses while the request sits pending
+- `requested_changes` JSONB — only the allowlisted fields the client touched (guest count, hours, package, add-ons, event date, venue); the field allowlist is enforced server-side in `server/utils/changeRequests.js`
+- `baseline` JSONB — snapshot of the same fields' current values on the proposal at request time, so the admin diff is stable even if the proposal mutates while the request sits pending
+- `note` TEXT — optional client note ("we'd like to add a second bar")
+- `price_preview` JSONB — full price preview computed at create time via the same path the admin editor uses (`pricingEngine`); persisted so the admin reviews the price the client saw
+- `acknowledged_total` NUMERIC(10,2) **dollars** (matches `proposals.total_price`'s unit) — the total the client saw and acknowledged when submitting; persists the consent record
+- `request_ip` VARCHAR(45); `request_user_agent` TEXT — audit trail for the consent contract
+- `decided_by` FK → users (ON DELETE SET NULL); `decided_at` TIMESTAMPTZ; `decision_note` TEXT — admin decision metadata (decline reason or approve note)
+- `cancelled_by` VARCHAR(10) CHECK (`client`, `admin`, `system`) — set when status is `cancelled` (client withdraws / admin clears stale / reaper auto-cancels on archive/complete)
+- `created_at`, `updated_at` TIMESTAMPTZ (auto-updated by `update_updated_at_column` trigger)
+- Partial unique index `idx_pcr_one_open(proposal_id) WHERE status = 'pending'` — enforces one open request per proposal so the client cannot stack pending requests and the admin queue stays clean
+- Supporting indexes: `idx_pcr_status(status)` for the admin queue scan; `idx_pcr_proposal(proposal_id)` for per-proposal lookups
 
 ### Invoices
 
@@ -1130,6 +1157,8 @@ Proposal business rules (BYOB bundle logic, add-on filtering, and selection guar
 - **`server/utils/paymentFailedClientNotify.js`**: post-`payment_intent.payment_failed`-webhook helper that emails the client their card was declined, sent once per proposal. The slot is claimed with an atomic `INSERT ... ON CONFLICT DO NOTHING` (partial unique index `idx_proposal_activity_payment_failed_client`) before the fetch and send, so concurrent Stripe retries cannot double-email; a failed send releases the claim. Extracted from `routes/stripe.js` to keep that file under the size cap. Best-effort — owns its try/catch, never throws into the webhook.
 
 `adminWriteLimiter` (`server/middleware/rateLimiters.js`) caps the proposal-write endpoints that can fire client emails (`POST /proposals` and `PATCH /:id/status`) at 10 requests/minute, keyed by admin user id (not IP, so an office NAT does not share a bucket). That is far above any human admin workflow while capping the email-spam blast radius of a compromised admin token.
+
+`clientPortalWriteLimiter` (same file) caps the client-portal write endpoints — `POST /api/client-portal/proposals/:token/calculate`, `POST /api/client-portal/proposals/:token/change-requests`, and `POST /api/client-portal/proposals/:token/change-requests/:id/cancel` — at 30 requests/minute, keyed by the authenticated `req.user.id` (falling back to `req.ip`) so one client cannot exhaust another's budget. The cap covers the live price-preview round-trips a portal session makes while keeping a runaway client from fan-firing admin notifications.
 
 ## Potion Planning Lab (post-booking only)
 
