@@ -205,6 +205,26 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
   }
 
   const composedLocation = composeVenueLocation(proposal) || proposal.event_location || null;
+  // Reconcile staffing slots to the proposal's bartender count (spec 6.1). Grow
+  // freely; on shrink never drop below already-approved (non-dropped) assignments,
+  // capping there and logging staffing_shrink_capped so admin resolves by hand.
+  const desiredSlots = Math.max(1, Number(proposal.num_bartenders) || 1);
+  const approvedRes = await db.query(
+    `SELECT COUNT(*)::int AS n FROM shift_requests
+       WHERE shift_id = (SELECT id FROM shifts WHERE proposal_id = $1 LIMIT 1)
+         AND status = 'approved' AND dropped_at IS NULL`,
+    [proposalId]
+  );
+  const approvedCount = approvedRes.rows[0].n;
+  const slots = Math.max(desiredSlots, approvedCount);
+  if (approvedCount > desiredSlots) {
+    await db.query(
+      `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details)
+       VALUES ($1, 'staffing_shrink_capped', 'system', $2)`,
+      [proposalId, JSON.stringify({ desired: desiredSlots, approved: approvedCount, kept: slots })]
+    );
+  }
+  const positionsNeeded = JSON.stringify(Array(slots).fill('Bartender'));
   // setup_minutes_before re-derives from the proposal each sync (same rule as
   // createEventShifts). Multi-shift events are skipped by the count !== 1 guard
   // above (by design — the admin manages those per shift via PUT /shifts/:id).
@@ -219,7 +239,8 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
       client_name = $5,
       event_type = $6,
       event_type_custom = $7,
-      setup_minutes_before = $9
+      setup_minutes_before = $9,
+      positions_needed = $10
     WHERE proposal_id = $8
     RETURNING *
   `, [
@@ -232,6 +253,7 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
     proposal.event_type_custom || null,
     proposalId,
     effectiveSetupMinutes(proposal),
+    positionsNeeded,
   ]);
   return upd.rows[0] || null;
 }
