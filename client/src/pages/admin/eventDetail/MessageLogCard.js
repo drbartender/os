@@ -22,18 +22,21 @@ export default function MessageLogCard({ messages }) {
         ) : (
           <ul className="message-log-list">
             {rows.map((m) => (
-              <li key={m.id} className="message-log-row">
+              <li key={m.id} className="message-log-row" tabIndex={0}>
                 <span className={`message-log-channel ${m.channel}`}>
                   {m.channel === 'sms' ? 'Text' : 'Email'}
                 </span>
                 <span className="message-log-label">{messageTypeLabel(m.message_type, m.subject)}</span>
                 <span className="message-log-recipient tiny muted">{m.recipient}</span>
                 <span className="message-log-time tiny muted">{timeLabel(m.created_at)}</span>
-                <span
-                  className={`message-log-status ${m.status === 'failed' ? 'danger' : 'ok'}`}
-                  title={m.status === 'failed' ? (m.error_message || 'Failed') : 'Sent'}
-                >
+                <span className={`message-log-status ${m.status === 'failed' ? 'danger' : 'ok'}`}>
                   {m.status === 'failed' ? 'Failed' : 'Sent'}
+                </span>
+                <span className="message-log-detail" role="tooltip">
+                  <span className="message-log-detail-text">{m.subject || messageTypeLabel(m.message_type, m.subject)}</span>
+                  {m.status === 'failed' && m.error_message ? (
+                    <span className="message-log-detail-error">Failed: {m.error_message}</span>
+                  ) : null}
                 </span>
               </li>
             ))}

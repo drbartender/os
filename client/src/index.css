@@ -16806,9 +16806,14 @@ html[data-app="staff"] body {
 
 /* Message log card (event detail) */
 .message-log-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.message-log-row { display: grid; grid-template-columns: auto 1fr auto auto auto; align-items: center; gap: 8px; font-size: 12.5px; }
+.message-log-row { display: grid; grid-template-columns: auto 1fr auto auto auto; align-items: center; gap: 8px; font-size: 12.5px; position: relative; cursor: help; }
 .message-log-channel { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 5px; border-radius: 4px; background: var(--surface-2, #eee); color: var(--text-muted, #666); }
 .message-log-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-log-recipient { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-log-status.ok { color: var(--success, #2e7d32); font-weight: 600; }
 .message-log-status.danger { color: var(--danger, #c62828); font-weight: 600; }
+/* Hover/focus reveal of the sent subject (email) / text preview (SMS) + failure reason. Single-line rows stay clean; the bubble overlays, no layout shift, no navigation. */
+.message-log-detail { display: none; position: absolute; left: 0; top: calc(100% + 3px); z-index: 30; max-width: 340px; padding: 7px 10px; border-radius: 6px; background: #fff; color: #1c1610; border: 1px solid rgba(0,0,0,0.12); box-shadow: 0 6px 18px rgba(0,0,0,0.22); font-size: 12px; line-height: 1.4; white-space: normal; word-break: break-word; }
+.message-log-row:hover .message-log-detail, .message-log-row:focus-within .message-log-detail { display: block; }
+.message-log-detail-text { display: block; }
+.message-log-detail-error { display: block; margin-top: 4px; color: #c62828; font-weight: 600; }
