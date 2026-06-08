@@ -17,42 +17,31 @@ import HomePage from './pages/website/HomePage';
 // new deploy replaces the hashed chunk files, a still-open tab requests an old
 // chunk hash; the SPA host serves index.html in place of the missing JS, so the
 // browser fails to parse it ("Unexpected token '<'") or raises a ChunkLoadError.
-// Reload ONCE to pull the fresh asset manifest — the attempt is recorded in
-// sessionStorage so it survives the reload; if storage is unavailable we skip
-// the reload rather than risk a loop on a genuinely broken (non-stale) build.
+// On a chunk-load failure we reload ONCE PER SESSION: the attempt is recorded in
+// sessionStorage (never cleared) so it survives the reload and a genuinely broken
+// (non-stale) build can't loop. A second deploy mid-session, or blocked storage,
+// falls back to the ErrorBoundary's manual refresh rather than risking a loop.
 // The local `lazy` shadows React's so every route definition below stays idiomatic.
 // (Sentry DRBARTENDER-CLIENT-4.)
 const CHUNK_RELOAD_KEY = 'chunk_reload_attempted';
-let chunkReloadInFlight = false;
 function lazy(factory) {
   return lazyBase(() =>
-    factory()
-      .then((mod) => {
-        try { window.sessionStorage.removeItem(CHUNK_RELOAD_KEY); } catch (_e) { /* ignore */ }
-        return mod;
-      })
-      .catch((err) => {
-        // Only reload if we can PERSIST the attempt across the reload. A stale
-        // chunk is fixed by reloading; a genuinely broken (non-stale) one would
-        // loop, so we gate the reload on a durable sessionStorage marker. If
-        // storage is blocked (the in-memory flag can't survive a reload), we
-        // skip the reload entirely and fall through to the ErrorBoundary.
-        let canReload = false;
-        try {
-          if (window.sessionStorage.getItem(CHUNK_RELOAD_KEY) !== '1') {
-            window.sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
-            canReload = !chunkReloadInFlight;
-          }
-        } catch (_e) {
-          canReload = false; // storage unavailable — no durable guard, don't risk a loop
+    factory().catch((err) => {
+      let canReload = false;
+      try {
+        if (window.sessionStorage.getItem(CHUNK_RELOAD_KEY) !== '1') {
+          window.sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
+          canReload = true;
         }
-        if (canReload) {
-          chunkReloadInFlight = true;
-          window.location.reload();
-          return new Promise(() => {}); // hold the Suspense fallback until reload lands
-        }
-        throw err; // already retried, or no durable guard — let the ErrorBoundary surface it
-      })
+      } catch (_e) {
+        canReload = false; // storage unavailable — no durable guard, don't risk a loop
+      }
+      if (canReload) {
+        window.location.reload();
+        return new Promise(() => {}); // hold the Suspense fallback until reload lands
+      }
+      throw err; // already reloaded this session, or no durable guard — let the ErrorBoundary surface it
+    })
   );
 }
 
