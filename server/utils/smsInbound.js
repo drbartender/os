@@ -107,8 +107,10 @@ async function lookupSender(fromPhone) {
  * Return the ids of every ACTIVE staff account whose contractor_profiles phone
  * matches an inbound number (by last-10 digits). A shared line (e.g. a company
  * Google Voice number) can map to several accounts; deactivated accounts are
- * excluded so a stale account can never win the match. Ordered most-recently-
- * updated first, the same order lookupSender uses for its single pick.
+ * excluded so a stale account can never win the match. DISTINCT guards against
+ * a duplicate profile row inflating the set (which would falsely read as
+ * ambiguous); LIMIT caps the fan-out so a placeholder/shared number spread
+ * across many rows cannot pile up enough work to blow the webhook timeout.
  *
  * @param {string} fromPhone - inbound E.164 number
  * @returns {Promise<number[]>} matching active user ids (may be empty)
@@ -117,12 +119,12 @@ async function findStaffCandidatesByPhone(fromPhone) {
   const key = last10(fromPhone);
   if (!key) return [];
   const r = await pool.query(
-    `SELECT u.id
+    `SELECT DISTINCT u.id
        FROM contractor_profiles cp
        JOIN users u ON u.id = cp.user_id
       WHERE RIGHT(REGEXP_REPLACE(cp.phone, '\\D', '', 'g'), 10) = $1
         AND u.onboarding_status IS DISTINCT FROM 'deactivated'
-      ORDER BY cp.updated_at DESC`,
+      LIMIT 25`,
     [key]
   );
   return r.rows.map((row) => row.id);
@@ -470,8 +472,11 @@ async function processInboundSms({ from, body, twilioSid }) {
     const code = detectResponseCode(text);
     if (code === 'confirm' || code === 'cant') {
       // A phone can match more than one active staff account (e.g. a shared
-      // company line). Disambiguate by which staffer actually has a matching
-      // upcoming approved shift; never guess when more than one does.
+      // company line). Re-resolve from scratch here rather than trusting
+      // sender.staffUserId (lookupSender's single most-recently-updated pick,
+      // which is exactly what mis-routed the original bug): disambiguate by
+      // which staffer actually has a matching upcoming approved shift, and
+      // never guess when more than one does.
       const candidates = await findStaffCandidatesByPhone(from);
       const resolved = await resolveShiftResponder(candidates);
 
@@ -493,21 +498,26 @@ async function processInboundSms({ from, body, twilioSid }) {
       }
 
       // code === 'cant'
-      if (resolved.status !== 'no_shift') {
-        const cant = await handleCant(resolved.staffUserId);
-        if (cant.ok) {
-          await alertStaffCant(cant);
-          return {
-            outcome: 'staff_cant',
-            reply: `Got it from Dr. Bartender: you are off the ${fmtDate(cant.eventDate)} shift${cant.clientName ? ' (' + cant.clientName + ')' : ''}. We will take it from here.`,
-          };
-        }
+      if (resolved.status === 'no_shift') {
+        await alertAdminEmail('Staff texted CANT but has no upcoming shift',
+          `A staff member texted CANT but the system found no approved upcoming shift for them. Inbound text: "${text}"`);
+        return { outcome: 'staff_cant_no_shift', reply: NO_CANT_SHIFT_REPLY };
       }
-      // No shift to release (or a rare race where it vanished between resolve
-      // and act): flag the admin so a human can sort it out.
-      await alertAdminEmail('Staff texted CANT but has no upcoming shift',
-        `A staff member texted CANT but the system found no approved upcoming shift for them. Inbound text: "${text}"`);
-      return { outcome: 'staff_cant_no_shift', reply: NO_CANT_SHIFT_REPLY };
+      const cant = await handleCant(resolved.staffUserId);
+      if (cant.ok) {
+        await alertStaffCant(cant);
+        return {
+          outcome: 'staff_cant',
+          reply: `Got it from Dr. Bartender: you are off the ${fmtDate(cant.eventDate)} shift${cant.clientName ? ' (' + cant.clientName + ')' : ''}. We will take it from here.`,
+        };
+      }
+      // The resolver saw a matching shift but handleCant did not: it was
+      // released or changed between the two reads (cover swap accepted, admin
+      // edit, etc.). Flag this distinctly so an admin is not sent chasing a
+      // "never had a shift" trail.
+      await alertAdminEmail('Staff CANT could not be applied (shift changed mid-request)',
+        `A staff member texted CANT and had a matching upcoming shift, but it was already released or changed before we could act. Inbound text: "${text}"`);
+      return { outcome: 'staff_cant_race', reply: NO_CANT_SHIFT_REPLY };
     }
     // Free-form staff text — route to admin, redirect the texter.
     await alertAdminEmail('Staff texted Dr. Bartender',
