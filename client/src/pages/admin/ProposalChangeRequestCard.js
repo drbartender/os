@@ -4,6 +4,20 @@ import { useToast } from '../../context/ToastContext';
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
 
+const CR_FIELD_LABELS = {
+  guest_count: 'Guests', event_duration_hours: 'Duration (hrs)', num_bars: 'Portable bars',
+  num_bartenders: 'Bartenders', event_date: 'Event date', event_start_time: 'Start time',
+  package_id: 'Package', venue_name: 'Venue', venue_street: 'Street', venue_city: 'City',
+  venue_state: 'State', venue_zip: 'ZIP', addon_ids: 'Add-ons',
+  addon_variants: 'Add-on options', addon_quantities: 'Add-on quantities',
+};
+const crFmt = (v) => {
+  if (v === null || v === undefined || v === '') return '—';
+  if (Array.isArray(v)) return v.length ? v.join(', ') : '—';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+};
+
 export default function ProposalChangeRequestCard({ proposalId, onChanged, onApply }) {
   const toast = useToast();
   const [requests, setRequests] = useState([]);
@@ -27,7 +41,15 @@ export default function ProposalChangeRequestCard({ proposalId, onChanged, onApp
         <div className="dl"><dt>Current total</dt><dd>{fmt(pv.current_total)}</dd>
           <dt>Estimated new total</dt><dd>{fmt(pv.estimated_total)}</dd>
           <dt>Client acknowledged</dt><dd>{fmt(open.acknowledged_total)}</dd></div>
-        <pre className="cr-diff">{JSON.stringify(open.requested_changes, null, 2)}</pre>
+        <div className="meta-k">Requested changes</div>
+        <div className="dl">
+          {Object.keys(open.requested_changes || {}).map(k => (
+            <React.Fragment key={k}>
+              <dt>{CR_FIELD_LABELS[k] || k}</dt>
+              <dd>{crFmt((open.baseline || {})[k])} → {crFmt(open.requested_changes[k])}</dd>
+            </React.Fragment>
+          ))}
+        </div>
         {open.note && <p><strong>Note:</strong> {open.note}</p>}
         {Number(pv.delta) < 0 && (
           <div className="client-alert client-alert-warning">
