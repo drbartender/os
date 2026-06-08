@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect } from 'react';
+import React, { Suspense, lazy as lazyBase, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate } from 'react-router-dom';
 import api from './utils/api';
 import { getHomePath } from './utils/userRoutes';
@@ -12,6 +12,39 @@ import SessionExpiryHandler from './components/SessionExpiryHandler';
 import Layout from './components/Layout';
 // HomePage stays eager — LCP-critical for the marketing site root.
 import HomePage from './pages/website/HomePage';
+
+// Wrap React.lazy so a stale code-split chunk after a deploy self-heals. When a
+// new deploy replaces the hashed chunk files, a still-open tab requests an old
+// chunk hash; the SPA host serves index.html in place of the missing JS, so the
+// browser fails to parse it ("Unexpected token '<'") or raises a ChunkLoadError.
+// Reload ONCE (guarded by sessionStorage + an in-memory flag so a genuinely
+// broken build can't loop) to pull the fresh asset manifest. The local `lazy`
+// shadows React's so every route definition below stays idiomatic.
+// (Sentry DRBARTENDER-CLIENT-4.)
+const CHUNK_RELOAD_KEY = 'chunk_reload_attempted';
+let chunkReloadInFlight = false;
+function lazy(factory) {
+  return lazyBase(() =>
+    factory()
+      .then((mod) => {
+        try { window.sessionStorage.removeItem(CHUNK_RELOAD_KEY); } catch (_e) { /* ignore */ }
+        return mod;
+      })
+      .catch((err) => {
+        let retried = chunkReloadInFlight;
+        try {
+          if (window.sessionStorage.getItem(CHUNK_RELOAD_KEY) === '1') retried = true;
+          else window.sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
+        } catch (_e) { /* sessionStorage unavailable — rely on the in-memory flag */ }
+        if (!retried) {
+          chunkReloadInFlight = true;
+          window.location.reload();
+          return new Promise(() => {}); // hold the Suspense fallback until reload lands
+        }
+        throw err; // already retried once — let the ErrorBoundary surface it
+      })
+  );
+}
 
 // Secondary public marketing routes — lazy so they don't bloat the initial bundle.
 const QuotePage = lazy(() => import('./pages/website/QuotePage'));
