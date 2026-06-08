@@ -11,6 +11,8 @@ const {
   applyOptIn,
   handleConfirm,
   handleCant,
+  findStaffCandidatesByPhone,
+  resolveShiftResponder,
 } = require('./smsInbound');
 
 test('detectOptKeyword > recognizes STOP and equivalents, case-insensitive', () => {
@@ -225,4 +227,110 @@ test('handleCant > returns ok:false reason no_shift when staff has no approved u
   const result = await handleCant(lsStaffUserId);
   assert.strictEqual(result.ok, false);
   assert.strictEqual(result.reason, 'no_shift');
+});
+
+// ---------------------------------------------------------------------------
+// Resolver hardening: active-account filter + multi-account disambiguation.
+// A phone can match more than one staff account (e.g. a shared company line).
+// ---------------------------------------------------------------------------
+
+async function mkStaff(email, onboardingStatus, phone) {
+  const u = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status)
+     VALUES ($1, 'x', 'staff', $2) RETURNING id`,
+    [email, onboardingStatus]
+  );
+  const id = u.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, phone) VALUES ($1, $2)`,
+    [id, phone]
+  );
+  return id;
+}
+
+async function mkApprovedShift(userId, daysOut) {
+  const sh = await pool.query(
+    `INSERT INTO shifts (event_date, start_time, status)
+     VALUES (CURRENT_DATE + ($1::int) * INTERVAL '1 day', '18:00', 'filled') RETURNING id`,
+    [daysOut]
+  );
+  const shiftId = sh.rows[0].id;
+  const sr = await pool.query(
+    `INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved') RETURNING id`,
+    [shiftId, userId]
+  );
+  return { shiftId, requestId: sr.rows[0].id };
+}
+
+async function cleanupStaff(ids) {
+  await pool.query('DELETE FROM shift_requests WHERE user_id = ANY($1::int[])', [ids]);
+  await pool.query('DELETE FROM contractor_profiles WHERE user_id = ANY($1::int[])', [ids]);
+  await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [ids]);
+}
+
+test('lookupSender > excludes a deactivated staff account', async () => {
+  const uid = await mkStaff('sms-rh-deactivated@example.com', 'deactivated', '3125550151');
+  try {
+    const r = await lookupSender('+13125550151');
+    assert.strictEqual(r.type, 'unknown');
+  } finally {
+    await cleanupStaff([uid]);
+  }
+});
+
+test('findStaffCandidatesByPhone > returns every active staffer sharing a number, excluding deactivated', async () => {
+  const a = await mkStaff('sms-rh-a@example.com', 'approved', '3125550150');
+  const b = await mkStaff('sms-rh-b@example.com', 'hired', '3125550150');
+  const dead = await mkStaff('sms-rh-dead@example.com', 'deactivated', '3125550150');
+  try {
+    const ids = await findStaffCandidatesByPhone('+13125550150');
+    assert.ok(ids.includes(a), 'includes active a');
+    assert.ok(ids.includes(b), 'includes active b');
+    assert.ok(!ids.includes(dead), 'excludes deactivated');
+    assert.strictEqual(ids.length, 2);
+  } finally {
+    await cleanupStaff([a, b, dead]);
+  }
+});
+
+test('resolveShiftResponder > ok when exactly one candidate has an upcoming approved shift', async () => {
+  const a = await mkStaff('sms-rh-one-a@example.com', 'approved', '3125550152');
+  const b = await mkStaff('sms-rh-one-b@example.com', 'approved', '3125550152');
+  const { shiftId, requestId } = await mkApprovedShift(a, 9);
+  try {
+    const res = await resolveShiftResponder([a, b]);
+    assert.strictEqual(res.status, 'ok');
+    assert.strictEqual(res.staffUserId, a);
+  } finally {
+    await pool.query('DELETE FROM shift_requests WHERE id = $1', [requestId]);
+    await pool.query('DELETE FROM shifts WHERE id = $1', [shiftId]);
+    await cleanupStaff([a, b]);
+  }
+});
+
+test('resolveShiftResponder > no_shift when no candidate has an upcoming approved shift', async () => {
+  const a = await mkStaff('sms-rh-none-a@example.com', 'approved', '3125550153');
+  const b = await mkStaff('sms-rh-none-b@example.com', 'approved', '3125550153');
+  try {
+    const res = await resolveShiftResponder([a, b]);
+    assert.strictEqual(res.status, 'no_shift');
+  } finally {
+    await cleanupStaff([a, b]);
+  }
+});
+
+test('resolveShiftResponder > ambiguous when multiple candidates have upcoming approved shifts', async () => {
+  const a = await mkStaff('sms-rh-amb-a@example.com', 'approved', '3125550154');
+  const b = await mkStaff('sms-rh-amb-b@example.com', 'approved', '3125550154');
+  const sa = await mkApprovedShift(a, 8);
+  const sb = await mkApprovedShift(b, 11);
+  try {
+    const res = await resolveShiftResponder([a, b]);
+    assert.strictEqual(res.status, 'ambiguous');
+    assert.deepStrictEqual([...res.userIds].sort((x, y) => x - y), [a, b].sort((x, y) => x - y));
+  } finally {
+    await pool.query('DELETE FROM shift_requests WHERE id = ANY($1::int[])', [[sa.requestId, sb.requestId]]);
+    await pool.query('DELETE FROM shifts WHERE id = ANY($1::int[])', [[sa.shiftId, sb.shiftId]]);
+    await cleanupStaff([a, b]);
+  }
 });

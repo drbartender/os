@@ -10,6 +10,14 @@ const { getEventTypeLabel } = require('./eventTypes');
 const STOP_WORDS = new Set(['stop', 'unsubscribe', 'end', 'cancel', 'quit']);
 const START_WORDS = new Set(['start', 'unstop', 'yes']);
 
+// Shared "talk to a human" line for replies where this automated number cannot
+// act. The 312 line is the company Google Voice number staffed by Dallas/Zul.
+const HUMAN_CONTACT_LINE = 'contact Dallas or Zul at (312) 588-9401';
+const AMBIGUOUS_RESPONSE_REPLY = `Dr. Bartender: we couldn't match this text to a single shift. Please ${HUMAN_CONTACT_LINE}.`;
+const NO_CONFIRM_SHIFT_REPLY = `Dr. Bartender: we did not find an upcoming shift to confirm for you. Please ${HUMAN_CONTACT_LINE} if that seems wrong.`;
+const NO_CANT_SHIFT_REPLY = `Dr. Bartender: we did not find an upcoming shift to release for you. Please ${HUMAN_CONTACT_LINE} if that seems wrong.`;
+const FREEFORM_STAFF_REPLY = `Dr. Bartender: this number is automated. For anything else, please ${HUMAN_CONTACT_LINE}.`;
+
 /**
  * Classify a message body as an opt-out / opt-in keyword.
  * Matches only when the ENTIRE trimmed body is a single keyword (Twilio's
@@ -85,6 +93,7 @@ async function lookupSender(fromPhone) {
      FROM contractor_profiles cp
      JOIN users u ON u.id = cp.user_id
      WHERE RIGHT(REGEXP_REPLACE(cp.phone, '\\D', '', 'g'), 10) = $1
+       AND u.onboarding_status IS DISTINCT FROM 'deactivated'
      ORDER BY cp.updated_at DESC
      LIMIT 1`,
     [key]
@@ -92,6 +101,31 @@ async function lookupSender(fromPhone) {
   if (s.rows[0]) return { type: 'staff', staffUserId: s.rows[0].id, staff: s.rows[0] };
 
   return { type: 'unknown' };
+}
+
+/**
+ * Return the ids of every ACTIVE staff account whose contractor_profiles phone
+ * matches an inbound number (by last-10 digits). A shared line (e.g. a company
+ * Google Voice number) can map to several accounts; deactivated accounts are
+ * excluded so a stale account can never win the match. Ordered most-recently-
+ * updated first, the same order lookupSender uses for its single pick.
+ *
+ * @param {string} fromPhone - inbound E.164 number
+ * @returns {Promise<number[]>} matching active user ids (may be empty)
+ */
+async function findStaffCandidatesByPhone(fromPhone) {
+  const key = last10(fromPhone);
+  if (!key) return [];
+  const r = await pool.query(
+    `SELECT u.id
+       FROM contractor_profiles cp
+       JOIN users u ON u.id = cp.user_id
+      WHERE RIGHT(REGEXP_REPLACE(cp.phone, '\\D', '', 'g'), 10) = $1
+        AND u.onboarding_status IS DISTINCT FROM 'deactivated'
+      ORDER BY cp.updated_at DESC`,
+    [key]
+  );
+  return r.rows.map((row) => row.id);
 }
 
 /**
@@ -200,6 +234,26 @@ async function findNearestApprovedShift(staffUserId) {
     [staffUserId]
   );
   return r.rows[0] || null;
+}
+
+/**
+ * Decide which staff candidate a CONFIRM/CANT applies to when a number matches
+ * more than one active account. The signal is "who has a matching upcoming
+ * approved shift": exactly one such candidate -> act on them; none -> there is
+ * nothing to act on; more than one -> refuse to guess and let a human resolve.
+ *
+ * @param {number[]} candidateIds
+ * @returns {Promise<{status:'ok', staffUserId:number} | {status:'no_shift'} | {status:'ambiguous', userIds:number[]}>}
+ */
+async function resolveShiftResponder(candidateIds) {
+  const withShift = [];
+  for (const uid of candidateIds || []) {
+    const shift = await findNearestApprovedShift(uid);
+    if (shift) withShift.push(uid);
+  }
+  if (withShift.length === 1) return { status: 'ok', staffUserId: withShift[0] };
+  if (withShift.length === 0) return { status: 'no_shift' };
+  return { status: 'ambiguous', userIds: withShift };
 }
 
 /**
@@ -414,35 +468,53 @@ async function processInboundSms({ from, body, twilioSid }) {
 
   if (sender.type === 'staff') {
     const code = detectResponseCode(text);
-    if (code === 'confirm') {
-      const r = await handleConfirm(sender.staffUserId);
-      const reply = r.ok
-        ? `Confirmed from Dr. Bartender: you're acknowledged for the ${fmtDate(r.eventDate)} shift${r.clientName ? ' (' + r.clientName + ')' : ''}. See you there.`
-        : 'Dr. Bartender: we did not find an upcoming shift to confirm for you. Reach out if that seems wrong.';
-      return { outcome: r.ok ? 'staff_confirm' : 'staff_confirm_no_shift', reply };
-    }
-    if (code === 'cant') {
-      const cant = await handleCant(sender.staffUserId);
-      if (cant.ok) {
-        await alertStaffCant(cant);
-        return {
-          outcome: 'staff_cant',
-          reply: `Got it from Dr. Bartender: you are off the ${fmtDate(cant.eventDate)} shift${cant.clientName ? ' (' + cant.clientName + ')' : ''}. We will take it from here.`,
-        };
+    if (code === 'confirm' || code === 'cant') {
+      // A phone can match more than one active staff account (e.g. a shared
+      // company line). Disambiguate by which staffer actually has a matching
+      // upcoming approved shift; never guess when more than one does.
+      const candidates = await findStaffCandidatesByPhone(from);
+      const resolved = await resolveShiftResponder(candidates);
+
+      if (resolved.status === 'ambiguous') {
+        await alertAdminEmail(`Ambiguous staff ${code.toUpperCase()} text`,
+          `A "${text}" text came from a number matching multiple active staff with upcoming shifts (user ids ${resolved.userIds.join(', ')}). No shift was changed; please follow up.`);
+        return { outcome: `staff_${code}_ambiguous`, reply: AMBIGUOUS_RESPONSE_REPLY };
       }
+
+      if (code === 'confirm') {
+        if (resolved.status === 'no_shift') {
+          return { outcome: 'staff_confirm_no_shift', reply: NO_CONFIRM_SHIFT_REPLY };
+        }
+        const r = await handleConfirm(resolved.staffUserId);
+        const reply = r.ok
+          ? `Confirmed from Dr. Bartender: you're acknowledged for the ${fmtDate(r.eventDate)} shift${r.clientName ? ' (' + r.clientName + ')' : ''}. See you there.`
+          : NO_CONFIRM_SHIFT_REPLY;
+        return { outcome: r.ok ? 'staff_confirm' : 'staff_confirm_no_shift', reply };
+      }
+
+      // code === 'cant'
+      if (resolved.status !== 'no_shift') {
+        const cant = await handleCant(resolved.staffUserId);
+        if (cant.ok) {
+          await alertStaffCant(cant);
+          return {
+            outcome: 'staff_cant',
+            reply: `Got it from Dr. Bartender: you are off the ${fmtDate(cant.eventDate)} shift${cant.clientName ? ' (' + cant.clientName + ')' : ''}. We will take it from here.`,
+          };
+        }
+      }
+      // No shift to release (or a rare race where it vanished between resolve
+      // and act): flag the admin so a human can sort it out.
       await alertAdminEmail('Staff texted CANT but has no upcoming shift',
         `A staff member texted CANT but the system found no approved upcoming shift for them. Inbound text: "${text}"`);
-      return {
-        outcome: 'staff_cant_no_shift',
-        reply: 'Dr. Bartender: we did not find an upcoming shift to release for you. Reach out if that seems wrong.',
-      };
+      return { outcome: 'staff_cant_no_shift', reply: NO_CANT_SHIFT_REPLY };
     }
     // Free-form staff text — route to admin, redirect the texter.
     await alertAdminEmail('Staff texted Dr. Bartender',
       `A staff member texted: "${text}". No response code matched, so no system action was taken.`);
     return {
       outcome: 'staff_freeform',
-      reply: 'Dr. Bartender: this number is automated. For anything else, call or text Dallas directly.',
+      reply: FREEFORM_STAFF_REPLY,
     };
   }
 
@@ -456,6 +528,8 @@ module.exports = {
   detectOptKeyword,
   detectResponseCode,
   lookupSender,
+  findStaffCandidatesByPhone,
+  resolveShiftResponder,
   recordInboundMessage,
   applyOptOut,
   applyOptIn,
