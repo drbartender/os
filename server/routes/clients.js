@@ -66,7 +66,7 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
     // A duplicate email trips the partial-unique idx_clients_email_unique.
     // Mirror auth.js: surface a field-level validation error instead of letting
     // the raw 23505 fall through to a generic 500 (Sentry DRBARTENDER-SERVER-10).
-    if (err.code === '23505' && (err.constraint || '').includes('email')) {
+    if (err.code === '23505' && err.constraint === 'idx_clients_email_unique') {
       throw new ValidationError({ email: 'A client with this email already exists.' });
     }
     throw err;
@@ -117,7 +117,7 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
     // Editing a client's email to one another client already owns trips the
     // partial-unique idx_clients_email_unique — surface it as a field error
     // rather than a raw 500 (Sentry DRBARTENDER-SERVER-10).
-    if (err.code === '23505' && (err.constraint || '').includes('email')) {
+    if (err.code === '23505' && err.constraint === 'idx_clients_email_unique') {
       throw new ValidationError({ email: 'A client with this email already exists.' });
     }
     throw err;
