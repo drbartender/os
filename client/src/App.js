@@ -17,9 +17,10 @@ import HomePage from './pages/website/HomePage';
 // new deploy replaces the hashed chunk files, a still-open tab requests an old
 // chunk hash; the SPA host serves index.html in place of the missing JS, so the
 // browser fails to parse it ("Unexpected token '<'") or raises a ChunkLoadError.
-// Reload ONCE (guarded by sessionStorage + an in-memory flag so a genuinely
-// broken build can't loop) to pull the fresh asset manifest. The local `lazy`
-// shadows React's so every route definition below stays idiomatic.
+// Reload ONCE to pull the fresh asset manifest — the attempt is recorded in
+// sessionStorage so it survives the reload; if storage is unavailable we skip
+// the reload rather than risk a loop on a genuinely broken (non-stale) build.
+// The local `lazy` shadows React's so every route definition below stays idiomatic.
 // (Sentry DRBARTENDER-CLIENT-4.)
 const CHUNK_RELOAD_KEY = 'chunk_reload_attempted';
 let chunkReloadInFlight = false;
@@ -31,17 +32,26 @@ function lazy(factory) {
         return mod;
       })
       .catch((err) => {
-        let retried = chunkReloadInFlight;
+        // Only reload if we can PERSIST the attempt across the reload. A stale
+        // chunk is fixed by reloading; a genuinely broken (non-stale) one would
+        // loop, so we gate the reload on a durable sessionStorage marker. If
+        // storage is blocked (the in-memory flag can't survive a reload), we
+        // skip the reload entirely and fall through to the ErrorBoundary.
+        let canReload = false;
         try {
-          if (window.sessionStorage.getItem(CHUNK_RELOAD_KEY) === '1') retried = true;
-          else window.sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
-        } catch (_e) { /* sessionStorage unavailable — rely on the in-memory flag */ }
-        if (!retried) {
+          if (window.sessionStorage.getItem(CHUNK_RELOAD_KEY) !== '1') {
+            window.sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
+            canReload = !chunkReloadInFlight;
+          }
+        } catch (_e) {
+          canReload = false; // storage unavailable — no durable guard, don't risk a loop
+        }
+        if (canReload) {
           chunkReloadInFlight = true;
           window.location.reload();
           return new Promise(() => {}); // hold the Suspense fallback until reload lands
         }
-        throw err; // already retried once — let the ErrorBoundary surface it
+        throw err; // already retried, or no durable guard — let the ErrorBoundary surface it
       })
   );
 }
