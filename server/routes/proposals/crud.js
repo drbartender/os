@@ -923,7 +923,7 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
         const crRow = await pool.query('SELECT * FROM proposal_change_requests WHERE id = $1', [change_request_id]);
         if (crRow.rows[0] && crRow.rows[0].status === 'approved') {
           const freshP = await pool.query('SELECT * FROM proposals WHERE id = $1', [req.params.id]);
-          await notifyClientOfDecision(crRow.rows[0], freshP.rows[0], 'approved');
+          if (freshP.rows[0]) await notifyClientOfDecision(crRow.rows[0], freshP.rows[0], 'approved');
         }
       } catch (notifyErr) {
         if (process.env.SENTRY_DSN_SERVER) {
