@@ -36,6 +36,13 @@ function resolveEventTimezone(proposal) {
  * @returns {string}
  */
 function formatEventLocalTime(date, tz, options = {}) {
+  // Backstop against an Invalid Date reaching Intl.format, which would throw the
+  // opaque "RangeError: Invalid time value" with no clue which caller or field
+  // produced it (Sentry DRBARTENDER-SERVER-Z — a null event_date built
+  // `new Date('nullT12:00:00Z')`). Fail with a self-identifying message instead.
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    throw new RangeError(`formatEventLocalTime: invalid date value (received ${String(date)})`);
+  }
   return new Intl.DateTimeFormat('en-US', {
     ...options,
     timeZone: tz,

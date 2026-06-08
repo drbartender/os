@@ -57,5 +57,24 @@ describe('eventTimezone', () => {
       const out = formatEventLocalTime(date, 'America/Chicago', { dateStyle: 'long' });
       assert.match(out, /June 15, 2026/);
     });
+
+    test('throws a clear, identifiable error for an Invalid Date (regression: SERVER-Z)', () => {
+      // Sentry DRBARTENDER-SERVER-Z: a null event_date produced
+      // `new Date('nullT12:00:00Z')` (Invalid Date) which made Intl.format throw
+      // the opaque "Invalid time value" deep inside the scheduled-message
+      // dispatcher. The guard must turn that into a self-identifying error.
+      assert.throws(
+        () => formatEventLocalTime(new Date('not-a-real-date'), 'America/Chicago', { dateStyle: 'long' }),
+        /formatEventLocalTime: invalid date/i
+      );
+      assert.throws(
+        () => formatEventLocalTime(new Date(NaN), 'America/Chicago', { timeStyle: 'short' }),
+        /formatEventLocalTime: invalid date/i
+      );
+      assert.throws(
+        () => formatEventLocalTime('2026-06-15', 'America/Chicago'),
+        /formatEventLocalTime: invalid date/i
+      );
+    });
   });
 });

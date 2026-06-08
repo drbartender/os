@@ -42,7 +42,15 @@ function formatEventDateLong(proposal) {
   const tz = resolveEventTimezone(proposal);
   // event_date is YYYY-MM-DD; combine with noon so we don't accidentally fall
   // back a day under negative-offset TZs.
-  const d = new Date(String(proposal.event_date).slice(0, 10) + 'T12:00:00Z');
+  // Validate the source field first: a null/blank/malformed event_date would
+  // build an Invalid Date and crash a scheduled reminder mid-dispatch
+  // (Sentry DRBARTENDER-SERVER-Z). Fail with a message naming the field so the
+  // dispatcher's Sentry capture (which carries the proposal id) is actionable.
+  const raw = (proposal && proposal.event_date) ? String(proposal.event_date).slice(0, 10) : '';
+  const d = new Date(raw + 'T12:00:00Z');
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`formatEventDateLong: invalid or missing event_date (received ${JSON.stringify(proposal && proposal.event_date)})`);
+  }
   return formatEventLocalTime(d, tz, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
 }
 
