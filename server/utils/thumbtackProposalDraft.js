@@ -2,10 +2,24 @@ const { EVENT_TYPES } = require('./eventTypes');
 const { pool } = require('../db');
 const { calculateProposal } = require('./pricingEngine');
 const { insertProposalRecord } = require('./proposalInsert');
+const { VENUE_STATES } = require('./venueAddress');
 
 const CORE_REACTION_SLUG = 'the-core-reaction';
 
 const ET_TZ = 'America/New_York';
+
+// Thumbtack sends a state name OR 2-letter code that may be outside the service
+// area (IL/IN/MI/MN/WI). Only persist an allowlisted state — anything else stays
+// null so the admin edit form's state dropdown isn't poisoned (a non-allowlisted
+// value makes validateVenue reject EVERY subsequent edit on the draft). The raw
+// location is kept in admin_notes so the operator still sees the lead's area.
+const STATE_CODE_TO_NAME = { IL: 'Illinois', IN: 'Indiana', MI: 'Michigan', MN: 'Minnesota', WI: 'Wisconsin' };
+function normalizeVenueState(raw) {
+  if (!raw) return null;
+  const v = String(raw).trim();
+  if (VENUE_STATES.includes(v)) return v;
+  return STATE_CODE_TO_NAME[v.toUpperCase()] || null;
+}
 
 // Ordered, specific-before-generic; first substring hit wins. Every id MUST
 // exist in EVENT_TYPES (validated by mapEventType's lookup).
@@ -76,6 +90,7 @@ function buildAdminNotes(lead) {
   const lines = [];
   lines.push(`Auto-created from Thumbtack lead (negotiation ${lead.negotiationId || 'unknown'}).`);
   lines.push(`Category: ${lead.category || 'N/A'}`);
+  lines.push(`Customer location: ${[lead.locationCity, lead.locationState, lead.locationZip].filter(Boolean).join(' ') || 'N/A'}`);
   lines.push(`Lead price / charge state: ${lead.leadPrice || 'N/A'} / ${lead.chargeState || 'N/A'}`);
   lines.push(`Event date as received: ${lead.eventDate || 'not specified'}`);
   lines.push('');
@@ -138,7 +153,7 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
         name: null,
         street: lead.locationAddress || null,
         city: lead.locationCity || null,
-        state: lead.locationState || null,
+        state: normalizeVenueState(lead.locationState),
         zip: lead.locationZip || null,
       },
       eventLocationFallback: null,

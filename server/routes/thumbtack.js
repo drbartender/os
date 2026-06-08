@@ -3,7 +3,6 @@ const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { sendEmail } = require('../utils/email');
 const { newThumbtackLeadAdmin, newThumbtackMessageAdmin, newThumbtackReviewAdmin } = require('../utils/emailTemplates');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { ADMIN_URL } = require('../utils/urls');
@@ -75,15 +74,17 @@ router.use(verifyWebhook);
 
 /** Truncate untrusted strings to prevent oversized DB inserts */
 function truncate(str, max = 5000) {
-  if (!str) return str;
-  return str.length > max ? str.slice(0, max) : str;
+  if (str === null || str === undefined) return null;
+  const v = typeof str === 'string' ? str : String(str);
+  return v.length > max ? v.slice(0, max) : v;
 }
 
 /** Try to extract guest count from Thumbtack details Q&A */
 function extractGuestCount(details) {
   if (!Array.isArray(details)) return null;
   for (const d of details) {
-    const q = (d.question || '').toLowerCase();
+    if (!d || typeof d !== 'object') continue;
+    const q = String(d.question || '').toLowerCase();
     if (q.includes('guest') || q.includes('attendee') || q.includes('people') || q.includes('how many')) {
       const num = parseInt(d.answer, 10);
       if (!isNaN(num) && num > 0) return num;
@@ -366,21 +367,26 @@ router.post('/messages', asyncHandler(async (req, res) => {
     // Notify admin of customer messages (non-blocking)
     if (msg.fromType === 'Customer' || !msg.fromType) {
       try {
-        const adminEmail = process.env.ADMIN_EMAIL;
-        if (adminEmail) {
-          const lead = await pool.query(
-            'SELECT client_id, customer_name FROM thumbtack_leads WHERE negotiation_id = $1',
-            [msg.negotiationId]
-          );
-          const clientId = lead.rows[0]?.client_id;
-          const adminUrl = clientId ? `${ADMIN_URL}/clients/${clientId}` : null;
-          const tpl = newThumbtackMessageAdmin({
-            customerName: lead.rows[0]?.customer_name || msg.senderName || 'Unknown',
-            text: msg.text,
-            adminUrl,
-          });
-          await sendEmail({ to: adminEmail, ...tpl });
-        }
+        const lead = await pool.query(
+          'SELECT client_id, customer_name FROM thumbtack_leads WHERE negotiation_id = $1',
+          [msg.negotiationId]
+        );
+        const clientId = lead.rows[0]?.client_id;
+        const adminUrl = clientId ? `${ADMIN_URL}/clients/${clientId}` : null;
+        const tpl = newThumbtackMessageAdmin({
+          customerName: lead.rows[0]?.customer_name || msg.senderName || 'Unknown',
+          text: msg.text,
+          adminUrl,
+        });
+        // Route through notifyAdminCategory (like /leads) so the routine_thumbtack
+        // preference is honored and every opted-in admin/manager is notified — not
+        // just ADMIN_EMAIL.
+        await notifyAdminCategory({
+          category: 'routine_thumbtack',
+          subject: tpl.subject,
+          emailHtml: tpl.html,
+          emailText: tpl.text,
+        });
       } catch (emailErr) {
         if (process.env.SENTRY_DSN_SERVER) {
           Sentry.captureException(emailErr, {
@@ -439,15 +445,17 @@ router.post('/reviews', asyncHandler(async (req, res) => {
 
     // Notify admin (non-blocking)
     try {
-      const adminEmail = process.env.ADMIN_EMAIL;
-      if (adminEmail) {
-        const tpl = newThumbtackReviewAdmin({
-          reviewerName: review.reviewerName,
-          rating: review.rating,
-          reviewText: review.reviewText,
-        });
-        await sendEmail({ to: adminEmail, ...tpl });
-      }
+      const tpl = newThumbtackReviewAdmin({
+        reviewerName: review.reviewerName,
+        rating: review.rating,
+        reviewText: review.reviewText,
+      });
+      await notifyAdminCategory({
+        category: 'routine_thumbtack',
+        subject: tpl.subject,
+        emailHtml: tpl.html,
+        emailText: tpl.text,
+      });
     } catch (emailErr) {
       if (process.env.SENTRY_DSN_SERVER) {
         Sentry.captureException(emailErr, {

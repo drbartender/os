@@ -89,7 +89,12 @@ test('createDraftProposalFromLead: creates a $350 Core Reaction draft and links 
   assert.equal(Number(row.total_price), 350);   // service_only, num_bars 0 => no bar fee
   assert.equal(row.event_type, 'wedding-reception');
   assert.equal(row.event_type_category, 'wedding_related');
-  assert.ok(row.event_location && row.event_location.includes('Tampa') && row.event_location.includes('FL'), 'event_location should be composed from the venue fields');
+  // Out-of-service-area state (FL) normalizes to null so it can't poison the admin
+  // edit form's state dropdown; the city/street still compose event_location, and
+  // the raw lead location (incl. FL) is preserved in admin_notes for the operator.
+  assert.ok(row.event_location && row.event_location.includes('Tampa'), 'event_location composed from the venue city/street');
+  assert.equal(row.venue_state, null, 'out-of-area state normalized to null');
+  assert.ok((row.admin_notes || '').includes('FL'), 'raw lead location (FL) preserved in admin_notes');
   assert.match(row.admin_notes || '', /Auto-created from Thumbtack/);
 
   const lead2 = await pool.query('SELECT proposal_id FROM thumbtack_leads WHERE negotiation_id = $1', [negotiationId]);
