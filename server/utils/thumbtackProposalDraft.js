@@ -65,8 +65,11 @@ function toEtDateAndTime(ts) {
   const eventDate = new Intl.DateTimeFormat('en-CA', {
     timeZone: ET_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(d); // en-CA => YYYY-MM-DD
-  const eventStartTime = new Intl.DateTimeFormat('en-US', {
-    timeZone: ET_TZ, hour: 'numeric', minute: '2-digit', hour12: true,
+  // 24-hour HH:MM, the canonical event_start_time format (the manual TimePicker
+  // stores e.g. '17:00'). Downstream formatters split on ':' and Number()-coerce
+  // the parts, so a 12-hour 'H:MM AM/PM' string renders as '4:NaN AM'.
+  const eventStartTime = new Intl.DateTimeFormat('en-GB', {
+    timeZone: ET_TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
   }).format(d);
   return { eventDate, eventStartTime };
 }

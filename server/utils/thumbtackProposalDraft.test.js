@@ -25,11 +25,19 @@ test('mapEventType: no match returns nulls', () => {
   assert.equal(r.eventTypeCategory, null);
 });
 
-test('toEtDateAndTime: late-evening UTC stays on the ET calendar day', () => {
+test('toEtDateAndTime: late-evening UTC stays on the ET calendar day, 24h HH:MM', () => {
   // 2026-06-21T01:00:00Z is 2026-06-20 21:00 EDT
   const r = toEtDateAndTime('2026-06-21T01:00:00Z');
   assert.equal(r.eventDate, '2026-06-20');
-  assert.match(r.eventStartTime, /9:00\s?PM/i);
+  // event_start_time is the canonical 24-hour HH:MM (matches the manual
+  // TimePicker, e.g. '17:00'). A 12-hour 'H:MM AM/PM' string makes downstream
+  // formatters (ProposalDetail t.split(':').map(Number)) render '4:NaN AM'.
+  assert.equal(r.eventStartTime, '21:00');
+});
+
+test('toEtDateAndTime: afternoon + midnight produce 24h HH:MM', () => {
+  assert.equal(toEtDateAndTime('2026-06-21T20:00:00Z').eventStartTime, '16:00'); // 4 PM EDT
+  assert.equal(toEtDateAndTime('2026-06-21T04:00:00Z').eventStartTime, '00:00'); // midnight ET
 });
 
 test('toEtDateAndTime: null input yields nulls', () => {
