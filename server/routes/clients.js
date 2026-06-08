@@ -8,12 +8,12 @@ const router = express.Router();
 
 const VALID_SOURCES = ['direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'other'];
 
-// Normalize email to trimmed lowercase (mirrors clientDedup.js / clientAuth.js)
-// so the case-sensitive partial-unique idx_clients_email_unique actually rejects
+// Normalize email to trimmed lowercase (mirrors clientDedup.js) so the
+// case-sensitive partial-unique idx_clients_email_unique actually rejects
 // case-variant duplicates ('Bob@x' vs 'bob@x'), and so this route stays consistent
-// with every other clients.email write path. Blank/whitespace → null (no email).
+// with every other clients.email write path. Non-string/blank/whitespace → null.
 const normalizeEmail = (email) =>
-  (email && String(email).trim()) ? String(email).trim().toLowerCase() : null;
+  (typeof email === 'string' && email.trim()) ? email.trim().toLowerCase() : null;
 
 /** GET /api/clients — list all clients with per-client aggregates.
  *  `events_count` counts paid/confirmed/completed proposals; `lifetime_value`
