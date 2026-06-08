@@ -5,7 +5,10 @@ const { insertProposalRecord } = require('./proposalInsert');
 
 const CORE_REACTION_SLUG = 'the-core-reaction';
 
-const ET_TZ = 'America/New_York';
+// Dr. Bartender operates in Central time (Chicago metro); proposals.event_timezone
+// defaults to 'America/Chicago'. Thumbtack sends event times in UTC, so convert to
+// Central to get the local event date + time the customer actually chose.
+const EVENT_TZ = 'America/Chicago';
 
 // Ordered, specific-before-generic; first substring hit wins. Every id MUST
 // exist in EVENT_TYPES (validated by mapEventType's lookup).
@@ -71,19 +74,19 @@ function leadNeedsBar(lead) {
   return hay.includes('bring the bar') || hay.includes('bring a bar');
 }
 
-/** UTC timestamp -> { eventDate: 'YYYY-MM-DD', eventStartTime: '6:00 PM' } in ET. */
-function toEtDateAndTime(ts) {
+/** UTC timestamp -> { eventDate: 'YYYY-MM-DD', eventStartTime: 'HH:MM' (24h) } in Central time. */
+function toEventDateAndTime(ts) {
   if (!ts) return { eventDate: null, eventStartTime: null };
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return { eventDate: null, eventStartTime: null };
   const eventDate = new Intl.DateTimeFormat('en-CA', {
-    timeZone: ET_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    timeZone: EVENT_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(d); // en-CA => YYYY-MM-DD
   // 24-hour HH:MM, the canonical event_start_time format (the manual TimePicker
   // stores e.g. '17:00'). Downstream formatters split on ':' and Number()-coerce
   // the parts, so a 12-hour 'H:MM AM/PM' string renders as '4:NaN AM'.
   const eventStartTime = new Intl.DateTimeFormat('en-GB', {
-    timeZone: ET_TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    timeZone: EVENT_TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
   }).format(d);
   return { eventDate, eventStartTime };
 }
@@ -148,7 +151,7 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
     });
 
     const { eventType, eventTypeCategory } = mapEventType(lead);
-    const { eventDate, eventStartTime } = toEtDateAndTime(lead.eventDate);
+    const { eventDate, eventStartTime } = toEventDateAndTime(lead.eventDate);
 
     const proposal = await insertProposalRecord(dbClient, {
       clientId,
@@ -198,4 +201,4 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
   }
 }
 
-module.exports = { mapEventType, toEtDateAndTime, buildAdminNotes, leadNeedsBar, createDraftProposalFromLead };
+module.exports = { mapEventType, toEventDateAndTime, buildAdminNotes, leadNeedsBar, createDraftProposalFromLead };

@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { mapEventType, toEtDateAndTime, buildAdminNotes, leadNeedsBar } = require('./thumbtackProposalDraft');
+const { mapEventType, toEventDateAndTime, buildAdminNotes, leadNeedsBar } = require('./thumbtackProposalDraft');
 
 test('mapEventType: maps wedding category to wedding-reception + category', () => {
   const r = mapEventType({ category: 'Wedding Bartending', details: [] });
@@ -25,23 +25,25 @@ test('mapEventType: no match returns nulls', () => {
   assert.equal(r.eventTypeCategory, null);
 });
 
-test('toEtDateAndTime: late-evening UTC stays on the ET calendar day, 24h HH:MM', () => {
-  // 2026-06-21T01:00:00Z is 2026-06-20 21:00 EDT
-  const r = toEtDateAndTime('2026-06-21T01:00:00Z');
+test('toEventDateAndTime: late-evening UTC stays on the Central calendar day, 24h HH:MM', () => {
+  // 2026-06-21T01:00:00Z is 2026-06-20 20:00 CDT (Central = proposals.event_timezone default)
+  const r = toEventDateAndTime('2026-06-21T01:00:00Z');
   assert.equal(r.eventDate, '2026-06-20');
-  // event_start_time is the canonical 24-hour HH:MM (matches the manual
-  // TimePicker, e.g. '17:00'). A 12-hour 'H:MM AM/PM' string makes downstream
-  // formatters (ProposalDetail t.split(':').map(Number)) render '4:NaN AM'.
-  assert.equal(r.eventStartTime, '21:00');
+  // canonical 24-hour HH:MM in Central time (matches the manual TimePicker, e.g.
+  // '17:00'). A 12-hour 'H:MM AM/PM' string makes downstream formatters
+  // (ProposalDetail t.split(':').map(Number)) render '4:NaN AM'.
+  assert.equal(r.eventStartTime, '20:00');
 });
 
-test('toEtDateAndTime: afternoon + midnight produce 24h HH:MM', () => {
-  assert.equal(toEtDateAndTime('2026-06-21T20:00:00Z').eventStartTime, '16:00'); // 4 PM EDT
-  assert.equal(toEtDateAndTime('2026-06-21T04:00:00Z').eventStartTime, '00:00'); // midnight ET
+test('toEventDateAndTime: Central conversion (Ruta) + day boundary', () => {
+  // Ruta: Thumbtack proposedTimes 23:00Z => 6:00 PM Central (matches the customer's stated time)
+  assert.deepEqual(toEventDateAndTime('2026-07-31T23:00:00Z'), { eventDate: '2026-07-31', eventStartTime: '18:00' });
+  // 04:00Z stays on the prior Central day at 11 PM (would be next-day midnight in ET)
+  assert.deepEqual(toEventDateAndTime('2026-06-22T04:00:00Z'), { eventDate: '2026-06-21', eventStartTime: '23:00' });
 });
 
-test('toEtDateAndTime: null input yields nulls', () => {
-  assert.deepEqual(toEtDateAndTime(null), { eventDate: null, eventStartTime: null });
+test('toEventDateAndTime: null input yields nulls', () => {
+  assert.deepEqual(toEventDateAndTime(null), { eventDate: null, eventStartTime: null });
 });
 
 test('buildAdminNotes: includes negotiation, category, description, Q&A', () => {
