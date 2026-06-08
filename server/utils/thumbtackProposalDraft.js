@@ -57,6 +57,20 @@ function mapEventType(lead) {
   return { eventType: null, eventTypeCategory: null };
 }
 
+/**
+ * True when the Thumbtack lead's "Bar availability" answer asks us to supply the
+ * bar (e.g. "Bartender will need to bring the bar"). The customer then needs a
+ * bar rented, so the draft sets num_bars=1 to add the first_bar_fee.
+ */
+function leadNeedsBar(lead) {
+  const details = Array.isArray(lead.details) ? lead.details : [];
+  const hay = [
+    lead.description || '',
+    ...details.map(d => `${d.question || ''} ${d.answer || ''}`),
+  ].join(' ').toLowerCase();
+  return hay.includes('bring the bar') || hay.includes('bring a bar');
+}
+
 /** UTC timestamp -> { eventDate: 'YYYY-MM-DD', eventStartTime: '6:00 PM' } in ET. */
 function toEtDateAndTime(ts) {
   if (!ts) return { eventDate: null, eventStartTime: null };
@@ -119,10 +133,12 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
     const pkg = pkgRes.rows[0];
     if (!pkg) throw new Error(`Package ${CORE_REACTION_SLUG} not found`);
 
-    // service_only packages rent no physical bar; num_bars MUST be 0 or the
-    // engine adds first_bar_fee (Number(pkg.first_bar_fee || 50) => $50 even
-    // when the column is 0). See pricingEngine.calculateBarRental.
-    const numBars = pkg.bar_type === 'service_only' ? 0 : 1;
+    // service_only packages rent no physical bar by default (num_bars 0). BUT
+    // when the lead's "Bar availability" answer says the bartender must bring the
+    // bar, the customer needs us to supply it, so set num_bars=1 to add the bar
+    // rental (first_bar_fee, e.g. $50 => $400 for Core Reaction; matches
+    // Thumbtack's own estimate). See pricingEngine.calculateBarRental.
+    const numBars = pkg.bar_type === 'service_only' ? (leadNeedsBar(lead) ? 1 : 0) : 1;
     const guestCount = lead.guestCount || 50;
     const durationHours = 4;
 
@@ -182,4 +198,4 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
   }
 }
 
-module.exports = { mapEventType, toEtDateAndTime, buildAdminNotes, createDraftProposalFromLead };
+module.exports = { mapEventType, toEtDateAndTime, buildAdminNotes, leadNeedsBar, createDraftProposalFromLead };
