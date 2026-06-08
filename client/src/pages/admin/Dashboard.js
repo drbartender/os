@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import Icon from '../../components/adminos/Icon';
 import StaffPills from '../../components/adminos/StaffPills';
@@ -50,6 +51,8 @@ function Delta({ pct }) {
 export default function Dashboard() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const filter = useMetricsFilter();
   const { from, to, basis, includeCc } = filter;
 
@@ -75,14 +78,20 @@ export default function Dashboard() {
     Promise.all([
       api.get('/shifts').then(r => r.data).catch(() => { anyFailed = true; return []; }),
       api.get('/proposals').then(r => r.data).catch(() => { anyFailed = true; return []; }),
-      api.get('/admin/applications').then(r => r.data).catch(() => { anyFailed = true; return { applications: [] }; }),
+      // /admin/applications is admin-only (the Hiring surface is adminOnly). A
+      // manager would 403 here on every dashboard load and trip the role_denial
+      // security audit (Sentry DRBARTENDER-SERVER-R), so only admins fetch it;
+      // managers simply show no applications card.
+      isAdmin
+        ? api.get('/admin/applications').then(r => r.data).catch(() => { anyFailed = true; return { applications: [] }; })
+        : Promise.resolve({ applications: [] }),
     ]).then(([s, p, a]) => {
       setShifts(s || []);
       setProposals(p || []);
       setApplications(a?.applications || a || []);
       if (anyFailed) toast.error('Some dashboard data failed to load. Try refreshing.');
     }).finally(() => setLoading(false));
-  }, [toast]);
+  }, [toast, isAdmin]);
 
   const upcoming = useMemo(() =>
     shifts.filter(e => e.event_date && dayDiff(e.event_date.slice(0, 10)) >= 0)
