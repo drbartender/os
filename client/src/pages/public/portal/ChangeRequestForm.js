@@ -10,7 +10,7 @@ export default function ChangeRequestForm({ proposal, token, onSubmitted, onCanc
   const toast = useToast();
   const [form, setForm] = useState({
     guest_count: proposal.guest_count, event_duration_hours: proposal.event_duration_hours,
-    num_bars: proposal.num_bars || 1, event_date: proposal.event_date ? String(proposal.event_date).slice(0, 10) : '',
+    num_bars: proposal.num_bars ?? 1, event_date: proposal.event_date ? String(proposal.event_date).slice(0, 10) : '',
     note: '',
   });
   const [preview, setPreview] = useState(null);
