@@ -343,7 +343,11 @@ export default function ProposalDetail() {
             </>
           ) : (
             <>
-              <ProposalChangeRequestCard proposalId={id} onChanged={loadProposal} />
+              <ProposalChangeRequestCard
+                proposalId={id}
+                onChanged={loadProposal}
+                onApply={(cr) => { setPendingCr(cr); setEditing(true); }}
+              />
               {/* Client */}
               <div className="card">
                 <div className="card-head">

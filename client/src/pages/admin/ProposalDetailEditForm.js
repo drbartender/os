@@ -56,16 +56,19 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
       // Seed addon_quantities once the catalog is in hand — recovering the raw
       // 1–10 stepper count needs each catalog row's slug/billing_type/
       // minimum_hours (proposal_addons.quantity stores a transformed value).
-      // Also re-baseline initialRef to the seeded form so this fill alone does
-      // NOT trip the dirty/leave-confirm guard. f.addon_quantities is spread
-      // last so a (rare) pre-catalog stepper edit is preserved.
       const recovered = recoverAddonQuantities(proposal.addons, addonRes.data, {
         durationHours: proposal.event_duration_hours,
       });
-      initialRef.current = JSON.stringify({
-        ...initialFormFromProposal(proposal),
-        addon_quantities: recovered,
-      });
+      // Absorb the recovered addon_quantities into whatever baseline is ALREADY set
+      // (a clean seed, OR a change-request overlay applied by the effect below) so
+      // this catalog fill alone does NOT trip the dirty/leave-confirm guard. Do NOT
+      // re-derive from initialFormFromProposal(proposal): that clobbers the overlay
+      // baseline and reads the editor dirty the instant "Apply in editor" opens it.
+      // Parsing the existing baseline also keeps a (rare) pre-catalog user edit
+      // showing as dirty — it isn't folded into the baseline. f.addon_quantities is
+      // spread last below so a pre-catalog stepper edit is preserved in the form.
+      const baseline = JSON.parse(initialRef.current);
+      initialRef.current = JSON.stringify({ ...baseline, addon_quantities: recovered });
       setEditForm(f => ({ ...f, addon_quantities: { ...recovered, ...f.addon_quantities } }));
     }).catch(() => {
       toast.error('Failed to load packages. Try refreshing.');

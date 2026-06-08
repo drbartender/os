@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
 
 const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
 
-export default function ProposalChangeRequestCard({ proposalId, onChanged }) {
+export default function ProposalChangeRequestCard({ proposalId, onChanged, onApply }) {
   const toast = useToast();
   const [requests, setRequests] = useState([]);
   const [reason, setReason] = useState('');
@@ -36,7 +35,11 @@ export default function ProposalChangeRequestCard({ proposalId, onChanged }) {
           </div>
         )}
         <div className="cr-actions">
-          <Link className="btn btn-primary" to={`/proposals/${proposalId}?edit=1&change_request_id=${open.id}`}>Apply in editor</Link>
+          {/* Imperative open (not a Link): the admin is already on /proposals/:id, so
+              a query-only nav would not remount ProposalDetail and the mount-only
+              edit/change_request_id state would never update. The parent opens the
+              editor + selects this request directly. */}
+          <button type="button" className="btn btn-primary" onClick={() => onApply?.(open)}>Apply in editor</button>
         </div>
         <div className="cr-decline">
           <textarea placeholder="Reason (required to decline)" value={reason} onChange={e => setReason(e.target.value)} rows={2} />
