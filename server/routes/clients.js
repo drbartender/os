@@ -56,10 +56,21 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   if (source && !VALID_SOURCES.includes(source)) {
     throw new ValidationError({ source: `Invalid source. Must be one of: ${VALID_SOURCES.join(', ')}` });
   }
-  const result = await pool.query(
-    `INSERT INTO clients (name, email, phone, source, notes) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-    [name.trim(), email || null, phone || null, source || 'direct', notes || null]
-  );
+  let result;
+  try {
+    result = await pool.query(
+      `INSERT INTO clients (name, email, phone, source, notes) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [name.trim(), email || null, phone || null, source || 'direct', notes || null]
+    );
+  } catch (err) {
+    // A duplicate email trips the partial-unique idx_clients_email_unique.
+    // Mirror auth.js: surface a field-level validation error instead of letting
+    // the raw 23505 fall through to a generic 500 (Sentry DRBARTENDER-SERVER-10).
+    if (err.code === '23505' && (err.constraint || '').includes('email')) {
+      throw new ValidationError({ email: 'A client with this email already exists.' });
+    }
+    throw err;
+  }
   res.status(201).json(result.rows[0]);
 }));
 
@@ -93,13 +104,24 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   if (source && !VALID_SOURCES.includes(source)) {
     throw new ValidationError({ source: `Invalid source. Must be one of: ${VALID_SOURCES.join(', ')}` });
   }
-  const result = await pool.query(`
-    UPDATE clients SET
-      name = COALESCE($1, name), email = COALESCE($2, email),
-      phone = COALESCE($3, phone), source = COALESCE($4, source),
-      notes = COALESCE($5, notes)
-    WHERE id = $6 RETURNING *
-  `, [name ? name.trim() : name, email, phone, source, notes, req.params.id]);
+  let result;
+  try {
+    result = await pool.query(`
+      UPDATE clients SET
+        name = COALESCE($1, name), email = COALESCE($2, email),
+        phone = COALESCE($3, phone), source = COALESCE($4, source),
+        notes = COALESCE($5, notes)
+      WHERE id = $6 RETURNING *
+    `, [name ? name.trim() : name, email, phone, source, notes, req.params.id]);
+  } catch (err) {
+    // Editing a client's email to one another client already owns trips the
+    // partial-unique idx_clients_email_unique — surface it as a field error
+    // rather than a raw 500 (Sentry DRBARTENDER-SERVER-10).
+    if (err.code === '23505' && (err.constraint || '').includes('email')) {
+      throw new ValidationError({ email: 'A client with this email already exists.' });
+    }
+    throw err;
+  }
 
   if (!result.rows[0]) throw new NotFoundError('Client not found.');
   res.json(result.rows[0]);
