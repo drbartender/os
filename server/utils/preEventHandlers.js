@@ -14,10 +14,16 @@ const { PUBLIC_SITE_URL } = require('./urls');
  * @returns {object|null} composite row, or null if proposal/client gone
  */
 async function loadProposalContext(proposalId) {
+  // event_date / balance_due_date are cast ::text because pg returns DATE as a
+  // JS Date object (there is no global type parser), and the formatters below do
+  // String(date).slice(0,10) expecting 'YYYY-MM-DD'. A Date object stringifies to
+  // "Sat Aug 15 2026 ..." → slice → an Invalid Date (Sentry SERVER-Z). Casting on
+  // the server gives the helpers the shape they document. Mirrors the cast in
+  // lastMinuteStaffingConfirmation.js.
   const { rows } = await pool.query(
-    `SELECT p.id, p.token, p.status, p.event_date, p.event_start_time,
+    `SELECT p.id, p.token, p.status, p.event_date::text AS event_date, p.event_start_time,
             p.event_timezone, p.event_location, p.event_type, p.event_type_custom,
-            p.guest_count, p.total_price, p.amount_paid, p.balance_due_date,
+            p.guest_count, p.total_price, p.amount_paid, p.balance_due_date::text AS balance_due_date,
             p.autopay_enrolled, p.pricing_snapshot,
             c.id AS client_id, c.name AS client_name, c.email AS client_email,
             sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category
@@ -111,6 +117,7 @@ function formatBalanceDueDate(proposal) {
   if (!proposal.balance_due_date) return '';
   const tz = resolveEventTimezone(proposal);
   const d = new Date(String(proposal.balance_due_date).slice(0, 10) + 'T12:00:00Z');
+  if (Number.isNaN(d.getTime())) return ''; // malformed date → omit (optional field), don't throw
   return formatEventLocalTime(d, tz, { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
