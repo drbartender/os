@@ -8,6 +8,13 @@ const router = express.Router();
 
 const VALID_SOURCES = ['direct', 'thumbtack', 'referral', 'website', 'calcom', 'zola', 'instagram', 'other'];
 
+// Normalize email to trimmed lowercase (mirrors clientDedup.js / clientAuth.js)
+// so the case-sensitive partial-unique idx_clients_email_unique actually rejects
+// case-variant duplicates ('Bob@x' vs 'bob@x'), and so this route stays consistent
+// with every other clients.email write path. Blank/whitespace → null (no email).
+const normalizeEmail = (email) =>
+  (email && String(email).trim()) ? String(email).trim().toLowerCase() : null;
+
 /** GET /api/clients — list all clients with per-client aggregates.
  *  `events_count` counts paid/confirmed/completed proposals; `lifetime_value`
  *  sums their `amount_paid`. The aggregates feed the ClientsDashboard sort
@@ -60,7 +67,7 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   try {
     result = await pool.query(
       `INSERT INTO clients (name, email, phone, source, notes) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [name.trim(), email || null, phone || null, source || 'direct', notes || null]
+      [name.trim(), normalizeEmail(email), phone || null, source || 'direct', notes || null]
     );
   } catch (err) {
     // A duplicate email trips the partial-unique idx_clients_email_unique.
@@ -112,7 +119,7 @@ router.put('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
         phone = COALESCE($3, phone), source = COALESCE($4, source),
         notes = COALESCE($5, notes)
       WHERE id = $6 RETURNING *
-    `, [name ? name.trim() : name, email, phone, source, notes, req.params.id]);
+    `, [name ? name.trim() : name, normalizeEmail(email), phone, source, notes, req.params.id]);
   } catch (err) {
     // Editing a client's email to one another client already owns trips the
     // partial-unique idx_clients_email_unique — surface it as a field error
