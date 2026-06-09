@@ -218,45 +218,82 @@ export default function SignAndPaySection({
         {/* Gratuity (§4): plain dollars; the rate is internal. Server confirms
             the new total before it shows. Hidden when staff x hours <= 0. */}
         {gratuityEnabled && (
-          <div className="gratuity-chooser" style={{ marginBottom: '1.25rem' }}>
-            <label className="sign-pay-eyebrow">Tip jar at the bar?</label>
-            <div className="hstack" style={{ gap: '1rem', margin: '0.3rem 0 0.6rem' }} role="radiogroup" aria-label="Tip jar">
-              <label className="hstack" style={{ gap: 4, cursor: 'pointer' }}>
-                <input type="radio" name="tipJar" checked={tipJar}
-                  onChange={() => { setTipJar(true); setGratuityDirty(true); }} /> Keep it
-              </label>
-              <label className="hstack" style={{ gap: 4, cursor: 'pointer' }}>
-                <input type="radio" name="tipJar" checked={!tipJar}
-                  onChange={() => { setTipJar(false); setGratuityDirty(true); setGratuityTotal((g) => Math.max(Number(g) || 0, gratuityFloor)); }} /> Skip it
-              </label>
-            </div>
-            <label className="sign-pay-eyebrow" style={{ display: 'block' }}>
-              {tipJar ? 'Add a gratuity?' : `Gratuity for your ${gratuityStaffNoun}s:`}
-            </label>
-            <div className="hstack" style={{ gap: 8, alignItems: 'center', marginTop: '0.3rem', flexWrap: 'wrap' }}>
-              {tipJar && (
-                <>
-                  <button type="button" className="btn btn-ghost btn-sm"
-                    onClick={() => { setGratuityTotal(0); setGratuityDirty(true); }}>No</button>
-                  <button type="button" className="btn btn-ghost btn-sm"
-                    onClick={() => { setGratuityTotal(gratuitySuggested); setGratuityDirty(true); }}>
-                    {fmt(gratuitySuggested)} (suggested)
-                  </button>
-                </>
-              )}
-              <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-                <span style={{ position: 'absolute', left: 8, color: 'var(--text-muted)' }}>$</span>
-                <input className="sign-pay-input" type="number" min={tipJar ? 0 : gratuityFloor} step="1"
-                  value={gratuityTotal}
-                  onChange={(e) => { setGratuityTotal(e.target.value); setGratuityDirty(true); }}
-                  style={{ paddingLeft: 18, width: 130 }} />
-              </span>
-            </div>
-            {gratuityBelowFloor && (
-              <p className="payment-policy-warn" role="alert" style={{ marginTop: '0.4rem' }}>
-                {gratuityFloorMessage(fmt(gratuityFloor), gratuityStaffNoun)}
+          <div className="gratuity-block">
+            <span className="sign-pay-eyebrow">Tip jar at the bar?</span>
+            <div className="gratuity-head">
+              <span className="sign-pay-eyebrow">Step · Gratuity</span>
+              <h3 className="gratuity-heading">Tipping, handled your way</h3>
+              <p className="gratuity-intro">
+                <span className="assured">Every dollar</span> goes straight to your
+                {` ${gratuityStaffNoun}s`}. None of it is kept by Dr. Bartender.
               </p>
-            )}
+            </div>
+
+            <div className="tip-jar-choices" role="radiogroup" aria-label="Tip jar">
+              <label className={`tip-tablet ${tipJar ? 'is-selected' : ''}`}>
+                <input type="radio" name="tipJar" checked={tipJar}
+                  onChange={() => { setTipJar(true); setGratuityDirty(true); }} />
+                <span className="tip-tablet-top">
+                  <span className="tip-tablet-mark" aria-hidden="true">&#9906;</span>
+                  <span className="tip-tablet-label">Keep the tip jar</span>
+                </span>
+                <span className="tip-tablet-desc">
+                  A jar sits on the bar; guests tip as they like. Add a little extra below
+                  if you'd like to start it off.
+                </span>
+              </label>
+              <label className={`tip-tablet ${!tipJar ? 'is-selected' : ''}`}>
+                <input type="radio" name="tipJar" checked={!tipJar}
+                  onChange={() => {
+                    setTipJar(false);
+                    setGratuityDirty(true);
+                    setGratuityTotal((g) => Math.max(Number(g) || 0, gratuityFloor));
+                  }} />
+                <span className="tip-tablet-top">
+                  <span className="tip-tablet-mark" aria-hidden="true">&#10005;</span>
+                  <span className="tip-tablet-label">Skip the tip jar</span>
+                </span>
+                <span className="tip-tablet-desc">
+                  No jar out. A set gratuity for your {gratuityStaffNoun}s is added to the
+                  total instead.
+                </span>
+              </label>
+            </div>
+
+            <div className="gratuity-amount">
+              <span className="sign-pay-eyebrow" style={{ display: 'block' }}>
+                {tipJar ? 'Add a gratuity?' : `Gratuity for your ${gratuityStaffNoun}s`}
+              </span>
+
+              <div className="gratuity-presets">
+                {tipJar && (
+                  <>
+                    <button type="button" className="gratuity-chip"
+                      onClick={() => { setGratuityTotal(0); setGratuityDirty(true); }}>
+                      None
+                    </button>
+                    <button type="button" className="gratuity-chip"
+                      onClick={() => { setGratuityTotal(gratuitySuggested); setGratuityDirty(true); }}>
+                      {fmt(gratuitySuggested)}<span className="chip-note">suggested</span>
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="gratuity-input-frame">
+                <span className="gratuity-input-currency">$</span>
+                <input className="gratuity-input" type="number" min={tipJar ? 0 : gratuityFloor} step="1"
+                  value={gratuityTotal}
+                  onChange={(e) => { setGratuityTotal(e.target.value); setGratuityDirty(true); }} />
+                <span className="gratuity-input-hint">100%&nbsp;to your<br />{gratuityStaffNoun}s</span>
+              </div>
+
+              {gratuityBelowFloor && (
+                <p className="gratuity-floor-warn" role="alert">
+                  {gratuityFloorMessage(fmt(gratuityFloor), gratuityStaffNoun)}
+                </p>
+              )}
+            </div>
           </div>
         )}
 

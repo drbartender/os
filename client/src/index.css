@@ -9591,6 +9591,93 @@ html[data-app="admin-os"] .location-suggest-item.active {
   flex-shrink: 0;
 }
 
+/* ── Gratuity chooser (§4) — apothecary treatment ───────────────── */
+.gratuity-block { display: flex; flex-direction: column; gap: 14px; }
+.gratuity-head { display: flex; flex-direction: column; gap: 6px; }
+.gratuity-heading {
+  font-family: var(--font-display);
+  font-size: 1.18rem; font-weight: 400;
+  color: var(--cream-text); margin: 0; letter-spacing: 0.015em;
+}
+.gratuity-intro {
+  margin: 0; font-size: 0.85rem; line-height: 1.5;
+  color: rgba(240, 232, 214, 0.72);
+}
+.gratuity-intro .assured { color: var(--brass-bright); font-style: italic; }
+
+.tip-jar-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 420px) { .tip-jar-choices { grid-template-columns: 1fr; } }
+
+.tip-tablet {
+  position: relative; display: flex; flex-direction: column; gap: 6px;
+  border: 2px solid rgba(184, 146, 74, 0.45); border-radius: 8px;
+  padding: 13px 14px 14px; cursor: pointer;
+  background: transparent; color: var(--cream-text);
+  transition: background 0.18s, border-color 0.18s;
+}
+.tip-tablet:hover { border-color: var(--brass-bright); }
+.tip-tablet:focus-within { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(29, 140, 137, 0.18); }
+.tip-tablet input { position: absolute; opacity: 0; pointer-events: none; }
+.tip-tablet.is-selected {
+  border-color: var(--amber); background: var(--paper); color: var(--deep-brown);
+}
+.tip-tablet-top { display: flex; align-items: center; gap: 9px; }
+.tip-tablet-mark {
+  width: 26px; height: 26px; flex-shrink: 0; border-radius: 50%;
+  border: 1.5px solid var(--brass);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px; line-height: 1; color: var(--brass);
+}
+.tip-tablet.is-selected .tip-tablet-mark {
+  border-color: var(--amber); background: var(--amber); color: var(--paper);
+}
+.tip-tablet-label { font-family: var(--font-display); font-size: 0.98rem; letter-spacing: 0.01em; }
+.tip-tablet-desc { font-size: 0.78rem; line-height: 1.45; color: rgba(240, 232, 214, 0.66); }
+.tip-tablet.is-selected .tip-tablet-desc { color: var(--text-muted); }
+
+.gratuity-amount { display: flex; flex-direction: column; gap: 8px; }
+.gratuity-presets { display: flex; gap: 8px; flex-wrap: wrap; }
+.gratuity-chip {
+  font-family: var(--font-display); font-size: 0.82rem; letter-spacing: 0.04em;
+  padding: 8px 14px; border-radius: 999px;
+  border: 1.5px solid rgba(184, 146, 74, 0.5);
+  background: transparent; color: var(--cream-text); cursor: pointer;
+  transition: border-color 0.16s, background 0.16s, color 0.16s;
+}
+.gratuity-chip:hover { border-color: var(--brass-bright); }
+.gratuity-chip .chip-note {
+  font-family: var(--font-body); font-style: italic; font-size: 0.72rem;
+  opacity: 0.7; margin-left: 4px;
+}
+
+.gratuity-input-frame {
+  display: flex; align-items: center;
+  background: var(--paper); border: 1px solid rgba(28, 22, 16, 0.22);
+  border-radius: 6px; padding: 4px 4px 4px 14px; max-width: 300px;
+}
+.gratuity-input-frame:focus-within {
+  border: 2px solid var(--amber); padding: 3px 3px 3px 13px;
+  box-shadow: 0 0 0 3px rgba(29, 140, 137, 0.18);
+}
+.gratuity-input-currency { font-family: var(--font-display); font-size: 1.1rem; color: var(--text-muted); }
+.gratuity-input {
+  border: none; background: transparent;
+  font-family: var(--font-display); font-size: 1.25rem; color: var(--deep-brown);
+  width: 90px; padding: 8px 6px; font-variant-numeric: tabular-nums;
+}
+.gratuity-input:focus { outline: none; }
+.gratuity-input-hint {
+  margin-left: auto; font-size: 0.7rem; font-family: var(--font-display);
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--sage);
+  padding: 0 12px; text-align: right; line-height: 1.3;
+}
+
+.gratuity-floor-warn {
+  font-size: 0.8rem; margin: 2px 0 0; padding: 0.55rem 0.75rem;
+  background: rgba(160, 82, 45, 0.14); border-left: 3px solid var(--rust);
+  border-radius: 4px; color: var(--brass-bright);
+}
+
 .sign-pay-stripe-wrap {
   background: var(--paper);
   border: 1px solid rgba(28, 22, 16, 0.22);
