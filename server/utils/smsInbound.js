@@ -89,11 +89,15 @@ async function lookupSender(fromPhone) {
   if (c.rows[0]) return { type: 'client', client: c.rows[0] };
 
   const s = await pool.query(
+    // Blocked statuses mirror the auth middleware block-list (auth.js): a
+    // deactivated/rejected/suspended account cannot use the portal, so it must
+    // not be able to act on a shift by text either. COALESCE keeps NULL-status
+    // (legacy) rows eligible.
     `SELECT u.id, u.communication_preferences
      FROM contractor_profiles cp
      JOIN users u ON u.id = cp.user_id
      WHERE RIGHT(REGEXP_REPLACE(cp.phone, '\\D', '', 'g'), 10) = $1
-       AND u.onboarding_status IS DISTINCT FROM 'deactivated'
+       AND COALESCE(u.onboarding_status, '') NOT IN ('deactivated', 'rejected', 'suspended')
      ORDER BY cp.updated_at DESC
      LIMIT 1`,
     [key]
@@ -106,11 +110,13 @@ async function lookupSender(fromPhone) {
 /**
  * Return the ids of every ACTIVE staff account whose contractor_profiles phone
  * matches an inbound number (by last-10 digits). A shared line (e.g. a company
- * Google Voice number) can map to several accounts; deactivated accounts are
- * excluded so a stale account can never win the match. DISTINCT guards against
- * a duplicate profile row inflating the set (which would falsely read as
- * ambiguous); LIMIT caps the fan-out so a placeholder/shared number spread
- * across many rows cannot pile up enough work to blow the webhook timeout.
+ * Google Voice number) can map to several accounts. Blocked statuses
+ * (deactivated/rejected/suspended, mirroring the auth.js block-list) are excluded
+ * so a stale account can never win the match; COALESCE keeps NULL-status legacy
+ * rows eligible. contractor_profiles.user_id is UNIQUE, so this is one row per
+ * user without DISTINCT. ORDER BY makes the LIMIT cap deterministic across Twilio
+ * retries, and the cap stops a placeholder/shared number spread across many rows
+ * from piling up enough per-candidate work to blow the webhook timeout.
  *
  * @param {string} fromPhone - inbound E.164 number
  * @returns {Promise<number[]>} matching active user ids (may be empty)
@@ -119,11 +125,12 @@ async function findStaffCandidatesByPhone(fromPhone) {
   const key = last10(fromPhone);
   if (!key) return [];
   const r = await pool.query(
-    `SELECT DISTINCT u.id
+    `SELECT u.id
        FROM contractor_profiles cp
        JOIN users u ON u.id = cp.user_id
       WHERE RIGHT(REGEXP_REPLACE(cp.phone, '\\D', '', 'g'), 10) = $1
-        AND u.onboarding_status IS DISTINCT FROM 'deactivated'
+        AND COALESCE(u.onboarding_status, '') NOT IN ('deactivated', 'rejected', 'suspended')
+      ORDER BY cp.updated_at DESC
       LIMIT 25`,
     [key]
   );

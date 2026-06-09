@@ -293,6 +293,21 @@ test('findStaffCandidatesByPhone > returns every active staffer sharing a number
   }
 });
 
+test('findStaffCandidatesByPhone > excludes rejected accounts, matching the auth block-list', async () => {
+  // 'suspended' is in auth.js's block-list too, but the users_onboarding_status_check
+  // CHECK forbids storing it, so only 'rejected' (and 'deactivated', above) are testable.
+  const active = await mkStaff('sms-rh-active@example.com', 'approved', '3125550155');
+  const rejected = await mkStaff('sms-rh-rej@example.com', 'rejected', '3125550155');
+  try {
+    const ids = await findStaffCandidatesByPhone('+13125550155');
+    assert.ok(ids.includes(active), 'keeps active');
+    assert.ok(!ids.includes(rejected), 'excludes rejected');
+    assert.strictEqual(ids.length, 1);
+  } finally {
+    await cleanupStaff([active, rejected]);
+  }
+});
+
 test('resolveShiftResponder > ok when exactly one candidate has an upcoming approved shift', async () => {
   const a = await mkStaff('sms-rh-one-a@example.com', 'approved', '3125550152');
   const b = await mkStaff('sms-rh-one-b@example.com', 'approved', '3125550152');
