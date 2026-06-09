@@ -733,7 +733,7 @@ router.post('/contractors/:userId/tip-page/regenerate-stripe', auth, requireAdmi
 }));
 
 // POST — create a Stripe link when one is missing (and ensure a token exists).
-// Fails 400 if a link already exists — forces an explicit regenerate call.
+// Fails 409 if a link already exists — forces an explicit regenerate call.
 router.post('/contractors/:userId/tip-page/generate-stripe', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const userId = parseInt(req.params.userId, 10);
   if (!Number.isInteger(userId)) throw new ValidationError('invalid userId');

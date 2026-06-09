@@ -54,7 +54,7 @@ const auth = async (req, res, next) => {
         return next(new AppError('This account has been deactivated. Contact admin.', 403, 'ACCOUNT_DEACTIVATED'));
       }
       if (u.onboarding_status === 'rejected') {
-        return next(new AppError('Your application was not selected at this time.', 403, 'ACCOUNT_REJECTED'));
+        return next(new AppError('Your application was not selected at this time.', 403, 'APPLICATION_REJECTED'));
       }
       if (u.onboarding_status === 'suspended') {
         return next(new AppError('This account is temporarily suspended. Contact admin.', 403, 'ACCOUNT_SUSPENDED'));
