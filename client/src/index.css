@@ -9666,11 +9666,6 @@ html[data-app="admin-os"] .location-suggest-item.active {
   width: 90px; padding: 8px 6px; font-variant-numeric: tabular-nums;
 }
 .gratuity-input:focus { outline: none; }
-.gratuity-input-hint {
-  margin-left: auto; font-size: 0.7rem; font-family: var(--font-display);
-  letter-spacing: 0.12em; text-transform: uppercase; color: var(--sage);
-  padding: 0 12px; text-align: right; line-height: 1.3;
-}
 
 .gratuity-floor-warn {
   font-size: 0.8rem; margin: 2px 0 0; padding: 0.55rem 0.75rem;

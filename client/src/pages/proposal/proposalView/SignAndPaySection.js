@@ -284,7 +284,6 @@ export default function SignAndPaySection({
                 <input className="gratuity-input" type="number" min={tipJar ? 0 : gratuityFloor} step="1"
                   value={gratuityTotal}
                   onChange={(e) => { setGratuityTotal(e.target.value); setGratuityDirty(true); }} />
-                <span className="gratuity-input-hint">100%&nbsp;to your<br />{gratuityStaffNoun}s</span>
               </div>
 
               {gratuityBelowFloor && (
