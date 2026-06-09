@@ -202,6 +202,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/` | Admin | List all plans with filters |
 | POST | `/` | Admin | Create new plan (generates UUID token) |
 | GET | `/by-proposal/:proposalId` | Admin | Fetch plan linked to a proposal |
+| POST | `/for-proposal/:proposalId` | Admin | Get-or-create the drink plan for a proposal (used by `DrinkPlanCard`). |
 | GET | `/:id/shopping-list-data` | Admin | Shaped data for shopping list generation (joins proposal for guest_count, resolves cocktail ingredients) |
 | GET | `/:id/shopping-list` | Admin | Fetch persisted shopping list + `shopping_list_status` |
 | PUT | `/:id/shopping-list` | Admin | Save shopping list edits (auto-saved by the modal while admin edits) |
@@ -280,6 +281,7 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | POST | `/refund/:id` | Admin (`auth, adminOnly`) | Issue a partial refund — auto-targets the largest refundable charge; no cross-charge spanning |
 | GET | `/refunds/:id` | Admin/Manager (`auth, requireAdminOrManager`) | Refund history for a proposal |
 | POST | `/webhook` | Stripe | Handle `payment_intent.succeeded`, `checkout.session.completed` — updates payment status, auto-creates event shift |
+| POST | `/create-intent-for-invoice/:token` | Public | Create a Stripe PaymentIntent for an open invoice (balance / Additional Services), used by the public token-gated InvoicePage (`server/routes/stripeCreateIntent.js`). |
 
 ### Clients — `/api/clients`
 | Method | Path | Auth | Description |
@@ -311,6 +313,10 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | POST | `/:id/auto-assign` | Staffing | Run auto-assign algorithm (dry_run for preview, or execute to approve top candidates) |
 | POST | `/:id/cancel-or-unassign` | Staffing | Cancel a shift or unassign one staffer; optionally notifies affected staff via SMS |
 | GET | `/by-proposal/:proposalId` | Staffing | All shifts for a proposal (array — supports multi-shift events on EventDetailPage) |
+| GET | `/detail/:id` | Yes | Single shift detail (powers the `/shifts/:id` deep-link redirect). |
+| GET | `/user/:userId/events` | Yes | A staffer's assigned upcoming events (powers the staff "my events" redirect). |
+| POST | `/:id/assign` | Staffing | Directly assign a `user_id` to a shift (admin/staffing path; inserts an approved shift_request + notifies). |
+| (Drop / Cover) | various | Yes | Drop / Cover shift marketplace — drop, request-cover, claim-cover, emergency-drop, withdraw. Lives in `server/routes/staffShiftActions.js`, mounted under `/api/shifts`; see the route file for exact paths. |
 
 ### Admin — `/api/admin` (continued)
 | Method | Path | Auth | Description |
@@ -320,6 +326,8 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | GET | `/settings` | Admin | Get app_settings (auto-assign weights, max distance) |
 | PUT | `/settings` | Admin | Update app_settings key-value pairs |
 | POST | `/backfill-geocodes` | Admin | Geocode all staff/shift addresses and backfill hire dates |
+| GET | `/payroll/...` | Admin | Payroll surface — contractor payouts, pay periods, and paystub data (`server/routes/admin/payroll.js`, mounted under `/api/admin/payroll`; see the route file for exact paths). |
+| (cover-swaps) | various | Admin | Admin cover-swap approval endpoints (`server/routes/adminCoverSwaps.js`, mounted under `/api/admin`). |
 
 ### Messages — `/api/messages`
 | Method | Path | Auth | Description |
@@ -452,6 +460,11 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | GET | `/:token` | No (token-gated) | Display data for the post-event feedback router page (client first name, event type). |
 | POST | `/:token` | No (token-gated) | Submit a rating (1-5). A 4-5 rating returns a Google Reviews redirect URL; a 1-3 rating records the feedback in `post_event_feedback` and emails an admin alert. Idempotent per proposal. |
 
+### Lab Rat (QA) — `/api/qa`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| (missions / quiz / seed / bug-counts) | various | Mixed | Lab Rat tester program — missions, quiz, seed data, and bug counts (`server/routes/labrat.js`). Public seed routes are rate-limited; see the route file for exact paths. |
+
 ### Authenticated Self — `/api/me`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -466,6 +479,11 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | GET | `/profile` | Yes | Hydrate the AccountPage Profile form + pending-email banner — `{ preferred_name, email, legal_name, phone, street_address, city, state, zip_code, emergency_contact_*, pending_email_change }`. `email` from `users`; profile fields from `contractor_profiles`; `legal_name` is `COALESCE(agreements.full_name, applications.full_name)` (signed agreement preferred — it's the canonical legal-doc source); `pending_email_change` is the most recent non-consumed, non-expired row from `pending_email_changes`. Scoped to `req.user.id` (no `:userId` param). New-hire safe — every nullable collapses to `null`, no 500. Spec §6.10. |
 | GET | `/calendar-settings` | Yes | Hydrate the AccountPage Calendar-sync section — `{ calendar_token, calendar_token_created_at, last_ics_fetch_at, calendar_subscribed_app, feed_url }`. All four data fields come from `users` (`calendar_subscribed_app` lives at `ui_preferences->>'calendar_subscribed_app'`). `feed_url` is composed server-side via the same `RENDER_EXTERNAL_URL \|\| API_URL \|\| http://localhost:PORT` pattern `routes/calendar.js` uses, so the AccountPage and the feed handler agree on the URL. Returning the token to its OWNER is correct (same posture as `POST /api/calendar/token/regenerate`). Spec §6.12. |
 | GET | `/documents` | Yes | Hydrate the AccountPage Documents section — `{ w9: { present, filename }, agreement: { present }, alcohol_certification: { present, filename, expires_on } }`. Presence-only — raw R2 keys (`w9_file_url`, `pdf_storage_key`, `alcohol_certification_file_url`) are DELIBERATELY NOT projected (returning them would let the client bypass auth on the underlying asset). A real download would go through the existing signed-URL/auth-gated file pattern, not this read. New-hire safe — LEFT JOINs collapse missing `payment_profiles` / `agreements` / `contractor_profiles` rows to `present: false`, no 500. Spec §6.14. |
+| POST | `/push-subscriptions` | Yes | Register a Web Push (VAPID) subscription for the current staffer (browser/PWA push). |
+| DELETE | `/push-subscriptions` | Yes | Remove a Web Push subscription (logout / unsubscribe). |
+| POST | `/request-email-change` | Yes | Start an email change — emails a confirmation link to the NEW address; stores a hashed token in `pending_email_changes` (`staffPortal.js`). |
+| POST | `/cancel-pending-email-change` | Yes | Cancel a pending email change for the current staffer. |
+| POST | `/confirm-email-change` | No (email-link token) | Unauthenticated confirm — the email-link token proves intent, applies the new email, and bumps `token_version` to invalidate old JWTs. Mounted at `/api/me` before `me.js` (`emailChange.js`). |
 
 ### Admin Tip Pages — `/api/admin/contractors/:userId/tip-page`
 | Method | Path | Auth | Description |

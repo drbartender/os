@@ -32,6 +32,9 @@ See `.env.example` for the full list. Key ones:
 | `DATABASE_URL` | PostgreSQL connection string |
 | `JWT_SECRET` | Token signing key |
 | `UNSUBSCRIBE_SECRET` | Optional. Separate signing key for unsubscribe/marketing-link JWTs (365-day lifetime). Falls back to `JWT_SECRET` if unset. |
+| `ENCRYPTION_KEY` | 64-hex-char (32-byte) AES-256-GCM key encrypting bank-account PII at rest (`server/utils/encryption.js`). Fails closed in prod when unset. |
+| `ADMIN_PASSWORD` | Password for the seeded admin account (`server/scripts/createAdmin.js`, `server/db/seed.js`). |
+| `MAX_FILE_SIZE` | Upload size limit in bytes (default `10485760` = 10MB), applied by the file-upload middleware in `server/index.js`. |
 | `RUN_SCHEDULERS` | Schedulers fire only when `NODE_ENV=production` (Render's default). In any other environment they default to OFF, so a local dev server never burns Resend/Twilio allotments by iterating the shared Neon DB. Set `RUN_SCHEDULERS=true` to force-on locally (testing a handler against a scratch row). Set `RUN_SCHEDULERS=false` on a secondary prod instance to prevent duplicate runs. |
 | `SEND_NOTIFICATIONS` | Real outbound email (Resend) + SMS (Twilio) fire only when `NODE_ENV=production` by default — same philosophy as `RUN_SCHEDULERS` — so a local dev server never burns provider allotments against the shared Neon DB. Set `SEND_NOTIFICATIONS=true` to force real sends locally (testing a real send to a scratch row). Set `SEND_NOTIFICATIONS=false` to force off anywhere. When gated off, `sendEmail`/`sendSMS` take their existing log-and-skip path. |
 | `RUN_AUTOPAY_SCHEDULER` / `RUN_AUTOCOMPLETE_SCHEDULER` / `RUN_AUTO_ASSIGN_SCHEDULER` / `RUN_SEQUENCE_SCHEDULER` / `RUN_QUOTE_DRAFT_CLEANUP_SCHEDULER` / `RUN_LABRAT_PURGE_SCHEDULER` | Optional. Per-scheduler disable. Set to `false` to disable that specific scheduler. Honored only when `RUN_SCHEDULERS` is not `false` (global flag wins). |

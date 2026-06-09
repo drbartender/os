@@ -62,11 +62,13 @@ Copy `.env.example` and fill in values. All variables:
 | `DATABASE_URL` | Yes | PostgreSQL connection string |
 | `JWT_SECRET` | Yes | Long random string for signing tokens |
 | `UNSUBSCRIBE_SECRET` | No | Separate signing key for unsubscribe/marketing-link JWTs. Falls back to `JWT_SECRET` if unset. |
+| `ENCRYPTION_KEY` | For bank PII | 64-hex-char (32-byte) AES-256-GCM key for bank-account fields at rest (`server/utils/encryption.js`). Fails closed in prod when unset. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. |
 | `RUN_SCHEDULERS` | No | Schedulers fire only when `NODE_ENV=production` (Render's default). In any other environment they default to OFF, so a local dev server never burns Resend/Twilio allotments by iterating the shared Neon DB. Set `RUN_SCHEDULERS=true` to force-on locally (testing a handler against a scratch row). Set `RUN_SCHEDULERS=false` on a secondary prod instance to prevent duplicate runs. |
 | `SEND_NOTIFICATIONS` | No | Real outbound email (Resend) + SMS (Twilio) fire only when `NODE_ENV=production` by default — same philosophy as `RUN_SCHEDULERS` — so a local dev server never burns provider allotments against the shared Neon DB. Set `SEND_NOTIFICATIONS=true` to force real sends locally (testing a real send to a scratch row). Set `SEND_NOTIFICATIONS=false` to force off anywhere. When gated off, `sendEmail`/`sendSMS` take their existing log-and-skip path. |
 | `RUN_AUTOPAY_SCHEDULER` / `RUN_AUTOCOMPLETE_SCHEDULER` / `RUN_AUTO_ASSIGN_SCHEDULER` / `RUN_SEQUENCE_SCHEDULER` / `RUN_QUOTE_DRAFT_CLEANUP_SCHEDULER` / `RUN_LABRAT_PURGE_SCHEDULER` | No | Per-scheduler disable. Set to `false` to disable that specific scheduler. Honored only when `RUN_SCHEDULERS` is not `false` (global flag wins). |
 | `RUN_MESSAGE_DISPATCHER_SCHEDULER` | No | Set to `false` to disable the scheduled-message dispatcher (balance reminders, plus future drip / event-week handlers). Defaults on. Honored only when `RUN_SCHEDULERS` is not `false` (global flag wins). |
 | `RUN_WEBHOOK_EVENTS_PRUNE_SCHEDULER` | No | Set to `false` to disable the hourly `webhook_events` 30-day prune. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
+| `RUN_PENDING_EMAIL_CLEANUP_SCHEDULER` | No | Set to `false` to disable the daily `pending_email_changes` 7-day purge. Default on. Honored only when `RUN_SCHEDULERS` is not `false`. |
 | `CLIENT_URL` | Yes | Admin/staff frontend URL for CORS + admin dashboard links in emails (e.g., `http://localhost:3000` in dev, `https://admin.drbartender.com` in prod) |
 | `PUBLIC_SITE_URL` | Yes | Public marketing site URL used in client-facing token links — proposals, drink plans, invoices, shopping lists (e.g., `http://localhost:3000` in dev, `https://drbartender.com` in prod) |
 | `STAFF_URL` | No | Staff portal origin used in hire-confirmation emails (e.g., `http://localhost:3000` in dev, `https://staff.drbartender.com` in prod). Falls back to the prod URL if unset. |
@@ -136,6 +138,7 @@ dr-bartender/
 │   │   │   ├── settings.js     # /settings + /test-email + /backfill-geocodes + /badge-counts (incl. open_tester_bugs)
 │   │   │   ├── labratBugs.js   # /tester-bugs (list + PATCH triage state for the LabRatBugsPage)
 │   │   │   ├── search.js       # /search — global record search across clients/proposals/events/staff
+│   │   │   ├── payroll.js      # /payroll — contractor payouts, pay periods, paystub data
 │   │   │   └── ccImport/       # Check Cherry import admin endpoints
 │   │   │       ├── index.js            # Composition router mounted at /api/admin/cc-import
 │   │   │       ├── wrapUp.js           # Bucket B wrap-up worklist + preview + enqueue (Task 18)
@@ -153,6 +156,7 @@ dr-bartender/
 │   │   ├── clientAuth.js       # Client authentication (separate from staff auth)
 │   │   ├── clientPortal.js     # Client portal endpoints
 │   │   ├── clientPortal/       # Per-concern subrouters mounted under /api/client-portal
+│   │   │   ├── summary.js      # Shared summary-column helpers (not a router)
 │   │   │   └── changeRequests.js # Client change-request endpoints (calculate, create, list, cancel)
 │   │   ├── clients.js          # Client CRUD
 │   │   ├── cocktails.js        # Cocktail menu CRUD
@@ -163,17 +167,22 @@ dr-bartender/
 │   │   ├── mocktails.js        # Mocktail menu CRUD
 │   │   ├── payment.js          # Payment method + W-9 upload
 │   │   ├── progress.js         # Onboarding step tracking
-│   │   ├── proposals/          # Service proposals (publicToken/public/metadata/lifecycle/crud/changeRequests sub-routers)
+│   │   ├── proposals/          # Service proposals (publicToken/public/metadata/lifecycle/crud/actions/changeRequests sub-routers)
 │   │   │   ├── index.js        # Composition router
 │   │   │   ├── publicToken.js  # /t/:token view + sign
 │   │   │   ├── public.js       # /public/* — packages, addons, calculate, capture-lead, quote-draft, submit
 │   │   │   ├── metadata.js     # /packages, /addons, /calculate, /financials, /dashboard-stats
 │   │   │   ├── lifecycle.js    # Proposal status state machine (PATCH /:id/status)
-│   │   │   ├── crud.js         # admin CRUD + notes/create-shift/balance-due-date/send-reminder/record-payment
+│   │   │   ├── crud.js         # admin CRUD (list / get / create / update / archive)
+│   │   │   ├── actions.js      # Per-proposal admin actions: notes, create-shift, balance-due-date, send-reminder, record-payment (carved out of crud.js)
 │   │   │   └── changeRequests.js # Admin change-request endpoints (queue, per-proposal list, decline)
 │   │   ├── shifts.js           # Shift scheduling
+│   │   ├── shifts.queries.js   # Extracted SQL projections/queries for shifts.js
+│   │   ├── staffShiftActions.js # Drop / Cover shift marketplace (drop, request-cover, claim-cover, emergency-drop, withdraw) under /api/shifts
+│   │   ├── adminCoverSwaps.js  # Admin cover-swap approval endpoints (mounted under /api/admin)
 │   │   ├── sms.js              # Twilio inbound-SMS webhook + admin thread API
 │   │   ├── stripe.js           # Payment intents, payment links, webhooks
+│   │   ├── stripeCreateIntent.js # POST /api/stripe/create-intent/:token (extracted from stripe.js)
 │   │   ├── emailChange.js      # Unauthenticated POST /api/me/confirm-email-change — email-link token proves intent, bumps token_version to invalidate old JWTs (mounted at /api/me before me.js)
 │   │   ├── emailMarketing.js   # Email marketing leads, campaigns, sequences, conversations
 │   │   ├── emailMarketingWebhook.js  # Resend webhook receiver (email tracking events)
@@ -189,6 +198,7 @@ dr-bartender/
 │   │   ├── publicFeedback.js   # Post-event feedback router (5-star sentiment routing)
 │   │   ├── testFeedback.js     # Receives Lab Rat bug reports — INSERTs into `tester_bugs` (durable) AND fire-and-forget emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` (notification)
 │   │   ├── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
+│   │   ├── labrat.js           # Lab Rat program — /api/qa missions, quiz, seed, bug-counts
 │   │   └── venues.js           # Google Places venue search proxy
 │   ├── utils/
 │   │   ├── adminAuditLog.js    # logAdminAction(...) — durable record of admin actions (rotate-token, regenerate-stripe). Best-effort; failures go to Sentry, never block the underlying op
@@ -330,6 +340,7 @@ dr-bartender/
 │   │   │   ├── proposal/       # ProposalView (public client-facing) — split into proposalView/ folder (parent + ProposalHeader + ProposalPricingBreakdown + SignAndPaySection + PaymentForm + AgreementText markdown-lite renderer + helpers + styles)
 │   │   │   ├── public/         # Client portal (ClientLogin, ClientShoppingList, Blog, BlogPost) + tip flow (TipPage with TipPage.atoms.jsx + TipPage.css, TipPageThanks post-tip feedback)
 │   │   │   │   └── portal/     # Client Portal v2 — PortalHome (landing), EventCommandCenter (focus shell), OverviewWidgets, ArchiveList, ShareButton, EmptyStates, ChangeRequestForm (request-a-change form with live price preview), money/nextUp/constants helpers + tabs/ (OverviewTab, PrescriptionTab, PotionTab, ReceiptsTab, ChangeRequestBanner pending/decided status banner on the Prescription tab)
+│   │   │   ├── labrat/         # Lab Rat program pages — LabRatLanding, LabRatQuiz, LabRatMissions, LabRatMission, BugDialog, linkify (/labrat/* routes)
 │   │   │   └── website/        # Public website (HomePage, ServicesPage, MethodPage, AboutPage, FaqPage, QuotePage, ClassWizard, quoteWizard/ — split QuoteWizard with steps/extras/ (AddonTile + BundlePicker + AddonAccordion) for the Extras step redesign)
 │   │   ├── images/             # Brand assets
 │   │   └── index.css           # Global styles
