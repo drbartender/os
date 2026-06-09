@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { loadStripe } from '@stripe/stripe-js';
 import { Elements, PaymentElement, useStripe, useElements } from '@stripe/react-stripe-js';
 import axios from 'axios';
@@ -87,6 +87,39 @@ function DrinkPlanPaymentForm({ onSubmit, payLabel, disabled }) {
   );
 }
 
+// ─── "Anything else?" notes card ──────────────────────────────────
+// Extracted + memoized so each keystroke re-renders ONLY this leaf, not the
+// whole ConfirmationStep (which would otherwise rebuild the selected-drinks,
+// syrup, and estimated-extras derivations on every character — a stutter felt
+// on the public post-booking screen, which also runs the Stripe Elements
+// iframe). The draft lives locally and is pushed up on blur.
+const AdditionalNotesCard = React.memo(function AdditionalNotesCard({ value, onCommit }) {
+  const [draft, setDraft] = useState(value || '');
+  // Re-sync if the committed value changes externally (e.g. a loaded draft).
+  useEffect(() => { setDraft(value || ''); }, [value]);
+  return (
+    <div className="card mb-2">
+      <h3 id="additional-notes-label" style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
+        Anything else we should know?
+      </h3>
+      <p id="additional-notes-desc" className="text-muted" style={{ color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+        One last chance to mention anything we should know about your event or your guests. Allergies, family stories, dietary needs, special requests, the stuff you've been meaning to bring up.
+      </p>
+      <textarea
+        id="additional-notes"
+        aria-labelledby="additional-notes-label"
+        aria-describedby="additional-notes-desc"
+        className="form-textarea"
+        rows={4}
+        placeholder="E.g., my dad has a nut allergy; the groom wants his old fashioned with extra orange peel; please introduce yourself to my mother-in-law when you arrive."
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => { if (draft !== (value || '')) onCommit(draft); }}
+      />
+    </div>
+  );
+});
+
 // ─── Main component ───────────────────────────────────────────────
 
 export default function ConfirmationStep({ plan, quickPickChoice, activeModules, selections, cocktails = [], mocktails = [], addOns = {}, addonPricing = [], guestCount, numBars = 0, pricingSnapshot = null, proposalSyrups = [], onSubmit, onSubmitForPayment, onChange, proposalPaymentInfo, token, saving, error }) {
@@ -113,6 +146,10 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
     getStripePromise().then((p) => { if (!cancelled) setStripePromise(p); });
     return () => { cancelled = true; };
   }, []);
+
+  // Stable commit for the notes card so its React.memo holds across unrelated
+  // re-renders of this step (payment polling, Stripe ticks, etc.).
+  const commitNotes = useCallback((v) => onChange('additionalNotes', v), [onChange]);
 
   // Extras-pricing math — recomputes on every Stripe Elements tick once mounted,
   // so memoize by the exact inputs it reads. We watch the narrow bar_rental
@@ -494,25 +531,10 @@ export default function ConfirmationStep({ plan, quickPickChoice, activeModules,
 
       {/* Catch-all "Anything else?" card. Gives clients a home for the
           by-the-way stuff (allergies, family stories, special requests)
-          that would otherwise get jammed into a scoped notes field. */}
-      <div className="card mb-2">
-        <h3 id="additional-notes-label" style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
-          Anything else we should know?
-        </h3>
-        <p id="additional-notes-desc" className="text-muted" style={{ color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
-          One last chance to mention anything we should know about your event or your guests. Allergies, family stories, dietary needs, special requests, the stuff you've been meaning to bring up.
-        </p>
-        <textarea
-          id="additional-notes"
-          aria-labelledby="additional-notes-label"
-          aria-describedby="additional-notes-desc"
-          className="form-textarea"
-          rows={4}
-          placeholder="E.g., my dad has a nut allergy; the groom wants his old fashioned with extra orange peel; please introduce yourself to my mother-in-law when you arrive."
-          value={selections.additionalNotes || ''}
-          onChange={(e) => onChange('additionalNotes', e.target.value)}
-        />
-      </div>
+          that would otherwise get jammed into a scoped notes field. Extracted
+          into a memoized child (above) so typing here doesn't re-render this
+          whole step on every keystroke. */}
+      <AdditionalNotesCard value={selections.additionalNotes} onCommit={commitNotes} />
 
       {/* Estimated Extras */}
       {hasExtras && (() => {

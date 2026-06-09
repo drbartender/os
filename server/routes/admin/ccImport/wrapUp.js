@@ -165,17 +165,21 @@ router.post(
     const ids = validateProposalIds(req.body);
     const breakdown = { proceed: 0, no_email: 0, suppressed: 0 };
 
+    // One round-trip for the whole batch (was one SELECT per id — an N+1 of up
+    // to MAX_BATCH=50 sequential queries). Classification stays per-id in JS.
+    const { rows } = await pool.query(
+      `SELECT p.id, p.status,
+              c.id AS client_id, c.email, c.email_status, c.phone, c.phone_status,
+              c.communication_preferences
+         FROM proposals p
+         JOIN clients c ON c.id = p.client_id
+        WHERE p.id = ANY($1::int[])`,
+      [ids]
+    );
+    const byId = new Map(rows.map((row) => [row.id, row]));
+
     for (const proposalId of ids) {
-      const r = await pool.query(
-        `SELECT p.id, p.status,
-                c.id AS client_id, c.email, c.email_status, c.phone, c.phone_status,
-                c.communication_preferences
-           FROM proposals p
-           JOIN clients c ON c.id = p.client_id
-          WHERE p.id = $1`,
-        [proposalId]
-      );
-      const row = r.rows[0];
+      const row = byId.get(proposalId);
       if (!row) continue;
 
       if (isNoEmail(row)) {
@@ -214,25 +218,48 @@ router.post(
     const ids = validateProposalIds(req.body);
     const results = [];
 
+    // Pre-fetch the proposal+client rows AND the already-enqueued set for the
+    // whole batch in two round-trips (was two SELECTs PER id — up to ~2*50
+    // sequential queries before any write). The per-row writes below stay
+    // per-row; only the read prelude is batched.
+    const { rows } = await pool.query(
+      `SELECT p.id, p.cc_id, p.status, p.event_date,
+              c.id AS client_id, c.email, c.email_status, c.phone, c.phone_status,
+              c.communication_preferences
+         FROM proposals p
+         JOIN clients c ON c.id = p.client_id
+        WHERE p.id = ANY($1::int[])`,
+      [ids]
+    );
+    const byId = new Map(rows.map((row) => [row.id, row]));
+
+    // Dedup against pending OR sent only — failed and suppressed are
+    // retry-eligible (operator may try again after a Resend bounce).
+    const dupRes = await pool.query(
+      `SELECT entity_id
+         FROM scheduled_messages
+        WHERE entity_type = 'proposal'
+          AND entity_id = ANY($1::int[])
+          AND message_type = 'post_event_wrap_up_email'
+          AND status IN ('pending','sent')`,
+      [ids]
+    );
+    const alreadyEnqueued = new Set(dupRes.rows.map((d) => d.entity_id));
+
+    // Computed once (was re-derived per id): pg returns DATE as a JS Date at UTC
+    // midnight, so a past event_date is strictly less than today (UTC).
+    const today = new Date(new Date().toISOString().slice(0, 10));
+
     for (const proposalId of ids) {
       try {
-        const r = await pool.query(
-          `SELECT p.id, p.cc_id, p.status, p.event_date,
-                  c.id AS client_id, c.email, c.email_status, c.phone, c.phone_status,
-                  c.communication_preferences
-             FROM proposals p
-             JOIN clients c ON c.id = p.client_id
-            WHERE p.id = $1`,
-          [proposalId]
-        );
-        const row = r.rows[0];
+        const row = byId.get(proposalId);
 
         const isBucketB =
           row &&
           row.cc_id !== null && row.cc_id !== undefined &&
           row.status === 'completed' &&
           row.event_date &&
-          new Date(row.event_date) < new Date(new Date().toISOString().slice(0, 10));
+          new Date(row.event_date) < today;
 
         if (!isBucketB) {
           results.push({ proposal_id: proposalId, outcome: 'invalid_target' });
@@ -244,19 +271,7 @@ router.post(
           continue;
         }
 
-        // Dedup against pending OR sent only — failed and suppressed are
-        // retry-eligible (operator may try again after a Resend bounce).
-        const dup = await pool.query(
-          `SELECT 1
-             FROM scheduled_messages
-            WHERE entity_type = 'proposal'
-              AND entity_id = $1
-              AND message_type = 'post_event_wrap_up_email'
-              AND status IN ('pending','sent')
-            LIMIT 1`,
-          [proposalId]
-        );
-        if (dup.rowCount > 0) {
+        if (alreadyEnqueued.has(proposalId)) {
           results.push({ proposal_id: proposalId, outcome: 'already_enqueued' });
           continue;
         }
@@ -293,6 +308,11 @@ router.post(
           action: 'cc_wrap_up_enqueued',
           metadata: { proposal_id: proposalId, cc_id: row.cc_id, client_id: row.client_id },
         });
+
+        // Guard in-batch duplicates: a repeated id later in the same request
+        // resolves to already_enqueued (the partial unique index would catch it
+        // anyway, this just skips the redundant insert attempt).
+        alreadyEnqueued.add(proposalId);
 
         results.push({ proposal_id: proposalId, outcome: 'enqueued' });
       } catch (err) {

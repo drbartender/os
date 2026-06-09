@@ -214,3 +214,18 @@ test('Case F: an empty-string document_version is rejected and records no signat
   assert.equal(row.rows[0].client_signed_at, null, 'a rejected empty-string sign must not record a signature');
   assert.equal(row.rows[0].client_signature_document_version, null);
 });
+
+// Case G (audit BLOCKER #2) — a public sign must stamp accepted_at, or the
+// financial dashboard (metricsQueries filters accepted_at IS NOT NULL) is blind
+// to every public booking. lifecycle.js (admin path) already stamps it; the
+// public sign-and-pay path did not.
+test('Case G: a successful public sign stamps accepted_at', async () => {
+  const p = await insertSignableProposal();
+  const res = await request('POST', `/api/proposals/t/${p.token}/sign`, {
+    body: validSignBody({ document_version: CURRENT_AGREEMENT_VERSION }),
+  });
+  assert.equal(res.status, 200, `expected 200, got ${res.status}: ${res.raw}`);
+  const row = await pool.query('SELECT status, accepted_at FROM proposals WHERE id = $1', [p.id]);
+  assert.equal(row.rows[0].status, 'accepted');
+  assert.ok(row.rows[0].accepted_at, 'accepted_at must be stamped when the client accepts via signing');
+});
