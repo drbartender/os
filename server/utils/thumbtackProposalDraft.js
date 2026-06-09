@@ -6,7 +6,10 @@ const { VENUE_STATES } = require('./venueAddress');
 
 const CORE_REACTION_SLUG = 'the-core-reaction';
 
-const ET_TZ = 'America/New_York';
+// Dr. Bartender operates in Central time (Chicago metro); proposals.event_timezone
+// defaults to 'America/Chicago'. Thumbtack sends event times in UTC, so convert to
+// Central to get the local event date + time the customer actually chose.
+const EVENT_TZ = 'America/Chicago';
 
 // Thumbtack sends a state name OR 2-letter code that may be outside the service
 // area (IL/IN/MI/MN/WI). Only persist an allowlisted state — anything else stays
@@ -71,16 +74,33 @@ function mapEventType(lead) {
   return { eventType: null, eventTypeCategory: null };
 }
 
-/** UTC timestamp -> { eventDate: 'YYYY-MM-DD', eventStartTime: '6:00 PM' } in ET. */
-function toEtDateAndTime(ts) {
+/**
+ * True when the Thumbtack lead's "Bar availability" answer asks us to supply the
+ * bar (e.g. "Bartender will need to bring the bar"). The customer then needs a
+ * bar rented, so the draft sets num_bars=1 to add the first_bar_fee.
+ */
+function leadNeedsBar(lead) {
+  const details = Array.isArray(lead.details) ? lead.details : [];
+  const hay = [
+    lead.description || '',
+    ...details.map(d => `${d.question || ''} ${d.answer || ''}`),
+  ].join(' ').toLowerCase();
+  return hay.includes('bring the bar') || hay.includes('bring a bar');
+}
+
+/** UTC timestamp -> { eventDate: 'YYYY-MM-DD', eventStartTime: 'HH:MM' (24h) } in Central time. */
+function toEventDateAndTime(ts) {
   if (!ts) return { eventDate: null, eventStartTime: null };
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return { eventDate: null, eventStartTime: null };
   const eventDate = new Intl.DateTimeFormat('en-CA', {
-    timeZone: ET_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    timeZone: EVENT_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(d); // en-CA => YYYY-MM-DD
-  const eventStartTime = new Intl.DateTimeFormat('en-US', {
-    timeZone: ET_TZ, hour: 'numeric', minute: '2-digit', hour12: true,
+  // 24-hour HH:MM, the canonical event_start_time format (the manual TimePicker
+  // stores e.g. '17:00'). Downstream formatters split on ':' and Number()-coerce
+  // the parts, so a 12-hour 'H:MM AM/PM' string renders as '4:NaN AM'.
+  const eventStartTime = new Intl.DateTimeFormat('en-GB', {
+    timeZone: EVENT_TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
   }).format(d);
   return { eventDate, eventStartTime };
 }
@@ -131,10 +151,12 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
     const pkg = pkgRes.rows[0];
     if (!pkg) throw new Error(`Package ${CORE_REACTION_SLUG} not found`);
 
-    // service_only packages rent no physical bar; num_bars MUST be 0 or the
-    // engine adds first_bar_fee (Number(pkg.first_bar_fee || 50) => $50 even
-    // when the column is 0). See pricingEngine.calculateBarRental.
-    const numBars = pkg.bar_type === 'service_only' ? 0 : 1;
+    // service_only packages rent no physical bar by default (num_bars 0). BUT
+    // when the lead's "Bar availability" answer says the bartender must bring the
+    // bar, the customer needs us to supply it, so set num_bars=1 to add the bar
+    // rental (first_bar_fee, e.g. $50 => $400 for Core Reaction; matches
+    // Thumbtack's own estimate). See pricingEngine.calculateBarRental.
+    const numBars = pkg.bar_type === 'service_only' ? (leadNeedsBar(lead) ? 1 : 0) : 1;
     const guestCount = lead.guestCount || 50;
     const durationHours = 4;
 
@@ -144,7 +166,7 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
     });
 
     const { eventType, eventTypeCategory } = mapEventType(lead);
-    const { eventDate, eventStartTime } = toEtDateAndTime(lead.eventDate);
+    const { eventDate, eventStartTime } = toEventDateAndTime(lead.eventDate);
 
     const proposal = await insertProposalRecord(dbClient, {
       clientId,
@@ -194,4 +216,4 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
   }
 }
 
-module.exports = { mapEventType, toEtDateAndTime, buildAdminNotes, createDraftProposalFromLead };
+module.exports = { mapEventType, toEventDateAndTime, buildAdminNotes, leadNeedsBar, createDraftProposalFromLead };

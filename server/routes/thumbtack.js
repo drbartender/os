@@ -86,8 +86,13 @@ function extractGuestCount(details) {
     if (!d || typeof d !== 'object') continue;
     const q = String(d.question || '').toLowerCase();
     if (q.includes('guest') || q.includes('attendee') || q.includes('people') || q.includes('how many')) {
-      const num = parseInt(d.answer, 10);
-      if (!isNaN(num) && num > 0) return num;
+      // Take the HIGH end of a range ("51 - 75 guests" => 75) so we never
+      // under-staff or under-price; Thumbtack reports guest count as a range.
+      const nums = String(d.answer || '').match(/\d+/g);
+      if (nums && nums.length) {
+        const max = Math.max(...nums.map(Number));
+        if (max > 0) return max;
+      }
     }
   }
   return null;
@@ -479,3 +484,4 @@ router.post('/reviews', asyncHandler(async (req, res) => {
 
 module.exports = router;
 module.exports.__setDeps = __setDeps;
+module.exports.extractGuestCount = extractGuestCount; // exported for unit tests

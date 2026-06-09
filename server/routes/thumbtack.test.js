@@ -16,6 +16,21 @@ const thumbtackRouter = require('./thumbtack');
 const publicTokenRouter = require('./proposals/publicToken');
 const { createDraftProposalFromLead } = require('../utils/thumbtackProposalDraft');
 
+// Pure unit tests for the guest-count parser (exported from thumbtack.js).
+test('extractGuestCount: takes the HIGH end of a range', () => {
+  assert.equal(thumbtackRouter.extractGuestCount([{ question: 'Estimated guest count', answer: '51 - 75 guests' }]), 75);
+});
+test('extractGuestCount: single number passes through', () => {
+  assert.equal(thumbtackRouter.extractGuestCount([{ question: 'How many guests?', answer: '80' }]), 80);
+});
+test('extractGuestCount: open-ended "100+" takes 100', () => {
+  assert.equal(thumbtackRouter.extractGuestCount([{ question: 'Guest count', answer: '100+' }]), 100);
+});
+test('extractGuestCount: no guest question or no number yields null', () => {
+  assert.equal(thumbtackRouter.extractGuestCount([{ question: 'Beverage types', answer: 'Beer, Wine' }]), null);
+  assert.equal(thumbtackRouter.extractGuestCount(null), null);
+});
+
 let server, baseUrl;
 const secret = process.env.THUMBTACK_WEBHOOK_SECRET || null;
 const negA = `test-fail-${Date.now()}`;

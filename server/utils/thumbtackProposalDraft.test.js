@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { mapEventType, toEtDateAndTime, buildAdminNotes } = require('./thumbtackProposalDraft');
+const { mapEventType, toEventDateAndTime, buildAdminNotes, leadNeedsBar } = require('./thumbtackProposalDraft');
 
 test('mapEventType: maps wedding category to wedding-reception + category', () => {
   const r = mapEventType({ category: 'Wedding Bartending', details: [] });
@@ -25,15 +25,25 @@ test('mapEventType: no match returns nulls', () => {
   assert.equal(r.eventTypeCategory, null);
 });
 
-test('toEtDateAndTime: late-evening UTC stays on the ET calendar day', () => {
-  // 2026-06-21T01:00:00Z is 2026-06-20 21:00 EDT
-  const r = toEtDateAndTime('2026-06-21T01:00:00Z');
+test('toEventDateAndTime: late-evening UTC stays on the Central calendar day, 24h HH:MM', () => {
+  // 2026-06-21T01:00:00Z is 2026-06-20 20:00 CDT (Central = proposals.event_timezone default)
+  const r = toEventDateAndTime('2026-06-21T01:00:00Z');
   assert.equal(r.eventDate, '2026-06-20');
-  assert.match(r.eventStartTime, /9:00\s?PM/i);
+  // canonical 24-hour HH:MM in Central time (matches the manual TimePicker, e.g.
+  // '17:00'). A 12-hour 'H:MM AM/PM' string makes downstream formatters
+  // (ProposalDetail t.split(':').map(Number)) render '4:NaN AM'.
+  assert.equal(r.eventStartTime, '20:00');
 });
 
-test('toEtDateAndTime: null input yields nulls', () => {
-  assert.deepEqual(toEtDateAndTime(null), { eventDate: null, eventStartTime: null });
+test('toEventDateAndTime: Central conversion (Ruta) + day boundary', () => {
+  // Ruta: Thumbtack proposedTimes 23:00Z => 6:00 PM Central (matches the customer's stated time)
+  assert.deepEqual(toEventDateAndTime('2026-07-31T23:00:00Z'), { eventDate: '2026-07-31', eventStartTime: '18:00' });
+  // 04:00Z stays on the prior Central day at 11 PM (would be next-day midnight in ET)
+  assert.deepEqual(toEventDateAndTime('2026-06-22T04:00:00Z'), { eventDate: '2026-06-21', eventStartTime: '23:00' });
+});
+
+test('toEventDateAndTime: null input yields nulls', () => {
+  assert.deepEqual(toEventDateAndTime(null), { eventDate: null, eventStartTime: null });
 });
 
 test('buildAdminNotes: includes negotiation, category, description, Q&A', () => {
@@ -46,6 +56,19 @@ test('buildAdminNotes: includes negotiation, category, description, Q&A', () => 
   assert.match(notes, /Wedding/);
   assert.match(notes, /Need a bartender/);
   assert.match(notes, /Guests\?: 80/);
+});
+
+test('leadNeedsBar: true when a detail says the bartender must bring the bar', () => {
+  assert.equal(leadNeedsBar({ details: [{ question: 'Bar availability', answer: 'Bartender will need to bring the bar' }] }), true);
+});
+
+test('leadNeedsBar: false when the customer already has a bar', () => {
+  assert.equal(leadNeedsBar({ details: [{ question: 'Bar availability', answer: 'I have a bar the bartender can use' }] }), false);
+});
+
+test('leadNeedsBar: false when no bar detail is present', () => {
+  assert.equal(leadNeedsBar({ details: [{ question: 'Guests?', answer: '80' }] }), false);
+  assert.equal(leadNeedsBar({}), false);
 });
 
 const { after } = require('node:test');
@@ -103,6 +126,36 @@ test('createDraftProposalFromLead: creates a $350 Core Reaction draft and links 
   // idempotency: a second call returns the same id, no new proposal
   const again = await createDraftProposalFromLead({ lead, clientId, negotiationId });
   assert.equal(again.proposalId, proposalId);
+});
+
+test('createDraftProposalFromLead: a "bring the bar" lead prices the $400 bar-rental draft', async () => {
+  const negotiationId = `test-bar-${Date.now()}`;
+  _cleanup.negotiationIds.push(negotiationId);
+
+  const c = await pool.query(
+    "INSERT INTO clients (name, phone, source) VALUES ('TT Bar Test', '+15550002222', 'thumbtack') RETURNING id"
+  );
+  const clientId = c.rows[0].id;
+  _cleanup.clientIds.push(clientId);
+
+  await pool.query(
+    `INSERT INTO thumbtack_leads (negotiation_id, client_id, customer_name, category, guest_count, raw_payload)
+     VALUES ($1, $2, 'TT Bar Test', 'Bartending', 51, '{}'::jsonb)`,
+    [negotiationId, clientId]
+  );
+
+  const lead = {
+    negotiationId, category: 'Bartending', guestCount: 51, eventDate: null,
+    description: 'need a bartender',
+    details: [{ question: 'Bar availability', answer: 'Bartender will need to bring the bar' }],
+  };
+
+  const { proposalId } = await createDraftProposalFromLead({ lead, clientId, negotiationId });
+  _cleanup.proposalIds.push(proposalId);
+
+  const p = await pool.query('SELECT num_bars, total_price FROM proposals WHERE id = $1', [proposalId]);
+  assert.equal(p.rows[0].num_bars, 1, 'a bring-the-bar lead must set num_bars=1');
+  assert.equal(Number(p.rows[0].total_price), 400, 'Core Reaction + bar rental = $400');
 });
 
 after(async () => {
