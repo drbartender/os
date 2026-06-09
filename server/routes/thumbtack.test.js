@@ -53,6 +53,8 @@ function httpReq(method, path, headers, body) {
 function postLead(negotiationId) {
   const body = JSON.stringify({
     leadID: negotiationId,
+    // 555-prefixed fictional number, unique per ms, so findOrCreateClient can never
+    // match a real client; cleanup only ever deletes the ids this suite created.
     customer: { name: 'Harness Lead', phone: `+1555${String(Date.now()).slice(-7)}` },
     request: {
       category: 'Wedding Bartending', description: 'need bartender',

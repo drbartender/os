@@ -88,9 +88,9 @@ function extractGuestCount(details) {
     if (q.includes('guest') || q.includes('attendee') || q.includes('people') || q.includes('how many')) {
       // Take the HIGH end of a range ("51 - 75 guests" => 75) so we never
       // under-staff or under-price; Thumbtack reports guest count as a range.
-      const nums = String(d.answer || '').match(/\d+/g);
+      const nums = String(d.answer || '').slice(0, 2000).match(/\d+/g);
       if (nums && nums.length) {
-        const max = Math.max(...nums.map(Number));
+        const max = nums.reduce((hi, n) => Math.max(hi, Number(n)), 0);
         if (max > 0) return max;
       }
     }

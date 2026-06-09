@@ -92,6 +92,18 @@ function leadNeedsBar(lead) {
   });
 }
 
+/**
+ * num_bars for a Thumbtack draft. Hosted/standard packages always rent the first
+ * bar (1). A service_only package rents one only when the lead asks us to bring
+ * the bar (leadNeedsBar), otherwise 0 so the engine adds no first_bar_fee. Pure,
+ * so this $50-swinging decision is unit-testable in isolation.
+ * See pricingEngine.calculateBarRental.
+ */
+function decideNumBars(pkg, lead) {
+  if (pkg.bar_type !== 'service_only') return 1;
+  return leadNeedsBar(lead) ? 1 : 0;
+}
+
 /** UTC timestamp -> { eventDate: 'YYYY-MM-DD', eventStartTime: 'HH:MM' (24h) } in Central time. */
 function toEventDateAndTime(ts) {
   if (!ts) return { eventDate: null, eventStartTime: null };
@@ -155,12 +167,9 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
     const pkg = pkgRes.rows[0];
     if (!pkg) throw new Error(`Package ${CORE_REACTION_SLUG} not found`);
 
-    // service_only packages rent no physical bar by default (num_bars 0). BUT
-    // when the lead's "Bar availability" answer says the bartender must bring the
-    // bar, the customer needs us to supply it, so set num_bars=1 to add the bar
-    // rental (first_bar_fee, e.g. $50 => $400 for Core Reaction; matches
-    // Thumbtack's own estimate). See pricingEngine.calculateBarRental.
-    const numBars = pkg.bar_type === 'service_only' ? (leadNeedsBar(lead) ? 1 : 0) : 1;
+    // num_bars drives the bar rental (first_bar_fee, e.g. $50 => $400 for Core
+    // Reaction when the lead asks us to bring the bar). See decideNumBars.
+    const numBars = decideNumBars(pkg, lead);
     const guestCount = lead.guestCount || 50;
     const durationHours = 4;
 
@@ -220,4 +229,4 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
   }
 }
 
-module.exports = { mapEventType, toEventDateAndTime, buildAdminNotes, leadNeedsBar, createDraftProposalFromLead };
+module.exports = { mapEventType, toEventDateAndTime, buildAdminNotes, leadNeedsBar, decideNumBars, createDraftProposalFromLead };

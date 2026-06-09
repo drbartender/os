@@ -1,7 +1,7 @@
 require('dotenv').config();
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { mapEventType, toEventDateAndTime, buildAdminNotes, leadNeedsBar } = require('./thumbtackProposalDraft');
+const { mapEventType, toEventDateAndTime, buildAdminNotes, leadNeedsBar, decideNumBars } = require('./thumbtackProposalDraft');
 
 test('mapEventType: maps wedding category to wedding-reception + category', () => {
   const r = mapEventType({ category: 'Wedding Bartending', details: [] });
@@ -44,6 +44,12 @@ test('toEventDateAndTime: Central conversion (Ruta) + day boundary', () => {
 
 test('toEventDateAndTime: null input yields nulls', () => {
   assert.deepEqual(toEventDateAndTime(null), { eventDate: null, eventStartTime: null });
+});
+
+test('toEventDateAndTime: winter UTC converts at CST (UTC-6), proving DST is honored not hardcoded', () => {
+  // 2026-01-15T05:30:00Z is 2026-01-14 23:30 CST (UTC-6). A hardcoded -5 (CDT)
+  // would wrongly yield 00:30 on the 15th; the IANA zone gives the correct CST.
+  assert.deepEqual(toEventDateAndTime('2026-01-15T05:30:00Z'), { eventDate: '2026-01-14', eventStartTime: '23:30' });
 });
 
 test('buildAdminNotes: includes negotiation, category, description, Q&A', () => {
@@ -94,7 +100,18 @@ test('leadNeedsBar: false when only the question (not the answer) mentions bring
   }), false);
 });
 
-const { after } = require('node:test');
+test('decideNumBars: service_only with no bring-the-bar answer is 0', () => {
+  assert.equal(decideNumBars({ bar_type: 'service_only' }, { details: [{ question: 'Guests?', answer: '80' }] }), 0);
+});
+
+test('decideNumBars: service_only with a bring-the-bar answer is 1', () => {
+  assert.equal(decideNumBars({ bar_type: 'service_only' }, { details: [{ question: 'Bar availability', answer: 'Bartender will need to bring the bar' }] }), 1);
+});
+
+test('decideNumBars: a non-service_only package always rents the first bar', () => {
+  assert.equal(decideNumBars({ bar_type: 'mobile_bar' }, { details: [] }), 1);
+});
+
 const { pool } = require('../db');
 const { createDraftProposalFromLead } = require('./thumbtackProposalDraft');
 
