@@ -46,6 +46,12 @@ class PaymentError extends AppError {
   }
 }
 
+class PayloadTooLargeError extends AppError {
+  constructor(message = 'Payload too large', code = 'PAYLOAD_TOO_LARGE') {
+    super(message, 413, code);
+  }
+}
+
 /**
  * Dispatcher contract: handlers throw this to mark their scheduled_messages row
  * as `status='suppressed'` with the given reason, without alerting Sentry or
@@ -88,6 +94,7 @@ module.exports = {
   PermissionError,
   ExternalServiceError,
   PaymentError,
+  PayloadTooLargeError,
   SuppressMessageError,
   QuotaExceededError,
 };
