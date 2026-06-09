@@ -21,25 +21,33 @@ export default function MessageLogCard({ messages }) {
           <div className="muted tiny">No messages sent yet.</div>
         ) : (
           <ul className="message-log-list">
-            {rows.map((m) => (
-              <li key={m.id} className="message-log-row" tabIndex={0}>
-                <span className={`message-log-channel ${m.channel}`}>
-                  {m.channel === 'sms' ? 'Text' : 'Email'}
-                </span>
-                <span className="message-log-label">{messageTypeLabel(m.message_type, m.subject)}</span>
-                <span className="message-log-recipient tiny muted">{m.recipient}</span>
-                <span className="message-log-time tiny muted">{timeLabel(m.created_at)}</span>
-                <span className={`message-log-status ${m.status === 'failed' ? 'danger' : 'ok'}`}>
-                  {m.status === 'failed' ? 'Failed' : 'Sent'}
-                </span>
-                <span className="message-log-detail" role="tooltip">
-                  <span className="message-log-detail-text">{m.subject || messageTypeLabel(m.message_type, m.subject)}</span>
-                  {m.status === 'failed' && m.error_message ? (
-                    <span className="message-log-detail-error">Failed: {m.error_message}</span>
-                  ) : null}
-                </span>
-              </li>
-            ))}
+            {rows.map((m) => {
+              const label = messageTypeLabel(m.message_type, m.subject);
+              const detailId = `message-log-detail-${m.id}`;
+              return (
+                <li key={m.id} className="message-log-row" tabIndex={0} aria-describedby={detailId}>
+                  <span className={`message-log-channel ${m.channel}`}>
+                    {m.channel === 'sms' ? 'Text' : 'Email'}
+                  </span>
+                  <span className="message-log-label">{label}</span>
+                  <span className="message-log-recipient tiny muted">{m.recipient}</span>
+                  <span className="message-log-time tiny muted">{timeLabel(m.created_at)}</span>
+                  <span className={`message-log-status ${m.status === 'failed' ? 'danger' : 'ok'}`}>
+                    {m.status === 'failed' ? 'Failed' : 'Sent'}
+                  </span>
+                  <span className="message-log-detail" role="tooltip" id={detailId}>
+                    {m.subject ? (
+                      <span className="message-log-detail-text">{m.subject}</span>
+                    ) : (
+                      <span className="message-log-detail-text muted">No preview saved for this message.</span>
+                    )}
+                    {m.status === 'failed' && m.error_message ? (
+                      <span className="message-log-detail-error">Failed: {m.error_message}</span>
+                    ) : null}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

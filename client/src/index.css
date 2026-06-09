@@ -16815,5 +16815,7 @@ html[data-app="staff"] body {
 /* Hover/focus reveal of the sent subject (email) / text preview (SMS) + failure reason. Single-line rows stay clean; the bubble overlays, no layout shift, no navigation. */
 .message-log-detail { display: none; position: absolute; left: 0; top: calc(100% + 3px); z-index: 30; max-width: 340px; padding: 7px 10px; border-radius: 6px; background: #fff; color: #1c1610; border: 1px solid rgba(0,0,0,0.12); box-shadow: 0 6px 18px rgba(0,0,0,0.22); font-size: 12px; line-height: 1.4; white-space: normal; word-break: break-word; }
 .message-log-row:hover .message-log-detail, .message-log-row:focus-within .message-log-detail { display: block; }
+/* The last row opens its bubble upward so it is not clipped at the card's bottom edge. */
+.message-log-row:last-child .message-log-detail { top: auto; bottom: calc(100% + 3px); }
 .message-log-detail-text { display: block; }
 .message-log-detail-error { display: block; margin-top: 4px; color: #c62828; font-weight: 600; }
