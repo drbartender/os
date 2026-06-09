@@ -194,7 +194,11 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
         [proposal.id]
       );
       if (paymentRow.rows[0]) {
-        const payAmountCents = Math.round(paymentAmount * 100);
+        // Use the capped applied delta (appliedAmount), never the raw admin-supplied
+        // paymentAmount — otherwise an over-payment inflates invoices.amount_paid past
+        // amount_due, wrongly flips the invoice to 'paid', and locks it, diverging the
+        // invoice ledger from the (correctly capped) proposal ledger.
+        const payAmountCents = Math.round(appliedAmount * 100);
         await linkPaymentToInvoice(openInvoice.rows[0].id, paymentRow.rows[0].id, payAmountCents, dbClient);
       }
     }
