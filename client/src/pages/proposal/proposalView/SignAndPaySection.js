@@ -3,6 +3,7 @@ import { Elements } from '@stripe/react-stripe-js';
 import SignaturePad from '../../../components/SignaturePad';
 import FormBanner from '../../../components/FormBanner';
 import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
+import { gratuityFloorMessage } from './gratuityFloor';
 import PaymentForm from './PaymentForm';
 import VenueAddressFields, { formatVenue } from '../../../components/VenueAddressFields';
 
@@ -76,6 +77,7 @@ export default function SignAndPaySection({
   gratuitySuggested = 0,
   gratuityFloor = 0,
   gratuityStaffNoun = 'bartender',
+  gratuityBelowFloor = false,
   // Booking-window policy (server-computed; never re-derived here)
   fullPaymentRequired,
   lastMinuteHold,
@@ -250,9 +252,9 @@ export default function SignAndPaySection({
                   style={{ paddingLeft: 18, width: 130 }} />
               </span>
             </div>
-            {!tipJar && Number(gratuityTotal) < gratuityFloor && (
+            {gratuityBelowFloor && (
               <p className="payment-policy-warn" role="alert" style={{ marginTop: '0.4rem' }}>
-                Without a tip jar, gratuity must be at least {fmt(gratuityFloor)}.
+                {gratuityFloorMessage(fmt(gratuityFloor), gratuityStaffNoun)}
               </p>
             )}
           </div>
@@ -296,40 +298,48 @@ export default function SignAndPaySection({
 
         {/* Stripe Payment Element */}
         <div>
-          {loadingIntent && (
-            <div style={{ textAlign: 'center', padding: '2rem' }} role="status" aria-live="polite">
-              <div className="spinner" />
-            </div>
-          )}
-
-          <FormBanner error={formError} fieldErrors={fieldErrors} />
-
-          {activeSecret && stripePromise && !loadingIntent && (
-            <div className="sign-pay-stripe-wrap">
-              <Elements
-                key={activeSecret}
-                stripe={stripePromise}
-                options={elementsOptions}
-              >
-                <PaymentForm
-                  onSubmit={handleSign}
-                  payLabel={payLabel}
-                  disabled={!sigName.trim() || !sigData || !venueComplete}
-                />
-              </Elements>
-            </div>
-          )}
-
-          {activeSecret && !stripePromise && !loadingIntent && (
-            <div style={{ textAlign: 'center', padding: '1rem' }} role="status" aria-live="polite">
-              <div className="spinner" />
-            </div>
-          )}
-
-          {!activeSecret && !loadingIntent && !formError && (
-            <p style={{ color: 'var(--rust)', fontSize: '0.875rem' }}>
-              Unable to load payment form. Please refresh the page or contact us at contact@drbartender.com.
+          {gratuityBelowFloor ? (
+            <p className="sign-pay-needs" role="status" aria-live="polite">
+              Add the required gratuity above to continue to payment.
             </p>
+          ) : (
+            <>
+              {loadingIntent && (
+                <div style={{ textAlign: 'center', padding: '2rem' }} role="status" aria-live="polite">
+                  <div className="spinner" />
+                </div>
+              )}
+
+              <FormBanner error={formError} fieldErrors={fieldErrors} />
+
+              {activeSecret && stripePromise && !loadingIntent && (
+                <div className="sign-pay-stripe-wrap">
+                  <Elements
+                    key={activeSecret}
+                    stripe={stripePromise}
+                    options={elementsOptions}
+                  >
+                    <PaymentForm
+                      onSubmit={handleSign}
+                      payLabel={payLabel}
+                      disabled={!sigName.trim() || !sigData || !venueComplete || gratuityBelowFloor}
+                    />
+                  </Elements>
+                </div>
+              )}
+
+              {activeSecret && !stripePromise && !loadingIntent && (
+                <div style={{ textAlign: 'center', padding: '1rem' }} role="status" aria-live="polite">
+                  <div className="spinner" />
+                </div>
+              )}
+
+              {!activeSecret && !loadingIntent && !formError && (
+                <p style={{ color: 'var(--rust)', fontSize: '0.875rem' }}>
+                  Unable to load payment form. Please refresh the page or contact us at contact@drbartender.com.
+                </p>
+              )}
+            </>
           )}
         </div>
 

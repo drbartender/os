@@ -11,6 +11,7 @@ import { EVENT_SERVICES_AGREEMENT } from '../../../data/eventServicesAgreement';
 import ProposalHeader from './ProposalHeader';
 import ProposalPricingBreakdown from './ProposalPricingBreakdown';
 import SignAndPaySection from './SignAndPaySection';
+import { isGratuityBelowFloor, gratuityFloorMessage } from './gratuityFloor';
 
 // ─── Main component ───────────────────────────────────────────────
 
@@ -42,6 +43,24 @@ export default function ProposalView() {
   const [tipJar, setTipJar] = useState(true);
   const [gratuityTotal, setGratuityTotal] = useState(0);
   const [gratuityDirty, setGratuityDirty] = useState(false);
+
+  // Gratuity chooser basis (§4): suggested = 25 x staff x hours, no-jar floor =
+  // GRATUITY_FLOOR_RATE ($50) x staff x hours. Read from the frozen snapshot
+  // gratuity block. Derived HERE (above the payment-intent effect) so that
+  // effect's below-floor gate can depend on `gratuityBelowFloor` without a TDZ.
+  // NOTE: the literal 50 mirrors the server GRATUITY_FLOOR_RATE
+  // (server/utils/pricingEngine.js) — keep them in sync; a server bump would
+  // otherwise silently under-block the client here.
+  const gratuityBasis = proposal?.pricing_snapshot?.gratuity || null;
+  const gratuityStaffCount = gratuityBasis?.staff_count ?? 0;
+  const gratuityHours = gratuityBasis?.hours ?? 0;
+  const gratuityStaffNoun = gratuityBasis?.staff_noun || 'bartender';
+  const gratuityEnabled = gratuityStaffCount * gratuityHours > 0;
+  const gratuitySuggested = Math.round(25 * gratuityStaffCount * gratuityHours);
+  const gratuityFloor = Math.round(50 * gratuityStaffCount * gratuityHours);
+  const gratuityBelowFloor = isGratuityBelowFloor({
+    gratuityEnabled, tipJar, gratuityTotal, gratuityFloor,
+  });
 
   // Intent state — track separate secrets for deposit vs full
   const [depositSecret, setDepositSecret] = useState('');
@@ -127,6 +146,10 @@ export default function ProposalView() {
   useEffect(() => {
     if (!isPayableStatus) return;
     if (!paymentOption) return;
+    // Never quote a below-floor no-jar gratuity: the server would reject it
+    // (deriveGratuityRate). Drop the loading state and let the gratuity floor
+    // warning + the payment-area note (SignAndPaySection) be the only UI.
+    if (gratuityBelowFloor) { setLoadingIntent(false); return; }
 
     // Decide whether the currently cached secret for this option is still
     // valid. Full intents don't care about autopay; deposit intents do.
@@ -186,7 +209,7 @@ export default function ProposalView() {
     })();
 
     return () => { cancelled = true; };
-  }, [isPayableStatus, paymentOption, autopayChecked, token, depositSecret, fullSecret, tipJar, gratuityTotal, gratuityDirty]);
+  }, [isPayableStatus, paymentOption, autopayChecked, token, depositSecret, fullSecret, tipJar, gratuityTotal, gratuityDirty, gratuityBelowFloor]);
 
   // A gratuity change invalidates both cached secrets (the full amount changes;
   // the deposit must re-persist the new rate), forcing a fresh intent + total.
@@ -248,6 +271,12 @@ export default function ProposalView() {
         setFormError(msg);
         throw new Error(msg);
       }
+    }
+
+    if (gratuityBelowFloor) {
+      const msg = gratuityFloorMessage(fmt(gratuityFloor), gratuityStaffNoun);
+      setFormError(msg);
+      throw new Error(msg);
     }
 
     // If already signed (server state or this session), skip
@@ -322,17 +351,6 @@ export default function ProposalView() {
   });
   const totalPrice = snapshot ? Number(snapshot.total) : 0;
   const balanceAmount = totalPrice - DEPOSIT_DOLLARS;
-
-  // Gratuity chooser basis (§4): suggested = 25 x staff x hours, no-jar floor =
-  // 50 x staff x hours. Disabled when staff x hours <= 0. Read from the frozen
-  // snapshot gratuity block (staff_count/hours/staff_noun).
-  const gratuityBasis = snapshot?.gratuity || null;
-  const gratuityStaffCount = gratuityBasis?.staff_count ?? 0;
-  const gratuityHours = gratuityBasis?.hours ?? 0;
-  const gratuityStaffNoun = gratuityBasis?.staff_noun || 'bartender';
-  const gratuityEnabled = gratuityStaffCount * gratuityHours > 0;
-  const gratuitySuggested = Math.round(25 * gratuityStaffCount * gratuityHours);
-  const gratuityFloor = Math.round(50 * gratuityStaffCount * gratuityHours);
 
   // Calculate balance due date (from DB or default 14 days before event)
   let balanceDueDate = proposal.balance_due_date;
@@ -463,6 +481,7 @@ export default function ProposalView() {
                 gratuitySuggested={gratuitySuggested}
                 gratuityFloor={gratuityFloor}
                 gratuityStaffNoun={gratuityStaffNoun}
+                gratuityBelowFloor={gratuityBelowFloor}
                 fullPaymentRequired={fullPaymentRequired}
                 lastMinuteHold={lastMinuteHold}
                 totalPrice={totalPrice}
