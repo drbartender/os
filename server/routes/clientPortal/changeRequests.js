@@ -93,7 +93,7 @@ router.post('/proposals/:token/change-requests', clientPortalWriteLimiter, async
     const ackClient = Number(req.body.acknowledged_total);
     if (!Number.isFinite(ackClient) || Math.round(ackClient * 100) !== Math.round(price_preview.estimated_total * 100)) {
       await dbClient.query('ROLLBACK');
-      return res.status(409).json({ code: 'PRICE_CHANGED', price_preview });
+      return res.status(409).json({ error: 'The estimated total changed since you last reviewed it. Please re-confirm.', code: 'PRICE_CHANGED', price_preview });
     }
 
     const { requested, baseline } = await buildDiff(proposal, proposed, dbClient);

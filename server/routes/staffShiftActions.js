@@ -30,6 +30,7 @@ const {
   ConflictError,
   NotFoundError,
   PermissionError,
+  PayloadTooLargeError,
 } = require('../utils/errors');
 const { hoursToEvent } = require('../utils/shiftTime');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
@@ -343,10 +344,7 @@ router.post('/requests/:requestId/request-cover', asyncHandler(async (req, res) 
   if (rawReason.length > MAX_COVER_REASON_LEN) {
     // Body too large for the cover_reason column slot — return 413 not 400 so
     // the client can distinguish from a missing-field error.
-    return res.status(413).json({
-      error: `Reason must be ${MAX_COVER_REASON_LEN} characters or fewer.`,
-      code: 'reason_too_long',
-    });
+    throw new PayloadTooLargeError(`Reason must be ${MAX_COVER_REASON_LEN} characters or fewer.`, 'reason_too_long');
   }
   // Defensive truncate (caller may also enforce client-side).
   const coverReason = rawReason.slice(0, MAX_COVER_REASON_LEN);
@@ -711,10 +709,7 @@ router.post('/requests/:requestId/emergency-drop', asyncHandler(async (req, res)
     });
   }
   if (rawReason.length > MAX_EMERGENCY_REASON_LEN) {
-    return res.status(413).json({
-      error: `Reason must be ${MAX_EMERGENCY_REASON_LEN} characters or fewer.`,
-      code: 'reason_too_long',
-    });
+    throw new PayloadTooLargeError(`Reason must be ${MAX_EMERGENCY_REASON_LEN} characters or fewer.`, 'reason_too_long');
   }
   const reason = rawReason.slice(0, MAX_EMERGENCY_REASON_LEN);
 

@@ -13,7 +13,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
-const { ValidationError } = require('../utils/errors');
+const { ValidationError, ConflictError, PayloadTooLargeError } = require('../utils/errors');
 const { validatePhone } = require('../utils/phone');
 const { isValidUpload } = require('../utils/fileValidation');
 const storage = require('../utils/storage');
@@ -686,7 +686,7 @@ router.post('/documents/:doc_type/replace', asyncHandler(async (req, res) => {
   // path that gets past the middleware (e.g. test harness with a different
   // limit).
   if (file.size > MAX_DOC_BYTES) {
-    return res.status(413).json({ error: 'File too large (max 10 MB).', code: 'FILE_TOO_LARGE' });
+    throw new PayloadTooLargeError('File too large (max 10 MB).', 'FILE_TOO_LARGE');
   }
   if (!isValidUpload(file)) {
     throw new ValidationError(
@@ -814,7 +814,7 @@ router.post('/request-email-change', emailChangeRequestLimiter, asyncHandler(asy
     [newEmail]
   );
   if (existsRes.rows.length > 0) {
-    return res.status(409).json({ error: 'That email is already in use.', code: 'EMAIL_IN_USE' });
+    throw new ConflictError('That email is already in use.', 'EMAIL_IN_USE');
   }
 
   // Supersede the requester's own prior pending row(s) so the partial UNIQUE

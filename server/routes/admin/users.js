@@ -748,7 +748,7 @@ router.post('/contractors/:userId/tip-page/generate-stripe', auth, requireAdminO
   const row = rows[0];
 
   if (row && row.stripe_payment_link_url) {
-    return res.status(400).json({ error: 'Stripe link already exists; use regenerate' });
+    throw new ConflictError('Stripe link already exists; use regenerate', 'STRIPE_LINK_EXISTS');
   }
 
   let token = row && row.tip_page_token;

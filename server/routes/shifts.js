@@ -28,7 +28,7 @@ const router = express.Router();
 function requireStaffing(req, res, next) {
   if (req.user.role === 'admin') return next();
   if (req.user.role === 'manager' && req.user.can_staff) return next();
-  return res.status(403).json({ error: 'Staffing access required.' });
+  return next(new PermissionError('Staffing access required.'));
 }
 
 /** Staff who have completed onboarding (or admin/manager) */
@@ -36,7 +36,7 @@ function requireOnboarded(req, res, next) {
   if (req.user.role === 'admin' || req.user.role === 'manager') return next();
   const allowed = ['submitted', 'reviewed', 'approved'];
   if (allowed.includes(req.user.onboarding_status)) return next();
-  return res.status(403).json({ error: 'Complete your onboarding to access shifts.' });
+  return next(new PermissionError('Complete your onboarding to access shifts.'));
 }
 
 // ─── Staff-facing routes ──────────────────────────────────────────
