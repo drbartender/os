@@ -35,6 +35,12 @@ export const ADDON_TAGLINES = {
   'parking-fee': 'Only if your venue charges for parking',
 };
 
+// Hint shown under the quantity stepper where "How many?" is ambiguous (Extras
+// step). Keyed by slug; absent slugs render no hint.
+export const ADDON_QTY_HINTS = {
+  'pre-batched-mocktail': 'Each one is a different mocktail flavor. Pick how many varieties to include.',
+};
+
 export const formatCurrency = (amount) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
 

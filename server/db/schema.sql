@@ -756,6 +756,17 @@ UPDATE service_addons SET name = 'Full Mixers' WHERE slug = 'full-mixers-only';
 UPDATE service_addons SET name = 'Garnish Package' WHERE slug = 'garnish-package-only';
 UPDATE service_addons SET name = 'Pre-Batched Mocktail' WHERE slug = 'pre-batched-mocktail';
 
+-- Quote-wizard extras copy. There is no admin UI for addon descriptions, so the
+-- DB is the source of truth and these targeted, intentional UPDATEs are the lever
+-- (same pattern as the name updates above). Ungated on purpose: they set the
+-- final client-facing copy on every deploy. Distinct from the removed bulk-polish
+-- block (745-748) — these are a small, deliberate, reviewed set, not a blanket
+-- reseed that would clobber per-row intent.
+UPDATE service_addons SET description = 'All the ice you need, delivered to your venue. Ice for your drinks and for keeping bottles and cans cold.' WHERE slug = 'ice-delivery-only';
+UPDATE service_addons SET description = 'Mixers for your signature drinks, up to three included. Anything beyond three gets added to your shopping list to pick up yourself. Does not include Foundation items (ice, water, cups).' WHERE slug = 'signature-mixers-only';
+UPDATE service_addons SET description = 'Our complete mixer selection: Coke, Diet Coke, and Sprite; club soda and tonic; orange, cranberry, and pineapple juice; simple syrup, lemon juice, lime juice, and bitters. Does not include Foundation items (ice, water, cups).' WHERE slug = 'full-mixers-only';
+UPDATE service_addons SET description = 'Request an extra bartender beyond what your guest count requires. We recommend 1 bartender per 100 guests, but you can add more for faster service or multiple bar stations. Gratuity is included for each additional bartender. Since this is more staff than your event requires, it makes sure the full team is compensated fairly.' WHERE slug = 'additional-bartender';
+
 -- Banquet server: 4-hour minimum
 UPDATE service_addons SET minimum_hours = 4 WHERE slug = 'banquet-server';
 

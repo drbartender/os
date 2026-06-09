@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ADDON_ICONS } from '../../../../../data/addonCategories';
-import { ADDON_TAGLINES, priceLabel } from '../../helpers';
+import { ADDON_TAGLINES, ADDON_QTY_HINTS, priceLabel } from '../../helpers';
 import { isQuantityCapable } from '../../../../../utils/proposalRules';
 import SyrupPicker from '../../../../../components/SyrupPicker';
 
@@ -112,15 +112,20 @@ export default function AddonTile({
         </div>
       )}
       {hasQty && selected && !unavailable && (
-        <div className="wz-tile-qty-row" onClick={(e) => e.stopPropagation()}>
-          <span className="wz-tile-qty-label">How many?</span>
-          <div className="wz-qty">
-            <button type="button" aria-label="Decrease quantity"
-              onClick={() => setQty(Math.max(1, q - 1))} disabled={q <= 1}>−</button>
-            <span className="wz-qty-value">{q}</span>
-            <button type="button" aria-label="Increase quantity"
-              onClick={() => setQty(Math.min(10, q + 1))}>+</button>
+        <div className="wz-tile-qty-wrap" onClick={(e) => e.stopPropagation()}>
+          <div className="wz-tile-qty-row">
+            <span className="wz-tile-qty-label">How many?</span>
+            <div className="wz-qty">
+              <button type="button" aria-label="Decrease quantity"
+                onClick={() => setQty(Math.max(1, q - 1))} disabled={q <= 1}>−</button>
+              <span className="wz-qty-value">{q}</span>
+              <button type="button" aria-label="Increase quantity"
+                onClick={() => setQty(Math.min(10, q + 1))}>+</button>
+            </div>
           </div>
+          {ADDON_QTY_HINTS[addon.slug] && (
+            <p className="wz-tile-qty-hint">{ADDON_QTY_HINTS[addon.slug]}</p>
+          )}
         </div>
       )}
       {isSyrup && selected && !unavailable && (

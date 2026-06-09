@@ -6238,16 +6238,25 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   color: rgba(28, 22, 16, 0.78);
   cursor: default;
 }
-.wz-tile-qty-row {
+.wz-tile-qty-wrap {
   grid-area: qty;
-  display: flex;
-  align-items: center;
-  gap: 10px;
   margin-top: 4px;
   padding-top: 8px;
   border-top: 1px dotted rgba(28, 22, 16, 0.18);
 }
+.wz-tile-qty-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .wz-tile-qty-label { color: var(--text-muted); font-style: italic; font-size: 0.85rem; }
+.wz-tile-qty-hint {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  font-style: italic;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
 .wz-qty { display: inline-flex; align-items: stretch; }
 .wz-qty button {
   width: 26px;
@@ -6277,7 +6286,7 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 .wz-tile-locked {
   grid-template-columns: 44px 1fr;
   grid-template-areas:
-    "icon   name"
+    "icon   body"
     "icon   msg"
     "unlock unlock";
   background: rgba(28, 22, 16, 0.04);
@@ -6302,6 +6311,18 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
   border-top: 1px dotted rgba(28, 22, 16, 0.18);
 }
 .wz-tile-unlock .btn-sm { font-size: 0.78rem; padding: 7px 12px; }
+/* The locked tile sits on a light parchment fill, so the global cream-text
+   secondary button is invisible here — flip it to dark text like every other
+   on-parchment secondary button. */
+.wz-tile-unlock .btn-secondary {
+  color: var(--deep-brown);
+  border-color: var(--border-dark);
+}
+.wz-tile-unlock .btn-secondary:hover:not(:disabled) {
+  background: rgba(19, 69, 68, 0.12);
+  color: var(--deep-brown);
+  border-color: var(--brass);
+}
 
 /* In-tile syrup picker section */
 .wz-tile-syrup {
@@ -6619,8 +6640,8 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 .wz-nav .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
 .wz-nav .btn-secondary {
   background: transparent;
-  color: var(--warm-brown);
-  border: 2px solid var(--parchment-dark);
+  color: var(--deep-brown);
+  border: 2px solid var(--border-dark);
   padding: 0.7rem 1.5rem;
   border-radius: 8px;
   font-family: var(--font-body);
