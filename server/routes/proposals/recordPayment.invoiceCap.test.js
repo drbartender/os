@@ -172,6 +172,12 @@ test('over-payment caps the invoice credit at amount_due (does not inflate the i
   // Proposal-side ledger is capped at the total (this was already correct).
   assert.equal(Number(body.amount_paid), 3000, 'proposal amount_paid should cap at total_price');
 
+  // BLOCKER #2: an admin-recorded payment is an acceptance source — accepted_at
+  // must be stamped so the financial dashboard (filters accepted_at IS NOT NULL)
+  // counts the booking.
+  const prop = (await pool.query('SELECT accepted_at FROM proposals WHERE id = $1', [overProposalId])).rows[0];
+  assert.ok(prop.accepted_at, 'record-payment must stamp accepted_at');
+
   const inv = (await pool.query(
     'SELECT amount_due, amount_paid, status, locked FROM invoices WHERE id = $1',
     [overInvoiceId]

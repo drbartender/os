@@ -159,8 +159,12 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
   try {
     await dbClient.query('BEGIN');
 
+    // accepted_at: an admin-recorded outside payment is an acceptance source
+    // (the client paid), so stamp it — otherwise the financial dashboard
+    // (metricsQueries filters accepted_at IS NOT NULL) never counts these
+    // bookings. COALESCE so re-recording a payment never moves the original.
     await dbClient.query(
-      'UPDATE proposals SET amount_paid = $1, status = $2 WHERE id = $3',
+      'UPDATE proposals SET amount_paid = $1, status = $2, accepted_at = COALESCE(accepted_at, NOW()) WHERE id = $3',
       [newAmountPaid, newStatus, proposal.id]
     );
 

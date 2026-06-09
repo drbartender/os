@@ -206,6 +206,10 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
       client_signature_user_agent = $5,
       client_signature_document_version = $6,
       status = 'accepted',
+      -- Stamp acceptance time so the financial dashboard (metricsQueries filters
+      -- accepted_at IS NOT NULL) counts public sign-and-pay bookings. COALESCE so
+      -- a re-sign never moves the original acceptance timestamp.
+      accepted_at = COALESCE(accepted_at, NOW()),
       venue_name  = COALESCE($8, venue_name),
       venue_street = COALESCE($9, venue_street),
       venue_city  = COALESCE($10, venue_city),

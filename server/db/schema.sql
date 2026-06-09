@@ -2022,6 +2022,27 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- Audit BLOCKER #2 backfill: the activity-log pass above only catches admin
+-- status changes (details->>'to' = 'accepted'). Public sign-and-pay logs
+-- action='signed' (no 'to'), and admin record-payment logs nothing about
+-- acceptance, so those accepted/paid proposals were left accepted_at IS NULL and
+-- went invisible to the financial dashboard (which filters accepted_at IS NOT
+-- NULL). Fall back to the best acceptance proxy. Idempotent: the EXISTS guard
+-- short-circuits once every eligible row is populated.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM proposals
+    WHERE accepted_at IS NULL
+      AND status IN ('accepted','deposit_paid','balance_paid','confirmed','completed')
+    LIMIT 1
+  ) THEN
+    UPDATE proposals
+    SET accepted_at = COALESCE(client_signed_at, sent_at, created_at)
+    WHERE accepted_at IS NULL
+      AND status IN ('accepted','deposit_paid','balance_paid','confirmed','completed');
+  END IF;
+END $$;
+
 -- ─── Sentry hardening: email_leads.lead_source allowlist ──────────
 -- The public quote wizard sends source='quote_wizard'. The original CHECK
 -- constraint omitted it, causing every wizard lead capture to fail with a
