@@ -4,7 +4,7 @@
 
 **Goal:** Reskin the proposal Sign & Pay gratuity block to the apothecary treatment and harden the no-jar gratuity floor from a passive warning into a hard submit block, with no change to payroll/payout math.
 
-**Architecture:** A small tested pure helper owns the below-floor predicate and the shared floor message. `ProposalView.js` computes `gratuityBelowFloor` once and passes it down; it gates the Stripe create-intent fetch and the `handleSign` submit. `SignAndPaySection.js` consumes the prop (disables Pay, suppresses the payment form below the floor) and carries the reskinned markup. CSS is appended to `index.css`. The server floor enforcement (`deriveGratuityRate` + the `proposals_gratuity_jar_check` DB CHECK) is untouched and remains the authoritative backstop.
+**Architecture:** A small tested pure helper owns the below-floor predicate and the shared floor message. `ProposalView.js` derives the gratuity basis and `gratuityBelowFloor` **above its effects** (so the create-intent effect can depend on it without a temporal-dead-zone crash), gates the Stripe create-intent fetch, and guards `handleSign`. `SignAndPaySection.js` consumes the prop (disables Pay, suppresses the payment form below the floor) and carries the reskinned markup. CSS is appended to `index.css`. The server floor enforcement (`deriveGratuityRate` + the `proposals_gratuity_jar_check` DB CHECK) is untouched and remains the authoritative backstop.
 
 **Tech Stack:** React 18 (CRA), vanilla CSS, Stripe React Elements, Jest (client unit tests via `react-scripts test`).
 
@@ -17,12 +17,16 @@
 
 - **Create** `client/src/pages/proposal/proposalView/gratuityFloor.js` — pure helpers: `isGratuityBelowFloor(...)` and `gratuityFloorMessage(...)`. One responsibility: the no-jar floor predicate + its client-facing copy, in one place so the inline warning and the `handleSign` guard cannot drift.
 - **Create** `client/src/pages/proposal/proposalView/gratuityFloor.test.js` — Jest unit tests for the helper (coercion edges).
-- **Modify** `client/src/pages/proposal/proposalView/ProposalView.js` — compute `gratuityBelowFloor`, pass it as a prop, gate the create-intent effect, add the `handleSign` floor guard.
-- **Modify** `client/src/pages/proposal/proposalView/SignAndPaySection.js` — accept the prop, OR it into the Pay `disabled`, suppress the payment area below the floor, and (separately) swap the gratuity block markup to the reskin.
+- **Modify** `client/src/pages/proposal/proposalView/ProposalView.js` — hoist the gratuity basis + `gratuityBelowFloor` above the effects, gate the create-intent effect, add the `handleSign` floor guard, pass the prop.
+- **Modify** `client/src/pages/proposal/proposalView/SignAndPaySection.js` — accept the prop, OR it into the Pay `disabled`, unify the floor warning on the shared message, suppress the payment area below the floor, and (Task 3) swap the gratuity block markup.
 - **Modify** `client/src/index.css` — append the gratuity-block CSS, including `.tip-tablet:focus-within`.
 - **Unchanged (reference only):** `server/utils/payrollAccrual.js`, `server/utils/payrollMath.js`, `server/utils/pricingEngine.js` (`deriveGratuityRate`, `GRATUITY_FLOOR_RATE`), `server/db/schema.sql` (`proposals_gratuity_jar_check`).
 
 **Commit grouping:** Task 1 = one commit (helper). Task 2 = one commit (floor block). Task 3 = one commit (reskin). Task 4 = verification only.
+
+**Review checkpoints (project execution-review cadence):**
+- After Task 2 (money/Stripe gating path): dispatch `security-review` + `code-review` on the worktree diff before continuing.
+- After Task 3 (presentation): dispatch `code-review` + `consistency-check`.
 
 ---
 
@@ -77,7 +81,7 @@ test('gratuityFloorMessage > builds the shared floor copy', () => {
 
 - [ ] **Step 2: Run the test, verify it fails**
 
-Run (from the worktree root):
+Run (from the worktree root, in Git Bash via the Bash tool):
 ```bash
 cd client && CI=true npm test -- src/pages/proposal/proposalView/gratuityFloor.test.js --watchAll=false
 ```
@@ -128,7 +132,9 @@ git commit -m "feat(gratuity): add isGratuityBelowFloor + shared floor message h
 
 ### Task 2: Hard floor block (behavior change)
 
-Wires `gratuityBelowFloor` through the live (not-yet-reskinned) component: it disables Pay, stops the create-intent fetch below the floor, replaces the payment area with a note, and guards `handleSign`. The server backstop is unchanged.
+Wires `gratuityBelowFloor` through the live (not-yet-reskinned) component: it disables Pay, stops the create-intent fetch below the floor, replaces the payment area with a note, unifies the floor warning on the shared message, and guards `handleSign`. The server backstop is unchanged.
+
+> **Why the hoist (Step 2):** `gratuityBelowFloor` is consumed by the create-intent effect's dependency array (Step 3, `ProposalView.js:189`), which React evaluates *during render at that line*. If the `const` were declared lower (the current basis block sits at `:326-335`, below the effect), the deps array would hit its temporal dead zone and throw `ReferenceError: Cannot access 'gratuityBelowFloor' before initialization`. So the whole gratuity basis moves above the effects.
 
 **Files:**
 - Modify: `client/src/pages/proposal/proposalView/ProposalView.js`
@@ -142,15 +148,34 @@ After the existing `import SignAndPaySection from './SignAndPaySection';` (line 
 import { isGratuityBelowFloor, gratuityFloorMessage } from './gratuityFloor';
 ```
 
-- [ ] **Step 2: Compute `gratuityBelowFloor` in `ProposalView.js`**
+- [ ] **Step 2: Hoist the gratuity basis + `gratuityBelowFloor` above the effects**
 
-Immediately after the `gratuityFloor` derivation (currently `client/src/pages/proposal/proposalView/ProposalView.js:335`), add:
+**(a)** Immediately after the gratuity state declarations (currently `const [gratuityDirty, setGratuityDirty] = useState(false);` at `ProposalView.js:44`), insert:
 
 ```js
+
+  // Gratuity chooser basis (§4): suggested = 25 x staff x hours, no-jar floor =
+  // GRATUITY_FLOOR_RATE ($50) x staff x hours. Read from the frozen snapshot
+  // gratuity block. Derived HERE (above the payment-intent effect) so that
+  // effect's below-floor gate can depend on `gratuityBelowFloor` without a TDZ.
+  // NOTE: the literal 50 mirrors the server GRATUITY_FLOOR_RATE
+  // (server/utils/pricingEngine.js) — keep them in sync; a server bump would
+  // otherwise silently under-block the client here.
+  const gratuityBasis = proposal?.pricing_snapshot?.gratuity || null;
+  const gratuityStaffCount = gratuityBasis?.staff_count ?? 0;
+  const gratuityHours = gratuityBasis?.hours ?? 0;
+  const gratuityStaffNoun = gratuityBasis?.staff_noun || 'bartender';
+  const gratuityEnabled = gratuityStaffCount * gratuityHours > 0;
+  const gratuitySuggested = Math.round(25 * gratuityStaffCount * gratuityHours);
+  const gratuityFloor = Math.round(50 * gratuityStaffCount * gratuityHours);
   const gratuityBelowFloor = isGratuityBelowFloor({
     gratuityEnabled, tipJar, gratuityTotal, gratuityFloor,
   });
 ```
+
+(`proposal` is state and may be `null` during loading; the optional chaining yields a disabled, $0-floor, not-below-floor basis until it loads — safe before the early returns.)
+
+**(b)** Delete the now-duplicate derivation further down. Remove the block currently at `ProposalView.js:326-335` (the comment `// Gratuity chooser basis (§4)...` through `const gratuityFloor = Math.round(50 * gratuityStaffCount * gratuityHours);`). **Leave** `const snapshot = proposal.pricing_snapshot;` (:308) and `totalPrice`/`balanceAmount` (:323-324) in place — those still feed the live total.
 
 - [ ] **Step 3: Gate the create-intent effect below the floor**
 
@@ -181,37 +206,45 @@ In `handleSign`, after the venue-validation block (currently ends at `ProposalVi
     }
 ```
 
+(This is belt-and-suspenders: below the floor the payment form is suppressed (Step 7), so the user cannot reach Pay; this guard only fires if a programmatic path slips through before the server/DB backstop. The `setFormError` is harmless even though the banner is unmounted in that state.)
+
 - [ ] **Step 5: Pass the prop to `SignAndPaySection`**
 
-In the `<SignAndPaySection ... />` render (currently `ProposalView.js:446-489`), add a prop next to the other gratuity props (after `gratuityStaffNoun={gratuityStaffNoun}` at line 465):
+In the `<SignAndPaySection ... />` render (currently `ProposalView.js:446-489`), add a prop after `gratuityStaffNoun={gratuityStaffNoun}` (line 465):
 
 ```js
                 gratuityBelowFloor={gratuityBelowFloor}
 ```
 
-- [ ] **Step 6: Accept the prop + OR it into Pay `disabled` in `SignAndPaySection.js`**
+- [ ] **Step 6: Update `SignAndPaySection.js` — prop, import, disabled, unified warning**
 
-In the `SignAndPaySection` props destructure, after `gratuityStaffNoun = 'bartender',` (currently `SignAndPaySection.js:78`), add:
+**(a)** Add the message import after the helpers import (currently `SignAndPaySection.js:5`):
+
+```js
+import { gratuityFloorMessage } from './gratuityFloor';
+```
+
+**(b)** In the props destructure, after `gratuityStaffNoun = 'bartender',` (currently `SignAndPaySection.js:78`), add:
 
 ```js
   gratuityBelowFloor = false,
 ```
 
-Then change the `PaymentForm` `disabled` expression (currently `SignAndPaySection.js:317`) from:
+**(c)** Replace the live inline floor warning (currently `SignAndPaySection.js:253-257`) with the shared-message version (single source of truth from this commit on):
 
 ```jsx
-                  disabled={!sigName.trim() || !sigData || !venueComplete}
+            {gratuityBelowFloor && (
+              <p className="payment-policy-warn" role="alert" style={{ marginTop: '0.4rem' }}>
+                {gratuityFloorMessage(fmt(gratuityFloor), gratuityStaffNoun)}
+              </p>
+            )}
 ```
 
-to:
+(Task 3 reskins this paragraph's class; the condition + message stay.)
 
-```jsx
-                  disabled={!sigName.trim() || !sigData || !venueComplete || gratuityBelowFloor}
-```
+- [ ] **Step 7: Disable Pay + suppress the payment area below the floor**
 
-- [ ] **Step 7: Suppress the payment area below the floor**
-
-Replace the entire `{/* Stripe Payment Element */}` block (currently `SignAndPaySection.js:297-334`) with:
+Replace the entire `{/* Stripe Payment Element */}` block (currently `SignAndPaySection.js:297-334`) with the following. This folds in the `disabled` change (so there is no separate, immediately-overwritten edit) and gates the whole block on `gratuityBelowFloor`. Note the note reuses the existing `sign-pay-needs` class (already on `main` at `SignAndPaySection.js:292`), not a reskin-introduced class:
 
 ```jsx
         {/* Stripe Payment Element */}
@@ -262,24 +295,22 @@ Replace the entire `{/* Stripe Payment Element */}` block (currently `SignAndPay
         </div>
 ```
 
-(Note: the `disabled` change from Step 6 now lives inside this replaced block — keep both consistent. Step 6's standalone edit and this block edit target the same `disabled` line; apply this block as the final state.)
-
-- [ ] **Step 8: Build the client and verify it compiles**
+- [ ] **Step 8: Build the client**
 
 Run (from the worktree root):
 ```bash
 cd client && CI=true npm run build
 ```
-Expected: `Compiled successfully` (warnings allowed, no errors).
+Expected: `Compiled successfully` (warnings allowed, no errors). Confirms no TDZ/ESLint break from the hoist.
 
 - [ ] **Step 9: Manual verification**
 
-Start the app against a proposal in a payable status that has a gratuity basis (staff x hours > 0). On the Sign & Pay card:
-- Select **Skip it** → amount jumps to the floor, payment form loads normally.
-- Type an amount **below** the floor → the floor warning shows, the Stripe form disappears and is replaced by "Add the required gratuity above to continue to payment.", and no "Unable to load payment form" banner appears.
-- Raise the amount back to/above the floor → after the ~400ms debounce the payment form returns.
-- Keep the jar (**Keep it**) and set $0 → no floor, payment form loads, Pay enabled.
-- (Validation parity) With a below-floor no-jar amount, no `create-intent` request is sent (check the Network tab).
+On a proposal in a payable status with a gratuity basis (staff x hours > 0):
+- **Skip it** → amount jumps to the floor, payment form loads normally.
+- Type **below** the floor → floor warning shows, the Stripe form is replaced by "Add the required gratuity above to continue to payment.", and no "Unable to load payment form" banner appears.
+- Confirm (Network tab) NO `create-intent` request fires while below the floor.
+- Raise back to/above the floor → after the ~400ms debounce the payment form returns.
+- **Keep it** + $0 → no floor, form loads, Pay enabled.
 
 - [ ] **Step 10: Commit**
 
@@ -288,28 +319,23 @@ git add client/src/pages/proposal/proposalView/ProposalView.js client/src/pages/
 git commit -m "feat(gratuity): hard-block no-jar gratuity below the floor"
 ```
 
+- [ ] **Step 11: Review checkpoint (money path)**
+
+Dispatch `security-review` and `code-review` on the Task 2 worktree diff (Stripe gating, `handleSign` throw, create-intent gate, Pay `disabled`). Resolve any blocker before Task 3.
+
 ---
 
 ### Task 3: Apothecary reskin of the gratuity block (presentation)
 
-Swaps the gratuity block markup to the drop-in treatment and appends the CSS. Behavior-preserving relative to the live block, with the `None` chip correctly gated, the question eyebrow restored, the focus ring added, and the copy de-em-dashed. Uses the `gratuityBelowFloor` prop from Task 2 for the warning.
+Swaps the gratuity block markup to the drop-in treatment and appends the CSS. Behavior-preserving relative to Task 2, with the `None` chip correctly gated, the question eyebrow restored, the focus ring added, and the copy de-em-dashed. `gratuityBelowFloor`, `gratuityFloorMessage`, and `fmt` are already in scope from Task 2.
 
 **Files:**
 - Modify: `client/src/pages/proposal/proposalView/SignAndPaySection.js`
 - Modify: `client/src/index.css`
 
-- [ ] **Step 1: Import the shared message in `SignAndPaySection.js`**
+- [ ] **Step 1: Replace the gratuity block markup**
 
-Change the helpers import (currently `SignAndPaySection.js:5`) to also pull in the message, and add the gratuityFloor helper import below it:
-
-```js
-import { fmt, formatDateShort, DEPOSIT_DOLLARS } from './helpers';
-import { gratuityFloorMessage } from './gratuityFloor';
-```
-
-- [ ] **Step 2: Replace the gratuity block markup**
-
-Replace the entire `{/* Gratuity (§4) ... */}` block (currently `SignAndPaySection.js:216-259`, the `{gratuityEnabled && (...)}` JSX) with:
+Replace the entire `{/* Gratuity (§4) ... */}` block (the `{gratuityEnabled && (...)}` JSX, currently around `SignAndPaySection.js:216-259` — note its inline warning was already updated in Task 2 Step 6c) with:
 
 ```jsx
         {/* Gratuity (§4): plain dollars; the rate is internal. Server confirms
@@ -395,9 +421,9 @@ Replace the entire `{/* Gratuity (§4) ... */}` block (currently `SignAndPaySect
         )}
 ```
 
-- [ ] **Step 3: Append the gratuity-block CSS**
+- [ ] **Step 2: Append the gratuity-block CSS**
 
-In `client/src/index.css`, immediately after the `.payment-tablet-autopay` rule block (search for `.payment-tablet-autopay`), append:
+In `client/src/index.css`, immediately after the `.payment-tablet-autopay` rule block (search for `.payment-tablet-autopay`; it is at ~line 9576), append:
 
 ```css
 /* ── Gratuity chooser (§4) — apothecary treatment ───────────────── */
@@ -488,7 +514,7 @@ In `client/src/index.css`, immediately after the `.payment-tablet-autopay` rule 
 }
 ```
 
-- [ ] **Step 4: Build the client**
+- [ ] **Step 3: Build the client**
 
 Run:
 ```bash
@@ -496,21 +522,26 @@ cd client && CI=true npm run build
 ```
 Expected: `Compiled successfully`, no errors.
 
-- [ ] **Step 5: Manual verification**
+- [ ] **Step 4: Manual verification**
 
 On the Sign & Pay card:
-- The gratuity block renders as two tip-jar tablets, brass preset chips, and the parchment input frame, with the "Tip jar at the bar?" eyebrow above.
+- The gratuity block renders as two tip-jar tablets, brass preset chips, and the parchment input frame.
+- **Visual order:** the "Tip jar at the bar?" eyebrow sits directly above the "Step · Gratuity" / "Tipping, handled your way" header (two `sign-pay-eyebrow` lines render back-to-back — confirm this matches the mockup; if it reads cramped, drop one).
 - **Keep the tip jar**: `None` and `{suggested}` chips show; clicking each sets the amount; $0 allowed; Pay enabled.
-- **Skip the tip jar**: no chips show; amount is at the floor; the floor warning + payment-area note appear only when typing below the floor (Task 2 behavior intact).
+- **Skip the tip jar**: no chips show; amount at the floor; the floor warning + payment-area note appear only when typing below the floor (Task 2 behavior intact).
 - Keyboard: Tab to a tablet shows a teal focus ring; Arrow keys move selection.
 - Copy reads "Every dollar goes straight to your {staff}s. None of it is kept by Dr. Bartender." with "Every dollar" italicized; no em dash anywhere.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add client/src/pages/proposal/proposalView/SignAndPaySection.js client/src/index.css
 git commit -m "feat(gratuity): apothecary reskin of the Sign & Pay gratuity block"
 ```
+
+- [ ] **Step 6: Review checkpoint (presentation)**
+
+Dispatch `code-review` + `consistency-check` on the Task 3 worktree diff.
 
 ---
 
@@ -530,19 +561,27 @@ Expected: PASS.
 ```bash
 cd client && CI=true npm run build
 ```
-Expected: `Compiled successfully`, no errors (this is the gate Vercel enforces).
+Expected: `Compiled successfully`, no errors.
 
-- [ ] **Step 3: Em-dash sweep**
+- [ ] **Step 3: Em-dash sweep (Git Bash)**
 
-Confirm no em dash slipped into the changed client copy:
+Confirm no em dash slipped into the changed client copy. Run in Git Bash (the Bash tool), scoped to the two files that carry copy:
 ```bash
-git diff main -- client/src | grep -n $'—' || echo "no em dashes"
+git diff main -- client/src/pages/proposal/proposalView/SignAndPaySection.js client/src/index.css | grep -n '—' || echo "no em dashes"
 ```
 Expected: `no em dashes`.
 
 - [ ] **Step 4: Validation-parity spot check (manual)**
 
-In the browser, with a no-jar amount below the floor, remove the Pay button's `disabled` via DevTools (or force a `create-intent` with a below-floor `gratuity_total`) and confirm the server still rejects it (`deriveGratuityRate` → `GRATUITY_BELOW_FLOOR`) — the client block and the server floor agree.
+Confirm the server still rejects a below-floor no-jar gratuity if the client gate is bypassed. With the proposal token, issue a raw request that skips the client gate, e.g. in the browser console:
+```js
+fetch(`/api/stripe/create-intent/${token}`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ payment_option: 'full', autopay: false, tip_jar: false, gratuity_total: 1 }),
+}).then(r => r.json()).then(console.log);
+```
+Expected: a 4xx with the floor `ValidationError` from `deriveGratuityRate` (`GRATUITY_BELOW_FLOOR`) — client guard and server floor agree. (Adjust the base path if the API origin differs from the app origin.)
 
 - [ ] **Step 5: Confirm no regression in the preserved handlers**
 
@@ -553,16 +592,16 @@ Toggle jar/amount and confirm the "New total" only updates after the server re-q
 ## Self-Review
 
 **1. Spec coverage:**
-- §3.1 reskin + invariants → Task 3 (markup/CSS), handlers preserved verbatim in the replacement block. ✓
-- §3.2 None-chip gating → Task 3 Step 2 (both chips inside `{tipJar && (...)}`). ✓
-- §3.3 hard floor block (single-home `gratuityBelowFloor`, coercion, no intent below floor, `throw` guard, single floor message, floor-rate dup noted) → Task 1 (helper) + Task 2 (wiring). ✓
-- §3.4 keyboard focus → Task 3 Step 3 (`.tip-tablet:focus-within`). ✓
-- §3.5 copy (em-dash → period, `.assured` span, 100% chip, colon-less label, accepted-claim) → Task 3 Step 2. ✓
-- §4 edge cases (empty/coerced input, jar mode, switching, payOnly) → covered by helper coercion (Task 1) + payOnly untouched (no edit to payOnly branch). ✓
+- §3.1 reskin + invariants → Task 3 Step 1 (markup), handlers preserved verbatim. ✓
+- §3.2 None-chip gating → Task 3 Step 1 (both chips inside `{tipJar && (...)}`). ✓
+- §3.3 hard floor block (single-home `gratuityBelowFloor` hoisted above effects, coercion via helper, no intent below floor, `throw` guard, single floor message, floor-rate dup flagged in the hoist comment) → Task 1 + Task 2. ✓
+- §3.4 keyboard focus → Task 3 Step 2 (`.tip-tablet:focus-within`). ✓
+- §3.5 copy (em-dash → period, `.assured` span, 100% chip, colon-less label, accepted-claim) → Task 3 Step 1. ✓
+- §4 edge cases (empty/coerced input, jar mode, switching, payOnly) → helper coercion (Task 1) + payOnly branch untouched. ✓
 - §5 verification (build, manual, below-floor no-intent, validation parity, no-regression) → Task 4. ✓
 
 **2. Placeholder scan:** No TBD/TODO; every code step has complete code. ✓
 
-**3. Type/name consistency:** `isGratuityBelowFloor` / `gratuityFloorMessage` defined in Task 1 and used with identical signatures in Tasks 2-3; `gratuityBelowFloor` prop named identically in `ProposalView` (Task 2 Step 5) and `SignAndPaySection` destructure/use (Task 2 Step 6, Task 3). The Pay `disabled` expression appears in Task 2 Step 6 and again in the Task 2 Step 7 block — Step 7 is the final state (noted inline). ✓
+**3. Type/name consistency:** `isGratuityBelowFloor` / `gratuityFloorMessage` defined in Task 1, used with identical signatures in Tasks 2-3; `gratuityBelowFloor` declared once (Task 2 Step 2a, above the effects) and consumed in the effect deps, `handleSign`, the prop, and the warning. The Pay `disabled` expression appears only once (Task 2 Step 7) — no redundant intermediate edit. ✓
 
-**Decomposition note:** Tasks are ordered helper → floor block → reskin so each has only backward dependencies. Task 2 ships a working hard-floor block on the live markup; Task 3 reskins on top. Both are independently revertable.
+**Decomposition note:** Tasks ordered helper → floor block → reskin; only backward dependencies. Task 2 ships a complete hard-floor block (warning + guard share one message from this commit); Task 3 reskins on top. The hoist (Step 2) fixes the TDZ the plan review caught and gives `gratuityBelowFloor` a single home. Review checkpoints: `security-review`+`code-review` after Task 2 (money path), `code-review`+`consistency-check` after Task 3.
