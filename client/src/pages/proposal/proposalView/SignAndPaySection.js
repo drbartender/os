@@ -219,9 +219,8 @@ export default function SignAndPaySection({
             the new total before it shows. Hidden when staff x hours <= 0. */}
         {gratuityEnabled && (
           <div className="gratuity-block">
-            <span className="sign-pay-eyebrow">Tip jar at the bar?</span>
             <div className="gratuity-head">
-              <span className="sign-pay-eyebrow">Step · Gratuity</span>
+              <span className="sign-pay-eyebrow">Tip jar at the bar?</span>
               <h3 className="gratuity-heading">Tipping, handled your way</h3>
               <p className="gratuity-intro">
                 <span className="assured">Every dollar</span> goes straight to your
