@@ -75,17 +75,21 @@ function mapEventType(lead) {
 }
 
 /**
- * True when the Thumbtack lead's "Bar availability" answer asks us to supply the
- * bar (e.g. "Bartender will need to bring the bar"). The customer then needs a
- * bar rented, so the draft sets num_bars=1 to add the first_bar_fee.
+ * True when the Thumbtack lead's "Bar availability" answer asks US to supply the
+ * bar (the canned option "Bartender will need to bring the bar"), so the draft
+ * sets num_bars=1 to add the first_bar_fee. Match ONLY the answer of the bar
+ * question. Never match lead.description (free customer prose, where "I'll bring
+ * the bar" would wrongly add a $50 rental), and never the question text (which
+ * frames the topic regardless of the answer). Negated answers are rejected.
  */
 function leadNeedsBar(lead) {
   const details = Array.isArray(lead.details) ? lead.details : [];
-  const hay = [
-    lead.description || '',
-    ...details.map(d => `${d.question || ''} ${d.answer || ''}`),
-  ].join(' ').toLowerCase();
-  return hay.includes('bring the bar') || hay.includes('bring a bar');
+  return details.some((d) => {
+    if (!d || !String(d.question || '').toLowerCase().includes('bar')) return false;
+    const answer = String(d.answer || '').toLowerCase();
+    if (!answer.includes('bring the bar') && !answer.includes('bring a bar')) return false;
+    return !/\bnot\b|n't|\bno\b/.test(answer);
+  });
 }
 
 /** UTC timestamp -> { eventDate: 'YYYY-MM-DD', eventStartTime: 'HH:MM' (24h) } in Central time. */

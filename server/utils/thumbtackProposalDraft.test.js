@@ -71,6 +71,29 @@ test('leadNeedsBar: false when no bar detail is present', () => {
   assert.equal(leadNeedsBar({}), false);
 });
 
+test('leadNeedsBar: false when the free-text description says the CUSTOMER will bring the bar', () => {
+  // lead.description is free customer prose. "I'll bring the bar" means the
+  // customer supplies it, not us, and must NOT add a $50 bar rental to the draft.
+  assert.equal(leadNeedsBar({
+    description: "I'll bring the bar myself, just need a great bartender",
+    details: [{ question: 'Bar availability', answer: 'I have a bar the bartender can use' }],
+  }), false);
+});
+
+test('leadNeedsBar: false when the bar answer is negated (will NOT need to bring the bar)', () => {
+  assert.equal(leadNeedsBar({
+    details: [{ question: 'Bar availability', answer: 'Bartender will not need to bring the bar' }],
+  }), false);
+});
+
+test('leadNeedsBar: false when only the question (not the answer) mentions bringing the bar', () => {
+  // The question text frames the topic regardless of the answer; a "No" answer
+  // must win. Old code matched the concatenated question text and false-fired.
+  assert.equal(leadNeedsBar({
+    details: [{ question: 'Will the bartender need to bring the bar?', answer: 'No, I already have a bar' }],
+  }), false);
+});
+
 const { after } = require('node:test');
 const { pool } = require('../db');
 const { createDraftProposalFromLead } = require('./thumbtackProposalDraft');
