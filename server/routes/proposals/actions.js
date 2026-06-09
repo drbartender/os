@@ -154,6 +154,10 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
   const newAmountPaid = Math.min(currentPaid + paymentAmount, totalPrice);
   const isFullyPaid = newAmountPaid >= totalPrice;
   const newStatus = isFullyPaid ? 'balance_paid' : 'deposit_paid';
+  // The capped delta actually applied to EVERY consumer — proposal ledger,
+  // invoice, activity log, and the client/admin receipt email — never the raw
+  // admin-supplied amount, so an over-payment reports the $Y applied, not $X entered.
+  const appliedAmount = newAmountPaid - currentPaid;
 
   const dbClient = await pool.connect();
   try {
@@ -176,11 +180,9 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
       [proposal.id, isFullyPaid ? 'full' : 'deposit', Math.round((newAmountPaid - currentPaid) * 100)]
     );
 
-    // Log activity. The capped delta (newAmountPaid - currentPaid) is the
-    // true amount applied to the ledger — record THAT in the audit trail,
-    // not the raw admin-supplied paymentAmount, so an over-payment entry
-    // does not show "$X paid" when only $Y was actually applied.
-    const appliedAmount = newAmountPaid - currentPaid;
+    // Log activity with the capped applied amount (appliedAmount, hoisted above),
+    // not the raw admin-supplied paymentAmount, so an over-payment entry does not
+    // show "$X paid" when only $Y was actually applied.
     await dbClient.query(
       `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, actor_id, details) VALUES ($1, $2, 'admin', $3, $4)`,
       [proposal.id, isFullyPaid ? 'paid_in_full' : 'deposit_paid', req.user.id,
@@ -223,7 +225,7 @@ router.post('/:id/record-payment', auth, requireAdminOrManager, asyncHandler(asy
       WHERE p.id = $1
     `, [proposal.id]);
     const pd = payData.rows[0];
-    const amountFormatted = paymentAmount.toFixed(2);
+    const amountFormatted = appliedAmount.toFixed(2);
     const payType = isFullyPaid ? 'full payment' : 'deposit';
     const eventTypeLabel = getEventTypeLabel({ event_type: pd?.event_type, event_type_custom: pd?.event_type_custom });
 
