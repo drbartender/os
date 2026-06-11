@@ -228,7 +228,25 @@ router.post('/webhook', asyncHandler(async (req, res) => {
             const paymentRowId = paymentRow.rows[0].id;
 
             if (invoiceId) {
-              await linkPaymentToInvoice(Number(invoiceId), paymentRowId, intent.amount, dbClient);
+              // Cross-check ownership before linking: only credit an invoice that actually
+              // belongs to this proposal, so a payment can never land on another proposal's
+              // invoice even if the intent metadata is inconsistent. Mirrors the
+              // proposal-scoped invoice lookups in the branches below.
+              const invOwner = await dbClient.query(
+                'SELECT id FROM invoices WHERE id = $1 AND proposal_id = $2',
+                [Number(invoiceId), proposalId]
+              );
+              if (invOwner.rows[0]) {
+                await linkPaymentToInvoice(Number(invoiceId), paymentRowId, intent.amount, dbClient);
+              } else {
+                console.warn(`Webhook: invoice ${invoiceId} does not belong to proposal ${proposalId} (intent ${intent.id}); payment not linked`);
+                if (process.env.SENTRY_DSN_SERVER) {
+                  Sentry.captureMessage(
+                    `Webhook invoice/proposal mismatch (invoice ${invoiceId}, proposal ${proposalId}, intent ${intent.id}); payment not linked`,
+                    'warning'
+                  );
+                }
+              }
             } else if (paymentType === 'drink_plan_extras' || paymentType === 'drink_plan_with_balance') {
               // Idempotency: this block is inside `if (isFirstDelivery)` above, so
               // Stripe retries won't re-create the extras invoice. If lifted out,
