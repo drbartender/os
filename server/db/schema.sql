@@ -1292,6 +1292,12 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token_expires_at TIMESTAMPTZ;
 -- Per-account OTP attempt counter: defense-in-depth vs. distributed brute force
 -- that an IP-based rate limiter can't see. Invalidate the OTP after 5 failures.
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token_attempts INTEGER NOT NULL DEFAULT 0;
+-- Manual session-revocation lever for client JWTs (mirrors users.token_version). The
+-- OTP-issued JWT embeds this value and clientAuth checks it, so bumping the counter
+-- (UPDATE clients SET token_version = token_version + 1) kills a specific client's
+-- outstanding 7-day sessions without rotating the shared JWT_SECRET. No automatic trigger
+-- today (client login is OTP-only, no password to reset) — a kept-in-reserve kill switch.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
 
 -- Missing indexes identified by database review
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_email_unique ON clients(email) WHERE email IS NOT NULL;

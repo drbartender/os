@@ -90,9 +90,19 @@ const clientAuth = async (req, res, next) => {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     if (decoded.role !== 'client') return next(new AppError('Invalid token', 401, 'INVALID_TOKEN'));
-    const result = await pool.query('SELECT id, name, email, phone FROM clients WHERE id = $1', [decoded.id]);
+    const result = await pool.query('SELECT id, name, email, phone, token_version FROM clients WHERE id = $1', [decoded.id]);
     if (!result.rows[0]) return next(new AppError('Client not found', 401, 'CLIENT_NOT_FOUND'));
-    req.user = { ...result.rows[0], role: 'client' };
+    const c = result.rows[0];
+    // Manual session-revocation gate (mirrors staff auth()): reject a JWT whose embedded
+    // tokenVersion is behind the row's, so bumping clients.token_version kills that client's
+    // outstanding 7-day sessions. Legacy tokens carry no tokenVersion claim → coalesce to 0,
+    // matching the column default, so existing client sessions survive the deploy.
+    if ((c.token_version ?? 0) !== (decoded.tokenVersion ?? 0)) {
+      return next(new AppError('Session expired — please log in again', 401, 'TOKEN_VERSION_MISMATCH'));
+    }
+    // Strip token_version from req.user — route handlers don't need it.
+    const { token_version: _, ...clientForReq } = c;
+    req.user = { ...clientForReq, role: 'client' };
     next();
   } catch (err) {
     return next(new AppError('Invalid token', 401, 'INVALID_TOKEN'));
