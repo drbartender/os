@@ -2695,6 +2695,12 @@ ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_won_at TIMESTAMPTZ;
 -- Dispute-email retry bailout (2026-05-25)
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_email_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE tips ADD COLUMN IF NOT EXISTS dispute_email_failed_at TIMESTAMPTZ;
+-- Deferral marker (frozen-period strand recovery). deferred_at NULL = not deferred.
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS deferred_at TIMESTAMPTZ;
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS defer_kind TEXT;            -- 'roll_forward' | 'clawback'
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS defer_target_cents INTEGER; -- clawback retry target cumulative
+ALTER TABLE tips ADD COLUMN IF NOT EXISTS defer_attempts INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_tips_deferred ON tips (deferred_at) WHERE deferred_at IS NOT NULL;
 
 -- Partial index supporting Task 7's unassigned-tips listing. Filter on
 -- shift_id IS NULL + tipped_at > NOW() - 90 days; this partial covers it.

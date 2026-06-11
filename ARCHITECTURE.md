@@ -949,7 +949,12 @@ Phase 4b adds three cross-cutting pieces. Overlap prevention: each handler carri
 - `dispute_won_at` TIMESTAMPTZ — set when Stripe reinstates a previously-paid-out card tip after a chargeback resolves in our favor; idempotency marker for `payrollDisputeNotify` (set either via successful admin notification OR via the retry-bailout path)
 - `dispute_email_attempts` INTEGER NOT NULL DEFAULT 0 — retry counter for the dispute-won admin notification (0 to 3); incremented atomically inside `notifyDisputeWon`'s held transaction on each failed send
 - `dispute_email_failed_at` TIMESTAMPTZ — set ONLY when the dispute-won notification was abandoned after exhausting retries. Canonical "needs manual reconciliation" marker; the weekly sweep query (below) reads this column as the durable failsafe channel.
+- `deferred_at` TIMESTAMPTZ — set when `rollForwardLateTip` or `clawbackTip` cannot complete because today's pay period is itself frozen (`status != 'open'`); NULL once the deferred placement/clawback successfully resolves. Canonical "this tip's payroll action is stranded" marker for the frozen-period strand-recovery flow (Late-Tip / Clawback Recovery, 2026-06-11).
+- `defer_kind` TEXT — `'roll_forward'` (a late tip waiting to be placed) or `'clawback'` (a refund that landed while frozen). Read by `retryDeferredTips()` to know which util to re-call. NULL when not deferred.
+- `defer_target_cents` INTEGER — for `defer_kind = 'clawback'` only: the cumulative `refunded_amount_cents` target the deferred clawback should reach when retried (raised if an escalating refund lands while still deferred). NULL otherwise.
+- `defer_attempts` INTEGER NOT NULL DEFAULT 0 — count of defer-marker writes for this tip; the retry sweep skips rows past `MAX_DEFER_ATTEMPTS` (25) so a stuck tip drops from auto-retry but stays on the admin Deferred-tips list.
 - Indexed on `(target_user_id, tipped_at DESC)` for staff-side `GET /api/me/tips` + admin-side `GET /api/admin/tips`
+- Partial index `idx_tips_deferred` on `(deferred_at) WHERE deferred_at IS NOT NULL` supports the deferred-tips list + sweep scan.
 
 **Dispute-won notification state machine.** For tip rows that have entered the dispute-reinstatement flow, the `(dispute_won_at, dispute_email_failed_at)` pair describes one of four states:
 - **In progress, no failures yet:** `dispute_won_at IS NULL AND dispute_email_attempts = 0`. Webhook has not delivered, or the first attempt has not run.
