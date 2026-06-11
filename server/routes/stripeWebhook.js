@@ -741,6 +741,12 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     await clawbackTipByPaymentIntent(paymentIntentId, Number(charge.amount_refunded || 0));
   }
 
+  // Dispute/refund idempotency lives in the helpers, not in an event-level webhook_events
+  // gate (audit A08, confirmed). clawbackTipByPaymentIntent moves only the delta beyond
+  // tips.refunded_amount_cents (a same-cumulative Stripe redelivery is delta=0 = no-op), and
+  // notifyDisputeWon below gates on tips.dispute_won_at (redelivery returns early). So an
+  // at-least-once redelivery of charge.refunded / dispute.* cannot double-clawback or
+  // double-notify; no extra guard is needed here.
   if (event.type === 'charge.dispute.funds_withdrawn') {
     const dispute = event.data.object;
     await clawbackTipByPaymentIntent(dispute.payment_intent, Number(dispute.amount || 0));
