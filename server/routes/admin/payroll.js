@@ -12,6 +12,10 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { NotFoundError, ValidationError, ConflictError } = require('../../utils/errors');
 const { findOpenPeriodForDate, recomputePayoutTotal, maybeFinalizePeriod } = require('../../utils/payrollProcessing');
 const { accruePayoutsForProposal } = require('../../utils/payrollAccrual');
+const { rollForwardLateTip } = require('../../utils/payrollLateTip');
+const { retryDeferredTips, MAX_DEFER_ATTEMPTS } = require('../../utils/payrollDeferredRetry');
+const { logAdminAction } = require('../../utils/adminAuditLog');
+const Sentry = require('@sentry/node');
 
 const router = express.Router();
 
@@ -396,13 +400,12 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
   // frozen path roll forward so the tip lands on a bartender payout next period.
   try {
     if (frozen) {
-      const { rollForwardLateTip } = require('../../utils/payrollLateTip');
       await rollForwardLateTip(tipId);
     } else if (proposalId) {
       await accruePayoutsForProposal(proposalId);
     }
   } catch (err) {
-    require('@sentry/node').captureException(err, {
+    Sentry.captureException(err, {
       tags: { route: 'tip_assign', step: frozen ? 'roll_forward' : 'reaccrue' },
     });
   }
@@ -411,7 +414,6 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
 }));
 
 async function loadDeferredTips() {
-  const { MAX_DEFER_ATTEMPTS } = require('../../utils/payrollDeferredRetry');
   const { rows } = await pool.query(
     `SELECT t.id, t.defer_kind, t.amount_cents, t.defer_target_cents, t.deferred_at, t.defer_attempts,
             t.shift_id, s.event_date, p.event_type, p.event_type_custom,
@@ -450,13 +452,10 @@ router.get('/payroll/deferred-tips', auth, adminOnly, asyncHandler(async (req, r
 }));
 
 router.post('/payroll/deferred-tips/retry', auth, adminOnly, asyncHandler(async (req, res) => {
-  const { retryDeferredTips } = require('../../utils/payrollDeferredRetry');
   const summary = await retryDeferredTips();
-  try {
-    const { logAdminAction } = require('../../utils/adminAuditLog');
-    await logAdminAction({ actorUserId: req.user.id, targetUserId: null,
-      action: 'payroll_deferred_tips_retry', metadata: summary });
-  } catch (e) { require('@sentry/node').captureException(e); }
+  // logAdminAction is best-effort and never throws (it self-routes failures to Sentry).
+  await logAdminAction({ actorUserId: req.user.id, targetUserId: null,
+    action: 'payroll_deferred_tips_retry', metadata: summary });
   res.json({ summary, tips: await loadDeferredTips() });
 }));
 

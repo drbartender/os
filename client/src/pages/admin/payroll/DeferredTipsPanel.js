@@ -4,6 +4,15 @@ import { useToast } from '../../../context/ToastContext';
 import { fmt$fromCents, fmtDate } from '../../../components/adminos/format';
 import { getEventTypeLabel } from '../../../utils/eventTypes';
 
+// deferred_at is a TIMESTAMPTZ (full ISO), not a date-only string, so fmtDate
+// (which assumes 'YYYY-MM-DD' and appends 'T12:00:00') would yield Invalid Date.
+// Format the timestamp directly.
+const fmtDeferredAt = (ts) => {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+
 export default function DeferredTipsPanel() {
   const toast = useToast();
   const [tips, setTips] = useState([]);
@@ -26,7 +35,11 @@ export default function DeferredTipsPanel() {
     try {
       const { data } = await api.post('/admin/payroll/deferred-tips/retry');
       const s = data.summary || {};
-      toast.success(`Retried ${s.scanned || 0}: resolved ${s.resolved || 0}, still stuck ${s.redeferred || 0}${s.errors ? `, errors ${s.errors}` : ''}.`);
+      if (s.skipped) {
+        toast.info('A retry is already running. Refreshed the list.');
+      } else {
+        toast.success(`Retried ${s.scanned || 0}: resolved ${s.resolved || 0}, still stuck ${s.redeferred || 0}${s.errors ? `, errors ${s.errors}` : ''}.`);
+      }
       setTips(data.tips || []);
     } catch (err) {
       toast.error(err.response?.data?.error || err.message || 'Retry failed');
@@ -67,7 +80,7 @@ export default function DeferredTipsPanel() {
                 <div className="tiny muted">{amt}{t.event_date ? ` · ${fmtDate(t.event_date)} ${lbl}` : ''}</div>
               </div>
               <div className="tiny muted" style={{ flex: 1 }}>
-                deferred {fmtDate(t.deferred_at)}
+                deferred {fmtDeferredAt(t.deferred_at)}
                 {t.stuck_reason === 'stubs' ? ' · stuck: bartender not on file (de-stub needed, Retry won\'t help)'
                   : t.stuck_reason === 'max_attempts' ? ' · stuck (needs attention)'
                   : ' · waiting for an open period'}
