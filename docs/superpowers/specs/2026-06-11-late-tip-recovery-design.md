@@ -66,7 +66,7 @@ Three facts that shape the design (verified in code):
 ## 3. Requirements
 
 ### 3.1 The deferral marker (schema)
-Add to `tips` at the ALTER block (`server/db/schema.sql` ~`:2693`, idempotent
+Add to `tips` beside the existing `tips` ALTERs (`server/db/schema.sql` ~`:2698-2703`, idempotent
 `ADD COLUMN IF NOT EXISTS`):
 - `deferred_at TIMESTAMPTZ` — set when placement defers, cleared (NULL) on success. NULL = "not
   deferred." Drives the sweep query, the admin list, and item age.
@@ -131,19 +131,37 @@ successful accrual `COMMIT` at `:273`, on the success-return path only), fire th
 `setImmediate(() => retryDeferredTips().catch(err => Sentry.captureException(err, { tags: { util: 'payrollAccrual', step: 'deferred_sweep' } })))`.
 (`retryDeferredTips` → `rollForwardLateTip`/`clawbackTip` never re-enter accrual, so no
 recursion.) The sweep is not fired on the early skip-return paths (legacy-stub `:87`,
-pay_period-not-open `:112`, no-workers `:130`).
+pay_period-not-open `:113`, no-workers `:131`).
+
+**Coalesce concurrent sweeps.** `accruePayoutsForProposal` also runs in batch loops (e.g.
+`server/utils/balanceScheduler.js:228` over many proposals, and the cc-import endpoints), so a
+batch of N accruals would otherwise queue N redundant sweeps racing the same row locks.
+`retryDeferredTips` guards itself with a module-level "sweep in flight" boolean: if a sweep is
+already running it no-ops immediately. So any burst of accruals triggers at most one concurrent
+sweep, and a tip deferred during the burst is picked up by the next accrual's sweep (or the
+admin button).
 
 ### 3.6 Clawback on a never-placed tip (the wrong-claw fix, Warning #4)
 A refund can arrive for a tip that is still `roll_forward`-deferred (never placed). Clawing a
-negative adjustment then would hit a payout line that does not exist. Rule: before `clawbackTip`
-creates a negative line, it must confirm the tip was actually placed — i.e. `rolled_forward_at
-IS NOT NULL` **or** a positive `payout_events` line exists for `(tip.shift_id)` carrying this
-tip's card-tip cents. If the tip was **never placed**:
+negative adjustment then would hit a payout line that does not exist. The discriminator must be
+**per-tip, not per-shift**: multiple tips on one shift pool into a single
+`payout_events (payout_id, shift_id)` row, so "a positive line exists for this shift" cannot tell
+whether *this* tip was placed (a late tip on a shift that already accrued other tips would be
+misread as placed). The only with-a-shift unplaced case is a tip currently `roll_forward`-
+deferred — use exactly that marker.
+
+**Immediately after the `FOR UPDATE` tip read and the `delta <= 0` early-return, and before any
+pay-period work** (`payrollClawback.js` ~:35): if `deferred_at IS NOT NULL AND defer_kind = 'roll_forward'`
+(never placed):
 - record the refund (`refunded_amount_cents = newAmt`), **no negative line**;
-- clear any `roll_forward` deferral marker and set `rolled_forward_at = NOW()` so the pending
-  roll-forward is cancelled (a refunded tip must not later be paid forward);
-- COMMIT; return `{ delta, bartenders: 0, unplaced: true }`.
-This makes `roll_forward` and `clawback` markers mutually exclusive by construction.
+- clear the `roll_forward` marker and set `rolled_forward_at = NOW()` so the pending roll-forward
+  is cancelled (a refunded tip must not later be paid forward);
+- COMMIT (this path touches only `tips`, so a frozen today-period does not block it); return
+  `{ delta, bartenders: 0, unplaced: true }`.
+
+This keeps `roll_forward` and `clawback` markers mutually exclusive by construction and never
+claws a non-existent line. A normally-accrued tip is NOT `roll_forward`-deferred, so it correctly
+falls through to the standard negative-line path against its pooled shift line.
 
 ### 3.7 Pre-ship strands (Blocker #3 — explicit decision: no automated backfill)
 Tips stranded **before** this ships carry no marker, so the sweep won't see them. **An
@@ -216,13 +234,17 @@ Run from repo root (loads root `.env`), payroll suites one at a time; re-run
   target for clawback), event, staff name(s), `deferred_at` (age), `defer_attempts`, and a
   `stuck_reason` ('frozen_period' | 'stubs' | 'max_attempts'). Sorted `deferred_at ASC`.
 - **`POST /payroll/deferred-tips/retry`** (`auth + adminOnly`): runs `retryDeferredTips()`,
-  returns the `{ scanned, placed, redeferred, errors }` summary **and** the refreshed list.
+  returns the `{ scanned, placed, redeferred, errors }` summary **and** the refreshed list. Writes
+  an **audit-log entry** (admin user id + the summary) — it moves money, so "who resolved which
+  strand, when" must be answerable, matching the codebase's admin-money-action logging.
 - **Client `DeferredTipsPanel`** (mirror `client/src/pages/admin/payroll/UnassignedTipsPanel.js`,
-  API via `client/src/utils/api.js`): rendered only when the list is non-empty; enumerated
-  states — loading spinner, GET-error message, in-flight (Retry disabled + spinner), result
-  toast ("placed K of N; D still frozen" / all-frozen / error), client-side debounce on Retry.
-  Each row shows event · staff · $amount · kind · age, and visually flags "stuck on stubs" vs
-  "frozen period" so the operator knows when Retry won't help.
+  API via `client/src/utils/api.js`): always present in the payroll page; enumerated states —
+  loading spinner; **empty** ("No deferred tips" line, mirroring `UnassignedTipsPanel`, so the
+  operator gets a positive "nothing stuck" signal rather than a vanished panel); GET-error message
+  **with a retry-fetch action**; in-flight (Retry disabled + spinner); result toast ("placed K of
+  N; D still frozen" / all-frozen / error); client-side debounce on Retry. Each row shows
+  event · staff · $amount · kind · age, and visually flags "stuck on stubs" vs "frozen period" so
+  the operator knows when Retry won't help.
 
 ## 8. Files
 - `server/db/schema.sql` — 4 `tips` columns + partial index.
