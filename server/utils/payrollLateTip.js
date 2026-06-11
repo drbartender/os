@@ -52,7 +52,9 @@ async function rollForwardLateTip(tipId) {
     const stubCount = allBartenders.length - bartenders.length;
 
     if (allBartenders.length === 0) {
-      await client.query('UPDATE tips SET rolled_forward_at = NOW() WHERE id = $1', [tipId]);
+      await client.query(
+        `UPDATE tips SET rolled_forward_at = NOW(), deferred_at = NULL,
+                defer_kind = NULL, defer_attempts = 0 WHERE id = $1`, [tipId]);
       await client.query('COMMIT');
       return { bartenders: 0 };
     }
@@ -83,15 +85,30 @@ async function rollForwardLateTip(tipId) {
       period = ins.rows[0];
     }
     if (period.status !== 'open') {
-      // Today's period is itself frozen (atypical and recoverable). Defer:
-      // mark NOT rolled so a retry once a new period opens can pick this up.
-      // Log to Sentry so a persistent defer doesn't silently disappear.
+      // Today's period is itself frozen (atypical, recoverable). Discard the no-op
+      // period upsert, then persist a deferral marker on a fresh connection.
+      await client.query('ROLLBACK');
+      try {
+        // Guard on rolled_forward_at IS NULL so a placement that committed during
+        // this race is never re-flagged (no resurrection / double-pay).
+        await pool.query(
+          `UPDATE tips
+              SET deferred_at = COALESCE(deferred_at, NOW()),
+                  defer_kind = 'roll_forward',
+                  defer_attempts = defer_attempts + 1
+            WHERE id = $1 AND rolled_forward_at IS NULL`,
+          [tipId]
+        );
+      } catch (markErr) {
+        Sentry.captureException(markErr, {
+          tags: { util: 'payrollLateTip', step: 'defer_mark_failed' }, extra: { tipId },
+        });
+      }
       Sentry.captureMessage("rollForwardLateTip: today's period is non-open; deferring", {
         level: 'warning',
         tags: { util: 'payrollLateTip', step: 'defer_frozen_today' },
         extra: { tipId, periodStatus: period.status },
       });
-      await client.query('ROLLBACK');
       return null;
     }
 
@@ -147,7 +164,9 @@ async function rollForwardLateTip(tipId) {
     );
 
     // Mark idempotent.
-    await client.query('UPDATE tips SET rolled_forward_at = NOW() WHERE id = $1', [tipId]);
+    await client.query(
+      `UPDATE tips SET rolled_forward_at = NOW(), deferred_at = NULL,
+              defer_kind = NULL, defer_attempts = 0 WHERE id = $1`, [tipId]);
     await client.query('COMMIT');
     return { bartenders: n, period_id: period.id };
   } catch (err) {
