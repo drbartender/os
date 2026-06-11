@@ -3,9 +3,28 @@ const { test, before, beforeEach, afterEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
 const { clawbackTip, clawbackTipByPaymentIntent } = require('./payrollClawback');
+const { payPeriodForDate, computePayday } = require('./payrollPeriods');
 
 if (process.env.NODE_ENV === 'production') {
   throw new Error('payrollClawback.test.js refuses to run against production');
+}
+
+// Two sub-tests pre-seed payouts in today's open period via a `SELECT id FROM
+// pay_periods WHERE status='open' AND CURRENT_DATE BETWEEN ...` subquery. On a
+// shared dev DB with no open period covering today (e.g. all periods are
+// `paid` or the open one ends before today), that subquery returns NULL and
+// the payouts.pay_period_id NOT NULL constraint fires. Force-open the period
+// for today's date the same way production payroll code would create it.
+async function ensureTodayPeriodOpen() {
+  const todayYmd = new Date().toISOString().slice(0, 10);
+  const { startDate, endDate } = payPeriodForDate(todayYmd);
+  const payday = computePayday(endDate);
+  await pool.query(
+    `INSERT INTO pay_periods (start_date, end_date, payday, status)
+     VALUES ($1, $2, $3, 'open')
+     ON CONFLICT (start_date) DO UPDATE SET status = 'open'`,
+    [startDate, endDate, payday]
+  );
 }
 
 let bartenderA, bartenderB, paidPeriodId, paidProposalId, paidShiftId, tipId;
@@ -196,6 +215,7 @@ test('clawbackTip > mixed-stub shift: claws back from real bartender only, stubs
   const cbTipId = tipRes.rows[0].id;
   // Seed the real bartender's payout_event (what rollForwardLateTip on a mixed
   // shift would have created via the new code path).
+  await ensureTodayPeriodOpen();
   await pool.query(
     `INSERT INTO payouts (pay_period_id, contractor_id)
      VALUES ((SELECT id FROM pay_periods WHERE status='open' AND CURRENT_DATE BETWEEN start_date AND end_date), $1)
@@ -279,6 +299,7 @@ test('clawbackTip > emergency-dropped bartender is excluded from the clawback sp
   );
   const cbTipId = tipRes.rows[0].id;
   // Seed the working bartender's paid-out event (full tip, since they worked solo).
+  await ensureTodayPeriodOpen();
   await pool.query(
     `INSERT INTO payouts (pay_period_id, contractor_id)
      VALUES ((SELECT id FROM pay_periods WHERE status='open' AND CURRENT_DATE BETWEEN start_date AND end_date), $1)
