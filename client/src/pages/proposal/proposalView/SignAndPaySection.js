@@ -176,6 +176,7 @@ export default function SignAndPaySection({
           <label className="sign-pay-eyebrow">Signature</label>
           <div className="sign-pay-sig-wrap">
             <SignaturePad
+              requireAccept
               value={sigData}
               onChange={(data, method) => { setSigData(data); setSigMethod(method); }}
             />
