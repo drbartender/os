@@ -26,7 +26,9 @@
 - **Create** `server/utils/payrollDeferredRetry.test.js` — integration tests.
 - **Modify** `ARCHITECTURE.md`, `README.md` — route table, schema, folder tree.
 
-**Commit grouping:** one commit per task.
+**Commit grouping:** one commit per task. Each task's doc fragment (schema/route-table/folder-tree) is committed **with that task**, not deferred.
+
+**Review checkpoints (execution-review cadence):** after **Task 1** → `database-review` (schema + partial index); after **Task 3** → `code-review` + `consistency-check` (the symmetric money path); after **Task 6** → `security-review` (money-moving admin endpoint + audit log); after **Task 7** → `code-review` (client wiring). Resolve any blocker before continuing.
 
 ---
 
@@ -59,8 +61,10 @@ Expected output: `defer_attempts, defer_kind, defer_target_cents, deferred_at`.
 
 - [ ] **Step 3: Commit**
 
+Update `ARCHITECTURE.md`'s Database-Schema `tips` section with the 4 new deferral columns, then commit both (same-change docs):
+
 ```bash
-git add server/db/schema.sql
+git add server/db/schema.sql ARCHITECTURE.md
 git commit -m "feat(payroll): tips deferral-marker columns + partial index"
 ```
 
@@ -121,6 +125,9 @@ afterEach(async () => {
 });
 
 after(async () => {
+  // Restore today's SHARED pay period (the suite flips it via setTodayPeriod). 'open' is
+  // the benign default; leaving it processing/paid would bleed into other payroll suites.
+  await pool.query("UPDATE pay_periods SET status='open' WHERE CURRENT_DATE BETWEEN start_date AND end_date");
   await pool.query("DELETE FROM contractor_profiles WHERE user_id=$1", [userId]);
   await pool.query("DELETE FROM users WHERE id=$1", [userId]);
   await pool.end();
@@ -271,6 +278,17 @@ test('clawbackTip > refund on a roll_forward-deferred (never placed) tip records
   const c = await pool.query("SELECT COUNT(*)::int AS c FROM payout_events pe JOIN payouts po ON po.id=pe.payout_id WHERE po.contractor_id=$1", [userId]);
   assert.equal(c.rows[0].c, 0, 'no negative line created');
 });
+
+test('clawbackTip > escalating refund while deferred raises defer_target_cents', async () => {
+  await setTodayPeriod('open');
+  await rollForwardLateTip(tipId);     // place so there is a line
+  await setTodayPeriod('processing');  // freeze today
+  await clawbackTip(tipId, 2000);      // defer $20
+  await clawbackTip(tipId, 3500);      // a larger refund lands, still frozen
+  const { rows } = await pool.query("SELECT defer_target_cents, refunded_amount_cents FROM tips WHERE id=$1", [tipId]);
+  assert.equal(rows[0].defer_target_cents, 3500, 'target raised to the latest cumulative');
+  assert.equal(rows[0].refunded_amount_cents, 0, 'cumulative still not advanced while deferred');
+});
 ```
 
 - [ ] **Step 2: Run, verify FAIL**
@@ -386,7 +404,7 @@ test('retryDeferredTips > places a deferred late tip and clears its marker', asy
   await rollForwardLateTip(tipId);   // deferred
   await setTodayPeriod('open');
   const summary = await retryDeferredTips();
-  assert.equal(summary.placed, 1);
+  assert.equal(summary.resolved, 1);
   const { rows } = await pool.query("SELECT deferred_at FROM tips WHERE id=$1", [tipId]);
   assert.equal(rows[0].deferred_at, null);
 });
@@ -427,9 +445,9 @@ const SWEEP_LIMIT = 200;
 let sweepInFlight = false;
 
 async function retryDeferredTips() {
-  if (sweepInFlight) return { skipped: true, reason: 'in_flight', scanned: 0, placed: 0, redeferred: 0, errors: 0 };
+  if (sweepInFlight) return { skipped: true, reason: 'in_flight', scanned: 0, resolved: 0, redeferred: 0, errors: 0 };
   sweepInFlight = true;
-  const summary = { scanned: 0, placed: 0, redeferred: 0, errors: 0 };
+  const summary = { scanned: 0, resolved: 0, redeferred: 0, errors: 0 };
   try {
     const { rows } = await pool.query(
       `SELECT id, defer_kind, defer_target_cents FROM tips
@@ -443,7 +461,7 @@ async function retryDeferredTips() {
         if (t.defer_kind === 'roll_forward') await rollForwardLateTip(t.id);
         else if (t.defer_kind === 'clawback') await clawbackTip(t.id, Number(t.defer_target_cents));
         const chk = await pool.query('SELECT deferred_at FROM tips WHERE id = $1', [t.id]);
-        if (chk.rows[0] && chk.rows[0].deferred_at === null) summary.placed += 1;
+        if (chk.rows[0] && chk.rows[0].deferred_at === null) summary.resolved += 1; // placed OR clawed
         else summary.redeferred += 1;
       } catch (err) {
         summary.errors += 1;
@@ -468,8 +486,10 @@ node --test server/utils/payrollDeferredRetry.test.js
 
 - [ ] **Step 5: Commit**
 
+Add `server/utils/payrollDeferredRetry.js` to `README.md`'s folder-structure tree, then commit:
+
 ```bash
-git add server/utils/payrollDeferredRetry.js server/utils/payrollDeferredRetry.test.js
+git add server/utils/payrollDeferredRetry.js server/utils/payrollDeferredRetry.test.js README.md
 git commit -m "feat(payroll): retryDeferredTips sweep (single-flight, attempt-capped)"
 ```
 
@@ -567,7 +587,15 @@ async function loadDeferredTips() {
                     JOIN users u ON u.id = sr.user_id
                LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
                    WHERE sr.shift_id = t.shift_id AND sr.status = 'approved'
-                     AND sr.dropped_at IS NULL AND LOWER(sr.position) = 'bartender') AS staff
+                     AND sr.dropped_at IS NULL AND LOWER(sr.position) = 'bartender') AS staff,
+            (t.shift_id IS NOT NULL
+             AND EXISTS (SELECT 1 FROM shift_requests sr2 JOIN users u2 ON u2.id = sr2.user_id
+                          WHERE sr2.shift_id = t.shift_id AND sr2.status = 'approved'
+                            AND sr2.dropped_at IS NULL AND LOWER(sr2.position) = 'bartender')
+             AND NOT EXISTS (SELECT 1 FROM shift_requests sr3 JOIN users u3 ON u3.id = sr3.user_id
+                              WHERE sr3.shift_id = t.shift_id AND sr3.status = 'approved'
+                                AND sr3.dropped_at IS NULL AND LOWER(sr3.position) = 'bartender'
+                                AND u3.cc_id NOT LIKE 'legacy_cc:%')) AS all_stubs
        FROM tips t
   LEFT JOIN shifts s ON s.id = t.shift_id
   LEFT JOIN proposals p ON p.id = s.proposal_id
@@ -576,9 +604,11 @@ async function loadDeferredTips() {
   );
   return rows.map(t => ({
     ...t,
-    // 'max_attempts' = stuck (stays on list, dropped from auto-retry); otherwise it's
-    // waiting for a period to open. (Stub-stuck manifests as a climbing attempt count.)
-    stuck_reason: t.defer_attempts >= MAX_DEFER_ATTEMPTS ? 'max_attempts' : 'frozen_period',
+    // 'stubs' = every approved bartender on the shift is a legacy_cc stub (Retry can't help;
+    // a de-stub is needed). 'max_attempts' = stuck past the auto-retry cap (stays on the list,
+    // dropped from auto-retry). Else: waiting for a period to open.
+    stuck_reason: t.all_stubs ? 'stubs'
+      : (t.defer_attempts >= MAX_DEFER_ATTEMPTS ? 'max_attempts' : 'frozen_period'),
   }));
 }
 
@@ -606,14 +636,16 @@ node -e "require('dotenv').config(); const {pool}=require('./server/db'); pool.q
 ```
 Expected: `loads OK` (the route module requires cleanly).
 
-- [ ] **Step 3: Manual smoke (optional, with the dev server running)**
+- [ ] **Step 3: Smoke the endpoints (REQUIRED — money path)**
 
-`GET /api/admin/payroll/deferred-tips` returns `{ tips: [...] }`; `POST /api/admin/payroll/deferred-tips/retry` returns `{ summary, tips }` and writes an `adminAuditLog` row.
+With the dev server running and authenticated as an admin: `GET /api/admin/payroll/deferred-tips` returns `200` `{ tips }`; `POST /api/admin/payroll/deferred-tips/retry` returns `200` `{ summary, tips }`. Then confirm the retry wrote an admin-audit row: read `server/utils/adminAuditLog.js` for the table/columns it writes to, then `SELECT` the latest `payroll_deferred_tips_retry` row and confirm its `metadata` holds the sweep summary.
 
 - [ ] **Step 4: Commit**
 
+Add `GET /payroll/deferred-tips` + `POST /payroll/deferred-tips/retry` to `ARCHITECTURE.md`'s admin route table, then commit:
+
 ```bash
-git add server/routes/admin/payroll.js
+git add server/routes/admin/payroll.js ARCHITECTURE.md
 git commit -m "feat(payroll): admin deferred-tips list + audit-logged retry endpoint"
 ```
 
@@ -656,7 +688,7 @@ export default function DeferredTipsPanel() {
     try {
       const { data } = await api.post('/admin/payroll/deferred-tips/retry');
       const s = data.summary || {};
-      toast.success(`Retried ${s.scanned || 0}: placed ${s.placed || 0}, still stuck ${s.redeferred || 0}${s.errors ? `, errors ${s.errors}` : ''}.`);
+      toast.success(`Retried ${s.scanned || 0}: resolved ${s.resolved || 0}, still stuck ${s.redeferred || 0}${s.errors ? `, errors ${s.errors}` : ''}.`);
       setTips(data.tips || []);
     } catch (err) {
       toast.error(err.response?.data?.error || err.message || 'Retry failed');
@@ -698,7 +730,9 @@ export default function DeferredTipsPanel() {
               </div>
               <div className="tiny muted" style={{ flex: 1 }}>
                 deferred {fmtDate(t.deferred_at)}
-                {t.stuck_reason === 'max_attempts' ? ' · stuck (needs attention)' : ' · waiting for an open period'}
+                {t.stuck_reason === 'stubs' ? ' · stuck: bartender not on file (de-stub needed, Retry won\'t help)'
+                  : t.stuck_reason === 'max_attempts' ? ' · stuck (needs attention)'
+                  : ' · waiting for an open period'}
               </div>
             </div>
           </div>
@@ -727,23 +761,20 @@ Expected: `Compiled successfully` (the pre-existing html2pdf source-map warning 
 
 - [ ] **Step 4: Commit**
 
+Add `client/src/pages/admin/payroll/DeferredTipsPanel.js` to `README.md`'s folder-structure tree, then commit:
+
 ```bash
-git add client/src/pages/admin/payroll/DeferredTipsPanel.js client/src/pages/admin/payroll/PayrollPage.js
+git add client/src/pages/admin/payroll/DeferredTipsPanel.js client/src/pages/admin/payroll/PayrollPage.js README.md
 git commit -m "feat(payroll): admin Deferred tips panel + Retry button"
 ```
 
 ---
 
-### Task 8: Docs + full verification
+### Task 8: Full verification
 
-**Files:** Modify `ARCHITECTURE.md`, `README.md`.
+(Docs are committed with their owning tasks — schema/Task 1, sweep util/Task 4, routes/Task 6, panel/Task 7.)
 
-- [ ] **Step 1: Docs**
-
-- `ARCHITECTURE.md`: add `GET /payroll/deferred-tips` and `POST /payroll/deferred-tips/retry` to the admin route table; add the 4 `tips` deferral columns to the Database Schema `tips` section.
-- `README.md`: add `server/utils/payrollDeferredRetry.js` and `client/src/pages/admin/payroll/DeferredTipsPanel.js` to the folder-structure tree.
-
-- [ ] **Step 2: Full verification**
+- [ ] **Step 1: Full verification**
 
 ```bash
 node --test server/utils/payrollDeferredRetry.test.js
@@ -754,12 +785,9 @@ cd client && CI=true npm run build; cd ..
 ```
 Expected: every suite green; client compiles. (Run server suites one at a time — shared dev DB.)
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 2: Confirm the docs landed**
 
-```bash
-git add ARCHITECTURE.md README.md
-git commit -m "docs(payroll): late-tip recovery routes, schema, folder tree"
-```
+`git log --oneline main..HEAD` should show the schema/route/folder-tree doc edits committed with Tasks 1/4/6/7. If any was missed, add it and commit `docs(payroll): ...`.
 
 ---
 
@@ -782,4 +810,8 @@ git commit -m "docs(payroll): late-tip recovery routes, schema, folder tree"
 
 **3. Type/name consistency:** `retryDeferredTips` / `MAX_DEFER_ATTEMPTS` defined in Task 4 and consumed identically in Tasks 5, 6. The marker columns (`deferred_at`, `defer_kind`, `defer_target_cents`, `defer_attempts`) are named identically across schema, both utils, the sweep, and the routes. `logAdminAction({ actorUserId, targetUserId, action, metadata })` matches `server/utils/adminAuditLog.js`. The clawback `tip` select adds `deferred_at, defer_kind`, used by the §3.6 check. ✓
 
-**Note on the `stuck_reason` UI:** the spec's `'stubs'` distinction is approximated by `max_attempts` (a stub-stuck tip climbs the attempt count). A precise stub flag is deferred to v2; the panel still surfaces "stuck (needs attention)" so no strand hides.
+**Post-review fold-ins (review round 2):** named review checkpoints per task; sweep summary `placed`→`resolved` (a cleared clawback isn't "placed"); the `stubs` stuck-reason is now computed in the loader (all approved bartenders are `legacy_cc` stubs) and shown distinctly in the panel; the test suite restores today's shared pay period in `after`; the Task 6 money-endpoint smoke is required; docs co-locate with their owning tasks.
+
+**Test coverage of spec §6:** defer/place/idempotency/race-guard/never-placed/attempt-cap/accrual-hook/escalating-refund are integration-tested. The rest are handled deliberately: GET-list visibility is implied by the defer tests (the loader's `WHERE deferred_at IS NOT NULL` returns exactly those rows); the marker-write-failure path is covered by inspection (the explicit try/catch → Sentry), not a brittle fault-injection test; the "all-stubs → de-stub" marker case is narrow (a non-stub bartender dropping between defer and retry — an all-stubs tip is skipped *before* the frozen-defer branch, so it never acquires a marker on its own) and the loader surfaces it via `stuck_reason='stubs'`.
+
+**Deferral-clear invariant:** the four clear columns (`deferred_at`, `defer_kind`, `defer_target_cents`, `defer_attempts`) must stay identical across all success sites (lateTip `:55`/`:150`; clawback `:40`/`:59`/`:157` + the §3.6 path). Kept as explicit literal SQL for readability; a `clearDeferralMarker` helper is a reasonable later refactor if a sixth marker column is ever added.
