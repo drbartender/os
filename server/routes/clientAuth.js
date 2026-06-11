@@ -81,7 +81,7 @@ router.post('/verify', otpLimiter, asyncHandler(async (req, res) => {
   if (Object.keys(fieldErrors).length > 0) throw new ValidationError(fieldErrors);
 
   const result = await pool.query(
-    'SELECT id, name, email, phone, auth_token, auth_token_expires_at, auth_token_attempts FROM clients WHERE LOWER(email) = LOWER($1)',
+    'SELECT id, name, email, phone, auth_token, auth_token_expires_at, auth_token_attempts, token_version FROM clients WHERE LOWER(email) = LOWER($1)',
     [email]
   );
   const client = result.rows[0];
@@ -125,7 +125,7 @@ router.post('/verify', otpLimiter, asyncHandler(async (req, res) => {
 
   // Issue JWT
   const token = jwt.sign(
-    { id: client.id, email: client.email, role: 'client' },
+    { id: client.id, email: client.email, role: 'client', tokenVersion: client.token_version ?? 0 },
     process.env.JWT_SECRET,
     { expiresIn: '7d' }
   );
