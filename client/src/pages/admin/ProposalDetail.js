@@ -204,6 +204,10 @@ export default function ProposalDetail() {
       const proceed = window.confirm('No email on file. Send via SMS only?');
       if (!proceed) return;
     }
+    if (status === 'accepted') {
+      const proceed = window.confirm('Mark this proposal accepted? This is normally automatic when the client signs and pays. Continue only for a manual or offline booking.');
+      if (!proceed) return;
+    }
     try {
       const res = await api.patch(`/proposals/${id}/status`, { status });
       setProposal(prev => ({ ...prev, status: res.data.status }));

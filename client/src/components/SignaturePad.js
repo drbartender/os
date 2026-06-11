@@ -1,9 +1,13 @@
 import React, { useRef, useEffect, useState } from 'react';
 
-export default function SignaturePad({ onChange, value }) {
+export default function SignaturePad({ onChange, value, requireAccept = false }) {
   const [mode, setMode] = useState('draw'); // 'draw' or 'type'
   const [typedName, setTypedName] = useState('');
   const [typeConsent, setTypeConsent] = useState(false);
+  // requireAccept (draw mode): strokes are on the canvas but not yet committed.
+  // The signature only counts once the user presses "Accept signature" — a
+  // stray tap can never register on its own.
+  const [pendingDraw, setPendingDraw] = useState(false);
   const canvasRef = useRef(null);
   const drawing = useRef(false);
   const hasSignature = useRef(false);
@@ -51,6 +55,10 @@ export default function SignaturePad({ onChange, value }) {
 
   function startDraw(e) {
     e.preventDefault();
+    // When acceptance is required and a signature is already committed, the
+    // first new stroke un-commits it so the user must press Accept again —
+    // never leave a stale "captured" signature that no longer matches the canvas.
+    if (requireAccept && value) onChange('', null);
     drawing.current = true;
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -78,7 +86,21 @@ export default function SignaturePad({ onChange, value }) {
     drawing.current = false;
     const canvas = canvasRef.current;
     const data = canvas.toDataURL('image/png');
-    onChange(data, 'draw');
+    if (requireAccept) {
+      // Hold the drawing until the user explicitly accepts it — don't commit
+      // on stroke-end.
+      setPendingDraw(true);
+    } else {
+      onChange(data, 'draw');
+    }
+  }
+
+  // requireAccept only: commit the drawn signature on an explicit press.
+  function acceptDraw() {
+    const canvas = canvasRef.current;
+    if (!canvas || !hasSignature.current) return;
+    onChange(canvas.toDataURL('image/png'), 'draw');
+    setPendingDraw(false);
   }
 
   function clearDraw() {
@@ -86,6 +108,7 @@ export default function SignaturePad({ onChange, value }) {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     hasSignature.current = false;
+    setPendingDraw(false);
     onChange('', null);
   }
 
@@ -97,6 +120,7 @@ export default function SignaturePad({ onChange, value }) {
       ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
       hasSignature.current = false;
     }
+    setPendingDraw(false);
     setTypedName('');
     setTypeConsent(false);
     onChange('', null);
@@ -124,6 +148,7 @@ export default function SignaturePad({ onChange, value }) {
 
   const isDrawCaptured = mode === 'draw' && value;
   const isTypeCaptured = mode === 'type' && value;
+  const awaitingAccept = requireAccept && pendingDraw && !isDrawCaptured;
 
   return (
     <div>
@@ -164,16 +189,27 @@ export default function SignaturePad({ onChange, value }) {
               onTouchEnd={stopDraw}
             />
             <div className="signature-controls">
+              {requireAccept && (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={acceptDraw}
+                  disabled={!awaitingAccept}
+                >
+                  Accept signature
+                </button>
+              )}
               <button type="button" className="btn btn-secondary btn-sm" onClick={clearDraw}>
                 Clear
               </button>
             </div>
           </div>
-          {!isDrawCaptured && (
-            <p className="form-helper">Sign above using your mouse or finger.</p>
-          )}
-          {isDrawCaptured && (
+          {isDrawCaptured ? (
             <p style={{ fontSize: '0.8rem', color: 'var(--success)', marginTop: '0.3rem' }}>✓ Signature captured</p>
+          ) : awaitingAccept ? (
+            <p className="form-helper">Press <strong>Accept signature</strong> to confirm.</p>
+          ) : (
+            <p className="form-helper">Sign above using your mouse or finger.</p>
           )}
         </div>
       ) : (
