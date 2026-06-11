@@ -23,6 +23,14 @@ before(async () => {
 });
 
 beforeEach(async () => {
+  // Heal the pay period that covers today. A prior processing/paid run in the
+  // shared dev DB can leave the current period frozen, which makes accrual a
+  // no-op ({skipped:'pay_period_not_open'}) and silently fails every assertion
+  // below. No other payroll suite uses today's period (they seed fixed past
+  // dates), so forcing it open here is isolated and needs no teardown.
+  await pool.query(
+    "UPDATE pay_periods SET status = 'open' WHERE CURRENT_DATE BETWEEN start_date AND end_date"
+  );
   const p = await pool.query(
     `INSERT INTO proposals (client_id, event_date, status, event_type, event_start_time,
                             event_duration_hours, total_price, amount_paid, pricing_snapshot)
