@@ -316,6 +316,12 @@ router.patch('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) 
  * Returns only sent/paid/partially_paid — no drafts or voids.
  */
 router.get('/client/:proposalToken', clientAuth, asyncHandler(async (req, res) => {
+  // proposals.token is UUID; a non-UUID param casts-and-throws (Postgres 22P02) -> 500.
+  // Reject it up front and return the empty list this route already contracts on (the
+  // public /t/:token route guards the same way).
+  if (!UUID_RE.test(req.params.proposalToken)) {
+    return res.json({ invoices: [] });
+  }
   const result = await pool.query(
     `SELECT
        i.id, i.token, i.proposal_id, i.invoice_number, i.label,

@@ -2134,6 +2134,27 @@ CREATE TABLE IF NOT EXISTS tips (
 CREATE INDEX IF NOT EXISTS idx_tips_target_user_tipped_at
   ON tips(target_user_id, tipped_at DESC);
 
+-- Orphaned tip sessions: a tip checkout completed (the customer was charged) but no tips
+-- row could be written because the session metadata was bad — malformed/missing token,
+-- non-positive amount, or a tip_page_token absent from payment_profiles (e.g. an old QR
+-- scanned after the token was rotated). The webhook records the session here instead of
+-- silently acking, so the operator has a reconciliation surface for real money sitting in
+-- Stripe. UNIQUE(stripe_session_id) makes the record idempotent against Stripe redelivery.
+CREATE TABLE IF NOT EXISTS tips_orphaned (
+  id SERIAL PRIMARY KEY,
+  stripe_session_id TEXT NOT NULL,
+  stripe_payment_intent_id TEXT,
+  amount_cents INTEGER,
+  attempted_token TEXT,
+  attempted_bartender_user_id INTEGER,
+  customer_email TEXT,
+  reason TEXT NOT NULL
+    CHECK (reason IN ('malformed_metadata', 'non_positive_amount', 'token_not_found')),
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tips_orphaned_session ON tips_orphaned(stripe_session_id);
+
 CREATE TABLE IF NOT EXISTS tip_page_feedback (
   id SERIAL PRIMARY KEY,
   target_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,

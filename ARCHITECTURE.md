@@ -958,6 +958,12 @@ Phase 4b adds three cross-cutting pieces. Overlap prevention: each handler carri
 - **Completed normally:** `dispute_won_at IS NOT NULL AND dispute_email_failed_at IS NULL`. Email delivered, admin notified.
 - **Completed by bailout:** `dispute_won_at IS NOT NULL AND dispute_email_failed_at IS NOT NULL`. Three send failures; admin must reconcile manually. The presence of `dispute_email_failed_at IS NOT NULL` is the canonical marker.
 
+**tips_orphaned** — Tip checkouts that completed (customer charged) but could NOT become a `tips` row because the session metadata was bad. The webhook records the session here instead of acking silently, so real money sitting in the Stripe balance has a reconciliation surface.
+- `id` SERIAL PK; `stripe_session_id` TEXT NOT NULL with a UNIQUE index — idempotency key against Stripe redelivery (`ON CONFLICT DO NOTHING`)
+- `stripe_payment_intent_id`, `amount_cents`, `attempted_token`, `attempted_bartender_user_id`, `customer_email` — best-effort capture from the session for manual booking
+- `reason` TEXT NOT NULL CHECK IN (`malformed_metadata` | `non_positive_amount` | `token_not_found`); `resolved_at` TIMESTAMPTZ set by the operator once reconciled; `created_at` DEFAULT NOW()
+- The insert is NOT swallowed: a DB failure bubbles to a 500 so Stripe retries, and the webhook acks 200 only once the orphan is durably recorded.
+
 **tip_page_feedback** — Bartender-feedback submissions from the tip thank-you page (only the negative-rating path; 4-5★ flows nudge customers to a Google review instead)
 - `id` SERIAL PK
 - `target_user_id` FK → users (bartender being reviewed; ON DELETE RESTRICT)

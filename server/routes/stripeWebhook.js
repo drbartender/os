@@ -466,6 +466,22 @@ router.post('/webhook', asyncHandler(async (req, res) => {
       const token = session.metadata.tip_page_token;
       const piId = session.payment_intent;
 
+      // Record a tip session we cannot turn into a tips row (bad metadata) so real money
+      // isn't silently lost in the Stripe balance. Idempotent on stripe_session_id. NOT
+      // wrapped in try/catch: a real DB failure bubbles to a 500 so Stripe retries instead
+      // of acking an unrecorded tip — i.e. a 200 here means the orphan is durably recorded.
+      const recordOrphanedTip = (reason) => pool.query(
+        `INSERT INTO tips_orphaned (stripe_session_id, stripe_payment_intent_id, amount_cents,
+                                    attempted_token, attempted_bartender_user_id, customer_email, reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (stripe_session_id) DO NOTHING`,
+        [
+          session.id, piId || null, session.amount_total || null,
+          token || null, Number.isInteger(targetUserId) ? targetUserId : null,
+          session.customer_details?.email || null, reason,
+        ]
+      );
+
       if (!Number.isInteger(targetUserId) || !token || !UUID_RE.test(token) || !piId) {
         console.error('[tip-webhook] malformed tip session metadata', session.id);
         Sentry.captureMessage('Malformed tip session metadata', {
@@ -473,6 +489,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           tags: { webhook: 'stripe', kind: 'tip' },
           extra: { sessionId: session.id, metadata: session.metadata },
         });
+        await recordOrphanedTip('malformed_metadata');
         return res.json({ received: true });
       }
 
@@ -483,6 +500,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           tags: { webhook: 'stripe', kind: 'tip' },
           extra: { sessionId: session.id, amount_total: session.amount_total },
         });
+        await recordOrphanedTip('non_positive_amount');
         return res.json({ received: true });
       }
 
@@ -503,6 +521,7 @@ router.post('/webhook', asyncHandler(async (req, res) => {
           tags: { webhook: 'stripe', kind: 'tip' },
           extra: { sessionId: session.id, tokenPrefix: token.slice(0, 8) },
         });
+        await recordOrphanedTip('token_not_found');
         return res.json({ received: true });
       }
       const dbUserId = verify.rows[0].user_id;
@@ -745,6 +764,12 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     await clawbackTipByPaymentIntent(paymentIntentId, Number(charge.amount_refunded || 0));
   }
 
+  // Dispute/refund idempotency lives in the helpers, not in an event-level webhook_events
+  // gate (audit A08, confirmed). clawbackTipByPaymentIntent moves only the delta beyond
+  // tips.refunded_amount_cents (a same-cumulative Stripe redelivery is delta=0 = no-op), and
+  // notifyDisputeWon below gates on tips.dispute_won_at (redelivery returns early). So an
+  // at-least-once redelivery of charge.refunded / dispute.* cannot double-clawback or
+  // double-notify; no extra guard is needed here.
   if (event.type === 'charge.dispute.funds_withdrawn') {
     const dispute = event.data.object;
     await clawbackTipByPaymentIntent(dispute.payment_intent, Number(dispute.amount || 0));
