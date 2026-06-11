@@ -410,6 +410,56 @@ router.patch('/payroll/tips/:id/assign', auth, adminOnly, asyncHandler(async (re
   res.json({ tip: updated.rows[0], frozen_period: frozen });
 }));
 
+async function loadDeferredTips() {
+  const { MAX_DEFER_ATTEMPTS } = require('../../utils/payrollDeferredRetry');
+  const { rows } = await pool.query(
+    `SELECT t.id, t.defer_kind, t.amount_cents, t.defer_target_cents, t.deferred_at, t.defer_attempts,
+            t.shift_id, s.event_date, p.event_type, p.event_type_custom,
+            ARRAY(SELECT COALESCE(cp.preferred_name, u.email)
+                    FROM shift_requests sr
+                    JOIN users u ON u.id = sr.user_id
+               LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+                   WHERE sr.shift_id = t.shift_id AND sr.status = 'approved'
+                     AND sr.dropped_at IS NULL AND LOWER(sr.position) = 'bartender') AS staff,
+            (t.shift_id IS NOT NULL
+             AND EXISTS (SELECT 1 FROM shift_requests sr2 JOIN users u2 ON u2.id = sr2.user_id
+                          WHERE sr2.shift_id = t.shift_id AND sr2.status = 'approved'
+                            AND sr2.dropped_at IS NULL AND LOWER(sr2.position) = 'bartender')
+             AND NOT EXISTS (SELECT 1 FROM shift_requests sr3 JOIN users u3 ON u3.id = sr3.user_id
+                              WHERE sr3.shift_id = t.shift_id AND sr3.status = 'approved'
+                                AND sr3.dropped_at IS NULL AND LOWER(sr3.position) = 'bartender'
+                                AND u3.cc_id NOT LIKE 'legacy_cc:%')) AS all_stubs
+       FROM tips t
+  LEFT JOIN shifts s ON s.id = t.shift_id
+  LEFT JOIN proposals p ON p.id = s.proposal_id
+      WHERE t.deferred_at IS NOT NULL
+      ORDER BY t.deferred_at ASC`
+  );
+  return rows.map(t => ({
+    ...t,
+    // 'stubs' = every approved bartender on the shift is a legacy_cc stub (Retry can't help;
+    // a de-stub is needed). 'max_attempts' = stuck past the auto-retry cap (stays on the list,
+    // dropped from auto-retry). Else: waiting for a period to open.
+    stuck_reason: t.all_stubs ? 'stubs'
+      : (t.defer_attempts >= MAX_DEFER_ATTEMPTS ? 'max_attempts' : 'frozen_period'),
+  }));
+}
+
+router.get('/payroll/deferred-tips', auth, adminOnly, asyncHandler(async (req, res) => {
+  res.json({ tips: await loadDeferredTips() });
+}));
+
+router.post('/payroll/deferred-tips/retry', auth, adminOnly, asyncHandler(async (req, res) => {
+  const { retryDeferredTips } = require('../../utils/payrollDeferredRetry');
+  const summary = await retryDeferredTips();
+  try {
+    const { logAdminAction } = require('../../utils/adminAuditLog');
+    await logAdminAction({ actorUserId: req.user.id, targetUserId: null,
+      action: 'payroll_deferred_tips_retry', metadata: summary });
+  } catch (e) { require('@sentry/node').captureException(e); }
+  res.json({ summary, tips: await loadDeferredTips() });
+}));
+
 router.get('/payroll/contractors/:userId/payouts', auth, adminOnly, asyncHandler(async (req, res) => {
   const userId = Number(req.params.userId);
   if (!Number.isInteger(userId)) throw new ValidationError(null, 'invalid userId');

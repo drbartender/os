@@ -327,6 +327,8 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | PUT | `/settings` | Admin | Update app_settings key-value pairs |
 | POST | `/backfill-geocodes` | Admin | Geocode all staff/shift addresses and backfill hire dates |
 | GET | `/payroll/...` | Admin | Payroll surface — contractor payouts, pay periods, and paystub data (`server/routes/admin/payroll.js`, mounted under `/api/admin/payroll`; see the route file for exact paths). |
+| GET | `/payroll/deferred-tips` | Admin | List tips deferred while the open pay period was frozen (with stuck-reason: `frozen_period`, `stubs`, or `max_attempts`). |
+| POST | `/payroll/deferred-tips/retry` | Admin | Manually run the deferred-tip sweep; audit-logged as `payroll_deferred_tips_retry` with the summary in `metadata`. |
 | (cover-swaps) | various | Admin | Admin cover-swap approval endpoints (`server/routes/adminCoverSwaps.js`, mounted under `/api/admin`). |
 
 ### Messages — `/api/messages`
