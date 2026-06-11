@@ -16,6 +16,7 @@ const { ADMIN_URL } = require('../utils/urls');
 const { matchTipToEvent } = require('../utils/payrollTips');
 const { clawbackTipByPaymentIntent } = require('../utils/payrollClawback');
 const { esc } = require('../utils/htmlEscape');
+const { UUID_RE } = require('../utils/tokens');
 
 const router = express.Router();
 
@@ -461,7 +462,6 @@ router.post('/webhook', asyncHandler(async (req, res) => {
     // Tip page handler — only for sessions tagged kind=tip in metadata.
     // Non-tip sessions fall through to the proposal deposit logic below.
     if (session.metadata && session.metadata.kind === 'tip') {
-      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const targetUserId = parseInt(session.metadata.bartender_user_id, 10);
       const token = session.metadata.tip_page_token;
       const piId = session.payment_intent;

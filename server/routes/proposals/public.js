@@ -17,7 +17,7 @@ const { findOrCreateClient } = require('../../utils/clientDedup');
 
 const router = express.Router();
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const { UUID_RE } = require('../../utils/tokens');
 const MAX_FORM_STATE_SIZE = 50 * 1024; // 50 KB
 
 // Mirrors schema CHECK on email_leads.lead_source and emailMarketing.js

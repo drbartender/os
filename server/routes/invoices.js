@@ -10,7 +10,7 @@ const { ValidationError, ConflictError, NotFoundError } = require('../utils/erro
 
 const router = express.Router();
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const { UUID_RE } = require('../utils/tokens');
 
 // ─── Public ──────────────────────────────────────────────────────────────────
 
