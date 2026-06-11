@@ -386,10 +386,10 @@ Don't regress these — Sentry catches obvious failures but not missing ARIA.
 
 ### File-Size Discipline (CLAUDE.md)
 
-The pre-commit hook (`.husky/check-file-size.sh`) gates source files (`server/**/*.js`, `client/src/**/*.{js,jsx}`):
+The pre-commit hook runs `node scripts/check-file-size.js --staged` on staged source files (`server/**/*.js`, `client/src/**/*.{js,jsx}`, excluding tests). Run `npm run check:filesize` any time for a full RED/YELLOW report.
 
-- **Warn at 700 lines** — plan a split.
-- **Fail at 1000 lines** — split or add `// claude-allow-large-file` with a one-line reason.
+- **Soft cap, 700 lines** — warns ("plan a split"), never blocks.
+- **Hard cap, 1000 lines** — a ratchet: blocks a commit only if it makes an already-over-cap file longer than at HEAD. There is no per-file opt-out marker; `git commit --no-verify` is the deliberate, per-commit escape.
 - Sweet spot: under 300 lines.
 
 Existing debt the redesign will inherit (already over 1000 — touch them, you split them):
