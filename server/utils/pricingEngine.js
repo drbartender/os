@@ -203,8 +203,8 @@ function getStaffNoun(pkg) {
 
 /** The single definition of the gratuity staff basis: bartenders (staffing.actual already
  *  folds the numBartenders override) + additional-bartender addon qty. EXCLUDES
- *  barbacks/servers. Shared by computeGratuityBasis and calculateProposal so the two can
- *  never drift (audit con-pricing-types). */
+ *  barbacks/servers. Shared by computeGratuityBasis, calculateProposal, and
+ *  gratuityBasisFromSnapshot so they can never drift (audit con-pricing-types). */
 function gratuityStaffCountFrom(staffing, additionalBartenderQty) {
   return staffing.actual + additionalBartenderQty;
 }
@@ -234,7 +234,7 @@ function gratuityBasisFromSnapshot(snapshot, durationHours) {
     .filter(a => a.slug === 'additional-bartender')
     // snapshot.addons[].quantity for a bartender is durationHours x rawQty; recover rawQty.
     .reduce((s, a) => s + (dh > 0 && a.quantity ? Math.round(a.quantity / dh) : (a.quantity || 0)), 0);
-  return { staffCount: staffActual + addonQty, hours: dh };
+  return { staffCount: gratuityStaffCountFrom({ actual: staffActual }, addonQty), hours: dh };
 }
 
 /** The gratuity dollar line, rounded to cents. ONE source of the math (DD #4). */
