@@ -160,3 +160,34 @@ test('retryDeferredTips > skips tips past the attempt cap (stays deferred)', asy
   const { rows } = await pool.query("SELECT deferred_at FROM tips WHERE id=$1", [tipId]);
   assert.ok(rows[0].deferred_at, 'still deferred (kept on admin list)');
 });
+
+const { accruePayoutsForProposal } = require('./payrollAccrual');
+
+test('accrual hook > a successful accrual sweeps a deferred tip', async () => {
+  await setTodayPeriod('processing');
+  await rollForwardLateTip(tipId);  // deferred
+  await setTodayPeriod('open');
+  // A fresh, unrelated funded proposal that accrues into today's open period.
+  const p2 = await pool.query(
+    `INSERT INTO proposals (client_id,event_date,status,event_type,event_start_time,event_duration_hours,total_price,amount_paid,pricing_snapshot)
+     VALUES (NULL,CURRENT_DATE,'completed','birthday-party','6:00 PM',4,1000,1000,'{"breakdown":[]}') RETURNING id`);
+  const s2 = await pool.query("INSERT INTO shifts (event_date,start_time,status,proposal_id) VALUES (CURRENT_DATE,'6:00 PM','open',$1) RETURNING id", [p2.rows[0].id]);
+  await pool.query("INSERT INTO shift_requests (shift_id,user_id,position,status) VALUES ($1,$2,'Bartender','approved')", [s2.rows[0].id, userId]);
+  await accruePayoutsForProposal(p2.rows[0].id);
+  // Wait for the off-response-path sweep to run. Polls instead of a fixed sleep
+  // so a slow CI / Windows scheduler tick can't flake — the sweep itself is
+  // typically sub-second locally, but setImmediate + a pool checkout vary.
+  for (let i = 0; i < 40; i += 1) {
+    const probe = await pool.query("SELECT deferred_at FROM tips WHERE id=$1", [tipId]);
+    if (probe.rows[0].deferred_at === null) break;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  const { rows } = await pool.query("SELECT deferred_at, rolled_forward_at FROM tips WHERE id=$1", [tipId]);
+  assert.equal(rows[0].deferred_at, null, 'deferred tip swept by the accrual hook');
+  assert.ok(rows[0].rolled_forward_at);
+  // cleanup the extra fixtures
+  await pool.query("DELETE FROM payout_events WHERE shift_id=$1", [s2.rows[0].id]);
+  await pool.query("DELETE FROM shift_requests WHERE shift_id=$1", [s2.rows[0].id]);
+  await pool.query("DELETE FROM shifts WHERE id=$1", [s2.rows[0].id]);
+  await pool.query("DELETE FROM proposals WHERE id=$1", [p2.rows[0].id]);
+});

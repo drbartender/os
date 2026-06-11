@@ -271,6 +271,14 @@ async function accruePayoutsForProposal(proposalId) {
     );
 
     await client.query('COMMIT');
+    // Best-effort, off the response path: a successful accrual proves an open period
+    // exists, so resolve any tips that deferred while a period was frozen. Never throws,
+    // never blocks the caller. The sweep is single-flight, so a batch of accruals
+    // (e.g. balanceScheduler) triggers at most one.
+    setImmediate(() => {
+      require('./payrollDeferredRetry').retryDeferredTips().catch(err =>
+        Sentry.captureException(err, { tags: { util: 'payrollAccrual', step: 'deferred_sweep' } }));
+    });
     return { skipped: false, accrued: payoutsCreatedCount };
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch (_) { /* already rolled back or connection dropped */ }
