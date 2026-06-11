@@ -145,6 +145,10 @@ function calculateAddonCost(addon, guestCount, durationHours, staffCount, addonQ
       return { quantity: effectiveHours * qty, total: effectiveHours * rate * qty };
     }
     case 'per_staff': {
+      // Single-instance by design: bills once per staff member. addonQuantity is
+      // intentionally NOT applied here — no current addon flows through this branch with
+      // qty > 1 (additional-bartender has its own block in calculateProposal). If a future
+      // per_staff addon needs multiples, switch to `staff * rate * qty` and add a test.
       const staff = staffCount || 1;
       return { quantity: staff, total: staff * rate };
     }
@@ -197,6 +201,14 @@ function getStaffNoun(pkg) {
   return pkg && pkg.bar_type === 'class' ? 'instructor' : 'bartender';
 }
 
+/** The single definition of the gratuity staff basis: bartenders (staffing.actual already
+ *  folds the numBartenders override) + additional-bartender addon qty. EXCLUDES
+ *  barbacks/servers. Shared by computeGratuityBasis and calculateProposal so the two can
+ *  never drift (audit con-pricing-types). */
+function gratuityStaffCountFrom(staffing, additionalBartenderQty) {
+  return staffing.actual + additionalBartenderQty;
+}
+
 /** Staff that share the client gratuity: bartenders (staffing.actual already
  *  folds the numBartenders override) + additional-bartender addon qty. EXCLUDES
  *  barbacks/servers — a SEPARATE count from the engine's totalStaff (spec §3). */
@@ -205,7 +217,7 @@ function computeGratuityBasis({ pkg, guestCount, durationHours, numBartenders, a
   const additionalBartenderQty = (addons || [])
     .filter(a => a.slug === 'additional-bartender')
     .reduce((sum, a) => sum + (a.quantity || 1), 0);
-  return { staffCount: staffing.actual + additionalBartenderQty, hours: Number(durationHours) || 0 };
+  return { staffCount: gratuityStaffCountFrom(staffing, additionalBartenderQty), hours: Number(durationHours) || 0 };
 }
 
 /** Derive the same basis from a computed snapshot (used by the surgical
@@ -363,7 +375,7 @@ function calculateProposal({ pkg, guestCount, durationHours, numBars, numBartend
 
   // Client-elected gratuity (DD #2/#4): staff pass-through, added on top of the
   // service total. staffing.actual already folds the numBartenders override.
-  const gratuityStaffCount = staffing.actual + additionalBartenderQty;
+  const gratuityStaffCount = gratuityStaffCountFrom(staffing, additionalBartenderQty);
   const staffNoun = getStaffNoun(pkg);
   const clientGratuityAmount = gratuityLineAmount(gratuityRate, gratuityStaffCount, durationHours);
 
