@@ -8,6 +8,7 @@ const { calculateSyrupCost } = require('../utils/pricingEngine');
 const asyncHandler = require('../middleware/asyncHandler');
 const { AppError, ValidationError, ConflictError, NotFoundError, ExternalServiceError, PaymentError } = require('../utils/errors');
 const { PUBLIC_SITE_URL } = require('../utils/urls');
+const { requireUuidToken } = require('../utils/tokens');
 
 const router = express.Router();
 
@@ -31,7 +32,7 @@ router.get('/publishable-key', publicReadLimiter, (_req, res) => {
 // ─── Public: create a Payment Intent for drink plan extras ──────
 
 /** POST /api/stripe/create-drink-plan-intent/:token — public, token-gated (drink plan token) */
-router.post('/create-drink-plan-intent/:token', publicLimiter, asyncHandler(async (req, res) => {
+router.post('/create-drink-plan-intent/:token', requireUuidToken('token', 'This drink plan is no longer available'), publicLimiter, asyncHandler(async (req, res) => {
   const stripe = getStripe();
   if (!stripe) {
     throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');
@@ -583,7 +584,7 @@ router.post('/refund/:id', auth, adminOnly, asyncHandler(async (req, res) => {
 // ─── Public: create a Payment Intent for an invoice ─────────────
 
 /** POST /api/stripe/create-intent-for-invoice/:token — public, token-gated */
-router.post('/create-intent-for-invoice/:token', publicLimiter, asyncHandler(async (req, res) => {
+router.post('/create-intent-for-invoice/:token', requireUuidToken('token', 'This invoice is no longer available'), publicLimiter, asyncHandler(async (req, res) => {
   const stripe = getStripe();
   if (!stripe) {
     throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');

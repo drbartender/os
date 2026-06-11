@@ -6,6 +6,7 @@ const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { NotFoundError, PermissionError } = require('../utils/errors');
 const { buildBeoConfirmVEvents, detectCalendarApp } = require('../utils/staffCalendarFeedExt');
+const { requireUuidToken } = require('../utils/tokens');
 
 const router = express.Router();
 
@@ -285,7 +286,7 @@ function buildStaffDescription(shift, teamList) {
 // ─── Routes ───────────────────────────────────────────────────────
 
 /** GET /api/calendar/feed/:token — iCal feed (public, token-gated) */
-router.get('/feed/:token', calendarLimiter, asyncHandler(async (req, res) => {
+router.get('/feed/:token', requireUuidToken('token', 'Calendar feed not found'), calendarLimiter, asyncHandler(async (req, res) => {
   // Look up user by calendar token
   const userRes = await pool.query(
     'SELECT id, role FROM users WHERE calendar_token = $1',

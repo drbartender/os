@@ -4,6 +4,7 @@ const { clientAuth } = require('../middleware/auth');
 const asyncHandler = require('../middleware/asyncHandler');
 const { NotFoundError } = require('../utils/errors');
 const { PROPOSAL_SUMMARY_COLUMNS, shapeFocus } = require('./clientPortal/summary');
+const { requireUuidToken } = require('../utils/tokens');
 
 const router = express.Router();
 
@@ -64,7 +65,7 @@ router.get('/home', asyncHandler(async (req, res) => {
 }));
 
 // GET /api/client-portal/proposals/:token — full proposal detail
-router.get('/proposals/:token', asyncHandler(async (req, res) => {
+router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.'), asyncHandler(async (req, res) => {
   // Public-safe column allowlist — even the client themselves should not see
   // admin_notes, stripe_customer_id, stripe_payment_method_id, or signature IP/UA.
   const result = await pool.query(`
