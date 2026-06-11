@@ -5,6 +5,7 @@ import { useToast } from '../../../context/ToastContext';
 import PayrollHeader from './PayrollHeader';
 import PayoutRow from './PayoutRow';
 import UnassignedTipsPanel from './UnassignedTipsPanel';
+import DeferredTipsPanel from './DeferredTipsPanel';
 import HistoryView from './HistoryView';
 
 const TABS = [
@@ -154,5 +155,10 @@ function HistoryTab() {
   return <HistoryView />;
 }
 function UnassignedTab() {
-  return <UnassignedTipsPanel />;
+  return (
+    <div className="vstack" style={{ gap: 16 }}>
+      <UnassignedTipsPanel />
+      <DeferredTipsPanel />
+    </div>
+  );
 }
