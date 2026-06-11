@@ -18,7 +18,7 @@ const {
 
 // Shared helpers extracted to a sibling module (also used by the create-intent
 // sub-router) so create-intent's gratuity logic doesn't grow this over-cap file.
-const { eventLabelFor } = require('../utils/stripeRouteHelpers');
+const { DEPOSIT_AMOUNT, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
 
 // create-intent lives in its own module (extracted in the gratuity split).
 router.use(require('./stripeCreateIntent'));
