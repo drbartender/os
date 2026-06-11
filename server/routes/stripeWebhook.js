@@ -239,6 +239,10 @@ router.post('/webhook', asyncHandler(async (req, res) => {
               if (invOwner.rows[0]) {
                 await linkPaymentToInvoice(Number(invoiceId), paymentRowId, intent.amount, dbClient);
               } else {
+                // Not a full no-op: the proposal-level amount_paid UPDATE above has
+                // already credited this payment. Only the invoice link is refused —
+                // the orphan is the missing invoice_payments row, reconciled manually
+                // off the Sentry warning below.
                 console.warn(`Webhook: invoice ${invoiceId} does not belong to proposal ${proposalId} (intent ${intent.id}); payment not linked`);
                 if (process.env.SENTRY_DSN_SERVER) {
                   Sentry.captureMessage(

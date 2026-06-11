@@ -1297,6 +1297,9 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token_attempts INTEGER NOT NUL
 -- (UPDATE clients SET token_version = token_version + 1) kills a specific client's
 -- outstanding 7-day sessions without rotating the shared JWT_SECRET. No automatic trigger
 -- today (client login is OTP-only, no password to reset) — a kept-in-reserve kill switch.
+-- Monotonic: only ever increment. The middleware check is strict equality, so
+-- decrementing back would re-validate every previously revoked token still inside
+-- its 7-day window.
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
 
 -- Missing indexes identified by database review
