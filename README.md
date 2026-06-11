@@ -219,6 +219,7 @@ dr-bartender/
 │   │   ├── ccWrapUpEmailTemplate.js # cc-import: wrap-up email subject + html + text renderer
 │   │   ├── ccWrapUpHandler.js  # cc-import: post_event_wrap_up_email dispatcher handler (registered at boot in server/index.js)
 │   │   ├── payrollGuards.js    # cc-import: isLegacyCcParticipant (per-proposal stub check, used by payrollAccrual). isLegacyCcStubUser (per-user check) kept for parity; no production callers since the rollForwardLateTip/clawbackTip stub-filter refactor moved the check inline into the bartender SELECT
+│   │   ├── payrollDeferredRetry.js # Re-runs placement for tips that deferred while the open pay period was frozen (single-flight, attempt-capped); fired off the response path after a successful accrual and from the admin Retry button
 │   │   ├── changeRequests.js   # Client-portal change-request helpers: edit-window classifier, field allowlist, proposed-state preview + diff + price preview, and the reaper that auto-cancels pending requests on archive/complete
 │   │   ├── changeRequestNotifications.js # Admin alert (new request) + client decision (approved/declined) email + SMS sends
 │   │   ├── channelFallback.js  # Channel-substitution decision for single-channel operational touches (picks the live channel when the registered one's status is 'bad')

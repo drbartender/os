@@ -137,3 +137,26 @@ test('clawbackTip > escalating refund while deferred raises defer_target_cents',
   assert.equal(rows[0].defer_target_cents, 3500, 'target raised to the latest cumulative');
   assert.equal(rows[0].refunded_amount_cents, 0, 'cumulative still not advanced while deferred');
 });
+
+const { retryDeferredTips } = require('./payrollDeferredRetry');
+
+test('retryDeferredTips > places a deferred late tip and clears its marker', async () => {
+  await setTodayPeriod('processing');
+  await rollForwardLateTip(tipId);   // deferred
+  await setTodayPeriod('open');
+  const summary = await retryDeferredTips();
+  assert.equal(summary.resolved, 1);
+  const { rows } = await pool.query("SELECT deferred_at FROM tips WHERE id=$1", [tipId]);
+  assert.equal(rows[0].deferred_at, null);
+});
+
+test('retryDeferredTips > skips tips past the attempt cap (stays deferred)', async () => {
+  await setTodayPeriod('processing');
+  await rollForwardLateTip(tipId);                 // deferred, attempts=1
+  await pool.query("UPDATE tips SET defer_attempts = 25 WHERE id=$1", [tipId]); // simulate stuck
+  await setTodayPeriod('open');
+  const summary = await retryDeferredTips();
+  assert.equal(summary.scanned, 0, 'capped tip not scanned');
+  const { rows } = await pool.query("SELECT deferred_at FROM tips WHERE id=$1", [tipId]);
+  assert.ok(rows[0].deferred_at, 'still deferred (kept on admin list)');
+});
