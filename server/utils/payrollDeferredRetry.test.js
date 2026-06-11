@@ -97,3 +97,43 @@ test('rollForwardLateTip > defer marker does NOT resurrect an already-placed tip
   const { rows } = await pool.query("SELECT deferred_at FROM tips WHERE id=$1", [tipId]);
   assert.equal(rows[0].deferred_at, null, 'guarded UPDATE did not re-mark a placed tip');
 });
+
+const { clawbackTip } = require('./payrollClawback');
+
+test('clawbackTip > frozen today defers and marks with target', async () => {
+  await setTodayPeriod('open');
+  await rollForwardLateTip(tipId);     // place the tip so there's a line to claw
+  await setTodayPeriod('processing');  // freeze today
+  const r = await clawbackTip(tipId, 2000); // refund $20 of the $50 tip
+  assert.equal(r, null);
+  const { rows } = await pool.query("SELECT deferred_at, defer_kind, defer_target_cents, refunded_amount_cents FROM tips WHERE id=$1", [tipId]);
+  assert.ok(rows[0].deferred_at);
+  assert.equal(rows[0].defer_kind, 'clawback');
+  assert.equal(rows[0].defer_target_cents, 2000);
+  assert.equal(rows[0].refunded_amount_cents, 0, 'cumulative not advanced while deferred');
+});
+
+test('clawbackTip > refund on a roll_forward-deferred (never placed) tip records refund, no negative line', async () => {
+  await setTodayPeriod('processing');
+  await rollForwardLateTip(tipId);     // roll_forward-deferred (never placed)
+  const r = await clawbackTip(tipId, 5000); // full refund arrives while still deferred
+  assert.ok(r && r.unplaced === true);
+  const { rows } = await pool.query("SELECT deferred_at, defer_kind, rolled_forward_at, refunded_amount_cents FROM tips WHERE id=$1", [tipId]);
+  assert.equal(rows[0].deferred_at, null, 'roll_forward marker cancelled');
+  assert.equal(rows[0].defer_kind, null);
+  assert.ok(rows[0].rolled_forward_at, 'roll-forward cancelled so it is never paid');
+  assert.equal(rows[0].refunded_amount_cents, 5000);
+  const c = await pool.query("SELECT COUNT(*)::int AS c FROM payout_events pe JOIN payouts po ON po.id=pe.payout_id WHERE po.contractor_id=$1", [userId]);
+  assert.equal(c.rows[0].c, 0, 'no negative line created');
+});
+
+test('clawbackTip > escalating refund while deferred raises defer_target_cents', async () => {
+  await setTodayPeriod('open');
+  await rollForwardLateTip(tipId);     // place so there is a line
+  await setTodayPeriod('processing');  // freeze today
+  await clawbackTip(tipId, 2000);      // defer $20
+  await clawbackTip(tipId, 3500);      // a larger refund lands, still frozen
+  const { rows } = await pool.query("SELECT defer_target_cents, refunded_amount_cents FROM tips WHERE id=$1", [tipId]);
+  assert.equal(rows[0].defer_target_cents, 3500, 'target raised to the latest cumulative');
+  assert.equal(rows[0].refunded_amount_cents, 0, 'cumulative still not advanced while deferred');
+});

@@ -21,7 +21,8 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
     await client.query('BEGIN');
 
     const tipRes = await client.query(
-      `SELECT id, shift_id, amount_cents, fee_cents, refunded_amount_cents, target_user_id
+      `SELECT id, shift_id, amount_cents, fee_cents, refunded_amount_cents, target_user_id,
+              deferred_at, defer_kind
          FROM tips WHERE id = $1 FOR UPDATE`,
       [tipId]
     );
@@ -34,10 +35,26 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
     const delta = newAmt - oldAmt;
     if (delta <= 0) { await client.query('ROLLBACK'); return { delta: 0 }; }
 
+    // §3.6: a refund on a tip still roll_forward-deferred (never placed) must not
+    // claw a line that doesn't exist. Record the refund, cancel the roll-forward.
+    if (tip.shift_id && tip.deferred_at && tip.defer_kind === 'roll_forward') {
+      await client.query(
+        `UPDATE tips SET refunded_amount_cents = $1, rolled_forward_at = NOW(),
+                deferred_at = NULL, defer_kind = NULL, defer_target_cents = NULL, defer_attempts = 0
+          WHERE id = $2`,
+        [newAmt, tipId]
+      );
+      await client.query('COMMIT');
+      return { delta, bartenders: 0, unplaced: true };
+    }
+
     // If the tip was never assigned to a shift, there's no line to claw back
     // FROM — just track the new cumulative and exit.
     if (!tip.shift_id) {
-      await client.query('UPDATE tips SET refunded_amount_cents = $1 WHERE id = $2', [newAmt, tipId]);
+      await client.query(
+        `UPDATE tips SET refunded_amount_cents = $1, deferred_at = NULL,
+                defer_kind = NULL, defer_target_cents = NULL, defer_attempts = 0
+          WHERE id = $2`, [newAmt, tipId]);
       await client.query('COMMIT');
       return { delta, bartenders: 0 };
     }
@@ -56,7 +73,10 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
     const stubCount = allBartenders.length - bartenders.length;
 
     if (allBartenders.length === 0) {
-      await client.query('UPDATE tips SET refunded_amount_cents = $1 WHERE id = $2', [newAmt, tipId]);
+      await client.query(
+        `UPDATE tips SET refunded_amount_cents = $1, deferred_at = NULL,
+                defer_kind = NULL, defer_target_cents = NULL, defer_attempts = 0
+          WHERE id = $2`, [newAmt, tipId]);
       await client.query('COMMIT');
       return { delta, bartenders: 0 };
     }
@@ -96,14 +116,28 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
       period = ins.rows[0];
     }
     if (period.status !== 'open') {
-      // Defer: don't move cumulative either, so a later retry can do this work.
-      // Log to Sentry so a persistent defer doesn't silently disappear.
+      // Defer: don't move the cumulative; persist a marker (with the target) so a
+      // retry can re-apply this clawback once a period opens.
+      await client.query('ROLLBACK');
+      try {
+        await pool.query(
+          `UPDATE tips
+              SET deferred_at = COALESCE(deferred_at, NOW()),
+                  defer_kind = 'clawback', defer_target_cents = $2,
+                  defer_attempts = defer_attempts + 1
+            WHERE id = $1 AND refunded_amount_cents < $2`,
+          [tipId, newAmt]
+        );
+      } catch (markErr) {
+        Sentry.captureException(markErr, {
+          tags: { util: 'payrollClawback', step: 'defer_mark_failed' }, extra: { tipId },
+        });
+      }
       Sentry.captureMessage("clawbackTip: today's period is non-open; deferring", {
         level: 'warning',
         tags: { util: 'payrollClawback', step: 'defer_frozen_today' },
         extra: { tipId, periodStatus: period.status, delta, newAmt },
       });
-      await client.query('ROLLBACK');
       return null;
     }
 
@@ -154,7 +188,10 @@ async function clawbackTip(tipId, newCumulativeRefundedCents) {
       [touched]
     );
 
-    await client.query('UPDATE tips SET refunded_amount_cents = $1 WHERE id = $2', [newAmt, tipId]);
+    await client.query(
+      `UPDATE tips SET refunded_amount_cents = $1, deferred_at = NULL,
+              defer_kind = NULL, defer_target_cents = NULL, defer_attempts = 0
+        WHERE id = $2`, [newAmt, tipId]);
     await client.query('COMMIT');
     return { delta, bartenders: bartenders.length, period_id: period.id };
   } catch (err) {
