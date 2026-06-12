@@ -8,7 +8,7 @@ v2 effort: what is done, what is in design, and what still needs building.
 > worktree/branch when it goes to build. Update the Status column here as pieces
 > move. Decisions already locked live in the Decisions Log so we do not relitigate.
 >
-> **Last updated:** 2026-06-05 · **Stage:** read-only foundation (2 + 3) built + merged to `main` (unpushed); editing (#5) built on branch `client-portal-editing`, awaiting merge
+> **Last updated:** 2026-06-11 · **Stage:** read-only foundation (2 + 3) AND editing model (5) shipped to prod 2026-06-05 (merge `9dc044f`). Worktree/branch `client-portal-editing` cleaned up 2026-06-11. Next up: day-of brief (#4).
 
 ---
 
@@ -25,8 +25,11 @@ v2 effort: what is done, what is in design, and what still needs building.
   soonest event, with tabs for the proposal, drink plan, day-of brief, and
   receipts, plus a share link for handing any document to someone without a login.
 - The work is **decomposed into 6 sub-projects**, built surface by surface, each
-  its own spec → plan → worktree. Build order is chosen (below). We are about to
-  open deep design on the read-only foundation.
+  its own spec → plan → worktree. **The v2 portal is live in prod:** the read-only
+  foundation (#2 + #3, shell + Overview + the three tabs + share link) and the
+  editing model (#5, change requests, model B) shipped 2026-06-05. The next build
+  is the day-of brief (#4); the money-flow reskin (#1) has two small verify
+  checkboxes open.
 
 ---
 
@@ -35,10 +38,10 @@ v2 effort: what is done, what is in design, and what still needs building.
 | # | Sub-project | Status | Depends on | Spec |
 |---|---|---|---|---|
 | 1 | Money-flow reskin (Login · ProposalView · Invoice) | Mostly done on `main`, verify + reconcile | none | money-flow handoff (design bundle) |
-| 2 | Portal shell + Overview (event command center) | **Done — merged to `main` `0ff6057` (2026-06-05), not yet pushed** | none (backbone) | [spec](superpowers/specs/2026-06-04-client-portal-v2-foundation-design.md) · [plan](superpowers/plans/2026-06-04-client-portal-v2-foundation.md) |
-| 3 | Read-only tabs (Prescription · Potion Plan · Receipts) + Share link | **Done — merged to `main` `0ff6057` (2026-06-05), not yet pushed** | 2 | [spec](superpowers/specs/2026-06-04-client-portal-v2-foundation-design.md) · [plan](superpowers/plans/2026-06-04-client-portal-v2-foundation.md) |
+| 2 | Portal shell + Overview (event command center) | **Done — shipped to prod 2026-06-05** (`0ff6057`) | none (backbone) | [spec](superpowers/specs/2026-06-04-client-portal-v2-foundation-design.md) · [plan](superpowers/plans/2026-06-04-client-portal-v2-foundation.md) |
+| 3 | Read-only tabs (Prescription · Potion Plan · Receipts) + Share link | **Done — shipped to prod 2026-06-05** (`0ff6057`) | 2 | [spec](superpowers/specs/2026-06-04-client-portal-v2-foundation-design.md) · [plan](superpowers/plans/2026-06-04-client-portal-v2-foundation.md) |
 | 4 | Day-of brief / "Big Experiment" tab | Decisions captured, build pending | 2, 3 | TBD |
-| 5 | Editing model (additive-only + change requests) | **Built on branch `client-portal-editing` 2026-06-05, awaiting merge** | 3 | [spec](superpowers/specs/2026-06-05-client-portal-editing-model-design.md) · [plan](superpowers/plans/2026-06-05-client-portal-editing-model.md) |
+| 5 | Editing model (additive-only + change requests) | **Done — merged `9dc044f`, shipped to prod 2026-06-05** | 3 | [spec](superpowers/specs/2026-06-05-client-portal-editing-model-design.md) · [plan](superpowers/plans/2026-06-05-client-portal-editing-model.md) |
 | 6 | Messages tab (client ↔ office) | Parked (out of v1) | 2 | none |
 | 7 | Multi-event switcher | Deferred (clients are one-at-a-time) | 2 | none |
 | 8 | Quote-resume card (finish a draft) | Deferred (rare in practice) | 2 | none |
@@ -122,7 +125,7 @@ What the client sees about the day itself, gated to unlock near the event (T-14)
 ### 5 · Editing model (additive-only + change requests)
 The money subsystem. Lets clients adjust their booking within guardrails. Its
 own full spec because it touches pricing, payments, the signed agreement, and
-staffing. **Spec + implementation plan written 2026-06-05** ([design](superpowers/specs/2026-06-05-client-portal-editing-model-design.md) · [plan](superpowers/plans/2026-06-05-client-portal-editing-model.md)); **built on branch `client-portal-editing` 2026-06-05, awaiting merge.** v1 is the request-to-admin model; see the spec §2 for the locked decisions.
+staffing. **Spec + implementation plan written 2026-06-05** ([design](superpowers/specs/2026-06-05-client-portal-editing-model-design.md) · [plan](superpowers/plans/2026-06-05-client-portal-editing-model.md)); **merged `9dc044f` and shipped to prod 2026-06-05.** v1 is the request-to-admin model; see the spec §2 for the locked decisions. Post-launch fix: readable admin change-request diff (field from/to instead of raw JSON, `e878541`).
 
 - Three windows:
   - **Pre-booking:** free edit (no signature, no money yet). Runs through the quote/pricing engine.
@@ -131,7 +134,7 @@ staffing. **Spec + implementation plan written 2026-06-05** ([design](superpower
 - **Removals / downgrades always route to admin**, in every window, because they touch refunds. Self-serve never triggers a refund.
 - [x] Define what is client-editable vs admin-locked (guest count / add-ons / package = yes; manual discounts / custom line items = no). Allowlist enforced server-side in `server/utils/changeRequests.js`.
 - [x] Re-price through `pricingEngine`, honoring the hosted-bartender ratio. Re-snapshot pricing. (Price preview persisted on the `proposal_change_requests` row at create time; admin edit re-runs the same path.)
-- [x] Re-evaluate payment status on every change (never leave a stale "paid in full"). `PATCH /api/proposals/:id` runs the existing money + status reconciliation; over-paid edits demote `confirmed`, `FOR UPDATE` apply read guards the reconciliation.
+- [x] Re-evaluate payment status on every change (never leave a stale "paid in full"). `PATCH /api/proposals/:id` runs the existing money + status reconciliation; `FOR UPDATE` apply read guards the reconciliation. **Merge decision A:** a `confirmed` booking is NOT demoted on an over-paid edit — `balance_paid` demotes to `deposit_paid`, but `confirmed` stays `confirmed` and the price delta is billed via the post-commit "Additional Services" invoice (locked by `server/routes/proposals/crud.demotion.test.js`).
 - [x] Signature re-acknowledgment on a material change (new total, re-confirm, store new signed version). v1 dissolves this into the authenticated change-request as the consent record (`acknowledged_total`, `request_ip`, `request_user_agent` persisted on the row); the standalone re-sign flow stays designed-for-but-not-built per the locked spec decision.
 - [x] Propagate event-detail changes to linked shifts. `syncShiftsFromProposal` now also reconciles `positions_needed`.
 - [x] New `change_request` entity (pending / approved / declined / cancelled) + admin review screen + notifications. Table `proposal_change_requests` with one-pending-per-proposal partial unique index; admin dashboard at `/change-requests` and a `ProposalChangeRequestCard` on Proposal Detail; admin-alert and client-decision email + SMS via `server/utils/changeRequestNotifications.js`. `PATCH /api/proposals/:id` accepts `change_request_id` to stamp the row `approved` atomically with the edit and suppress the duplicate edit email. The archive/complete reaper auto-cancels open requests.
@@ -169,6 +172,12 @@ Out of v1 unless promoted.
   becomes a computed flag (fixed 14-day line), not a gate. Signature
   re-acknowledgment dissolves (the authenticated request is the consent record). See
   the [editing-model spec](superpowers/specs/2026-06-05-client-portal-editing-model-design.md).
+- **Merge decision A (2026-06-05, `9dc044f`).** A `confirmed` booking is NOT
+  demoted when an edit pushes the total past `amount_paid`. `balance_paid` still
+  demotes to `deposit_paid`, but `confirmed` means the event is locked in; the
+  price delta is collected via the post-commit "Additional Services" invoice
+  rather than by reverting the lifecycle. Locked by
+  `server/routes/proposals/crud.demotion.test.js`.
 - **T-14 boundary rationale.** It is the same seam as bartender assignment: before
   ~2 weeks out nobody is committed, so changes are cheap and self-serve is safe;
   inside 2 weeks a specific human is assigned, so admin must verify availability.
