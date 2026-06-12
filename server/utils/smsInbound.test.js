@@ -1,4 +1,5 @@
 require('dotenv').config();
+process.env.SEND_NOTIFICATIONS = 'false'; // never fire real email/SMS from this suite
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
@@ -13,6 +14,9 @@ const {
   handleCant,
   findStaffCandidatesByPhone,
   resolveShiftResponder,
+  findThumbtackProxyLead,
+  processInboundSms,
+  __setDeps,
 } = require('./smsInbound');
 
 test('detectOptKeyword > recognizes STOP and equivalents, case-insensitive', () => {
@@ -55,6 +59,7 @@ test('detectResponseCode > returns null for free-form text', () => {
 
 let lsClientId;
 let lsStaffUserId;
+let ttClientId;
 
 before(async () => {
   // Idempotent cleanup - if a prior run threw mid-suite, fixed-email/phone
@@ -78,12 +83,34 @@ before(async () => {
     `INSERT INTO contractor_profiles (user_id, phone) VALUES ($1, '(312) 555-0149')`,
     [lsStaffUserId]
   );
+
+  // Thumbtack relay fixtures: a post-rollout lead whose proxy number is the
+  // client's stored phone (mirrors prod), and a pre-rollout lead with a real
+  // number that must NOT match.
+  await pool.query("DELETE FROM thumbtack_leads WHERE negotiation_id IN ('tt-relay-proxy-test', 'tt-relay-legacy-test')");
+  await pool.query("DELETE FROM clients WHERE email = 'tt-relay-client@example.com'");
+  const tc = await pool.query(
+    `INSERT INTO clients (name, email, phone, source) VALUES ('TT Relay Client', 'tt-relay-client@example.com', '8392750001', 'thumbtack') RETURNING id`
+  );
+  ttClientId = tc.rows[0].id;
+  await pool.query(
+    `INSERT INTO thumbtack_leads (negotiation_id, client_id, customer_phone, customer_name, raw_payload)
+     VALUES ('tt-relay-proxy-test', $1, '8392750001', 'TT Relay Client', '{}'::jsonb)`,
+    [ttClientId]
+  );
+  await pool.query(
+    `INSERT INTO thumbtack_leads (negotiation_id, client_id, customer_phone, customer_name, raw_payload, created_at)
+     VALUES ('tt-relay-legacy-test', $1, '3125550148', 'SMS Lookup Client', '{}'::jsonb, '2026-06-01T00:00:00Z')`,
+    [lsClientId]
+  );
 });
 
 after(async () => {
   await pool.query('DELETE FROM contractor_profiles WHERE user_id = $1', [lsStaffUserId]);
   await pool.query('DELETE FROM users WHERE id = $1', [lsStaffUserId]);
   await pool.query('DELETE FROM clients WHERE id = $1', [lsClientId]);
+  await pool.query("DELETE FROM thumbtack_leads WHERE negotiation_id IN ('tt-relay-proxy-test', 'tt-relay-legacy-test')");
+  await pool.query('DELETE FROM clients WHERE id = $1', [ttClientId]);
   await pool.end();
 });
 
@@ -347,5 +374,80 @@ test('resolveShiftResponder > ambiguous when multiple candidates have upcoming a
     await pool.query('DELETE FROM shift_requests WHERE id = ANY($1::int[])', [[sa.requestId, sb.requestId]]);
     await pool.query('DELETE FROM shifts WHERE id = ANY($1::int[])', [[sa.shiftId, sb.shiftId]]);
     await cleanupStaff([a, b]);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Thumbtack proxy-relay detection (spec 2026-06-11). Run ALONE (shared dev DB).
+// ---------------------------------------------------------------------------
+
+test('findThumbtackProxyLead > matches a post-rollout lead by last-10 digits', async () => {
+  const r = await findThumbtackProxyLead('+18392750001');
+  assert.ok(r, 'expected a match');
+  assert.strictEqual(r.clientId, ttClientId);
+});
+
+test('findThumbtackProxyLead > ignores pre-rollout leads (real customer numbers)', async () => {
+  assert.strictEqual(await findThumbtackProxyLead('+13125550148'), null);
+});
+
+test('findThumbtackProxyLead > null for unknown and garbage numbers', async () => {
+  assert.strictEqual(await findThumbtackProxyLead('+19998887777'), null);
+  assert.strictEqual(await findThumbtackProxyLead(null), null);
+});
+
+test('processInboundSms > tags thumbtack relay, links the client, no reply', async () => {
+  const result = await processInboundSms({
+    from: '+18392750001',
+    body: 'Patricia Johnson replied to you on Thumbtack.',
+    twilioSid: 'SMtest_relay_1',
+  });
+  assert.strictEqual(result.outcome, 'thumbtack_relay');
+  assert.strictEqual(result.reply, null);
+  const row = await pool.query("SELECT client_id, metadata FROM sms_messages WHERE twilio_sid = 'SMtest_relay_1'");
+  assert.strictEqual(row.rows[0].client_id, ttClientId);
+  assert.strictEqual(row.rows[0].metadata.thumbtack_relay, true);
+  await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_relay_1'");
+});
+
+test('processInboundSms > a relayed STOP does not opt the client out', async () => {
+  const result = await processInboundSms({ from: '+18392750001', body: 'STOP', twilioSid: 'SMtest_relay_stop' });
+  assert.strictEqual(result.outcome, 'thumbtack_relay');
+  const r = await pool.query('SELECT communication_preferences FROM clients WHERE id = $1', [ttClientId]);
+  assert.notStrictEqual(r.rows[0].communication_preferences?.sms_enabled, false, 'sms_enabled must not be flipped');
+  await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_relay_stop'");
+});
+
+test('processInboundSms > a retried relay MessageSid is a duplicate no-op', async () => {
+  const first = await processInboundSms({ from: '+18392750001', body: 'echo', twilioSid: 'SMtest_relay_dup' });
+  assert.strictEqual(first.outcome, 'thumbtack_relay');
+  const second = await processInboundSms({ from: '+18392750001', body: 'echo', twilioSid: 'SMtest_relay_dup' });
+  assert.strictEqual(second.outcome, 'duplicate');
+  await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_relay_dup'");
+});
+
+test('processInboundSms > relay keeps the client link after real-number capture', async () => {
+  // Simulate Component 4: the proxy no longer matches clients.phone, so the
+  // lead-row fallback must supply the client link.
+  await pool.query("UPDATE clients SET phone = '7735550000' WHERE id = $1", [ttClientId]);
+  try {
+    const result = await processInboundSms({ from: '+18392750001', body: 'echo after capture', twilioSid: 'SMtest_relay_fb' });
+    assert.strictEqual(result.outcome, 'thumbtack_relay');
+    const row = await pool.query("SELECT client_id FROM sms_messages WHERE twilio_sid = 'SMtest_relay_fb'");
+    assert.strictEqual(row.rows[0].client_id, ttClientId);
+  } finally {
+    await pool.query("UPDATE clients SET phone = '8392750001' WHERE id = $1", [ttClientId]);
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_relay_fb'");
+  }
+});
+
+test('processInboundSms > detection failure fails open to the normal path', async () => {
+  __setDeps({ findThumbtackProxyLead: async () => { throw new Error('boom'); } });
+  try {
+    const result = await processInboundSms({ from: '+19998880000', body: 'hello?', twilioSid: 'SMtest_relay_open' });
+    assert.strictEqual(result.outcome, 'unknown_sender', 'must fall through to todays path');
+  } finally {
+    __setDeps({ findThumbtackProxyLead });
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_relay_open'");
   }
 });

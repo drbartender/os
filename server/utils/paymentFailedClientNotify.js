@@ -7,6 +7,7 @@ const smsTemplates = require('./smsTemplates');
 const { shouldSendImmediate } = require('./messageSuppression');
 const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
+const { formatEventDateForSms } = require('./smsEventDate');
 
 // Client-facing "your card failed" email + SMS for a failed Stripe payment,
 // sent once per proposal (spec 3.3, email + SMS together, urgent). Extracted
@@ -89,13 +90,9 @@ async function notifyClientPaymentFailed({ proposalId, paymentIntentId }) {
         channel: 'sms',
       });
       if (smsCheck.ok && pc.client_phone) {
-        const eventDateSms = pc.event_date
-          ? new Date(String(pc.event_date).slice(0, 10) + 'T12:00:00Z')
-              .toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' })
-          : 'your event';
         await sendAndLogSms({
           to: pc.client_phone,
-          body: smsTemplates.paymentFailureSms({ eventDate: eventDateSms, link: proposalUrl }),
+          body: smsTemplates.paymentFailureSms({ eventDate: formatEventDateForSms(pc.event_date), link: proposalUrl }),
           clientId: pc.client_id || null,
           messageType: 'payment_failure',
           recipientName: pc.client_name || null,

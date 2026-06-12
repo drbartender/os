@@ -640,23 +640,6 @@ function newThumbtackLeadAdmin({ customerName, customerPhone, category, descript
   };
 }
 
-function newThumbtackMessageAdmin({ customerName, text, adminUrl }) {
-  const name = esc(customerName || 'A customer');
-  const rawPreview = text && text.length > 300 ? text.slice(0, 300) + '...' : (text || '(no text)');
-  return {
-    subject: `Thumbtack Message from ${esc(customerName || 'A customer')}`,
-    html: wrapEmail(`
-      <h2 style="color:${BRAND.primary};margin-top:0;">New Thumbtack Message</h2>
-      <p><strong>${name}</strong> sent a message via Thumbtack:</p>
-      <div style="background:${BRAND.bg};padding:16px;border-radius:6px;margin:1rem 0;border-left:4px solid ${BRAND.secondary};">
-        ${esc(rawPreview)}
-      </div>
-      ${adminUrl ? ctaButton(adminUrl, 'View Client') : ''}
-    `),
-    text: `Thumbtack message from ${customerName || 'A customer'}: ${rawPreview}${adminUrl ? ` View: ${adminUrl}` : ''}`,
-  };
-}
-
 function newThumbtackReviewAdmin({ reviewerName, rating, reviewText }) {
   const name = esc(reviewerName || 'A customer');
   const stars = rating !== null && rating !== undefined ? '★'.repeat(Math.round(rating)) + '☆'.repeat(5 - Math.round(rating)) : 'N/A';
@@ -947,7 +930,6 @@ module.exports = {
   applicationDeactivated,
   abandonedQuote,
   newThumbtackLeadAdmin,
-  newThumbtackMessageAdmin,
   newThumbtackReviewAdmin,
   // Tip-page feedback
   tipFeedbackAdminNotification,

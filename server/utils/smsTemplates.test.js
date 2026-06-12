@@ -265,3 +265,40 @@ test('staff_drop_to_management_sms > handles missing inputs gracefully', () => {
   const body = t.staff_drop_to_management_sms({});
   assert.match(body, /^EMERGENCY DROP from A staffer:/);
 });
+
+// ─── No-date contract: callers pass a formatted string or null; templates own
+// the fallback. "on ___" templates drop the clause; "for ___" keep dt(). ───
+
+test('initialProposalSms > drops the date clause when eventDate is null', () => {
+  const s = t.initialProposalSms({ eventTypeLabel: 'birthday party', eventDate: null, link: 'https://x/p/abc' });
+  assert.match(s, /proposal for the birthday party\. Review/);
+  assert.ok(!s.includes('on your event'), 'no "on your event"');
+});
+
+test('dripTouch1Sms > drops the date clause when eventDate is null', () => {
+  const s = t.dripTouch1Sms({ eventTypeLabel: 'wedding', eventDate: null });
+  assert.match(s, /for the wedding\?/);
+  assert.ok(!s.includes('your event'), 'no fallback text in an "on" slot');
+});
+
+test('dripTouch3Sms > drops the date clause when eventDate is null', () => {
+  const s = t.dripTouch3Sms({ eventTypeLabel: 'wedding', eventDate: null, link: 'https://x/p/abc' });
+  assert.match(s, /Quick thought on the wedding\./);
+  assert.ok(!s.includes('on your event'), 'no "on your event"');
+});
+
+test('dripTouch5Sms > no doubled "your event" when eventDate is null', () => {
+  const s = t.dripTouch5Sms({ eventDate: null, link: 'https://x/p/abc' });
+  assert.match(s, /Last check on your event\./);
+  assert.ok(!s.includes('your your'), 'no "your your event event"');
+});
+
+test('signPayConfirmationSms > falls back to "your event" when eventDate is null', () => {
+  const s = t.signPayConfirmationSms({ eventDate: null });
+  assert.match(s, /You're booked for your event!/);
+});
+
+test('paymentFailureSms > falls back to "your event" when eventDate is null', () => {
+  const s = t.paymentFailureSms({ eventDate: null, link: 'https://x/p/abc' });
+  assert.match(s, /payment for your event didn't go through/);
+});

@@ -25,6 +25,7 @@ const { SuppressMessageError } = require('./errors');
 const { sendAndLogSms } = require('./sms');
 const smsTemplates = require('./smsTemplates');
 const { PUBLIC_SITE_URL } = require('./urls');
+const { formatEventDateForSms: eventDateSms } = require('./smsEventDate');
 
 const DAY_SECONDS = 86400;
 
@@ -56,13 +57,6 @@ async function loadBalanceSmsContext(proposalId) {
   const balanceDue = Number(ctx.total_price) - Number(ctx.amount_paid);
   if (!(balanceDue > 0)) throw new Error('balance SMS: balance is zero or negative, reminder moot');
   return ctx;
-}
-
-function eventDateSms(eventDate) {
-  if (!eventDate) return 'your event';
-  const parsed = new Date(String(eventDate).slice(0, 10) + 'T12:00:00Z');
-  if (Number.isNaN(parsed.getTime())) return 'your event';
-  return parsed.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' });
 }
 
 function proposalUrl(token) {

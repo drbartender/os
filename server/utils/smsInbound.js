@@ -64,6 +64,40 @@ function last10(phone) {
   return digits.length >= 10 ? digits.slice(-10) : null;
 }
 
+// ─── Thumbtack proxy-relay detection (spec 2026-06-11) ─────────────────────
+// Leads created on or after this date carry a per-lead Thumbtack proxy number
+// as customer_phone (rollout completed 2026-06-08). Pre-rollout leads hold the
+// customer's REAL number, so they must never match: a real client texting in
+// has to keep alerting. Explicit UTC instant; created_at is TIMESTAMPTZ.
+const THUMBTACK_PROXY_ROLLOUT = '2026-06-08T00:00:00Z';
+
+/**
+ * Match an inbound sender number against post-rollout Thumbtack proxy numbers.
+ * Returns the newest matching lead's client link, or null when not relay
+ * traffic. Exported for reuse by the public proposal route (phone prefill).
+ *
+ * @param {string} phone - inbound E.164 number
+ * @returns {Promise<{clientId:number|null}|null>}
+ */
+async function findThumbtackProxyLead(phone) {
+  const key = last10(phone);
+  if (!key) return null;
+  const r = await pool.query(
+    `SELECT client_id FROM thumbtack_leads
+      WHERE RIGHT(REGEXP_REPLACE(customer_phone, '\\D', '', 'g'), 10) = $1
+        AND created_at >= $2
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [key, THUMBTACK_PROXY_ROLLOUT]
+  );
+  return r.rows[0] ? { clientId: r.rows[0].client_id } : null;
+}
+
+// Test seam (mirrors thumbtack.js): lets the suite prove detection failures
+// fail OPEN (message still alerts) without monkeypatching the pool.
+let _deps = { findThumbtackProxyLead };
+function __setDeps(d) { _deps = { ..._deps, ...d }; }
+
 /**
  * Resolve an inbound phone number to its sender. Clients are checked first.
  *
@@ -447,6 +481,47 @@ async function processInboundSms({ from, body, twilioSid }) {
 
   const sender = await lookupSender(from);
 
+  // Thumbtack relay traffic: Thumbtack pings our Twilio number from per-lead
+  // proxy numbers ("X replied to you on Thumbtack...", access-code challenges,
+  // conversation echoes). Record for audit, tagged, with NO alerts: Thumbtack
+  // already notifies the admin directly (app push, SMS to the GV line, email).
+  // Fail OPEN: a detection error must never silence a real client, so any
+  // throw falls through to the normal alerting paths below.
+  let proxyLead = null;
+  try {
+    proxyLead = await _deps.findThumbtackProxyLead(from);
+  } catch (detectErr) {
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(detectErr, { tags: { feature: 'sms-inbound', step: 'thumbtack_relay_detect' } });
+    }
+    console.error('[smsInbound] thumbtack relay detection failed (failing open):', detectErr.message);
+  }
+  if (proxyLead) {
+    // Client link: prefer the live clients.phone match; after real-number
+    // capture the proxy no longer matches a client row, so fall back to the
+    // lead's client_id. Skipped on purpose: STOP/START (opt semantics do not
+    // transfer from a proxy), all alerts, all auto-replies.
+    const relayClientId = sender.type === 'client' ? sender.client.id : (proxyLead.clientId || null);
+    const recorded = await recordInboundMessage({
+      fromPhone: from,
+      body: text,
+      clientId: relayClientId,
+      twilioSid,
+      metadata: { thumbtack_relay: true },
+    });
+    if (!recorded) return { outcome: 'duplicate', reply: null };
+    console.log(`[smsInbound] thumbtack_relay suppressed (sender ...${(last10(from) || '').slice(-4)}, client ${relayClientId || 'none'})`);
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.addBreadcrumb({
+        category: 'sms-inbound',
+        message: 'thumbtack_relay suppressed',
+        level: 'info',
+        data: { clientId: relayClientId },
+      });
+    }
+    return { outcome: 'thumbtack_relay', reply: null };
+  }
+
   // STOP/START — handled before sender-type branching, for any sender. We
   // record the preference internally and tag metadata for audit. We do NOT
   // send our own reply: US carrier rules make Twilio send the mandated
@@ -557,4 +632,6 @@ module.exports = {
   alertStaffCant,
   alertAdminEmail,
   processInboundSms,
+  findThumbtackProxyLead,
+  __setDeps,
 };

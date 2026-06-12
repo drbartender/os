@@ -13,6 +13,7 @@ const { buildOrientationPayload } = require('./orientationData');
 const { shouldSendImmediate } = require('./messageSuppression');
 const { PUBLIC_SITE_URL, ADMIN_URL } = require('./urls');
 const { eventLabelFor } = require('./stripeRouteHelpers');
+const { formatEventDateForSms } = require('./smsEventDate');
 
 async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
   try {
@@ -154,13 +155,9 @@ async function sendPaymentNotifications(proposalId, amountCents, paymentType) {
           if (smsCheck.ok) {
             const { sendAndLogSms } = require('./sms');
             const smsTemplates = require('./smsTemplates');
-            const eventDateSms = pi.event_date
-              ? new Date(String(pi.event_date).slice(0, 10) + 'T12:00:00Z')
-                  .toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' })
-              : 'your event';
             await sendAndLogSms({
               to: pi.client_phone,
-              body: smsTemplates.signPayConfirmationSms({ eventDate: eventDateSms }),
+              body: smsTemplates.signPayConfirmationSms({ eventDate: formatEventDateForSms(pi.event_date) }),
               clientId: pi.client_id || null,
               messageType: 'sign_pay_confirmation',
               recipientName: pi.client_name || null,

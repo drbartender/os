@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
-const { newThumbtackLeadAdmin, newThumbtackMessageAdmin, newThumbtackReviewAdmin } = require('../utils/emailTemplates');
+const { newThumbtackLeadAdmin, newThumbtackReviewAdmin } = require('../utils/emailTemplates');
 const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { ADMIN_URL } = require('../utils/urls');
 const { findOrCreateClient } = require('../utils/clientDedup');
@@ -368,39 +368,6 @@ router.post('/messages', asyncHandler(async (req, res) => {
     }
 
     console.log(`Thumbtack message ${msg.messageId} saved`);
-
-    // Notify admin of customer messages (non-blocking)
-    if (msg.fromType === 'Customer' || !msg.fromType) {
-      try {
-        const lead = await pool.query(
-          'SELECT client_id, customer_name FROM thumbtack_leads WHERE negotiation_id = $1',
-          [msg.negotiationId]
-        );
-        const clientId = lead.rows[0]?.client_id;
-        const adminUrl = clientId ? `${ADMIN_URL}/clients/${clientId}` : null;
-        const tpl = newThumbtackMessageAdmin({
-          customerName: lead.rows[0]?.customer_name || msg.senderName || 'Unknown',
-          text: msg.text,
-          adminUrl,
-        });
-        // Route through notifyAdminCategory (like /leads) so the routine_thumbtack
-        // preference is honored and every opted-in admin/manager is notified — not
-        // just ADMIN_EMAIL.
-        await notifyAdminCategory({
-          category: 'routine_thumbtack',
-          subject: tpl.subject,
-          emailHtml: tpl.html,
-          emailText: tpl.text,
-        });
-      } catch (emailErr) {
-        if (process.env.SENTRY_DSN_SERVER) {
-          Sentry.captureException(emailErr, {
-            tags: { webhook: 'thumbtack', route: '/messages' },
-          });
-        }
-        console.error('Thumbtack message notification failed (non-blocking):', emailErr);
-      }
-    }
 
     res.status(200).json({ status: 'ok' });
   } catch (err) {

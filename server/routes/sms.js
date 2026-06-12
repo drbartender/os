@@ -97,13 +97,20 @@ router.post('/inbound', inboundLimiter, async (req, res) => {
  * activity first, with an unread inbound count.
  */
 router.get('/conversations', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+  // Thumbtack relay echoes (metadata.thumbtack_relay = 'true') are machine
+  // traffic, not the client speaking: excluded from the list, the unread
+  // count, AND the existence check, so a relay echo can never surface or
+  // bump a thread. IS DISTINCT FROM keeps legacy NULL-metadata rows visible.
   const result = await pool.query(`
     SELECT c.id AS client_id, c.name, c.phone,
       (SELECT COUNT(*) FROM sms_messages m
-        WHERE m.client_id = c.id AND m.direction = 'inbound' AND m.read_at IS NULL)::int AS unread_count,
-      (SELECT MAX(m2.created_at) FROM sms_messages m2 WHERE m2.client_id = c.id) AS last_message_at
+        WHERE m.client_id = c.id AND m.direction = 'inbound' AND m.read_at IS NULL
+          AND (m.metadata->>'thumbtack_relay') IS DISTINCT FROM 'true')::int AS unread_count,
+      (SELECT MAX(m2.created_at) FROM sms_messages m2 WHERE m2.client_id = c.id
+          AND (m2.metadata->>'thumbtack_relay') IS DISTINCT FROM 'true') AS last_message_at
     FROM clients c
-    WHERE EXISTS (SELECT 1 FROM sms_messages m3 WHERE m3.client_id = c.id)
+    WHERE EXISTS (SELECT 1 FROM sms_messages m3 WHERE m3.client_id = c.id
+          AND (m3.metadata->>'thumbtack_relay') IS DISTINCT FROM 'true')
     ORDER BY last_message_at DESC
     LIMIT 200
   `);
@@ -116,7 +123,10 @@ router.get('/conversations/:clientId', auth, requireAdminOrManager, asyncHandler
   if (!Number.isInteger(clientId)) throw new ValidationError({ clientId: 'Invalid client id.' });
   const result = await pool.query(
     `SELECT id, direction, body, status, twilio_sid, read_at, created_at
-     FROM sms_messages WHERE client_id = $1 ORDER BY created_at ASC LIMIT 500`,
+     FROM sms_messages
+     WHERE client_id = $1
+       AND (metadata->>'thumbtack_relay') IS DISTINCT FROM 'true'
+     ORDER BY created_at ASC LIMIT 500`,
     [clientId]
   );
   res.json(result.rows);

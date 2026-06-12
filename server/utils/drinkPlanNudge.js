@@ -38,6 +38,7 @@ const smsTemplates = require('./smsTemplates');
 const { wrapEmail } = require('./emailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
+const { formatEventDateForSms: eventDateSms } = require('./smsEventDate');
 
 const BRAND = { primary: '#3b2314', secondary: '#6b4226' };
 const DAY_SECONDS = 86400;
@@ -47,13 +48,6 @@ const NUDGE_PRIORITY = 2;
 function esc(str) {
   if (str === null || str === undefined) return '';
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function eventDateSms(eventDate) {
-  if (!eventDate) return 'your event';
-  const parsed = new Date(String(eventDate).slice(0, 10) + 'T12:00:00Z');
-  if (Number.isNaN(parsed.getTime())) return 'your event';
-  return parsed.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' });
 }
 
 /**
@@ -144,7 +138,9 @@ async function handleDrinkPlanNudgeEmail({ entity }) {
   const tpl = drinkPlanNudgeEmail({
     clientFirstName: firstNameOf(ctx.client_name),
     eventTypeLabel: eventLabel(ctx),
-    eventDateDisplay: eventDateSms(ctx.event_date),
+    // Email path keeps the old 'your event' fallback; only the SMS path adopts
+    // the new "null means drop the clause" contract.
+    eventDateDisplay: eventDateSms(ctx.event_date) || 'your event',
     plannerUrl: ctx.token ? `${PUBLIC_SITE_URL}/plan/${ctx.token}` : `${PUBLIC_SITE_URL}/plan`,
     consultUrl: process.env.CAL_BOOKING_URL || null,
     phone: process.env.ADMIN_PHONE || null,

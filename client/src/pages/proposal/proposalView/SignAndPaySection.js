@@ -62,6 +62,8 @@ export default function SignAndPaySection({
   sigData,
   setSigData,
   setSigMethod,
+  clientPhone = '',
+  setClientPhone = () => {},
   // Payment options
   paymentOption,
   setPaymentOption,
@@ -169,6 +171,36 @@ export default function SignAndPaySection({
             onChange={(e) => setSigName(e.target.value)}
             placeholder="Your full name"
           />
+        </div>
+
+        {/* Optional contact number (real-number capture for Thumbtack leads) */}
+        <div>
+          <label className="sign-pay-eyebrow" htmlFor="sig-phone">
+            Best phone number for event-day updates (optional)
+          </label>
+          <input
+            id="sig-phone"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            className="sign-pay-input"
+            value={clientPhone}
+            onChange={(e) => {
+              setClientPhone(e.target.value);
+              setFieldErrors((fe) => {
+                if (!fe.client_phone) return fe;
+                const next = { ...fe };
+                delete next.client_phone;
+                return next;
+              });
+            }}
+            placeholder="(312) 555-0148"
+          />
+          {fieldErrors?.client_phone && (
+            <p style={{ color: 'var(--rust)', fontSize: '0.875rem' }} role="alert">
+              {fieldErrors.client_phone}
+            </p>
+          )}
         </div>
 
         {/* Signature */}

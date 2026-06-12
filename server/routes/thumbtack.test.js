@@ -67,6 +67,23 @@ function postLead(negotiationId) {
   return httpReq('POST', '/api/thumbtack/leads', headers, body);
 }
 
+function postMessage(messageId, negotiationId) {
+  const body = JSON.stringify({
+    event: { eventType: 'MessageCreatedV4' },
+    data: {
+      messageID: messageId,
+      negotiationID: negotiationId,
+      from: 'Customer',
+      text: 'relay-removal harness message',
+      sentAt: new Date().toISOString(),
+      customer: { displayName: 'Harness Customer' },
+    },
+  });
+  const headers = { 'Content-Type': 'application/json' };
+  if (secret) headers['x-thumbtack-secret'] = secret;
+  return httpReq('POST', '/api/thumbtack/messages', headers, body);
+}
+
 before(async () => {
   const app = express();
   app.use(express.json());
@@ -115,6 +132,20 @@ test('a Thumbtack-sourced draft never exposes admin_notes on the public token ro
   const pub = await httpReq('GET', `/api/proposals/t/${row.rows[0].token}`, {}, null);
   assert.equal(pub.status, 200);
   assert.equal('admin_notes' in pub.body, false, 'public token route must NOT expose admin_notes');
+});
+
+test('POST /messages persists the message and 200s with no admin email block', async () => {
+  // Reuse negA (persisted in thumbtack_leads by the earlier draft-failure test) so
+  // the message row points at a known lead, mirroring real webhook traffic.
+  // negotiation_id has no FK constraint; any string would persist.
+  const msgId = `test-msg-${Date.now()}`;
+  const res = await postMessage(msgId, negA);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.status, 'ok');
+  const row = await pool.query('SELECT text, from_type FROM thumbtack_messages WHERE message_id = $1', [msgId]);
+  assert.equal(row.rows.length, 1);
+  assert.equal(row.rows[0].from_type, 'Customer');
+  await pool.query('DELETE FROM thumbtack_messages WHERE message_id = $1', [msgId]);
 });
 
 after(async () => {

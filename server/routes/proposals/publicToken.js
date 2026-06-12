@@ -12,6 +12,8 @@ const asyncHandler = require('../../middleware/asyncHandler');
 const { ValidationError, ConflictError, NotFoundError } = require('../../utils/errors');
 const { isVenueComplete, composeVenueLocation, validateVenue } = require('../../utils/venueAddress');
 const { KNOWN_AGREEMENT_VERSIONS, LEGACY_AGREEMENT_VERSION } = require('../../utils/agreementVersions');
+const { findThumbtackProxyLead } = require('../../utils/smsInbound');
+const { validatePhone } = require('../../utils/phone');
 
 const router = express.Router();
 
@@ -55,7 +57,8 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
       p.view_count, p.last_viewed_at, p.created_at, p.updated_at,
       sp.name AS package_name, sp.slug AS package_slug, sp.category AS package_category,
       sp.includes AS package_includes,
-      c.name AS client_name, c.email AS client_email
+      c.name AS client_name, c.email AS client_email,
+      c.phone AS client_phone_raw, c.source AS client_source
     FROM proposals p
     LEFT JOIN service_packages sp ON sp.id = p.package_id
     LEFT JOIN clients c ON c.id = p.client_id
@@ -108,11 +111,33 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
     eventStartTime: proposal.event_start_time,
   });
 
+  // Optional-phone prefill (spec 2026-06-11 Component 4). A Thumbtack proxy
+  // number must never show in the signing form: blank it so the client is
+  // invited to provide a real one. The proxy lookup runs only for
+  // thumbtack-sourced clients (a proxy can only live on a row clientDedup
+  // created with source 'thumbtack'), keeping the extra query off the common
+  // public-page path. Fail closed to blank: never show a proxy.
+  let clientPhonePrefill = proposal.client_phone_raw || '';
+  if (clientPhonePrefill && proposal.client_source === 'thumbtack') {
+    try {
+      if (await findThumbtackProxyLead(clientPhonePrefill)) clientPhonePrefill = '';
+    } catch (err) {
+      console.error('[proposals/public] proxy prefill check failed (blanking):', err.message);
+      clientPhonePrefill = '';
+    }
+  }
+  // Strip the internal lookup fields (delete-on-copy, not rest-destructure,
+  // so eslint's no-unused-vars stays quiet).
+  const publicProposal = { ...proposal };
+  delete publicProposal.client_phone_raw;
+  delete publicProposal.client_source;
+
   res.json({
-    ...proposal,
+    ...publicProposal,
     addons: addonsRes.rows,
     drink_plan_token: drinkPlanToken,
     venue_complete: isVenueComplete(proposal),
+    client_phone_prefill: clientPhonePrefill,
     status: proposal.status === 'sent' ? 'viewed' : proposal.status,
     payment_policy: {
       full_payment_required: win.fullPaymentRequired,
@@ -129,6 +154,11 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
   const fieldErrors = {};
   if (!client_signed_name) fieldErrors.client_signed_name = 'Please enter your full name';
   if (!client_signature_data) fieldErrors.signature = 'Please sign before accepting';
+  // Optional real-number capture (spec 2026-06-11 Component 4). validatePhone
+  // is the save-time helper (10-digit storage), NOT sms.js#normalizePhone
+  // (send-time E.164). Empty input is valid and never overwrites.
+  const phoneCheck = validatePhone(req.body.client_phone);
+  if (phoneCheck.error) fieldErrors.client_phone = phoneCheck.error;
   if (Object.keys(fieldErrors).length > 0) {
     throw new ValidationError(fieldErrors);
   }
@@ -235,9 +265,36 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
   }
   const proposal = { id: lookup.rows[0].id };
 
+  // Phone write is gated on the sign UPDATE having returned a row (the
+  // client_signed_at IS NULL TOCTOU gate above): a replayed sign POST that hit
+  // ALREADY_ACCEPTED never reaches this point, so a leaked token cannot mutate
+  // the phone after acceptance. Best-effort: a phone-write failure must never
+  // 500 a successful signature. phone_status resets to 'ok' whenever the client
+  // confirms a number, even an unchanged one: a stale 'bad' verdict (earned by
+  // the old proxy or a transient delivery failure) must not mute a number the
+  // client just vouched for (channelFallback suppresses all automated SMS on
+  // phone_status 'bad').
+  let phoneUpdated = false;
+  if (phoneCheck.value) {
+    try {
+      const pu = await pool.query(
+        `UPDATE clients SET phone = $1, phone_status = 'ok'
+          WHERE id = (SELECT client_id FROM proposals WHERE id = $2)
+            AND (phone IS DISTINCT FROM $1 OR phone_status IS DISTINCT FROM 'ok')`,
+        [phoneCheck.value, proposal.id]
+      );
+      phoneUpdated = pu.rowCount > 0;
+    } catch (phoneErr) {
+      if (process.env.SENTRY_DSN_SERVER) {
+        Sentry.captureException(phoneErr, { tags: { route: 'proposals/sign', issue: 'phone_capture' } });
+      }
+      console.error('Sign-time phone capture failed (non-blocking):', phoneErr.message);
+    }
+  }
+
   await pool.query(
     `INSERT INTO proposal_activity_log (proposal_id, action, actor_type, details) VALUES ($1, 'signed', 'client', $2)`,
-    [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method })]
+    [proposal.id, JSON.stringify({ signed_name: client_signed_name, signature_method: client_signature_method, phone_updated: phoneUpdated })]
   );
 
   // Email notifications (non-blocking)
