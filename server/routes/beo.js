@@ -107,10 +107,16 @@ router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) =
     [proposalId]
   );
 
-  const isAdmin = req.user.role === 'admin' || req.user.role === 'manager';
-  const isAck = isAdmin
-    ? false
-    : shiftReqsRow.rows.some((r) => r.user_id === req.user.id && r.beo_acknowledged_at !== null);
+  // A worker is whoever holds an approved active shift on this proposal (the set
+  // selected above). The admin-VIEW flag must NOT key on role alone: a manager
+  // who is actually staffed (audit 3c W1) is a worker — they get the staff-portal
+  // confirm/drop/cover UI and their ack must round-trip — while an admin, or a
+  // manager who is only viewing, stays an admin-style viewer.
+  const isStaffer = shiftReqsRow.rows.some((r) => r.user_id === req.user.id);
+  const isAdmin = (req.user.role === 'admin' || req.user.role === 'manager') && !isStaffer;
+  const isAck = shiftReqsRow.rows.some(
+    (r) => r.user_id === req.user.id && r.beo_acknowledged_at !== null
+  );
 
   // ── Team roster (spec §6.18). Spec defines `team_roster` as the active
   // approved bartenders on this proposal — the same hybrid-state filter the
@@ -353,9 +359,10 @@ router.post('/:proposalId/acknowledge', auth, beoReadLimiter, asyncHandler(async
   );
 
   if (result.rowCount === 0) {
-    // Discriminator: authorize() already proved the staffer has an approved
-    // active shift, so the only thing the UPDATE can have rejected on is the
-    // finalized_at gate. Re-check to give a precise error.
+    // Discriminator: authorize() (for staff) or the manager-shift check above
+    // (for managers) already proved the caller has an approved active shift, so
+    // the only thing the UPDATE can have rejected on is the finalized_at gate.
+    // Re-check to give a precise error.
     const dp = await pool.query('SELECT finalized_at FROM drink_plans WHERE proposal_id = $1', [proposalId]);
     if (!dp.rows[0] || !dp.rows[0].finalized_at) {
       throw new ConflictError('Plan is not finalized.');

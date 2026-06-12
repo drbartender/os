@@ -427,6 +427,30 @@ test('POST /api/beo/:proposalId/acknowledge > 409 when not finalized', async () 
   assert.strictEqual(res.status, 409);
 });
 
+// ─── GET viewer classification for managers (audit 3c W1 tail) ──────────────
+// A manager who is STAFFED on the event is a worker (is_admin:false) so the
+// staff-portal confirm/drop/cover UI shows; their ack must round-trip. A manager
+// who is only VIEWING stays an admin-style viewer (is_admin:true).
+
+test('GET /api/beo/:proposalId > staffed manager is a worker (is_admin false) and their ack round-trips', async () => {
+  await pool.query('UPDATE drink_plans SET finalized_at = NOW() WHERE id = $1', [drinkPlanId]);
+  let res = await request('GET', `/api/beo/${proposalId}`, { token: managerStaffedToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.viewer.is_admin, false, 'a staffed manager is a worker, not an admin viewer');
+  assert.strictEqual(res.body.viewer.is_acknowledged, false);
+  await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: managerStaffedToken });
+  res = await request('GET', `/api/beo/${proposalId}`, { token: managerStaffedToken });
+  assert.strictEqual(res.body.viewer.is_admin, false);
+  assert.strictEqual(res.body.viewer.is_acknowledged, true, 'the manager ack round-trips to the GET payload');
+  await pool.query('UPDATE shift_requests SET beo_acknowledged_at = NULL WHERE shift_id = $1 AND user_id = $2', [shiftId, managerStaffedId]);
+});
+
+test('GET /api/beo/:proposalId > viewing manager (no shift) stays an admin-style viewer (is_admin true)', async () => {
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: managerViewerToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.viewer.is_admin, true, 'a manager with NO shift is a viewer, not a worker');
+});
+
 // ─── team_roster (spec §6.18) ──────────────────────────────────────────────
 
 test('GET /api/beo/:proposalId > team_roster: display_name uses preferred + last initial', async () => {
