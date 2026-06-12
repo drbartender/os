@@ -153,10 +153,11 @@ router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) =
   // VIEWER themselves is approved+active on this proposal. A pending
   // requester (who could be a brand-new staffer the admin hasn't confirmed
   // yet) does NOT get to harvest active bartenders' numbers via the BEO
-  // endpoint. Admins/managers are not staff and therefore do not satisfy
-  // the approved-on-this-proposal predicate either — they get null phones
-  // here, which is fine: admin contact paths use the existing admin UI,
-  // not the team-roster card.
+  // endpoint. The gate is the approved-on-this-proposal predicate alone: an
+  // admin (or a manager who is only VIEWING) does not satisfy it and gets
+  // null phones; a manager who is actually STAFFED on the event does satisfy
+  // it and sees teammate phones like any other worker (audit 3c W1). Admin
+  // contact paths use the existing admin UI, not the team-roster card.
   const viewerRow = await pool.query(
     `SELECT 1
        FROM shift_requests sr
@@ -298,20 +299,37 @@ router.get('/:proposalId/logo', auth, beoReadLimiter, asyncHandler(async (req, r
   res.send(Buffer.from(await upstream.arrayBuffer()));
 }));
 
-// POST /:proposalId/acknowledge — staff stamps beo_acknowledged_at on every
-// approved, non-cancelled shift_request they hold on this event. Admin/manager
-// callers get a 200 no-op (acknowledged:false) so the same UI button is safe
-// for both audiences. Requires the drink plan to be finalized — pre-finalize
-// acknowledgement would let staff confirm a BEO that admin may still revise.
+// POST /:proposalId/acknowledge — a worker stamps beo_acknowledged_at on every
+// approved, non-cancelled shift_request they hold on this event. Admins (and
+// managers who are only VIEWING, not staffed) get a 200 no-op (acknowledged:false)
+// so the same UI button is safe for every audience. Requires the drink plan to be
+// finalized — pre-finalize acknowledgement would let staff confirm a BEO that admin
+// may still revise.
 router.post('/:proposalId/acknowledge', auth, beoReadLimiter, asyncHandler(async (req, res) => {
   const proposalId = parseInt(req.params.proposalId, 10);
   if (!Number.isFinite(proposalId)) throw new NotFoundError('Event not found.');
   await authorize(req, proposalId);
 
-  // Admin/manager: no-op. They view the BEO but never "acknowledge" — the
-  // ack timestamp is a per-bartender state used to drive the unack nudge.
-  if (req.user.role === 'admin' || req.user.role === 'manager') {
+  // Admin: pure no-op. Admins view the BEO but are never staffed on a shift
+  // (POST /shifts/:id/assign rejects role='admin'), so there is nothing to ack.
+  if (req.user.role === 'admin') {
     return res.json({ acknowledged: false });
+  }
+
+  // Manager: a manager can be a pure BEO viewer OR an assigned worker (audit 3c
+  // W1 — managers are assignable to shifts and ARE scheduled for the unack nudge).
+  // Only a manager who actually holds an approved active shift acknowledges; a
+  // viewing manager no-ops like admin so the shared button stays safe for them.
+  if (req.user.role === 'manager') {
+    const staffed = await pool.query(
+      `SELECT 1 FROM shift_requests sr
+         JOIN shifts s ON s.id = sr.shift_id
+        WHERE s.proposal_id = $1 AND sr.user_id = $2
+          AND sr.status = 'approved' AND sr.dropped_at IS NULL
+          AND s.status != 'cancelled' LIMIT 1`,
+      [proposalId, req.user.id]
+    );
+    if (!staffed.rows[0]) return res.json({ acknowledged: false });
   }
 
   // Single UPDATE…FROM. Covers staffers with multiple approved shifts on the

@@ -41,6 +41,10 @@ let staffUserId;
 let otherStaffUserId;
 let adminUserId;
 let clientId;
+let managerStaffedId;    // manager WITH an approved shift on the proposal (assignable worker)
+let managerStaffedToken;
+let managerViewerId;     // manager with NO shift — pure BEO viewer
+let managerViewerToken;
 
 // Roster fixtures (§6.18 team_roster tests). Each teammate exercises a
 // different branch of the display_name fallback chain in computeName().
@@ -145,6 +149,25 @@ before(async () => {
     process.env.JWT_SECRET, { expiresIn: '1h' }
   );
 
+  // Manager WITH an approved shift on the proposal (audit 3c W1: managers are a
+  // worker class and can be assigned to shifts, so they must be able to ack the BEO).
+  const mStaffed = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, $2, 'manager', 'approved', 0) RETURNING id`,
+    [`beo-route-mgr-staffed-${NONCE}@example.com`, passwordHash]
+  );
+  managerStaffedId = mStaffed.rows[0].id;
+  managerStaffedToken = jwt.sign({ userId: managerStaffedId, tokenVersion: 0 }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+  // Manager with NO shift — a pure BEO viewer; must still get the clean no-op.
+  const mViewer = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, $2, 'manager', 'approved', 0) RETURNING id`,
+    [`beo-route-mgr-viewer-${NONCE}@example.com`, passwordHash]
+  );
+  managerViewerId = mViewer.rows[0].id;
+  managerViewerToken = jwt.sign({ userId: managerViewerId, tokenVersion: 0 }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
   // Client + proposal + drink_plan + shift + approved request
   const c = await pool.query(
     "INSERT INTO clients (name, email, phone) VALUES ($1, $2, '+15555551111') RETURNING id",
@@ -187,6 +210,11 @@ before(async () => {
   await pool.query(
     "INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved')",
     [shiftId, staffUserId]
+  );
+  // The staffed manager holds an approved request on the same shift.
+  await pool.query(
+    "INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved')",
+    [shiftId, managerStaffedId]
   );
 
   // ── Roster fixtures (§6.18). One user per fallback branch.
@@ -290,6 +318,7 @@ after(async () => {
   // to users — cleaning the user rows below sweeps the rest.
   const userIds = [
     adminUserId, staffUserId, otherStaffUserId,
+    managerStaffedId, managerViewerId,
     rosterPreferredId, rosterAppsOnlyId, rosterAgreementsId,
     rosterEmailOnlyId, rosterDroppedId,
   ].filter((id) => id !== null && id !== undefined);
@@ -365,6 +394,29 @@ test('POST /api/beo/:proposalId/acknowledge > staff stamps beo_acknowledged_at w
 
 test('POST /api/beo/:proposalId/acknowledge > admin returns 200 with acknowledged:false', async () => {
   const res = await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: adminToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.acknowledged, false);
+});
+
+test('POST /api/beo/:proposalId/acknowledge > manager WITH an approved shift stamps beo_acknowledged_at (managers are assignable workers)', async () => {
+  await pool.query('UPDATE drink_plans SET finalized_at = NOW() WHERE id = $1', [drinkPlanId]);
+  const res = await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: managerStaffedToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.acknowledged, true);
+  assert.ok(res.body.beo_acknowledged_at);
+  const { rows } = await pool.query(
+    'SELECT beo_acknowledged_at FROM shift_requests WHERE shift_id = $1 AND user_id = $2',
+    [shiftId, managerStaffedId]
+  );
+  assert.ok(rows[0].beo_acknowledged_at, 'the manager-as-staffer ack is persisted (so the nudge clears)');
+  await pool.query(
+    'UPDATE shift_requests SET beo_acknowledged_at = NULL WHERE shift_id = $1 AND user_id = $2',
+    [shiftId, managerStaffedId]
+  );
+});
+
+test('POST /api/beo/:proposalId/acknowledge > manager with NO shift returns the clean no-op (acknowledged:false)', async () => {
+  const res = await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: managerViewerToken });
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.acknowledged, false);
 });
