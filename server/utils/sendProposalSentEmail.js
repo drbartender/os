@@ -13,6 +13,7 @@ const { getEventTypeLabel } = require('./eventTypes');
 const { shouldSendImmediate } = require('./messageSuppression');
 
 const { PUBLIC_SITE_URL } = require('./urls');
+const { formatEventDateForSms } = require('./smsEventDate');
 
 // Dependency seam for tests.
 let _deps = {
@@ -22,15 +23,6 @@ let _deps = {
   Sentry: realSentry,
 };
 function __setDeps(d) { _deps = { ..._deps, ...d }; }
-
-/** Format a YYYY-MM-DD / Date event_date as "August 15" for SMS copy. */
-function formatSmsDate(eventDate) {
-  if (!eventDate) return 'your event';
-  const ymd = String(eventDate).slice(0, 10);
-  const parsed = new Date(ymd + 'T12:00:00Z');
-  if (Number.isNaN(parsed.getTime())) return 'your event';
-  return parsed.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' });
-}
 
 async function sendProposalSentEmail(proposal, { actorType = 'admin' } = {}) {
   // ── Email half (existing behavior) ──
@@ -89,7 +81,7 @@ async function sendProposalSentEmail(proposal, { actorType = 'admin' } = {}) {
     });
     const body = smsTemplates.initialProposalSms({
       eventTypeLabel,
-      eventDate: formatSmsDate(proposal.event_date),
+      eventDate: formatEventDateForSms(proposal.event_date),
       link: `${PUBLIC_SITE_URL}/proposal/${proposal.token}`,
     });
     await _deps.sendAndLogSms({

@@ -14,7 +14,8 @@ function dt(date) { return date || 'your event'; }
 
 // ─── 1.2 Initial proposal SMS ────────────────────────────────────
 function initialProposalSms({ eventTypeLabel, eventDate, link }) {
-  return `Hi, Dallas here. Just sent your proposal for the ${ev(eventTypeLabel)} on ${dt(eventDate)}. Review the details and check out here: ${link}. Let me know if you have any questions or need any changes.`;
+  const dateClause = eventDate ? ` on ${eventDate}` : '';
+  return `Hi, Dallas here. Just sent your proposal for the ${ev(eventTypeLabel)}${dateClause}. Review the details and check out here: ${link}. Let me know if you have any questions or need any changes.`;
 }
 
 // ─── 2.1 Sign+pay confirmation SMS ───────────────────────────────
@@ -24,17 +25,20 @@ function signPayConfirmationSms({ eventDate }) {
 
 // ─── 1.3 Drip touch 1 (+1d) ──────────────────────────────────────
 function dripTouch1Sms({ eventTypeLabel, eventDate }) {
-  return `Hi, Dallas here. Did you get the proposal I sent for the ${ev(eventTypeLabel)} on ${dt(eventDate)}? Let me know if you have any questions.`;
+  const dateClause = eventDate ? ` on ${eventDate}` : '';
+  return `Hi, Dallas here. Did you get the proposal I sent for the ${ev(eventTypeLabel)}${dateClause}? Let me know if you have any questions.`;
 }
 
 // ─── 1.3 Drip touch 3 (+10d) ─────────────────────────────────────
 function dripTouch3Sms({ eventTypeLabel, eventDate, link }) {
-  return `Hi, Dallas here. Quick thought on the ${ev(eventTypeLabel)} on ${dt(eventDate)}. Want to tweak anything before it books up? Easy to adjust: ${link}.`;
+  const dateClause = eventDate ? ` on ${eventDate}` : '';
+  return `Hi, Dallas here. Quick thought on the ${ev(eventTypeLabel)}${dateClause}. Want to tweak anything before it books up? Easy to adjust: ${link}.`;
 }
 
 // ─── 1.3 Drip touch 5 (+21d), SMS half ───────────────────────────
 function dripTouch5Sms({ eventDate, link }) {
-  return `Hi, Dallas here. Last check on your ${dt(eventDate)} event. Want to lock it in before someone else grabs the date? ${link}`;
+  const eventClause = eventDate ? `your ${eventDate} event` : 'your event';
+  return `Hi, Dallas here. Last check on ${eventClause}. Want to lock it in before someone else grabs the date? ${link}`;
 }
 
 // ─── 3.7 Drink plan nudge SMS ────────────────────────────────────

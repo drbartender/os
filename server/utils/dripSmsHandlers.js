@@ -26,6 +26,7 @@ const { sendAndLogSms } = require('./sms');
 const smsTemplates = require('./smsTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
+const { formatEventDateForSms: eventDateSms } = require('./smsEventDate');
 
 /**
  * Load the proposal + client fields a drip SMS handler needs. A gone/archived
@@ -52,13 +53,6 @@ async function loadDripSmsContext(proposalId) {
   const prefs = proposal.comm_prefs || {};
   if (prefs.sms_enabled === false) throw new SuppressMessageError('sms_opted_out');
   return proposal;
-}
-
-function eventDateSms(eventDate) {
-  if (!eventDate) return 'your event';
-  const parsed = new Date(String(eventDate).slice(0, 10) + 'T12:00:00Z');
-  if (Number.isNaN(parsed.getTime())) return 'your event';
-  return parsed.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' });
 }
 
 function proposalUrl(token) {
