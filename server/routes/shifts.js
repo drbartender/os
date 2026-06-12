@@ -94,9 +94,9 @@ router.get('/unstaffed-upcoming', auth, requireStaffing, asyncHandler(async (req
     LEFT JOIN clients c ON c.id = p.client_id
     WHERE s.status = 'open'
       AND s.event_date >= CURRENT_DATE
-      AND jsonb_typeof(s.positions_needed::jsonb) = 'array'
+      AND s.positions_needed IS JSON ARRAY
       AND (SELECT COUNT(*) FROM shift_requests sr2 WHERE sr2.shift_id = s.id AND sr2.status = 'approved' AND sr2.dropped_at IS NULL)
-          < jsonb_array_length(s.positions_needed::jsonb)
+          < jsonb_array_length(CASE WHEN s.positions_needed IS JSON ARRAY THEN s.positions_needed::jsonb ELSE '[]'::jsonb END)
     ORDER BY s.event_date ASC, s.start_time ASC
     LIMIT 200
   `);
@@ -442,7 +442,8 @@ router.put('/:id', auth, requireStaffing, asyncHandler(async (req, res) => {
       client_email = COALESCE($17, client_email),
       client_phone = COALESCE($18, client_phone),
       guest_count = COALESCE($19, guest_count),
-      event_duration_hours = COALESCE($20, event_duration_hours)
+      event_duration_hours = COALESCE($20, event_duration_hours),
+      updated_at = NOW()
     WHERE id = $14 RETURNING *
   `;
   const updateParams = [
@@ -662,6 +663,15 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
   // Verify the shift exists
   const shiftRes = await pool.query('SELECT * FROM shifts WHERE id = $1', [req.params.id]);
   if (!shiftRes.rows[0]) throw new NotFoundError('Shift not found.');
+
+  // Verify the target is a real, onboarded staff user before creating the request. A typo
+  // or stale id would otherwise insert an orphan shift_request whose downstream SMS/email
+  // blocks silently no-op against the missing user (audit 3c).
+  const eligible = await pool.query(
+    "SELECT id FROM users WHERE id = $1 AND role = 'staff' AND onboarding_status IN ('submitted','reviewed','approved') LIMIT 1",
+    [user_id]
+  );
+  if (!eligible.rows[0]) throw new NotFoundError('User not eligible for assignment.');
 
   // Insert or update the shift request as approved.
   // BEO: clear any stale ack unconditionally — admin re-approving means a

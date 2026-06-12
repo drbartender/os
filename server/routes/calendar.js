@@ -430,7 +430,10 @@ router.get('/feed/:token', requireUuidToken('token', 'Calendar feed not found'),
 
 /** GET /api/calendar/event/:shiftId.ics — single event download (auth required) */
 router.get('/event/:shiftId.ics', auth, asyncHandler(async (req, res) => {
-  const shiftId = parseInt(req.params.shiftId);
+  const shiftId = parseInt(req.params.shiftId, 10);
+  // `:shiftId.ics` captures everything before `.ics`; a non-numeric path (foo.ics) yields
+  // NaN, which casts-and-throws (22P02) into a 500. Reject it as a clean 404 first.
+  if (!Number.isFinite(shiftId)) throw new NotFoundError('Event not found');
   const isAdmin = req.user.role === 'admin' || req.user.role === 'manager';
 
   // Verify access

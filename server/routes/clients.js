@@ -21,7 +21,11 @@ const normalizeEmail = (email) =>
  *  options and the Lifetime value column. Explicit column allowlist on
  *  clients excludes `notes` (potentially large free-text). */
 router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
-  const { search, page = 1, limit = 50 } = req.query;
+  const { search } = req.query;
+  // Bound pagination: a non-numeric or oversized limit otherwise casts-and-throws (500) or
+  // returns an unbounded result set. Clamp to [1, 200], default 50; page floors at 1.
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   let query = `
     SELECT
       c.id, c.name, c.email, c.phone, c.source, c.created_at, c.updated_at, c.cc_id,
@@ -45,9 +49,9 @@ router.get('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   }
 
   query += ' ORDER BY c.created_at DESC';
-  params.push(Number(limit));
+  params.push(limit);
   query += ` LIMIT $${params.length}`;
-  params.push((Number(page) - 1) * Number(limit));
+  params.push((page - 1) * limit);
   query += ` OFFSET $${params.length}`;
 
   const result = await pool.query(query, params);

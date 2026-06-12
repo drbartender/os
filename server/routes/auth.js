@@ -1,4 +1,5 @@
 const express = require('express');
+const Sentry = require('@sentry/node');
 const rateLimit = require('express-rate-limit');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -357,7 +358,11 @@ router.get('/me', auth, asyncHandler(async (req, res) => {
     );
     res.json({ user: { ...req.user, has_application: ctx.rows[0].has_application, preferred_name: ctx.rows[0].preferred_name } });
   } catch (_err) {
-    // Preserve existing fallback behavior — if the lookup fails, still return the user
+    // Surface the failed lookup to Sentry (the fallback below hides it from the client),
+    // then preserve existing behavior: still return req.user so the session keeps working.
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(_err, { tags: { route: 'auth.me' } });
+    }
     res.json({ user: req.user });
   }
 }));
@@ -367,6 +372,11 @@ router.post('/forgot-password', authLimiter, asyncHandler(async (req, res) => {
   const { email } = req.body;
   // Keep generic success response for enumeration safety; still validate basic input
   if (!email) throw new ValidationError({ email: 'Email is required' });
+  if (!EMAIL_RE.test(email)) {
+    // Malformed input can't match a real account; short-circuit before the DB lookup,
+    // returning the same generic response so the email format alone can't enumerate.
+    return res.json({ message: 'If an account exists with that email, a password reset link has been sent.' });
+  }
 
   // Always return success to prevent email enumeration
   const result = await pool.query('SELECT id, email FROM users WHERE email = $1', [email.toLowerCase()]);
