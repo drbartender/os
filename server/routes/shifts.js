@@ -664,11 +664,12 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
   const shiftRes = await pool.query('SELECT * FROM shifts WHERE id = $1', [req.params.id]);
   if (!shiftRes.rows[0]) throw new NotFoundError('Shift not found.');
 
-  // Verify the target is a real, onboarded staff user before creating the request. A typo
-  // or stale id would otherwise insert an orphan shift_request whose downstream SMS/email
-  // blocks silently no-op against the missing user (audit 3c).
+  // Verify the target is a real, onboarded worker (staff OR manager — managers are a worker
+  // class, same as the messages.js recipient allow-list and the self-request path) before
+  // creating the request. A typo, stale id, or non-worker (admin) would otherwise insert an
+  // orphan shift_request whose downstream SMS/email blocks silently no-op (audit 3c).
   const eligible = await pool.query(
-    "SELECT id FROM users WHERE id = $1 AND role = 'staff' AND onboarding_status IN ('submitted','reviewed','approved') LIMIT 1",
+    "SELECT id FROM users WHERE id = $1 AND role IN ('staff','manager') AND onboarding_status IN ('submitted','reviewed','approved') LIMIT 1",
     [user_id]
   );
   if (!eligible.rows[0]) throw new NotFoundError('User not eligible for assignment.');

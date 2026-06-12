@@ -63,9 +63,7 @@ router.post('/resend', asyncHandler(async (req, res) => {
       return res.status(400).json({ error: 'Invalid webhook payload' });
     }
 
-    // Log raw event. ON CONFLICT makes a Resend redelivery a no-op: if this (resend_id,
-    // event_type) was already recorded, skip all the side-effects below so a replay can't
-    // re-apply status / bounce / unsubscribe writes (audit 3c).
+    // Log raw event. ON CONFLICT dedupes the row so a Resend redelivery never inserts twice.
     const logged = await pool.query(
       `INSERT INTO email_webhook_events (resend_id, event_type, payload)
        VALUES ($1, $2, $3)
@@ -74,7 +72,19 @@ router.post('/resend', asyncHandler(async (req, res) => {
       [resendId, type, payload]
     );
     if (logged.rowCount === 0) {
-      return res.json({ received: true, duplicate: true });
+      // Row already recorded. Skip the side-effects ONLY if it was fully processed — a true
+      // replay. If processed is still false, a prior delivery 500'd after the INSERT but
+      // before finishing, so the event is stranded; fall through and re-run the side-effects
+      // instead of losing it. The re-runnable writes are safe: *_at stamps COALESCE to the
+      // first write, and the lead/enrollment/client flips are WHERE-guarded. (The email_sends
+      // status overwrite is not strictly monotonic on out-of-order replay — tracked follow-up.)
+      const existing = await pool.query(
+        'SELECT processed FROM email_webhook_events WHERE resend_id = $1 AND event_type = $2',
+        [resendId, type]
+      );
+      if (existing.rows[0] && existing.rows[0].processed) {
+        return res.json({ received: true, duplicate: true });
+      }
     }
 
     // Map Resend event types to our status
@@ -89,16 +99,24 @@ router.post('/resend', asyncHandler(async (req, res) => {
 
     const newStatus = statusMap[type];
     if (!newStatus) {
-      // Unknown event type — log and ignore
+      // Unknown event type — a terminal no-op. Mark processed so the row is not
+      // left perpetually re-runnable by the heal path above (audit 3c follow-up).
+      await pool.query(
+        `UPDATE email_webhook_events SET processed = true WHERE resend_id = $1 AND event_type = $2`,
+        [resendId, type]
+      );
       return res.json({ received: true });
     }
 
     // Update email_sends status
+    // COALESCE so a re-run (heal of a stranded event) keeps the FIRST event's
+    // timestamp rather than overwriting it with the replay wall-clock — the *_at
+    // columns stay idempotent across redeliveries (audit 3c follow-up).
     const TIMESTAMP_QUERIES = {
-      'opened': 'UPDATE email_sends SET status = $1, opened_at = NOW() WHERE resend_id = $2',
-      'clicked': 'UPDATE email_sends SET status = $1, clicked_at = NOW() WHERE resend_id = $2',
-      'bounced': 'UPDATE email_sends SET status = $1, bounced_at = NOW() WHERE resend_id = $2',
-      'complained': 'UPDATE email_sends SET status = $1, complained_at = NOW() WHERE resend_id = $2',
+      'opened': 'UPDATE email_sends SET status = $1, opened_at = COALESCE(opened_at, NOW()) WHERE resend_id = $2',
+      'clicked': 'UPDATE email_sends SET status = $1, clicked_at = COALESCE(clicked_at, NOW()) WHERE resend_id = $2',
+      'bounced': 'UPDATE email_sends SET status = $1, bounced_at = COALESCE(bounced_at, NOW()) WHERE resend_id = $2',
+      'complained': 'UPDATE email_sends SET status = $1, complained_at = COALESCE(complained_at, NOW()) WHERE resend_id = $2',
     };
 
     if (TIMESTAMP_QUERIES[newStatus]) {

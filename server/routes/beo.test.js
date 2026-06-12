@@ -41,6 +41,10 @@ let staffUserId;
 let otherStaffUserId;
 let adminUserId;
 let clientId;
+let managerStaffedId;    // manager WITH an approved shift on the proposal (assignable worker)
+let managerStaffedToken;
+let managerViewerId;     // manager with NO shift — pure BEO viewer
+let managerViewerToken;
 
 // Roster fixtures (§6.18 team_roster tests). Each teammate exercises a
 // different branch of the display_name fallback chain in computeName().
@@ -145,6 +149,25 @@ before(async () => {
     process.env.JWT_SECRET, { expiresIn: '1h' }
   );
 
+  // Manager WITH an approved shift on the proposal (audit 3c W1: managers are a
+  // worker class and can be assigned to shifts, so they must be able to ack the BEO).
+  const mStaffed = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, $2, 'manager', 'approved', 0) RETURNING id`,
+    [`beo-route-mgr-staffed-${NONCE}@example.com`, passwordHash]
+  );
+  managerStaffedId = mStaffed.rows[0].id;
+  managerStaffedToken = jwt.sign({ userId: managerStaffedId, tokenVersion: 0 }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+  // Manager with NO shift — a pure BEO viewer; must still get the clean no-op.
+  const mViewer = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, $2, 'manager', 'approved', 0) RETURNING id`,
+    [`beo-route-mgr-viewer-${NONCE}@example.com`, passwordHash]
+  );
+  managerViewerId = mViewer.rows[0].id;
+  managerViewerToken = jwt.sign({ userId: managerViewerId, tokenVersion: 0 }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
   // Client + proposal + drink_plan + shift + approved request
   const c = await pool.query(
     "INSERT INTO clients (name, email, phone) VALUES ($1, $2, '+15555551111') RETURNING id",
@@ -187,6 +210,11 @@ before(async () => {
   await pool.query(
     "INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved')",
     [shiftId, staffUserId]
+  );
+  // The staffed manager holds an approved request on the same shift.
+  await pool.query(
+    "INSERT INTO shift_requests (shift_id, user_id, status) VALUES ($1, $2, 'approved')",
+    [shiftId, managerStaffedId]
   );
 
   // ── Roster fixtures (§6.18). One user per fallback branch.
@@ -290,6 +318,7 @@ after(async () => {
   // to users — cleaning the user rows below sweeps the rest.
   const userIds = [
     adminUserId, staffUserId, otherStaffUserId,
+    managerStaffedId, managerViewerId,
     rosterPreferredId, rosterAppsOnlyId, rosterAgreementsId,
     rosterEmailOnlyId, rosterDroppedId,
   ].filter((id) => id !== null && id !== undefined);
@@ -369,10 +398,57 @@ test('POST /api/beo/:proposalId/acknowledge > admin returns 200 with acknowledge
   assert.strictEqual(res.body.acknowledged, false);
 });
 
+test('POST /api/beo/:proposalId/acknowledge > manager WITH an approved shift stamps beo_acknowledged_at (managers are assignable workers)', async () => {
+  await pool.query('UPDATE drink_plans SET finalized_at = NOW() WHERE id = $1', [drinkPlanId]);
+  const res = await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: managerStaffedToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.acknowledged, true);
+  assert.ok(res.body.beo_acknowledged_at);
+  const { rows } = await pool.query(
+    'SELECT beo_acknowledged_at FROM shift_requests WHERE shift_id = $1 AND user_id = $2',
+    [shiftId, managerStaffedId]
+  );
+  assert.ok(rows[0].beo_acknowledged_at, 'the manager-as-staffer ack is persisted (so the nudge clears)');
+  await pool.query(
+    'UPDATE shift_requests SET beo_acknowledged_at = NULL WHERE shift_id = $1 AND user_id = $2',
+    [shiftId, managerStaffedId]
+  );
+});
+
+test('POST /api/beo/:proposalId/acknowledge > manager with NO shift returns the clean no-op (acknowledged:false)', async () => {
+  const res = await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: managerViewerToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.acknowledged, false);
+});
+
 test('POST /api/beo/:proposalId/acknowledge > 409 when not finalized', async () => {
   await pool.query('UPDATE drink_plans SET finalized_at = NULL WHERE id = $1', [drinkPlanId]);
   const res = await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: staffToken });
   assert.strictEqual(res.status, 409);
+});
+
+// ─── GET viewer classification for managers (audit 3c W1 tail) ──────────────
+// A manager who is STAFFED on the event is a worker (is_admin:false) so the
+// staff-portal confirm/drop/cover UI shows; their ack must round-trip. A manager
+// who is only VIEWING stays an admin-style viewer (is_admin:true).
+
+test('GET /api/beo/:proposalId > staffed manager is a worker (is_admin false) and their ack round-trips', async () => {
+  await pool.query('UPDATE drink_plans SET finalized_at = NOW() WHERE id = $1', [drinkPlanId]);
+  let res = await request('GET', `/api/beo/${proposalId}`, { token: managerStaffedToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.viewer.is_admin, false, 'a staffed manager is a worker, not an admin viewer');
+  assert.strictEqual(res.body.viewer.is_acknowledged, false);
+  await request('POST', `/api/beo/${proposalId}/acknowledge`, { token: managerStaffedToken });
+  res = await request('GET', `/api/beo/${proposalId}`, { token: managerStaffedToken });
+  assert.strictEqual(res.body.viewer.is_admin, false);
+  assert.strictEqual(res.body.viewer.is_acknowledged, true, 'the manager ack round-trips to the GET payload');
+  await pool.query('UPDATE shift_requests SET beo_acknowledged_at = NULL WHERE shift_id = $1 AND user_id = $2', [shiftId, managerStaffedId]);
+});
+
+test('GET /api/beo/:proposalId > viewing manager (no shift) stays an admin-style viewer (is_admin true)', async () => {
+  const res = await request('GET', `/api/beo/${proposalId}`, { token: managerViewerToken });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.viewer.is_admin, true, 'a manager with NO shift is a viewer, not a worker');
 });
 
 // ─── team_roster (spec §6.18) ──────────────────────────────────────────────

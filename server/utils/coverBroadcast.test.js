@@ -21,6 +21,7 @@ let teammateId;
 let barbackId;
 let mutedId;
 let busyId;
+let managerTeammateId;
 let clientId;
 let proposalId;
 let shiftId;
@@ -109,6 +110,20 @@ before(async () => {
     [busyId]
   );
 
+  // Manager-bartender teammate (audit 3c W1: managers are a worker class and must
+  // receive cover broadcasts like any qualified staffer). Approved, not muted, free.
+  const mgr = await pool.query(
+    `INSERT INTO users (email, password_hash, role, onboarding_status, token_version)
+     VALUES ($1, $2, 'manager', 'approved', 0) RETURNING id`,
+    [`cover-broadcast-manager-${NONCE}@example.com`, ph]
+  );
+  managerTeammateId = mgr.rows[0].id;
+  await pool.query(
+    `INSERT INTO contractor_profiles (user_id, phone, preferred_name, position, hourly_rate)
+     VALUES ($1, '5550000006', 'Morgan Manager', 'bartender', 30.00)`,
+    [managerTeammateId]
+  );
+
   // Client + proposal + shift (the one being covered).
   const c = await pool.query(
     `INSERT INTO clients (name, email, phone) VALUES ($1, $2, '+15555550001') RETURNING id`,
@@ -176,11 +191,9 @@ after(async () => {
   await pool.query(`DELETE FROM shifts WHERE proposal_id = $1`, [proposalId]);
   await pool.query(`DELETE FROM proposals WHERE id = $1`, [proposalId]);
   await pool.query(`DELETE FROM clients WHERE id = $1`, [clientId]);
-  await pool.query(
-    `DELETE FROM contractor_profiles WHERE user_id IN ($1, $2, $3, $4, $5)`,
-    [requesterId, teammateId, barbackId, mutedId, busyId]
-  );
-  await pool.query(`DELETE FROM users WHERE id IN ($1, $2, $3, $4, $5)`, [requesterId, teammateId, barbackId, mutedId, busyId]);
+  const allUserIds = [requesterId, teammateId, barbackId, mutedId, busyId, managerTeammateId].filter(Boolean);
+  await pool.query(`DELETE FROM contractor_profiles WHERE user_id = ANY($1::int[])`, [allUserIds]);
+  await pool.query(`DELETE FROM users WHERE id = ANY($1::int[])`, [allUserIds]);
   await pool.end();
 });
 
@@ -256,6 +269,17 @@ test('broadcastCoverRequest > broadcasts to qualified bartender, excludes inelig
   for (const row of rows) {
     assert.strictEqual(row.message_type, 'cover_broadcast');
   }
+});
+
+test('broadcastCoverRequest > includes a qualified manager-bartender teammate (managers are a worker class)', async () => {
+  const result = await broadcastCoverRequest(shiftId, requesterId);
+  const { rows } = await pool.query(
+    `SELECT 1 FROM scheduled_messages
+      WHERE entity_type = 'shift' AND entity_id = $1 AND recipient_id = $2`,
+    [shiftId, managerTeammateId]
+  );
+  assert.ok(rows.length >= 1, 'a qualified manager-bartender must receive the cover broadcast');
+  assert.ok(result.broadcast_count >= 1);
 });
 
 test('broadcastCoverRequest > returns 0 when shift not found', async () => {

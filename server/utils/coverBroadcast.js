@@ -142,7 +142,7 @@ async function broadcastCoverRequest(shiftId, requestingUserId) {
     `SELECT u.id
        FROM users u
        JOIN contractor_profiles cp ON cp.user_id = u.id
-      WHERE u.role = 'staff'
+      WHERE u.role IN ('staff', 'manager')
         AND u.onboarding_status = 'approved'
         AND u.id <> $1
         AND cp.position = ANY($2::text[])
