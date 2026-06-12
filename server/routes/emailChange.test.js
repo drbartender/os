@@ -352,3 +352,27 @@ test('POST /api/me/confirm-email-change > reaches handler with NO JWT (route is 
   assert.strictEqual(res.status, 410, `expected handler to run and return 410, got ${res.status}`);
   assert.strictEqual(res.body.reason, 'invalid_or_expired');
 });
+
+test('POST /api/me/confirm-email-change > concurrent confirms of the SAME token bump token_version once + write one audit row (FOR UPDATE serializes the race)', async () => {
+  const newEmail = `email-change-test-concurrent-${NONCE}@example.com`;
+  const { raw } = await seedPending(staffUserA_Id, newEmail);
+
+  const tv = async () => (await pool.query('SELECT token_version FROM users WHERE id = $1', [staffUserA_Id])).rows[0].token_version;
+  const auditCount = async () => (await pool.query(
+    "SELECT COUNT(*)::int AS n FROM staff_audit_log WHERE user_id = $1 AND action = 'email_change_confirmed'",
+    [staffUserA_Id]
+  )).rows[0].n;
+
+  const tvBefore = await tv();
+  const auditBefore = await auditCount();
+
+  // Fire several confirms of the same token simultaneously to force the race window.
+  const results = await Promise.all(
+    Array.from({ length: 5 }, () => request('POST', '/api/me/confirm-email-change', { body: { token: raw } }))
+  );
+
+  const wins = results.filter((r) => r.status === 200).length;
+  assert.strictEqual(wins, 1, `exactly one of the 5 concurrent confirms should win; got ${wins}`);
+  assert.strictEqual((await tv()) - tvBefore, 1, 'token_version must bump exactly once, not N times');
+  assert.strictEqual((await auditCount()) - auditBefore, 1, 'exactly one audit row, not duplicates');
+});

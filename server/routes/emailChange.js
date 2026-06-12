@@ -91,6 +91,19 @@ router.post('/confirm-email-change', emailChangeConfirmLimiter, asyncHandler(asy
   try {
     await client.query('BEGIN');
 
+    // Lock the pending row and re-check it's still unconsumed INSIDE the transaction.
+    // The pre-transaction SELECT above can pass for several concurrent confirms of the
+    // same token; this row lock serializes them so only the first bumps token_version +
+    // writes the audit row, and the losers bail (audit 3b: double-confirm race).
+    const lockRes = await client.query(
+      'SELECT consumed_at FROM pending_email_changes WHERE id = $1 FOR UPDATE',
+      [pending.id]
+    );
+    if (!lockRes.rows[0] || lockRes.rows[0].consumed_at !== null) {
+      await client.query('ROLLBACK');
+      return res.status(410).json({ ok: false, reason: 'invalid_or_expired' });
+    }
+
     await client.query(
       `UPDATE users
           SET email = $2,
