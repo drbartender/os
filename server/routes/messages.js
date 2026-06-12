@@ -73,6 +73,8 @@ router.post('/send', auth, adminOnly, asyncHandler(async (req, res) => {
     JOIN contractor_profiles cp ON cp.user_id = u.id
     JOIN agreements ag ON ag.user_id = u.id
     WHERE u.id = ANY($1)
+      AND u.role IN ('staff', 'manager')
+      AND u.onboarding_status IN ('submitted', 'reviewed', 'approved')
   `, [recipient_ids]);
 
   // Twilio sends stay sequential (carrier throttle), but DB inserts batch into one query at the end.
