@@ -63,9 +63,7 @@ router.post('/resend', asyncHandler(async (req, res) => {
       return res.status(400).json({ error: 'Invalid webhook payload' });
     }
 
-    // Log raw event. ON CONFLICT makes a Resend redelivery a no-op: if this (resend_id,
-    // event_type) was already recorded, skip all the side-effects below so a replay can't
-    // re-apply status / bounce / unsubscribe writes (audit 3c).
+    // Log raw event. ON CONFLICT dedupes the row so a Resend redelivery never inserts twice.
     const logged = await pool.query(
       `INSERT INTO email_webhook_events (resend_id, event_type, payload)
        VALUES ($1, $2, $3)
@@ -74,7 +72,17 @@ router.post('/resend', asyncHandler(async (req, res) => {
       [resendId, type, payload]
     );
     if (logged.rowCount === 0) {
-      return res.json({ received: true, duplicate: true });
+      // Row already recorded. Skip the side-effects ONLY if it was fully processed — a true
+      // replay. If processed is still false, a prior delivery 500'd after the INSERT but
+      // before finishing, so the event is stranded; fall through and re-run the side-effects
+      // (all the writes below are idempotent UPDATEs) instead of losing it (audit 3c follow-up).
+      const existing = await pool.query(
+        'SELECT processed FROM email_webhook_events WHERE resend_id = $1 AND event_type = $2',
+        [resendId, type]
+      );
+      if (existing.rows[0] && existing.rows[0].processed) {
+        return res.json({ received: true, duplicate: true });
+      }
     }
 
     // Map Resend event types to our status
