@@ -4,6 +4,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { auth, requireAdminOrManager } = require('../middleware/auth');
 const { publicReadLimiter, drinkPlanWriteLimiter, logoUploadLimiter } = require('../middleware/rateLimiters');
+const { requireUuidToken } = require('../utils/tokens');
 
 // Token-gated selections PUT accepts arbitrary JSON. To stop attackers from
 // (a) seeding internal-only keys like `_logoFilename` to pivot the logo proxy
@@ -70,7 +71,7 @@ const router = express.Router();
  *  is auto-generated and waiting for review (status='pending_review'), or no
  *  list exists yet, the response stays in the "being prepared" placeholder
  *  state so clients don't see unreviewed quantities. */
-router.get('/t/:token/shopping-list', publicReadLimiter, asyncHandler(async (req, res) => {
+router.get('/t/:token/shopping-list', requireUuidToken('token', 'This drink plan is no longer available'), publicReadLimiter, asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT dp.shopping_list, dp.shopping_list_status,
             dp.client_name, dp.event_type, dp.event_type_custom, dp.event_date, dp.status
@@ -100,7 +101,7 @@ router.get('/t/:token/shopping-list', publicReadLimiter, asyncHandler(async (req
 }));
 
 /** GET /api/drink-plans/t/:token — fetch plan by token (public) */
-router.get('/t/:token', publicReadLimiter, asyncHandler(async (req, res) => {
+router.get('/t/:token', requireUuidToken('token', 'This drink plan is no longer available'), publicReadLimiter, asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT dp.id, dp.token, dp.client_name, dp.client_email, dp.event_type, dp.event_type_custom, dp.event_date,
             dp.status, dp.serving_type, dp.selections, dp.submitted_at, dp.created_at,
@@ -137,7 +138,7 @@ router.get('/t/:token', publicReadLimiter, asyncHandler(async (req, res) => {
 }));
 
 /** PUT /api/drink-plans/t/:token — save draft or submit (public) */
-router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
+router.put('/t/:token', requireUuidToken('token', 'This drink plan is no longer available'), drinkPlanWriteLimiter, asyncHandler(async (req, res) => {
   const { serving_type, status, paid_separately } = req.body;
   const selections = sanitizeSelections(req.body.selections);
   const paidSeparately = paid_separately === true;
@@ -577,7 +578,7 @@ router.put('/t/:token', drinkPlanWriteLimiter, asyncHandler(async (req, res) => 
  * URL + filename into selections.companyLogo via Postgres jsonb || operator.
  * Returns { logoUrl, selections }.
  */
-router.post('/t/:token/logo', logoUploadLimiter, asyncHandler(async (req, res) => {
+router.post('/t/:token/logo', requireUuidToken('token', 'This drink plan is no longer available'), logoUploadLimiter, asyncHandler(async (req, res) => {
   const planResult = await pool.query(
     'SELECT id, status, finalized_at FROM drink_plans WHERE token = $1',
     [req.params.token]
@@ -650,7 +651,7 @@ router.post('/t/:token/logo', logoUploadLimiter, asyncHandler(async (req, res) =
  *   3. Returning bytes directly with Cache-Control: public, max-age=86400
  *      gives us browser caching for free.
  */
-router.get('/t/:token/logo', logoUploadLimiter, asyncHandler(async (req, res) => {
+router.get('/t/:token/logo', requireUuidToken('token', 'This drink plan is no longer available'), logoUploadLimiter, asyncHandler(async (req, res) => {
   // Project just the filename — the full selections JSONB is 50-200 KB and
   // this route is hit once per pageview on every cache miss.
   const planResult = await pool.query(

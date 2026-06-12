@@ -6,6 +6,7 @@ const { getEventTypeLabel } = require('../utils/eventTypes');
 const asyncHandler = require('../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../utils/errors');
 const crypto = require('crypto');
+const { requireUuidToken } = require('../utils/tokens');
 
 const router = express.Router();
 
@@ -200,7 +201,7 @@ router.get('/history', auth, adminOnly, asyncHandler(async (req, res) => {
 
 // ─── Message group detail ────────────────────────────────────────
 
-router.get('/history/:groupId', auth, adminOnly, asyncHandler(async (req, res) => {
+router.get('/history/:groupId', auth, adminOnly, requireUuidToken('groupId', 'Conversation not found'), asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT sm.*,
       s.event_type AS shift_event_type,

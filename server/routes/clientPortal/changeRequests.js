@@ -6,6 +6,7 @@ const { clientPortalWriteLimiter } = require('../../middleware/rateLimiters');
 const {
   computeEditWindow, filterToAllowlist, buildPreview, buildDiff,
 } = require('../../utils/changeRequests');
+const { requireUuidToken } = require('../../utils/tokens');
 
 const router = express.Router();
 
@@ -51,7 +52,7 @@ function assertEditable(proposal) {
 }
 
 // POST /calculate, price an in-progress edit (no write).
-router.post('/proposals/:token/calculate', clientPortalWriteLimiter, asyncHandler(async (req, res) => {
+router.post('/proposals/:token/calculate', requireUuidToken('token', 'Proposal not found.'), clientPortalWriteLimiter, asyncHandler(async (req, res) => {
   const proposal = await loadOwnedProposal(req.params.token, req.user.id);
   assertEditable(proposal);
   assertAddonPayloadBounded(req.body);
@@ -61,7 +62,7 @@ router.post('/proposals/:token/calculate', clientPortalWriteLimiter, asyncHandle
 }));
 
 // POST /change-requests, create. Enforces the create-time consent contract.
-router.post('/proposals/:token/change-requests', clientPortalWriteLimiter, asyncHandler(async (req, res) => {
+router.post('/proposals/:token/change-requests', requireUuidToken('token', 'Proposal not found.'), clientPortalWriteLimiter, asyncHandler(async (req, res) => {
   const dbClient = await pool.connect();
   try {
     await dbClient.query('BEGIN');
@@ -142,7 +143,7 @@ router.post('/proposals/:token/change-requests', clientPortalWriteLimiter, async
 }));
 
 // GET /change-requests, open request + bounded history.
-router.get('/proposals/:token/change-requests', asyncHandler(async (req, res) => {
+router.get('/proposals/:token/change-requests', requireUuidToken('token', 'Proposal not found.'), asyncHandler(async (req, res) => {
   const proposal = await loadOwnedProposal(req.params.token, req.user.id);
   const r = await pool.query(
     `SELECT id, status, edit_window, requested_changes, baseline, note, price_preview,
@@ -155,7 +156,7 @@ router.get('/proposals/:token/change-requests', asyncHandler(async (req, res) =>
 }));
 
 // POST /change-requests/:id/cancel, client withdraws a pending request.
-router.post('/proposals/:token/change-requests/:id/cancel', clientPortalWriteLimiter, asyncHandler(async (req, res) => {
+router.post('/proposals/:token/change-requests/:id/cancel', requireUuidToken('token', 'Proposal not found.'), clientPortalWriteLimiter, asyncHandler(async (req, res) => {
   const proposal = await loadOwnedProposal(req.params.token, req.user.id);
   const dbClient = await pool.connect();
   try {

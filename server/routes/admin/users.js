@@ -790,8 +790,8 @@ router.post('/contractors/:userId/tip-page/activate', auth, requireAdminOrManage
 
 // ─── Tips Activity + Feedback Queue ──────────────────────────────
 
-// All tips activity (admin)
-router.get('/tips', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+// All tips activity (admin-only — exposes customer emails + tip amounts)
+router.get('/tips', auth, adminOnly, asyncHandler(async (req, res) => {
   const { bartender_id, from, to } = req.query;
   const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
   const cursor = parseInt(req.query.cursor, 10) || null;
@@ -832,8 +832,8 @@ router.get('/tips', auth, requireAdminOrManager, asyncHandler(async (req, res) =
   });
 }));
 
-// Feedback queue (admin)
-router.get('/tip-feedback', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+// Feedback queue (admin-only — exposes submitter emails + comments)
+router.get('/tip-feedback', auth, adminOnly, asyncHandler(async (req, res) => {
   const status = req.query.status === 'reviewed' ? 'reviewed'
               : req.query.status === 'all' ? 'all' : 'unreviewed';
 
@@ -854,8 +854,8 @@ router.get('/tip-feedback', auth, requireAdminOrManager, asyncHandler(async (req
   res.json({ feedback: rows });
 }));
 
-// Mark feedback reviewed
-router.post('/tip-feedback/:id/review', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
+// Mark feedback reviewed (admin-only — mirrors the feedback view's gate)
+router.post('/tip-feedback/:id/review', auth, adminOnly, asyncHandler(async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) throw new ValidationError('invalid id');
 

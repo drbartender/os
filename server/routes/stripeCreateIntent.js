@@ -13,13 +13,14 @@ const { getStripe } = require('../utils/stripeClient');
 const { getBookingWindow } = require('../utils/bookingWindow');
 const { deriveGratuityRate, gratuityBasisFromSnapshot, recomputeSnapshotGratuity } = require('../utils/pricingEngine');
 const { DEPOSIT_AMOUNT, eventLabelFor, getOrCreateCustomer } = require('../utils/stripeRouteHelpers');
+const { requireUuidToken } = require('../utils/tokens');
 
 const router = express.Router();
 
 // ─── Public: create a Payment Intent for a proposal ──────────────
 
 /** POST /api/stripe/create-intent/:token — public, token-gated */
-router.post('/create-intent/:token', publicLimiter, asyncHandler(async (req, res) => {
+router.post('/create-intent/:token', requireUuidToken('token', 'This proposal is no longer available'), publicLimiter, asyncHandler(async (req, res) => {
   const stripe = getStripe();
   if (!stripe) {
     throw new AppError('Payments are not configured.', 503, 'PAYMENTS_NOT_CONFIGURED');

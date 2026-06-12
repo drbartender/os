@@ -1292,6 +1292,15 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token_expires_at TIMESTAMPTZ;
 -- Per-account OTP attempt counter: defense-in-depth vs. distributed brute force
 -- that an IP-based rate limiter can't see. Invalidate the OTP after 5 failures.
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS auth_token_attempts INTEGER NOT NULL DEFAULT 0;
+-- Manual session-revocation lever for client JWTs (mirrors users.token_version). The
+-- OTP-issued JWT embeds this value and clientAuth checks it, so bumping the counter
+-- (UPDATE clients SET token_version = token_version + 1) kills a specific client's
+-- outstanding 7-day sessions without rotating the shared JWT_SECRET. No automatic trigger
+-- today (client login is OTP-only, no password to reset) — a kept-in-reserve kill switch.
+-- Monotonic: only ever increment. The middleware check is strict equality, so
+-- decrementing back would re-validate every previously revoked token still inside
+-- its 7-day window.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
 
 -- Missing indexes identified by database review
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_email_unique ON clients(email) WHERE email IS NOT NULL;
@@ -2124,6 +2133,27 @@ CREATE TABLE IF NOT EXISTS tips (
 
 CREATE INDEX IF NOT EXISTS idx_tips_target_user_tipped_at
   ON tips(target_user_id, tipped_at DESC);
+
+-- Orphaned tip sessions: a tip checkout completed (the customer was charged) but no tips
+-- row could be written because the session metadata was bad — malformed/missing token,
+-- non-positive amount, or a tip_page_token absent from payment_profiles (e.g. an old QR
+-- scanned after the token was rotated). The webhook records the session here instead of
+-- silently acking, so the operator has a reconciliation surface for real money sitting in
+-- Stripe. UNIQUE(stripe_session_id) makes the record idempotent against Stripe redelivery.
+CREATE TABLE IF NOT EXISTS tips_orphaned (
+  id SERIAL PRIMARY KEY,
+  stripe_session_id TEXT NOT NULL,
+  stripe_payment_intent_id TEXT,
+  amount_cents INTEGER,
+  attempted_token TEXT,
+  attempted_bartender_user_id INTEGER,
+  customer_email TEXT,
+  reason TEXT NOT NULL
+    CHECK (reason IN ('malformed_metadata', 'non_positive_amount', 'token_not_found')),
+  resolved_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tips_orphaned_session ON tips_orphaned(stripe_session_id);
 
 CREATE TABLE IF NOT EXISTS tip_page_feedback (
   id SERIAL PRIMARY KEY,

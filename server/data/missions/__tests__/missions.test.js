@@ -1,10 +1,12 @@
+const { describe, test } = require('node:test');
+const assert = require('node:assert/strict');
 const catalog = require('..');
 
 describe('mission catalog', () => {
-  test('loads without throwing', () => expect(catalog.all).toBeDefined());
+  test('loads without throwing', () => assert.ok(catalog.all));
   test('all ids are unique', () => {
     const ids = catalog.all.map(m => m.id);
-    expect(new Set(ids).size).toBe(ids.length);
+    assert.equal(new Set(ids).size, ids.length);
   });
-  test('catalog is frozen', () => expect(Object.isFrozen(catalog.all)).toBe(true));
+  test('catalog is frozen', () => assert.equal(Object.isFrozen(catalog.all), true));
 });

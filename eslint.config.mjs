@@ -26,11 +26,24 @@ export default [
         setInterval: "readonly",
         clearTimeout: "readonly",
         clearInterval: "readonly",
+        setImmediate: "readonly",
+        URL: "readonly",
+        URLSearchParams: "readonly",
+        fetch: "readonly",
+        AbortController: "readonly",
+        TextEncoder: "readonly",
+        TextDecoder: "readonly",
+        AbortSignal: "readonly",
+        structuredClone: "readonly",
       },
     },
     rules: {
       // Security rules
       ...security.configs.recommended.rules,
+
+      // Unresolved references (a dropped import compiles fine and only throws
+      // at request time — this catches it at lint time instead)
+      "no-undef": "error",
 
       // Dangerous patterns
       "no-eval": "error",

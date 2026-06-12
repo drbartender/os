@@ -797,6 +797,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `communication_preferences` JSONB — `{sms_enabled, email_enabled, marketing_enabled}` (defaults true). Drives the Automated Communication system's send gating.
 - `email_status` (`ok` | `bad`), `phone_status` (`ok` | `bad`) — channel deliverability flags flipped on bounce/blocked-list signals.
 - `email_harvest_status` (`not_needed` | `pending` | `harvested` | `failed`), `email_harvest_attempted_at` — track the email-harvest flow for SMS-only leads. Partial index `idx_clients_email_harvest_pending` powers the scheduler's pending sweep.
+- **OTP login** (`/api/client-auth`): `auth_token` (bcrypt hash of the 6-digit code), `auth_token_expires_at`, `auth_token_attempts` (per-account brute-force ceiling). `token_version` — manual session-revocation lever embedded in the OTP-issued JWT and checked in `clientAuth` middleware (mirrors `users.token_version`); bumping it kills a client's outstanding 7-day sessions without rotating `JWT_SECRET`. No automatic trigger today (login is OTP-only, no password to reset).
 - **Intake de-duplication:** every intake path (Thumbtack webhook, admin `POST /proposals`, public quote wizard, BEO/shifts create) resolves clients through `findOrCreateClient` (`server/utils/clientDedup.js`), which matches on email OR normalized phone (name-guarded on phone-only matches) and backfills NULL fields only — never overwriting an existing identity, so the unauthenticated wizard is safe. `mergeClients` (`server/utils/clientMerge.js`) consolidates pre-existing duplicates by repointing every `client_id` FK (discovered from the catalog; all are `ON DELETE SET NULL`) onto the surviving row, then deleting the loser.
 
 ### Menu
@@ -963,6 +964,12 @@ Phase 4b adds three cross-cutting pieces. Overlap prevention: each handler carri
 - **In progress, retrying:** `dispute_won_at IS NULL AND dispute_email_attempts > 0 AND dispute_email_attempts < 3`. One or more send failures, still inside the retry window.
 - **Completed normally:** `dispute_won_at IS NOT NULL AND dispute_email_failed_at IS NULL`. Email delivered, admin notified.
 - **Completed by bailout:** `dispute_won_at IS NOT NULL AND dispute_email_failed_at IS NOT NULL`. Three send failures; admin must reconcile manually. The presence of `dispute_email_failed_at IS NOT NULL` is the canonical marker.
+
+**tips_orphaned** — Tip checkouts that completed (customer charged) but could NOT become a `tips` row because the session metadata was bad. The webhook records the session here instead of acking silently, so real money sitting in the Stripe balance has a reconciliation surface.
+- `id` SERIAL PK; `stripe_session_id` TEXT NOT NULL with a UNIQUE index — idempotency key against Stripe redelivery (`ON CONFLICT DO NOTHING`)
+- `stripe_payment_intent_id`, `amount_cents`, `attempted_token`, `attempted_bartender_user_id`, `customer_email` — best-effort capture from the session for manual booking
+- `reason` TEXT NOT NULL CHECK IN (`malformed_metadata` | `non_positive_amount` | `token_not_found`); `resolved_at` TIMESTAMPTZ set by the operator once reconciled; `created_at` DEFAULT NOW()
+- The insert is NOT swallowed: a DB failure bubbles to a 500 so Stripe retries, and the webhook acks 200 only once the orphan is durably recorded.
 
 **tip_page_feedback** — Bartender-feedback submissions from the tip thank-you page (only the negative-rating path; 4-5★ flows nudge customers to a Google review instead)
 - `id` SERIAL PK

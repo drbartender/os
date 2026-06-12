@@ -15,7 +15,7 @@ const { KNOWN_AGREEMENT_VERSIONS, LEGACY_AGREEMENT_VERSION } = require('../../ut
 
 const router = express.Router();
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const { UUID_RE } = require('../../utils/tokens');
 
 // Reject malformed tokens before ANY downstream work — placed ahead of
 // signLimiter on /sign so a junk token can't consume the per-IP signing bucket

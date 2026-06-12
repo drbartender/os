@@ -14,7 +14,7 @@ const { normalizePaypalUrl, normalizeZelleHandle } = require('../utils/tipHandle
 
 const router = express.Router();
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const { UUID_RE } = require('../utils/tokens');
 
 // Short-lived in-process cache for headshot signed URLs. The QR-scan path
 // signs a fresh R2 URL on every GET (the JSON response is no-cache), so a

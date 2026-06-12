@@ -1,6 +1,7 @@
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
+const { esc } = require('./htmlEscape');
 const emailTemplates = require('./emailTemplates');
 const { getEventTypeLabel } = require('./eventTypes');
 const { PUBLIC_SITE_URL } = require('./urls');
