@@ -258,8 +258,8 @@ columns are preserved for historical records; new v2 signers populate the `ack_*
 | PATCH | `/:id/status` | Admin | Update proposal status. On a →sent transition, creates the invoice in-transaction (idempotent on `proposal_id`) and emails the client via `sendProposalSentEmail`. Rate-limited per admin via `adminWriteLimiter` (10/min). |
 | PATCH | `/:id/notes` | Admin | Update admin notes |
 | DELETE | `/:id` | Admin | Delete a proposal |
-| GET | `/t/:token` | Public | Fetch proposal by token (tracks views + geolocation) |
-| POST | `/t/:token/sign` | Public | Client signature + acceptance |
+| GET | `/t/:token` | Public | Fetch proposal by token (tracks views + geolocation). Response includes `client_phone_prefill` (blank when the stored phone matches a known Thumbtack proxy, so the sign form never displays the proxy back to the customer). |
+| POST | `/t/:token/sign` | Public | Client signature + acceptance. Body accepts an optional `client_phone`; a valid value overwrites `clients.phone` (replacing a Thumbtack proxy with the customer's real number) and resets `phone_status` to `'ok'`. |
 | PATCH | `/:id/balance-due-date` | Admin | Override balance due date for a proposal |
 | POST | `/:id/send-reminder` | Admin | Email the client a balance-due reminder (logged to proposal_activity_log) |
 | POST | `/:id/record-payment` | Admin | Record an outside payment (cash, Venmo, etc.) — triggers shift creation |
@@ -1332,7 +1332,8 @@ The Check Cherry import landed several skip gates and best-effort hooks across t
 - **Lead flow**: Thumbtack sends lead → webhook creates/matches client (by phone) with `source='thumbtack'` → stores in `thumbtack_leads` → auto-creates an inert draft proposal → emails admin notification
 - **Auto-draft**: after lead capture commits, the webhook best-effort calls `createDraftProposalFromLead` (`server/utils/thumbtackProposalDraft.js`), which prices a Core Reaction (BYOB) draft via the shared `server/utils/proposalInsert.js` row builder and links it from `thumbtack_leads.proposal_id`. The draft is inert (`status='draft'`, no invoice, no send), so the admin opens it, adds the email, and clicks Send. A draft failure never rolls back lead capture or 500s the webhook (it is logged, plus Sentry when configured). The admin notification deep-links straight to the draft. `proposals.source` (`'thumbtack'` vs NULL = manual/direct) drives the Proposals dashboard source filter and badge.
 - **Important**: Thumbtack does NOT include customer email in webhooks. Admin must grab email manually from Thumbtack (lead → three-dot menu → create estimate/invoice) and add it to the client record.
-- **Messages**: Customer messages stored in `thumbtack_messages`, admin notified via email
+- **Messages**: Customer messages are persisted in `thumbtack_messages`. The `/api/thumbtack/messages` webhook no longer sends an admin email (Thumbtack notifies the pro directly via app push, SMS, and email through their per-lead proxy-number system rolled out 2026-06-08). Lead and review webhook emails are unchanged.
+- **Proxy-relay suppression (inbound SMS)**: Inbound SMS from a phone number that matches a post-rollout `thumbtack_leads.customer_phone` proxy is recorded in `sms_messages` tagged `metadata.thumbtack_relay = true`, fires no admin alerts, and is excluded from the admin Messages endpoints (`GET /api/sms/conversations` and `GET /api/sms/conversations/:clientId`, including their unread counts and threads). Detection fails open: a lookup error logs and routes the message through the normal client path rather than dropping it.
 - **Reviews**: Stored in `thumbtack_reviews`, admin notified via email
 - **Custom domain**: `api.drbartender.com` CNAME → Render, so Thumbtack endpoints are permanent regardless of hosting changes
 
