@@ -34,6 +34,8 @@ export default function ProposalView() {
   const [venue, setVenue] = useState({
     venue_name: '', venue_street: '', venue_city: '', venue_state: '', venue_zip: '',
   });
+  const [clientPhone, setClientPhone] = useState('');
+  const phoneSeeded = useRef(false);
   const signedThisSession = useRef(false);
 
   // Payment option state
@@ -110,6 +112,15 @@ export default function ProposalView() {
         venue_zip: proposal.venue_zip || '',
         _seeded: true,
       }));
+    }
+  }, [proposal]);
+
+  // Seed the optional phone field from the server prefill (once). The server
+  // sends '' for Thumbtack proxy numbers so a proxy is never shown.
+  useEffect(() => {
+    if (proposal && !phoneSeeded.current) {
+      phoneSeeded.current = true;
+      setClientPhone(proposal.client_phone_prefill || '');
     }
   }, [proposal]);
 
@@ -288,6 +299,7 @@ export default function ProposalView() {
         client_signature_data: sigData,
         client_signature_method: sigMethod,
         document_version: EVENT_SERVICES_AGREEMENT.version,
+        client_phone: clientPhone.trim() || null,
         venue_name: venue.venue_name?.trim() || null,
         venue_street: venue.venue_street?.trim() || null,
         venue_city: venue.venue_city?.trim() || null,
@@ -468,6 +480,8 @@ export default function ProposalView() {
                 sigData={sigData}
                 setSigData={setSigData}
                 setSigMethod={setSigMethod}
+                clientPhone={clientPhone}
+                setClientPhone={setClientPhone}
                 paymentOption={paymentOption}
                 setPaymentOption={setPaymentOption}
                 autopayChecked={autopayChecked}
