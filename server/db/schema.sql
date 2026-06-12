@@ -1626,7 +1626,11 @@ CREATE INDEX IF NOT EXISTS idx_proposals_autopay_balance ON proposals(balance_du
 -- adds autopay_status to the index so the eligible-for-charge subset stays
 -- index-only as enrolled proposals scale beyond a few hundred.
 CREATE INDEX IF NOT EXISTS idx_proposals_autopay_claim ON proposals(balance_due_date, autopay_status) WHERE status = 'deposit_paid' AND autopay_enrolled = true;
-CREATE INDEX IF NOT EXISTS idx_email_webhook_events_resend_type ON email_webhook_events(resend_id, event_type);
+-- UNIQUE so the Resend webhook handler's ON CONFLICT (resend_id, event_type) DO NOTHING gives
+-- replay idempotency (a redelivered event can't re-apply its side-effects). Supersedes the old
+-- non-unique index on the same columns. Safe: the table is empty on dev + prod (verified).
+DROP INDEX IF EXISTS idx_email_webhook_events_resend_type;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_email_webhook_events_resend_type_uniq ON email_webhook_events(resend_id, event_type);
 CREATE INDEX IF NOT EXISTS idx_email_conversations_unread ON email_conversations(read_at) WHERE read_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_shifts_open_upcoming ON shifts(event_date) WHERE status = 'open';
 CREATE INDEX IF NOT EXISTS idx_clients_email_lower ON clients(LOWER(email));
