@@ -161,6 +161,10 @@ router.post('/proposals/:token/change-requests/:id/cancel', requireUuidToken('to
   const dbClient = await pool.connect();
   try {
     await dbClient.query('BEGIN');
+    // Already client-scoped: loadOwnedProposal above 404s unless req.user.id owns this
+    // proposal token, and this UPDATE filters by that verified proposal.id — so a
+    // cross-client cancel is impossible. No extra client_id filter needed (audit 3b);
+    // proposal_change_requests carries no client_id column to filter on regardless.
     const r = await dbClient.query(
       `UPDATE proposal_change_requests SET status = 'cancelled', cancelled_by = 'client', updated_at = NOW()
         WHERE id = $1 AND proposal_id = $2 AND status = 'pending' RETURNING id`,
