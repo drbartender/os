@@ -4,7 +4,10 @@ const ALGO = 'aes-256-gcm';
 
 function getKey() {
   const key = process.env.ENCRYPTION_KEY;
-  if (!key || key.length < 64) {
+  // Must be EXACTLY 64 hex chars (32 bytes). A longer or non-hex value would pass a loose
+  // `length < 64` check, then silently truncate through Buffer.from(key, 'hex') and produce
+  // unrecoverable ciphertext. Fail fast instead.
+  if (!key || !/^[0-9a-fA-F]{64}$/.test(key)) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error('ENCRYPTION_KEY must be set to 64 hex chars in production');
     }
