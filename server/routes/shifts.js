@@ -94,9 +94,9 @@ router.get('/unstaffed-upcoming', auth, requireStaffing, asyncHandler(async (req
     LEFT JOIN clients c ON c.id = p.client_id
     WHERE s.status = 'open'
       AND s.event_date >= CURRENT_DATE
-      AND jsonb_typeof(s.positions_needed::jsonb) = 'array'
+      AND s.positions_needed IS JSON ARRAY
       AND (SELECT COUNT(*) FROM shift_requests sr2 WHERE sr2.shift_id = s.id AND sr2.status = 'approved' AND sr2.dropped_at IS NULL)
-          < jsonb_array_length(s.positions_needed::jsonb)
+          < jsonb_array_length(CASE WHEN s.positions_needed IS JSON ARRAY THEN s.positions_needed::jsonb ELSE '[]'::jsonb END)
     ORDER BY s.event_date ASC, s.start_time ASC
     LIMIT 200
   `);
