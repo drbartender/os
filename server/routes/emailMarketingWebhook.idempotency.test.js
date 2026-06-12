@@ -21,7 +21,9 @@ if (process.env.NODE_ENV === 'production') {
 const NONCE = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 const RESEND_ID = `re_idemp_${NONCE}`;
 const RESEND_ID_HEAL = `re_heal_${NONCE}`;
-let server, baseUrl, healLeadId;
+const RESEND_ID_TS = `re_ts_${NONCE}`;
+const RESEND_ID_UNK = `re_unk_${NONCE}`;
+let server, baseUrl, healLeadId, tsLeadId;
 
 before(async () => {
   const app = express();
@@ -34,9 +36,10 @@ before(async () => {
 
 after(async () => {
   if (server) await new Promise((r) => server.close(r));
-  await pool.query('DELETE FROM email_webhook_events WHERE resend_id = ANY($1)', [[RESEND_ID, RESEND_ID_HEAL]]);
-  await pool.query('DELETE FROM email_sends WHERE resend_id = $1', [RESEND_ID_HEAL]);
-  if (healLeadId) await pool.query('DELETE FROM email_leads WHERE id = $1', [healLeadId]);
+  await pool.query('DELETE FROM email_webhook_events WHERE resend_id = ANY($1)', [[RESEND_ID, RESEND_ID_HEAL, RESEND_ID_TS, RESEND_ID_UNK]]);
+  await pool.query('DELETE FROM email_sends WHERE resend_id = ANY($1)', [[RESEND_ID_HEAL, RESEND_ID_TS]]);
+  const leads = [healLeadId, tsLeadId].filter(Boolean);
+  if (leads.length) await pool.query('DELETE FROM email_leads WHERE id = ANY($1::int[])', [leads]);
   await pool.end();
 });
 
@@ -99,4 +102,41 @@ test('a recorded-but-unprocessed event re-applies its (idempotent) side-effects 
   assert.equal(cnt.rows[0].n, 1, 'still exactly one webhook_events row (no duplicate insert)');
   const proc = await pool.query('SELECT processed FROM email_webhook_events WHERE resend_id = $1', [RESEND_ID_HEAL]);
   assert.equal(proc.rows[0].processed, true, 'the row is now marked processed');
+});
+
+test('the heal does NOT re-stamp an existing *_at timestamp (COALESCE keeps the first event time)', async () => {
+  const lead = await pool.query(
+    `INSERT INTO email_leads (name, email, status) VALUES ('TS Test', $1, 'active') RETURNING id`,
+    [`ts-${NONCE}@example.com`]
+  );
+  tsLeadId = lead.rows[0].id;
+  // email_sends already carries bounced_at from the original (pre-strand) processing.
+  const original = '2020-01-02T03:04:05.000Z';
+  await pool.query(
+    `INSERT INTO email_sends (lead_id, resend_id, status, bounced_at) VALUES ($1, $2, 'bounced', $3)`,
+    [tsLeadId, RESEND_ID_TS, original]
+  );
+  await pool.query(
+    `INSERT INTO email_webhook_events (resend_id, event_type, payload, processed) VALUES ($1, 'email.bounced', '{}', false)`,
+    [RESEND_ID_TS]
+  );
+
+  const res = await postEvent({ type: 'email.bounced', data: { email_id: RESEND_ID_TS } });
+  assert.equal(res.status, 200, `${res.status} ${JSON.stringify(res.body)}`);
+  const send = await pool.query('SELECT bounced_at FROM email_sends WHERE resend_id = $1', [RESEND_ID_TS]);
+  assert.equal(
+    new Date(send.rows[0].bounced_at).toISOString(), new Date(original).toISOString(),
+    'bounced_at must keep the original event time, not the replay wall-clock'
+  );
+});
+
+test('an unknown event type is marked processed=true (terminal no-op, not perpetually re-runnable)', async () => {
+  const res = await postEvent({ type: 'email.somethingnew', data: { email_id: RESEND_ID_UNK } });
+  assert.equal(res.status, 200, `${res.status} ${JSON.stringify(res.body)}`);
+  assert.ok(res.body && res.body.received, 'unknown type still acks received');
+  const ev = await pool.query(
+    'SELECT processed FROM email_webhook_events WHERE resend_id = $1 AND event_type = $2',
+    [RESEND_ID_UNK, 'email.somethingnew']
+  );
+  assert.equal(ev.rows[0].processed, true, 'an unknown-type row is marked processed (terminal)');
 });
