@@ -136,7 +136,8 @@ test('a Thumbtack-sourced draft never exposes admin_notes on the public token ro
 
 test('POST /messages persists the message and 200s with no admin email block', async () => {
   // Reuse negA (persisted in thumbtack_leads by the earlier draft-failure test) so
-  // the thumbtack_messages.negotiation_id FK is satisfied.
+  // the message row points at a known lead, mirroring real webhook traffic.
+  // negotiation_id has no FK constraint; any string would persist.
   const msgId = `test-msg-${Date.now()}`;
   const res = await postMessage(msgId, negA);
   assert.equal(res.status, 200);
