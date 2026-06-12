@@ -4,12 +4,13 @@ const { pool } = require('../db');
 const { getSignedUrl } = require('../utils/storage');
 const asyncHandler = require('../middleware/asyncHandler');
 const { NotFoundError, ExternalServiceError } = require('../utils/errors');
+const { publicReadLimiter } = require('../middleware/rateLimiters');
 
 const router = express.Router();
 
 // ─── Public: list published posts ────────────────────────────────
 
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', publicReadLimiter, asyncHandler(async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
   const offset = (page - 1) * limit;
@@ -29,7 +30,7 @@ router.get('/', asyncHandler(async (req, res) => {
 const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB
 
-router.get('/images/:filename', asyncHandler(async (req, res) => {
+router.get('/images/:filename', publicReadLimiter, asyncHandler(async (req, res) => {
   const filename = path.basename(req.params.filename);
   let url;
   try {
@@ -67,7 +68,7 @@ router.get('/images/:filename', asyncHandler(async (req, res) => {
 
 // ─── Public: single published post by slug ───────────────────────
 
-router.get('/:slug', asyncHandler(async (req, res) => {
+router.get('/:slug', publicReadLimiter, asyncHandler(async (req, res) => {
   const result = await pool.query(
     `SELECT bp.*, cn.chapter_number FROM blog_posts bp
      JOIN (
