@@ -269,16 +269,18 @@ router.post('/t/:token/sign', requireUuidToken, signLimiter, asyncHandler(async 
   // client_signed_at IS NULL TOCTOU gate above): a replayed sign POST that hit
   // ALREADY_ACCEPTED never reaches this point, so a leaked token cannot mutate
   // the phone after acceptance. Best-effort: a phone-write failure must never
-  // 500 a successful signature. phone_status resets with the new number, since
-  // a 'bad' verdict earned by the old proxy must not mute the fresh real
-  // number (channelFallback suppresses all automated SMS on phone_status 'bad').
+  // 500 a successful signature. phone_status resets to 'ok' whenever the client
+  // confirms a number, even an unchanged one: a stale 'bad' verdict (earned by
+  // the old proxy or a transient delivery failure) must not mute a number the
+  // client just vouched for (channelFallback suppresses all automated SMS on
+  // phone_status 'bad').
   let phoneUpdated = false;
   if (phoneCheck.value) {
     try {
       const pu = await pool.query(
         `UPDATE clients SET phone = $1, phone_status = 'ok'
           WHERE id = (SELECT client_id FROM proposals WHERE id = $2)
-            AND phone IS DISTINCT FROM $1`,
+            AND (phone IS DISTINCT FROM $1 OR phone_status IS DISTINCT FROM 'ok')`,
         [phoneCheck.value, proposal.id]
       );
       phoneUpdated = pu.rowCount > 0;
