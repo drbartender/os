@@ -46,6 +46,7 @@ v2 effort: what is done, what is in design, and what still needs building.
 | 7 | Multi-event switcher | Deferred (clients are one-at-a-time) | 2 | none |
 | 8 | Quote-resume card (finish a draft) | Deferred (rare in practice) | 2 | none |
 | 9 | In-portal actions (embed potion lab · in-tab invoice payment) | Deferred follow-on | 3 | none |
+| 10 | "Who brings what" card on the day-of brief (event-specific) | Deferred follow-on (decided 2026-06-11) | 4 | none |
 
 **Status legend:** Not started · In design · Design done (spec written) · In build · Done · Parked.
 
@@ -142,6 +143,13 @@ staffing. **Spec + implementation plan written 2026-06-05** ([design](superpower
   additive-only self-serve with removals to admin. If we ever allow self-serve
   removals before T-14, we must pick refund vs account credit. Parked as
   additive-only for now.
+
+### 10 · "Who brings what" card (deferred, depends on #4)
+The design mock's bring/provide split on the day-of brief. Decision 2026-06-11:
+it must be **event-specific** (real per-event arrangements: ice, garnishes,
+venue-provided glassware), not a generic package-level derivation. That means an
+admin-editable per-event field + admin UI, so it is its own small sub-project
+after #4 ships. Until then the day-of brief ships without the card.
 
 ### 6 · Messages tab (parked)
 Client ↔ office thread surfaced in-portal. The login page already advertises it.
