@@ -370,11 +370,10 @@ router.get('/me', auth, asyncHandler(async (req, res) => {
 // Forgot password — request reset link
 router.post('/forgot-password', authLimiter, asyncHandler(async (req, res) => {
   const { email } = req.body;
-  // Keep generic success response for enumeration safety; still validate basic input
-  if (!email) throw new ValidationError({ email: 'Email is required' });
-  if (!EMAIL_RE.test(email)) {
-    // Malformed input can't match a real account; short-circuit before the DB lookup,
-    // returning the same generic response so the email format alone can't enumerate.
+  // Missing OR malformed input can't match a real account: short-circuit before
+  // the DB lookup with the same generic response, so neither the absence of an
+  // email nor its format can enumerate accounts. Both cases return identically.
+  if (!email || !EMAIL_RE.test(email)) {
     return res.json({ message: 'If an account exists with that email, a password reset link has been sent.' });
   }
 

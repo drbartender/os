@@ -487,7 +487,13 @@ router.post('/webhook', asyncHandler(async (req, res) => {
         Sentry.captureMessage('Malformed tip session metadata', {
           level: 'warning',
           tags: { webhook: 'stripe', kind: 'tip' },
-          extra: { sessionId: session.id, metadata: session.metadata },
+          // Never log raw metadata: tip_page_token is a live bearer credential.
+          // Keep the diagnostic value (which keys were present, a token prefix).
+          extra: {
+            sessionId: session.id,
+            metadataKeys: Object.keys(session.metadata || {}),
+            tokenPrefix: (token || '').slice(0, 8) || null,
+          },
         });
         await recordOrphanedTip('malformed_metadata');
         return res.json({ received: true });
