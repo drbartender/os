@@ -64,6 +64,8 @@ router.post('/resend', asyncHandler(async (req, res) => {
     }
 
     // Log raw event. ON CONFLICT dedupes the row so a Resend redelivery never inserts twice.
+    // This MUST stay on `pool` (its own committed statement), NOT inside the txn below: the
+    // row has to exist and be committed before the FOR UPDATE can lock it.
     await pool.query(
       `INSERT INTO email_webhook_events (resend_id, event_type, payload)
        VALUES ($1, $2, $3)
