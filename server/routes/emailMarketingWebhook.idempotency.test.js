@@ -23,7 +23,8 @@ const RESEND_ID = `re_idemp_${NONCE}`;
 const RESEND_ID_HEAL = `re_heal_${NONCE}`;
 const RESEND_ID_TS = `re_ts_${NONCE}`;
 const RESEND_ID_UNK = `re_unk_${NONCE}`;
-let server, baseUrl, healLeadId, tsLeadId;
+const RESEND_ID_RACE = `re_race_${NONCE}`;
+let server, baseUrl, healLeadId, tsLeadId, raceLeadId;
 
 before(async () => {
   const app = express();
@@ -36,9 +37,9 @@ before(async () => {
 
 after(async () => {
   if (server) await new Promise((r) => server.close(r));
-  await pool.query('DELETE FROM email_webhook_events WHERE resend_id = ANY($1)', [[RESEND_ID, RESEND_ID_HEAL, RESEND_ID_TS, RESEND_ID_UNK]]);
-  await pool.query('DELETE FROM email_sends WHERE resend_id = ANY($1)', [[RESEND_ID_HEAL, RESEND_ID_TS]]);
-  const leads = [healLeadId, tsLeadId].filter(Boolean);
+  await pool.query('DELETE FROM email_webhook_events WHERE resend_id = ANY($1)', [[RESEND_ID, RESEND_ID_HEAL, RESEND_ID_TS, RESEND_ID_UNK, RESEND_ID_RACE]]);
+  await pool.query('DELETE FROM email_sends WHERE resend_id = ANY($1)', [[RESEND_ID_HEAL, RESEND_ID_TS, RESEND_ID_RACE]]);
+  const leads = [healLeadId, tsLeadId, raceLeadId].filter(Boolean);
   if (leads.length) await pool.query('DELETE FROM email_leads WHERE id = ANY($1::int[])', [leads]);
   await pool.end();
 });
@@ -128,6 +129,68 @@ test('the heal does NOT re-stamp an existing *_at timestamp (COALESCE keeps the 
     new Date(send.rows[0].bounced_at).toISOString(), new Date(original).toISOString(),
     'bounced_at must keep the original event time, not the replay wall-clock'
   );
+});
+
+test('concurrent redeliveries serialize on the row lock and do not double-apply the side-effects', async () => {
+  // The race this guards: two redeliveries of the same (resend_id, event_type) both
+  // read processed=false and both run the side-effects. The handler now takes a
+  // SELECT ... FOR UPDATE row lock, so a second delivery blocks until the first
+  // commits, then sees processed=true and skips. We simulate "delivery A is
+  // mid-flight" by holding the row lock open in our own transaction, fire delivery
+  // B through the handler, prove B blocks, then release and confirm B skipped.
+  const lead = await pool.query(
+    `INSERT INTO email_leads (name, email, status) VALUES ('Race Test', $1, 'active') RETURNING id`,
+    [`race-${NONCE}@example.com`]
+  );
+  raceLeadId = lead.rows[0].id;
+  await pool.query(
+    `INSERT INTO email_sends (lead_id, resend_id, status) VALUES ($1, $2, 'sent')`,
+    [raceLeadId, RESEND_ID_RACE]
+  );
+  await pool.query(
+    `INSERT INTO email_webhook_events (resend_id, event_type, payload, processed)
+     VALUES ($1, 'email.bounced', '{}', false)`,
+    [RESEND_ID_RACE]
+  );
+
+  // Delivery A: hold the FOR UPDATE row lock open in a transaction.
+  const clientA = await pool.connect();
+  await clientA.query('BEGIN');
+  await clientA.query(
+    'SELECT processed FROM email_webhook_events WHERE resend_id = $1 AND event_type = $2 FOR UPDATE',
+    [RESEND_ID_RACE, 'email.bounced']
+  );
+
+  // Delivery B fires concurrently; it must block on the same row lock.
+  const bPromise = postEvent({ type: 'email.bounced', data: { email_id: RESEND_ID_RACE } });
+
+  // Prove B is blocked: it has not resolved while A holds the lock.
+  const phase = await Promise.race([
+    bPromise.then(() => 'resolved'),
+    new Promise((r) => setTimeout(() => r('pending'), 700)),
+  ]);
+  assert.equal(phase, 'pending', 'delivery B must block on the row lock while A holds it');
+
+  // The lead is still untouched while B is blocked (B has applied nothing).
+  const midLead = await pool.query('SELECT status FROM email_leads WHERE id = $1', [raceLeadId]);
+  assert.equal(midLead.rows[0].status, 'active', 'B applied no side-effects while blocked');
+
+  // A finishes: applies the bounce exactly once, marks processed, commits, releases.
+  await clientA.query(`UPDATE email_leads SET status = 'bounced' WHERE id = $1`, [raceLeadId]);
+  await clientA.query(
+    'UPDATE email_webhook_events SET processed = true WHERE resend_id = $1 AND event_type = $2',
+    [RESEND_ID_RACE, 'email.bounced']
+  );
+  await clientA.query('COMMIT');
+  clientA.release();
+
+  // B unblocks, sees processed=true, and skips as a duplicate (no second apply).
+  const b = await bPromise;
+  assert.equal(b.status, 200, `B should ack: ${b.status} ${JSON.stringify(b.body)}`);
+  assert.equal(b.body && b.body.duplicate, true, 'B serialized behind A and then skipped as duplicate');
+
+  const leadAfter = await pool.query('SELECT status FROM email_leads WHERE id = $1', [raceLeadId]);
+  assert.equal(leadAfter.rows[0].status, 'bounced', 'the bounce applied exactly once (by A); B did not re-apply');
 });
 
 test('an unknown event type is marked processed=true (terminal no-op, not perpetually re-runnable)', async () => {
