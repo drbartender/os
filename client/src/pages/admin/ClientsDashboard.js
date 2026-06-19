@@ -11,8 +11,6 @@ import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
 import KebabMenu from '../../components/adminos/KebabMenu';
 import ClickableRow from '../../components/ClickableRow';
-import useDrawerParam from '../../hooks/useDrawerParam';
-import ClientDrawer from '../../components/adminos/drawers/ClientDrawer';
 import { fmt$, fmtDate } from '../../components/adminos/format';
 import CcImportBadge from '../../components/admin/CcImportBadge';
 
@@ -35,7 +33,6 @@ function initialsOf(name) {
 export default function ClientsDashboard() {
   const navigate = useNavigate();
   const toast = useToast();
-  const drawer = useDrawerParam();
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -216,7 +213,7 @@ export default function ClientsDashboard() {
               {!loading && filtered.map(c => {
                 const src = SOURCE[c.source] || { label: c.source || '—', kind: 'neutral' };
                 return (
-                  <ClickableRow key={c.id} onActivate={() => drawer.open('client', c.id)}>
+                  <ClickableRow key={c.id} onActivate={() => navigate(`/clients/${c.id}`)}>
                     <td>
                       <div className="hstack">
                         <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{initialsOf(c.name)}</div>
@@ -252,11 +249,6 @@ export default function ClientsDashboard() {
                           href: c.phone ? `tel:${stripPhone(c.phone)}` : undefined,
                           disabled: !c.phone,
                         },
-                        {
-                          label: 'Open Full Page',
-                          icon: 'external',
-                          onClick: () => navigate(`/clients/${c.id}`),
-                        },
                       ]} />
                     </td>
                   </ClickableRow>
@@ -269,15 +261,9 @@ export default function ClientsDashboard() {
 
       {!loading && (
         <div className="tiny muted" style={{ padding: '8px 2px' }}>
-          {filtered.length} {filtered.length === 1 ? 'client' : 'clients'} · Click a row to peek
+          {filtered.length} {filtered.length === 1 ? 'client' : 'clients'} · Click a row to open
         </div>
       )}
-
-      <ClientDrawer
-        id={drawer.kind === 'client' ? drawer.id : null}
-        open={drawer.kind === 'client'}
-        onClose={drawer.close}
-      />
     </div>
   );
 }

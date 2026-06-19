@@ -2,7 +2,7 @@
 // server/routes/clients.js, the `clients_source_check` constraint in
 // server/db/schema.sql, and the duplicated local `SOURCE` badge maps in
 // client/src/pages/admin/ClientsDashboard.js and
-// client/src/components/adminos/drawers/ClientDrawer.js.
+// client/src/pages/admin/ClientDetail.js.
 export const CLIENT_SOURCES = [
   { value: 'direct',    label: 'Direct' },
   { value: 'referral',  label: 'Referral' },
