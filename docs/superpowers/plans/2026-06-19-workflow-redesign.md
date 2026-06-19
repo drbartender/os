@@ -2,140 +2,120 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement the think-on-main / build-in-lanes workflow from `docs/superpowers/specs/2026-06-19-workflow-redesign-design.md`: the os-stays-on-main guard, crash-safe merge/board tooling, the rewritten two-tier CLAUDE.md, and the supporting cleanup, leaving auto-pull built-but-off.
+**Goal:** Implement the think-on-main / build-in-lanes workflow from `docs/superpowers/specs/2026-06-19-workflow-redesign-design.md`: the os-stays-on-main guard, crash-safe merge/board tooling, lane lifecycle, the rewritten two-tier CLAUDE.md, and supporting cleanup, leaving auto-pull built-but-off.
 
-**Architecture:** A set of mostly-independent lanes. The tooling lanes (guard, merge lock, board, worktree cleanup) are small self-contained scripts buildable in parallel. The doc lanes (CLAUDE.md rewrite, memory reconciliation, README/ARCHITECTURE) follow once the tooling exists so they describe real files. **Bootstrapping note:** this work is executed under the CURRENT workflow (today's worktree-per-project model, manual merges), because the new model's tooling does not exist yet. The CLAUDE.md rewrite lane is the switch-flip: once it lands, the new model is live.
+**Architecture:** Mostly-independent lanes. **Built on the Linux box** (now up), which is what unblocks `flock` (merge lock) and real symlinks (worktrees). Built under the CURRENT workflow until lane L8 (the CLAUDE.md rewrite) flips the new model live. Tooling lanes are small self-contained scripts; doc lanes follow once the tooling exists.
 
-**Tech Stack:** Bash (git hooks, `flock`), Node.js (existing `scripts/*.js` helpers), Markdown (CLAUDE.md, board, specs/plans), git worktrees.
+**Tech Stack:** Bash (git hooks, `flock`), Node.js + `node:test` (existing test convention: `node --test`), Markdown, git worktrees.
 
 ## Global Constraints
 
-- **os never leaves main.** No `checkout`/`switch`/`checkout -b` in the os (primary) worktree, ever. Verbatim invariant.
-- **Sensitive paths are one list** (spec "Sensitive paths"), the single trigger for full-fleet review, conflict-escalation, and auto-pull disqualification. Pin exact globs to the real tree (no `schedulers/`, `routes/webhooks/`, or `utils/comms/` folders exist).
-- **Lanes merge by squash** behind a `flock` lock; merge is not deploy; push to prod is a separate explicit call.
-- **Review:** per-lane before merge, risk-scaled by the sensitive-path list, iron rule (incomplete = blocker), chunk-and-retry over a coverage manifest, push-time seam sweep + sensitive-path re-review.
+- **os never leaves main.** No `checkout`/`switch`/`checkout -b` in the os (primary) worktree. Verbatim invariant.
+- **Sensitive paths are one list** (L5), the single trigger for full-fleet review, conflict-escalation, AND auto-pull disqualification. Real globs, no `schedulers/`, `routes/webhooks/`, or `utils/comms/` folders exist.
+- **Lanes merge by squash** behind a `flock` lock; squash commit message carries lane name + plan link; merge is not deploy; push to prod is a separate explicit call.
+- **Review:** per-lane before merge, risk-scaled by L5, iron rule (incomplete = blocker), chunk-and-retry over a coverage manifest, push-time seam sweep + sensitive-path re-review.
 - **Auto-pull ships OFF.**
-- **No em dashes** in any prose (commas, periods, colons, parentheticals). Commits are single-line, no co-author footer.
-- **File-size ratchet** applies to every new script (aim under 300 lines).
-- **Reference content** (env vars, stack, paths) is carried verbatim in the CLAUDE.md rewrite, never re-derived.
+- **Tests use `node:test`** (`node --test`), the repo's existing convention. No new bash-test runner.
+- **No em dashes** in prose. Commits single-line, no co-author footer.
+- **File-size ratchet** applies (aim under 300 lines/script).
+- **Reference content** carried verbatim in the CLAUDE.md rewrite, never re-derived.
 
 ---
 
 ## Lane Map (the part to co-design)
 
-| Lane | Deliverable | Depends on | Parallel group |
+| Lane | Deliverable | Depends on | Review fleet |
 |---|---|---|---|
-| **L1 os-guard** | pre-commit guard that blocks off-main doc commits AND any commit on a non-main branch from the os worktree | none | A (parallel) |
-| **L2 merge-lock** | `flock` squash-merge wrapper | none | A (parallel) |
-| **L3 board** | `docs/build-board.md` + rebase/ff-only/atomic board-write helper with sensitive-string denylist | none | A (parallel) |
-| **L4 worktree-cleanup** | drop misleading `'junction'` flag/comments in worktree scripts | none | A (parallel) |
-| **L5 sensitive-paths** | the pinned glob list (one file consumed by review/conflict/auto-pull) | none | A (parallel) |
-| **L6 CLAUDE.md rewrite** | two-tier rewrite + whys + carry-forward coverage check + retire `/overnight-review` + Pre-Push 4.5 | L1-L5 exist (to reference) | B (after A) |
-| **L7 review-procedure** | document chunk-and-retry manifest rule + lane-map front-matter schema; optional manifest helper | L5 | B (after A) |
-| **L8 memory-reconcile** | retire/trim the 8 stale workflow memory notes + MEMORY.md | L6 | C (after B) |
-| **L9 README/ARCH** | folder tree + script/doc entries | L1-L4 | C (after B) |
-| **L10 auto-pull** | full auto-pull mechanism, knob defaults OFF | L1, L2, L3, L5, L6 | D (post-launch, gated) |
+| **L5 sensitive-paths** | `scripts/sensitive-paths.txt` (real globs incl. migrations) + a tiny matcher + its test | none | security, consistency |
+| **L1 os-guard** | pre-commit guard: blocks off-main spec/plan docs AND any commit on a non-main branch from the os worktree; `node:test` | L5 (none hard) | code, security |
+| **L2 merge-tooling** | `flock` squash-merge wrapper: lock + squash + lane-name/plan-link commit msg + dirty-tree pause + verify-clean-before-cleanup + invocation wiring | L5 | code |
+| **L3 board** | `docs/build-board.md` + write-helper (pull --rebase, commit, push `--ff-only`, atomic temp+rename, bounded retry+escalation, generic Stripe-id/PII denylist) | none | security |
+| **L4 worktree-cleanup** | drop the `'junction'` flag/comments (safe on Linux); keep "always use the helper" rule (husky `.husky/_` needed on Linux) | none | code |
+| **L6 lane-lifecycle** | stale detection (48h no-commit / 15+ main commits / any sensitive-path landed since cut), runner (session-start + push-sweep), `git log main..lane` unmerged check, `-d` never `-D` | L5 | code |
+| **L7 pre-push-reconcile** | reconcile `.husky/pre-push` (client `CI=true` gate) with the new push confirmation step | none | code |
+| **L8 CLAUDE.md (switch-flip, serial commits)** | one lane, sequential commits sharing the file: (a) two-tier rewrite + carry-forward + mechanical coverage check; (b) retire `/overnight-review` (command + `.log` cache + Pre-Push 4.5); (c) Windows-pruning + transitional markers; (d) review-procedure + lane-map schema | L1-L7 exist | consistency (vs invariant list) |
+| **L9 memory-reconcile** | retire/trim the 8 stale notes + transitional markers + `MEMORY.md` | L8 | consistency |
+| **L10 README/ARCH** | folder tree, NPM Scripts table, pre-commit description, ARCH pre-commit ref | L1-L4 | consistency |
+| **L11 auto-pull (post-launch, knob OFF, split)** | 11a claim+footprint · 11b disqualifier + merge-time re-check (incl. re-check-FAIL resolution) · 11c prevention (no `npm install`, no shared-DB verify) · 11d knob + merge-cue | L1,L2,L3,L5,L8 | full fleet at knob-flip |
 
-**Dependency graph:** A = {L1, L2, L3, L4, L5} all parallel, no inter-deps. B = {L6, L7} after A. C = {L8, L9} after B. D = {L10} last, and the knob ships off so it is not on the critical path to "new model live."
+**Dependency graph:** L5 first (foundational data L2/L6/L8/L11 read). Then {L1, L2, L3, L4, L6, L7} parallel. Then L8 (serial internal commits, the flip). Then {L9, L10}. Then L11 sub-lanes, last, knob off.
 
-**Recommended order:** build group A in parallel, then L6 (the switch-flip) with L7, then L8 + L9, and defer L10 until the model has run for a while. "New model live" is reached at the end of group C; L10 is optional throughput added later.
+**Collision resolution (was unresolved):** L8's four pieces all touch `.claude/CLAUDE.md`, so they are ONE lane with four sequential commits, NOT parallel lanes. No other cross-lane file overlap (verified by the review: L1 → `.husky/pre-commit`, L7 → `.husky/pre-push`, L4 → worktree scripts, L2/L3 → new scripts).
 
-**Per-lane footprints** (for the independence/sensitive checks):
-- L1: `scripts/guard-os-main.sh`, `.husky/pre-commit`, `scripts/__tests__/guard-os-main.test.sh`
-- L2: `scripts/merge-lane.sh`
-- L3: `docs/build-board.md`, `scripts/board-write.sh`
-- L4: `scripts/worktree-new.js`, `scripts/worktree-rm.js`
-- L5: `scripts/sensitive-paths.txt` (or `.json`), the canonical glob list
-- L6: `.claude/CLAUDE.md`, delete `.claude/commands/overnight-review.md`
-- L7: `.claude/CLAUDE.md` (review section), a lane-map template doc, optional `scripts/review-manifest.sh`
-- L8: the 8 memory notes under `~/.claude/projects/.../memory/` + `MEMORY.md`
-- L9: `README.md`, `ARCHITECTURE.md`
-
-> L6 and L7 both touch `.claude/CLAUDE.md`, so they are NOT independent: build them as one merge or sequence them. Noted here because the new model would otherwise flag them as a collision.
+**"New model live"** is reached at the end of L8 + L9 + L10. L11 is optional throughput added later.
 
 ---
 
-## L1: os-guard (detailed, the exemplar lane)
+## L1: os-guard (detailed exemplar)
 
 **Files:**
 - Create: `scripts/guard-os-main.sh`
-- Modify: `.husky/pre-commit` (add one line after the existing `check-docs-drift.sh`, `check-file-size.js`, `lint-staged`)
-- Test: `scripts/__tests__/guard-os-main.test.sh`
+- Modify: `.husky/pre-commit` (append `bash scripts/guard-os-main.sh || exit 1` after the existing three lines, preserving the explicit `|| exit 1` so a non-zero exit aborts the hook)
+- Test: `scripts/guard-os-main.test.js` (`node:test`, run by `npm test`)
 
 **Interfaces:**
-- Consumes: nothing.
-- Produces: a hook that exits non-zero (blocking the commit) when (a) the committing worktree is the primary/os worktree and its branch is not `main`, or (b) any staged path is under `docs/superpowers/specs/` or `docs/superpowers/plans/` while the branch is not `main`. Exits 0 otherwise.
+- Produces: a hook exiting non-zero when (a) the committing worktree is the primary/os worktree and branch is not `main`, or (b) any staged path is under `docs/superpowers/specs|plans/` while branch is not `main`. Exits 0 otherwise.
 
-- [ ] **Step 1: Write the failing test**
-
-```bash
-# scripts/__tests__/guard-os-main.test.sh
-set -euo pipefail
-tmp=$(mktemp -d); cd "$tmp"; git init -q; git commit -q --allow-empty -m init
-cp "$OLDPWD/scripts/guard-os-main.sh" .
-git checkout -q -b feature
-# (a) doc commit on non-main branch must be blocked
-mkdir -p docs/superpowers/specs && echo x > docs/superpowers/specs/t.md
-git add docs/superpowers/specs/t.md
-if bash guard-os-main.sh; then echo "FAIL: doc-off-main not blocked"; exit 1; fi
-echo "PASS: doc-off-main blocked"
-```
-
-- [ ] **Step 2: Run it, verify it fails** — `bash scripts/__tests__/guard-os-main.test.sh` → FAIL (script missing).
-
-- [ ] **Step 3: Implement `scripts/guard-os-main.sh`**
+- [ ] **Step 1: Implement `scripts/guard-os-main.sh`** (git plumbing validated against `worktree-new.js`):
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 branch=$(git rev-parse --abbrev-ref HEAD)
-[ "$branch" = "main" ] && exit 0   # on main, nothing to guard
-
-# primary (os) worktree? its toplevel == the dir holding the common .git dir's parent
+[ "$branch" = "main" ] && exit 0
 common=$(git rev-parse --path-format=absolute --git-common-dir)
 primary=$(dirname "$common")
 toplevel=$(git rev-parse --show-toplevel)
 staged=$(git diff --cached --name-only)
-
 if [ "$toplevel" = "$primary" ]; then
   echo "BLOCKED: os worktree is on '$branch', not main. os must never leave main."; exit 1
 fi
 if echo "$staged" | grep -Eq '^docs/superpowers/(specs|plans)/'; then
-  echo "BLOCKED: spec/plan docs may only be committed on main (branch is '$branch')."; exit 1
+  echo "BLOCKED: spec/plan docs may only be committed on main (branch '$branch')."; exit 1
 fi
 exit 0
 ```
 
-- [ ] **Step 4: Run the test, verify it passes** — `bash scripts/__tests__/guard-os-main.test.sh` → PASS.
+- [ ] **Step 2: Write `scripts/guard-os-main.test.js`** — a `node:test` suite that, per case, builds a throwaway repo with `child_process` (setting `git config user.email/user.name` so commits work), creates a LINKED worktree via `git worktree add` so `toplevel != primary`, runs `bash scripts/guard-os-main.sh` in the right cwd, and asserts the exit code. Cover all five:
+  1. primary worktree on `feature`, stage any file → exit 1
+  2. linked worktree on `feature`, stage a `docs/superpowers/specs/x.md` → exit 1 (docs rule, the case the old test never reached)
+  3. linked worktree on `feature`, stage a code file → exit 0
+  4. primary worktree on `main`, stage anything → exit 0
+  5. linked worktree on `main`, stage a doc → exit 0
 
-- [ ] **Step 5: Add the positive on-main case to the test** (a doc commit on main, and a code commit in a linked worktree, both must pass), run, verify PASS.
+- [ ] **Step 3: Run `npm test`** → the new suite FAILS (script not wired / assertions red), confirming the test exercises each rule distinctly.
 
-- [ ] **Step 6: Wire into `.husky/pre-commit`** — add `bash scripts/guard-os-main.sh` as its own line (not folded into the other scripts), after the existing three steps.
-
-- [ ] **Step 7: Manual verification** — in os: `git switch -c tmp; touch docs/superpowers/specs/z.md; git add z.md; git commit` → blocked. `git switch main`, delete tmp. Confirm normal main commit still works.
-
-- [ ] **Step 8: Commit** — `git commit -m "feat(workflow): add os-stays-on-main pre-commit guard"`
-
----
-
-## L2 - L10: per-lane briefs (expanded to bite-sized steps when pulled)
-
-Per the new model, each remaining lane is detailed at pull time by its building agent, guided by the brief below plus the spec. Each ends with its own per-lane review.
-
-- **L2 merge-lane.sh:** `flock`-wrapped squash merge of a lane branch into main, run only in os. Acceptance: two concurrent invocations serialize; killing one mid-merge releases the lock (flock auto-release). Verify with two backgrounded calls.
-- **L3 board:** initial `docs/build-board.md` (Ready / In flight / Recently shipped sections, stable anchors) + `scripts/board-write.sh` doing `pull --rebase` then temp-file write then `--ff-only` commit with bounded retry, plus a denylist regex rejecting customer-name / token / `pi_`/`cus_` patterns. Acceptance: concurrent writes do not lost-update; denylist blocks a seeded sensitive string.
-- **L4 worktree-cleanup:** in `scripts/worktree-new.js` drop the `'junction'` third arg and the junction comments (no-op on Linux); in `scripts/worktree-rm.js` comment the now-dormant junction-replacement guard. Acceptance: scripts still create/remove a worktree; no behavior change on Windows, real symlinks on Linux.
-- **L5 sensitive-paths:** materialize the spec's list as `scripts/sensitive-paths.txt` (gitignore-style globs) naming the real files (pricingEngine, stripeClient, encryption, gratuityLabels, eventTypes, payroll*; schema.sql; the 6 webhook/inbound route files; auth/rateLimiters/asyncHandler middleware; `*Scheduler.js` + handlers; `*EmailTemplates.js` + `*Handlers.js`; `.env.example`; errors.js). Acceptance: a small script can read it and match a known sensitive file and reject a known cosmetic one.
-- **L6 CLAUDE.md rewrite:** replace the Git Workflow section with the two-tier model (Invariants / Conventions, why on each), carry forward the named invariants (Rules 2/7/9/10/11/12, inline self-check, env-var debug discipline, Stripe fails-closed), drop the Windows scar tissue with transitional markers, delete `/overnight-review` and Pre-Push step 4.5. Acceptance: the audited coverage check (every inventoried invariant present, the at-risk list confirmed) passes; no dangling overnight references (`grep -ri overnight .claude/CLAUDE.md` empty).
-- **L7 review-procedure:** document the chunk-and-retry manifest rule and the lane-map front-matter schema (footprint globs, dependency graph, lane id) in CLAUDE.md / a template; optional `scripts/review-manifest.sh` that prints `git diff --name-only` for a scope. Acceptance: schema has every field the three consumers need.
-- **L8 memory-reconcile:** retire `reference_worktree_npm_install_junction`, `reference_worktree_rm_locked_folder_windows`, `reference_codex_cli_windows`, `reference_gemini_cli_windows`, `reference_vercel_cli_windows`; trim `reference_dev_server_process` to its platform-independent core; rewrite `project-worktree-workflow` and `reference_os_shared_git_index` to the new model; update `MEMORY.md`. Acceptance: no memory note contradicts the new CLAUDE.md.
-- **L9 README/ARCH:** add `docs/build-board.md`, the new `scripts/*`, to the README folder tree and any NPM-script changes; update ARCHITECTURE if folders changed. Acceptance: `check-docs-drift.sh` is satisfied.
-- **L10 auto-pull (post-launch, knob OFF):** claim via `--ff-only` board push + rebase/re-check loop, footprint from the lane-map front-matter, independence widened to the sensitive/side-effect list, re-check at merge, no `npm install`, no shared-DB verification. Acceptance: with the knob off, nothing auto-starts; with it on in a test, two overlapping candidates do not both start. Build last.
+- [ ] **Step 4: Make it pass**, then **Step 5: wire `.husky/pre-commit`** (Step 1 line), then **Step 6: manual check** in a real worktree, then **Step 7: commit** `feat(workflow): add os-stays-on-main pre-commit guard + node:test`.
 
 ---
 
-## Self-Review
+## L2 - L11: per-lane briefs (expanded to bite-sized steps at pull time)
 
-- **Spec coverage:** every Implementation-surface bullet maps to a lane (guard L1, merge lock L2, board L3, worktree scripts L4, sensitive paths L5, CLAUDE.md + overnight retirement L6, chunk-and-retry + lane-map schema L7, memory L8, README/ARCH L9, auto-pull L10). Covered.
-- **Placeholder scan:** L1 is fully specified with code; L2-L10 are briefs by design (the new model details a lane at pull time), not TODO placeholders. The one risk is treating a brief as done without expansion; the per-lane review gate catches that.
-- **Collision note:** L6 and L7 share `.claude/CLAUDE.md` and must not run as independent parallel lanes (flagged in the lane map).
+- **L5 sensitive-paths:** `scripts/sensitive-paths.txt` (gitignore-style) naming the real files: `pricingEngine.js`, `stripeClient.js`, `encryption.js`, `gratuityLabels.js`, `eventTypes.js`, `payroll*.js`; `server/db/schema.sql` + `server/scripts/migrations/**` (or wherever migrations live, pin at build); the 6 route files (`stripeWebhook.js`, `stripe.js`, `calcom.js`, `emailMarketingWebhook.js`, `sms.js`, `thumbtack.js`); `server/middleware/{auth,rateLimiters,asyncHandler}.js`; `server/utils/*Scheduler.js` + handlers; `server/utils/*EmailTemplates.js` + `*Handlers.js`; `.env.example`; `errors.js`. Plus `scripts/sensitive-match.js` (reads the list, returns whether a path set is sensitive) and its `node:test`. Acceptance: matches a known sensitive file, rejects a cosmetic one.
+- **L2 merge-tooling:** `scripts/merge-lane.sh`, run only in os, invoked explicitly (document: Claude runs it during integration, not a hook). Steps: acquire `flock`; refuse if os tree is dirty (pause, tell Dallas to commit/stash the quick fix); `git merge --squash <lane>` then commit with message `merge(lane <name>): <plan-link>`; re-run the lane's per-lane review against new HEAD ("verifies clean"); only then signal the worktree is safe to remove. Acceptance: two concurrent invocations serialize; a killed run releases the lock (flock auto-release); dirty tree pauses.
+- **L3 board:** `docs/build-board.md` (Ready / In flight / Recently shipped, stable anchors) + `scripts/board-write.sh` doing `pull --rebase`, atomic temp-file write + rename, `git commit`, `git push --ff-only`, bounded retry then escalate. Denylist regex rejects emails, phones, and the generic Stripe-id family (`(pi|cus|ch|re|evt|in|sub|cs|seti|pm)_[A-Za-z0-9]+`) and tokens. Acceptance: concurrent writes do not lost-update; denylist blocks a seeded sensitive line.
+- **L4 worktree-cleanup:** drop the `'junction'` 3rd arg + junction comments in `scripts/worktree-new.js`; comment the now-dormant junction-replacement guard in `scripts/worktree-rm.js`; KEEP the "always use the helper" rule (husky `.husky/_` needed on Linux too). Acceptance: helper creates/removes a worktree on Linux with real symlinks; `npm test` green.
+- **L6 lane-lifecycle:** `scripts/lane-status.sh` (or node) listing open worktrees vs board, flagging stale (older than 48h with no commit, OR 15+ commits on main since cut, OR any L5 sensitive-path landed on main since cut), run at session start and in the push sweep. Safe-scrap: `git log main..<lane>` must be empty before any removal; always `git branch -d`, never `-D`; non-empty → ask Dallas. Acceptance: a fabricated stale lane is flagged; a lane with unmerged commits refuses auto-scrap.
+- **L7 pre-push-reconcile:** decide and document how `.husky/pre-push` (client `CI=true` build gate) coexists with the new push confirmation (keep it as the mechanical client-build gate; the confirmation + sweep sit above it). Update the hook only if needed. Acceptance: a client change still gets the CI build gate.
+- **L8 CLAUDE.md (serial commits, the flip):**
+  - (a) Rewrite the Git Workflow section into the two-tier model (Invariants / Conventions, why on each); carry forward every named invariant; add `scripts/check-claudemd-invariants.sh` that greps a committed `scripts/claudemd-invariants.txt` (Rule 2/7/9/10/11/12 keywords, `STRIPE_TEST_MODE_UNTIL`, "fails closed", inline-self-check headings, env-var debug discipline phrase) against the rewritten doc, so the coverage check is mechanical, not a human read. Also fold in the quick-fix review gate, conflict-handling escalation (L5-keyed), dirty-tree rule, lane lifecycle, inside-a-lane rules.
+  - (b) Retire `/overnight-review`: delete `.claude/commands/overnight-review.md`, remove the `.claude/overnight-review.log` cache handling, delete CLAUDE.md Rule 6's overnight mention + the entire Pre-Push step 4.5 block + the "Honoring overnight-review cache" string. Acceptance: `grep -ri overnight .claude/` returns only this plan/spec, nothing in CLAUDE.md or commands.
+  - (c) Drop Windows scar tissue with a defined transitional marker (a `> TRANSITIONAL (remove once fully off Windows):` block) so a marker is distinguishable from accidental retention.
+  - (d) Document the chunk-and-retry coverage-manifest rule and the lane-map front-matter schema (footprint globs, dependency graph, lane id) consumed by `plan-decomposition`, auto-pull, and the footprint-drift abort.
+  - Acceptance: `check-claudemd-invariants.sh` passes; overnight grep clean.
+- **L9 memory-reconcile:** retire `reference_worktree_npm_install_junction`, `reference_worktree_rm_locked_folder_windows`, `reference_codex_cli_windows`, `reference_gemini_cli_windows`, `reference_vercel_cli_windows`; trim `reference_dev_server_process` to its platform-independent core; rewrite `project-worktree-workflow` + `reference_os_shared_git_index` to the new model; put a transitional marker on anything kept-but-Windows-flavored; update `MEMORY.md`. Acceptance: no memory note contradicts the new CLAUDE.md.
+- **L10 README/ARCH:** add `docs/build-board.md` + new `scripts/*` to the README folder tree; update the NPM Scripts table (worktree entries no longer mention junctions); update the pre-commit description (now 4 steps incl. the os-guard); update the ARCHITECTURE pre-commit reference. Acceptance: each named section reflects reality; `check-docs-drift.sh` satisfied.
+- **L11 auto-pull (post-launch, knob OFF, four sub-lanes):** 11a claim via `--ff-only` board push + rebase/re-read + footprint from lane-map front-matter; 11b independence check widened to the L5 sensitive/side-effect members + re-check at merge time + a defined resolution when the re-check FAILS (abort the lane, re-queue on the board, surface to Dallas); 11c prevention (block `npm install` in an auto-lane; no shared-Neon-DB verification, defer that to os post-merge); 11d the on/off knob (defaults OFF) + whether "merge it" is a distinct cue. Acceptance per sub-lane; knob-off means nothing auto-starts.
+
+---
+
+## Self-Review (post plan-review revision)
+
+- **Spec coverage:** every spec Implementation-surface AND Deferred item now maps to a lane: stale-lane/dirty-tree/squash-bookkeeping/pre-push (previously dropped) are now L6 / L2 / L2 / L7; the rest unchanged. Covered.
+- **Decomposition:** L8's four CLAUDE.md commits are sequential within one lane (collision resolved); L11 split into 11a-11d; L1 test now `node:test` with a real linked-worktree fixture covering all five behaviors.
+- **Feasibility:** built on Linux (flock + symlinks available); L1 git plumbing matches `worktree-new.js`; tests use the repo's `node:test` runner; L4 junction removal is safe on Linux.
+- **Review cadence:** each lane names its fleet (column above), matched to what it touches.
+- **Placeholder scan:** L1 fully coded; L2-L11 are intentional pull-time briefs, each now naming its files, acceptance, and owning the spec mechanism it implements.
+
+## Open items folded from /review-plan (2026-06-19)
+Blockers: Windows feasibility (resolved by Linux), four dropped mechanisms (added), L6/L10 oversize (L8 serial + L11 split), L1 test bug (ported to node:test). Warnings: `--ff-only` wording, L10 enumerated targets, L2 wiring, transitional-marker shape, review-cadence column, generic Stripe-id denylist, mechanical invariant coverage check, group ordering. All addressed above.
