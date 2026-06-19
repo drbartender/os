@@ -19,6 +19,7 @@
     "optimize:assets": "node scripts/optimize-assets.js",
     "worktree:new": "node scripts/worktree-new.js",
     "worktree:rm": "node scripts/worktree-rm.js",
+    "lane:status": "node scripts/lane-status.js",
     "where": "node scripts/show-location.js",
     "cc-import": "node scripts/cc-import.js",
     "cc-import:phase0": "node scripts/cc-import.js --phase=0",
