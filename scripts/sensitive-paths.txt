@@ -1,0 +1,49 @@
+# Sensitive paths: single source of truth (workflow-redesign spec, 2026-06-19).
+#
+# A change touching ANY path here is money / auth / data / external-send risk.
+# This ONE list is the trigger for all three of:
+#   1. full agent-fleet review (either track), no matter how small the change
+#   2. conflict-escalation (stop and ask on a conflict in these files)
+#   3. auto-pull disqualification (these wait for an explicit go)
+#
+# Format: gitignore-style, repo-root-relative, one pattern per line.
+# '*' matches within a single path segment (it does NOT cross '/').
+# Blank lines and lines starting with '#' are ignored.
+# Consumed by scripts/sensitive-match.js.
+
+# Pricing / payments / PII
+server/utils/pricingEngine.js
+server/utils/stripeClient.js
+server/utils/encryption.js
+server/utils/gratuityLabels.js
+server/utils/eventTypes.js
+server/utils/payroll*.js
+
+# Schema / DDL (no migrations/ dir exists; schema goes through schema.sql
+# plus the one-off repair scripts under server/scripts/)
+server/db/schema.sql
+server/scripts/*.sql
+
+# Webhook + inbound handlers (flat in server/routes/, not a folder)
+server/routes/stripeWebhook.js
+server/routes/stripe.js
+server/routes/calcom.js
+server/routes/emailMarketingWebhook.js
+server/routes/sms.js
+server/routes/thumbtack.js
+
+# Auth / guards / limits / the shared error funnel
+server/middleware/auth.js
+server/middleware/rateLimiters.js
+server/middleware/asyncHandler.js
+server/utils/errors.js
+
+# Schedulers (scattered in server/utils/, not a folder)
+server/utils/*Scheduler.js
+
+# Comms / external sends (flat in server/utils/, not a comms/ folder)
+server/utils/*EmailTemplates.js
+server/utils/*Handlers.js
+
+# Env-var contract
+.env.example
