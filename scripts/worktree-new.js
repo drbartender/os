@@ -5,19 +5,19 @@
 //   node scripts/worktree-new.js <name>
 //   npm run worktree:new -- <name>
 //
-// Creates ..\worktrees\<name>\ on a new branch <name> taken from main, then
-// junctions in the three things a worktree needs to edit, lint, and commit:
+// Creates ../worktrees/<name>/ on a new branch <name> taken from main, then
+// symlinks in the three things a worktree needs to edit, lint, and commit:
 //
-//   <worktree>\node_modules        -> <main>\node_modules
-//   <worktree>\client\node_modules -> <main>\client\node_modules
-//   <worktree>\.husky\_            -> <main>\.husky\_
+//   <worktree>/node_modules        -> <main>/node_modules
+//   <worktree>/client/node_modules -> <main>/client/node_modules
+//   <worktree>/.husky/_            -> <main>/.husky/_
 //
 // All three are needed even by a worktree that only edits and commits: the
 // pre-commit hook runs eslint, the root eslint.config.mjs imports a plugin out
-// of client/node_modules, and .husky\_ is husky's hook runner (without it the
-// commit silently skips the hook). Junctions are instant and cost no disk.
+// of client/node_modules, and .husky/_ is husky's hook runner (without it the
+// commit silently skips the hook). Symlinks are instant and cost no disk.
 //
-// Re-running on an existing worktree just creates any missing junctions.
+// Re-running on an existing worktree just creates any missing links.
 
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -81,7 +81,7 @@ if (exists) {
   console.log(`Created worktree "${name}" on a new branch from main.`);
 }
 
-// --- junctions --------------------------------------------------------------
+// --- symlinks ---------------------------------------------------------------
 function link(relPath, source) {
   const dest = path.join(target, relPath);
   if (!fs.existsSync(source)) {
@@ -99,7 +99,9 @@ function link(relPath, source) {
     return;
   }
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.symlinkSync(source, dest, 'junction');
+  // Plain symlink: correct on Linux. The old Windows-only 'junction' type
+  // arg has been dropped (it was a no-op on Linux anyway).
+  fs.symlinkSync(source, dest);
   console.log(`  linked ${relPath}`);
 }
 

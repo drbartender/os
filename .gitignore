@@ -1,10 +1,15 @@
-node_modules/
+# node_modules and the worktree symlinks below use NO trailing slash so the
+# pattern matches a symlink too, not only a real directory. Lane worktrees
+# symlink these on Linux; a dir-only pattern (trailing slash) would miss the
+# symlink and leave every worktree born "dirty", which breaks worktree cleanup.
+node_modules
 .env
 .env.*
 !.env.example
 *.key
 *.pem
-client/node_modules/
+client/node_modules
+.husky/_
 client/build/
 server/uploads/*
 !server/uploads/.gitkeep

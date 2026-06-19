@@ -5,9 +5,9 @@
 //   node scripts/worktree-rm.js <name> [--force]
 //   npm run worktree:rm -- <name> [--force]
 //
-// Order matters. The junctions are removed first, so the teardown can never
+// Order matters. The symlinks are removed first, so the teardown can never
 // follow a link into the shared node_modules and delete it. Only entries that
-// lstat reports as links are removed; a real directory in a junction's place
+// lstat reports as links are removed; a real directory in a link's place
 // stops the script. Then the worktree is removed, then the branch.
 //
 // The branch is deleted with `git branch -d`, which refuses an unmerged branch,
@@ -66,29 +66,34 @@ if (git(['status', '--porcelain'], { cwd: target })) {
   die(`"${name}" has uncommitted changes, commit or discard them in the worktree first`);
 }
 
-// --- remove the junctions BEFORE removing the worktree ---------------------
-function unlinkJunction(relPath) {
+// --- remove the symlinks BEFORE removing the worktree ----------------------
+// The isSymbolicLink guard below is cross-platform and load-bearing: it stops
+// the script if a shared dir was materialized as a real directory, so teardown
+// never deletes the shared node_modules.
+function unlinkSharedLink(relPath) {
   const dest = path.join(target, relPath);
   let st;
   try { st = fs.lstatSync(dest); } catch { return; }
   if (!st.isSymbolicLink()) {
-    die(`${relPath} is a real directory, not a junction, stopping so the shared copy is not deleted`);
+    die(`${relPath} is a real directory, not a symlink, stopping so the shared copy is not deleted`);
   }
   try {
     fs.unlinkSync(dest);
   } catch {
     try {
+      // rmdir fallback was for Windows junctions; on Linux a symlink always
+      // unlinks above, so this branch is a no-op now. Kept as a harmless guard.
       fs.rmdirSync(dest);
     } catch (e) {
-      die(`could not remove the junction ${relPath}: ${e.message}`);
+      die(`could not remove the link ${relPath}: ${e.message}`);
     }
   }
   console.log(`  unlinked ${relPath}`);
 }
 
-unlinkJunction('node_modules');
-unlinkJunction(path.join('client', 'node_modules'));
-unlinkJunction(path.join('.husky', '_'));
+unlinkSharedLink('node_modules');
+unlinkSharedLink(path.join('client', 'node_modules'));
+unlinkSharedLink(path.join('.husky', '_'));
 
 // --- remove the worktree, then the branch ----------------------------------
 try {
