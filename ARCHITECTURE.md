@@ -1406,9 +1406,12 @@ Self-hostable open-source scheduling platform. drb-os receives Cal.com webhooks 
 - **Run**: `npm run lint` (check) or `npm run lint:fix` (auto-fix)
 
 ### Pre-Commit Hooks (Husky + lint-staged)
-- **Hook**: `.husky/pre-commit` runs `npx lint-staged`
-- **Scope**: Only lints staged `server/**/*.js` files (fast — not full codebase)
-- **Behavior**: Blocks commits with ESLint errors; allows warnings
+- **Hook**: `.husky/pre-commit` runs four steps in order:
+  1. `bash scripts/check-docs-drift.sh`: warns (never blocks) when a structural file was added/removed/renamed (or `schema.sql` changed) without a matching doc update.
+  2. `node scripts/check-file-size.js --staged`: the file-size ratchet (soft cap 700, hard cap 1000; blocks only a commit that grows an over-cap file).
+  3. `npx lint-staged`: ESLint on staged `server/**/*.js` only (fast, not the full codebase); blocks on errors, allows warnings.
+  4. `bash scripts/guard-os-main.sh`: the os-stays-on-main guard; blocks any commit from the primary `os` worktree while it is off `main`, and any `docs/superpowers/specs|plans/` doc committed off `main`.
+- **Workflow tooling** (think-on-main / build-in-lanes, not all hook-invoked): `scripts/guard-os-main.sh` (above), `scripts/merge-lane.sh` (flock'd squash-merge wrapper, run only in `os`), `scripts/lane-status.js` (open-lane + stale-lane detection, `npm run lane:status`), `scripts/board-write.sh` (atomic `docs/build-board.md` writer with a PII/Stripe-id denylist), `scripts/sensitive-paths.txt` + `scripts/sensitive-match.js` (the one sensitive-path list and its matcher, the single trigger for review-scaling, conflict-escalation, and auto-pull disqualification), and `scripts/check-claudemd-invariants.sh` + `scripts/claudemd-invariants.txt` (paired keyword/regex coverage check over `CLAUDE.md`). Most carry a co-located `*.test.js` run by `npm test` (`node --test`).
 
 ### Claude Code Review Agents
 Seven custom agents in `.claude/agents/` provide automated code review:

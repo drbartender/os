@@ -350,12 +350,23 @@ dr-bartender/
 │   ├── vercel.json             # SPA rewrite rule for Vercel
 │   └── package.json            # React deps, proxy: localhost:5000
 ├── scripts/                    # Build + workflow scripts (build-testing-guide.js, check-file-size.js, optimize-assets.js, worktree-new.js, worktree-rm.js)
+│   │                           # think-on-main/build-in-lanes tooling (each with a co-located *.test.js where noted):
+│   │                           #   guard-os-main.sh (+ .test.js)   : pre-commit os-stays-on-main guard
+│   │                           #   merge-lane.sh (+ .test.js)      : flock'd squash-merge wrapper
+│   │                           #   board-write.sh (+ .test.js)     : atomic build-board writer with PII denylist
+│   │                           #   lane-status.js (+ .test.js)     : open-lane listing + stale-lane detection (npm run lane:status)
+│   │                           #   sensitive-paths.txt             : the one sensitive-path list (review/conflict/auto-pull trigger)
+│   │                           #   sensitive-match.js (+ .test.js) : matcher that reads sensitive-paths.txt
+│   │                           #   check-claudemd-invariants.sh    : paired keyword/regex coverage check over CLAUDE.md
+│   │                           #   claudemd-invariants.txt         : the invariant manifest it checks
 │   ├── cc-import.js             # Check Cherry importer CLI entrypoint — dispatches to per-phase modules via --phase=N
 │   └── cc-import/               # 7-phase Check Cherry import pipeline (Phase 0 attachments → Phase 6 leads/invoices archive)
 │       ├── lib/                 # Shared utilities: csv, money, dateFmt, duration, timeFormat, fuzzyName, buckets, db, runLog, httpFetch, r2, email, cli
 │       └── phases/              # phase0.js through phase6.js — one file per import phase, each with a co-located *.test.js
+├── docs/                       # Project docs: build-board.md (Claude-maintained ready/in-flight/shipped index), ops-runbook.md, tech-debt.md,
+│                               # client-portal-v2-project.md, staff-portal-beo-project.md, open-threads.md, superpowers/{specs,plans}/
 ├── .claude/agents/             # Claude Code review agents (7 agents)
-├── .husky/pre-commit           # Pre-commit hook (docs-drift check + file-size ratchet + lint-staged)
+├── .husky/pre-commit           # Pre-commit hook, four steps: docs-drift check + file-size ratchet + lint-staged + os-stays-on-main guard (scripts/guard-os-main.sh)
 ├── .env.example                # Environment variable template
 ├── eslint.config.mjs           # ESLint flat config + security plugin
 ├── package.json                # Server deps + npm scripts
@@ -378,8 +389,9 @@ dr-bartender/
 | `npm run check:filesize` | Report every source file by line-count zone (RED over 1000, YELLOW 700-1000) |
 | `npm run build:testing-guide` | Build `client/public/testing-guide.html` from `TESTING.md` via `scripts/build-testing-guide.js` |
 | `npm run optimize:assets` | One-shot asset optimization (PNG→WebP at tile size, TTF→WOFF2). Idempotent — skips already-converted outputs. |
-| `npm run worktree:new -- <name>` | Create a parallel-dev worktree at `../worktrees/<name>` on a new branch off `main`, with `node_modules` + husky junctions wired up |
-| `npm run worktree:rm -- <name>` | Tear down a worktree: remove its junctions, the worktree, then the branch (`--force` to discard an unmerged branch) |
+| `npm run worktree:new -- <name>` | Create a parallel-dev worktree at `../worktrees/<name>` on a new branch off `main`, with `node_modules` + husky symlinks wired up |
+| `npm run worktree:rm -- <name>` | Tear down a worktree: remove its symlinks, the worktree, then the branch (`--force` to discard an unmerged branch) |
+| `npm run lane:status` | List open lanes (worktrees) and flag stale ones (48h no-commit, 15+ main commits since cut, or a sensitive path landed on main since cut); run at session start and in the push sweep |
 | `npm run cc-import` | One-shot Check Cherry import run using the default config (runs all 7 phases sequentially) |
 | `npm run cc-import:all` | Explicit "run all phases" alias of `cc-import` |
 | `npm run cc-import:phase0` ... `:phase6` | Single-phase run (`--phase=N`): Phase 0 attachments, Phase 1 leads-as-clients, Phase 2 clients, Phase 3 proposals/events, Phase 4 payments/refunds, Phase 5 payouts, Phase 6 leads + invoices archive |
