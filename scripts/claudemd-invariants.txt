@@ -1,0 +1,30 @@
+# Invariant coverage manifest for the CLAUDE.md rewrite (workflow-redesign L8).
+# Format: "<key> <extended-regex>", split on the FIRST space (keys are single
+# tokens). Matched case-insensitively. Each rule below MUST survive the rewrite.
+# This is a coarse, necessary-not-sufficient net (it proves the rule's substance
+# is present, not just a bare keyword); a consistency agent does the semantics.
+
+# Named git-safety invariants (carried from the old Twelve Core Rules)
+code-preservation code preservation
+explicit-staging git add <specific
+no-add-dot never .*git add \.
+no-reset-main never .*reset.*on .*main
+no-amend-pushed never .*amend.*pushed
+destructive-approval destructive ops .*explicit approval
+push-fail-stop push fail.*stop|stop and report
+
+# Verification + discipline (carried)
+inline-self-check inline self-check
+env-debug-discipline confirm .*is set in
+design-review-fleet spec-grounding|review-spec
+
+# Money / auth / data invariants (cross-cutting, must never weaken)
+stripe-test-mode STRIPE_TEST_MODE_UNTIL
+stripe-fails-closed fails closed
+hosted-bartender-ratio isHostedPackage
+gratuity gratuityLineAmount|GRATUITY_LABEL
+proposal-payment-status paid in full
+money-cents integer cents
+encryption-pii AES-256
+file-size-ratchet ratchet
+doc-updates mandatory doc
