@@ -1,6 +1,227 @@
 # Dr. Bartender — Claude Code Instructions
 
-CLAUDE.md is the **rules doc**. Structural reference (folder tree, route table) lives in `README.md` and `ARCHITECTURE.md`. Read those when you need to know where a file lives.
+CLAUDE.md is the **rules doc**, organized in two tiers:
+
+- **Invariants** — genuine law that protects money, auth, data, and code. They change only with deliberate care, and the rewrite is coverage-checked so none is ever silently dropped.
+- **Conventions** — how we work now, each carrying its *why*. Conventions are questionable by default: when one gets in your way, say so, change it, and update its *why* right then. The doc stays alive.
+
+Structural reference (folder tree, route table) lives in `README.md` and `ARCHITECTURE.md`. Read those when you need to know where a file lives. Reference material (tech stack, env vars) sits at the end of this doc.
+
+> TRANSITIONAL (remove once fully off Windows): primary development is the Linux box now. A few notes still describe Windows-era behavior; each carries a `TRANSITIONAL` marker until the Windows machine is retired.
+
+---
+
+# Invariants
+
+## Git safety
+
+Solo developer, vibe-coded. **Code preservation is the #1 priority.** Push to `main` = deploy to production via Render + Vercel. These rules protect work and the shared `main`; they do not bend.
+
+- **os never leaves main.** The `os` checkout is permanently pinned to `main`. Never `checkout`, `switch`, or `checkout -b` inside `os`. *Why:* `os` is a single shared checkout with one HEAD across parallel windows; moving it drags another window onto the wrong branch and strands that window's commits. A branch exists only as a separate worktree ("lane") under `../worktrees/`, driven by path. A pre-commit guard (`scripts/guard-os-main.sh`) blocks any commit on a non-main branch from the `os` worktree, and any spec/plan doc committed off `main`.
+- **Code preservation beats shipping speed.** When a git op could destroy uncommitted or unpushed work, stop and ask. *Why:* lost work is unrecoverable; a delayed ship is not.
+- **Explicit staging only.** `git add <specific-path>` always. Never `git add .`, `-A`, or `-u`. *Why:* prevents sweeping in screenshots, `.playwright-mcp/`, `.env`, and other junk.
+- **Never `git reset` on `main`.** Reset is safe inside a lane branch. Rewinding shared `main` is the exact collision the lane model removes. Unpushed work: `git reset --soft HEAD~N` (in a lane). Pushed work: `git revert <sha>` + push (a new undo commit, never a rewrite of pushed history). Unstage without losing work: `git restore --staged <path>`.
+- **Never `--amend` a pushed commit.** On unpushed commits prefer new commits over amend; amend only if the user explicitly asks. *Why:* rewriting pushed history breaks every other checkout.
+- **Destructive ops always require explicit approval.** `push --force`, `reset --hard`, `clean -f`, `branch -D`, `checkout .`, `restore .`, and `rm` on tracked files need a per-action yes every time. No "obviously safe" bypass. *Why:* these are the irreversible ones.
+- **Push failures stop and report — never auto-resolve.** If `git push` is rejected (non-fast-forward, auth, network), stop and ask. Never auto-pull, auto-rebase, or force-push. *Why:* an auto-fix can silently clobber or ship the wrong thing.
+- **Push = deploy.** Every push to `main` ships to Render + Vercel. Treat it with gravity. Pushes are explicit-cue only (see Push model).
+- **Commits are finished, tested work, grouped by logical feature.** "Finished" means either (a) the user verified it works in the app, or (b) it is a behavior-inert change (copy, CSS, docs) the user approved. One commit per logical feature, not per file or step. No WIP or checkpoint commits on `main`. *Why:* clean, revertable history where a commit is a unit of intent. (Lane checkpoints are exempt: they never reach `main`; the squash merge is the unit.)
+- **Branches and stashes outside the lane model need approval with a one-line reason.** Claude may propose but never creates them silently. *Why:* the lane lifecycle is blanket-authorized, but ad-hoc branches/stashes are where work goes missing.
+
+## Money, auth, and data: cross-cutting consistency
+
+When modifying any entity, always check and update **all** related entities too. Never leave one part of the system out of sync with another. Examples:
+
+- **Proposal price changes** → re-evaluate payment status. If the new total exceeds `amount_paid`, remove or correct any "Paid in Full" flag. Never leave a proposal marked paid when it isn't.
+- **Proposal event detail changes** (date, time, location, guest count) → check and update linked shifts accordingly.
+- **Phone number / formatting changes** → update every component, route, and display that touches that field.
+- **Schema column changes** → update every route (SELECT, INSERT, UPDATE), every component that reads/writes that field, and every place that displays it.
+- **New feature data shape** → ensure every consumer of that data (backend endpoints, frontend components, PDF templates) is updated in the same PR.
+- **Event identity** — client name and event type are separate, independent data points. Never concatenate them into a single "title" string or prompt for an `event_name`. Display uses `getEventTypeLabel({ event_type, event_type_custom })` with `'event'` as the graceful fallback. Available in `client/src/utils/eventTypes.js` (ESM) and `server/utils/eventTypes.js` (CJS — kept in sync manually).
+- **Hosted-package bartender rule** — Hosted (per_guest) packages include bartender staffing in the per-guest rate **at a 1:100 guest ratio** (so 100 guests = 1 included, 250 guests = 3 included; controlled by `pkg.guests_per_bartender`). Bartenders **within** the ratio are $0 line items with $0 gratuity. Bartenders **above** the ratio — added via the `num_bartenders` override OR the `additional-bartender` add-on — are charged at the standard hourly rate (`pkg.extra_bartender_hourly`, default $40/hr) plus the same sub-100-guest gratuity surcharge that applies on BYOB ($50/$25/$15 per hour for <50/<75/<100 guests). Use `isHostedPackage(pkg)` and `staffing.required` from `server/utils/pricingEngine.js`. Grep for `isHostedPackage` before adding any new bartender-cost code path; only zero the charge for the first `staffing.required` bartenders. This rule has been re-lost multiple times — treat as load-bearing.
+- **Drink plans: event-side is canonical, proposal-side is preview.** Bartender prep, shopping-list approval, and client communication all use the EVENT's drink plan (post-conversion). Verify drink-plan / shopping-list UI changes on the event path. Pricing logic still verifies on the proposal side (that's where money math runs).
+- **Checkout gratuity** — gratuity is stored as a per-staff-per-hour RATE (`gratuity_rate`); the dollar line is always computed (`rate × staffCount × hours`, staff = bartenders + additional-bartender addon, NOT barbacks/servers) and layered on top of the forced `"Shared Gratuity"` surcharge. Added on top of `total_price` (never diluted by a discount/override), pooled with the forced surcharge in payroll (both labels via `gratuityLabels.GRATUITY_PAYROLL_LABELS`), and gated on funded before accrual. Applies to all packages via `staff_noun`. Labels come from the one shared constant module (`gratuityLabels.js`, server + client mirror). The no-jar floor (rate ≥ 50) is enforced at the route (`deriveGratuityRate`), in the engine, and by a DB CHECK. The Stripe webhook records the amount actually charged (additive), never `= total_price`. Grep `gratuityLineAmount` / `GRATUITY_LABEL` before touching gratuity.
+
+The rule: **if you change X, search the codebase for everything that depends on X and update it too.**
+
+## Coding patterns
+
+- **No ORM** — use raw SQL via `pool.query()` with parameterized queries (`$1`, `$2`, etc.). Never concatenate user input into SQL.
+- **Route files** export an Express Router. One file per resource under `server/routes/`.
+- **Auth middleware** — import `{ auth }` for protected routes; check `req.user.role` for admin/manager guards.
+- **Async route handlers** — wrap with `asyncHandler` so rejections funnel to the global error middleware. Throw `AppError` subclasses (`ValidationError`, `NotFoundError`, `PermissionError`, `ConflictError`, `ExternalServiceError`, `PaymentError`) for client-visible errors instead of `res.status(400).json({error: '...'})`. Hierarchy lives in `server/utils/errors.js`.
+- **File uploads** use `express-fileupload` → validated with magic bytes via `server/utils/fileValidation.js` → uploaded to R2 → URL stored in DB.
+- **Public token-gated routes** (drink plans, proposals, invoices) use UUID tokens in the URL instead of auth.
+- **Frontend API calls** go through `client/src/utils/api.js` (axios with auto-attached JWT). Never raw `fetch`/`axios`.
+- **Schema changes** go in `schema.sql` using idempotent statements (`IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`).
+- **Pricing logic** lives in `server/utils/pricingEngine.js` — pure functions, no DB calls. Money stored as integer cents, never floats.
+- **Stripe** — all Stripe API calls go through `server/utils/stripeClient.js`, never `require('stripe')` directly. The factory honors `STRIPE_TEST_MODE_UNTIL` and fails closed if creds are missing.
+- **Bank PII** — banking fields on `users` / `payouts` route through `server/utils/encryption.js` (AES-256-GCM, fails closed in prod). Never store plaintext.
+- **CSS** — vanilla CSS in `index.css`. No CSS modules, no utility frameworks.
+- **Naming**: camelCase for JS variables/functions, snake_case for DB columns and API JSON keys.
+
+## Inline self-check (every change, free)
+
+Before presenting ANY code change, silently verify:
+
+**Security**
+- All SQL uses parameterized queries (`$1`, `$2`) — never string concatenation
+- All non-public routes have `auth` middleware; admin routes check `req.user.role`
+- Endpoints filter by `req.user.id` to prevent accessing other users' data (IDOR)
+- No secrets hardcoded — everything from `process.env`
+- User input validated on server side (type, length, format)
+- File uploads validated with magic bytes via `fileValidation.js`
+- Error responses never leak stack traces, SQL, or internals
+
+**Data Integrity**
+- Multi-table writes wrapped in `BEGIN/COMMIT/ROLLBACK`
+- Schema changes are idempotent (`IF NOT EXISTS`)
+- Money stored as integer cents, never floats
+- Changed columns updated in ALL routes that touch that table
+
+**Frontend**
+- Async ops have loading, error, and empty states
+- API calls go through `utils/api.js` — never raw fetch/axios
+- New routes added to `App.js` with correct auth guards
+- Client-side validation matches server-side rules
+
+**Logic**
+- Null/undefined handled for DB results, API responses, optional fields
+- Date ranges and pagination boundaries correct
+- No race conditions on payment/mutation endpoints
+
+## Env-var debug discipline
+
+Production env vars live in Render (server) and Vercel (client) dashboards — I cannot read those. Local `.env` is gitignored. If a bug looks env-related, I will NEVER assert *"X isn't set"* — phrase it as *"Can you confirm `X` is set in [Render | Vercel]?"* My inability to see a value ≠ the value being absent.
+
+---
+
+# Conventions (how we work now, and why)
+
+## The model: think-on-main, build-in-lanes
+
+**Thinking always lives on main.** Brainstorm, spec, and plan commit to `main` the moment they exist. Any number of parallel planning windows share the `os` main checkout, each writing its own spec/plan doc. *Why:* the old wound was branch-stranded thinking, a plan committed to a project branch whose code never fully landed, so the problem-solving was effectively lost while `main` moved on. Nothing valuable ever sits on a branch now, so nothing valuable can be stranded.
+
+**Code is built in lanes.** A "lane" is a short-lived, throwaway git worktree under `../worktrees/`, holding code only, living hours not weeks, owned end-to-end by Claude. When a plan is ready and the user says go, Claude cuts a lane off current `main`, builds it, merges it back by squash, and deletes it. The user never names, finds, or returns to a lane. *Why:* worktrees kept the parallel-execution throughput; redefining them as code-only and Claude-managed removes the branch-hunting overhead. If a lane rots, the worst case is re-running mechanical code from a plan that is safe on `main`.
+
+> TRANSITIONAL (remove once fully off Windows): a lane's shared `node_modules` / `client/node_modules` / `.husky/_` are real symlinks on Linux (the worktree helper's old `'junction'` arg was a Windows-only no-op). `.gitignore` matches them so a lane is born clean. Always use `npm run worktree:new` / `worktree:rm` (the husky `.husky/_` link is needed on Linux too); never a bare `git worktree add`.
+
+## Two tracks
+
+The user picks the track by how the work opens:
+
+- **Quick fix → on main, in `os`.** "Just fix this real quick." Claude edits on `main`, commits, done. No branch, no merge. Staying on `main` is exactly what the os invariant guarantees, so quick fixes never fight it.
+- **Project → think on main, build in a lane.** "Let's work on this." Brainstorm and plan on `main`, then Claude builds it in a lane and merges back.
+
+## Thinking phase
+
+- **Brainstorm.** Claude digs in, forms an opinion and leads with it, asks one question at a time, prose not menus. **Section-by-section approvals ARE the approval; there is no "now read the whole written spec" gate.**
+- **Spec.** A byproduct of the live brainstorm, committed to `main`, fed to the spec-review agents. The user does not re-read it.
+- **Plan = lane map.** The plan comes out as the work broken into independent, individually buildable-and-reviewable lanes, plus a dependency/parallelism graph, in structured front-matter (see schema below). That graph IS the run-order, co-designed with the user.
+
+## Lane lifecycle and stale lanes
+
+- Claude auto-handles the safe moves: create the lane, merge it when clean, clean it up after merge. No asking. ("Manage it for me.")
+- **Stale detection.** A lane is flagged stale when it is older than 48h with no new commit, OR `main` has advanced 15+ commits since it was cut, OR any sensitive path has landed on `main` since it was cut. The check runs at session start (`npm run lane:status`) and again at each push-time sweep.
+- **Default for a dead lane:** scrap and re-cut fresh from the plan (safe on `main`), salvaging half-written code only if it is substantial and clean.
+- **Never scrap unmerged work.** Before any scrap, `git log main..<lane-branch>` must be empty. If it is non-empty, do NOT scrap without the user's okay. Auto-scrap always uses `git branch -d` (which refuses unmerged), never `-D`. ("Never lose my code.")
+
+## Inside a lane (execution method)
+
+Claude picks the most efficient method for the lane in front of it and does not default to subagents or any other ceremony because a skill says to. A small coherent lane is built in one pass; a lane with genuinely independent pieces is split across parallel subagents. Claude states the method so the user can wave it off. The Inline Self-Check still runs before every change. Inside a lane Claude self-commits freely as it builds (checkpoints, sandboxed, nothing ships); those checkpoints never reach `main` because the merge is a squash. On a mid-build failure (compile error, test fail, dev-server crash), the lane stays open for repair; if it cannot be repaired it follows the stale-lane default (re-cut from plan).
+
+## Merge model
+
+- **Serialized through `os`, behind a real lock.** Every merge runs in the one `os`/`main` checkout, never from inside a lane, and acquires an exclusive `flock` (`scripts/merge-lane.sh`). flock auto-releases if the holder dies, so a crashed merge cannot wedge future merges. The second merge waits.
+- **Lanes merge by squash.** In-lane checkpoints do not land on `main`; the squash is one clean commit per logical feature, and its message carries the lane name + plan link. The squash merge is the test gate; in-lane checkpoints are never assumed individually tested.
+- **Merge is not deploy.** `main` can hold several freshly merged lanes with nothing shipped. The push to prod is a separate, gated step.
+- **Dirty-tree rule.** If `os` has uncommitted quick-fix work when a lane is ready to merge, Claude does not merge into a dirty tree. It pauses and asks the user to commit the quick fix first (or, with okay, auto-stashes with an explicit, reported recovery).
+- **Source branch survives until the merge verifies clean** = no conflict AND the lane's per-lane review re-confirmed against main's new HEAD. Then the worktree is removed.
+- **Conflict handling, path-based.** Ordinary textual conflicts: Claude resolves using both diffs and both plans (on `main`) and reports what it did. Claude stops and brings it to the user whenever the conflict touches a **sensitive path** (see below) or the resolution is genuinely ambiguous.
+
+## Review model
+
+- **Per-lane, before merge, is the primary gate.** A single lane is a small, coherent scope where review agents finish and return real verdicts. By push time every lane on `main` was already cleanly reviewed.
+- **Risk-scaled by the sensitive-path list.** Cosmetic changes get a light look; anything touching a **sensitive path** gets the full agent fleet no matter how tiny. The one list is `scripts/sensitive-paths.txt` (matched by `scripts/sensitive-match.js`); it is the single trigger for review-scaling, conflict-escalation, AND auto-pull disqualification. Claude always states which level it ran.
+- **Iron rule: a failed or incomplete agent is never a pass.** A non-completing agent is a blind spot, not a green light. An agent that completes but returns no explicit pass/fail (empty, inconclusive, low-confidence) counts as a non-completion.
+- **Chunk-and-retry with a coverage manifest.** A review that does not finish is split into smaller chunks and re-run, halving down toward single-file. Coverage is guaranteed by a manifest: every file in `git diff --name-only` for the scope appears in exactly one chunk's input, and each file ends with an explicit pass/fail-or-anomaly recorded against it. The lane is blocked unless every file has a real verdict. If a single-file chunk still cannot complete after a retry, Claude stops, names the file, and blocks the merge (never allow-with-warning).
+- **Quick-fix review gate.** A quick fix touching any **sensitive path** triggers the full fleet at push time on those specific commits, regardless of scope. A quick fix touching nothing sensitive gets the light look plus the push-time sweep.
+- **Push-time integration sweep.** A focused pass over the seams between merged lanes and quick-fixes (files touched by more than one source since the last push, computed from `git log <lastPush>..HEAD --name-only`), checking that separately-clean pieces still agree. NOT a re-audit of every line. Same chunk-and-retry, manifest, and iron rule apply.
+- **Sensitive-path re-review at push.** Any commit since the last push that touches a **sensitive path** gets the full fleet at push, against main's new HEAD, regardless of overlap. Because squash-merge hides within-squash overlap, this (not seam intersection) is what guarantees sensitive code is re-reviewed at push.
+
+Agent specs live in `.claude/agents/`. This project is vibe-coded; the author relies on Claude to catch issues.
+
+## Push model
+
+The push to prod is the user's deliberate, explicit call ("push", "deploy", "ship it", "send it"). It carries forward the old strictness:
+
+- **Confirmation gate (before any other step).** Claude announces the batch in one line: *"N commits / M files pending. Run review + push?"* and waits for an explicit yes. If the user says *defer / wait / one more thing / hold on*, Claude stands down silently and re-asks on the next push cue. **Claude NEVER volunteers a "ready to push?" prompt.** After a commit, silence is correct.
+- The push-time sweep (and any sensitive quick-fix full-fleet review) runs ONLY after that yes. **Never pre-run review agents** at feature completion, "to verify," or as prep. The confirmation prompt is the single entry point to the fleet.
+- A flagged finding gives the user a fix-now / push-anyway / abandon choice. **Root-cause discipline on the fix:** for anything important (security, auth, money/pricing, data integrity, logic, cross-cutting consistency, integration) or any non-trivial change, invoke `superpowers:systematic-debugging` — fix the root cause and check whether it manifests elsewhere, never just patch the symptom. Trivial one-liners (copy, a missing import, a doc tweak) get the direct fix.
+- Push failures stop and report (Git-safety invariant).
+
+> TRANSITIONAL (remove once fully off Windows): `.husky/pre-push` runs the exact Vercel client build (`CI=true react-scripts build`) only when a push changes `client/`, catching CI-fatal ESLint warnings that nothing else local catches. It sits below the confirmation gate as the last mechanical gate; emergencies bypass with `git push --no-verify`.
+
+## Plan = lane map (front-matter schema)
+
+A plan's lanes are declared in structured front-matter so the spec-review agents, auto-pull, and the footprint-drift check can all read them. Each lane declares: a lane id, its `footprint` (the file globs it expects to touch), its dependencies (what blocks it), and its review fleet. A lane that edits outside its declared footprint aborts and surfaces rather than silently widening.
+
+## Reasoning effort
+
+**Use maximum reasoning effort when:**
+- A change crosses system boundaries (schema → routes → components, backend ↔ frontend)
+- Pricing, payment, or Stripe logic is involved (real money at stake)
+- Auth, security, or role-guard logic is involved (data exposure risk)
+- Schema migrations (hard to reverse in production)
+- Any change that triggers the Cross-Cutting Consistency rules
+
+**Normal effort is fine for:**
+- Single-file, single-layer edits (one component, one route, one style block)
+- Copy, text, or documentation-only changes
+- CSS-only styling tweaks
+- Isolated bug fixes with an obvious cause and fix
+
+**Quick test:** *"If I get this subtly wrong, will it cause a bug that's hard to catch?"* If yes — max effort. If the mistake would be immediately obvious — normal effort.
+
+## File-size discipline
+
+The codebase enforces line-count limits to prevent mega-files. A pre-commit hook runs `node scripts/check-file-size.js --staged` on staged source files (`server/**/*.js`, `client/src/**/*.{js,jsx}`, excluding tests). It is a **ratchet**, not a flat cap:
+
+- **Soft cap, 700 lines** — warns ("plan a split"). Never blocks.
+- **Hard cap, 1000 lines** — a file over 1000 lines blocks the commit **only if this commit makes it longer than it is at `HEAD`.** A non-growing change (bugfix, refactor, or anything flat or shrinking) to an over-cap file is always allowed. The only way to *add* to an over-cap file is to first extract enough that the file stays flat or shrinks.
+
+There is no per-file opt-out marker. A file over the cap is frozen at its current size, and the ratchet tightens: once a file sheds lines, the lower count becomes its new ceiling. For a genuine emergency where a growing commit to an over-cap file cannot wait, `git commit --no-verify` is the escape: per-commit, deliberate, and visible, not a permanent exemption.
+
+Run `npm run check:filesize` any time for a full-tree RED / YELLOW report.
+
+**When you write a new file or add to one, aim for the sweet spot:** under 300 lines is comfortable; 300 to 600 is fine for a focused page or route file; 600 to 700 is the yellow zone (one concern or two?); over 700, actively plan a split.
+
+**How to split, by the patterns already in the codebase:** route files into per-concern files behind a composition router (see `server/routes/proposals/`); template files into per-domain siblings (`lifecycleEmailTemplates.js`, `marketingEmailTemplates.js` alongside `emailTemplates.js`); page components by extracting self-contained sections.
+
+## Mandatory documentation updates
+
+**This is not optional.** When you add, rename, or remove anything that touches the codebase shape, update the relevant docs in the same change. The pre-commit hook will warn if you don't. Most structural updates land in `README.md` (folder tree, npm scripts, key features) and `ARCHITECTURE.md` (route table, schema, third-party integrations). Only env vars and integrations also touch this doc.
+
+| What changed | CLAUDE.md | README.md | ARCHITECTURE.md |
+|---|---|---|---|
+| New/removed route file | — | Folder structure tree | Add/remove API route table |
+| New/removed util file | — | Folder structure tree | Mention in relevant section |
+| New/removed component | — | Folder structure tree | — |
+| New/removed page | — | Folder structure tree | — |
+| New/removed context | — | Folder structure tree | — |
+| Schema column/table change | — | — | Database Schema section |
+| New env variable | Environment Variables table | Environment Variables table | — |
+| New npm script | — | NPM Scripts table | — |
+| New integration | Tech Stack list | Tech Stack table | Third-Party Integrations |
+| New feature | — | Key Features section | Relevant architecture section |
+
+## Design-stage review fleet
+
+Explicit-only Claude agents for reviewing specs and plans BEFORE any code is written. `/review-spec` runs three agents (`spec-grounding`, `spec-gaps`, `spec-risk`) in parallel on a spec doc. `/review-plan` runs three agents (`plan-fidelity`, `plan-decomposition`, `plan-feasibility`) in parallel on an implementation plan. Natural-language triggers ("review the spec", "review the plan", "design review") route to the same commands. Both resolve to the most recent file in `docs/superpowers/specs/` or `docs/superpowers/plans/` unless an explicit path is given. Report-only; no auto-fix. Complements `/gemini-spec`.
+
+---
+
+# Reference
 
 ## Tech Stack
 
@@ -22,8 +243,6 @@ CLAUDE.md is the **rules doc**. Structural reference (folder tree, route table) 
 - **Dev tools**: nodemon, concurrently, ESLint + eslint-plugin-security, husky + lint-staged
 
 ## Environment Variables
-
-**Env-var debug discipline.** Production env vars live in Render (server) and Vercel (client) dashboards — I cannot read those. Local `.env` is gitignored. If a bug looks env-related, I will NEVER assert *"X isn't set"* — phrase it as *"Can you confirm `X` is set in [Render | Vercel]?"* My inability to see a value ≠ the value being absent.
 
 See `.env.example` for the full list. Key ones:
 
@@ -68,214 +287,3 @@ See `.env.example` for the full list. Key ones:
 | `VAPID_PRIVATE_KEY` | Web Push (VAPID) private key. Server-only — never commit, never expose to the client. When unset, the push sender fails closed (`vapid_unset`) and the server still boots normally; SMS + email keep covering every notification. |
 | `REACT_APP_VAPID_PUBLIC_KEY` | Client-side copy of `VAPID_PUBLIC_KEY` (identical value), used by the staff portal to subscribe the browser to push. Set on the client side (Vercel). |
 | `VAPID_CONTACT_EMAIL` | Contact email embedded in the VAPID JWT (`mailto:`). Optional — defaults to `contact@drbartender.com`. |
-
-## Git Workflow
-
-Solo developer, vibe-coded. Code preservation is the #1 priority. Work runs in parallel across many Claude windows, each project isolated in its own worktree and branch (see Project Worktrees below). Push to `main` = deploy to production via Render + Vercel.
-
-### Project Worktrees
-
-Many Claude windows run at once. Each project gets its own **worktree** (a separate folder) on its own **branch**, so windows never overwrite each other.
-
-- **One project = one worktree = one branch.** Drive that worktree straight from the `os` integration window by operating on its path, or open a dedicated window inside it for parallel work. A separate window is optional, not required. Its spec, plan, and code all commit to its branch.
-- **The `os` folder stays on `main`.** Git will not check out `main` twice, so `os` is the integration station: branches merge into `main` there, and the batched push runs there.
-- Worktrees live in `..\worktrees\<name>\`, a sibling of `os` and outside the repo, so nothing needs gitignoring. Branch names are plain and descriptive, no prefix: `drawer-fix`, `tip-flow`.
-
-**Lifecycle of one project** (creation and integration commands run from the `os` folder):
-
-1. **Create** — `npm run worktree:new -- <name>`. Adds the worktree on a new branch off `main`, with the `node_modules` and husky junctions a worktree needs to commit. Always use this helper. Do NOT use the `EnterWorktree` tool or a bare `git worktree add`: those skip the junctions, and the worktree's commits then fail eslint or silently bypass the pre-commit hook.
-2. **Work** — drive the worktree from `os` by its path (project edits use the worktree's absolute paths; run project git commands with the worktree as the working directory, e.g. `cd ..\worktrees\<name>` or `git -C ..\worktrees\<name>`, so commits land on branch `<name>`), or open a Claude window in `..\worktrees\<name>\`. Either way, plan, execute, and commit on branch `<name>`.
-3. **Merge** — when the project is done and verified: `git merge <name>`.
-4. **Clean up** — `npm run worktree:rm -- <name>`.
-
-A worktree shares `client/node_modules` with `os` by junction, so only one build or dev server runs at a time. When driving a worktree from `os`, run its dev server / client build from the worktree path, and stop any `os` dev server first to free port 5000. Final post-merge verification runs in `os`.
-
-### Twelve Core Rules
-
-1. **Each project in its own worktree.** Project work happens on a per-project branch in its own worktree, never as commits on `main` (see Project Worktrees above). A worktree can be driven from the `os` integration window (operate on its path) or from a dedicated window opened in it. The discipline that replaces one-window-per-worktree: every project edit or command targets the worktree explicitly (its absolute path for edits, the worktree as the git working dir for commits), and you stay clear about which checkout each command touches (`os` is `main`; the worktree is `<branch>`). Never let a project edit or commit land on `main`. Merges and pushes still run from `os` on `main`.
-2. **Code preservation beats shipping speed.** When a git op could destroy uncommitted or unpushed work, stop and ask.
-3. **Commits are finished, tested work only — and grouped by logical feature, not by step.** "Finished" means either (a) user verified it works in the app, or (b) it's a behavior-inert change (copy, CSS, docs) the user approved. No WIP commits, no checkpoint commits. **Default to one commit per logical feature, not one per file or step.** If a feature touches the AppError class, asyncHandler middleware, and the routes that use them, that's ONE commit, not three. Only split when the pieces are genuinely independent and could be reverted separately.
-4. **Separate cues for commit vs. push.**
-   - **Commit cue:** "looks good", "commit", "next task", or any affirmative after Claude reports what to test → commit without re-approval. Use plain `git commit -m "single line"` (no heredoc, no co-author footer) unless the user asks otherwise — keeps permission prompts at zero.
-   - **Push cue:** explicit only — "push", "deploy", "ship it", "send it". Claude never auto-pushes on commit cues. **Claude NEVER volunteers a "ready to push?" prompt.** Pushes are user-initiated only. The user coordinates push timing across multiple parallel Claude sessions / terminals and decides when the full batch is ready. After a commit, Claude stands down — silence is correct. No "ready to push?" question, no "want me to push these now?" nudge, nothing.
-   - **Agent-run confirmation.** When the user issues a push cue, Claude's FIRST response is a one-line batch summary + confirmation — BEFORE any agent launch: *"N commits / M files pending. Run agents + push?"* Agents fire only on an explicit yes. If the user says *wait / one more thing / defer*, Claude stands down — no agent run, no push. Re-ask on the next push cue. **Never pre-run agents.** Not at end of feature, not to "verify," not on commit cues, not as prep. The confirmation prompt is the single entry point to the agent fleet. This guards against burning a review on a batch the user is about to amend, and lets the user consolidate commits across multiple terminals into ONE review pass.
-5. **Push = deploy.** Every push to `main` ships to Render + Vercel. Treat with gravity.
-6. **Review agents run automatically before every code-touching push.** Claude launches all 5 non-UI agents in parallel (`consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`). Skip agents only when (a) the push contains exclusively `*.md` or `.gitignore` changes, or (b) a fresh `.claude/overnight-review.log` records the current `HEAD` as CLEAN or FIXED with zero flags (see Pre-Push Procedure step 4.5). Clean results → push proceeds silently. Any flag → stop, report findings, wait. Fixes to flagged findings follow the root-cause discipline in Pre-Push Procedure step 6. **Agents run exactly once per logical push, gated by the Pre-Push Procedure step 0.5 confirmation. Claude does NOT pre-run agents at feature completion, task completion, "let me verify," or any point outside the confirmed push flow.** Agent specs live in `.claude/agents/`.
-7. **Explicit staging only.** `git add <specific-path>` always. Never `git add .`, `-A`, or `-u`. Prevents sweeping in screenshots, `.playwright-mcp/`, `.env`, etc.
-8. **Branches and stashes require approval with a one-line reason.** Claude may propose but never creates silently.
-9. **Undo rules (safe recipes).**
-   - `git reset` is safe inside your own project branch. Never `git reset` on `main`: rewinding shared `main` is the exact collision   the worktree model removes.
-   - Unpushed commit: `git reset --soft HEAD~N`
-   - Pushed commit: `git revert <sha>` + push (new undo commit — never rewrite pushed history)
-   - Unstage without losing work: `git restore --staged <path>`
-10. **Amend rules.** Never `--amend` a pushed commit. On unpushed commits, prefer new commits over amend; only amend if the user explicitly asks.
-11. **Destructive ops always require explicit approval.** `push --force`, `reset --hard`, `clean -f`, `branch -D`, `checkout .`, `restore .`, `rm` on tracked files — per-action yes every time. No "obviously safe" bypass.
-12. **Push failures stop and report — never auto-resolve.** If `git push` is rejected (non-fast-forward, auth, network), Claude stops and asks. Never auto-pulls, auto-rebases, or force-pushes.
-
-### Pre-Push Procedure
-
-When the user gives a push cue, Claude runs this checklist exactly. No steps skipped, no silent deviations.
-
-**0.5 — Confirmation gate (runs BEFORE any other step).** Announce the pending batch in one line: *"N commits / M files. Run agents + push?"* Wait for explicit yes. If the user says *defer / wait / one more thing / hold on*, stand down silently — no agent run, no push, no further pre-push work. Re-ask on the next push cue. This gate ensures agents run AT MOST once per logical push, even when the user is batching work across multiple parallel Claude sessions.
-
-1. **Verify branch.** Confirm this is the `os` folder on `main` (pushes run from the integration window, never from a project worktree). If not, stop and ask.
-2. **Sanity-check working tree.** If there are uncommitted modifications or untracked files other than known-ignored artifacts, pause and ask: *"There are uncommitted changes in X, Y, Z — meant to go in this push or leave them out?"* Not a hard block; user may just say "leave them."
-3. **Inventory the batch.** Run `git log origin/main..HEAD --name-only` to see every file in the pending push.
-4. **Classify code vs. non-code.** If all changed files are `*.md` or `.gitignore`, skip to step 7.
-4.5. **Check overnight-review cache.** If `.claude/overnight-review.log` exists, honor it and skip to step 7 when ALL of the following hold:
-   - Log timestamp is within the last 18 hours
-   - `Current HEAD:` sha in the log matches `git rev-parse HEAD`
-   - `## Result` line begins with `CLEAN` or `FIXED`
-   - `## Flagged for morning (NOT fixed)` section contains only `none`
-
-   If honored, announce one line: *"Honoring overnight-review cache (HEAD `<short-sha>`, result `<CLEAN|FIXED>`)"* and skip to step 7. Otherwise announce one line why the cache was rejected (stale / HEAD mismatch / has flags / missing) and continue to step 5.
-5. **Launch 5 agents in parallel** (single message, 5 concurrent Agent tool calls): `consistency-check`, `code-review`, `security-review`, `database-review`, `performance-review`.
-6. **Wait for all agents. Consolidate.** All clean → proceed silently to push. Any flagged issue → stop, present a consolidated report grouped by severity (blockers, warnings, suggestions), ask for direction (fix now, push anyway, abandon).
-
-   **Root-cause discipline on the fix.** When the user opts to fix a flagged finding, invoke `superpowers:systematic-debugging` for anything important (security, auth, money/pricing, data integrity, logic, cross-cutting consistency, integration) **or** not a trivial one-line change: find and fix the root cause and check whether the same cause manifests elsewhere — never just patch the symptom the agent pointed at. Trivial, obvious one-liners (copy, style, a missing import, a doc update, an `res.status().json` → `AppError` swap) get the direct fix, no debugging ceremony. Applies equally to an explicit `review-before-deploy` run; does **not** apply to `overnight-review`.
-7. **Push.** `git push origin main`. If rejected, stop and report (per Rule 12).
-8. **Report result.** Confirm push succeeded. Note Render + Vercel are now deploying. List commits that shipped.
-
-## Reasoning Effort
-
-**Use maximum reasoning effort when:**
-- A change crosses system boundaries (schema → routes → components, backend ↔ frontend)
-- Pricing, payment, or Stripe logic is involved (real money at stake)
-- Auth, security, or role-guard logic is involved (data exposure risk)
-- Schema migrations (hard to reverse in production)
-- Any change that triggers the Cross-Cutting Consistency rules below
-
-**Normal effort is fine for:**
-- Single-file, single-layer edits (one component, one route, one style block)
-- Copy, text, or documentation-only changes
-- CSS-only styling tweaks
-- Isolated bug fixes with an obvious cause and fix
-
-**Quick test:** *"If I get this subtly wrong, will it cause a bug that's hard to catch?"* If yes — max effort. If the mistake would be immediately obvious — normal effort.
-
-## Coding Patterns & Conventions
-
-- **No ORM** — use raw SQL via `pool.query()` with parameterized queries (`$1`, `$2`, etc.). Never concatenate user input into SQL.
-- **Route files** export an Express Router. One file per resource under `server/routes/`.
-- **Auth middleware** — import `{ auth }` for protected routes; check `req.user.role` for admin/manager guards.
-- **Async route handlers** — wrap with `asyncHandler` so rejections funnel to the global error middleware. Throw `AppError` subclasses (`ValidationError`, `NotFoundError`, `PermissionError`, `ConflictError`, `ExternalServiceError`, `PaymentError`) for client-visible errors instead of `res.status(400).json({error: '...'})`. Hierarchy lives in `server/utils/errors.js`.
-- **File uploads** use `express-fileupload` → validated with magic bytes via `server/utils/fileValidation.js` → uploaded to R2 → URL stored in DB.
-- **Public token-gated routes** (drink plans, proposals, invoices) use UUID tokens in the URL instead of auth.
-- **Frontend API calls** go through `client/src/utils/api.js` (axios with auto-attached JWT). Never raw `fetch`/`axios`.
-- **Schema changes** go in `schema.sql` using idempotent statements (`IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`).
-- **Pricing logic** lives in `server/utils/pricingEngine.js` — pure functions, no DB calls. Money stored as integer cents, never floats.
-- **Stripe** — all Stripe API calls go through `server/utils/stripeClient.js`, never `require('stripe')` directly. The factory honors `STRIPE_TEST_MODE_UNTIL` and fails closed if creds are missing.
-- **Bank PII** — banking fields on `users` / `payouts` route through `server/utils/encryption.js` (AES-256-GCM, fails closed in prod). Never store plaintext.
-- **CSS** — vanilla CSS in `index.css`. No CSS modules, no utility frameworks.
-- **Naming**: camelCase for JS variables/functions, snake_case for DB columns and API JSON keys.
-
-## Cross-Cutting Consistency
-
-When modifying any entity, always check and update **all** related entities too. Never leave one part of the system out of sync with another. Examples:
-
-- **Proposal price changes** → re-evaluate payment status. If the new total exceeds `amount_paid`, remove or correct any "Paid in Full" flag. Never leave a proposal marked paid when it isn't.
-- **Proposal event detail changes** (date, time, location, guest count) → check and update linked shifts accordingly.
-- **Phone number / formatting changes** → update every component, route, and display that touches that field.
-- **Schema column changes** → update every route (SELECT, INSERT, UPDATE), every component that reads/writes that field, and every place that displays it.
-- **New feature data shape** → ensure every consumer of that data (backend endpoints, frontend components, PDF templates) is updated in the same PR.
-- **Event identity** — client name and event type are separate, independent data points. Never concatenate them into a single "title" string or prompt for an `event_name`. Display uses `getEventTypeLabel({ event_type, event_type_custom })` with `'event'` as the graceful fallback. Available in `client/src/utils/eventTypes.js` (ESM) and `server/utils/eventTypes.js` (CJS — kept in sync manually).
-- **Hosted-package bartender rule** — Hosted (per_guest) packages include bartender staffing in the per-guest rate **at a 1:100 guest ratio** (so 100 guests = 1 included, 250 guests = 3 included; controlled by `pkg.guests_per_bartender`). Bartenders **within** the ratio are $0 line items with $0 gratuity. Bartenders **above** the ratio — added via the `num_bartenders` override OR the `additional-bartender` add-on — are charged at the standard hourly rate (`pkg.extra_bartender_hourly`, default $40/hr) plus the same sub-100-guest gratuity surcharge that applies on BYOB ($50/$25/$15 per hour for <50/<75/<100 guests). Use `isHostedPackage(pkg)` and `staffing.required` from `server/utils/pricingEngine.js`. Grep for `isHostedPackage` before adding any new bartender-cost code path; only zero the charge for the first `staffing.required` bartenders. This rule has been re-lost multiple times — treat as load-bearing.
-- **Drink plans: event-side is canonical, proposal-side is preview.** Bartender prep, shopping-list approval, and client communication all use the EVENT's drink plan (post-conversion). Verify drink-plan / shopping-list UI changes on the event path. Pricing logic still verifies on the proposal side (that's where money math runs).
-
-- **Checkout gratuity** — gratuity is stored as a per-staff-per-hour RATE (`gratuity_rate`); the dollar line is always computed (`rate × staffCount × hours`, staff = bartenders + additional-bartender addon, NOT barbacks/servers) and layered on top of the forced `"Shared Gratuity"` surcharge. Added on top of `total_price` (never diluted by a discount/override), pooled with the forced surcharge in payroll (both labels via `gratuityLabels.GRATUITY_PAYROLL_LABELS`), and gated on funded before accrual. Applies to all packages via `staff_noun`. Labels come from the one shared constant module (`gratuityLabels.js`, server + client mirror). The no-jar floor (rate ≥ 50) is enforced at the route (`deriveGratuityRate`), in the engine, and by a DB CHECK. The Stripe webhook records the amount actually charged (additive), never `= total_price`. Grep `gratuityLineAmount` / `GRATUITY_LABEL` before touching gratuity.
-
-The rule: **if you change X, search the codebase for everything that depends on X and update it too.**
-
-## File Size Discipline
-
-The codebase enforces line-count limits to prevent mega-files. A pre-commit hook
-runs `node scripts/check-file-size.js --staged` on staged source files
-(`server/**/*.js`, `client/src/**/*.{js,jsx}`, excluding tests). It is a
-**ratchet**, not a flat cap:
-
-- **Soft cap, 700 lines** — warns ("plan a split"). Never blocks.
-- **Hard cap, 1000 lines** — a file over 1000 lines blocks the commit **only if
-  this commit makes it longer than it is at `HEAD`.** A non-growing change
-  (bugfix, refactor, or anything flat or shrinking) to an over-cap file is
-  always allowed. The only way to *add* to an over-cap file is to first extract
-  enough that the file stays flat or shrinks.
-
-There is no per-file opt-out marker. A file over the cap is frozen at its
-current size, and the ratchet tightens: once a file sheds lines, the lower count
-becomes its new ceiling. For a genuine emergency where a growing commit to an
-over-cap file cannot wait, `git commit --no-verify` is the escape: it is
-per-commit, deliberate, and visible, not a permanent exemption.
-
-Run `npm run check:filesize` any time for a full-tree RED / YELLOW report.
-
-**When you write a new file or add to one, aim for the sweet spot:**
-- **under 300 lines** — comfortable; holds in your head, easy to review.
-- **300 to 600 lines** — fine for a focused page or route file with one concern.
-- **600 to 700 lines** — yellow zone. Ask: is this one concern, or two?
-- **over 700 lines** — actively plan a split.
-
-**How to split, by the patterns already in the codebase:**
-- **Route files** — per-concern files behind a composition router. See
-  `server/routes/proposals/` (`index.js` mounts `crud`, `lifecycle`, `metadata`,
-  `public`, `publicToken`).
-- **Template files** — per-domain sibling files. See
-  `server/utils/lifecycleEmailTemplates.js` and `marketingEmailTemplates.js`
-  alongside `emailTemplates.js`.
-- **Page components** — extract self-contained sections into their own files.
-
-## Mandatory Documentation Updates
-
-**This is not optional.** When you add, rename, or remove anything that touches the codebase shape, update the relevant docs in the same change. The pre-commit hook will warn if you don't.
-
-CLAUDE.md is the rules doc — most structural updates land in `README.md` (folder tree, npm scripts, key features) and `ARCHITECTURE.md` (route table, schema, third-party integrations). Only env vars and integrations also touch CLAUDE.md.
-
-| What changed | CLAUDE.md | README.md | ARCHITECTURE.md |
-|---|---|---|---|
-| New/removed route file | — | Folder structure tree | Add/remove API route table |
-| New/removed util file | — | Folder structure tree | Mention in relevant section |
-| New/removed component | — | Folder structure tree | — |
-| New/removed page | — | Folder structure tree | — |
-| New/removed context | — | Folder structure tree | — |
-| Schema column/table change | — | — | Database Schema section |
-| New env variable | Environment Variables table | Environment Variables table | — |
-| New npm script | — | NPM Scripts table | — |
-| New integration | Tech Stack list | Tech Stack table | Third-Party Integrations |
-| New feature | — | Key Features section | Relevant architecture section |
-
----
-
-## Code Verification System
-
-This project is vibe-coded — the author relies on Claude to catch issues. Verification has two layers: an inline self-check on every change (below), and opus-powered review agents triggered automatically before code-touching pushes (see Git Workflow Rule 6 + Pre-Push Procedure). Agent specs live in `.claude/agents/` — what each agent checks is documented there, not duplicated here.
-
-**Design-stage review fleet.** Explicit-only Claude agents for reviewing specs and plans BEFORE any code is written. `/review-spec` runs three agents (`spec-grounding`, `spec-gaps`, `spec-risk`) in parallel on a spec doc. `/review-plan` runs three agents (`plan-fidelity`, `plan-decomposition`, `plan-feasibility`) in parallel on an implementation plan. Natural-language triggers ("review the spec", "review the plan", "design review") route to the same commands. Both resolve to the most recent file in `docs/superpowers/specs/` or `docs/superpowers/plans/` unless an explicit path is given. Report-only; no auto-fix. Complements `/gemini-spec` rather than replacing it.
-
-### Inline Self-Check (Every Change — Free)
-
-Before presenting ANY code change, silently verify:
-
-**Security**
-- All SQL uses parameterized queries (`$1`, `$2`) — never string concatenation
-- All non-public routes have `auth` middleware; admin routes check `req.user.role`
-- Endpoints filter by `req.user.id` to prevent accessing other users' data (IDOR)
-- No secrets hardcoded — everything from `process.env`
-- User input validated on server side (type, length, format)
-- File uploads validated with magic bytes via `fileValidation.js`
-- Error responses never leak stack traces, SQL, or internals
-
-**Data Integrity**
-- Multi-table writes wrapped in `BEGIN/COMMIT/ROLLBACK`
-- Schema changes are idempotent (`IF NOT EXISTS`)
-- Money stored as integer cents, never floats
-- Changed columns updated in ALL routes that touch that table
-
-**Frontend**
-- Async ops have loading, error, and empty states
-- API calls go through `utils/api.js` — never raw fetch/axios
-- New routes added to `App.js` with correct auth guards
-- Client-side validation matches server-side rules
-
-**Logic**
-- Null/undefined handled for DB results, API responses, optional fields
-- Date ranges and pagination boundaries correct
-- No race conditions on payment/mutation endpoints
