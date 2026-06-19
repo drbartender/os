@@ -2,3 +2,4 @@
 bash scripts/check-docs-drift.sh
 node scripts/check-file-size.js --staged || exit 1
 npx lint-staged
+bash scripts/guard-os-main.sh || exit 1
