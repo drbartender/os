@@ -61,6 +61,11 @@ export default function AdminApplicationDetail() {
     );
   }
 
+  // `id` (route param) is the USER id this page was loaded with: the key every
+  // /admin/applications/:userId action endpoint expects. `a.id` from the detail API is the
+  // application row's OWN pk (a.* clobbers u.id in the detail query), so it is display-only
+  // (the "Application · A###" label). Never key action calls on a.id: e.g. user #16 with
+  // application #7 made Hire POST to /applications/7, which 404s ("User not found").
   const a = data.application;
   const status = stageOf(a.onboarding_status);
   const isRejected = a.onboarding_status === 'rejected';
@@ -86,7 +91,7 @@ export default function AdminApplicationDetail() {
   const handleReminder = async () => {
     setReminderBusy(true);
     try {
-      await api.post(`/admin/applications/${a.id}/reminder`);
+      await api.post(`/admin/applications/${id}/reminder`);
       toast.success('Reminder sent.');
       await load();
     } catch (e) {
@@ -150,22 +155,22 @@ export default function AdminApplicationDetail() {
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
           <ViabilityCard a={a} />
           {(status === 'interviewing' || status === 'in_progress' || isRejected) && (
-            <ScorecardCard userId={a.id} initial={data.scorecard} onSaved={load} />
+            <ScorecardCard userId={id} initial={data.scorecard} onSaved={load} />
           )}
           <SectionWords a={a} />
           <SectionExperience a={a} />
           <SectionGear a={a} />
           <SectionContact a={a} />
-          <TimelineCard userId={a.id} timeline={data.timeline} onPosted={load} />
+          <TimelineCard userId={id} timeline={data.timeline} onPosted={load} />
         </div>
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
           <ActionsCard
             a={a}
             acting={acting}
-            onMove={(to) => handle(() => api.post(`/admin/applications/${a.id}/move`, { to }), 'Moved.')}
-            onSchedule={() => navigate(`/hiring?schedule=${a.id}`)}
+            onMove={(to) => handle(() => api.post(`/admin/applications/${id}/move`, { to }), 'Moved.')}
+            onSchedule={() => navigate(`/hiring?schedule=${id}`)}
             onReject={() => setRejectOpen(true)}
-            onRestore={() => handle(() => api.post(`/admin/applications/${a.id}/restore`), 'Restored to Applied.')}
+            onRestore={() => handle(() => api.post(`/admin/applications/${id}/restore`), 'Restored to Applied.')}
             onReminder={handleReminder}
           />
           <StatsCard a={a} scorecard={data.scorecard} />
@@ -182,7 +187,7 @@ export default function AdminApplicationDetail() {
         onClose={() => setRejectOpen(false)}
         onConfirm={async (reason) => {
           await handle(
-            () => api.post(`/admin/applications/${a.id}/reject`, { rejection_reason: reason }),
+            () => api.post(`/admin/applications/${id}/reject`, { rejection_reason: reason }),
             'Rejected.'
           );
           setRejectOpen(false);
