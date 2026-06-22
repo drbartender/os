@@ -85,15 +85,16 @@ router.get('/users/:id', auth, requireAdminOrManager, asyncHandler(async (req, r
   // manager manages/evaluates/schedules staff, but the payroll/financial tier
   // stays admin-only — managers don't process payouts (those routes are
   // adminOnly). So withhold the whole payment_profiles row (bank is masked above
-  // regardless, plus payment handle / method / stripe ids) and the W-9 tax
-  // document. Operational + evaluation data (profile, application answers,
-  // resume/headshot/BASSET, scorecard, shifts) stays visible.
+  // regardless, plus payment handle / method / stripe ids, and the W-9 tax
+  // document — all of which live on payment_profiles) via `payment: {}` below,
+  // and strip the contractor pay rate (contractor_profiles.hourly_rate, the only
+  // comp field on the profile). Operational + evaluation data (profile, app
+  // answers, resume/headshot/BASSET, scorecard, shifts) stays visible.
   const isManager = req.user.role !== 'admin';
   const profile = profileRes.rows[0] || {};
   const application = appRes.rows[0] || {};
   if (isManager) {
-    if ('w9_file_url' in profile) profile.w9_file_url = null;
-    if ('w9_file_url' in application) application.w9_file_url = null;
+    if ('hourly_rate' in profile) delete profile.hourly_rate;
   }
 
   res.json({
