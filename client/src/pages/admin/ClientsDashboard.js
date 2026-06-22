@@ -11,6 +11,7 @@ import StatusChip from '../../components/adminos/StatusChip';
 import Toolbar from '../../components/adminos/Toolbar';
 import KebabMenu from '../../components/adminos/KebabMenu';
 import ClickableRow from '../../components/ClickableRow';
+import RowLink from '../../components/RowLink';
 import { fmt$, fmtDate } from '../../components/adminos/format';
 import CcImportBadge from '../../components/admin/CcImportBadge';
 
@@ -217,7 +218,7 @@ export default function ClientsDashboard() {
                     <td>
                       <div className="hstack">
                         <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{initialsOf(c.name)}</div>
-                        <strong>{c.name}</strong>
+                        <RowLink to={`/clients/${c.id}`}><strong>{c.name}</strong></RowLink>
                         <CcImportBadge ccId={c.cc_id} />
                       </div>
                     </td>

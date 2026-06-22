@@ -22,7 +22,7 @@ export default function ClickableRow({ to, onActivate, children, style, ...rest 
 
   const activate = (newTab) => {
     if (to) {
-      if (newTab) window.open(to, '_blank', 'noopener,noreferrer');
+      if (newTab) window.open(to, '_blank');
       else navigate(to);
     } else if (onActivate) {
       onActivate();
@@ -71,10 +71,13 @@ export default function ClickableRow({ to, onActivate, children, style, ...rest 
   };
 
   const onAuxClick = (e) => {
-    if (e.button === 1) {
-      e.preventDefault();
-      activate(true);
-    }
+    if (e.button !== 1) return;
+    // Mirror onMouseUp: let a real anchor/button handle its own middle-click
+    // (native new-tab) rather than also firing the row's window.open, which
+    // would open a second tab.
+    if (e.target.closest(INTERACTIVE_SELECTOR)) return;
+    e.preventDefault();
+    activate(true);
   };
 
   const onKeyDown = (e) => {

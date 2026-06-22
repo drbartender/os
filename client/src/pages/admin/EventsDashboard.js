@@ -11,6 +11,7 @@ import Icon from '../../components/adminos/Icon';
 import StatusChip from '../../components/adminos/StatusChip';
 import StaffPills from '../../components/adminos/StaffPills';
 import ClickableRow from '../../components/ClickableRow';
+import RowLink from '../../components/RowLink';
 import Toolbar from '../../components/adminos/Toolbar';
 import KebabMenu from '../../components/adminos/KebabMenu';
 import useDrawerParam from '../../hooks/useDrawerParam';
@@ -405,7 +406,9 @@ const EventRow = React.memo(function EventRow({ event: e, dispatch }) {
   return (
     <ClickableRow onActivate={() => dispatch('rowClick', e)}>
       <td>
-        <strong>{e.client_name || 'Event'}</strong>
+        {e.proposal_id
+          ? <RowLink to={`/events/${e.proposal_id}`}><strong>{e.client_name || 'Event'}</strong></RowLink>
+          : <strong>{e.client_name || 'Event'}</strong>}
         <div className="sub">{getEventTypeLabel({ event_type: e.event_type, event_type_custom: e.event_type_custom })}{!e.proposal_id && ' · Manual'}</div>
       </td>
       <td>

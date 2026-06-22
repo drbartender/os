@@ -11,6 +11,7 @@ import { fmt$, fmtDate, relDay } from '../../components/adminos/format';
 import ClickableRow from '../../components/ClickableRow';
 import CcImportBadge from '../../components/admin/CcImportBadge';
 import SourceBadge from '../../components/admin/SourceBadge';
+import RowLink from '../../components/RowLink';
 
 // Mirrors `proposals_status_check` in server/db/schema.sql. Keep in sync —
 // the constraint allows draft/sent/viewed/modified/accepted/deposit_paid/
@@ -193,7 +194,7 @@ export default function ProposalsDashboard() {
                 return (
                   <ClickableRow key={p.id} to={`/proposals/${p.id}`}>
                     <td>
-                      <strong>{p.client_name || '—'}</strong>
+                      <RowLink to={`/proposals/${p.id}`}><strong>{p.client_name || '—'}</strong></RowLink>
                       <CcImportBadge ccId={p.proposal_cc_id} />
                       <SourceBadge source={p.source} />
                       {p.client_email && <div className="sub">{p.client_email}</div>}

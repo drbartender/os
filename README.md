@@ -316,6 +316,7 @@ dr-bartender/
 │   │   │                       # VenueAddressFields (structured venue address — sign+pay gate & admin edit),
 │   │   │                       # VenueSearchInput (venue-name typeahead (Google Places)),
 │   │   │                       # ClickableRow (table <tr> wrapper: plain click navigates, drag selects/copies text),
+│   │   │                       # RowLink (real-anchor wrapper for a ClickableRow's primary cell: ctrl/cmd/middle-click opens a new tab natively),
 │   │   │                       # AddonControls (shared add-on UI controls: quantity stepper + greyed bundle badge, used by ProposalCreate + ProposalDetailEditForm),
 │   │   │                       # admin/LegacyCcPaymentsPanel (admin-only panel on ProposalDetail that surfaces CC-imported Stripe charges and warns the operator that the DRB OS Refund button cannot reach them),
 │   │   │                       # admin/CcImportBadge (small "Imported from CC" badge rendered next to titles on admin proposals/clients/events pages when cc_id is set),
