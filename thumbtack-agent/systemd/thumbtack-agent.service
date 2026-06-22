@@ -2,6 +2,9 @@
 Description=Thumbtack email-harvester agent (Playwright, box-only)
 After=network-online.target
 Wants=network-online.target
+# Cap restart rate so a crash loop can't hammer Thumbtack (these belong in [Unit]).
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -12,9 +15,6 @@ EnvironmentFile=/home/drbartender/projects/os/thumbtack-agent/.env
 ExecStart=/usr/bin/xvfb-run -a /home/drbartender/.nvm/versions/node/v24.16.0/bin/node src/index.js
 Restart=on-failure
 RestartSec=30
-# A crash loop should not hammer Thumbtack: cap restarts.
-StartLimitIntervalSec=600
-StartLimitBurst=5
 
 [Install]
 WantedBy=default.target
