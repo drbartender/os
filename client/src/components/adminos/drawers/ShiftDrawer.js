@@ -331,10 +331,9 @@ export default function ShiftDrawer({ shiftId, open, onClose, onUpdate }) {
                       style={{ marginTop: 8, gap: 6, flexWrap: 'wrap' }}
                     >
                       <select
-                        className="form-select"
+                        className="select"
                         value={pickerPosition}
                         onChange={e => setPickerPosition(e.target.value)}
-                        style={{ fontSize: 12.5, padding: '4px 8px' }}
                       >
                         <option value="">Position…</option>
                         <option value="Bartender">Bartender</option>

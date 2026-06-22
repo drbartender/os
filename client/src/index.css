@@ -3284,41 +3284,51 @@ tr.row-drag-over td { border-top: 2px solid var(--amber) !important; }
 
 /* Staff assign picker */
 .staff-assign-wrapper { position: relative; margin-top: 0.5rem; }
-.staff-assign-search {
+/* Staff assign picker (ShiftDrawer) is admin-os-only. Style it with the
+   skin-aware admin-os input tokens so it flips correctly between After Hours
+   (dark) and House Lights (light) instead of rendering as a fixed light-paper
+   box. Mirrors the canonical `html[data-app="admin-os"] .input` recipe. */
+html[data-app="admin-os"] .staff-assign-search {
   width: 100%;
   padding: 0.4rem 0.6rem;
-  font-size: 0.85rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--cream);
-  color: var(--deep-brown);
-  font-family: var(--font-body);
+  font-size: 12.5px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  color: var(--ink-1);
+  font-family: var(--font-ui);
+  outline: none;
+  transition: border-color 0.1s, box-shadow 0.1s;
 }
-.staff-assign-search::placeholder { color: var(--text-muted); }
-.staff-assign-dropdown {
+html[data-app="admin-os"] .staff-assign-search::placeholder { color: var(--ink-4); }
+html[data-app="admin-os"] .staff-assign-search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+html[data-app="admin-os"] .staff-assign-dropdown {
   position: absolute;
   top: 100%;
   left: 0;
   right: 0;
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  background: var(--bg-elev);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
   max-height: 200px;
   overflow-y: auto;
   z-index: var(--z-dropdown);
 }
-.staff-assign-item {
+html[data-app="admin-os"] .staff-assign-item {
   padding: 0.5rem 0.75rem;
   cursor: pointer;
-  color: var(--deep-brown);
-  font-size: 0.85rem;
-  border-bottom: 1px solid var(--parchment);
+  color: var(--ink-1);
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--line-1);
 }
-.staff-assign-item:hover { background: var(--cream); }
-.staff-assign-item:last-child { border-bottom: none; }
+html[data-app="admin-os"] .staff-assign-item:hover { background: var(--row-hover); }
+html[data-app="admin-os"] .staff-assign-item:last-child { border-bottom: none; }
 .staff-assign-item-name { font-weight: 600; }
-.staff-assign-item-meta { font-size: 0.75rem; color: var(--warm-brown); }
+html[data-app="admin-os"] .staff-assign-item-meta { font-size: 0.75rem; color: var(--ink-3); }
 
 /* Collapsible section toggle */
 .section-toggle {
@@ -13700,6 +13710,31 @@ html[data-app="admin-os"] .field-block {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+/* The reply box uses the global `.form-input` class, which paints a fixed
+   light-paper background (apothecary tokens) regardless of the active admin-os
+   skin. Override it here, scoped to the admin shell, so it adopts the
+   skin-aware input tokens (matches `html[data-app="admin-os"] .input`). The
+   global `.form-input` is left untouched for the public/auth/proposal forms. */
+html[data-app="admin-os"] .sms-reply textarea.form-input {
+  padding: 0.5rem 0.6rem;
+  min-height: 64px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-sm);
+  color: var(--ink-1);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  line-height: 1.45;
+  resize: vertical;
+  transition: border-color 0.1s, box-shadow 0.1s;
+}
+html[data-app="admin-os"] .sms-reply textarea.form-input::placeholder { color: var(--ink-4); }
+html[data-app="admin-os"] .sms-reply textarea.form-input:focus {
+  outline: none;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 @media (max-width: 720px) {
   .sms-layout { grid-template-columns: 1fr; }
