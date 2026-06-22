@@ -258,11 +258,15 @@ function getSiteContext() {
 
 // getHomePath is now imported from ./utils/userRoutes — see import above.
 
-/** Requires auth. adminOnly also allows managers (they share the dashboard). */
-function ProtectedRoute({ children, adminOnly = false }) {
+/** Requires auth. adminOnly also allows managers (they share the dashboard);
+ *  adminStrict is admin-only (rejects managers) for admin-exclusive surfaces. */
+function ProtectedRoute({ children, adminOnly = false, adminStrict = false }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="loading" role="status" aria-live="polite"><div className="spinner" aria-hidden="true" />Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
+  if (adminStrict && user.role !== 'admin') {
+    return <Navigate to={getHomePath(user)} replace />;
+  }
   if (adminOnly && user.role !== 'admin' && user.role !== 'manager') {
     return <Navigate to={getHomePath(user)} replace />;
   }
@@ -549,10 +553,13 @@ function AppRoutes() {
         <Route path="/settings" element={<SettingsDashboard />} />
         <Route path="/blog" element={<BlogDashboard />} />
         <Route path="/labrat-bugs" element={<LabRatBugsPage />} />
-        {/* CC-Import admin pages: path retained with `/admin` prefix per plan;
-            ProtectedRoute adminOnly is inherited from the parent <Route>. */}
-        <Route path="/admin/cc-import/wrap-up" element={<CcImportWrapUpPage />} />
-        <Route path="/admin/cc-import/review" element={<CcImportReviewPage />} />
+        {/* CC-Import admin pages: path retained with `/admin` prefix per plan.
+            The whole CC-import surface is admin-only on the server (audit batch
+            3c-roles), so wrap each in `adminStrict` — a manager (admitted by the
+            parent adminOnly shell) is redirected home instead of rendering a page
+            whose every API call 403s. */}
+        <Route path="/admin/cc-import/wrap-up" element={<ProtectedRoute adminStrict><CcImportWrapUpPage /></ProtectedRoute>} />
+        <Route path="/admin/cc-import/review" element={<ProtectedRoute adminStrict><CcImportReviewPage /></ProtectedRoute>} />
         <Route path="/email-marketing" element={<EmailMarketingDashboard />}>
           <Route index element={<EmailLeadsDashboard />} />
           <Route path="leads" element={<EmailLeadsDashboard />} />

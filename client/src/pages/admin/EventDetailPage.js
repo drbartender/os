@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState, lazy, Suspense } from
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
 import { useToast } from '../../context/ToastContext';
+import { useAuth } from '../../context/AuthContext';
 import { getEventTypeLabel } from '../../utils/eventTypes';
 import { formatPhone } from '../../utils/formatPhone';
 import useDrawerParam from '../../hooks/useDrawerParam';
@@ -52,6 +53,7 @@ function fmtTimeRange(start, durationHours) {
 export default function EventDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user: viewer } = useAuth();
   const toast = useToast();
   const drawer = useDrawerParam();
   const [proposal, setProposal] = useState(null);
@@ -237,7 +239,7 @@ export default function EventDetailPage() {
             {/* cc-imported proposals miss the normal post-conversion nudge schedule
                 (the import happens after T-21). If a drink plan EXISTS, admins
                 can re-enroll the nudges here. The endpoint is idempotent. */}
-            {proposal.cc_id && drinkPlan && (
+            {viewer?.role === 'admin' && proposal.cc_id && drinkPlan && (
               <button
                 type="button"
                 className="btn btn-secondary"

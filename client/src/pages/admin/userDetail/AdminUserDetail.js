@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../../utils/api';
 import { formatPhone } from '../../../utils/formatPhone';
 import { useToast } from '../../../context/ToastContext';
+import { useAuth } from '../../../context/AuthContext';
 import Icon from '../../../components/adminos/Icon';
 import StatusChip from '../../../components/adminos/StatusChip';
 import { fmt$, fmtDate } from '../../../components/adminos/format';
@@ -28,6 +29,7 @@ import TipPageTab from './tabs/TipPageTab';
 export default function AdminUserDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user: viewer } = useAuth();
   const toast = useToast();
 
   const [data, setData] = useState(null);
@@ -402,7 +404,7 @@ export default function AdminUserDetail() {
           Only renders when this user co-participated on a proposal with a
           legacy CC stub user. The endpoint is idempotent (UPSERT semantics);
           accruePayoutsForProposal returns 'skipped' when nothing changed. */}
-      {stubCoProposals.length > 0 && (
+      {viewer?.role === 'admin' && stubCoProposals.length > 0 && (
         <section className="card" style={{ marginBottom: 'var(--gap)', padding: '1.25rem 1.5rem' }}>
           <h3 style={{ fontSize: 16, margin: '0 0 6px' }}>Re-accrue payouts</h3>
           <p style={{ fontSize: 13, color: 'var(--ink-3)', margin: '0 0 12px' }}>
