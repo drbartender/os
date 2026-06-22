@@ -18,7 +18,7 @@ import useDrawerParam from '../../hooks/useDrawerParam';
 import ShiftDrawer from '../../components/adminos/drawers/ShiftDrawer';
 import InvoicesDrawer from '../../components/adminos/drawers/InvoicesDrawer';
 import { fmt$, fmtDate, relDay, dayDiff } from '../../components/adminos/format';
-import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip } from '../../components/adminos/shifts';
+import { shiftPositions, parsePositionsCount, approvedCount, eventStatusChip, SHIFT_EQUIPMENT_OPTIONS, parseEquipmentArray } from '../../components/adminos/shifts';
 import AddressLink from '../../components/adminos/AddressLink';
 
 const TIME_SLOTS = [];
@@ -35,6 +35,9 @@ const EMPTY_FORM = {
   client_name: '', client_email: '', client_phone: '',
   event_date: '', start_time: '', end_time: '', event_duration_hours: '',
   location: '', guest_count: '', positions_needed: 1,
+  // Token array consumed by the auto-assign equipment scorer. Defaults empty
+  // (= no gear requirement, scorer awards full equipment credit to everyone).
+  equipment_required: [],
 };
 
 export default function EventsDashboard() {
@@ -79,6 +82,19 @@ export default function EventsDashboard() {
     }
   };
 
+  // Add/remove an equipment token from form.equipment_required. parseEquipmentArray
+  // keeps this correct whether the field holds the array default or a JSON-string
+  // seed (edit-existing case).
+  const toggleEquipment = (token, checked) => {
+    setForm(f => {
+      const current = parseEquipmentArray(f.equipment_required);
+      const next = checked
+        ? (current.includes(token) ? current : [...current, token])
+        : current.filter(t => t !== token);
+      return { ...f, equipment_required: next };
+    });
+  };
+
   const handleCreate = async (e) => {
     e.preventDefault();
     setCreateError('');
@@ -102,6 +118,10 @@ export default function EventsDashboard() {
         location: form.location,
         guest_count: form.guest_count || null,
         positions_needed: positions,
+        // Send as a plain token array — POST /shifts JSON.stringifies it server
+        // side (server/routes/shifts.js). parseEquipmentArray tolerates either
+        // an array (the form default) or a JSON-string seed (edit-existing).
+        equipment_required: parseEquipmentArray(form.equipment_required),
       });
       toast.success('Event created.');
       setForm(EMPTY_FORM);
@@ -268,6 +288,27 @@ export default function EventsDashboard() {
                 <div className="meta-k" style={{ marginBottom: 4 }}>Positions needed</div>
                 <input className="input" type="number" min="1" value={form.positions_needed} onChange={e => handleField('positions_needed', e.target.value)} />
                 <FieldError error={fieldErrors?.positions_needed} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <div className="meta-k" style={{ marginBottom: 4 }}>Equipment required</div>
+                <div className="hstack" style={{ flexWrap: 'wrap', gap: 16 }}>
+                  {SHIFT_EQUIPMENT_OPTIONS.map(([token, label]) => {
+                    const selected = parseEquipmentArray(form.equipment_required);
+                    return (
+                      <label key={token} className="hstack" style={{ gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(token)}
+                          onChange={e => toggleEquipment(token, e.target.checked)}
+                        />
+                        {label}
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="muted tiny" style={{ marginTop: 4 }}>
+                  Used to prioritize bartenders who own this gear during auto-assign.
+                </div>
               </div>
             </div>
             <FormBanner error={createError} fieldErrors={fieldErrors} />

@@ -24,6 +24,36 @@ export function parsePositionsArray(raw) {
   return [];
 }
 
+// Canonical equipment tokens a shift can require, paired with human labels.
+// These tokens MUST match the keys the auto-assign scorer compares against
+// (server/utils/autoAssign.js → computeEquipmentScore equipmentMap +
+// the `equipment_${item}` constraint check), so the equipment-match scoring
+// actually fires. Labels mirror client/src/pages/admin/userDetail/components/
+// EquipmentDisplay.js for consistency. Only the three ownable items are
+// requirable — the profile-only flags (none_but_open / no_space / will_pickup)
+// describe a bartender's situation, not a shift requirement.
+export const SHIFT_EQUIPMENT_OPTIONS = [
+  ['portable_bar', 'Portable Bar'],
+  ['cooler', 'Cooler'],
+  ['table_with_spandex', '6ft Table w/ Spandex'],
+];
+
+// Returns the parsed `equipment_required` array (token strings). Tolerates both
+// array-shaped (already parsed) and string-shaped (JSON-encoded TEXT) inputs,
+// the same way parsePositionsArray does. Empty array when missing/malformed.
+export function parseEquipmentArray(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    try {
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 // Returns the count of position slots a shift needs (length of the JSON array).
 export function parsePositionsCount(s) {
   if (!s) return 1;
