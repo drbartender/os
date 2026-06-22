@@ -760,8 +760,10 @@ export default function PotionPlanningLab() {
   const selfNavigatingSteps = [MODULE_STEP_MAP.signatureDrinks, MODULE_STEP_MAP.mocktails];
   const hideGlobalNav = selfNavigatingSteps.includes(step);
 
+  // 'welcome' renders its own "Start" button inside the welcome card (it is the
+  // single, deliberately-loud action), so the global Back/Next nav is hidden there.
   const showBack = !['welcome', 'quickPick'].includes(step) && !hideGlobalNav;
-  const showNext = !['quickPick', 'customSetup', 'confirmation', 'submitted'].includes(step) && !hideGlobalNav;
+  const showNext = !['welcome', 'quickPick', 'customSetup', 'confirmation', 'submitted'].includes(step) && !hideGlobalNav;
 
   // Button label
   const nextLabel = 'Next';
@@ -774,6 +776,7 @@ export default function PotionPlanningLab() {
           <RefinementWelcomeStep
             plan={plan}
             guestCount={guestCount}
+            onStart={handleNext}
           />
         );
 

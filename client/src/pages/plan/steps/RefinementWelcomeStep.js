@@ -1,73 +1,59 @@
 import React from 'react';
 import WelcomeRoadmap from '../components/WelcomeRoadmap';
 
-export default function RefinementWelcomeStep({ plan, guestCount }) {
+// Format a date column ('YYYY-MM-DD' or ISO) without the UTC off-by-one shift.
+function formatEventDate(value) {
+  if (!value) return null;
+  const [y, m, d] = String(value).slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+export default function RefinementWelcomeStep({ plan, guestCount, onStart }) {
   const isHosted = plan?.package_category === 'hosted';
   const mode = isHosted ? 'hosted' : 'byob';
-  const packageName = plan?.package_name || 'package';
+  const packageName = plan?.package_name || 'your package';
+  const firstName = plan?.client_name ? String(plan.client_name).trim().split(/\s+/)[0] : '';
+
+  const metaBits = [
+    guestCount ? `${guestCount} guests` : null,
+    formatEventDate(plan?.event_date),
+    isHosted ? packageName : 'BYOB',
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
-    <>
-      {isHosted && Array.isArray(plan.package_includes) && plan.package_includes.length > 0 && (
-        <div className="card mb-2">
-          <h3 style={{ fontFamily: 'var(--font-display)', color: 'var(--deep-brown)', marginBottom: '0.5rem' }}>
-            Your package: {plan.package_name}
-          </h3>
-          <p className="text-muted text-small" style={{ color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
-            Stocked &amp; ready:
-          </p>
-          <ul className="potion-hosted-list">
-            {plan.package_includes
-              .filter((item) => !/\{(hours|bartenders|bartenders_s)\}/.test(item))
-              .map((item, i) => (
-                <li key={i}>{item}</li>
-              ))}
-          </ul>
-          <p className="text-muted text-small" style={{ marginTop: '0.5rem', fontStyle: 'italic' }}>
-            Anything beyond this list is an upgrade.
-          </p>
-        </div>
-      )}
-
-      <div className="card" style={{ overflow: 'hidden' }}>
+    <div className="potion-welcome">
+      <div className="card potion-card-inner-frame potion-welcome-card">
+        <span className="potion-kicker">Finalize your bar</span>
         <h1 className="potion-welcome-title">
-          Welcome Back!
+          Welcome back{firstName ? `, ${firstName}` : ''}.
         </h1>
+        <p className="potion-welcome-lede">
+          Your booking's confirmed, so you're already underway. All that's left is finalizing your
+          bar. <strong>Three parts, just a few minutes.</strong>
+        </p>
 
-        <div className="potion-welcome-body">
-          <img
-            src="/images/potion-bartender.png"
-            alt="Dr. Bartender"
-            className="potion-welcome-bartender"
-          />
+        <WelcomeRoadmap mode={mode} packageName={packageName} metaBits={metaBits} />
 
-          <div className="potion-welcome-text">
-            {plan?.client_name && (
-              <p style={{ fontWeight: 700, marginBottom: '0.5rem' }}>
-                {plan.client_name}, your booking is confirmed!
-              </p>
-            )}
-
-            {guestCount && (
-              <p style={{ fontFamily: 'var(--font-display)', marginBottom: '1rem', color: 'var(--deep-brown)' }}>
-                Guest count: {guestCount}
-              </p>
-            )}
-
-            <p>
-              Let's finalize the details for your bar and lock everything in.
-            </p>
-          </div>
-
-          <img
-            src="/images/potion-drinks.png"
-            alt="Signature cocktails"
-            className="potion-welcome-drinks"
-          />
+        <div className="potion-launch">
+          <button type="button" className="btn potion-start" onClick={onStart}>
+            Start
+          </button>
+          <p className="potion-launch-reassure">
+            No wrong answers. Your progress saves as you go, and you can go back and change anything
+            before you submit.
+          </p>
+          <p className="potion-launch-cost">
+            Nothing here charges you. You'll see the price before any upgrade.
+          </p>
         </div>
       </div>
-
-      <WelcomeRoadmap mode={mode} packageName={packageName} />
-    </>
+    </div>
   );
 }

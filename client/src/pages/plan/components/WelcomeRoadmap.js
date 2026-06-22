@@ -1,56 +1,74 @@
 import React from 'react';
 
 /**
- * Welcome roadmap: three cards showing the journey through the wizard, plus
- * a footer line previewing what the team delivers after submission.
- * Mounted below the welcome card on RefinementWelcomeStep.
+ * The welcome "procedure": a passive, vertical numbered itinerary (an <ol>),
+ * deliberately NOT a row of clickable cards. The first node is a genuinely
+ * completed "step zero" (the booking) that delivers an honest endowed-progress
+ * head start. Only Part One differs by package type.
  *
  * - mode: 'byob' | 'hosted'
- * - packageName: required when mode === 'hosted' (used in Part 1 body)
+ * - packageName: shown in the hosted Part One copy
+ * - metaBits: short "120 guests · Sep 14, 2026 · BYOB" string for the done node
  */
-export default function WelcomeRoadmap({ mode = 'byob', packageName = '' }) {
+export default function WelcomeRoadmap({ mode = 'byob', packageName = 'package', metaBits = '' }) {
   const isHosted = mode === 'hosted';
 
+  const parts = [
+    isHosted
+      ? {
+          title: 'Pick what we pour',
+          desc: <>Your <strong>{packageName}</strong> is set. Just choose the specific drinks within it.</>,
+        }
+      : {
+          title: 'Choose your drinks',
+          desc: (
+            <>
+              Cocktails, beer and wine, spirits, whatever you'd like to pour. We turn it into{' '}
+              <strong>your shopping list</strong>.
+            </>
+          ),
+        },
+    {
+      title: 'Design your menu card',
+      desc: 'Custom, standard, or skip it. We print and frame it to display on the bar.',
+    },
+    {
+      title: 'The day-of details',
+      desc: 'Where the bar sets up, parking, power, and how we get in. The practical stuff so the day runs smooth.',
+    },
+  ];
+
+  const ordinals = ['One', 'Two', 'Three'];
+
   return (
-    <>
-      <div className="potion-roadmap">
-        <div className={`potion-roadmap-step ${isHosted ? 'hosted' : 'shopping'}`}>
-          <div className="potion-roadmap-num">Part 1</div>
-          <h4 className="potion-roadmap-title">
-            {isHosted ? 'Pick what we serve' : 'Build your drink menu'}
-          </h4>
-          <p className="potion-roadmap-body">
-            {isHosted
-              ? `Your ${packageName || 'package'} is locked in. Choose the specific drinks within it.`
-              : "Cocktails, mocktails, beer and wine, spirits. Whatever you'd like to serve, we'll tally up what you need."}
-          </p>
-          <span className="potion-roadmap-tag">
-            {isHosted ? '→ we stock everything' : '→ becomes your shopping list'}
-          </span>
+    <ol className="potion-procedure">
+      <li className="potion-proc-item done">
+        <div className="potion-proc-rail">
+          <span className="potion-proc-node" aria-hidden="true">✓</span>
+          <span className="potion-proc-line" />
         </div>
-
-        <div className="potion-roadmap-step">
-          <div className="potion-roadmap-num">Part 2</div>
-          <h4 className="potion-roadmap-title">Choose menu design</h4>
-          <p className="potion-roadmap-body">
-            Custom, standard, or skip it. We bring the printed and framed menu to display on the bar.
+        <div className="potion-proc-body">
+          <span className="potion-proc-step">Already done</span>
+          <h2 className="potion-proc-title">Booking confirmed</h2>
+          <p className="potion-proc-desc">
+            {metaBits ? <><strong>{metaBits}</strong>. </> : null}
+            We've carried over your booking details, so you won't re-enter anything.
           </p>
         </div>
-
-        <div className="potion-roadmap-step">
-          <div className="potion-roadmap-num">Part 3</div>
-          <h4 className="potion-roadmap-title">Confirm logistics</h4>
-          <p className="potion-roadmap-body">
-            Event-day contact, parking, equipment, access notes.
-          </p>
-        </div>
-      </div>
-
-      <div className="potion-roadmap-footer">
-        <p>
-          After you submit, we put together your final shopping list, menu, and event order. You'll hear from us within 2 business days.
-        </p>
-      </div>
-    </>
+      </li>
+      {parts.map((p, i) => (
+        <li className="potion-proc-item" key={i}>
+          <div className="potion-proc-rail">
+            <span className="potion-proc-node" aria-hidden="true">{i + 1}</span>
+            <span className="potion-proc-line" />
+          </div>
+          <div className="potion-proc-body">
+            <span className="potion-proc-step">Part {ordinals[i]}</span>
+            <h2 className="potion-proc-title">{p.title}</h2>
+            <p className="potion-proc-desc">{p.desc}</p>
+          </div>
+        </li>
+      ))}
+    </ol>
   );
 }
