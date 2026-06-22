@@ -4,7 +4,28 @@ const path = require('path');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL?.includes('neon.tech') ? { rejectUnauthorized: false } : false
+  ssl: process.env.DATABASE_URL?.includes('neon.tech') ? { rejectUnauthorized: false } : false,
+  // Pool sizing (SERVER-11): GET /api/proposals/dashboard-stats fans out ~14
+  // concurrent aggregate queries; the pg default max of 10 forced the overflow
+  // to queue on pg-pool.connect (the spans Sentry flagged as an "N+1"). 20 covers
+  // the widest concurrent fan-out with headroom.
+  max: 20,
+  connectionTimeoutMillis: 10000,
+});
+
+// A pooled client can emit 'error' asynchronously when the backend drops it from
+// under us — a Neon idle reap, an idle-in-transaction timeout, a network blip.
+// pg forwards an idle client's error to the Pool, and an UNHANDLED pool 'error'
+// takes down the whole process (this was Sentry SERVER-17). Handle it: capture,
+// log, and let pg evict the dead client so the next checkout gets a fresh one.
+pool.on('error', (err) => {
+  try {
+    const Sentry = require('@sentry/node');
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureException(err, { tags: { area: 'pg-pool' } });
+    }
+  } catch (_sentryErr) { /* best-effort: never let error reporting crash us */ }
+  console.error('[db] idle pool client error (handled, process stays up):', err && err.message);
 });
 
 // Split a SQL script into individual statements on `;`, respecting Postgres

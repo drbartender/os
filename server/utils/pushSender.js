@@ -2,7 +2,7 @@
  * Web Push sender for the staff portal (spec §6.17).
  *
  * Phase B (Task 55): real web-push delivery. The dispatcher
- * (scheduledMessageDispatcher.dispatchPushRow) calls sendPush() once per stored
+ * (pushDispatch.dispatchPushRow) calls sendPush() once per stored
  * subscription and branches on the structured result:
  *   { ok: true }              -> sent
  *   { ok: false, gone: true } -> 410/404, the dispatcher prunes the subscription

@@ -9,7 +9,7 @@ const { resolveChannelFallback } = require('./channelFallback');
 const { suspendClientAutomation } = require('./clientAutomationSuspension');
 const { SuppressMessageError, QuotaExceededError } = require('./errors');
 const { deferRowForQuota, maybeAlertQuotaOnce } = require('./emailQuotaDefer');
-const pushSender = require('./pushSender');
+const { dispatchPushRow } = require('./pushDispatch');
 const {
   pickChannelsForUserAndCategory,
   CRITICAL_CATEGORIES,
@@ -402,105 +402,9 @@ async function lookupRecipient(recipientType, recipientId) {
 
 // ─── Dispatch one row ────────────────────────────────────────
 
-// ─── Staff portal: push channel + sibling cascade (Phase 2 Task 7) ──────
-//
-// Push rows bypass the registered-handler model (no per-message_type push handler
-// is needed; the payload travels on the row itself). dispatchPushRow iterates
-// the recipient's push_subscriptions[] via web-push (stubbed in Phase A; real
-// in Phase B Task 55). 410/404 responses prune the dead subscription inside a
-// SELECT FOR UPDATE transaction so concurrent dispatch ticks don't race on
-// jsonb_set of the same JSONB column.
-async function dispatchPushRow(row) {
-  const payload = row.payload || {};
-  // We need the recipient's push_subscriptions[]. Pull inside a FOR UPDATE
-  // transaction so we can prune dead subs atomically against concurrent dispatch.
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const { rows: userRows } = await client.query(
-      `SELECT staff_notification_preferences AS prefs
-         FROM users WHERE id = $1 FOR UPDATE`,
-      [row.recipient_id]
-    );
-    if (userRows.length === 0) {
-      await client.query('ROLLBACK');
-      await pool.query(
-        "UPDATE scheduled_messages SET status = 'failed', error_message = $2 WHERE id = $1",
-        [row.id, 'recipient user not found']
-      );
-      return;
-    }
-    const prefs = userRows[0].prefs || {};
-    const subs = Array.isArray(prefs.push_subscriptions) ? prefs.push_subscriptions : [];
-    if (subs.length === 0) {
-      await client.query('ROLLBACK');
-      await pool.query(
-        "UPDATE scheduled_messages SET status = 'suppressed', error_message = $2 WHERE id = $1",
-        [row.id, 'no_push_subscriptions']
-      );
-      return;
-    }
-
-    let anyOk = false;
-    let anyDegraded = false;
-    const survivors = [];
-    for (const sub of subs) {
-      const result = await pushSender.sendPush({
-        subscription: { endpoint: sub.endpoint, keys: sub.keys },
-        title: payload.title,
-        body: payload.body,
-        url: payload.url,
-        tag: payload.tag || row.message_type,
-        icon: payload.icon,
-      });
-      if (result && result.ok) {
-        anyOk = true;
-        survivors.push(sub);
-      } else if (result && result.gone) {
-        // Prune this subscription from the array.
-        anyDegraded = true;
-      } else {
-        // Keep the sub on transient failure; only 410/404 prunes.
-        survivors.push(sub);
-      }
-    }
-
-    if (survivors.length !== subs.length) {
-      await client.query(
-        `UPDATE users
-            SET staff_notification_preferences = jsonb_set(
-              staff_notification_preferences, '{push_subscriptions}', $2::jsonb, true)
-          WHERE id = $1`,
-        [row.recipient_id, JSON.stringify(survivors)]
-      );
-    }
-    await client.query('COMMIT');
-
-    if (anyOk) {
-      await pool.query(
-        "UPDATE scheduled_messages SET status = 'sent', sent_at = NOW(), error_message = NULL WHERE id = $1",
-        [row.id]
-      );
-      if (anyDegraded) {
-        Sentry.addBreadcrumb({
-          category: 'notifications',
-          message: 'push_partial_prune',
-          data: { user_id: row.recipient_id, row_id: row.id, pruned: subs.length - survivors.length },
-        });
-      }
-    } else {
-      await pool.query(
-        "UPDATE scheduled_messages SET status = 'failed', error_message = $2 WHERE id = $1",
-        [row.id, anyDegraded ? 'all_subscriptions_gone' : 'push_send_failed']
-      );
-    }
-  } catch (err) {
-    try { await client.query('ROLLBACK'); } catch {}
-    throw err;
-  } finally {
-    client.release();
-  }
-}
+// Push-channel dispatch (dispatchPushRow) lives in ./pushDispatch.js — extracted
+// from this file and fixed for SERVER-17 (no transaction is held across the
+// web-push network sends; dead subs are pruned in a separate short transaction).
 
 // Sibling-suppression cascade: when one row in a suppression_key group sends
 // successfully, mark the remaining pending siblings 'suppressed_by_sibling' so
