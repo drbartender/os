@@ -89,7 +89,7 @@ router.post('/', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
 router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   // Client and proposals are independent lookups — Promise.all saves one round-trip.
   // Explicit column allowlist on proposals excludes pricing_snapshot blob.
-  const [client, proposals] = await Promise.all([
+  const [client, proposals, lead] = await Promise.all([
     pool.query('SELECT * FROM clients WHERE id = $1', [req.params.id]),
     pool.query(`
       SELECT p.id, p.token, p.client_id, p.event_type, p.event_type_custom,
@@ -100,10 +100,21 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
       WHERE p.client_id = $1
       ORDER BY p.created_at DESC
     `, [req.params.id]),
+    // Latest non-terminal Thumbtack lead — drives the manual email-harvest affordance.
+    pool.query(
+      `SELECT negotiation_id FROM thumbtack_leads
+        WHERE client_id = $1 AND status NOT IN ('converted','lost')
+        ORDER BY created_at DESC LIMIT 1`,
+      [req.params.id]
+    ),
   ]);
   if (!client.rows[0]) throw new NotFoundError('Client not found.');
 
-  res.json({ ...client.rows[0], proposals: proposals.rows });
+  res.json({
+    ...client.rows[0],
+    proposals: proposals.rows,
+    thumbtack_negotiation_id: lead.rows[0]?.negotiation_id || null,
+  });
 }));
 
 /** PUT /api/clients/:id — update client */

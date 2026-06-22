@@ -1,0 +1,20 @@
+[Unit]
+Description=Thumbtack email-harvester agent (Playwright, box-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust these paths at deploy (Task 12). node lives under nvm; xvfb-run gives the
+# headful Chrome a virtual display on the headless box.
+WorkingDirectory=/home/drbartender/projects/os/thumbtack-agent
+EnvironmentFile=/home/drbartender/projects/os/thumbtack-agent/.env
+ExecStart=/usr/bin/xvfb-run -a /home/drbartender/.nvm/versions/node/v24.16.0/bin/node src/index.js
+Restart=on-failure
+RestartSec=30
+# A crash loop should not hammer Thumbtack: cap restarts.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Install]
+WantedBy=default.target

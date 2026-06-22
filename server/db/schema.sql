@@ -2352,6 +2352,10 @@ ALTER TABLE clients ADD COLUMN IF NOT EXISTS phone_status TEXT NOT NULL DEFAULT 
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS email_harvest_status TEXT NOT NULL DEFAULT 'not_needed';
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS email_harvest_attempted_at TIMESTAMPTZ;
 
+-- Thumbtack email harvester (2026-06-16): per-lead failure counter for the retry cap.
+-- Kept separate from email_harvest_attempted_at, which is the lease/cooldown timestamp.
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS email_harvest_attempts INTEGER NOT NULL DEFAULT 0;
+
 DO $$ BEGIN
   ALTER TABLE clients DROP CONSTRAINT IF EXISTS clients_email_status_check;
   ALTER TABLE clients ADD CONSTRAINT clients_email_status_check

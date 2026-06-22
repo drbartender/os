@@ -277,6 +277,10 @@ See `.env.example` for the full list. Key ones:
 | `ADMIN_EMAIL` | Admin inbox address. Seed-account email, and the default `Reply-To` on every client-facing email sent via `sendEmail`. Set to a monitored inbox in prod so client replies do not bounce. Falls through to no `Reply-To` header when unset. |
 | `ADMIN_PHONE` | Optional. E.164 number for last-minute (<72h) booking SMS alerts. Unset → admin SMS skipped; broad staff blast still fires. |
 | `THUMBTACK_WEBHOOK_SECRET` | Shared secret for Thumbtack webhook auth |
+| `THUMBTACK_AGENT_SECRET` | Shared secret for the Thumbtack email-harvester agent + admin manual-paste routes (`/api/admin/thumbtack/*`). Timing-safe compare; **fails closed (401) in every environment when unset** (unlike the webhook's warn-and-allow-in-dev). |
+| `HARVESTER_ENABLED` | Optional. Set to `false` to make `GET /api/admin/thumbtack/pending-harvest` return `[]` (redeploy-free kill-switch) and idle the box agent. Defaults on. |
+| `MAX_HARVEST_ATTEMPTS` | Optional. Transient-failure retry cap before a harvest lead is marked `failed`. Default 3. |
+| `HARVEST_COOLDOWN_INTERVAL` | Optional. Postgres interval before a leased-but-unresolved harvest lead is re-offered by `pending-harvest`. Default `'6 hours'`. |
 | `CAL_WEBHOOK_SECRET` | HMAC-SHA256 signing secret for the Cal.com webhook. Fails closed: webhook returns 503 if unset. |
 | `CAL_BOOKING_URL` | Public Cal.com booking page URL. Surfaced in 3 client comms touches (drink-plan nudge email + SMS, six-months-out marketing). Optional; templates omit the consult line when unset. |
 | `GOOGLE_PLACES_API_KEY` | Google Places API (New) key for venue-name search. Server-only. When unset, venue search degrades to a plain text input. |

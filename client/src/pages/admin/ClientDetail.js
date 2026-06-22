@@ -44,6 +44,9 @@ export default function ClientDetail() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
+  const [harvestEmail, setHarvestEmail] = useState('');
+  const [harvestBusy, setHarvestBusy] = useState(false);
+  const [harvestError, setHarvestError] = useState('');
 
   useEffect(() => {
     api.get(`/clients/${id}`)
@@ -103,6 +106,42 @@ export default function ClientDetail() {
         source: client.source || 'direct',
         notes: client.notes || '',
       });
+    }
+  };
+
+  const refreshClient = () => api.get(`/clients/${id}`).then(res => setClient(res.data)).catch(() => {});
+
+  // Manual email-harvest fallback (Thumbtack never sends the email). Routes through the
+  // admin path of /email-harvested so it sets the email, marks the lead harvested, and
+  // re-arms any drip touches suppressed for the missing email.
+  const submitHarvestEmail = async () => {
+    setHarvestError('');
+    const email = harvestEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setHarvestError('Enter a valid email address.'); return; }
+    setHarvestBusy(true);
+    try {
+      await api.post('/admin/thumbtack/email-harvested', { negotiation_id: client.thumbtack_negotiation_id, email });
+      setHarvestEmail('');
+      await refreshClient();
+      toast.success('Customer email saved.');
+    } catch (err) {
+      setHarvestError(err.message || 'Could not save the email. Try again.');
+    } finally {
+      setHarvestBusy(false);
+    }
+  };
+
+  const retryHarvest = async () => {
+    setHarvestError('');
+    setHarvestBusy(true);
+    try {
+      await api.post('/admin/thumbtack/rearm', { negotiation_id: client.thumbtack_negotiation_id });
+      await refreshClient();
+      toast.success('Back in the harvester queue.');
+    } catch (err) {
+      setHarvestError(err.message || 'Could not retry. Try again.');
+    } finally {
+      setHarvestBusy(false);
     }
   };
 
@@ -215,6 +254,38 @@ export default function ClientDetail() {
         </div>
 
         <div className="vstack" style={{ gap: 'var(--gap)' }}>
+          {(client.email_harvest_status === 'pending' || client.email_harvest_status === 'failed') && !client.email && client.thumbtack_negotiation_id && (
+            <div className="card">
+              <div className="card-head"><h3>Customer email needed</h3></div>
+              <div className="card-body">
+                <div className="muted tiny" style={{ marginBottom: 8 }}>
+                  {client.email_harvest_status === 'failed'
+                    ? "The harvester couldn't read this lead's email. Paste it in, or send the lead back to the queue."
+                    : "Thumbtack didn't send an email for this lead. The harvester will fill it in, or you can paste it now."}
+                </div>
+                <input
+                  className="input"
+                  type="email"
+                  placeholder="customer@example.com"
+                  value={harvestEmail}
+                  onChange={e => { setHarvestEmail(e.target.value); if (harvestError) setHarvestError(''); }}
+                  aria-invalid={!!harvestError}
+                  disabled={harvestBusy}
+                />
+                {harvestError && <FieldError error={harvestError} />}
+                <div className="hstack" style={{ gap: 6, marginTop: 8 }}>
+                  <button type="button" className="btn btn-primary" onClick={submitHarvestEmail} disabled={harvestBusy || !harvestEmail.trim()}>
+                    {harvestBusy ? 'Saving…' : 'Save email'}
+                  </button>
+                  {client.email_harvest_status === 'failed' && (
+                    <button type="button" className="btn btn-ghost" onClick={retryHarvest} disabled={harvestBusy}>
+                      Retry harvest
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           {editing && (
             <div className="card">
               <div className="card-head"><h3>Edit contact</h3></div>

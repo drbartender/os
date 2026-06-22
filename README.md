@@ -95,6 +95,8 @@ Copy `.env.example` and fill in values. All variables:
 | `REACT_APP_GOOGLE_REVIEW_URL` | For tip pages | Client build-time Google review URL (same value as `PUBLIC_GOOGLE_REVIEW_URL`) |
 | `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` | For tip pages | Inbox that receives bartender feedback from the tip thank-you flow (default: `contact@drbartender.com`) |
 | `THUMBTACK_WEBHOOK_SECRET` | For Thumbtack | Shared secret for Thumbtack webhook auth |
+| `THUMBTACK_AGENT_SECRET` | For harvester | Shared secret for the email-harvester agent + admin-paste routes; fails closed when unset |
+| `HARVESTER_ENABLED` | Optional | `false` idles the harvester (server returns `[]`, agent idles). Default on |
 | `CAL_WEBHOOK_SECRET` | For Cal.com | HMAC-SHA256 signing secret for the Cal.com webhook. Required in prod; webhook returns 503 if unset. |
 | `CAL_BOOKING_URL` | For Cal.com | Public Cal.com booking page URL. Surfaced in three client comms touches (drink-plan nudge email + SMS, six-months-out marketing). Optional; templates omit the consult line when unset. |
 | `GOOGLE_PLACES_API_KEY` | For venue search | Google Places API (New) key for venue-name search. Server-only. When unset, venue search degrades to a plain text input. |
@@ -199,6 +201,7 @@ dr-bartender/
 │   │   ├── publicFeedback.js   # Post-event feedback router (5-star sentiment routing)
 │   │   ├── testFeedback.js     # Receives Lab Rat bug reports — INSERTs into `tester_bugs` (durable) AND fire-and-forget emails `ADMIN_FEEDBACK_NOTIFICATION_EMAIL` (notification)
 │   │   ├── thumbtack.js        # Thumbtack webhook endpoints (leads, messages, reviews)
+│   │   ├── thumbtackAgent.js   # Thumbtack email-harvester API (/api/admin/thumbtack): pending-harvest, email-harvested, harvest-failed, rearm. Driven by the box-only agent in thumbtack-agent/
 │   │   ├── labrat.js           # Lab Rat program — /api/qa missions, quiz, seed, bug-counts
 │   │   └── venues.js           # Google Places venue search proxy
 │   ├── utils/

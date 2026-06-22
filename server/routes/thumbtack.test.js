@@ -224,6 +224,61 @@ test('POST /messages persists the message and 200s with no admin email block', a
   await pool.query('DELETE FROM thumbtack_messages WHERE message_id = $1', [msgId]);
 });
 
+test('seeding: a new email-less Thumbtack lead flags its client pending', async () => {
+  thumbtackRouter.__setDeps({ createDraftProposalFromLead: async () => null });
+  const neg = `test-seed-pending-${Date.now()}`;
+  created.negotiationIds.push(neg);
+  const res = await postLead(neg);
+  assert.equal(res.status, 200);
+  const lead = await pool.query('SELECT client_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg]);
+  const clientId = lead.rows[0].client_id;
+  assert.ok(clientId, 'a client should have been created');
+  created.clientIds.push(clientId);
+  const c = await pool.query('SELECT email, email_harvest_status FROM clients WHERE id = $1', [clientId]);
+  assert.equal(c.rows[0].email, null, 'harness lead has no email');
+  assert.equal(c.rows[0].email_harvest_status, 'pending', 'an email-less Thumbtack client must be flagged pending');
+});
+
+test('seeding: a returning lead does NOT re-flag a client whose harvest already concluded', async () => {
+  // findOrCreateClient's phone match only fires on email-NULL, name-matching rows
+  // (anti-takeover guard in clientDedup.js), so a Thumbtack lead never resolves to a
+  // client that already has an email. The reachable protection is the STATUS guard:
+  // once a client's harvest concluded (failed/harvested), a new lead must not reset
+  // it to pending. Re-arm is an explicit admin action. Here we drive a 'failed' row.
+  thumbtackRouter.__setDeps({ createDraftProposalFromLead: async () => null });
+  const phone = `+1555${String(Date.now()).slice(-7)}`;
+  const name = 'Harness Returning';
+  const mkBody = (neg) => JSON.stringify({
+    leadID: neg,
+    customer: { name, phone },
+    request: { category: 'Wedding Bartending', description: 'x', location: { city: 'Tampa', state: 'FL', zipCode: '33602' }, details: [] },
+  });
+  const headers = { 'Content-Type': 'application/json' };
+  if (secret) headers['x-thumbtack-secret'] = secret;
+
+  // Lead 1 creates the email-less client (seeded pending).
+  const neg1 = `test-seed-a-${Date.now()}`;
+  created.negotiationIds.push(neg1);
+  await httpReq('POST', '/api/thumbtack/leads', headers, mkBody(neg1));
+  const r1 = await pool.query('SELECT client_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg1]);
+  const clientId = r1.rows[0].client_id;
+  assert.ok(clientId, 'lead 1 should create a client');
+  created.clientIds.push(clientId);
+
+  // The harvester gave up: status 'failed', email still null.
+  await pool.query("UPDATE clients SET email_harvest_status = 'failed' WHERE id = $1", [clientId]);
+
+  // Lead 2 (same name + phone) dedupes onto the same email-null client.
+  const neg2 = `test-seed-b-${Date.now()}`;
+  created.negotiationIds.push(neg2);
+  const res = await httpReq('POST', '/api/thumbtack/leads', headers, mkBody(neg2));
+  assert.equal(res.status, 200);
+  const r2 = await pool.query('SELECT client_id FROM thumbtack_leads WHERE negotiation_id = $1', [neg2]);
+  assert.equal(r2.rows[0].client_id, clientId, 'lead 2 should dedupe onto the same email-null client by name+phone');
+  const status = await pool.query('SELECT email_harvest_status FROM clients WHERE id = $1', [clientId]);
+  assert.equal(status.rows[0].email_harvest_status, 'failed', 'a concluded (failed) harvest must NOT be reset to pending by a new lead');
+});
+
 after(async () => {
   for (const id of created.proposalIds) {
     await pool.query('DELETE FROM proposal_addons WHERE proposal_id = $1', [id]);

@@ -73,6 +73,20 @@ if (!process.env.CAL_WEBHOOK_SECRET) {
   } catch (_) { /* sentry optional in dev */ }
 }
 
+// Thumbtack email-harvester agent secret presence check. The agent routes fail
+// closed (401) in every environment when this is unset; warn at startup so the
+// missed config is visible even before any agent traffic arrives.
+if (!process.env.THUMBTACK_AGENT_SECRET) {
+  const msg = 'THUMBTACK_AGENT_SECRET is not set; Thumbtack email-harvester agent routes will reject every request (fail closed)';
+  console.warn(`[startup] ${msg}`);
+  try {
+    const Sentry = require('@sentry/node');
+    if (process.env.SENTRY_DSN_SERVER) {
+      Sentry.captureMessage(msg, { level: 'warning', tags: { component: 'startup', subsystem: 'thumbtack-harvester' } });
+    }
+  } catch (_) { /* sentry optional in dev */ }
+}
+
 const app = express();
 app.set('trust proxy', 1); // Required for Render/Heroku reverse proxies (rate limiter, IP detection)
 const PORT = process.env.PORT || 5000;
@@ -196,6 +210,10 @@ app.use('/api/me', require('./routes/me'));
 app.use('/api/me', require('./routes/staffPortal'));
 app.use('/api/payment', require('./routes/payment'));
 app.use('/api/application', require('./routes/application'));
+// Thumbtack email-harvester agent API (spec 2026-06-16). Mounted BEFORE the
+// general /api/admin router so the agent-secret paths match here first and never
+// hit the admin router's JWT auth (the agent presents no JWT).
+app.use('/api/admin/thumbtack', require('./routes/thumbtackAgent'));
 app.use('/api/admin', require('./routes/admin'));
 // Admin one-click cover-swap routes (spec section 6.5). Lives at /api/admin
 // so the routing-table audit lines up with the other admin surfaces. JWT

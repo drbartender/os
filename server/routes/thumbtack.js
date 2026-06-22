@@ -1,5 +1,4 @@
 const express = require('express');
-const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const Sentry = require('@sentry/node');
 const { pool } = require('../db');
@@ -7,6 +6,7 @@ const { newThumbtackLeadAdmin, newThumbtackReviewAdmin } = require('../utils/ema
 const { notifyAdminCategory } = require('../utils/adminNotifications');
 const { ADMIN_URL } = require('../utils/urls');
 const { findOrCreateClient } = require('../utils/clientDedup');
+const { safeEqual } = require('../utils/secrets');
 const { createDraftProposalFromLead } = require('../utils/thumbtackProposalDraft');
 
 // Test seam: lets thumbtack.test.js stub the draft builder to throw and prove
@@ -24,13 +24,6 @@ router.use(webhookLimiter);
 // ─── Webhook Auth ──────────────────────────────────────────────────
 // Thumbtack can send Basic Auth or a custom header depending on setup.
 // We check both against THUMBTACK_WEBHOOK_SECRET.
-
-/** Timing-safe string comparison */
-function safeEqual(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string') return false;
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
-}
 
 function verifyWebhook(req, res, next) {
   const secret = process.env.THUMBTACK_WEBHOOK_SECRET;
@@ -295,6 +288,18 @@ router.post('/leads', asyncHandler(async (req, res) => {
         JSON.stringify(body),
       ]
     );
+
+    // Thumbtack never sends the customer email. If this client has no email yet,
+    // flag it for the email harvester to fill in. Guarded so it only flips
+    // not_needed -> pending: a client that already has an email, or is already
+    // pending/harvested/failed, is left untouched.
+    if (clientId) {
+      await dbClient.query(
+        `UPDATE clients SET email_harvest_status='pending'
+         WHERE id=$1 AND email IS NULL AND email_harvest_status='not_needed'`,
+        [clientId]
+      );
+    }
 
     await dbClient.query('COMMIT');
     console.log(`Thumbtack lead ${lead.negotiationId} saved — client ${clientId}`);

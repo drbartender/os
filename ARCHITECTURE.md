@@ -425,6 +425,17 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | POST | `/messages` | Webhook secret | Receive customer message from Thumbtack thread |
 | POST | `/reviews` | Webhook secret | Receive new Thumbtack review |
 
+### Thumbtack Email Harvester — `/api/admin/thumbtack`
+
+Agent + admin-paste surface for filling the customer email Thumbtack never sends (only name + phone arrive). Auth is `agentOrAdmin` (timing-safe `x-thumbtack-agent-secret` OR an admin/manager JWT), fail-closed in every env. Mounted BEFORE `/api/admin` so the agent-secret paths skip that router's JWT guard. The box-only Playwright agent that drives these lives in `thumbtack-agent/` (committed, NOT deployed to Render).
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/pending-harvest` | Agent secret | Work queue: up to N `{negotiation_id}` for pending, email-null, past-cooldown clients with a non-terminal lead; atomically leases each (`FOR UPDATE SKIP LOCKED`). `HARVESTER_ENABLED=false` → `[]` |
+| POST | `/email-harvested` | Agent secret OR admin JWT | Set `clients.email` + status `harvested`. Agent may only write a pending+null client; admin (manual paste) may override any status. UNIQUE-email collision → `failed`+alert (agent) or recoverable 409 (admin), never a merge or stamp. Rejects pro-domain / `ADMIN_EMAIL` / active `users.email`. After commit, re-arms suppressed `client_no_email` drip touches |
+| POST | `/harvest-failed` | Agent secret | Outcome report: `session_expired` (alert, no count), `ambiguous` (failed), `render_timeout`/`navigation_error`/`lead_not_found` (bump `email_harvest_attempts`, fail at `MAX_HARVEST_ATTEMPTS`) |
+| POST | `/rearm` | Admin JWT | Put a `failed` lead back in the queue (status `pending`, attempts 0, cooldown cleared) |
+
 ### Cal.com Integration — `/api/calcom`
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -797,7 +808,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - `notes`
 - `communication_preferences` JSONB — `{sms_enabled, email_enabled, marketing_enabled}` (defaults true). Drives the Automated Communication system's send gating.
 - `email_status` (`ok` | `bad`), `phone_status` (`ok` | `bad`) — channel deliverability flags flipped on bounce/blocked-list signals.
-- `email_harvest_status` (`not_needed` | `pending` | `harvested` | `failed`), `email_harvest_attempted_at` — track the email-harvest flow for SMS-only leads. Partial index `idx_clients_email_harvest_pending` powers the scheduler's pending sweep.
+- `email_harvest_status` (`not_needed` | `pending` | `harvested` | `failed`), `email_harvest_attempted_at` (lease + cooldown timestamp), `email_harvest_attempts` (failure counter for the retry cap) — track the Thumbtack email-harvest flow for email-less leads. Partial index `idx_clients_email_harvest_pending` powers the agent's `pending-harvest` queue.
 - **OTP login** (`/api/client-auth`): `auth_token` (bcrypt hash of the 6-digit code), `auth_token_expires_at`, `auth_token_attempts` (per-account brute-force ceiling). `token_version` — manual session-revocation lever embedded in the OTP-issued JWT and checked in `clientAuth` middleware (mirrors `users.token_version`); bumping it kills a client's outstanding 7-day sessions without rotating `JWT_SECRET`. No automatic trigger today (login is OTP-only, no password to reset).
 - **Intake de-duplication:** every intake path (Thumbtack webhook, admin `POST /proposals`, public quote wizard, BEO/shifts create) resolves clients through `findOrCreateClient` (`server/utils/clientDedup.js`), which matches on email OR normalized phone (name-guarded on phone-only matches) and backfills NULL fields only — never overwriting an existing identity, so the unauthenticated wizard is safe. `mergeClients` (`server/utils/clientMerge.js`) consolidates pre-existing duplicates by repointing every `client_id` FK (discovered from the catalog; all are `ON DELETE SET NULL`) onto the surviving row, then deleting the loser.
 
