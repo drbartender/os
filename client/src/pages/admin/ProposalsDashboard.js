@@ -36,6 +36,10 @@ export default function ProposalsDashboard() {
   const toast = useToast();
 
   const [proposals, setProposals] = useState([]);
+  // Server-side total for the current bucket (from the X-Total-Count header).
+  // The list itself is capped at the server page size (default 50), so `total`
+  // can exceed proposals.length — that's how we know more rows exist.
+  const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState({ active: 0, draft: 0, accepted: 0, paid: 0, archived: 0 });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -81,7 +85,12 @@ export default function ProposalsDashboard() {
       const qs = tabToQuery[currentTab] || tabToQuery.active;
       const sourceQs = sourceFilter ? `&source=${sourceFilter}` : '';
       const list = await api.get(`/proposals${qs}${sourceQs}`);
-      setProposals(list.data || []);
+      const rows = list.data || [];
+      setProposals(rows);
+      // X-Total-Count is the unpaginated total for this bucket. Fall back to the
+      // number of rows we actually got if the header is missing (older server).
+      const headerTotal = Number(list.headers?.['x-total-count']);
+      setTotal(Number.isFinite(headerTotal) ? headerTotal : rows.length);
     } catch (err) {
       console.error('Failed to fetch proposals:', err);
       toast.error('Failed to load proposals. Try refreshing.');
@@ -235,7 +244,10 @@ export default function ProposalsDashboard() {
 
       {!loading && (
         <div className="tiny muted" style={{ padding: '8px 2px' }}>
-          {filtered.length} {filtered.length === 1 ? 'proposal' : 'proposals'} · Click a row to open
+          {search
+            ? `${filtered.length} ${filtered.length === 1 ? 'proposal' : 'proposals'} match`
+            : `${total} ${total === 1 ? 'proposal' : 'proposals'}${proposals.length < total ? ` · showing first ${proposals.length}` : ''}`}
+          {' · Click a row to open'}
         </div>
       )}
     </div>

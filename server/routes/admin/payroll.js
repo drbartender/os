@@ -466,9 +466,14 @@ router.get('/payroll/contractors/:userId/payouts', auth, adminOnly, asyncHandler
     `SELECT po.id, po.status, po.total_cents,
             po.payment_method, po.payment_handle, po.paid_at, po.paystub_storage_key,
             pp.id AS period_id, pp.start_date, pp.end_date, pp.payday, pp.status AS period_status,
-            (SELECT COUNT(*) FROM payout_events WHERE payout_id = po.id) AS event_count
+            COALESCE(ec.event_count, 0) AS event_count
        FROM payouts po
        JOIN pay_periods pp ON pp.id = po.pay_period_id
+       LEFT JOIN (
+         SELECT payout_id, COUNT(*) AS event_count
+           FROM payout_events
+          GROUP BY payout_id
+       ) ec ON ec.payout_id = po.id
       WHERE po.contractor_id = $1
       ORDER BY pp.start_date DESC`,
     [userId]

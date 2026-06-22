@@ -57,12 +57,17 @@ router.get('/', auth, requireOnboarded, asyncHandler(async (req, res) => {
         COALESCE(c.name, s.client_name) AS client_name,
         COALESCE(c.phone, s.client_phone) AS client_phone,
         COALESCE(c.email, s.client_email) AS client_email,
-        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
-        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
+        rc.request_count,
+        rc.approved_count
       FROM shifts s
       LEFT JOIN users u ON u.id = s.created_by
       LEFT JOIN proposals p ON p.id = s.proposal_id
       LEFT JOIN clients c ON c.id = p.client_id
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) FILTER (WHERE sr.status != 'denied') AS request_count,
+               COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
+        FROM shift_requests sr WHERE sr.shift_id = s.id
+      ) rc ON true
       ORDER BY s.event_date ASC
       LIMIT 500
     `);
@@ -87,15 +92,20 @@ router.get('/unstaffed-upcoming', auth, requireStaffing, asyncHandler(async (req
     SELECT s.id, s.event_date, s.start_time, s.end_time, s.location, s.guest_count,
            s.event_type, s.event_type_custom, s.positions_needed, s.proposal_id,
            COALESCE(c.name, s.client_name) AS client_name,
-           (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
-           (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
+           rc.request_count,
+           rc.approved_count
     FROM shifts s
     LEFT JOIN proposals p ON p.id = s.proposal_id
     LEFT JOIN clients c ON c.id = p.client_id
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) FILTER (WHERE sr.status != 'denied') AS request_count,
+             COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
+      FROM shift_requests sr WHERE sr.shift_id = s.id
+    ) rc ON true
     WHERE s.status = 'open'
       AND s.event_date >= CURRENT_DATE
       AND s.positions_needed IS JSON ARRAY
-      AND (SELECT COUNT(*) FROM shift_requests sr2 WHERE sr2.shift_id = s.id AND sr2.status = 'approved' AND sr2.dropped_at IS NULL)
+      AND rc.approved_count
           < jsonb_array_length(CASE WHEN s.positions_needed IS JSON ARRAY THEN s.positions_needed::jsonb ELSE '[]'::jsonb END)
     ORDER BY s.event_date ASC, s.start_time ASC
     LIMIT 200
@@ -196,8 +206,8 @@ router.get('/my-requests', auth, asyncHandler(async (req, res) => {
 router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async (req, res) => {
   const result = await pool.query(`
     SELECT s.*,
-      (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
-      (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count,
+      rc.request_count,
+      rc.approved_count,
       (SELECT COALESCE(json_agg(json_build_object(
                 'user_id', sr.user_id,
                 'name', COALESCE(cp.preferred_name, u.email),
@@ -208,6 +218,11 @@ router.get('/by-proposal/:proposalId', auth, requireStaffing, asyncHandler(async
          LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
         WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_staff
     FROM shifts s
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) FILTER (WHERE sr.status != 'denied') AS request_count,
+             COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
+      FROM shift_requests sr WHERE sr.shift_id = s.id
+    ) rc ON true
     WHERE s.proposal_id = $1
     ORDER BY s.event_date ASC, s.start_time ASC, s.id ASC
     LIMIT 100
@@ -226,11 +241,16 @@ router.get('/detail/:id', auth, requireStaffing, asyncHandler(async (req, res) =
         COALESCE(c.email, s.client_email) AS client_email,
         p.total_price AS proposal_total,
         p.token AS proposal_token,
-        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status != 'denied') AS request_count,
-        (SELECT COUNT(*) FROM shift_requests sr WHERE sr.shift_id = s.id AND sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
+        rc.request_count,
+        rc.approved_count
       FROM shifts s
       LEFT JOIN proposals p ON p.id = s.proposal_id
       LEFT JOIN clients c ON c.id = p.client_id
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) FILTER (WHERE sr.status != 'denied') AS request_count,
+               COUNT(*) FILTER (WHERE sr.status = 'approved' AND sr.dropped_at IS NULL) AS approved_count
+        FROM shift_requests sr WHERE sr.shift_id = s.id
+      ) rc ON true
       WHERE s.id = $1
     `, [req.params.id]),
     pool.query(`
@@ -691,13 +711,22 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
   const request = result.rows[0];
   const shift = shiftRes.rows[0];
 
+  // Fetch the assignee's email + contractor profile ONCE; both the SMS and
+  // email notification blocks below read from this single row (SMS uses
+  // phone + preferred_name, email uses email + preferred_name). Best-effort:
+  // a fetch failure must not break the (already-created) assignment response,
+  // so swallow it and let both blocks no-op.
+  const recipient = await pool.query(
+    'SELECT u.email, cp.preferred_name, cp.phone FROM users u LEFT JOIN contractor_profiles cp ON cp.user_id = u.id WHERE u.id = $1',
+    [user_id]
+  ).then(r => r.rows[0] || {}).catch((e) => {
+    console.error('Assignment notification fetch failed (non-blocking):', e.message);
+    return {};
+  });
+
   // Send SMS notification (non-blocking)
   try {
-    const cpRes = await pool.query(
-      'SELECT preferred_name, phone FROM contractor_profiles WHERE user_id = $1',
-      [user_id]
-    );
-    const cp = cpRes.rows[0];
+    const cp = recipient;
     if (cp?.phone) {
       const date = shift.event_date
         ? new Date(shift.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
@@ -725,12 +754,7 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
 
   // Send email notification (non-blocking)
   try {
-    const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [user_id]);
-    const staffEmail = userRes.rows[0]?.email;
-    const cpRes2 = await pool.query(
-      'SELECT preferred_name FROM contractor_profiles WHERE user_id = $1',
-      [user_id]
-    );
+    const staffEmail = recipient.email;
     if (staffEmail) {
       const date = shift.event_date
         ? new Date(shift.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
@@ -739,7 +763,7 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
       // house setup clock time; null start time → template omits the row.
       const setupTime = subtractMinutesFromTime(shift.start_time, shift.setup_minutes_before ?? 60);
       const tpl = emailTemplates.shiftRequestApproved({
-        staffName: cpRes2.rows[0]?.preferred_name || 'there',
+        staffName: recipient.preferred_name || 'there',
         eventTypeLabel: getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom }),
         eventDate: date,
         startTime: shift.start_time || 'TBD',
@@ -850,19 +874,28 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
 
   // SMS the staff member when their request is approved
   if (status === 'approved') {
-    try {
-      const infoRes = await pool.query(`
-        SELECT s.event_type, s.event_type_custom, s.client_name,
-               s.event_date, s.start_time, s.end_time, s.location,
-               s.setup_minutes_before,
-               cp.phone, cp.preferred_name
-        FROM shift_requests sr
-        JOIN shifts s ON s.id = sr.shift_id
-        LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-        WHERE sr.id = $1
-      `, [req.params.requestId]);
+    // Fetch the staffer's email + contractor profile + shift fields ONCE; both
+    // the SMS and email blocks below read from this single row (superset of the
+    // columns each needs; email gates on info.email, SMS gates on info.phone).
+    // Best-effort: a fetch failure must not break the (already-committed)
+    // approval response, so swallow it and let both blocks no-op.
+    const info = await pool.query(`
+      SELECT u.email,
+             s.event_type, s.event_type_custom, s.client_name,
+             s.event_date, s.start_time, s.end_time, s.location,
+             s.setup_minutes_before,
+             cp.phone, cp.preferred_name
+      FROM shift_requests sr
+      JOIN shifts s ON s.id = sr.shift_id
+      JOIN users u ON u.id = sr.user_id
+      LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
+      WHERE sr.id = $1
+    `, [req.params.requestId]).then(r => r.rows[0]).catch((e) => {
+      console.error('Shift approval notification fetch failed (non-blocking):', e.message);
+      return undefined;
+    });
 
-      const info = infoRes.rows[0];
+    try {
       if (info?.phone) {
         const date = info.event_date
           ? new Date(info.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
@@ -890,32 +923,21 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
 
     // Email the staff member (non-blocking)
     try {
-      const userRes = await pool.query('SELECT email FROM users WHERE id = $1', [result.rows[0].user_id]);
-      const staffEmail = userRes.rows[0]?.email;
-      const infoForEmail = (await pool.query(`
-        SELECT s.event_type, s.event_type_custom,
-               s.event_date, s.start_time, s.end_time, s.location,
-               s.setup_minutes_before,
-               cp.preferred_name
-        FROM shift_requests sr
-        JOIN shifts s ON s.id = sr.shift_id
-        LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
-        WHERE sr.id = $1
-      `, [req.params.requestId])).rows[0];
-      if (staffEmail && infoForEmail) {
-        const date = infoForEmail.event_date
-          ? new Date(infoForEmail.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
+      const staffEmail = info?.email;
+      if (staffEmail && info) {
+        const date = info.event_date
+          ? new Date(info.event_date).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' })
           : 'TBD';
         // Back-of-house setup clock time (start − minutes, default 60). null when
         // start time is missing/unparseable → template omits the row entirely.
-        const setupTime = subtractMinutesFromTime(infoForEmail.start_time, infoForEmail.setup_minutes_before ?? 60);
+        const setupTime = subtractMinutesFromTime(info.start_time, info.setup_minutes_before ?? 60);
         const tpl = emailTemplates.shiftRequestApproved({
-          staffName: infoForEmail.preferred_name || 'there',
-          eventTypeLabel: getEventTypeLabel({ event_type: infoForEmail.event_type, event_type_custom: infoForEmail.event_type_custom }),
+          staffName: info.preferred_name || 'there',
+          eventTypeLabel: getEventTypeLabel({ event_type: info.event_type, event_type_custom: info.event_type_custom }),
           eventDate: date,
-          startTime: infoForEmail.start_time || 'TBD',
-          endTime: infoForEmail.end_time || 'TBD',
-          location: infoForEmail.location || 'TBD',
+          startTime: info.start_time || 'TBD',
+          endTime: info.end_time || 'TBD',
+          location: info.location || 'TBD',
           setupTime,
         });
         await sendEmail({ to: staffEmail, ...tpl });

@@ -48,12 +48,11 @@ router.put('/settings', auth, adminOnly, asyncHandler(async (req, res) => {
   const entries = Object.entries(req.body);
   if (entries.length === 0) throw new ValidationError({ _form: 'No settings provided.' });
 
-  for (const [key, value] of entries) {
-    await pool.query(`
-      INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
-      ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
-    `, [key, String(value)]);
-  }
+  await pool.query(`
+    INSERT INTO app_settings (key, value, updated_at)
+    SELECT k, v, NOW() FROM unnest($1::text[], $2::text[]) AS t(k, v)
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+  `, [entries.map((e) => e[0]), entries.map((e) => String(e[1]))]);
 
   const result = await pool.query('SELECT key, value FROM app_settings');
   const settings = {};

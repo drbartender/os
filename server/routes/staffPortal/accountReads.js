@@ -56,47 +56,52 @@ function register(router) {
   // agreement, NO application — all the LEFT JOINs collapse to nulls and we
   // return them as nulls. Never 500.
   router.get('/profile', asyncHandler(async (req, res) => {
-    const profileRes = await pool.query(
-      `SELECT
-         u.email,
-         cp.preferred_name,
-         cp.phone,
-         cp.street_address,
-         cp.city,
-         cp.state,
-         cp.zip_code,
-         cp.emergency_contact_name,
-         cp.emergency_contact_phone,
-         cp.emergency_contact_relationship,
-         -- Prefer the signed agreement's full_name (legal doc); fall back to
-         -- the application's full_name; null if the staffer is brand-new and
-         -- has neither.
-         COALESCE(ag.full_name, ap.full_name) AS legal_name
-       FROM users u
-       LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
-       LEFT JOIN agreements           ag ON ag.user_id = u.id
-       LEFT JOIN applications         ap ON ap.user_id = u.id
-       WHERE u.id = $1`,
-      [req.user.id]
-    );
+    // The two reads are independent (both keyed only on req.user.id, neither
+    // uses the other's result), so fire them concurrently. asyncHandler still
+    // funnels a rejection from either to the global error middleware.
+    const [profileRes, pendingRes] = await Promise.all([
+      pool.query(
+        `SELECT
+           u.email,
+           cp.preferred_name,
+           cp.phone,
+           cp.street_address,
+           cp.city,
+           cp.state,
+           cp.zip_code,
+           cp.emergency_contact_name,
+           cp.emergency_contact_phone,
+           cp.emergency_contact_relationship,
+           -- Prefer the signed agreement's full_name (legal doc); fall back to
+           -- the application's full_name; null if the staffer is brand-new and
+           -- has neither.
+           COALESCE(ag.full_name, ap.full_name) AS legal_name
+         FROM users u
+         LEFT JOIN contractor_profiles cp ON cp.user_id = u.id
+         LEFT JOIN agreements           ag ON ag.user_id = u.id
+         LEFT JOIN applications         ap ON ap.user_id = u.id
+         WHERE u.id = $1`,
+        [req.user.id]
+      ),
+      // Most recent non-consumed, non-expired pending change. The partial unique
+      // index `idx_pending_email_changes_new_email_pending` enforces at-most-one
+      // pending row per new_email globally, but the same user could in theory
+      // have rows for two different new_emails if the supersede UPDATE in
+      // request-email-change failed mid-flight. ORDER BY created_at DESC LIMIT 1
+      // gives us the canonical "most recent" without depending on that.
+      pool.query(
+        `SELECT new_email, expires_at
+           FROM pending_email_changes
+          WHERE user_id = $1
+            AND consumed_at IS NULL
+            AND expires_at > NOW()
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [req.user.id]
+      ),
+    ]);
     const row = profileRes.rows[0] || {};
 
-    // Most recent non-consumed, non-expired pending change. The partial unique
-    // index `idx_pending_email_changes_new_email_pending` enforces at-most-one
-    // pending row per new_email globally, but the same user could in theory
-    // have rows for two different new_emails if the supersede UPDATE in
-    // request-email-change failed mid-flight. ORDER BY created_at DESC LIMIT 1
-    // gives us the canonical "most recent" without depending on that.
-    const pendingRes = await pool.query(
-      `SELECT new_email, expires_at
-         FROM pending_email_changes
-        WHERE user_id = $1
-          AND consumed_at IS NULL
-          AND expires_at > NOW()
-        ORDER BY created_at DESC
-        LIMIT 1`,
-      [req.user.id]
-    );
     const pending = pendingRes.rows[0]
       ? {
           new_email: pendingRes.rows[0].new_email,
