@@ -38,7 +38,7 @@ export default function Login() {
       login(res.data.token, res.data.user);
       const u = res.data.user;
       if (u.role === 'admin') navigate('/admin');
-      else if (['applied','interviewing','rejected'].includes(u.onboarding_status)) navigate('/application-status');
+      else if (['applied','interviewing','rejected'].includes(u.onboarding_status)) navigate(getHomePath(u));
       else if (u.onboarding_status === 'in_progress' && !u.has_application) {
         if (window.location.hostname.startsWith('staff.')) {
           const params = new URLSearchParams();

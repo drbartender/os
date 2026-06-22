@@ -61,7 +61,7 @@ router.get('/users', auth, adminOnly, asyncHandler(async (req, res) => {
 }));
 
 // Get single user record (full detail — includes application data)
-router.get('/users/:id', auth, adminOnly, asyncHandler(async (req, res) => {
+router.get('/users/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const userId = req.params.id;
 
   const [userRes, progressRes, profileRes, agreementRes, paymentRes, appRes] = await Promise.all([
@@ -81,13 +81,28 @@ router.get('/users/:id', auth, adminOnly, asyncHandler(async (req, res) => {
     if (payment.account_number) { const raw = decrypt(payment.account_number); payment.account_number = '****' + raw.slice(-4); }
   }
 
+  // Least-privilege for managers (this route is open to admin + manager). A
+  // manager manages/evaluates/schedules staff, but the payroll/financial tier
+  // stays admin-only — managers don't process payouts (those routes are
+  // adminOnly). So withhold the whole payment_profiles row (bank is masked above
+  // regardless, plus payment handle / method / stripe ids) and the W-9 tax
+  // document. Operational + evaluation data (profile, application answers,
+  // resume/headshot/BASSET, scorecard, shifts) stays visible.
+  const isManager = req.user.role !== 'admin';
+  const profile = profileRes.rows[0] || {};
+  const application = appRes.rows[0] || {};
+  if (isManager) {
+    if ('w9_file_url' in profile) profile.w9_file_url = null;
+    if ('w9_file_url' in application) application.w9_file_url = null;
+  }
+
   res.json({
     user: userRes.rows[0],
     progress: progressRes.rows[0] || {},
-    profile: profileRes.rows[0] || {},
+    profile,
     agreement: agreementRes.rows[0] || {},
-    payment,
-    application: appRes.rows[0] || {}
+    payment: isManager ? {} : payment,
+    application
   });
 }));
 
@@ -512,7 +527,7 @@ router.get('/users/:id/stub-co-participated-proposals', auth, requireAdminOrMana
 // ─── Seniority Management ────────────────────────────────────────
 
 // Get seniority info for a user
-router.get('/users/:id/seniority', auth, adminOnly, asyncHandler(async (req, res) => {
+router.get('/users/:id/seniority', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const userId = req.params.id;
 
   const [profileRes, eventsRes] = await Promise.all([

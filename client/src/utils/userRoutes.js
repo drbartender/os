@@ -1,3 +1,21 @@
+// Applicant-tier routes (/apply, /application-status) are mounted on
+// hiring.drbartender.com and the admin app, but NOT on staff.drbartender.com
+// (see App.js StaffSiteRoutes). An applicant who lands on staff.* (a bookmark,
+// a stale link, a fresh login) would otherwise resolve to the staff catch-all
+// '/', which RequirePortal rejects back to getHomePath('/application-status'),
+// an infinite Navigate-replace loop that trips Safari's "replaceState more than
+// 100x/10s" limiter (Sentry CLIENT-5 / CLIENT-6). Kick them cross-domain to the
+// hiring portal where the route exists. A full page load (window.location) is
+// required because Vercel cross-subdomain rewrites do not fire on client-side
+// React Router navs.
+function applicantRoute(path) {
+  if (typeof window !== 'undefined' && window.location.hostname === 'staff.drbartender.com') {
+    window.location.replace('https://hiring.drbartender.com' + path);
+    return '/login'; // moot: the full-page redirect above already navigated away
+  }
+  return path;
+}
+
 /**
  * Canonical "where should this user land" decision tree. Used by:
  *   - App.js — RedirectIfLoggedIn, getHomePath in the main routes file
@@ -19,7 +37,7 @@ export function getHomePath(user) {
   switch (user.onboarding_status) {
     case 'applied':
     case 'interviewing':
-      return '/application-status';
+      return applicantRoute('/application-status');
     // Completed onboarding → portal
     case 'submitted':
     case 'reviewed':
@@ -42,8 +60,8 @@ export function getHomePath(user) {
     case 'hired':
       return '/welcome';
     case 'in_progress':
-      return user.has_application ? '/welcome' : '/apply';
+      return user.has_application ? '/welcome' : applicantRoute('/apply');
     default:
-      return user.has_application ? '/application-status' : '/apply';
+      return user.has_application ? applicantRoute('/application-status') : applicantRoute('/apply');
   }
 }
