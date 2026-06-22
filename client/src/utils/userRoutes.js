@@ -33,10 +33,16 @@ export function getHomePath(user) {
         return '/login';
       }
       return '/dashboard';
-    // Actively going through onboarding
+    // Actively going through onboarding. 'hired' is the legacy onboarding status.
+    // An admin-Hired applicant from the hiring board reaches onboarding as
+    // 'in_progress' WITH an application on file (the Hire button moves
+    // interviewing to in_progress). 'in_progress' WITHOUT an application is a
+    // pre-hire registrant who still needs to apply, so has_application
+    // disambiguates the two.
     case 'hired':
       return '/welcome';
     case 'in_progress':
+      return user.has_application ? '/welcome' : '/apply';
     default:
       return user.has_application ? '/application-status' : '/apply';
   }

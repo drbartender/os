@@ -13,6 +13,10 @@ export default function ApplicationStatus() {
   // flipped them to 'hired' after they applied), forward them to the correct
   // destination instead of stranding them on the "application received" card.
   if (status === 'hired') return <Navigate to="/welcome" replace />;
+  // Admin-Hired applicants land here as in_progress WITH an application on file;
+  // forward them into onboarding (mirrors getHomePath). in_progress WITHOUT an
+  // application is a pre-hire registrant who still needs to apply.
+  if (status === 'in_progress' && user?.has_application) return <Navigate to="/welcome" replace />;
   if (['submitted', 'reviewed', 'approved'].includes(status)) return <Navigate to="/dashboard" replace />;
   if (status === 'in_progress' && !user?.has_application) return <Navigate to="/apply" replace />;
 
