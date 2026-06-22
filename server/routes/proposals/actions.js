@@ -23,6 +23,11 @@ const router = express.Router();
 /** PATCH /api/proposals/:id/notes — update admin notes */
 router.patch('/:id/notes', auth, requireAdminOrManager, asyncHandler(async (req, res) => {
   const { admin_notes } = req.body;
+  // Length-cap (audit 6): admin_notes is a free-form TEXT field; bound it so a
+  // pathological payload can't bloat the row. 10k chars is far above any real note.
+  if (typeof admin_notes === 'string' && admin_notes.length > 10000) {
+    throw new ValidationError({ admin_notes: 'Admin notes must be 10,000 characters or fewer' });
+  }
   const result = await pool.query(
     'UPDATE proposals SET admin_notes = $1 WHERE id = $2 RETURNING id, admin_notes',
     [admin_notes || '', req.params.id]
@@ -48,6 +53,18 @@ router.patch('/:id/balance-due-date', auth, requireAdminOrManager, asyncHandler(
   const { balance_due_date } = req.body;
   if (!balance_due_date) {
     throw new ValidationError({ balance_due_date: 'Balance due date is required' });
+  }
+  // ISO/calendar-date guard (audit 6): balance_due_date lands in a DATE column.
+  // Without this, garbage ("tomorrow", "13/45/26") or an impossible-but-parseable
+  // date ("2026-02-30") reaches Postgres and 500s with a 22007/22008 instead of a
+  // clean 400. The round-trip (toISOString slice === input) rejects rolled-over
+  // dates that the format regex alone would let through.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(balance_due_date)) {
+    throw new ValidationError({ balance_due_date: 'Balance due date must be in YYYY-MM-DD format' });
+  }
+  const parsedDueDate = new Date(`${balance_due_date}T00:00:00Z`);
+  if (Number.isNaN(parsedDueDate.getTime()) || parsedDueDate.toISOString().slice(0, 10) !== balance_due_date) {
+    throw new ValidationError({ balance_due_date: 'Balance due date is not a valid calendar date' });
   }
   const result = await pool.query(
     'UPDATE proposals SET balance_due_date = $1 WHERE id = $2 RETURNING id, balance_due_date',
