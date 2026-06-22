@@ -82,14 +82,38 @@ router.post('/webhook', calcomWebhookLimiter, asyncHandler(async (req, res) => {
   const event = body.triggerEvent;
   const data = body.payload || {};
 
-  switch (event) {
-    case 'BOOKING_CREATED':         return handleCreated(data, res);
-    case 'BOOKING_CANCELLED':       return handleCancelled(data, res);
-    case 'BOOKING_RESCHEDULED':     return handleRescheduled(data, res);
-    case 'BOOKING_NO_SHOW_UPDATED': return handleNoShow(data, res);
-    default:
-      console.log(`[calcom] ignored event: ${event || 'unknown'}`);
-      return res.status(200).send(`ignored: ${event || 'unknown'}`);
+  // Strand-on-failure guard (audit F1). The dedupe row above is committed
+  // (autocommit) BEFORE the handler runs. If a handler throws mid-processing,
+  // Cal.com retries the delivery — but the committed dedupe row would
+  // short-circuit that retry as "Already processed", permanently losing the
+  // consult create / cancel / reschedule / no-show. So on ANY handler failure
+  // we delete the dedupe row, letting the retry re-run the handler. All four
+  // handlers are idempotent (consult fast-path + ON CONFLICT, fixed-status
+  // UPDATEs guarded on status <> 'completed', reschedule's create fallthrough),
+  // so a heal re-run never double-applies. The row therefore persists only on
+  // success — exactly when a later true replay should be skipped. (await so a
+  // rejection is caught here, not after the function returns.)
+  try {
+    switch (event) {
+      case 'BOOKING_CREATED':         return await handleCreated(data, res);
+      case 'BOOKING_CANCELLED':       return await handleCancelled(data, res);
+      case 'BOOKING_RESCHEDULED':     return await handleRescheduled(data, res);
+      case 'BOOKING_NO_SHOW_UPDATED': return await handleNoShow(data, res);
+      default:
+        console.log(`[calcom] ignored event: ${event || 'unknown'}`);
+        return res.status(200).send(`ignored: ${event || 'unknown'}`);
+    }
+  } catch (err) {
+    // Un-strand: drop the dedupe row so Cal.com's retry re-runs the handler.
+    // Best-effort — if this DELETE also fails, asyncHandler still 500s and
+    // Cal.com keeps retrying; the row stays only in the rare DB-down window.
+    try {
+      await pool.query(
+        `DELETE FROM webhook_events WHERE provider = 'calcom' AND event_id = $1`,
+        [eventUid]
+      );
+    } catch (_) { /* swallow; surfaced via the rethrow below */ }
+    throw err;
   }
 }));
 

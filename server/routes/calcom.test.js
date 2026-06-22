@@ -190,6 +190,27 @@ test('webhook: dedupe treats different bodies as different events', async () => 
   assert.equal(Number(dedupeRows.rows[0].n), 2);
 });
 
+test('webhook: a failing handler deletes the dedupe row so Cal.com retries (audit F1)', async () => {
+  await buildApp(TEST_SECRET);
+  // BOOKING_CREATED with a present-but-invalid startTime: extractBookingFields
+  // passes startTime through raw, so the consults INSERT (scheduled_at) throws
+  // an invalid-timestamp error and handleCreated ROLLBACKs + rethrows. The
+  // strand-on-failure guard must then DELETE the committed webhook_events dedupe
+  // row so Cal.com's retry re-runs the handler — without it the retry would
+  // short-circuit as "Already processed" and the consult would be lost forever.
+  const payload = {
+    uid: 'test-strand-f1',
+    startTime: 'not-a-valid-timestamp',
+    attendees: [{ name: 'CalcomTest Strand', email: 'strand@calcom-test.example' }],
+  };
+  const res = await postEvent('BOOKING_CREATED', payload);
+  assert.equal(res.status, 500); // unhandled handler error -> Express default 500
+  const { rows } = await pool.query(
+    "SELECT COUNT(*)::int AS n FROM webhook_events WHERE provider = 'calcom'"
+  );
+  assert.equal(rows[0].n, 0, 'dedupe row must be deleted on handler failure so the retry re-runs');
+});
+
 // ─── BOOKING_CREATED tests ────────────────────────────────────────
 
 async function postCreated(payload) {
