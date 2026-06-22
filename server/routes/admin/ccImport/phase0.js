@@ -1,7 +1,7 @@
 /**
  * Admin CC-Import Review — Section 9.2 §7 Phase 0 give-up endpoints.
  *
- * Two mutation endpoints (both auth + requireAdminOrManager, both audited):
+ * Two mutation endpoints (both auth + adminOnly, both audited):
  *
  *   /review/phase0-failure/:row_id/accept-loss      — set given_up_at + reason
  *   /review/phase0-failure/:row_id/revert-give-up   — clear give-up + reset attempts
@@ -17,7 +17,7 @@
 const express = require('express');
 
 const { pool } = require('../../../db');
-const { auth, requireAdminOrManager } = require('../../../middleware/auth');
+const { auth, adminOnly } = require('../../../middleware/auth');
 const asyncHandler = require('../../../middleware/asyncHandler');
 const { ValidationError, NotFoundError, ConflictError } = require('../../../utils/errors');
 const { logAdminAction } = require('../../../utils/adminAuditLog');
@@ -47,7 +47,7 @@ function trimText(name, value, { required = false, max = 2000, min = 0 } = {}) {
 router.post(
   '/review/phase0-failure/:row_id/accept-loss',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const rowId = intParam('row_id', req.params.row_id);
     const reason = trimText('reason', req.body?.reason, { required: true, min: 1, max: 500 });
@@ -95,7 +95,7 @@ router.post(
 router.post(
   '/review/phase0-failure/:row_id/revert-give-up',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const rowId = intParam('row_id', req.params.row_id);
 

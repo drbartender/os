@@ -24,7 +24,7 @@
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../../db');
-const { auth, requireAdminOrManager } = require('../../../middleware/auth');
+const { auth, adminOnly } = require('../../../middleware/auth');
 const asyncHandler = require('../../../middleware/asyncHandler');
 const { ValidationError, NotFoundError, ConflictError } = require('../../../utils/errors');
 const { logAdminAction } = require('../../../utils/adminAuditLog');
@@ -42,7 +42,7 @@ const router = express.Router({ mergeParams: true });
 router.post(
   '/proposals/:id/reenroll-drink-plan-nudge',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id)) throw new ValidationError(undefined, 'id must be an integer');
@@ -87,7 +87,7 @@ router.post(
 router.post(
   '/proposals/:id/reaccrue-payout',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isInteger(id)) throw new ValidationError(undefined, 'id must be an integer');

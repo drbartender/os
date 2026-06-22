@@ -10,10 +10,10 @@
  *
  *   GET /admin/cc-import/search/users?q=&include_stubs=&limit=&offset=
  *     Powers the unmatched-payee "link to user" picker.
- *     Stubs (cc_id LIKE 'legacy_cc:%') are excluded by default; include_stubs
- *     is admin-only and 403s for managers because the `.local` stub email could
- *     expose contractor-identity-derived data (Section 9.2 §3). Even when an
- *     admin omits include_stubs, the redaction below is defense-in-depth.
+ *     Stubs (cc_id LIKE 'legacy_cc:%') are excluded by default; pass
+ *     include_stubs=true to include them. The whole router is admin-only
+ *     (audit batch 3c-roles), so the `.local` stub emails (contractor-identity-
+ *     derived, Section 9.2 §3) are only ever exposed to admins.
  *
  *   GET /admin/cc-import/review/unmatched-payee/:legacy_payout_id/link-preview?user_id=
  *     Pre-flight counts for the link-confirmation modal (Section 9.3.E).
@@ -24,7 +24,7 @@
 
 const express = require('express');
 const { pool } = require('../../../db');
-const { auth, requireAdminOrManager } = require('../../../middleware/auth');
+const { auth, adminOnly } = require('../../../middleware/auth');
 const asyncHandler = require('../../../middleware/asyncHandler');
 const { ValidationError, NotFoundError } = require('../../../utils/errors');
 
@@ -52,7 +52,7 @@ function parsePagination(req) {
 router.get(
   '/search/proposals',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const q = parseQ(req);
     const { limit, offset } = parsePagination(req);
@@ -78,21 +78,17 @@ router.get(
 );
 
 // ── GET /search/users ─────────────────────────────────────────────
-// Unmatched-payee picker. Stubs excluded by default; include_stubs is
-// admin-only (managers get 403 — see file header for rationale). When called
-// by a non-admin (even without include_stubs), we still redact any stub-email
-// that leaks through as defense-in-depth.
+// Unmatched-payee picker. Stubs excluded by default; pass include_stubs=true to
+// include them. The route is admin-only (audit batch 3c-roles), so stub `.local`
+// emails are only ever returned to admins — no per-row role gate needed.
 router.get(
   '/search/users',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const q = parseQ(req);
     const { limit, offset } = parsePagination(req);
     const includeStubs = req.query.include_stubs === 'true';
-    if (includeStubs && req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'include_stubs requires admin role' });
-    }
     const like = `%${q}%`;
     const stubFilter = includeStubs
       ? ''
@@ -109,14 +105,6 @@ router.get(
         LIMIT $2 OFFSET $3`,
       [like, limit, offset]
     );
-    // Defense-in-depth: redact stub email when caller is not admin. The stub
-    // filter above already excludes them when include_stubs=false; this also
-    // covers the rare case where a non-admin somehow received a stub row.
-    if (req.user.role !== 'admin') {
-      for (const r of items) {
-        if (/^legacy_cc:/.test(String(r.cc_id || ''))) r.email = '(redacted)';
-      }
-    }
     res.json({ items });
   })
 );
@@ -132,7 +120,7 @@ router.get(
 router.get(
   '/review/unmatched-payee/:legacy_payout_id/link-preview',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const legacyPayoutId = parseInt(req.params.legacy_payout_id, 10);
     const userId = parseInt(req.query.user_id, 10);

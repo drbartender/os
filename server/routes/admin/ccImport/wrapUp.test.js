@@ -12,7 +12,7 @@ if (process.env.NODE_ENV === 'production') {
   throw new Error('wrapUp.test.js refuses to run against production');
 }
 
-let adminId, adminToken, server, baseUrl;
+let adminId, adminToken, managerId, managerToken, server, baseUrl;
 // Bucket B fixtures
 let clientId, proposalId;            // happy-path: completed past event, good email
 let clientWithMsgId, proposalWithMsgId; // already has a sent wrap-up row
@@ -33,6 +33,13 @@ before(async () => {
     { userId: adminId, tokenVersion: 0 },
     process.env.JWT_SECRET
   );
+
+  // Manager user for the admin-only guard test (audit batch 3c-roles).
+  const mgr = await pool.query(
+    "INSERT INTO users (email, password_hash, role) VALUES ('cc-wrapup-manager@example.com','x','manager') RETURNING id"
+  );
+  managerId = mgr.rows[0].id;
+  managerToken = jwt.sign({ userId: managerId, tokenVersion: 0 }, process.env.JWT_SECRET);
 
   // Bucket B happy-path client + proposal
   const c1 = await pool.query(
@@ -111,7 +118,7 @@ before(async () => {
   app.use(express.json());
   app.use('/api/admin/cc-import', ccImportRouter);
   app.use((err, req, res, _next) => {
-    if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message, fieldErrors: err.fieldErrors });
+    if (err instanceof AppError) return res.status(err.statusCode).json({ error: err.message, code: err.code, fieldErrors: err.fieldErrors });
     res.status(500).json({ error: err.message });
   });
   server = app.listen(0);
@@ -148,6 +155,9 @@ after(async () => {
     );
     await pool.query('DELETE FROM users WHERE id = $1', [adminId]);
   }
+  if (managerId) {
+    await pool.query('DELETE FROM users WHERE id = $1', [managerId]);
+  }
   await pool.end();
 });
 
@@ -173,6 +183,14 @@ function req(method, path, token, body) {
     r.end();
   });
 }
+
+// Audit batch 3c-roles: cc-import is admin-only; a manager (previously allowed
+// by requireAdminOrManager) now gets 403. The guard runs before the handler.
+test('GET /wrap-up is admin-only — manager gets 403 (audit batch 3c-roles)', async () => {
+  const r = await req('GET', '/api/admin/cc-import/wrap-up?filter=all', managerToken);
+  assert.equal(r.status, 403);
+  assert.equal(JSON.parse(r.body).code, 'PERMISSION_DENIED');
+});
 
 test('GET /wrap-up returns Bucket B item with wrap_up_done=false', async () => {
   // Filter to 'all' so the already-sent fixture and ours both could appear,

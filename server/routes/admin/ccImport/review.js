@@ -1,20 +1,22 @@
 /**
- * Admin CC-Import Review page — Section 9.2 worklist + 10 action endpoints.
+ * Admin CC-Import Review page — Section 9.2 worklist + action endpoints.
  *
  * GET /admin/cc-import/review
  *   Returns all 7 sections in one shot (50 rows per section). Lets the
  *   front-end render every collapsible at once without a per-section fetch.
  *
- * 8 mutation endpoints (all auth + requireAdminOrManager, all audited):
+ * 6 mutation endpoints (all auth + adminOnly, all audited):
  *
  *   /duplicate/:row_id/confirm                 — flip duplicate_review → confirmed
- *   /duplicate/:row_id/promote                 — re-run Bucket A promote (skipDedup)
  *   /orphan-payment/:legacy_id/link            — set cc_event_id + promote
  *   /orphan-payment/:legacy_id/dismiss         — set dismissed_at + notes
  *   /unmatched-payee/:legacy_payout_id/link    — reassign shift_requests + audit
  *   /unmatched-payee/:legacy_payout_id/create-stub  — fresh stub + link payout
  *   /errored-row/:row_id/retry                 — re-run per-row insert
- *   /skipped-event/:row_id/promote             — re-run phase3 promotion
+ *
+ * The 2 skipDedup force-promote endpoints (/duplicate/:row_id/promote §1 and
+ * /skipped-event/:row_id/promote §6) live in sibling reviewPromote.js, extracted
+ * for file size + transaction atomicity (audit batch 3c-roles).
  *
  * Phase 0 give-up endpoints (accept-loss, revert-give-up — Section 9.2 §7) live
  * in sibling phase0.js, mounted by index.js. Extracted for file-size discipline.
@@ -33,7 +35,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
 const { pool } = require('../../../db');
-const { auth, requireAdminOrManager } = require('../../../middleware/auth');
+const { auth, adminOnly } = require('../../../middleware/auth');
 const asyncHandler = require('../../../middleware/asyncHandler');
 const { ValidationError, NotFoundError, ConflictError } = require('../../../utils/errors');
 const { logAdminAction } = require('../../../utils/adminAuditLog');
@@ -81,7 +83,7 @@ function reportException(req, err, extra = {}) {
 router.get(
   '/review',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const [
       duplicates,
@@ -197,7 +199,7 @@ router.get(
 router.post(
   '/review/duplicate/:row_id/confirm',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const rowId = intParam('row_id', req.params.row_id);
 
@@ -241,92 +243,15 @@ router.post(
   })
 );
 
-// §1 — Suspected duplicates: promote (the CC row is actually new; bypass dedup).
-// Refuses if the candidate proposal's updated_at > the row's imported_at (the
-// operator might be about to clobber a human edit) unless confirm_candidate_edited.
-router.post(
-  '/review/duplicate/:row_id/promote',
-  auth,
-  requireAdminOrManager,
-  asyncHandler(async (req, res) => {
-    const rowId = intParam('row_id', req.params.row_id);
-    const confirmEdited = req.body?.confirm_candidate_edited === true;
-
-    const guard = await pool.query(
-      `SELECT id, import_status, import_notes, payload, imported_at
-         FROM legacy_cc_raw_imports
-        WHERE id = $1 AND source_entity = 'events'`,
-      [rowId]
-    );
-    if (guard.rowCount === 0) throw new NotFoundError('row not found');
-    if (guard.rows[0].import_status !== 'duplicate_review') {
-      throw new ConflictError('row is not in duplicate_review state');
-    }
-    const raw = guard.rows[0];
-    const candidateId = raw.import_notes?.candidate_proposal_id || null;
-
-    // Candidate-edited check — only when notes carried a candidate id.
-    if (candidateId && !confirmEdited) {
-      const cand = await pool.query(
-        `SELECT updated_at FROM proposals WHERE id = $1`, [candidateId]
-      );
-      if (cand.rowCount > 0) {
-        const candidateUpdated = cand.rows[0].updated_at;
-        if (candidateUpdated && new Date(candidateUpdated) > new Date(raw.imported_at)) {
-          throw new ConflictError(
-            `Candidate proposal #${candidateId} has been edited since import (${candidateUpdated.toISOString?.() || candidateUpdated}). ` +
-              `Pass confirm_candidate_edited: true to promote anyway.`,
-            'CC_CANDIDATE_EDITED'
-          );
-        }
-      }
-    }
-
-    // Re-run Bucket A promotion with dedup skipped.
-    const result = await phase3.promoteBucketA(raw.payload, { skipDedup: true });
-
-    if (result.status !== 'promoted' && result.status !== 'already_promoted') {
-      throw new ConflictError(`Promote failed: ${result.error || result.status}`, 'CC_PROMOTE_FAILED');
-    }
-
-    const newNotes = {
-      ...(raw.import_notes || {}),
-      decision: 'promote_anyway',
-      resolved_by_user_id: req.user.id,
-      resolved_at: new Date().toISOString(),
-      proposal_id: result.proposalId || null,
-      candidate_edited_confirmed: confirmEdited,
-    };
-
-    await pool.query(
-      `UPDATE legacy_cc_raw_imports
-          SET import_status = 'duplicate_confirmed',
-              import_notes = $2::jsonb
-        WHERE id = $1`,
-      [rowId, JSON.stringify(newNotes)]
-    );
-
-    await logAdminAction({
-      actorUserId: req.user.id,
-      targetUserId: null,
-      action: 'cc_review_duplicate_promoted',
-      metadata: {
-        row_id: rowId,
-        candidate_proposal_id: candidateId,
-        promoted_proposal_id: result.proposalId || null,
-        candidate_edited_confirmed: confirmEdited,
-      },
-    });
-
-    res.json({ ok: true, decision: 'promote_anyway', proposal_id: result.proposalId || null });
-  })
-);
+// §1 — Suspected-duplicate force-promote (/duplicate/:row_id/promote) moved to
+// sibling reviewPromote.js (audit batch 3c-roles): extracted for file size and
+// wrapped in a transaction so promote + status flip are atomic.
 
 // §2 — Orphan payment: link to a proposal + re-promote single row.
 router.post(
   '/review/orphan-payment/:legacy_id/link',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const legacyId = intParam('legacy_id', req.params.legacy_id);
     const proposalId = intParam('proposal_id', req.body?.proposal_id);
@@ -481,7 +406,7 @@ router.post(
 router.post(
   '/review/orphan-payment/:legacy_id/dismiss',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const legacyId = intParam('legacy_id', req.params.legacy_id);
     const reason = trimText('reason', req.body?.reason, { max: 2000 });
@@ -518,7 +443,7 @@ router.post(
 router.post(
   '/review/unmatched-payee/:legacy_payout_id/link',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const legacyPayoutId = intParam('legacy_payout_id', req.params.legacy_payout_id);
     const userId = intParam('user_id', req.body?.user_id);
@@ -732,7 +657,7 @@ router.post(
 router.post(
   '/review/unmatched-payee/:legacy_payout_id/create-stub',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const legacyPayoutId = intParam('legacy_payout_id', req.params.legacy_payout_id);
 
@@ -813,7 +738,7 @@ router.post(
 router.post(
   '/review/errored-row/:row_id/retry',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const rowId = intParam('row_id', req.params.row_id);
     const payloadOverride = req.body?.payload_override;
@@ -937,61 +862,9 @@ router.post(
   })
 );
 
-// §6 — Skipped (Bucket D): re-run phase 3 with the skip rule bypassed.
-router.post(
-  '/review/skipped-event/:row_id/promote',
-  auth,
-  requireAdminOrManager,
-  asyncHandler(async (req, res) => {
-    const rowId = intParam('row_id', req.params.row_id);
-
-    const guard = await pool.query(
-      `SELECT id, payload, import_status, source_entity
-         FROM legacy_cc_raw_imports
-        WHERE id = $1`,
-      [rowId]
-    );
-    if (guard.rowCount === 0) throw new NotFoundError('row not found');
-    if (guard.rows[0].import_status !== 'skipped' || guard.rows[0].source_entity !== 'events') {
-      throw new ConflictError('row is not a skipped event');
-    }
-
-    // Reclassify by status + event_date so a past-dated event lands in Bucket B
-    // (completed, no auto-comms enrollment) instead of being force-promoted as
-    // Bucket A and scheduling stale reminders. classifyForRetry mirrors the
-    // initial phase 3 pass via buildRowContext + classify; C/D degrade to A
-    // (archive paths aren't single-row callable) with the genuine bucket letter
-    // preserved in the audit log.
-    const { bucket, promote } = phase3.classifyForRetry(guard.rows[0].payload);
-    const result = await promote(guard.rows[0].payload, { skipDedup: true });
-    if (result.status !== 'promoted' && result.status !== 'already_promoted') {
-      throw new ConflictError(`Promote failed: ${result.error || result.status}`, 'CC_PROMOTE_FAILED');
-    }
-
-    await pool.query(
-      `UPDATE legacy_cc_raw_imports
-          SET import_status = 'promoted',
-              import_notes = $2::jsonb
-        WHERE id = $1`,
-      [rowId, JSON.stringify({
-        promoted_by_user_id: req.user.id,
-        promoted_at: new Date().toISOString(),
-        proposal_id: result.proposalId || null,
-        skip_rule_bypassed: true,
-        retry_bucket: bucket,
-      })]
-    );
-
-    await logAdminAction({
-      actorUserId: req.user.id,
-      targetUserId: null,
-      action: 'cc_review_skipped_event_promoted',
-      metadata: { row_id: rowId, proposal_id: result.proposalId || null, retry_bucket: bucket },
-    });
-
-    res.json({ ok: true, proposal_id: result.proposalId || null });
-  })
-);
+// §6 — Skipped-event force-promote (/skipped-event/:row_id/promote) moved to
+// sibling reviewPromote.js (audit batch 3c-roles): extracted for file size and
+// wrapped in a transaction so promote + status flip are atomic.
 
 // §7 — Phase 0 give-up endpoints (accept-loss, revert-give-up) live in
 // sibling phase0.js, mounted by index.js. Extracted for file-size discipline.

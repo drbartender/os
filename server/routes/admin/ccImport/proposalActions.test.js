@@ -186,9 +186,17 @@ test('POST /proposals/:id/reenroll-drink-plan-nudge 401 without token', async ()
   assert.equal(r.status, 401);
 });
 
-test('POST /proposals/:id/reenroll-drink-plan-nudge 403 for non-admin/manager role', async () => {
+test('POST /proposals/:id/reenroll-drink-plan-nudge 403 for staff role', async () => {
   const r = await req('POST', `/api/admin/proposals/${proposalWithPlanId}/reenroll-drink-plan-nudge`, staffToken, {});
   assert.equal(r.status, 403);
+});
+
+// Audit batch 3c-roles: cc-import is admin-only; managers (previously allowed by
+// requireAdminOrManager) now get 403. The guard runs before the handler.
+test('POST /proposals/:id/reenroll-drink-plan-nudge is admin-only — manager 403 (audit batch 3c-roles)', async () => {
+  const r = await req('POST', `/api/admin/proposals/${proposalWithPlanId}/reenroll-drink-plan-nudge`, managerToken, {});
+  assert.equal(r.status, 403);
+  assert.equal(JSON.parse(r.body).code, 'PERMISSION_DENIED');
 });
 
 test('POST /proposals/:id/reenroll-drink-plan-nudge 404 on unknown proposal', async () => {

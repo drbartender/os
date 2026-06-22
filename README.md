@@ -142,7 +142,8 @@ dr-bartender/
 │   │   │   └── ccImport/       # Check Cherry import admin endpoints
 │   │   │       ├── index.js            # Composition router mounted at /api/admin/cc-import
 │   │   │       ├── wrapUp.js           # Bucket B wrap-up worklist + preview + enqueue (Task 18)
-│   │   │       ├── review.js           # Review-page GET (7 sections) + 8 action endpoints (Task 19)
+│   │   │       ├── review.js           # Review-page GET (7 sections) + 6 action endpoints (Task 19)
+│   │   │       ├── reviewPromote.js     # The 2 skipDedup force-promote endpoints, extracted for size + atomic promote+status-flip txn (audit 3c-roles)
 │   │   │       ├── phase0.js           # Phase 0 give-up endpoints (extracted to keep review.js under cap)
 │   │   │       ├── search.js           # Review-page proposal + user typeahead pickers + link-preview
 │   │   │       └── proposalActions.js  # Mounted at /api/admin (not under /cc-import/) — re-enroll drink-plan nudge + re-accrue payout (Task 21)

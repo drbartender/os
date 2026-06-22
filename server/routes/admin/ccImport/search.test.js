@@ -244,10 +244,18 @@ test('GET /search/users excludes stubs by default', async () => {
   assert.ok(!ids.includes(stubUserId), 'stub user excluded by default');
 });
 
-test('GET /search/users include_stubs=true requires admin (manager 403)', async () => {
+// Audit batch 3c-roles: the whole cc-import surface is admin-only — managers,
+// previously allowed by requireAdminOrManager, now get 403 on every endpoint.
+test('GET /search/users is admin-only — manager gets 403 (audit batch 3c-roles)', async () => {
   const r = await req('GET', '/api/admin/cc-import/search/users?q=Search&include_stubs=true', managerToken);
   assert.equal(r.status, 403);
-  assert.match(JSON.parse(r.body).error, /include_stubs requires admin/);
+  assert.equal(JSON.parse(r.body).code, 'PERMISSION_DENIED');
+});
+
+test('GET /search/proposals is admin-only — manager gets 403 (audit batch 3c-roles)', async () => {
+  const r = await req('GET', '/api/admin/cc-import/search/proposals?q=Search', managerToken);
+  assert.equal(r.status, 403);
+  assert.equal(JSON.parse(r.body).code, 'PERMISSION_DENIED');
 });
 
 test('GET /search/users include_stubs=true returns stubs for admin', async () => {

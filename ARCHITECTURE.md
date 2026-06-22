@@ -506,31 +506,31 @@ Blog post bodies are stored as sanitized HTML (via DOMPurify). The admin editor 
 | GET | `/tester-bugs` | Admin/Manager | List Lab Rat bug reports (filter `?status=open\|fixed\|wontfix\|all` and `?missionId=...`). Returns `{ bugs, openCountByMission }`. |
 | PATCH | `/tester-bugs/:id` | Admin/Manager | Update a bug's triage state — body `{ status?, fixCommitSha?, notes? }`. Bumps `status_updated_at`. |
 | GET | `/users/:id/stub-co-participated-proposals` | Admin/Manager | Proposals where the given user co-participated on a shift with a legacy CC stub. Powers the user-detail "Co-participated with a CC stub" affordance. |
-| POST | `/proposals/:id/reenroll-drink-plan-nudge` | Admin/Manager | Re-schedule the drink-plan nudge (email + SMS) for a CC-imported proposal that now has a `drink_plans` row. Idempotent — duplicate-pending insert no-ops. Mounted from `routes/admin/ccImport/proposalActions.js`. |
-| POST | `/proposals/:id/reaccrue-payout` | Admin/Manager | Re-run `accruePayoutsForProposal` for a CC proposal after stub cleanup. Returns the structured `{ skipped, reason }` result. Mounted from `routes/admin/ccImport/proposalActions.js`. |
+| POST | `/proposals/:id/reenroll-drink-plan-nudge` | Admin | Re-schedule the drink-plan nudge (email + SMS) for a CC-imported proposal that now has a `drink_plans` row. Idempotent — duplicate-pending insert no-ops. Mounted from `routes/admin/ccImport/proposalActions.js`. |
+| POST | `/proposals/:id/reaccrue-payout` | Admin | Re-run `accruePayoutsForProposal` for a CC proposal after stub cleanup. Returns the structured `{ skipped, reason }` result. Mounted from `routes/admin/ccImport/proposalActions.js`. |
 
 ### CC Import Admin — `/api/admin/cc-import`
-All endpoints require `auth + requireAdminOrManager` unless otherwise noted. The `include_stubs=true` knob on `/search/users` 403s for managers because the legacy stub email could expose contractor-identity-derived data. Mutations write to `admin_audit_log` via `logAdminAction`. Spec reference: `docs/superpowers/specs/2026-05-25-checkcherry-import-design.md` §9.
+All endpoints require `auth + adminOnly` (audit batch 3c-roles locked the entire cc-import surface to admin-only — managers no longer reach it). The two `skipDedup` force-promote endpoints (`/review/duplicate/:row_id/promote`, `/review/skipped-event/:row_id/promote`) live in `routes/admin/ccImport/reviewPromote.js` and run the promote + the `legacy_cc_raw_imports` status flip in one transaction so a partial promote can't strand a committed proposal (retry-safe). Mutations write to `admin_audit_log` via `logAdminAction`. Spec reference: `docs/superpowers/specs/2026-05-25-checkcherry-import-design.md` §9.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/wrap-up` | Admin/Manager | Bucket B wrap-up worklist (cc-imported, status='completed', past event_date). Filterable `?filter=needs-wrapup\|all`, `?range=since-import\|last-30`, paginated. |
-| POST | `/wrap-up/preview` | Admin/Manager | Pre-flight delivery breakdown for selected ids (uses `resolveChannelFallback`, no DB writes — confirmation modal). |
-| POST | `/wrap-up/enqueue` | Admin/Manager | Schedules `post_event_wrap_up_email` messages for selected proposals (best-effort per id with a per-row outcome enum). |
-| GET | `/review` | Admin/Manager | All 7 sections in one shot: duplicates / orphan payments / unmatched payees / errored rows / skipped events / Phase 0 eligible + done, plus `lastRun` telemetry. |
-| POST | `/review/duplicate/:row_id/confirm` | Admin/Manager | Flip a duplicate_review row to duplicate_confirmed (operator says yes, this IS a dup). |
-| POST | `/review/duplicate/:row_id/promote` | Admin/Manager | Re-run Bucket A promote on the suspect row with `skipDedup` (operator says no, this is NOT a dup). |
-| POST | `/review/orphan-payment/:legacy_id/link` | Admin/Manager | Set `cc_event_id` + promote the legacy payment into `proposal_payments` (or `proposal_refunds`) inside a transaction. |
-| POST | `/review/orphan-payment/:legacy_id/dismiss` | Admin/Manager | Mark the orphan payment dismissed (sets `dismissed_at` + operator notes). |
-| POST | `/review/unmatched-payee/:legacy_payout_id/link` | Admin/Manager | Reassign the stub's `shift_requests` to a real user, mark stubs accordingly, link the payout, audit-log. |
-| POST | `/review/unmatched-payee/:legacy_payout_id/create-stub` | Admin/Manager | Create a fresh `legacy_cc:` stub user and link the payout to it. |
-| POST | `/review/errored-row/:row_id/retry` | Admin/Manager | Re-run the per-row insert for an errored `legacy_cc_raw_imports` row. |
-| POST | `/review/skipped-event/:row_id/promote` | Admin/Manager | Re-run Phase 3 promotion for a previously skipped event row. |
-| POST | `/review/phase0-failure/:row_id/accept-loss` | Admin/Manager | Mark a Phase 0 attachment fetch failure as accepted-loss (sets `given_up_at` + reason; gated on `attempt_count >= 10`). |
-| POST | `/review/phase0-failure/:row_id/revert-give-up` | Admin/Manager | Reverse an accept-loss (clears `given_up_at` + resets `attempt_count`). |
-| GET | `/search/proposals?q=&limit=&offset=` | Admin/Manager | Typeahead picker for the orphan-payment "link to proposal" UI (matches client name ILIKE OR proposal `cc_id`). |
-| GET | `/search/users?q=&include_stubs=&limit=&offset=` | Admin/Manager (`include_stubs=true` admin-only) | Typeahead picker for the unmatched-payee "link to user" UI. Stubs (cc_id LIKE 'legacy_cc:%') excluded by default. |
-| GET | `/review/unmatched-payee/:legacy_payout_id/link-preview?user_id=` | Admin/Manager | Pre-flight counts for the link-confirmation modal (shift_requests to be reassigned per the precheck SELECT). |
+| GET | `/wrap-up` | Admin | Bucket B wrap-up worklist (cc-imported, status='completed', past event_date). Filterable `?filter=needs-wrapup\|all`, `?range=since-import\|last-30`, paginated. |
+| POST | `/wrap-up/preview` | Admin | Pre-flight delivery breakdown for selected ids (uses `resolveChannelFallback`, no DB writes — confirmation modal). |
+| POST | `/wrap-up/enqueue` | Admin | Schedules `post_event_wrap_up_email` messages for selected proposals (best-effort per id with a per-row outcome enum). |
+| GET | `/review` | Admin | All 7 sections in one shot: duplicates / orphan payments / unmatched payees / errored rows / skipped events / Phase 0 eligible + done, plus `lastRun` telemetry. |
+| POST | `/review/duplicate/:row_id/confirm` | Admin | Flip a duplicate_review row to duplicate_confirmed (operator says yes, this IS a dup). |
+| POST | `/review/duplicate/:row_id/promote` | Admin | Re-run Bucket A promote on the suspect row with `skipDedup` (operator says no, this is NOT a dup). Transactional (reviewPromote.js). |
+| POST | `/review/orphan-payment/:legacy_id/link` | Admin | Set `cc_event_id` + promote the legacy payment into `proposal_payments` (or `proposal_refunds`) inside a transaction. |
+| POST | `/review/orphan-payment/:legacy_id/dismiss` | Admin | Mark the orphan payment dismissed (sets `dismissed_at` + operator notes). |
+| POST | `/review/unmatched-payee/:legacy_payout_id/link` | Admin | Reassign the stub's `shift_requests` to a real user, mark stubs accordingly, link the payout, audit-log. |
+| POST | `/review/unmatched-payee/:legacy_payout_id/create-stub` | Admin | Create a fresh `legacy_cc:` stub user and link the payout to it. |
+| POST | `/review/errored-row/:row_id/retry` | Admin | Re-run the per-row insert for an errored `legacy_cc_raw_imports` row. |
+| POST | `/review/skipped-event/:row_id/promote` | Admin | Re-run Phase 3 promotion for a previously skipped event row. Transactional (reviewPromote.js). |
+| POST | `/review/phase0-failure/:row_id/accept-loss` | Admin | Mark a Phase 0 attachment fetch failure as accepted-loss (sets `given_up_at` + reason; gated on `attempt_count >= 10`). |
+| POST | `/review/phase0-failure/:row_id/revert-give-up` | Admin | Reverse an accept-loss (clears `given_up_at` + resets `attempt_count`). |
+| GET | `/search/proposals?q=&limit=&offset=` | Admin | Typeahead picker for the orphan-payment "link to proposal" UI (matches client name ILIKE OR proposal `cc_id`). |
+| GET | `/search/users?q=&include_stubs=&limit=&offset=` | Admin | Typeahead picker for the unmatched-payee "link to user" UI. Stubs (cc_id LIKE 'legacy_cc:%') excluded by default; `include_stubs=true` includes them (admin-only route). |
+| GET | `/review/unmatched-payee/:legacy_payout_id/link-preview?user_id=` | Admin | Pre-flight counts for the link-confirmation modal (shift_requests to be reassigned per the precheck SELECT). |
 
 ### Proposal-level legacy CC payments — `/api/proposals`
 | Method | Path | Auth | Description |

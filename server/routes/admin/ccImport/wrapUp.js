@@ -5,7 +5,7 @@
  * event_date in the past) proposals so the operator can fire
  * `post_event_wrap_up_email` for events that pre-date the importer cut-over.
  *
- * Endpoints (all auth + requireAdminOrManager):
+ * Endpoints (all auth + adminOnly):
  *   GET  /admin/cc-import/wrap-up           worklist + header counts
  *   POST /admin/cc-import/wrap-up/preview   pre-flight delivery breakdown
  *   POST /admin/cc-import/wrap-up/enqueue   schedule the actual messages
@@ -20,7 +20,7 @@
 const express = require('express');
 const Sentry = require('@sentry/node');
 const { pool } = require('../../../db');
-const { auth, requireAdminOrManager } = require('../../../middleware/auth');
+const { auth, adminOnly } = require('../../../middleware/auth');
 const asyncHandler = require('../../../middleware/asyncHandler');
 const { ValidationError } = require('../../../utils/errors');
 const { scheduleMessage } = require('../../../utils/messageScheduling');
@@ -48,7 +48,7 @@ function isNoEmail(client) {
 router.get(
   '/wrap-up',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const offset = (page - 1) * PAGE_SIZE;
@@ -160,7 +160,7 @@ function validateProposalIds(body) {
 router.post(
   '/wrap-up/preview',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const ids = validateProposalIds(req.body);
     const breakdown = { proceed: 0, no_email: 0, suppressed: 0 };
@@ -213,7 +213,7 @@ router.post(
 router.post(
   '/wrap-up/enqueue',
   auth,
-  requireAdminOrManager,
+  adminOnly,
   asyncHandler(async (req, res) => {
     const ids = validateProposalIds(req.body);
     const results = [];
