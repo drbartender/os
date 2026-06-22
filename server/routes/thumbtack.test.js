@@ -71,7 +71,8 @@ let server, baseUrl;
 const secret = process.env.THUMBTACK_WEBHOOK_SECRET || null;
 const negA = `test-fail-${Date.now()}`;
 const negB = `test-pii-${Date.now()}`;
-const created = { negotiationIds: [negA, negB], proposalIds: [], clientIds: [] };
+const negC = `test-half-${Date.now()}`;
+const created = { negotiationIds: [negA, negB, negC], proposalIds: [], clientIds: [] };
 
 function httpReq(method, path, headers, body) {
   return new Promise((resolve, reject) => {
@@ -96,6 +97,27 @@ function postLead(negotiationId) {
       category: 'Wedding Bartending', description: 'need bartender',
       location: { city: 'Tampa', state: 'FL', zipCode: '33602' },
       details: [{ question: 'Guests?', answer: '80' }],
+    },
+  });
+  const headers = { 'Content-Type': 'application/json' };
+  if (secret) headers['x-thumbtack-secret'] = secret;
+  return httpReq('POST', '/api/thumbtack/leads', headers, body);
+}
+
+// V4 envelope with a proposedTimes window, so eventDuration is computed from
+// end - start. start/end are ISO strings.
+function postLeadV4(negotiationId, start, end) {
+  const body = JSON.stringify({
+    event: { eventType: 'NewLeadV4' },
+    data: {
+      negotiationID: negotiationId,
+      customer: { firstName: 'Half', lastName: 'Hour', phone: `+1555${String(Date.now()).slice(-7)}` },
+      request: {
+        category: { name: 'Bartending' }, description: 'half-hour window',
+        location: { city: 'Chicago', state: 'IL', zipCode: '60601' },
+        proposedTimes: [{ start, end }],
+        details: [{ question: 'Guests?', answer: '60' }],
+      },
     },
   });
   const headers = { 'Content-Type': 'application/json' };
@@ -168,6 +190,24 @@ test('a Thumbtack-sourced draft never exposes admin_notes on the public token ro
   const pub = await httpReq('GET', `/api/proposals/t/${row.rows[0].token}`, {}, null);
   assert.equal(pub.status, 200);
   assert.equal('admin_notes' in pub.body, false, 'public token route must NOT expose admin_notes');
+});
+
+test('a fractional (:30) event window persists the lead and prices the half-hour, never 500s', async () => {
+  thumbtackRouter.__setDeps({ createDraftProposalFromLead }); // real builder
+  // 6:00 PM -> 9:30 PM Central = 3.5h. A routine customer choice; this must NOT
+  // crash the INTEGER insert (regression guard for the auto-draft duration fix).
+  const res = await postLeadV4(negC, '2026-09-12T23:00:00Z', '2026-09-13T02:30:00Z');
+  assert.equal(res.status, 200, 'a half-hour window must not 500 the webhook');
+
+  const lead = await pool.query('SELECT event_duration, client_id, proposal_id FROM thumbtack_leads WHERE negotiation_id = $1', [negC]);
+  assert.equal(lead.rows.length, 1, 'lead persisted');
+  assert.equal(Number(lead.rows[0].event_duration), 3.5, 'fractional duration stored faithfully');
+  if (lead.rows[0].client_id) created.clientIds.push(lead.rows[0].client_id);
+  assert.ok(lead.rows[0].proposal_id, 'a draft was auto-created');
+  created.proposalIds.push(lead.rows[0].proposal_id);
+
+  const p = await pool.query('SELECT event_duration_hours FROM proposals WHERE id = $1', [lead.rows[0].proposal_id]);
+  assert.equal(Number(p.rows[0].event_duration_hours), 3.5, 'draft priced on the real 3.5h, not the 4h default');
 });
 
 test('POST /messages persists the message and 200s with no admin email block', async () => {

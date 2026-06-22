@@ -103,17 +103,20 @@ function extractGuestCount(details) {
  * Thumbtack V4 leads carry the window as proposedTimes[].start/end ISO
  * timestamps, so the duration is unambiguous. We deliberately do NOT read a
  * scalar booking.duration: its unit is undocumented and real payloads never
- * send it. Returns null for a missing or implausible window (<=0 or >24h) so
- * the draft builder falls back to its 4-hour default.
+ * send it. Rounded to ONE decimal to match the NUMERIC(4,1) duration columns
+ * (thumbtack_leads.event_duration and proposals.event_duration_hours), so the
+ * stored value and the priced value never disagree; half-hour windows (e.g.
+ * 6:00-9:30 PM => 3.5) are preserved. Returns null for a missing or implausible
+ * window (rounds to <=0 or >24h) so the draft builder falls back to 4 hours.
  */
 function computeDurationHours(startIso, endIso) {
   if (!startIso || !endIso) return null;
   const start = new Date(startIso);
   const end = new Date(endIso);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
-  const hours = (end.getTime() - start.getTime()) / 3600000;
+  const hours = Math.round(((end.getTime() - start.getTime()) / 3600000) * 10) / 10;
   if (!Number.isFinite(hours) || hours <= 0 || hours > 24) return null;
-  return Math.round(hours * 100) / 100; // kill float noise; real windows are whole hours
+  return hours;
 }
 
 /** Normalize phone to digits only for matching */

@@ -1699,7 +1699,7 @@ CREATE TABLE IF NOT EXISTS thumbtack_leads (
   location_zip VARCHAR(20),
   location_address TEXT,
   event_date TIMESTAMPTZ,
-  event_duration INTEGER,
+  event_duration NUMERIC(4,1), -- event duration in HOURS (end - start of the lead window); NUMERIC to hold half-hours like 3.5
   guest_count INTEGER,
   lead_type VARCHAR(50),
   lead_price VARCHAR(50),
@@ -1725,6 +1725,13 @@ CREATE TRIGGER update_thumbtack_leads_updated_at BEFORE UPDATE ON thumbtack_lead
 -- Link a lead to the draft proposal auto-created from it (idempotency + tracing).
 ALTER TABLE thumbtack_leads
   ADD COLUMN IF NOT EXISTS proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL;
+
+-- event_duration now holds the event window in HOURS (end - start), which can be
+-- a half-hour (e.g. 3.5). Widen the original INTEGER column so a fractional
+-- duration no longer fails the lead INSERT (22P02) and 500s the webhook. Safe to
+-- re-run: ALTER TYPE to the same NUMERIC(4,1) is a no-op on an already-converted DB.
+ALTER TABLE thumbtack_leads
+  ALTER COLUMN event_duration TYPE NUMERIC(4,1);
 
 CREATE TABLE IF NOT EXISTS thumbtack_messages (
   id SERIAL PRIMARY KEY,
