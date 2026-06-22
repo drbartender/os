@@ -2,6 +2,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendEmail } = require('./email');
 const { normalizePhone } = require('./sms');
+const { QuotaExceededError } = require('./errors');
 
 // The 11 notification categories (spec 8.3). A notification declares its
 // category; the helper fans it out to every admin/manager subscribed to it.
@@ -103,10 +104,20 @@ async function notifyAdminCategory({ category, subject, emailHtml, emailText, sm
         await sendEmail({ to: r.email, subject, html: emailHtml, text: emailText });
         emailed += 1;
       } catch (err) {
-        Sentry.captureException(err, {
-          tags: { feature: 'admin-notification', category, channel: 'email' },
-          extra: { recipient_id: r.id },
-        });
+        if (err instanceof QuotaExceededError) {
+          // Resend daily-cap / rate-limit on a best-effort admin notice is not
+          // worth paging on: breadcrumb at warning level and move on.
+          Sentry.captureMessage('admin notification skipped: email quota/rate limit', {
+            level: 'warning',
+            tags: { feature: 'admin-notification', category, channel: 'email', reason: 'resend_quota' },
+            extra: { recipient_id: r.id },
+          });
+        } else {
+          Sentry.captureException(err, {
+            tags: { feature: 'admin-notification', category, channel: 'email' },
+            extra: { recipient_id: r.id },
+          });
+        }
         console.error(`[adminNotifications] email to user ${r.id} failed:`, err.message);
       }
     }

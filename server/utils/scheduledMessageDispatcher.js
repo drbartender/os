@@ -919,7 +919,7 @@ function lastFour(_proposal) {
 async function sendBalanceReminder({ entity, recipient, paymentMode }) {
   const balanceDue = Number(entity.total_price) - Number(entity.amount_paid);
   if (balanceDue <= 0) {
-    throw new Error('balance reminder fired but balance is zero or negative');
+    throw new SuppressMessageError(`balance_not_positive:${balanceDue}`);
   }
   const tpl = emailTemplates.paymentReminderClient({
     clientName: recipient.name,
@@ -943,7 +943,7 @@ async function sendBalanceDueToday({ entity, recipient }) {
 async function sendBalanceLate({ entity, recipient, daysLate }) {
   const balanceDue = Number(entity.total_price) - Number(entity.amount_paid);
   if (balanceDue <= 0) {
-    throw new Error('late reminder fired but balance is zero or negative');
+    throw new SuppressMessageError(`balance_not_positive:${balanceDue}`);
   }
   const tpl = emailTemplates.paymentReminderLate({
     clientName: recipient.name,

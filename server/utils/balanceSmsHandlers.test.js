@@ -85,10 +85,13 @@ test('balance_due_today_sms handler > sends an SMS and marks the row sent', asyn
   __setSmsDeps({ sendSMS: require('./sms')._realSendSMS });
 });
 
-test('balance_late_t3_sms handler > throws when balance is already zero', async () => {
+test('balance_late_t3_sms handler > suppresses when balance is already zero', async () => {
   _clearHandlersForTest();
   registerBalanceSmsHandlers();
-  // Pay the balance in full so the handler's balance>0 guard fails.
+  // Pay the balance in full so the handler's balance>0 guard fails. A moot
+  // reminder to a paid-up client is an expected suppression, not a failure:
+  // the row is marked 'suppressed' (no Sentry alert) with the computed balance
+  // recorded in the reason, per the SERVER-13 triage.
   await pool.query('UPDATE proposals SET amount_paid = total_price WHERE id = $1', [proposalId]);
   await pool.query(
     `INSERT INTO scheduled_messages (entity_id, entity_type, message_type, recipient_type, recipient_id, channel, scheduled_for)
@@ -100,6 +103,6 @@ test('balance_late_t3_sms handler > throws when balance is already zero', async 
     "SELECT status, error_message FROM scheduled_messages WHERE entity_id=$1 AND message_type='balance_late_t3_sms'",
     [proposalId]
   );
-  assert.strictEqual(rows[0].status, 'failed');
-  assert.match(rows[0].error_message, /balance/i);
+  assert.strictEqual(rows[0].status, 'suppressed');
+  assert.match(rows[0].error_message, /balance_not_positive/);
 });

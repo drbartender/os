@@ -31,11 +31,12 @@ const DAY_SECONDS = 86400;
 
 /**
  * Load proposal + client fields a balance SMS handler needs. A gone/archived
- * proposal or an already-cleared balance throws a plain Error (the dispatcher
- * marks 'failed'). The contact-deliverability skips (no phone, bad phone, SMS
- * opted out) throw SuppressMessageError so the row is recorded 'suppressed'
- * without alerting Sentry. Per spec 7.3 the SMS half of this multi-channel pair
- * suppresses on a dead channel while the email half still fires.
+ * proposal throws a plain Error (the dispatcher marks 'failed'). An
+ * already-cleared balance (client paid before the reminder fired) and the
+ * contact-deliverability skips (no phone, bad phone, SMS opted out) throw
+ * SuppressMessageError so the row is recorded 'suppressed' without alerting
+ * Sentry. Per spec 7.3 the SMS half of this multi-channel pair suppresses on a
+ * dead channel while the email half still fires.
  */
 async function loadBalanceSmsContext(proposalId) {
   const { rows } = await pool.query(
@@ -55,7 +56,7 @@ async function loadBalanceSmsContext(proposalId) {
   const prefs = ctx.comm_prefs || {};
   if (prefs.sms_enabled === false) throw new SuppressMessageError('sms_opted_out');
   const balanceDue = Number(ctx.total_price) - Number(ctx.amount_paid);
-  if (!(balanceDue > 0)) throw new Error('balance SMS: balance is zero or negative, reminder moot');
+  if (!(balanceDue > 0)) throw new SuppressMessageError(`balance_not_positive:${balanceDue}`);
   return ctx;
 }
 

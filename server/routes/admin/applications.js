@@ -354,6 +354,12 @@ router.put('/applications/:userId/scorecard', auth, adminOnly, asyncHandler(asyn
     throw new ValidationError(null, 'No scorecard fields provided.');
   }
 
+  // Guard the interview_scores.user_id FK: a stale kanban click on a
+  // since-deleted applicant would otherwise hit interview_scores_user_id_fkey
+  // and surface as a raw 500. Mirror the sibling stage-transition routes: 404.
+  const exists = await pool.query('SELECT 1 FROM users WHERE id = $1', [userId]);
+  if (exists.rowCount === 0) throw new NotFoundError('User not found');
+
   // SET clause refreshes scored_by so the column reflects the LAST scorer, not
   // the first. Column names come from the DIMS allowlist — never user input.
   const cols = Object.keys(updates);
