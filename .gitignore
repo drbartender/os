@@ -21,11 +21,13 @@ server/uploads/*
 .claude/scheduled_tasks.lock
 client/.claude/
 # Local Claude scratch / working artifacts (audit runs, thread-mining, one-off
-# generators, session handoff notes). Never committed; they kept dirtying the
+# generators, payroll/cleanup scripts, session handoff notes). The leading
+# underscore marks throwaway scratch. Never committed; they kept dirtying the
 # shared os tree and blocking lane merges.
 .claude/_*
 .claude/gen-*
 .claude/mobile-audit-*
+/_*
 /handoff*.md
 
 # UI / pre-deploy review run output
