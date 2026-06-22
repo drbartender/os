@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash VARCHAR(255) NOT NULL,
   role VARCHAR(20) DEFAULT 'staff' CHECK (role IN ('staff', 'admin')),
   onboarding_status VARCHAR(50) DEFAULT 'in_progress',
-  notifications_opt_in BOOLEAN DEFAULT false,
+  notifications_opt_in BOOLEAN DEFAULT false, -- DEAD (audit 5b): write-only, superseded by *_notification_preferences JSONB; pending DROP in a follow-up migration
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

@@ -34,7 +34,7 @@ const PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
 
 // Register
 router.post('/register', authLimiter, asyncHandler(async (req, res) => {
-  const { email, password, notifications_opt_in } = req.body;
+  const { email, password } = req.body;
 
   const fieldErrors = {};
   if (!email) fieldErrors.email = 'Email is required';
@@ -52,8 +52,8 @@ router.post('/register', authLimiter, asyncHandler(async (req, res) => {
 
   const hash = await bcrypt.hash(password, 12);
   const result = await pool.query(
-    'INSERT INTO users (email, password_hash, notifications_opt_in) VALUES ($1, $2, $3) RETURNING id, email, role, onboarding_status, token_version',
-    [email.toLowerCase(), hash, notifications_opt_in || false]
+    'INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, role, onboarding_status, token_version',
+    [email.toLowerCase(), hash]
   );
   const user = result.rows[0];
 
@@ -77,7 +77,7 @@ router.post('/register', authLimiter, asyncHandler(async (req, res) => {
 // application-submit handler can promote them to 'hired' (instead of 'applied')
 // and seed contractor_profiles automatically — skipping the admin-review wait.
 router.post('/register-pre-hired', authLimiter, asyncHandler(async (req, res) => {
-  const { email, password, notifications_opt_in } = req.body;
+  const { email, password } = req.body;
 
   const fieldErrors = {};
   if (!email) fieldErrors.email = 'Email is required';
@@ -108,10 +108,10 @@ router.post('/register-pre-hired', authLimiter, asyncHandler(async (req, res) =>
     await client.query('BEGIN');
 
     const userRes = await client.query(
-      `INSERT INTO users (email, password_hash, notifications_opt_in, pre_hired)
-       VALUES ($1, $2, $3, true)
+      `INSERT INTO users (email, password_hash, pre_hired)
+       VALUES ($1, $2, true)
        RETURNING id, email, role, onboarding_status, token_version, pre_hired`,
-      [normalizedEmail, hash, notifications_opt_in || false]
+      [normalizedEmail, hash]
     );
     user = userRes.rows[0];
 

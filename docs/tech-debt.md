@@ -196,6 +196,13 @@ const statusPredicate = archived
 **Why deferred:** Harmless code smell. Removing the explicit JS fallback OR the DEFAULT is a one-line cleanup but provides no behavior change.
 **Next step:** Sweep during next routine DB maintenance.
 
+### Dead column: `users.notifications_opt_in`
+
+**Source:** audit batch 5b, L1 (lane audit-5b-notif).
+**What:** `users.notifications_opt_in` was write-only — set by the `/register` and `/register-pre-hired` routes from the PreHire onboarding signup checkbox ("Text me when new shifts post"), but gated NO notification. Real shift-SMS gating is `staff_notification_preferences` JSONB via `notificationChannelResolver.js` (defaults opted-in). The checkbox implied an effect that never happened. Removed the checkbox + both writers (auth routes) + the two admin SELECTs; column is now dead (no writers remain in `client/src` or `server/routes`; only `schema.sql` + test fixtures reference it).
+**Why deferred:** `DROP COLUMN` not done yet — defer one clean deploy so the no-writer change ships first, then drop in a follow-up migration. Test fixtures (`notificationChannelResolver.test.js`, `messageScheduling.test.js`, `scheduledMessageDispatcher.test.js`, `beoHandlers.test.js`) still INSERT the column; update them when the DROP migration lands.
+**Next step:** `ALTER TABLE users DROP COLUMN notifications_opt_in;` migration after one clean deploy, plus drop the column from the test INSERTs.
+
 ---
 
 ## Accepted risks — document, don't fix

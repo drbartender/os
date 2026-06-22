@@ -13,7 +13,7 @@ export default function PreHireOnboarding() {
   const { user, login, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
-  const [form, setForm] = useState({ email: '', password: '', confirmPassword: '', notifications_opt_in: false });
+  const [form, setForm] = useState({ email: '', password: '', confirmPassword: '' });
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [loading, setLoading] = useState(false);
@@ -83,7 +83,6 @@ export default function PreHireOnboarding() {
       const res = await api.post('/auth/register-pre-hired', {
         email: form.email,
         password: form.password,
-        notifications_opt_in: form.notifications_opt_in,
       });
       login(res.data.token, res.data.user);
       toast.success('Welcome aboard!');
@@ -168,18 +167,6 @@ export default function PreHireOnboarding() {
                   aria-invalid={!!fieldErrors?.confirmPassword}
                 />
                 <FieldError error={fieldErrors?.confirmPassword} />
-              </div>
-
-              <div className="form-group">
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'normal' }}>
-                  <input
-                    type="checkbox"
-                    name="notifications_opt_in"
-                    checked={form.notifications_opt_in}
-                    onChange={handle}
-                  />
-                  <span style={{ fontSize: '0.9rem' }}>Text me when new shifts post (optional)</span>
-                </label>
               </div>
 
               <FormBanner error={error} fieldErrors={fieldErrors} />
