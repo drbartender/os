@@ -17,6 +17,14 @@ import { isQuantityCapable } from '../../utils/proposalRules';
 import { formatSetupTime } from '../../utils/setupTime';
 import CcImportBadge from '../../components/admin/CcImportBadge';
 
+// Read-only audit copy for proposals.gratuity_rate_change_origin (NULL when the
+// rate was never touched, so the line is hidden). Admin-only: this component is
+// only mounted inside the admin proposal detail (auth + requireAdminOrManager).
+const GRATUITY_ORIGIN_LABELS = {
+  admin: 'Rate set by admin',
+  staffing: 'Adjusted by staffing change',
+};
+
 // Self-contained edit form for ProposalDetail. Owns:
 //  - editForm state, dirty tracking, leave-confirm modal, beforeunload guard
 //  - package & addon catalog fetch
@@ -655,6 +663,13 @@ export default function ProposalDetailEditForm({ proposal, changeRequest, onSave
                 </div>
                 {editForm.tip_jar === false && Number(editForm.gratuity_total) < gFloor && (
                   <p className="chip danger" style={{ marginTop: 6 }}>Without a tip jar, minimum is ${gFloor}.</p>
+                )}
+                {/* Read-only audit trail: who last moved the gratuity rate. Hidden
+                    when never touched (origin is null). Internal-only. */}
+                {GRATUITY_ORIGIN_LABELS[proposal?.gratuity_rate_change_origin] && (
+                  <p className="tiny muted" style={{ marginTop: 6 }}>
+                    {GRATUITY_ORIGIN_LABELS[proposal.gratuity_rate_change_origin]}
+                  </p>
                 )}
               </>
             );
