@@ -7,6 +7,7 @@ const Sentry = require('@sentry/node');
 const { pool } = require('../db');
 const { sendSMS, normalizePhone } = require('./sms');
 const { getEventTypeLabel } = require('./eventTypes');
+const { subtractMinutesFromTime } = require('./setupTime');
 const { scheduleStaffShiftMessages } = require('./staffShiftHandlers');
 const { confirmStaffingIfFullyStaffed } = require('./lastMinuteStaffingConfirmation');
 
@@ -329,8 +330,12 @@ async function autoAssignShift(shiftId, { dryRun = false } = {}) {
           // function; for legacy shifts with no proposal_id they're null and
           // cityState falls back to empty.
           const cityState = [shift.venue_city, shift.venue_state].filter(Boolean).join(', ');
+          // Setup/arrival clock time (start − minutes, default 60). Null when
+          // start time is missing/unparseable → omit the clause.
+          const setupTime = subtractMinutesFromTime(shift.start_time, shift.setup_minutes_before ?? 60);
           const msg = `Hey ${name}! You've been approved for the ${eventCtx} on ${shift.event_date}.` +
             (shift.start_time ? ` Time: ${shift.start_time}${shift.end_time ? ' - ' + shift.end_time : ''}.` : '') +
+            (setupTime ? ` Please arrive by ${setupTime} to set up.` : '') +
             (cityState ? ` In ${cityState}.` : '') +
             ` — Dr. Bartender`;
           await sendSMS({ to: phone, body: msg });

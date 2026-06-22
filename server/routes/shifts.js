@@ -709,10 +709,14 @@ router.post('/:id/assign', auth, requireStaffing, asyncHandler(async (req, res) 
       const name = cp.preferred_name ? `, ${cp.preferred_name}` : '';
       const label = getEventTypeLabel({ event_type: shift.event_type, event_type_custom: shift.event_type_custom });
       const ctx = shift.client_name ? `${label} at ${shift.client_name}` : label;
+      // Setup/arrival clock time (start − minutes, default 60). Null when start
+      // time is missing/unparseable → omit the clause so we never send "by null".
+      const setupTime = subtractMinutesFromTime(shift.start_time, shift.setup_minutes_before ?? 60);
+      const setupText = setupTime ? ` Please arrive by ${setupTime} to set up.` : '';
 
       await sendSMS({
         to: normalizePhone(cp.phone) || cp.phone,
-        body: `Hey${name}! You've been assigned to the ${ctx} on ${date} at ${time} — ${location}. See you there! - Dr. Bartender`,
+        body: `Hey${name}! You've been assigned to the ${ctx} on ${date} at ${time} — ${location}.${setupText} See you there! - Dr. Bartender`,
       });
     }
   } catch (smsErr) {
@@ -850,6 +854,7 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
       const infoRes = await pool.query(`
         SELECT s.event_type, s.event_type_custom, s.client_name,
                s.event_date, s.start_time, s.end_time, s.location,
+               s.setup_minutes_before,
                cp.phone, cp.preferred_name
         FROM shift_requests sr
         JOIN shifts s ON s.id = sr.shift_id
@@ -869,10 +874,14 @@ router.put('/requests/:requestId', auth, requireStaffing, asyncHandler(async (re
         const name = info.preferred_name ? `, ${info.preferred_name}` : '';
         const label = getEventTypeLabel({ event_type: info.event_type, event_type_custom: info.event_type_custom });
         const ctx = info.client_name ? `${label} at ${info.client_name}` : label;
+        // Setup/arrival clock time (start − minutes, default 60). Null when start
+        // time is missing/unparseable → omit the clause so we never send "by null".
+        const setupTime = subtractMinutesFromTime(info.start_time, info.setup_minutes_before ?? 60);
+        const setupText = setupTime ? ` Please arrive by ${setupTime} to set up.` : '';
 
         await sendSMS({
           to: normalizePhone(info.phone) || info.phone,
-          body: `Hey${name}! You've been confirmed for the ${ctx} on ${date} at ${time} — ${location}. See you there! - Dr. Bartender`,
+          body: `Hey${name}! You've been confirmed for the ${ctx} on ${date} at ${time} — ${location}.${setupText} See you there! - Dr. Bartender`,
         });
       }
     } catch (smsErr) {
