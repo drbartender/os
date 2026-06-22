@@ -169,13 +169,13 @@ test('Phase 1 Wix UPSERT: clean insert of a new staff user from all 3 CSVs', asy
 
   // agreements row seeded from Field Guide Ack.
   const agRow = await pool.query(
-    `SELECT acknowledged_field_guide, agreed_non_solicitation, sms_consent, signature_data
+    `SELECT ack_field_guide, ack_non_solicit, sms_consent, signature_data
        FROM agreements WHERE user_id = $1`,
     [userId]
   );
   assert.strictEqual(agRow.rowCount, 1);
-  assert.strictEqual(agRow.rows[0].acknowledged_field_guide, true);
-  assert.strictEqual(agRow.rows[0].agreed_non_solicitation, true);
+  assert.strictEqual(agRow.rows[0].ack_field_guide, true);
+  assert.strictEqual(agRow.rows[0].ack_non_solicit, true);
   assert.strictEqual(agRow.rows[0].sms_consent, true);
   assert.strictEqual(agRow.rows[0].signature_data, 'signed');
 

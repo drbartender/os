@@ -400,9 +400,15 @@ async function run({ ccDir, loadCsv: loadCsvFn = loadCsv, captureMessage = null 
           }
 
           await client.query(
+            // Schema-drift fix (audit 5a): write the ack_* columns the LIVE staff
+            // sign route (server/routes/agreement.js) reads, not the legacy
+            // acknowledged_field_guide / agreed_non_solicitation pair, so an
+            // imported staffer's acks are visible to the same code path as a
+            // freshly-signed one. The legacy columns are kept (no drop) but no
+            // longer written by anything.
             `INSERT INTO agreements
                (user_id, full_name, email, phone, sms_consent,
-                acknowledged_field_guide, agreed_non_solicitation,
+                ack_field_guide, ack_non_solicit,
                 signature_data, signed_at, signature_document_version)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
              ON CONFLICT (user_id) DO UPDATE SET
@@ -410,8 +416,8 @@ async function run({ ccDir, loadCsv: loadCsvFn = loadCsv, captureMessage = null 
                email = COALESCE(EXCLUDED.email, agreements.email),
                phone = COALESCE(EXCLUDED.phone, agreements.phone),
                sms_consent = agreements.sms_consent OR EXCLUDED.sms_consent,
-               acknowledged_field_guide = agreements.acknowledged_field_guide OR EXCLUDED.acknowledged_field_guide,
-               agreed_non_solicitation = agreements.agreed_non_solicitation OR EXCLUDED.agreed_non_solicitation,
+               ack_field_guide = agreements.ack_field_guide OR EXCLUDED.ack_field_guide,
+               ack_non_solicit = agreements.ack_non_solicit OR EXCLUDED.ack_non_solicit,
                signature_data = COALESCE(EXCLUDED.signature_data, agreements.signature_data),
                signed_at = COALESCE(EXCLUDED.signed_at, agreements.signed_at)`,
             [

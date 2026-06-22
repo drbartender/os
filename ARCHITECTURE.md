@@ -599,13 +599,14 @@ Portal access (`RequirePortal` in `client/src/App.js`, `requireOnboarded` in `se
 - `equipment_will_pickup` — Willing to pick up equipment from storage
 - File URLs: `alcohol_certification_file_url`, `resume_file_url`, `headshot_file_url`
 - Emergency contact fields
+- **Source of truth (audit 5a):** `contractor_profiles` is the LIVE, editable record for staff PII (phone, address, emergency contact, equipment, transportation) — every operational surface (BEO phone, paystub, SMS routing, geocoding, search) reads it. The `applications` table is an IMMUTABLE submission snapshot ("Original application"), seeded once into `contractor_profiles` at hire (`contractorSeed.js`) and intentionally NOT kept in sync afterward (stale-by-design history). `applications.full_name` is the ONLY canonical legal-name source (contractor_profiles carries `preferred_name` only); `legal_name` resolves as `COALESCE(agreements.full_name, applications.full_name)`.
 
 **agreements** — Signed legal documents
 - `user_id` FK → users
 - `signature_data` (base64 canvas image), `signed_at`
 - `signature_document_version` — version of the agreement text the user signed (e.g. `contractor-agreement-v2`)
 - `sms_consent`
-- Legacy v1 columns (preserved for historical records): `acknowledged_field_guide`, `agreed_non_solicitation`
+- Legacy v1 columns (preserved for historical records, **no longer written as of audit 5a** — both the live sign route and cc-import phase1 now write the V2 `ack_*` columns): `acknowledged_field_guide`, `agreed_non_solicitation`
 - V2 acknowledgment booleans: `ack_ic_status`, `ack_commitment`, `ack_non_solicit`, `ack_damage_recoupment`, `ack_legal_protections`, `ack_field_guide`
 - PDF record: `pdf_storage_key` (R2 object key), `pdf_generated_at`, `pdf_email_sent_at`
 

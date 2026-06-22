@@ -100,6 +100,10 @@ CREATE TABLE IF NOT EXISTS agreements (
   email VARCHAR(255),
   phone VARCHAR(50),
   sms_consent BOOLEAN DEFAULT false,
+  -- Legacy v1 acks (audit 5a): DEPRECATED — no longer written by anything. The
+  -- live sign route (routes/agreement.js) and cc-import phase1 both write the V2
+  -- ack_field_guide / ack_non_solicit columns instead. Kept (not dropped) for
+  -- any pre-cutover historical rows; the admin DocumentsTab reads legacy-OR-ack.
   acknowledged_field_guide BOOLEAN DEFAULT false,
   agreed_non_solicitation BOOLEAN DEFAULT false,
   signature_data TEXT,

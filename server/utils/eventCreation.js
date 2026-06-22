@@ -104,7 +104,7 @@ async function createEventShifts(proposalId) {
 
   // Fetch proposal with client info
   const result = await pool.query(`
-    SELECT p.*, c.name AS client_name, c.email AS client_email
+    SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
     WHERE p.id = $1
@@ -132,8 +132,8 @@ async function createEventShifts(proposalId) {
   // which is in hand via SELECT p.*). Informational only — start_time stays equal
   // to service start; this never shifts the billable/pay window.
   const shiftResult = await pool.query(`
-    INSERT INTO shifts (event_type, event_type_custom, client_name, event_date, start_time, end_time, location, setup_minutes_before, positions_needed, notes, status, proposal_id, created_by)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11, $12)
+    INSERT INTO shifts (event_type, event_type_custom, client_name, event_date, start_time, end_time, location, setup_minutes_before, positions_needed, notes, status, proposal_id, created_by, client_email, client_phone, guest_count, event_duration_hours)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11, $12, $13, $14, $15, $16)
     RETURNING *
   `, [
     proposal.event_type || null,
@@ -147,7 +147,15 @@ async function createEventShifts(proposalId) {
     JSON.stringify(positions),
     `Auto-created from proposal #${proposal.id}. ${proposal.guest_count || 0} guests. Client: ${proposal.client_name || 'Unknown'}.`,
     proposalId,
-    proposal.created_by
+    proposal.created_by,
+    // Schema-drift sync (audit 5a): populate the denormalized shift columns that
+    // back the manual-event path + the COALESCE(client/proposal, shift) fallbacks
+    // in the shift list/detail and the staff ShiftCard guest tag. Sourced from
+    // the proposal (guest_count, event_duration_hours) and clients (email, phone).
+    proposal.client_email || null,
+    proposal.client_phone || null,
+    proposal.guest_count ?? null,
+    proposal.event_duration_hours ?? null
   ]);
 
   // Auto-create the linked drink plan (non-blocking). No client email here —
@@ -186,7 +194,7 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
   if (cnt.rows[0].n !== 1) return null;
 
   const result = await db.query(`
-    SELECT p.*, c.name AS client_name, c.email AS client_email
+    SELECT p.*, c.name AS client_name, c.email AS client_email, c.phone AS client_phone
     FROM proposals p
     LEFT JOIN clients c ON c.id = p.client_id
     WHERE p.id = $1
@@ -240,7 +248,11 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
       event_type = $6,
       event_type_custom = $7,
       setup_minutes_before = $9,
-      positions_needed = $10
+      positions_needed = $10,
+      client_email = $11,
+      client_phone = $12,
+      guest_count = $13,
+      event_duration_hours = $14
     WHERE proposal_id = $8
     RETURNING *
   `, [
@@ -254,6 +266,12 @@ async function syncShiftsFromProposal(proposalId, db = pool) {
     proposalId,
     effectiveSetupMinutes(proposal),
     positionsNeeded,
+    // Schema-drift sync (audit 5a): keep the denormalized shift columns in step
+    // with the proposal on every admin edit (see createEventShifts for why).
+    proposal.client_email || null,
+    proposal.client_phone || null,
+    proposal.guest_count ?? null,
+    proposal.event_duration_hours ?? null,
   ]);
   return upd.rows[0] || null;
 }

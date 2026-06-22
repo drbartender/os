@@ -58,3 +58,24 @@ test('shrink is capped at approved assignments and logs staffing_shrink_capped',
   assert.equal(log.rows[0].details.approved, 2);
   assert.equal(log.rows[0].details.kept, 2);
 });
+
+test('syncs denormalized client_email/client_phone/guest_count/event_duration_hours to the shift (audit 5a)', async () => {
+  // Schema-drift fix: a proposal edit must propagate these to the linked shift,
+  // not leave them NULL (which silently dropped the staff ShiftCard guest tag).
+  const pr = await pool.query(
+    `INSERT INTO proposals (client_id, status, package_id, guest_count, num_bartenders, event_date, event_start_time, event_duration_hours)
+     VALUES ($1,'deposit_paid',$2,175,1,'2099-09-09','5:00 PM',5) RETURNING id`, [clientId, pkgId]);
+  const proposalId = pr.rows[0].id;
+  // Shift created without the denormalized columns (mirrors a converted proposal
+  // from before this fix) — they must be NULL pre-sync, populated post-sync.
+  await pool.query(`INSERT INTO shifts (event_date, positions_needed, status, proposal_id) VALUES ('2099-09-09','["Bartender"]','open',$1)`, [proposalId]);
+  await syncShiftsFromProposal(proposalId, pool);
+  const s = await pool.query(
+    'SELECT guest_count, event_duration_hours, client_email, client_phone FROM shifts WHERE proposal_id = $1',
+    [proposalId]
+  );
+  assert.equal(s.rows[0].guest_count, 175);
+  assert.equal(Number(s.rows[0].event_duration_hours), 5);
+  assert.equal(s.rows[0].client_email, `sync-a-${NONCE}@example.com`); // from clients.email
+  assert.equal(s.rows[0].client_phone, null); // the test client has no phone
+});
