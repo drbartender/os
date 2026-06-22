@@ -2555,6 +2555,14 @@ CREATE INDEX IF NOT EXISTS idx_consults_scheduled_at ON consults(scheduled_at) W
 ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL;
 ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
 ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+-- Strand-on-failure heal (audit F1b). An inbound row is recorded BEFORE its
+-- side-effect (opt-out / CONFIRM / CANT) runs; if that side-effect throws, the
+-- row was stranded and Twilio's retry used to short-circuit as a duplicate,
+-- losing the action. `processed` gates the dedupe: inbound rows insert FALSE and
+-- flip TRUE only after the side-effect succeeds, so a retry of an unsettled row
+-- re-runs the (idempotent) handler. DEFAULT TRUE so every pre-existing row and
+-- every outbound row is already settled and is never re-processed.
+ALTER TABLE sms_messages ADD COLUMN IF NOT EXISTS processed BOOLEAN NOT NULL DEFAULT TRUE;
 
 -- 'received' is the status for an inbound message (sent/failed/queued only
 -- describe an outbound send attempt).

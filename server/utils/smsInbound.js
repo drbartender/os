@@ -196,15 +196,62 @@ async function recordInboundMessage({ fromPhone, body, clientId, twilioSid, meta
   // processInboundSms SELECT-dedup a graceful no-op instead of a 23505 → 500.
   // The partial unique index idx_sms_messages_twilio_sid is the arbiter; a null
   // twilio_sid can't conflict, so it still inserts. Returns null on a conflict.
+  // processed=false: an inbound row starts UNSETTLED and is flipped true only
+  // after its side-effect succeeds (audit F1b strand heal). The column DEFAULT is
+  // true, so this explicit false is what marks the row as needing settlement.
   const result = await pool.query(
     `INSERT INTO sms_messages
-       (direction, client_id, recipient_phone, body, message_type, status, twilio_sid, metadata)
-     VALUES ('inbound', $1, $2, $3, 'general', 'received', $4, $5)
+       (direction, client_id, recipient_phone, body, message_type, status, twilio_sid, metadata, processed)
+     VALUES ('inbound', $1, $2, $3, 'general', 'received', $4, $5, false)
      ON CONFLICT (twilio_sid) WHERE twilio_sid IS NOT NULL DO NOTHING
      RETURNING *`,
     [clientId || null, phone, text, twilioSid || null, JSON.stringify(meta)]
   );
   return result.rows[0] || null;
+}
+
+/**
+ * Flip an inbound row to processed=true once its side-effect has succeeded.
+ * No-op without a twilio_sid (a SID-less inbound can't be deduped or healed).
+ */
+async function markProcessed(twilioSid) {
+  if (!twilioSid) return;
+  await pool.query(
+    "UPDATE sms_messages SET processed = true WHERE twilio_sid = $1 AND direction = 'inbound'",
+    [twilioSid]
+  );
+}
+
+/**
+ * Settle the inbound row (processed=true) AFTER its side-effect succeeded, then
+ * return the handler result. On a thrown side-effect this is never reached, so
+ * the row stays processed=false and Twilio's retry re-runs the (idempotent)
+ * handler — that is the heal.
+ */
+async function settle(twilioSid, result) {
+  await markProcessed(twilioSid);
+  return result;
+}
+
+/**
+ * Record the inbound row and decide whether to run its side-effect (audit F1b):
+ *  - fresh insert    -> true  (process it)
+ *  - settled dup     -> false (a true replay; skip)
+ *  - unsettled dup   -> true  (a prior attempt stranded it; re-run to heal)
+ * The top-level dedupe already skips settled rows, so a conflict here is almost
+ * always a strand; the re-check guards the narrow gap where a concurrent
+ * delivery settled it between the dedupe SELECT and this insert. All inbound
+ * side-effects are idempotent, so a re-run never double-applies.
+ */
+async function recordAndShouldProcess(args) {
+  const row = await recordInboundMessage(args);
+  if (row) return true;
+  if (!args.twilioSid) return true;
+  const ex = await pool.query(
+    "SELECT processed FROM sms_messages WHERE twilio_sid = $1 AND direction = 'inbound' LIMIT 1",
+    [args.twilioSid]
+  );
+  return !(ex.rows[0] && ex.rows[0].processed);
 }
 
 /**
@@ -328,7 +375,7 @@ async function handleConfirm(staffUserId) {
  *   {ok:false, reason:'no_shift'}
  * >}
  */
-async function handleCant(staffUserId) {
+async function handleCant(staffUserId, twilioSid) {
   const shift = await findNearestApprovedShift(staffUserId);
   if (!shift) return { ok: false, reason: 'no_shift' };
 
@@ -348,6 +395,17 @@ async function handleCant(staffUserId) {
       "UPDATE shifts SET status = 'open' WHERE id = $1 AND status <> 'cancelled'",
       [shift.shift_id]
     );
+    // Settle the inbound SMS row in the SAME transaction as the drop (audit F1b).
+    // CANT flips shift_request status approved->denied, so a retry would
+    // re-resolve to a DIFFERENT branch (no_shift) and mis-alert; settling
+    // atomically here guarantees a retry is skipped as a true replay rather than
+    // re-entering CANT after the drop already committed.
+    if (twilioSid) {
+      await dbClient.query(
+        "UPDATE sms_messages SET processed = true WHERE twilio_sid = $1 AND direction = 'inbound'",
+        [twilioSid]
+      );
+    }
     await dbClient.query('COMMIT');
   } catch (err) {
     try { await dbClient.query('ROLLBACK'); } catch (_) { /* already rolled back or connection dropped */ }
@@ -468,12 +526,13 @@ function fmtDate(d) {
 async function processInboundSms({ from, body, twilioSid }) {
   const text = (body || '').trim();
 
-  // Idempotency: Twilio retries an inbound webhook on timeout. If this
-  // MessageSid was already recorded as an inbound row, this delivery is a
-  // retry — do nothing.
+  // Idempotency + strand heal (audit F1b): only a SETTLED (processed=true) row
+  // short-circuits as a true replay. An unsettled row — a prior attempt that
+  // recorded then failed before its side-effect committed — falls through so
+  // Twilio's retry re-runs the idempotent handler instead of losing the action.
   if (twilioSid) {
     const dup = await pool.query(
-      "SELECT 1 FROM sms_messages WHERE twilio_sid = $1 AND direction = 'inbound' LIMIT 1",
+      "SELECT 1 FROM sms_messages WHERE twilio_sid = $1 AND direction = 'inbound' AND processed = TRUE LIMIT 1",
       [twilioSid]
     );
     if (dup.rowCount > 0) return { outcome: 'duplicate', reply: null };
@@ -502,14 +561,14 @@ async function processInboundSms({ from, body, twilioSid }) {
     // lead's client_id. Skipped on purpose: STOP/START (opt semantics do not
     // transfer from a proxy), all alerts, all auto-replies.
     const relayClientId = sender.type === 'client' ? sender.client.id : (proxyLead.clientId || null);
-    const recorded = await recordInboundMessage({
+    const proceed = await recordAndShouldProcess({
       fromPhone: from,
       body: text,
       clientId: relayClientId,
       twilioSid,
       metadata: { thumbtack_relay: true },
     });
-    if (!recorded) return { outcome: 'duplicate', reply: null };
+    if (!proceed) return { outcome: 'duplicate', reply: null };
     console.log(`[smsInbound] thumbtack_relay suppressed (sender ...${(last10(from) || '').slice(-4)}, client ${relayClientId || 'none'})`);
     if (process.env.SENTRY_DSN_SERVER) {
       Sentry.addBreadcrumb({
@@ -519,7 +578,7 @@ async function processInboundSms({ from, body, twilioSid }) {
         data: { clientId: relayClientId },
       });
     }
-    return { outcome: 'thumbtack_relay', reply: null };
+    return settle(twilioSid, { outcome: 'thumbtack_relay', reply: null });
   }
 
   // STOP/START — handled before sender-type branching, for any sender. We
@@ -529,25 +588,24 @@ async function processInboundSms({ from, body, twilioSid }) {
   const optKeyword = detectOptKeyword(text);
   if (optKeyword) {
     const clientId = sender.type === 'client' ? sender.client.id : null;
-    const recorded = await recordInboundMessage({ fromPhone: from, body: text, clientId, twilioSid, metadata: { opt_keyword: optKeyword } });
-    // null = a concurrent retry already recorded this SID — don't double-apply.
-    if (!recorded) return { outcome: 'duplicate', reply: null };
+    const proceed = await recordAndShouldProcess({ fromPhone: from, body: text, clientId, twilioSid, metadata: { opt_keyword: optKeyword } });
+    if (!proceed) return { outcome: 'duplicate', reply: null };
     if (optKeyword === 'stop') await applyOptOut(sender);
     else await applyOptIn(sender);
-    return { outcome: `opt_${optKeyword}`, reply: null };
+    return settle(twilioSid, { outcome: `opt_${optKeyword}`, reply: null });
   }
 
-  // Record the message (client_id set only for a client sender).
+  // Record the message (client_id set only for a client sender). Heal-aware: an
+  // unsettled prior record (stranded by a failed side-effect) is re-processed.
   const clientId = sender.type === 'client' ? sender.client.id : null;
-  const recorded = await recordInboundMessage({ fromPhone: from, body: text, clientId, twilioSid });
-  // null = a concurrent retry already recorded this SID — stop here.
-  if (!recorded) return { outcome: 'duplicate', reply: null };
+  const proceed = await recordAndShouldProcess({ fromPhone: from, body: text, clientId, twilioSid });
+  if (!proceed) return { outcome: 'duplicate', reply: null };
 
   if (sender.type === 'client') {
     // No auto-reply to clients — the admin replies personally from the
     // Messages page. We just alert the admin a client texted in.
     await alertInboundClient(sender.client, text);
-    return { outcome: 'client_message', reply: null };
+    return settle(twilioSid, { outcome: 'client_message', reply: null });
   }
 
   if (sender.type === 'staff') {
@@ -565,27 +623,27 @@ async function processInboundSms({ from, body, twilioSid }) {
       if (resolved.status === 'ambiguous') {
         await alertAdminEmail(`Ambiguous staff ${code.toUpperCase()} text`,
           `A "${text}" text came from a number matching multiple active staff with upcoming shifts (user ids ${resolved.userIds.join(', ')}). No shift was changed; please follow up.`);
-        return { outcome: `staff_${code}_ambiguous`, reply: AMBIGUOUS_RESPONSE_REPLY };
+        return settle(twilioSid, { outcome: `staff_${code}_ambiguous`, reply: AMBIGUOUS_RESPONSE_REPLY });
       }
 
       if (code === 'confirm') {
         if (resolved.status === 'no_shift') {
-          return { outcome: 'staff_confirm_no_shift', reply: NO_CONFIRM_SHIFT_REPLY };
+          return settle(twilioSid, { outcome: 'staff_confirm_no_shift', reply: NO_CONFIRM_SHIFT_REPLY });
         }
         const r = await handleConfirm(resolved.staffUserId);
         const reply = r.ok
           ? `Confirmed from Dr. Bartender: you're acknowledged for the ${fmtDate(r.eventDate)} shift${r.clientName ? ' (' + r.clientName + ')' : ''}. See you there.`
           : NO_CONFIRM_SHIFT_REPLY;
-        return { outcome: r.ok ? 'staff_confirm' : 'staff_confirm_no_shift', reply };
+        return settle(twilioSid, { outcome: r.ok ? 'staff_confirm' : 'staff_confirm_no_shift', reply });
       }
 
       // code === 'cant'
       if (resolved.status === 'no_shift') {
         await alertAdminEmail('Staff texted CANT but has no upcoming shift',
           `A staff member texted CANT but the system found no approved upcoming shift for them. Inbound text: "${text}"`);
-        return { outcome: 'staff_cant_no_shift', reply: NO_CANT_SHIFT_REPLY };
+        return settle(twilioSid, { outcome: 'staff_cant_no_shift', reply: NO_CANT_SHIFT_REPLY });
       }
-      const cant = await handleCant(resolved.staffUserId);
+      const cant = await handleCant(resolved.staffUserId, twilioSid);
       if (cant.ok) {
         await alertStaffCant(cant);
         return {
@@ -599,21 +657,21 @@ async function processInboundSms({ from, body, twilioSid }) {
       // "never had a shift" trail.
       await alertAdminEmail('Staff CANT could not be applied (shift changed mid-request)',
         `A staff member texted CANT and had a matching upcoming shift, but it was already released or changed before we could act. Inbound text: "${text}"`);
-      return { outcome: 'staff_cant_race', reply: NO_CANT_SHIFT_REPLY };
+      return settle(twilioSid, { outcome: 'staff_cant_race', reply: NO_CANT_SHIFT_REPLY });
     }
     // Free-form staff text — route to admin, redirect the texter.
     await alertAdminEmail('Staff texted Dr. Bartender',
       `A staff member texted: "${text}". No response code matched, so no system action was taken.`);
-    return {
+    return settle(twilioSid, {
       outcome: 'staff_freeform',
       reply: FREEFORM_STAFF_REPLY,
-    };
+    });
   }
 
   // Unknown sender.
   await alertAdminEmail('Text from an unknown number',
     `An unrecognized number (${from}) texted Dr. Bartender: "${text}".`);
-  return { outcome: 'unknown_sender', reply: null };
+  return settle(twilioSid, { outcome: 'unknown_sender', reply: null });
 }
 
 module.exports = {

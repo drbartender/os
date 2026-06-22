@@ -426,6 +426,43 @@ test('processInboundSms > a retried relay MessageSid is a duplicate no-op', asyn
   await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_relay_dup'");
 });
 
+test('processInboundSms > a stranded (processed=false) opt-out re-applies on Twilio retry, then settles (audit F1b heal)', async () => {
+  // Simulate a prior delivery that recorded the inbound row but whose applyOptOut
+  // threw before settling — the row was left processed=false and the client was
+  // never opted out. The retry must NOT skip it as a duplicate; it must re-run
+  // the (idempotent) opt-out and then settle so a later replay IS skipped.
+  const phone = '3125550177';
+  await pool.query("DELETE FROM clients WHERE email = 'sms-heal-client@example.com'");
+  const cc = await pool.query(
+    `INSERT INTO clients (name, email, phone) VALUES ('SMS Heal Client', 'sms-heal-client@example.com', $1) RETURNING id`,
+    [phone]
+  );
+  const healClientId = cc.rows[0].id;
+  try {
+    // Stranded record: inbound row exists, processed=false; client still sms-enabled.
+    await pool.query(
+      `INSERT INTO sms_messages (direction, client_id, recipient_phone, body, message_type, status, twilio_sid, metadata, processed)
+       VALUES ('inbound', $1, $2, 'STOP', 'general', 'received', 'SMtest_heal_stop', '{}'::jsonb, false)`,
+      [healClientId, phone]
+    );
+
+    const healed = await processInboundSms({ from: `+1${phone}`, body: 'STOP', twilioSid: 'SMtest_heal_stop' });
+    assert.strictEqual(healed.outcome, 'opt_stop', 'a stranded opt-out must re-process, not skip as duplicate');
+
+    const after = await pool.query('SELECT communication_preferences FROM clients WHERE id = $1', [healClientId]);
+    assert.strictEqual(after.rows[0].communication_preferences?.sms_enabled, false, 'the opt-out healed: sms_enabled is now false');
+
+    const row = await pool.query("SELECT processed FROM sms_messages WHERE twilio_sid = 'SMtest_heal_stop'");
+    assert.strictEqual(row.rows[0].processed, true, 'the row is now settled so a further retry is skipped');
+
+    const replay = await processInboundSms({ from: `+1${phone}`, body: 'STOP', twilioSid: 'SMtest_heal_stop' });
+    assert.strictEqual(replay.outcome, 'duplicate', 'once settled, a replay is skipped as a true duplicate');
+  } finally {
+    await pool.query("DELETE FROM sms_messages WHERE twilio_sid = 'SMtest_heal_stop'");
+    await pool.query('DELETE FROM clients WHERE id = $1', [healClientId]);
+  }
+});
+
 test('processInboundSms > relay keeps the client link after real-number capture', async () => {
   // Simulate Component 4: the proxy no longer matches clients.phone, so the
   // lead-row fallback must supply the client link.
