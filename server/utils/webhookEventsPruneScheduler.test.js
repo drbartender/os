@@ -1,4 +1,4 @@
-require('dotenv').config({ path: 'C:/Users/dalla/DRB_OS/os/.env' });
+require('dotenv').config();
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { pool } = require('../db');
