@@ -24,7 +24,9 @@ const RESEND_ID_HEAL = `re_heal_${NONCE}`;
 const RESEND_ID_TS = `re_ts_${NONCE}`;
 const RESEND_ID_UNK = `re_unk_${NONCE}`;
 const RESEND_ID_RACE = `re_race_${NONCE}`;
-let server, baseUrl, healLeadId, tsLeadId, raceLeadId;
+const RESEND_ID_MONO = `re_mono_${NONCE}`;
+const RESEND_ID_MONO2 = `re_mono2_${NONCE}`;
+let server, baseUrl, healLeadId, tsLeadId, raceLeadId, monoLeadId, mono2LeadId;
 
 before(async () => {
   const app = express();
@@ -37,9 +39,9 @@ before(async () => {
 
 after(async () => {
   if (server) await new Promise((r) => server.close(r));
-  await pool.query('DELETE FROM email_webhook_events WHERE resend_id = ANY($1)', [[RESEND_ID, RESEND_ID_HEAL, RESEND_ID_TS, RESEND_ID_UNK, RESEND_ID_RACE]]);
-  await pool.query('DELETE FROM email_sends WHERE resend_id = ANY($1)', [[RESEND_ID_HEAL, RESEND_ID_TS, RESEND_ID_RACE]]);
-  const leads = [healLeadId, tsLeadId, raceLeadId].filter(Boolean);
+  await pool.query('DELETE FROM email_webhook_events WHERE resend_id = ANY($1)', [[RESEND_ID, RESEND_ID_HEAL, RESEND_ID_TS, RESEND_ID_UNK, RESEND_ID_RACE, RESEND_ID_MONO, RESEND_ID_MONO2]]);
+  await pool.query('DELETE FROM email_sends WHERE resend_id = ANY($1)', [[RESEND_ID_HEAL, RESEND_ID_TS, RESEND_ID_RACE, RESEND_ID_MONO, RESEND_ID_MONO2]]);
+  const leads = [healLeadId, tsLeadId, raceLeadId, monoLeadId, mono2LeadId].filter(Boolean);
   if (leads.length) await pool.query('DELETE FROM email_leads WHERE id = ANY($1::int[])', [leads]);
   await pool.end();
 });
@@ -202,4 +204,44 @@ test('an unknown event type is marked processed=true (terminal no-op, not perpet
     [RESEND_ID_UNK, 'email.somethingnew']
   );
   assert.equal(ev.rows[0].processed, true, 'an unknown-type row is marked processed (terminal)');
+});
+
+test('status is monotonic: a late engagement event does not regress a terminal bounce (audit F2)', async () => {
+  // Resend can deliver out of order. A send already 'bounced' must NOT be dragged
+  // back to 'opened' by a late open event (the old bare `status=$1` overwrite did).
+  const lead = await pool.query(
+    `INSERT INTO email_leads (name, email, status) VALUES ('Mono Test', $1, 'active') RETURNING id`,
+    [`mono-${NONCE}@example.com`]
+  );
+  monoLeadId = lead.rows[0].id;
+  await pool.query(
+    `INSERT INTO email_sends (lead_id, resend_id, status, bounced_at) VALUES ($1, $2, 'bounced', NOW())`,
+    [monoLeadId, RESEND_ID_MONO]
+  );
+
+  const res = await postEvent({ type: 'email.opened', data: { email_id: RESEND_ID_MONO } });
+  assert.equal(res.status, 200, `${res.status} ${JSON.stringify(res.body)}`);
+
+  const send = await pool.query('SELECT status FROM email_sends WHERE resend_id = $1', [RESEND_ID_MONO]);
+  assert.equal(send.rows[0].status, 'bounced', 'a late opened must not regress a terminal bounce (would be "opened" pre-fix)');
+});
+
+test('status still advances forward: sent -> delivered -> opened -> clicked (monotonic guard does not over-block)', async () => {
+  // Guards the other direction: the rank CASE must not freeze legit progression.
+  const lead = await pool.query(
+    `INSERT INTO email_leads (name, email, status) VALUES ('Mono2 Test', $1, 'active') RETURNING id`,
+    [`mono2-${NONCE}@example.com`]
+  );
+  mono2LeadId = lead.rows[0].id;
+  await pool.query(
+    `INSERT INTO email_sends (lead_id, resend_id, status) VALUES ($1, $2, 'sent')`,
+    [mono2LeadId, RESEND_ID_MONO2]
+  );
+
+  await postEvent({ type: 'email.delivered', data: { email_id: RESEND_ID_MONO2 } });
+  await postEvent({ type: 'email.opened', data: { email_id: RESEND_ID_MONO2 } });
+  await postEvent({ type: 'email.clicked', data: { email_id: RESEND_ID_MONO2 } });
+
+  const send = await pool.query('SELECT status FROM email_sends WHERE resend_id = $1', [RESEND_ID_MONO2]);
+  assert.equal(send.rows[0].status, 'clicked', 'forward progression must still reach the highest rank');
 });

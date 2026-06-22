@@ -106,9 +106,9 @@ router.post('/resend', asyncHandler(async (req, res) => {
       // processed = false row was stranded by a prior delivery that rolled back
       // before finishing; fall through and (re-)run the side-effects. The
       // re-runnable writes are safe: *_at stamps COALESCE to the first write,
-      // and the lead/enrollment/client flips are WHERE-guarded. (The email_sends
-      // bare-status overwrite is not strictly monotonic on out-of-order replay,
-      // tracked follow-up.)
+      // and the lead/enrollment/client flips are WHERE-guarded. The email_sends
+      // status write is now monotonic (audit F2 — see the rank guard below), so
+      // an out-of-order replay can never regress a terminal bounce/complaint.
       if (locked.rows[0] && locked.rows[0].processed) {
         await client.query('COMMIT');
         return res.json({ received: true, duplicate: true });
@@ -125,25 +125,33 @@ router.post('/resend', asyncHandler(async (req, res) => {
         return res.json({ received: true });
       }
 
-      // Update email_sends status.
-      // COALESCE so a re-run (heal of a stranded event) keeps the FIRST event's
-      // timestamp rather than overwriting it with the replay wall-clock — the *_at
-      // columns stay idempotent across redeliveries.
-      const TIMESTAMP_QUERIES = {
-        'opened': 'UPDATE email_sends SET status = $1, opened_at = COALESCE(opened_at, NOW()) WHERE resend_id = $2',
-        'clicked': 'UPDATE email_sends SET status = $1, clicked_at = COALESCE(clicked_at, NOW()) WHERE resend_id = $2',
-        'bounced': 'UPDATE email_sends SET status = $1, bounced_at = COALESCE(bounced_at, NOW()) WHERE resend_id = $2',
-        'complained': 'UPDATE email_sends SET status = $1, complained_at = COALESCE(complained_at, NOW()) WHERE resend_id = $2',
+      // Update email_sends status — MONOTONIC (audit F2). Resend can deliver
+      // events out of order (e.g. a late 'opened' after a 'bounced'); status must
+      // only ever advance FORWARD by rank, never regress a terminal bounce/
+      // complaint back to an engagement state. The guard lives INSIDE the UPDATE
+      // (a CASE comparing the incoming rank $3 against the row's current rank) so
+      // it is atomic — required because different event_types for the same
+      // resend_id lock different email_webhook_events rows and can race on this
+      // email_sends row. The *_at stamps still COALESCE to the first write, so a
+      // late event whose status is dropped can still record when we learned of it.
+      // Rank: sent 0 < delivered 1 < opened 2 < clicked 3 < bounced 4 < complained 5.
+      // Only resend_id-bearing rows reach this UPDATE (WHERE resend_id = $2), and
+      // those are always inserted at status='sent'; 'queued'/'failed' email_sends
+      // rows carry no resend_id, so the ELSE-0 floor only ever applies to a real
+      // 'sent' row (never a terminal 'failed').
+      const STATUS_RANK = { sent: 0, delivered: 1, opened: 2, clicked: 3, bounced: 4, complained: 5 };
+      const newRank = STATUS_RANK[newStatus] ?? 0;
+      // Full literal queries (no interpolation) to match the parameterized style
+      // and keep the SQL injection-free by construction. $3 = newRank.
+      const MONOTONIC_QUERIES = {
+        'opened': `UPDATE email_sends SET status = CASE WHEN $3 >= (CASE status WHEN 'complained' THEN 5 WHEN 'bounced' THEN 4 WHEN 'clicked' THEN 3 WHEN 'opened' THEN 2 WHEN 'delivered' THEN 1 ELSE 0 END) THEN $1 ELSE status END, opened_at = COALESCE(opened_at, NOW()) WHERE resend_id = $2`,
+        'clicked': `UPDATE email_sends SET status = CASE WHEN $3 >= (CASE status WHEN 'complained' THEN 5 WHEN 'bounced' THEN 4 WHEN 'clicked' THEN 3 WHEN 'opened' THEN 2 WHEN 'delivered' THEN 1 ELSE 0 END) THEN $1 ELSE status END, clicked_at = COALESCE(clicked_at, NOW()) WHERE resend_id = $2`,
+        'bounced': `UPDATE email_sends SET status = CASE WHEN $3 >= (CASE status WHEN 'complained' THEN 5 WHEN 'bounced' THEN 4 WHEN 'clicked' THEN 3 WHEN 'opened' THEN 2 WHEN 'delivered' THEN 1 ELSE 0 END) THEN $1 ELSE status END, bounced_at = COALESCE(bounced_at, NOW()) WHERE resend_id = $2`,
+        'complained': `UPDATE email_sends SET status = CASE WHEN $3 >= (CASE status WHEN 'complained' THEN 5 WHEN 'bounced' THEN 4 WHEN 'clicked' THEN 3 WHEN 'opened' THEN 2 WHEN 'delivered' THEN 1 ELSE 0 END) THEN $1 ELSE status END, complained_at = COALESCE(complained_at, NOW()) WHERE resend_id = $2`,
       };
-
-      if (TIMESTAMP_QUERIES[newStatus]) {
-        await client.query(TIMESTAMP_QUERIES[newStatus], [newStatus, resendId]);
-      } else {
-        await client.query(
-          `UPDATE email_sends SET status = $1 WHERE resend_id = $2`,
-          [newStatus, resendId]
-        );
-      }
+      // sent / delivered (and any future no-timestamp status) take the status-only form.
+      const STATUS_ONLY_QUERY = `UPDATE email_sends SET status = CASE WHEN $3 >= (CASE status WHEN 'complained' THEN 5 WHEN 'bounced' THEN 4 WHEN 'clicked' THEN 3 WHEN 'opened' THEN 2 WHEN 'delivered' THEN 1 ELSE 0 END) THEN $1 ELSE status END WHERE resend_id = $2`;
+      await client.query(MONOTONIC_QUERIES[newStatus] || STATUS_ONLY_QUERY, [newStatus, resendId, newRank]);
 
       // For bounces/complaints, suppress the lead
       if (newStatus === 'bounced' || newStatus === 'complained') {
