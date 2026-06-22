@@ -13193,7 +13193,7 @@ html[data-app="admin-os"] .field-block {
   background: rgba(184,146,74,0.10);
   border: 1px solid rgba(184,146,74,0.40);
   border-radius: var(--radius);
-  color: var(--deep-brown);
+  color: var(--cream-text);
   position: relative;
   box-shadow: 0 1px 4px rgba(0,0,0,0.15);
 }
@@ -13216,7 +13216,7 @@ html[data-app="admin-os"] .field-block {
 .potion-app .potion-scope .potion-scope-title {
   font-family: var(--font-display);
   font-size: 1.08rem;
-  color: var(--deep-brown);
+  color: var(--cream-text);
   margin: 0 0 4px;
   line-height: 1.2;
   text-transform: none;
@@ -13227,9 +13227,9 @@ html[data-app="admin-os"] .field-block {
   margin: 0;
   font-size: 0.94rem;
   line-height: 1.5;
-  color: rgba(28,22,16,0.82);
+  color: rgba(240,232,214,0.84);
 }
-.potion-app .potion-scope .potion-scope-text strong { color: var(--deep-brown); }
+.potion-app .potion-scope .potion-scope-text strong { color: var(--cream-text); }
 
 /* Tone: hosted (we provide) */
 .potion-app .potion-scope.hosted {
@@ -13239,25 +13239,25 @@ html[data-app="admin-os"] .field-block {
 .potion-app .potion-scope.hosted .potion-scope-seal {
   background: rgba(29,140,137,0.16);
   border-color: rgba(29,140,137,0.55);
-  color: var(--amber);
+  color: var(--amber-light);
 }
 .potion-app .potion-scope.hosted h3.potion-scope-title,
-.potion-app .potion-scope.hosted .potion-scope-title { color: var(--deep-brown); }
+.potion-app .potion-scope.hosted .potion-scope-title { color: var(--cream-text); }
 
 /* Tone: aside (not part of shopping) */
 .potion-app .potion-scope.aside {
-  background: rgba(28,22,16,0.05);
-  border-color: rgba(28,22,16,0.18);
+  background: rgba(240,232,214,0.04);
+  border-color: rgba(240,232,214,0.16);
 }
 .potion-app .potion-scope.aside .potion-scope-seal {
-  background: rgba(28,22,16,0.06);
-  border-color: rgba(28,22,16,0.22);
-  color: var(--text-muted);
+  background: rgba(240,232,214,0.06);
+  border-color: rgba(240,232,214,0.22);
+  color: rgba(240,232,214,0.58);
 }
 .potion-app .potion-scope.aside h3.potion-scope-title,
-.potion-app .potion-scope.aside .potion-scope-title { color: var(--text-muted); }
+.potion-app .potion-scope.aside .potion-scope-title { color: rgba(240,232,214,0.66); }
 .potion-app .potion-scope.aside p.potion-scope-text,
-.potion-app .potion-scope.aside .potion-scope-text { color: rgba(28,22,16,0.66); }
+.potion-app .potion-scope.aside .potion-scope-text { color: rgba(240,232,214,0.60); }
 
 /* Welcome roadmap: three-card journey */
 .potion-app .potion-roadmap {
@@ -13271,8 +13271,8 @@ html[data-app="admin-os"] .field-block {
 }
 .potion-app .potion-roadmap-step {
   padding: 14px 16px;
-  background: rgba(184,146,74,0.06);
-  border: 1px solid rgba(184,146,74,0.30);
+  background: rgba(184,146,74,0.12);
+  border: 1px solid rgba(184,146,74,0.34);
   border-radius: var(--radius);
   position: relative;
 }
@@ -13295,16 +13295,14 @@ html[data-app="admin-os"] .field-block {
   content: ""; width: 18px; height: 1px;
   background: var(--brass); opacity: 0.7;
 }
-.potion-app .potion-roadmap-step.hosted .potion-roadmap-num,
-.potion-app .potion-roadmap-step.hosted .potion-roadmap-num::before {
-  color: var(--amber); background: var(--amber);
-}
+.potion-app .potion-roadmap-step.hosted .potion-roadmap-num { color: var(--amber-light); }
+.potion-app .potion-roadmap-step.hosted .potion-roadmap-num::before { background: var(--amber-light); }
 
 .potion-app h4.potion-roadmap-title,
 .potion-app .potion-roadmap-title {
   font-family: var(--font-display);
   font-size: 1.05rem;
-  color: var(--deep-brown);
+  color: var(--cream-text);
   margin: 0 0 4px;
   text-transform: none;
   letter-spacing: 0.01em;
@@ -13313,7 +13311,7 @@ html[data-app="admin-os"] .field-block {
   margin: 0;
   font-size: 0.88rem;
   line-height: 1.45;
-  color: rgba(28,22,16,0.74);
+  color: rgba(240,232,214,0.80);
 }
 .potion-app .potion-roadmap-tag {
   display: inline-block;
@@ -13323,14 +13321,14 @@ html[data-app="admin-os"] .field-block {
   padding: 2px 8px;
   border-radius: 999px;
   background: rgba(184,146,74,0.22);
-  color: var(--text-muted);
+  color: var(--brass-bright);
   border: 1px solid rgba(184,146,74,0.45);
   font-family: var(--font-body);
   font-style: italic;
 }
 .potion-app .potion-roadmap-step.hosted .potion-roadmap-tag {
   background: rgba(29,140,137,0.18);
-  color: var(--amber);
+  color: var(--amber-light);
   border-color: rgba(29,140,137,0.45);
 }
 
@@ -13345,7 +13343,7 @@ html[data-app="admin-os"] .field-block {
   margin: 0;
   font-size: 0.88rem;
   font-style: italic;
-  color: var(--text-muted);
+  color: rgba(240,232,214,0.72);
   line-height: 1.45;
   max-width: 640px;
   margin-left: auto;
