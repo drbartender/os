@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { loadStripe } from '@stripe/stripe-js';
@@ -321,6 +321,50 @@ export default function ProposalView() {
     }
   };
 
+  // Line-item rows for the pricing breakdown. Rebuilt only when the pricing
+  // snapshot object or the package name changes — the snapshot reference is
+  // swapped wholesale by the payment-intent effect when total/gratuity update,
+  // so keying on it also catches those refreshes. Declared above the early
+  // returns to keep hook order stable; guards null proposal/snapshot itself.
+  const lineItems = useMemo(() => {
+    const snap = proposal?.pricing_snapshot;
+    const items = [];
+    if (snap && snap.package) {
+      const packageTotal = (snap.package.base_cost || 0) + (snap.staffing?.total || 0);
+      items.push({ label: proposal.package_name, amount: packageTotal });
+      if (snap.bar_rental?.total > 0) {
+        items.push({ label: 'Bar Rental', amount: snap.bar_rental.total });
+      }
+      (snap.addons || []).forEach(a => {
+        items.push({ label: a.name, amount: a.line_total });
+      });
+      if (snap.syrups?.total > 0) {
+        let syrupLabel = 'Handcrafted Syrups';
+        const sc = snap.syrups;
+        if (sc.packs > 0 && sc.singles > 0) {
+          syrupLabel += ` (${sc.packs} three-pack${sc.packs !== 1 ? 's' : ''} + ${sc.singles} single${sc.singles !== 1 ? 's' : ''})`;
+        } else if (sc.packs > 0) {
+          syrupLabel += ` (${sc.packs} three-pack${sc.packs !== 1 ? 's' : ''})`;
+        } else {
+          syrupLabel += ` (${sc.singles} bottle${sc.singles !== 1 ? 's' : ''})`;
+        }
+        items.push({ label: syrupLabel, amount: sc.total });
+      }
+      (snap.adjustments || []).forEach(adj => {
+        if (!adj.visible) return;
+        const amt = Math.abs(Number(adj.amount) || 0);
+        items.push({
+          label: adj.label || (adj.type === 'discount' ? 'Discount' : 'Surcharge'),
+          amount: adj.type === 'discount' ? -amt : amt,
+        });
+      });
+      if (snap.gratuity && snap.gratuity.total > 0) {
+        items.push({ label: 'Gratuity', amount: snap.gratuity.total });
+      }
+    }
+    return items;
+  }, [proposal?.pricing_snapshot, proposal?.package_name]);
+
   if (loading) {
     return (
       <div style={styles.page}>
@@ -372,40 +416,7 @@ export default function ProposalView() {
     balanceDueDate = d.toISOString();
   }
 
-  const lineItems = [];
-  if (snapshot && snapshot.package) {
-    const packageTotal = (snapshot.package.base_cost || 0) + (snapshot.staffing?.total || 0);
-    lineItems.push({ label: proposal.package_name, amount: packageTotal });
-    if (snapshot.bar_rental?.total > 0) {
-      lineItems.push({ label: 'Bar Rental', amount: snapshot.bar_rental.total });
-    }
-    (snapshot.addons || []).forEach(a => {
-      lineItems.push({ label: a.name, amount: a.line_total });
-    });
-    if (snapshot.syrups?.total > 0) {
-      let syrupLabel = 'Handcrafted Syrups';
-      const sc = snapshot.syrups;
-      if (sc.packs > 0 && sc.singles > 0) {
-        syrupLabel += ` (${sc.packs} three-pack${sc.packs !== 1 ? 's' : ''} + ${sc.singles} single${sc.singles !== 1 ? 's' : ''})`;
-      } else if (sc.packs > 0) {
-        syrupLabel += ` (${sc.packs} three-pack${sc.packs !== 1 ? 's' : ''})`;
-      } else {
-        syrupLabel += ` (${sc.singles} bottle${sc.singles !== 1 ? 's' : ''})`;
-      }
-      lineItems.push({ label: syrupLabel, amount: sc.total });
-    }
-    (snapshot.adjustments || []).forEach(adj => {
-      if (!adj.visible) return;
-      const amt = Math.abs(Number(adj.amount) || 0);
-      lineItems.push({
-        label: adj.label || (adj.type === 'discount' ? 'Discount' : 'Surcharge'),
-        amount: adj.type === 'discount' ? -amt : amt,
-      });
-    });
-    if (snapshot.gratuity && snapshot.gratuity.total > 0) {
-      lineItems.push({ label: 'Gratuity', amount: snapshot.gratuity.total });
-    }
-  }
+  // (lineItems is memoized above the early returns.)
 
   // Server-computed booking-window policy (never re-derived client-side).
   // fullPaymentRequired → deposit/autopay hidden, option locked to 'full'.

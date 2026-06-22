@@ -74,7 +74,15 @@ export default function Blog() {
             <Link to={`/labnotes/${featured.slug}`} className="card ws-labnotes-featured">
               <div className="ws-labnotes-featured-img">
                 {featured.cover_image_url ? (
-                  <img src={resolveImageUrl(featured.cover_image_url)} alt={featured.title} />
+                  // Container CSS already pins dimensions (min-height / breakpoint
+                  // aspect-ratio + img width/height/object-fit), so layout shift is
+                  // covered; only add lazy/async decoding to defer offscreen loads.
+                  <img
+                    src={resolveImageUrl(featured.cover_image_url)}
+                    alt={featured.title}
+                    loading="lazy"
+                    decoding="async"
+                  />
                 ) : (
                   <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 3', height: '100%' }}>
                     <span>{'PHOTO\nfeature post hero'}</span>
@@ -106,7 +114,15 @@ export default function Blog() {
                 <Link key={post.id} to={`/labnotes/${post.slug}`} className="card ws-labnotes-card">
                   <div className="ws-labnotes-card-img">
                     {post.cover_image_url ? (
-                      <img src={resolveImageUrl(post.cover_image_url)} alt={post.title} />
+                      // .ws-labnotes-card-img already sets aspect-ratio: 4/3 on the
+                      // container (img fills it), so dimensions are reserved; just
+                      // add lazy/async so below-the-fold index cards defer loading.
+                      <img
+                        src={resolveImageUrl(post.cover_image_url)}
+                        alt={post.title}
+                        loading="lazy"
+                        decoding="async"
+                      />
                     ) : (
                       <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 3' }}>
                         <span>{`PHOTO\npost ${post.chapter_number || ''}\nstill life`}</span>

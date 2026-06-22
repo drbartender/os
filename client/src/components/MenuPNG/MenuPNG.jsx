@@ -1,5 +1,4 @@
 import React, { useRef, useState } from 'react';
-import html2canvas from 'html2canvas';
 import MenuPreview from '../../pages/plan/components/MenuPreview';
 
 /**
@@ -37,6 +36,7 @@ export default function MenuPNG({ plan }) {
     try {
       const node = hiddenRef.current;
       if (!node) throw new Error('Render surface not ready.');
+      const html2canvas = (await import('html2canvas')).default;
       const canvas = await html2canvas(node, {
         scale: 3,
         backgroundColor: '#12161C',

@@ -17,20 +17,30 @@ import HomePage from './pages/website/HomePage';
 // new deploy replaces the hashed chunk files, a still-open tab requests an old
 // chunk hash; the SPA host serves index.html in place of the missing JS, so the
 // browser fails to parse it ("Unexpected token '<'") or raises a ChunkLoadError.
-// On a chunk-load failure we reload ONCE PER SESSION: the attempt is recorded in
-// sessionStorage (never cleared) so it survives the reload and a genuinely broken
-// (non-stale) build can't loop. A second deploy mid-session, or blocked storage,
-// falls back to the ErrorBoundary's manual refresh rather than risking a loop.
+// On a chunk-load failure we reload, but never twice in quick succession: the
+// attempt time is recorded in sessionStorage so it survives the reload. A second
+// failure WITHIN the TTL window is treated as a genuinely broken (non-stale)
+// build and falls back to the ErrorBoundary rather than looping. A failure
+// OUTSIDE the window (a later, separate deploy mid-session) is allowed to reload
+// again — the stale-recorded attempt has expired. Blocked storage also falls
+// back to the ErrorBoundary's manual refresh rather than risking a loop.
 // The local `lazy` shadows React's so every route definition below stays idiomatic.
 // (Sentry DRBARTENDER-CLIENT-4.)
-const CHUNK_RELOAD_KEY = 'chunk_reload_attempted';
+const CHUNK_RELOAD_KEY = 'chunk_reload_attempted_at';
+// Loop-prevention window: a repeat chunk failure inside this span is the same
+// broken build, so suppress the reload. A failure after it is a fresh stale-chunk
+// event and earns a new reload attempt.
+const CHUNK_RELOAD_TTL_MS = 10000;
 function lazy(factory) {
   return lazyBase(() =>
     factory().catch((err) => {
       let canReload = false;
       try {
-        if (window.sessionStorage.getItem(CHUNK_RELOAD_KEY) !== '1') {
-          window.sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
+        const last = Number(window.sessionStorage.getItem(CHUNK_RELOAD_KEY));
+        const now = Date.now();
+        // Reload unless a prior attempt is recorded and still within the TTL.
+        if (!last || now - last > CHUNK_RELOAD_TTL_MS) {
+          window.sessionStorage.setItem(CHUNK_RELOAD_KEY, String(now));
           canReload = true;
         }
       } catch (_e) {
@@ -40,7 +50,7 @@ function lazy(factory) {
         window.location.reload();
         return new Promise(() => {}); // hold the Suspense fallback until reload lands
       }
-      throw err; // already reloaded this session, or no durable guard — let the ErrorBoundary surface it
+      throw err; // reloaded too recently, or no durable guard — let the ErrorBoundary surface it
     })
   );
 }

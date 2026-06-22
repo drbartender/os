@@ -395,10 +395,13 @@ export default function PotionPlanningLab() {
     }
   };
 
-  // Update a selection field
-  const updateSelections = (field, value) => {
+  // Update a selection field. Stable across renders so the memoized
+  // AdditionalNotesCard (and other downstream memos) don't re-render on every
+  // keystroke. setSelections is a useState setter (stable), and the functional
+  // update form closes over nothing else, so the dep array is empty.
+  const updateSelections = useCallback((field, value) => {
     setSelections(prev => ({ ...prev, [field]: value }));
-  };
+  }, []);
 
   // Toggle an addon on/off in selections.addOns
   const toggleAddOn = (slug, metadata = {}) => {

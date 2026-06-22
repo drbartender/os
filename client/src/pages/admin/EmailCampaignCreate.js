@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../utils/api';
-import RichTextEditor from '../../components/RichTextEditor';
 import AudienceSelector from '../../components/AudienceSelector';
 import useFormValidation from '../../hooks/useFormValidation';
 import { useToast } from '../../context/ToastContext';
 import FormBanner from '../../components/FormBanner';
 import FieldError from '../../components/FieldError';
+
+const RichTextEditor = lazy(() => import('../../components/RichTextEditor'));
 
 export default function EmailCampaignCreate() {
   const navigate = useNavigate();
@@ -85,12 +86,14 @@ export default function EmailCampaignCreate() {
 
             <div className="form-group">
               <label className="form-label">Email Body</label>
-              <RichTextEditor
-                content={form.html_body}
-                onChange={val => setForm({ ...form, html_body: val })}
-                onUploadImage={() => Promise.resolve(null)}
-                placeholder="Write your email content here..."
-              />
+              <Suspense fallback={<div className="muted" style={{ padding: '1rem 0' }}>Loading editor…</div>}>
+                <RichTextEditor
+                  content={form.html_body}
+                  onChange={val => setForm({ ...form, html_body: val })}
+                  onUploadImage={() => Promise.resolve(null)}
+                  placeholder="Write your email content here..."
+                />
+              </Suspense>
               <FieldError error={fieldErrors?.html_body} />
             </div>
           </>

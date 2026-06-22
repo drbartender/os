@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import RichTextEditor from './RichTextEditor';
+import React, { useState, lazy, Suspense } from 'react';
+
+const RichTextEditor = lazy(() => import('./RichTextEditor'));
 
 export default function SequenceStepEditor({ step, onSave, onCancel, onUploadImage }) {
   const [subject, setSubject] = useState(step?.subject || '');
@@ -56,12 +57,14 @@ export default function SequenceStepEditor({ step, onSave, onCancel, onUploadIma
 
       <div className="form-group">
         <label className="form-label">Email Body</label>
-        <RichTextEditor
-          content={htmlBody}
-          onChange={setHtmlBody}
-          onUploadImage={onUploadImage || (() => Promise.resolve(null))}
-          placeholder="Write your email content..."
-        />
+        <Suspense fallback={<div className="muted" style={{ padding: '1rem 0' }}>Loading editor…</div>}>
+          <RichTextEditor
+            content={htmlBody}
+            onChange={setHtmlBody}
+            onUploadImage={onUploadImage || (() => Promise.resolve(null))}
+            placeholder="Write your email content..."
+          />
+        </Suspense>
       </div>
 
       <div className="em-step-actions">

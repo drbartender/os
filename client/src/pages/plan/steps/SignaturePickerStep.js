@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { SYRUPS, SYRUP_CATEGORIES, getAllUniqueSyrups, getDrinkSyrupSelections, calculateSyrupCost, getBottlesPerSyrup } from '../../../data/syrups';
 import { getUpgradesForDrink, isUpgradeSelectedForDrink } from '../data/drinkUpgrades';
 import { computeCocktailGap, computeGapCost } from '../data/packageGaps';
@@ -115,11 +115,13 @@ export default function SignaturePickerStep({
   const isYourMenu = activeTab === 'your-menu';
   const filteredDrinks = cocktails.filter(d => d.category_id === activeTab);
 
-  // Count selected per category
-  const countForCategory = (catId) => {
+  // Count selected per category. Memoized: called once per tab in both the
+  // mobile pills row and the desktop sidebar (~2× tab count per render), and
+  // each call filters `cocktails`. Stable identity until its inputs change.
+  const countForCategory = useCallback((catId) => {
     if (catId === 'your-menu') return selected.length + customCocktails.length;
     return cocktails.filter(d => d.category_id === catId && selected.includes(d.id)).length;
-  };
+  }, [cocktails, selected, customCocktails]);
 
   return (
     <div>

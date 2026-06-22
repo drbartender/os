@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 import PublicLayout from '../../components/PublicLayout';
@@ -38,6 +38,15 @@ export default function BlogPost() {
       .finally(() => setLoading(false));
   }, [slug]);
 
+  // Sanitize the post body once per body change, not on every render. DOMPurify
+  // walks the full HTML tree, so re-running it each render is wasted work.
+  // resolveBodyImageUrls + API_BASE are module-scope constants, so the raw body
+  // is the only input. Placed above the early returns to keep hook order stable.
+  const sanitizedBody = useMemo(
+    () => DOMPurify.sanitize(resolveBodyImageUrls(post?.body)),
+    [post?.body]
+  );
+
   if (loading) {
     return (
       <PublicLayout>
@@ -70,7 +79,9 @@ export default function BlogPost() {
       <article className="lab-notebook">
         {post.cover_image_url && (
           <div className="lab-notebook-cover">
-            <img src={resolveImageUrl(post.cover_image_url)} alt={post.title} />
+            {/* Article hero / LCP image — intentionally NOT lazy (lazy-loading the
+                LCP element hurts it); only hint async decoding. */}
+            <img src={resolveImageUrl(post.cover_image_url)} alt={post.title} decoding="async" />
           </div>
         )}
         <div className="lab-notebook-header">
@@ -87,7 +98,7 @@ export default function BlogPost() {
         </div>
         <div
           className="lab-notebook-body"
-          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(resolveBodyImageUrls(post.body)) }}
+          dangerouslySetInnerHTML={{ __html: sanitizedBody }}
         />
         <div className="lab-notebook-footer">
           <Link to="/labnotes" className="lab-notebook-back">&larr; Back to Lab Notes</Link>
