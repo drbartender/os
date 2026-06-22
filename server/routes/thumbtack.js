@@ -98,6 +98,24 @@ function extractGuestCount(details) {
   return null;
 }
 
+/**
+ * Event duration in HOURS from the lead's scheduled window (end - start).
+ * Thumbtack V4 leads carry the window as proposedTimes[].start/end ISO
+ * timestamps, so the duration is unambiguous. We deliberately do NOT read a
+ * scalar booking.duration: its unit is undocumented and real payloads never
+ * send it. Returns null for a missing or implausible window (<=0 or >24h) so
+ * the draft builder falls back to its 4-hour default.
+ */
+function computeDurationHours(startIso, endIso) {
+  if (!startIso || !endIso) return null;
+  const start = new Date(startIso);
+  const end = new Date(endIso);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const hours = (end.getTime() - start.getTime()) / 3600000;
+  if (!Number.isFinite(hours) || hours <= 0 || hours > 24) return null;
+  return Math.round(hours * 100) / 100; // kill float noise; real windows are whole hours
+}
+
 /** Normalize phone to digits only for matching */
 function normalizePhone(phone) {
   if (!phone) return null;
@@ -113,6 +131,9 @@ function parseLead(body) {
     const loc = req.location || {};
     const booking = req.booking || {};
     const proposedTimes = req.proposedTimes || [];
+    // Event window: prefer a confirmed booking, else the first proposed time.
+    const windowStart = booking.start || proposedTimes[0]?.start || null;
+    const windowEnd = booking.end || proposedTimes[0]?.end || null;
 
     return {
       negotiationId: d.negotiationID || d.negotiation_id,
@@ -125,8 +146,8 @@ function parseLead(body) {
       locationCity: loc.city || null,
       locationState: loc.state || null,
       locationZip: loc.zipCode || null,
-      eventDate: booking.start || proposedTimes[0]?.start || null,
-      eventDuration: booking.duration || null,
+      eventDate: windowStart,
+      eventDuration: computeDurationHours(windowStart, windowEnd),
       leadType: d.leadType || null,
       leadPrice: d.leadPrice || null,
       chargeState: d.chargeState || null,
@@ -452,3 +473,5 @@ router.post('/reviews', asyncHandler(async (req, res) => {
 module.exports = router;
 module.exports.__setDeps = __setDeps;
 module.exports.extractGuestCount = extractGuestCount; // exported for unit tests
+module.exports.parseLead = parseLead; // exported for unit tests
+module.exports.computeDurationHours = computeDurationHours; // exported for unit tests

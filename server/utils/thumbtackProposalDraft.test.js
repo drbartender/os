@@ -1,7 +1,7 @@
 require('dotenv').config();
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { mapEventType, toEventDateAndTime, buildAdminNotes, leadNeedsBar, decideNumBars } = require('./thumbtackProposalDraft');
+const { mapEventType, toEventDateAndTime, buildAdminNotes, leadNeedsBar, decideNumBars, resolveDurationHours } = require('./thumbtackProposalDraft');
 
 test('mapEventType: maps wedding category to wedding-reception + category', () => {
   const r = mapEventType({ category: 'Wedding Bartending', details: [] });
@@ -112,6 +112,18 @@ test('decideNumBars: a non-service_only package always rents the first bar', () 
   assert.equal(decideNumBars({ bar_type: 'mobile_bar' }, { details: [] }), 1);
 });
 
+test('resolveDurationHours: trusts a sane positive lead duration', () => {
+  assert.equal(resolveDurationHours(6), 6);
+  assert.equal(resolveDurationHours(2.5), 2.5);
+  assert.equal(resolveDurationHours('3'), 3);
+});
+
+test('resolveDurationHours: falls back to 4 for missing/invalid/out-of-range', () => {
+  for (const bad of [null, undefined, 0, -1, 25, NaN, 'abc', {}]) {
+    assert.equal(resolveDurationHours(bad), 4, `expected fallback 4 for ${String(bad)}`);
+  }
+});
+
 const { pool } = require('../db');
 const { createDraftProposalFromLead } = require('./thumbtackProposalDraft');
 
@@ -196,6 +208,36 @@ test('createDraftProposalFromLead: a "bring the bar" lead prices the $400 bar-re
   const p = await pool.query('SELECT num_bars, total_price FROM proposals WHERE id = $1', [proposalId]);
   assert.equal(p.rows[0].num_bars, 1, 'a bring-the-bar lead must set num_bars=1');
   assert.equal(Number(p.rows[0].total_price), 400, 'Core Reaction + bar rental = $400');
+});
+
+test('createDraftProposalFromLead: a 6-hour lead prices the real duration (350 + 2x100) and stores 6h', async () => {
+  const negotiationId = `test-dur-${Date.now()}`;
+  _cleanup.negotiationIds.push(negotiationId);
+
+  const c = await pool.query(
+    "INSERT INTO clients (name, phone, source) VALUES ('TT Dur Test', '+15550003333', 'thumbtack') RETURNING id"
+  );
+  const clientId = c.rows[0].id;
+  _cleanup.clientIds.push(clientId);
+
+  await pool.query(
+    `INSERT INTO thumbtack_leads (negotiation_id, client_id, customer_name, category, guest_count, raw_payload)
+     VALUES ($1, $2, 'TT Dur Test', 'Bartending', 60, '{}'::jsonb)`,
+    [negotiationId, clientId]
+  );
+
+  // eventDuration captured upstream from the Thumbtack event window (end - start).
+  const lead = {
+    negotiationId, category: 'Bartending', guestCount: 60, eventDate: null, eventDuration: 6,
+    description: 'six hour event', details: [],
+  };
+
+  const { proposalId } = await createDraftProposalFromLead({ lead, clientId, negotiationId });
+  _cleanup.proposalIds.push(proposalId);
+
+  const p = await pool.query('SELECT event_duration_hours, total_price FROM proposals WHERE id = $1', [proposalId]);
+  assert.equal(Number(p.rows[0].event_duration_hours), 6, 'draft must carry the lead duration, not the default 4');
+  assert.equal(Number(p.rows[0].total_price), 550, 'Core Reaction 6hr = 350 + (6-4)*100');
 });
 
 after(async () => {

@@ -158,8 +158,10 @@ atomically (no window where a proposal exists but the lead is unlinked):
    'the-core-reaction'`. If missing, throw (caught upstream as best-effort).
 3. **Map lead -> fields** (see Field Mapping), build `admin_notes` (see Admin
    Notes).
-4. **Price.** `calculateProposal({ pkg, guestCount, durationHours: 4, numBars,
-   numBartenders: undefined, addons: [], syrupSelections: [] })` where `numBars`
+4. **Price.** `calculateProposal({ pkg, guestCount, durationHours, numBars,
+   numBartenders: undefined, addons: [], syrupSelections: [] })` where
+   `durationHours` is the lead's real event duration (revised 2026-06-22: see
+   Field Mapping; originally a hardcoded `4`) and `numBars`
    is 0 for a `service_only` package (The Core Reaction) and 1 otherwise. A
    `service_only` package rents no physical bar, and any `numBars >= 1` makes the
    engine add `first_bar_fee` (`Number(pkg.first_bar_fee || 50)`, i.e. $50 even
@@ -184,7 +186,7 @@ This unit never creates an invoice, never sends email/SMS, never sets `sent`.
 | `guest_count` | `lead.guestCount` | parsed by `extractGuestCount`; fall back to 50 |
 | `event_date` | `lead.eventDate` | convert to `America/New_York`, take the date part; null if absent |
 | `event_start_time` | `lead.eventDate` | ET time like `6:00 PM`; null if absent |
-| `event_duration_hours` | (not trusted) | always default `4`; Thumbtack's duration unit is ambiguous, admin adjusts |
+| `event_duration_hours` | event window | **Revised 2026-06-22:** derived from the lead's scheduled window (`proposedTimes[0].end - .start`, in hours) via `computeDurationHours`; falls back to `4` only when the window is absent/implausible. The original "always 4" punted on a scalar `booking.duration` whose unit was ambiguous, but real V4 payloads carry an unambiguous start/end pair instead. |
 | `event_location` | venue fields | composed by `insertProposalRecord` via `composeVenueLocation` |
 | `venue_street/city/state/zip` | `lead.location*` | nullable |
 | `venue_name` | (none) | null |

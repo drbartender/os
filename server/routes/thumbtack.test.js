@@ -31,6 +31,42 @@ test('extractGuestCount: no guest question or no number yields null', () => {
   assert.equal(thumbtackRouter.extractGuestCount(null), null);
 });
 
+// Pure unit tests for event-duration capture (exported from thumbtack.js).
+// Real V4 leads carry the event window as proposedTimes[].start/end (never a
+// scalar booking.duration), so the duration is the unambiguous end - start.
+test('computeDurationHours: hours from the end - start window', () => {
+  assert.equal(thumbtackRouter.computeDurationHours('2026-08-29T22:00:00Z', '2026-08-30T04:00:00Z'), 6);
+  assert.equal(thumbtackRouter.computeDurationHours('2026-07-24T21:30:00Z', '2026-07-25T00:30:00Z'), 3);
+});
+test('computeDurationHours: missing or implausible window yields null', () => {
+  assert.equal(thumbtackRouter.computeDurationHours(null, '2026-01-01T00:00:00Z'), null);
+  assert.equal(thumbtackRouter.computeDurationHours('2026-01-01T05:00:00Z', '2026-01-01T05:00:00Z'), null); // 0h
+  assert.equal(thumbtackRouter.computeDurationHours('2026-01-02T00:00:00Z', '2026-01-01T00:00:00Z'), null); // negative
+  assert.equal(thumbtackRouter.computeDurationHours('2026-01-01T00:00:00Z', '2026-01-03T00:00:00Z'), null); // 48h > 24
+  assert.equal(thumbtackRouter.computeDurationHours('bad', 'worse'), null);
+});
+test('parseLead: V4 captures eventDuration from the proposedTimes window', () => {
+  const lead = thumbtackRouter.parseLead({
+    event: { eventType: 'NewLead' },
+    data: {
+      negotiationID: 'neg-dur',
+      request: {
+        category: { name: 'Bartending' },
+        proposedTimes: [{ start: '2026-08-29T22:00:00Z', end: '2026-08-30T04:00:00Z' }],
+        details: [],
+      },
+    },
+  });
+  assert.equal(lead.eventDuration, 6);
+  assert.equal(lead.eventDate, '2026-08-29T22:00:00Z');
+});
+test('parseLead: V4 with no end time leaves eventDuration null (draft falls back to 4)', () => {
+  const lead = thumbtackRouter.parseLead({
+    event: {}, data: { negotiationID: 'n', request: { proposedTimes: [{ start: '2026-08-29T22:00:00Z' }], details: [] } },
+  });
+  assert.equal(lead.eventDuration, null);
+});
+
 let server, baseUrl;
 const secret = process.env.THUMBTACK_WEBHOOK_SECRET || null;
 const negA = `test-fail-${Date.now()}`;

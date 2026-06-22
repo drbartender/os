@@ -104,6 +104,19 @@ function decideNumBars(pkg, lead) {
   return leadNeedsBar(lead) ? 1 : 0;
 }
 
+/**
+ * Event duration (hours) for the draft. Trust a sane positive lead duration
+ * (derived upstream in parseLead from the Thumbtack event window, end - start);
+ * otherwise fall back to the historical 4-hour default. The pricing engine
+ * throws on <=0, so this also guards bad/absent input; >24h is treated as bad
+ * data. Pure, so the $-swinging duration decision is unit-testable in isolation.
+ */
+function resolveDurationHours(raw) {
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0 && n <= 24) return n;
+  return 4;
+}
+
 /** UTC timestamp -> { eventDate: 'YYYY-MM-DD', eventStartTime: 'HH:MM' (24h) } in Central time. */
 function toEventDateAndTime(ts) {
   if (!ts) return { eventDate: null, eventStartTime: null };
@@ -171,7 +184,9 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
     // Reaction when the lead asks us to bring the bar). See decideNumBars.
     const numBars = decideNumBars(pkg, lead);
     const guestCount = lead.guestCount || 50;
-    const durationHours = 4;
+    // Use the lead's real event duration (captured from the Thumbtack window);
+    // fall back to 4h only when absent/implausible. See resolveDurationHours.
+    const durationHours = resolveDurationHours(lead.eventDuration);
 
     const snapshot = calculateProposal({
       pkg, guestCount, durationHours, numBars,
@@ -229,4 +244,4 @@ async function createDraftProposalFromLead({ lead, clientId, negotiationId }) {
   }
 }
 
-module.exports = { mapEventType, toEventDateAndTime, buildAdminNotes, leadNeedsBar, decideNumBars, createDraftProposalFromLead };
+module.exports = { mapEventType, toEventDateAndTime, buildAdminNotes, leadNeedsBar, decideNumBars, resolveDurationHours, createDraftProposalFromLead };
