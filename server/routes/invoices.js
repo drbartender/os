@@ -48,7 +48,7 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
   // Parallel fetch line items and payments
   const [lineItemsRes, paymentsRes] = await Promise.all([
     pool.query(
-      `SELECT id, description, quantity, unit_price, line_total, source_type
+      `SELECT id, description, quantity::float8 AS quantity, unit_price, line_total, source_type
          FROM invoice_line_items
         WHERE invoice_id = $1
         ORDER BY id`,

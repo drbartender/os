@@ -861,7 +861,7 @@ CREATE TABLE IF NOT EXISTS proposal_addons (
   addon_name VARCHAR(255),
   billing_type VARCHAR(20),
   rate NUMERIC(10,2),
-  quantity INTEGER,
+  quantity NUMERIC(10,2),
   line_total NUMERIC(10,2),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(proposal_id, addon_id)
@@ -1810,13 +1810,30 @@ CREATE TABLE IF NOT EXISTS invoice_line_items (
   id SERIAL PRIMARY KEY,
   invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
   description VARCHAR(255) NOT NULL,
-  quantity INTEGER NOT NULL DEFAULT 1,
+  quantity NUMERIC(10,2) NOT NULL DEFAULT 1,
   unit_price INTEGER NOT NULL DEFAULT 0,
   line_total INTEGER NOT NULL DEFAULT 0,
   source_type VARCHAR(20) DEFAULT 'manual'
     CHECK (source_type IN ('package', 'addon', 'fee', 'manual')),
   source_id INTEGER
 );
+
+-- SERVER-15: add-on quantity can be fractional (a half-hour event window means
+-- quantity 3.5 for per-hour add-ons), which 22P02'd the INTEGER quantity columns
+-- and 500'd both the public proposal submit and downstream invoice generation.
+-- Widen both to NUMERIC. Guarded so the ACCESS EXCLUSIVE ALTER only fires once,
+-- on a DB still holding the old INTEGER column, never on every initDb boot.
+DO $$ BEGIN
+  IF (SELECT data_type FROM information_schema.columns
+      WHERE table_name = 'proposal_addons' AND column_name = 'quantity') = 'integer'
+  THEN ALTER TABLE proposal_addons ALTER COLUMN quantity TYPE NUMERIC(10,2); END IF;
+END $$;
+
+DO $$ BEGIN
+  IF (SELECT data_type FROM information_schema.columns
+      WHERE table_name = 'invoice_line_items' AND column_name = 'quantity') = 'integer'
+  THEN ALTER TABLE invoice_line_items ALTER COLUMN quantity TYPE NUMERIC(10,2); END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_invoice_line_items_invoice_id ON invoice_line_items(invoice_id);
 

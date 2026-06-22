@@ -740,7 +740,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 
 **proposal_addons** — Line items linking proposals to add-ons
 - `proposal_id` FK, `addon_id` FK
-- `addon_name`, `billing_type`, `rate`, `quantity`, `line_total`
+- `addon_name`, `billing_type`, `rate`, `quantity` (NUMERIC — holds fractional hours for per-hour add-ons, e.g. a 3.5h window; pg returns NUMERIC as a string, so readers coerce with `::float8`/`Number()`), `line_total`
 - `variant` (nullable) — optional addon-specific variant tag (e.g., `'non-alcoholic-bubbles'` swaps the Champagne Toast label without changing price)
 
 **proposal_activity_log** — Audit trail
@@ -792,7 +792,7 @@ Event identity: proposals/shifts/drink_plans carry `event_type` (id) + optional 
 - A proposal's first invoice is created when the proposal enters the `sent` state. `createInvoiceOnSend` (in `server/utils/invoiceHelpers.js`, idempotent on `proposal_id`) runs inside the same DB transaction as the status change on every →sent path: admin `POST /proposals` with `send_now`, admin `PATCH /:id` and `PATCH /:id/status`, and the public `POST /api/proposals/public/submit` quote-wizard submission. Client notification (`sendProposalSentEmail`) fires post-commit and is best-effort.
 
 **invoice_line_items** — Line items per invoice
-- `invoice_id` FK, `description`, `quantity`, `unit_price` (cents), `line_total` (cents)
+- `invoice_id` FK, `description`, `quantity` (NUMERIC — mirrors proposal_addons.quantity so a fractional add-on quantity flows into the auto-generated invoice without a 500), `unit_price` (cents), `line_total` (cents)
 - `source_type`: package | addon | fee | manual
 - `source_id` — FK to proposal_addons.id or null
 

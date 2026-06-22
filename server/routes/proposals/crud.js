@@ -400,7 +400,8 @@ router.get('/:id', auth, requireAdminOrManager, asyncHandler(async (req, res) =>
   res.json({
     ...row,
     setup_time_display: setupTimeDisplay(row),
-    addons: addons.rows,
+    // SERVER-15: pg returns the now-NUMERIC quantity as a string; coerce to a number.
+    addons: addons.rows.map(a => ({ ...a, quantity: a.quantity === null ? null : Number(a.quantity) })),
     activity: activity.rows,
     messageLog,
   });

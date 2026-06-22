@@ -107,7 +107,7 @@ router.get('/proposals/:token', requireUuidToken('token', 'Proposal not found.')
   // is belt-and-suspenders against IDOR surviving a future refactor of the lookup.
   const [addons, payments] = await Promise.all([
     pool.query(
-      `SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant
+      `SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity::float8 AS quantity, line_total, variant
          FROM proposal_addons
         WHERE proposal_id = $1
           AND proposal_id IN (SELECT id FROM proposals WHERE client_id = $2)

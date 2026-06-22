@@ -86,7 +86,7 @@ router.get('/:proposalId', auth, beoReadLimiter, asyncHandler(async (req, res) =
   const dp = dpRow.rows[0] || null;
 
   const addonsRow = await pool.query(
-    `SELECT addon_id, addon_name, billing_type, rate, quantity, line_total
+    `SELECT addon_id, addon_name, billing_type, rate, quantity::float8 AS quantity, line_total
        FROM proposal_addons WHERE proposal_id = $1 ORDER BY addon_name`,
     [proposalId]
   );

@@ -134,7 +134,7 @@ async function buildDiff(proposal, proposed, db = pool) {
   // not produce a spurious diff.
   if (proposed.addon_ids !== undefined) {
     const cur = (await db.query(
-      'SELECT addon_id, variant, quantity FROM proposal_addons WHERE proposal_id = $1 ORDER BY addon_id', [proposal.id]
+      'SELECT addon_id, variant, quantity::float8 AS quantity FROM proposal_addons WHERE proposal_id = $1 ORDER BY addon_id', [proposal.id]
     )).rows;
     const curIds = cur.map(r => r.addon_id).sort((a, b) => a - b);
     const propIds = [...(proposed.addon_ids || [])].sort((a, b) => a - b);

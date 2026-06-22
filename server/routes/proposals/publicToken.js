@@ -84,7 +84,7 @@ router.get('/t/:token', publicLimiter, asyncHandler(async (req, res) => {
       [proposal.id]
     ),
     pool.query(
-      'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity, line_total, variant FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
+      'SELECT id, proposal_id, addon_id, addon_name, billing_type, rate, quantity::float8 AS quantity, line_total, variant FROM proposal_addons WHERE proposal_id = $1 ORDER BY id',
       [proposal.id]
     ),
     pool.query(
