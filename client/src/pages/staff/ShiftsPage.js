@@ -4,18 +4,47 @@ import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import api from '../../utils/api';
 import ShiftCard from '../../components/staff/ShiftCard';
+import LogisticsTag from '../../components/staff/LogisticsTag';
+import RequestSheet from '../../components/staff/RequestSheet';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import {
+  parsePositionsNeeded,
+  rosterCounts,
+  computeRemaining,
+  classifyRequest,
+  isEventFullyStaffed,
+  CANONICAL_LABELS,
+} from '../../utils/staffingRoles';
 import ShiftDetail from './ShiftDetail';
 
-const SUB_TABS = ['available', 'mine', 'past'];
+const SUB_TABS = ['available', 'all', 'mine', 'past'];
+
+/**
+ * True when an open-shift feed row still has at least one unfilled role.
+ * Available shows these; All shows every open event (full or not). Both
+ * source the same /shifts feed (fully-staffed events stay status='open').
+ */
+function isShiftAvailable(row) {
+  const remaining = computeRemaining(
+    parsePositionsNeeded(row.positions_needed),
+    row.approved_by_role && typeof row.approved_by_role === 'object' ? row.approved_by_role : {}
+  );
+  return !isEventFullyStaffed(remaining);
+}
 
 /**
  * ShiftsPage — staff portal v2 (spec §6.3).
  *
- * URL-driven sub-tab selector. Three sub-routes share one page:
- *   /shifts/available — open shifts (GET /api/shifts staff path)
- *   /shifts/mine      — pending + upcoming approved
+ * URL-driven sub-tab selector. Four sub-routes share one page:
+ *   /shifts/available — open events with at least one unfilled role
+ *   /shifts/all       — every open event (full ones included; join a waitlist)
+ *   /shifts/mine      — pending / waitlisted + upcoming approved
  *   /shifts/past      — completed / past approved
+ *
+ * Available and All source the SAME open-shift feed (GET /api/shifts staff
+ * path); a fully-staffed event stays status='open', so the only difference
+ * is a client-side filter (isShiftAvailable) that drops fully-staffed rows
+ * from Available. Per-role fill comes from positions_needed + approved_by_role.
  *
  * Mounted from App.js as `<Route path="shifts/*">`. The component reads the
  * sub-tab segment from useParams() so the active sub-tab survives reload,
@@ -23,10 +52,12 @@ const SUB_TABS = ['available', 'mine', 'past'];
  * redirects to /available to give every load a deterministic landing tab.
  *
  * Action surface per sub-tab:
- *   - Available: ShiftCard with `variant='open'`. Cover-needed rows show
- *     the accent border (via ShiftCard) + inline banner + "Cover this"
- *     button → POST /api/shifts/requests/:shiftId/claim-cover. Plain open
- *     rows show "Request" → POST /api/shifts/:id/request.
+ *   - Available / All: open-shift rows with a per-role fill line + logistics
+ *     tag. Cover-needed rows show the accent border + inline banner +
+ *     "Cover this" → POST /api/shifts/requests/:shiftId/claim-cover. Plain
+ *     open rows open the RequestSheet (ranked roles + transport ack), which
+ *     POSTs { requested_positions, transport_acknowledged } to
+ *     /api/shifts/:id/request. A fully-staffed event shows "Join waitlist".
  *   - Mine: pending rows (faded) with a "Withdraw" button →
  *     DELETE /api/shifts/requests/:requestId. Approved upcoming rows use
  *     ShiftCard with `showConfirmFlag` and navigate into ShiftDetail.
@@ -79,6 +110,11 @@ function ShiftsPageBody({ subTab }) {
   // trip resolves.
   const [busyKey, setBusyKey] = useState(null);
 
+  // The open RequestSheet target (an open-shift feed row), or null. Requesting
+  // a plain open shift now goes through the ranked-role + transport-ack sheet
+  // (the request endpoint requires requested_positions), not a bare POST.
+  const [requestTarget, setRequestTarget] = useState(null);
+
   const fetchAvailable = useCallback(async () => {
     setOpenLoading(true);
     setOpenError(null);
@@ -107,7 +143,8 @@ function ShiftsPageBody({ subTab }) {
   }, [user?.id]);
 
   useEffect(() => {
-    if (subTab === 'available') fetchAvailable();
+    // Available + All share the open-shift feed.
+    if (subTab === 'available' || subTab === 'all') fetchAvailable();
     if (subTab === 'mine' || subTab === 'past') fetchUserEvents();
   }, [subTab, fetchAvailable, fetchUserEvents]);
 
@@ -116,6 +153,10 @@ function ShiftsPageBody({ subTab }) {
   const upcoming = Array.isArray(userEvents?.upcoming) ? userEvents.upcoming : [];
   const past = Array.isArray(userEvents?.past) ? userEvents.past : [];
   const allOpenShifts = Array.isArray(openShifts) ? openShifts : [];
+  // Available = open events with at least one unfilled role. All = every open
+  // event (full ones included, so a staffer can join a waitlist). Both derive
+  // from the same feed; the only difference is this client-side filter.
+  const availableShifts = allOpenShifts.filter(isShiftAvailable);
   // Separate pending requests (from the user-events endpoint isn't where they
   // live — pending live on /shifts via my_request_id+my_request_status).
   // Pending requests on Mine come from /shifts where my_request_status is
@@ -141,12 +182,12 @@ function ShiftsPageBody({ subTab }) {
 
   // ── Actions ──────────────────────────────────────────────────────────
 
-  async function withdrawRequest(requestId) {
+  async function withdrawRequest(requestId, isWaitlisted = false) {
     if (!requestId) return;
     setBusyKey(`req:${requestId}`);
     try {
       await api.delete(`/shifts/requests/${requestId}`);
-      toast?.success?.('Request withdrawn.');
+      toast?.success?.(isWaitlisted ? 'Left the waitlist.' : 'Request withdrawn.');
       setMyRequestPending((prev) => prev.filter((s) => s.my_request_id !== requestId));
     } catch (err) {
       const code = err?.code;
@@ -160,21 +201,19 @@ function ShiftsPageBody({ subTab }) {
     }
   }
 
-  async function requestShift(shift) {
-    const shiftId = shift.id;
-    if (!shiftId) return;
-    setBusyKey(`req-shift:${shiftId}`);
-    try {
-      await api.post(`/shifts/${shiftId}/request`, {
-        position: shift.my_request_position || null,
-      });
-      toast?.success?.('Request sent.');
-      await fetchAvailable();
-    } catch (err) {
-      toast?.error?.(err?.message || 'Could not send the request.');
-    } finally {
-      setBusyKey(null);
-    }
+  // Requesting a plain open shift opens the ranked-role + transport-ack sheet.
+  // The /shifts/:id/request endpoint requires requested_positions and (when the
+  // event needs gear/supplies) a transport acknowledgment, so a bare POST is no
+  // longer valid; the sheet collects both.
+  function openRequestSheet(shift) {
+    if (!shift?.id) return;
+    setRequestTarget(shift);
+  }
+
+  async function onRequestSubmitted() {
+    setRequestTarget(null);
+    toast?.success?.('Request sent.');
+    await fetchAvailable();
   }
 
   async function claimCover(shift) {
@@ -202,7 +241,8 @@ function ShiftsPageBody({ subTab }) {
   // ── Render ───────────────────────────────────────────────────────────
 
   const counts = {
-    available: allOpenShifts.length,
+    available: availableShifts.length,
+    all: allOpenShifts.length,
     mine: myRequestPending.length + upcoming.length,
     past: past.length,
   };
@@ -234,12 +274,13 @@ function ShiftsPageBody({ subTab }) {
         ))}
       </div>
 
-      {subTab === 'available' && (
-        <AvailableTab
+      {(subTab === 'available' || subTab === 'all') && (
+        <OpenShiftsTab
+          mode={subTab}
           loading={openLoading && openShifts == null}
           error={openError}
           onRetry={fetchAvailable}
-          shifts={allOpenShifts}
+          shifts={subTab === 'available' ? availableShifts : allOpenShifts}
           busyKey={busyKey}
           onOpenShift={(s) =>
             navigate(`/shifts/${s.id}`, {
@@ -248,7 +289,7 @@ function ShiftsPageBody({ subTab }) {
               state: { proposal_id: s.proposal_id || null, shift: s },
             })
           }
-          onRequest={requestShift}
+          onRequest={openRequestSheet}
           onClaimCover={claimCover}
         />
       )}
@@ -283,21 +324,32 @@ function ShiftsPageBody({ subTab }) {
           }}
         />
       )}
+
+      <RequestSheet
+        open={!!requestTarget}
+        shift={requestTarget}
+        onClose={() => setRequestTarget(null)}
+        onSubmitted={onRequestSubmitted}
+      />
     </>
   );
 }
 
 // ── Sub-tab components ──────────────────────────────────────────────────
 
-function AvailableTab({ loading, error, onRetry, shifts, busyKey, onOpenShift, onRequest, onClaimCover }) {
+function OpenShiftsTab({ mode, loading, error, onRetry, shifts, busyKey, onOpenShift, onRequest, onClaimCover }) {
   if (loading) return <ListSkeleton count={3} />;
   if (error) return <InlineError msg={error} onRetry={onRetry} />;
   if (shifts.length === 0) {
     return (
       <EmptyState
         icon={<CalendarIcon size={22} />}
-        title="No open shifts right now."
-        sub="New shifts post weekly. Check back soon."
+        title={mode === 'all' ? 'No open events right now.' : 'No shifts to grab right now.'}
+        sub={
+          mode === 'all'
+            ? 'New shifts post weekly. Check back soon.'
+            : 'Everything posted is fully staffed. Check the All tab to see them, or back soon for new shifts.'
+        }
       />
     );
   }
@@ -306,7 +358,17 @@ function AvailableTab({ loading, error, onRetry, shifts, busyKey, onOpenShift, o
       {shifts.map((raw) => {
         const s = normalizeOpenShift(raw);
         const isRequested = !!raw.my_request_id && raw.my_request_status !== 'denied';
-        const busy = busyKey === `cover:${s.id}` || busyKey === `req-shift:${s.id}`;
+        // Only the cover claim has an inline busy state; the Request button opens
+        // RequestSheet, which owns its own submitting state.
+        const busy = busyKey === `cover:${s.id}`;
+        // Per-role fill from the feed (positions_needed + approved_by_role).
+        const needed = parsePositionsNeeded(raw.positions_needed);
+        const counts = rosterCounts(needed);
+        const approved = raw.approved_by_role && typeof raw.approved_by_role === 'object'
+          ? raw.approved_by_role
+          : {};
+        const remaining = computeRemaining(needed, approved);
+        const fullyStaffed = needed.length > 0 && isEventFullyStaffed(remaining);
         return (
           <div
             key={s.id}
@@ -360,12 +422,38 @@ function AvailableTab({ loading, error, onRetry, shifts, busyKey, onOpenShift, o
                 )}
               </div>
             )}
+            {needed.length > 0 && (
+              <div className="sp-shift-roster">
+                <div className="sp-shift-roster-fill">
+                  {CANONICAL_LABELS.filter((role) => counts[role] > 0).map((role, i, arr) => {
+                    const total = counts[role] || 0;
+                    const filled = Math.min(Number(approved[role]) || 0, total);
+                    return (
+                      <span key={role} className={'sp-roster-pill' + (filled >= total ? ' full' : '')}>
+                        {role} {filled}/{total}
+                        {i < arr.length - 1 ? ' ·' : ''}
+                      </span>
+                    );
+                  })}
+                </div>
+                <LogisticsTag
+                  equipment_required={raw.equipment_required}
+                  supply_run_required={raw.supply_run_required}
+                />
+              </div>
+            )}
             <div className="sp-shift-foot">
               <div className="sp-shift-foot-l">
                 {s.cover_needed && (
                   <span className="sp-chip warn">
                     <span className="sp-chip-dot" />
                     Cover needed
+                  </span>
+                )}
+                {fullyStaffed && !s.cover_needed && (
+                  <span className="sp-chip neutral">
+                    <span className="sp-chip-dot" />
+                    Fully staffed
                   </span>
                 )}
               </div>
@@ -384,11 +472,17 @@ function AvailableTab({ loading, error, onRetry, shifts, busyKey, onOpenShift, o
                     if (s.cover_needed) {
                       onClaimCover(s);
                     } else {
-                      onRequest(s);
+                      onRequest(raw);
                     }
                   }}
                 >
-                  {busy ? '…' : s.cover_needed ? 'Cover this' : 'Request'}
+                  {busy
+                    ? '…'
+                    : s.cover_needed
+                    ? 'Cover this'
+                    : fullyStaffed
+                    ? 'Join waitlist'
+                    : 'Request'}
                 </button>
               )}
             </div>
@@ -422,7 +516,7 @@ function MineTab({ loading, error, onRetry, pending, upcoming, busyKey, onWithdr
           key={s.my_request_id || `s${s.id}`}
           shift={s}
           busy={busyKey === `req:${s.my_request_id}`}
-          onWithdraw={() => onWithdraw(s.my_request_id)}
+          onWithdraw={(isWaitlisted) => onWithdraw(s.my_request_id, isWaitlisted)}
         />
       ))}
       {upcoming.map((row) => (
@@ -465,6 +559,18 @@ function PastTab({ loading, error, onRetry, past, onOpenPayout }) {
 // ── Pending request row (Mine sub-tab) ──────────────────────────────────
 
 function PendingRow({ shift, busy, onWithdraw }) {
+  // A pending request whose every ranked role is currently full is a waitlist
+  // entry (the server keeps status='pending' for both; the waitlist vs
+  // actionable split is computed client-side from the same shared classifier).
+  // approved_by_role on the feed excludes the viewer's own pending row, so
+  // classifyRequest sees the true open slots.
+  const ranked = parsePositionsNeeded(shift.my_requested_positions);
+  const remaining = computeRemaining(
+    parsePositionsNeeded(shift.positions_needed),
+    shift.approved_by_role && typeof shift.approved_by_role === 'object' ? shift.approved_by_role : {}
+  );
+  const isWaitlisted = ranked.length > 0 && classifyRequest(ranked, remaining).state === 'waitlisted';
+
   return (
     <div className="sp-shift" style={{ opacity: 0.85 }}>
       <div className="sp-shift-head">
@@ -476,25 +582,34 @@ function PendingRow({ shift, busy, onWithdraw }) {
       </div>
       <div>
         <div className="sp-shift-name">{shift.client_name || 'Open shift'}</div>
-        <div className="sp-shift-type">Request pending review</div>
+        <div className="sp-shift-type">
+          {isWaitlisted ? "You're on the waitlist" : 'Request pending review'}
+        </div>
       </div>
       <div className="sp-shift-foot">
         <div className="sp-shift-foot-l">
-          <span className="sp-chip warn">
-            <span className="sp-chip-dot" />
-            Pending
-          </span>
-          {shift.my_request_position && (
-            <span className="sp-chip neutral">{shift.my_request_position}</span>
+          {isWaitlisted ? (
+            <span className="sp-chip info">
+              <span className="sp-chip-dot" />
+              Waitlisted
+            </span>
+          ) : (
+            <span className="sp-chip warn">
+              <span className="sp-chip-dot" />
+              Pending
+            </span>
+          )}
+          {!isWaitlisted && ranked.length > 0 && (
+            <span className="sp-chip neutral">{ranked.join(', ')}</span>
           )}
         </div>
         <button
           type="button"
           className="sp-btn sp-btn-sm sp-btn-ghost"
           disabled={busy}
-          onClick={onWithdraw}
+          onClick={() => onWithdraw(isWaitlisted)}
         >
-          {busy ? '…' : 'Withdraw'}
+          {busy ? '…' : isWaitlisted ? 'Leave waitlist' : 'Withdraw'}
         </button>
       </div>
     </div>
@@ -606,6 +721,7 @@ function normalizePastEvent(row) {
 
 function labelFor(tab) {
   if (tab === 'available') return 'Available';
+  if (tab === 'all') return 'All';
   if (tab === 'mine') return 'Mine';
   if (tab === 'past') return 'Past';
   return tab;

@@ -1,5 +1,13 @@
 import React from 'react';
 import { getEventTypeLabel } from '../../utils/eventTypes';
+import {
+  parsePositionsNeeded,
+  rosterCounts,
+  computeRemaining,
+  isEventFullyStaffed,
+  CANONICAL_LABELS,
+} from '../../utils/staffingRoles';
+import LogisticsTag from './LogisticsTag';
 
 /**
  * ShiftCard — shared shift summary card for the redesigned staff portal
@@ -111,6 +119,7 @@ export default function ShiftCard({ shift, showConfirmFlag = false, onClick, var
           )}
         </div>
       )}
+      {isOpen && <ShiftRoster shift={shift} />}
       <ShiftCardFoot
         shift={shift}
         variant={variant}
@@ -143,10 +152,13 @@ function ShiftCardFoot({ shift, variant, showConfirmFlag }) {
   }
 
   if (variant === 'open') {
+    const remaining = shiftRemaining(shift);
+    const hasRoster = remaining != null;
+    const full = hasRoster && isEventFullyStaffed(remaining);
     const hasEstimate = shift.pay_cents_estimate != null;
     const hasCount = shift.requested_by_count > 0;
     const hasCover = !!shift.cover_needed;
-    if (!hasEstimate && !hasCount && !hasCover) return null;
+    if (!hasEstimate && !hasCount && !hasCover && !full) return null;
     return (
       <div className="sp-shift-foot">
         <div className="sp-shift-foot-l">
@@ -159,6 +171,12 @@ function ShiftCardFoot({ shift, variant, showConfirmFlag }) {
           {hasCount && (
             <span className="sp-chip neutral">
               {shift.requested_by_count} already requested
+            </span>
+          )}
+          {full && (
+            <span className="sp-chip neutral">
+              <span className="sp-chip-dot" />
+              Fully staffed
             </span>
           )}
           {hasCover && (
@@ -192,6 +210,62 @@ function ShiftCardFoot({ shift, variant, showConfirmFlag }) {
       </div>
     </div>
   );
+}
+
+/**
+ * ShiftRoster — per-role fill line + logistics tag for an open shift.
+ *
+ * Reads positions_needed (the canonical roster) + approved_by_role (the
+ * approved headcount per role) from the feed row and renders, e.g.:
+ *   "Bartender 2/2 · Banquet Server 0/1"  [Bar Kit Only]
+ *
+ * Fully defensive: when the row carries no roster (e.g. the HomePage teaser
+ * normalizer omits positions_needed), the whole block renders nothing so
+ * those consumers are unaffected.
+ */
+function ShiftRoster({ shift }) {
+  const needed = parsePositionsNeeded(shift.positions_needed);
+  if (needed.length === 0) return null;
+  const counts = rosterCounts(needed);
+  const approved = shift.approved_by_role && typeof shift.approved_by_role === 'object'
+    ? shift.approved_by_role
+    : {};
+  // Render in the canonical role order for a stable, predictable read.
+  const ordered = CANONICAL_LABELS.filter((role) => counts[role] > 0);
+  return (
+    <div className="sp-shift-roster">
+      <div className="sp-shift-roster-fill">
+        {ordered.map((role, i) => {
+          const total = counts[role] || 0;
+          const filled = Math.min(Number(approved[role]) || 0, total);
+          const roleFull = filled >= total;
+          return (
+            <span key={role} className={'sp-roster-pill' + (roleFull ? ' full' : '')}>
+              {role} {filled}/{total}
+              {i < ordered.length - 1 ? ' ·' : ''}
+            </span>
+          );
+        })}
+      </div>
+      <LogisticsTag
+        equipment_required={shift.equipment_required}
+        supply_run_required={shift.supply_run_required}
+      />
+    </div>
+  );
+}
+
+/**
+ * Compute the per-role remaining map for an open shift row, or null when the
+ * row carries no roster data (so callers can branch on "roster present").
+ */
+function shiftRemaining(shift) {
+  const needed = parsePositionsNeeded(shift.positions_needed);
+  if (needed.length === 0) return null;
+  const approved = shift.approved_by_role && typeof shift.approved_by_role === 'object'
+    ? shift.approved_by_role
+    : {};
+  return computeRemaining(needed, approved);
 }
 
 // ── Local helpers ──────────────────────────────────────────────────────────

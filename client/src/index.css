@@ -14049,6 +14049,102 @@ html[data-app="admin-os"] .sms-reply textarea.form-input:focus {
 [data-skin="light"] .sp-shift-payout { font-weight: 400; font-size: 16px; }
 .sp-mono { font-family: var(--sp-font-mono); }
 
+/* ── Per-role roster line + logistics tag (open-shift cards, Lane 6) ──── */
+.sp-shift-roster {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+  margin-top: 2px;
+}
+.sp-shift-roster-fill {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 5px;
+  font-size: 12px;
+  color: var(--sp-ink-2);
+}
+.sp-roster-pill {
+  font-family: var(--sp-font-numeric);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sp-roster-pill.full { color: var(--sp-ink-3); }
+
+/* ── RoleRankPicker (ranked-role request, Lane 6) ─────────────────────── */
+.sp-rank-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 0.5rem;
+}
+.sp-rank-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--sp-line-1);
+  border-radius: 8px;
+  background: var(--sp-bg-2);
+}
+[data-skin="light"] .sp-rank-row { border-radius: 0; background: transparent; border-color: var(--sp-line-2); }
+.sp-rank-row.selected { border-color: var(--sp-line-3); background: var(--sp-bg-3); }
+[data-skin="light"] .sp-rank-row.selected { border-color: var(--sp-ink-1); background: transparent; }
+.sp-rank-main {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  cursor: pointer;
+}
+.sp-rank-main input[type="checkbox"] { flex-shrink: 0; accent-color: var(--sp-accent); }
+.sp-rank-role {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--sp-ink-1);
+}
+[data-skin="light"] .sp-rank-role { font-weight: 500; }
+.sp-rank-num {
+  display: inline-grid;
+  place-items: center;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: hsl(var(--sp-accent-h) var(--sp-accent-s) var(--sp-accent-l) / 0.15);
+  color: var(--sp-accent);
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+[data-skin="light"] .sp-rank-num { background: transparent; border: 1px solid var(--sp-ms-emerald); color: var(--sp-ms-emerald); border-radius: 0; }
+.sp-rank-moves { display: inline-flex; gap: 4px; flex-shrink: 0; }
+.sp-rank-moves .sp-icon-btn { width: 28px; height: 28px; }
+
+/* ── Transport acknowledgment row (RequestSheet, Lane 6) ──────────────── */
+.sp-ack-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.6rem 0.7rem;
+  margin-top: 0.5rem;
+  border: 1px solid var(--sp-line-2);
+  border-radius: 8px;
+  background: var(--sp-bg-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--sp-ink-1);
+  cursor: pointer;
+}
+[data-skin="light"] .sp-ack-row { border-radius: 0; background: transparent; }
+.sp-ack-row input[type="checkbox"] { margin-top: 2px; flex-shrink: 0; accent-color: var(--sp-accent); }
+
 /* ── Generic icon button (TeamRosterCard contact actions) ─────────────── */
 .sp-icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
