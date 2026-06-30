@@ -47,19 +47,22 @@ const SERVICES = [
     n: 'Formula I',
     t: 'BYOB Bar',
     body: "You supply the spirits, mixers, ice, and bar. We bring the tools, the cups, the garnish prep, and the BASSET-trained professionals to pour it all. Most popular.",
-    img: "PHOTO\nbar setup\nclient's bottles",
+    photo: '/images/marketing/service-byob-bar.jpg',
+    alt: "A fully stocked BYOB bar with the client's bottles and prepared cocktails",
   },
   {
     n: 'Formula II',
     t: 'Hosted Bar',
     body: 'Booze, ice, garnish, mixers, cups, and BASSET-trained bartenders — plus a built-out menu and the staff to run it. Bespoke menu included.',
-    img: 'PHOTO\nbuilt bar\nat an event',
+    photo: '/images/marketing/service-hosted-bar.jpg',
+    alt: 'A Dr. Bartender bartender running a hosted bar at an event',
   },
   {
     n: 'Formula III',
     t: 'Cocktail Classes',
     body: 'Private classes — kits, syrups, garnishes, and a host with twenty-five years behind the stick. Two hours, eight guests.',
-    img: 'PHOTO\nclass tasting\nfour glass flight',
+    photo: '/images/marketing/service-cocktail-class.jpg',
+    alt: 'A flight of cocktails from a private Dr. Bartender cocktail class',
   },
 ];
 
@@ -157,6 +160,14 @@ export default function HomePage() {
     <PublicLayout>
       {/* ── Hero ─────────────────────────────────────────── */}
       <section className="ws-press-hero">
+        <img
+          className="ws-press-hero-bg"
+          src="/images/marketing/hero-cocktails.jpg"
+          alt=""
+          aria-hidden="true"
+          fetchPriority="high"
+        />
+        <div className="ws-press-hero-overlay" aria-hidden="true" />
         <div className="ws-wrap">
           <FadeUp>
             <div className="ws-press-hero-center">
@@ -212,8 +223,13 @@ export default function HomePage() {
                 <span className="ws-bracket bl" aria-hidden="true" />
                 <span className="ws-bracket br" aria-hidden="true" />
                 <div className="specimen-card-plate">
-                  <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 5' }}>
-                    <span>{'PORTRAIT\nOF THE PROPRIETOR\ncandid · b&w · half-smirk'}</span>
+                  <div className="img-placeholder on-paper-tile has-photo" style={{ aspectRatio: '4 / 5' }}>
+                    <img
+                      className="ws-photo"
+                      src="/images/marketing/proprietor-portrait.jpg"
+                      alt="Dallas Raby, founder and lead bartender of Dr. Bartender"
+                      loading="lazy"
+                    />
                   </div>
                 </div>
                 <div className="specimen-card-tag">
@@ -277,8 +293,8 @@ export default function HomePage() {
             {SERVICES.map((s, i) => (
               <FadeUp key={s.t} delay={i * 0.1}>
                 <article className="card ws-press-service">
-                  <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 3' }}>
-                    <span>{s.img}</span>
+                  <div className="img-placeholder on-paper-tile has-photo" style={{ aspectRatio: '4 / 3' }}>
+                    <img className="ws-photo" src={s.photo} alt={s.alt} loading="lazy" />
                   </div>
                   <div className="ws-press-service-body">
                     <div className="ws-press-service-formula">{s.n}</div>

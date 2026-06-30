@@ -8,7 +8,8 @@ const STEPS = [
     kicker: 'Step One · The Prescription',
     t: 'Build an instant quote.',
     body: 'Five questions. Live pricing as you choose. We send a real proposal — sign and pay in one breath. No 30-minute discovery call required.',
-    img: 'PHOTO\ninstant quote\non a phone',
+    photo: '/images/marketing/method-instant-quote-phone.jpg',
+    alt: 'A phone showing the Dr. Bartender instant quote',
     bullets: [
       'Live pricing as you adjust',
       'Real proposal in your inbox',
@@ -20,7 +21,8 @@ const STEPS = [
     kicker: 'Step Two · The Potion Planner',
     t: 'Plan the menu.',
     body: 'A short questionnaire builds a menu around your taste — colors, flavors, allergens, what your guests actually want. Browse our cocktail catalogue. Mark favorites. Add a smoke bubble or two.',
-    img: 'PHOTO\nplanner UI\non a tablet',
+    photo: '/images/marketing/method-planner-tablet.jpg',
+    alt: 'A tablet showing the Dr. Bartender menu planner',
     bullets: [
       'Two signature drinks · always included',
       'Browse 80+ catalogue cocktails',
@@ -32,7 +34,8 @@ const STEPS = [
     kicker: 'Step Three · The Big Experiment',
     t: 'The night, run tight.',
     body: 'On the day, we arrive 90 minutes early, build the bar, and run a tight, smiling, well-lit shift. You meet your guests; we pour. Tear-down is on us.',
-    img: 'PHOTO\nbartender mid-pour\ndim event light',
+    photo: '/images/marketing/method-event-bar.jpg',
+    alt: 'Dr. Bartender bartenders running a built bar at an event',
     bullets: [
       'Arrive 90 min early · setup included',
       'BASSET-trained · general + liquor liability',
@@ -71,11 +74,11 @@ function StepText({ s }) {
   );
 }
 
-function StepImage({ label }) {
+function StepImage({ photo, alt }) {
   return (
     <div className="card ws-press-method-img">
-      <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 3' }}>
-        <span>{label}</span>
+      <div className="img-placeholder on-paper-tile has-photo" style={{ aspectRatio: '4 / 3' }}>
+        <img className="ws-photo" src={photo} alt={alt} loading="lazy" />
       </div>
     </div>
   );
@@ -102,11 +105,11 @@ export default function MethodPage() {
               {i % 2 === 0 ? (
                 <>
                   <StepText s={s} />
-                  <StepImage label={s.img} />
+                  <StepImage photo={s.photo} alt={s.alt} />
                 </>
               ) : (
                 <>
-                  <StepImage label={s.img} />
+                  <StepImage photo={s.photo} alt={s.alt} />
                   <StepText s={s} />
                 </>
               )}

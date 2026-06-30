@@ -48,8 +48,13 @@ export default function AboutPage() {
               <span className="ws-bracket bl" aria-hidden="true" />
               <span className="ws-bracket br" aria-hidden="true" />
               <div className="specimen-card-plate">
-                <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 5' }}>
-                  <span>{'PORTRAIT\nOF THE PROPRIETOR\ncandid · b&w · half-smirk'}</span>
+                <div className="img-placeholder on-paper-tile has-photo" style={{ aspectRatio: '4 / 5' }}>
+                  <img
+                    className="ws-photo"
+                    src="/images/marketing/proprietor-portrait.jpg"
+                    alt="Dallas Raby, founder and lead bartender of Dr. Bartender"
+                    loading="lazy"
+                  />
                 </div>
               </div>
               <div className="specimen-card-tag">

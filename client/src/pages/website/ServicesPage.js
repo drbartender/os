@@ -17,7 +17,8 @@ const FORMULAS = [
       ['Ice & cups', 'optional add-on'],
       ['Bespoke menu', 'two signature drinks · included'],
     ],
-    img: "PHOTO\nbar setup\nclient's bottles",
+    photo: '/images/marketing/service-byob-bar.jpg',
+    alt: "A fully stocked BYOB bar with the client's bottles and prepared cocktails",
   },
   {
     num: 'Formula II',
@@ -33,7 +34,8 @@ const FORMULAS = [
       ['Glassware & cups', 'compostable available'],
       ['Bespoke menu', 'two signature drinks · included'],
     ],
-    img: 'PHOTO\nbuilt bar\nat a wedding',
+    photo: '/images/marketing/service-hosted-bar.jpg',
+    alt: 'A Dr. Bartender bartender running a built, hosted bar at an event',
   },
   {
     num: 'Formula III',
@@ -49,7 +51,8 @@ const FORMULAS = [
       ['Recipe cards', 'take-home set'],
       ['Travel', 'within Chicago — IL, IN, MI by quote'],
     ],
-    img: 'PHOTO\nclass tasting\nfour glass flight',
+    photo: '/images/marketing/service-cocktail-class.jpg',
+    alt: 'A flight of cocktails from a private Dr. Bartender cocktail class',
   },
 ];
 
@@ -87,10 +90,10 @@ function ServiceDetails({ s }) {
   );
 }
 
-function FormulaImage({ label }) {
+function FormulaImage({ photo, alt }) {
   return (
-    <div className="img-placeholder on-paper-tile" style={{ aspectRatio: '4 / 3' }}>
-      <span>{label}</span>
+    <div className="img-placeholder on-paper-tile has-photo" style={{ aspectRatio: '4 / 3' }}>
+      <img className="ws-photo" src={photo} alt={alt} loading="lazy" />
     </div>
   );
 }
@@ -118,13 +121,13 @@ export default function ServicesPage() {
             >
               {i % 2 === 0 ? (
                 <>
-                  <FormulaImage label={s.img} />
+                  <FormulaImage photo={s.photo} alt={s.alt} />
                   <ServiceDetails s={s} />
                 </>
               ) : (
                 <>
                   <ServiceDetails s={s} />
-                  <FormulaImage label={s.img} />
+                  <FormulaImage photo={s.photo} alt={s.alt} />
                 </>
               )}
             </div>
