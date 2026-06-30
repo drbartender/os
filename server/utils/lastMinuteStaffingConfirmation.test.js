@@ -14,6 +14,14 @@ test('_resolveDisplayName > preferred_name wins', () => {
   assert.strictEqual(_resolveDisplayName({ preferred_name: 'Alex' }), 'Alex');
 });
 
+test('_resolveDisplayName > role-aware fallback never calls a server "Your bartender"', () => {
+  assert.strictEqual(_resolveDisplayName({ position: 'Banquet Server' }), 'Your banquet server');
+  assert.strictEqual(_resolveDisplayName({ position: 'banquet server' }), 'Your banquet server');
+  assert.strictEqual(_resolveDisplayName({ position: 'Barback' }), 'Your barback');
+  assert.strictEqual(_resolveDisplayName({ position: 'Bartender' }), 'Your bartender');
+  assert.strictEqual(_resolveDisplayName({}), 'Your bartender');
+});
+
 test('_resolveDisplayName > falls through to generic when preferred_name is null', () => {
   assert.strictEqual(_resolveDisplayName({ preferred_name: null }), 'Your bartender');
 });

@@ -10,9 +10,19 @@ const smsTemplates = require('./smsTemplates');
 
 // ─── Pure renderer ───────────────────────────────────────────────
 
-/** Pick the most specific display name available, falling through to a generic label. */
+/** Role-aware generic label for a staffer with no preferred_name on file, so a
+ * Banquet Server / Barback is never announced as "Your bartender". */
+function _roleNoun(position) {
+  const p = String(position || '').trim().toLowerCase();
+  if (p === 'banquet server') return 'banquet server';
+  if (p === 'barback') return 'barback';
+  return 'bartender';
+}
+
+/** Pick the most specific display name available, falling through to a
+ * role-aware generic label. */
 function _resolveDisplayName(row) {
-  return row.preferred_name || 'Your bartender';
+  return row.preferred_name || `Your ${_roleNoun(row.position)}`;
 }
 
 /**
@@ -109,7 +119,7 @@ async function notifyClientOfStaffingConfirmation(proposalId, shiftId) {
   }
 
   const bartenderRows = await pool.query(
-    `SELECT cp.preferred_name, cp.phone
+    `SELECT cp.preferred_name, cp.phone, sr.position
        FROM shift_requests sr
        LEFT JOIN contractor_profiles cp ON cp.user_id = sr.user_id
       WHERE sr.shift_id = $1 AND sr.status = 'approved' AND sr.dropped_at IS NULL
